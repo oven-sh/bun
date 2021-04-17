@@ -1,0 +1,40 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "build",
+      "type": "shell",
+      "command": "zig build",
+      "problemMatcher": [],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "run",
+      "type": "process",
+      "command": "zig",
+      "args": ["run", "${file}"],
+      "group": "build",
+      "presentation": {
+        "showReuseMessage": false,
+        "clear": true
+      }
+    },
+    {
+      "label": "test",
+      "type": "process",
+      "command": "zig",
+      "args": ["test", "${file}", "-femit-bin=zig-cache/bin/test"],
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      },
+      "presentation": {
+        "showReuseMessage": false,
+        "clear": true
+      }
+    }
+  ]
+}

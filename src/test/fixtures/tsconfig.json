@@ -1,0 +1,9 @@
+{
+  "compilerOptions": {
+    "baseUrl": "/Users/jarredsumner/Code/esdev/src/test/fixtures",
+    "paths": {
+      "components": ["components/*"]
+    },
+    "jsx": "preserve"
+  }
+}

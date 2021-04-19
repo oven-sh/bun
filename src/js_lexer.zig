@@ -312,6 +312,241 @@ pub const Lexer = struct {
                     }
                 },
 
+                '&' => {
+                    // '&' or '&=' or '&&' or '&&='
+                    lexer.step();
+                    switch (lexer.code_point) {
+                        '=' => {
+                            lexer.step();
+                            lexer.token = T.t_ampersand_equals;
+                        },
+
+                        '&' => {
+                            lexer.step();
+                            switch (lexer.code_point) {
+                                '=' => {
+                                    lexer.step();
+                                    lexer.token = T.t_ampersand_ampersand_equals;
+                                },
+
+                                else => {
+                                    lexer.token = T.t_ampersand_ampersand;
+                                },
+                            }
+                        },
+                        else => {
+                            lexer.token = T.t_ampersand;
+                        },
+                    }
+                },
+
+                '|' => {
+
+                    // '|' or '|=' or '||' or '||='
+                    lexer.step();
+                    switch (lexer.code_point) {
+                        '=' => {
+                            lexer.step();
+                            lexer.token = T.t_bar_equals;
+                        },
+                        '|' => {
+                            lexer.step();
+                            switch (lexer.code_point) {
+                                '=' => {
+                                    lexer.step();
+                                    lexer.token = T.t_bar_bar_equals;
+                                },
+
+                                else => {
+                                    lexer.token = T.t_bar_bar;
+                                },
+                            }
+                        },
+                        else => {
+                            lexer.token = T.t_bar;
+                        },
+                    }
+                },
+
+                '^' => {
+                    // '^' or '^='
+                    lexer.step();
+                    switch (lexer.code_point) {
+                        '=' => {
+                            lexer.step();
+                            lexer.token = T.t_caret_equals;
+                        },
+
+                        else => {
+                            lexer.token = T.t_caret;
+                        },
+                    }
+                },
+
+                '+' => {
+                    // '+' or '+=' or '++'
+                    lexer.step();
+                    switch (lexer.code_point) {
+                        '=' => {
+                            lexer.step();
+                            lexer.token = T.t_plus_equals;
+                        },
+
+                        '+' => {
+                            lexer.step();
+                            lexer.token = T.t_plus_plus;
+                        },
+
+                        else => {
+                            lexer.token = T.t_plus;
+                        },
+                    }
+                },
+
+                '=' => {
+                    // '=' or '=>' or '==' or '==='
+                    lexer.step();
+                    switch (lexer.code_point) {
+                        '>' => {
+                            lexer.step();
+                            lexer.token = T.t_equals_greater_than;
+                        },
+
+                        '=' => {
+                            lexer.step();
+                            switch (lexer.code_point) {
+                                '=' => {
+                                    lexer.step();
+                                    lexer.token = T.t_equals_equals_equals;
+                                },
+
+                                else => {
+                                    lexer.token = T.t_equals_equals;
+                                },
+                            }
+                        },
+
+                        else => {
+                            lexer.token = T.t_equals;
+                        },
+                    }
+                },
+
+                '<' => {
+                    // '<' or '<<' or '<=' or '<<=' or '<!--'
+                    lexer.step();
+                    switch (lexer.code_point) {
+                        '=' => {
+                            lexer.step();
+                            lexer.token = T.t_less_than_equals;
+                        },
+
+                        '<' => {
+                            lexer.step();
+                            switch (lexer.code_point) {
+                                '=' => {
+                                    lexer.step();
+                                    lexer.token = T.t_less_than_less_than_equals;
+                                },
+
+                                else => {
+                                    lexer.token = T.t_less_than_less_than;
+                                },
+                            }
+                        },
+                        // Handle legacy HTML-style comments
+                        '!' => {
+                            if (std.mem.eql(u8, lexer.peek("--".len), "--")) {
+                                lexer.addUnsupportedSyntaxError("Legacy HTML comments not implemented yet!");
+                                return;
+                            }
+
+                            lexer.token = T.t_less_than;
+                        },
+
+                        else => {
+                            lexer.token = T.t_less_than;
+                        },
+                    }
+                },
+
+                '>' => {
+                    // '>' or '>>' or '>>>' or '>=' or '>>=' or '>>>='
+                    lexer.step();
+
+                    switch (lexer.code_point) {
+                        '=' => {
+                            lexer.step();
+                            lexer.token = T.t_greater_than_equals;
+                        },
+                        '>' => {
+                            lexer.step();
+                            switch (lexer.code_point) {
+                                '=' => {
+                                    lexer.step();
+                                    lexer.token = T.t_greater_than_greater_than_equals;
+                                },
+                                '>' => {
+                                    lexer.step();
+                                    switch (lexer.code_point) {
+                                        '=' => {
+                                            lexer.step();
+                                            lexer.token = T.t_greater_than_greater_than_greater_than_equals;
+                                        },
+                                        else => {
+                                            lexer.token = T.t_greater_than_greater_than_greater_than;
+                                        },
+                                    }
+                                },
+                                else => {
+                                    lexer.token = T.t_greater_than_greater_than;
+                                },
+                            }
+                        },
+                        else => {
+                            lexer.token = T.t_greater_than;
+                        },
+                    }
+                },
+
+                '!' => {
+                    // '!' or '!=' or '!=='
+                    lexer.step();
+                    switch (lexer.code_point) {
+                        '=' => {
+                            lexer.step();
+                            switch (lexer.code_point) {
+                                '=' => {
+                                    lexer.step();
+                                    lexer.Token = TExclamationEqualsEquals;
+                                },
+
+                                else => {
+                                    lexer.Token = TExclamationEquals;
+                                },
+                            }
+                        },
+                        else => {
+                            lexer.Token = TExclamation;
+                        },
+                    }
+                },
+
+                '\'', '"', '`' => {
+                    const quote = lexer.code_point;
+                    var needsSlowPath = false;
+                    var suffixLen = 1;
+
+                    if (quote != '`') {
+                        lexer.token = T.t_string_literal;
+                    } else if (lexer.rescan_close_brace_as_template_token) {
+                        lexer.token = T.t_template_tail;
+                    } else {
+                        lexer.token = T.t_no_substitution_template_literal;
+                    }
+                    lexer.step();
+                },
+
                 else => {
                     // Check for unusual whitespace characters
                     if (isWhitespace(lexer.code_point)) {
@@ -444,6 +679,20 @@ fn isWhitespace(codepoint: CodePoint) bool {
             return false;
         },
     }
+}
+
+test "Lexer.next()" {
+    const msgs = std.ArrayList(logger.Msg).init(std.testing.allocator);
+    const log = logger.Log{
+        .msgs = msgs,
+    };
+
+    defer std.testing.allocator.free(msgs.items);
+    const source = logger.Source.initPathString("index.js", "for (let i = 0; i < 100; i++) { console.log('hi'); }", std.heap.page_allocator);
+
+    var lex = try Lexer.init(log, source, std.testing.allocator);
+    defer lex.string_literal.shrinkAndFree(0);
+    lex.next();
 }
 
 test "Lexer.step()" {

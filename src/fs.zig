@@ -1,5 +1,6 @@
 const std = @import("std");
 const strings = @import("strings.zig");
+const alloc = @import("alloc.zig");
 const expect = std.testing.expect;
 
 pub const FileSystem = struct { tree: std.AutoHashMap(FileSystemEntry) };
@@ -17,11 +18,14 @@ pub const PathName = struct {
     dir: []u8,
     ext: []u8,
 
-    pub fn init(_path: []u8) PathName {
-        var path = _path;
-        var base: []u8 = path;
-        var dir: []u8 = path;
-        var ext: []u8 = path;
+    pub fn init(_path: []const u8, allocator: *std.mem.Allocator) PathName {
+        // TODO: leak.
+        var path: []u8 = allocator.alloc(u8, _path.len) catch unreachable;
+        std.mem.copy(u8, path, _path);
+
+        var base = path;
+        var dir = path;
+        var ext = path;
 
         var _i = strings.lastIndexOfChar(path, '/');
         while (_i) |i| {
@@ -54,10 +58,14 @@ pub const PathName = struct {
 };
 
 pub const Path = struct {
-    pretty_path: []u8,
-    text: []u8,
-    namespace: []u8,
-    path_disabled: []u8,
+    pretty_path: []const u8,
+    text: []const u8,
+    namespace: []const u8,
+    name: PathName,
+
+    pub fn init(text: []const u8, allocator: *std.mem.Allocator) Path {
+        return Path{ .pretty_path = text, .text = text, .namespace = "file", .name = PathName.init(text, allocator) };
+    }
 
     pub fn isBefore(a: *Path, b: Path) bool {
         return a.namespace > b.namespace ||
@@ -69,7 +77,7 @@ pub const Path = struct {
 
 test "PathName.init" {
     var file = "/root/directory/file.ext".*;
-    const res = PathName.init(&file);
+    const res = PathName.init(&file, std.heap.page_allocator);
     std.testing.expectEqualStrings(res.dir, "/root/directory");
     std.testing.expectEqualStrings(res.base, "file");
     std.testing.expectEqualStrings(res.ext, ".ext");

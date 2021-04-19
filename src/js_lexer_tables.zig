@@ -178,11 +178,11 @@ pub const Keywords = std.ComptimeStringMap(T, .{
     .{ "with", .t_with },
 });
 
-pub const CodePoint = u21;
+pub const CodePoint = i22;
 
 pub const TokenEnumType = std.EnumArray(T, []u8);
 
-pub const tokenToString: TokenEnumType = comptime {
+pub const tokenToString = comptime {
     var TEndOfFile = "end of file".*;
     var TSyntaxError = "syntax error".*;
     var THashbang = "hashbang comment".*;

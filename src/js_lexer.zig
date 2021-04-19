@@ -10,7 +10,15 @@ pub const Keywords = tables.Keywords;
 pub const tokenToString = tables.tokenToString;
 pub const jsxEntity = tables.jsxEntity;
 
+const string = []const u8;
+
 pub const Lexer = struct {
+    // pub const Error = error{
+    //     UnexpectedToken,
+    //     EndOfFile,
+    // };
+
+    // err: ?Lexer.Error,
     log: logger.Log,
     source: logger.Source,
     current: usize = 0,
@@ -26,9 +34,9 @@ pub const Lexer = struct {
     is_legacy_octal_literal: bool = false,
     // comments_to_preserve_before: []js_ast.Comment,
     // all_original_comments: []js_ast.Comment,
-    code_point: CodePoint = 0,
-    string_literal: []u16,
-    identifier: []u8 = "",
+    code_point: CodePoint = -1,
+    string_literal: std.ArrayList([]u16),
+    identifier: []const u8 = "",
     // jsx_factory_pragma_comment: js_ast.Span,
     // jsx_fragment_pragma_comment: js_ast.Span,
     // source_mapping_url: js_ast.Span,
@@ -48,12 +56,41 @@ pub const Lexer = struct {
         return it.source.contents[it.current - cp_len .. it.current];
     }
 
-    pub fn addError(self: *Lexer, loc: logger.Loc, text: []u8) void {
-        if (loc == self.prevErrorLoc) {
+    pub fn syntax_error(self: *Lexer) void {
+        self.addError(self.start, "Syntax Error!!", .{}, true);
+    }
+
+    pub fn addError(self: *Lexer, _loc: usize, comptime format: []const u8, args: anytype, panic: bool) void {
+        const loc = logger.usize2Loc(_loc);
+        if (loc == self.prev_error_loc) {
             return;
         }
 
+        const errorMessage = std.fmt.allocPrint(self.string_literal.allocator, format, args) catch unreachable;
+        self.log.addError(self.source, loc, errorMessage) catch unreachable;
         self.prev_error_loc = loc;
+
+        if (panic) {
+            self.doPanic(errorMessage);
+        }
+    }
+
+    pub fn addRangeError(self: *Lexer, range: logger.Range, comptime format: []const u8, args: anytype, panic: bool) void {
+        if (loc == self.prev_error_loc) {
+            return;
+        }
+
+        const errorMessage = std.fmt.allocPrint(self.string_literal.allocator, format, args) catch unreachable;
+        var msg = self.log.addRangeError(self.source, range, errorMessage);
+        self.prev_error_loc = loc;
+
+        if (panic) {
+            self.doPanic(errorMessage);
+        }
+    }
+
+    fn doPanic(self: *Lexer, content: []const u8) void {
+        std.debug.panic("{s}", .{content});
     }
 
     pub fn codePointEql(self: *Lexer, a: u8) bool {
@@ -61,7 +98,7 @@ pub const Lexer = struct {
     }
 
     fn nextCodepoint(it: *Lexer) callconv(.Inline) CodePoint {
-        const slice = it.nextCodepointSlice() orelse return @as(CodePoint, 0);
+        const slice = it.nextCodepointSlice() orelse return @as(CodePoint, -1);
 
         switch (slice.len) {
             1 => return @as(CodePoint, slice[0]),
@@ -118,23 +155,296 @@ pub const Lexer = struct {
         }
     }
 
-    pub fn next(self: *Lexer) void {}
+    pub fn addUnsupportedSyntaxError(self: *Lexer, msg: []const u8) void {
+        self.addError(self.end, "Unsupported syntax: {s}", .{msg}, true);
+    }
 
-    pub fn init(log: logger.Log, source: logger.Source) Lexer {
-        var string_literal = [1]u16{0};
+    pub fn scanIdentifierWithEscapes(self: *Lexer) void {
+        self.addUnsupportedSyntaxError("escape sequence");
+        return;
+    }
 
+    pub fn next(lexer: *Lexer) void {
+        lexer.has_newline_before = lexer.end == 0;
+
+        while (true) {
+            lexer.start = lexer.end;
+            lexer.token = T.t_end_of_file;
+
+            switch (lexer.code_point) {
+                -1 => {
+                    lexer.token = T.t_end_of_file;
+                },
+
+                '#' => {
+                    if (lexer.start == 0 and lexer.source.contents[1] == '!') {
+                        lexer.addUnsupportedSyntaxError("#!hashbang is not supported yet.");
+                        return;
+                    }
+
+                    lexer.step();
+                    if (!isIdentifierStart(lexer.code_point)) {
+                        lexer.syntax_error();
+                    }
+                    lexer.step();
+
+                    if (isIdentifierStart(lexer.code_point)) {
+                        lexer.step();
+                        while (isIdentifierContinue(lexer.code_point)) {
+                            lexer.step();
+                        }
+                        if (lexer.code_point == '\\') {
+                            lexer.scanIdentifierWithEscapes();
+                            lexer.token = T.t_private_identifier;
+                            // lexer.Identifier, lexer.Token = lexer.scanIdentifierWithEscapes(normalIdentifier);
+                        } else {
+                            lexer.token = T.t_private_identifier;
+                            lexer.identifier = lexer.raw();
+                        }
+                        break;
+                    }
+                },
+                '\r', '\n', 0x2028, 0x2029 => {
+                    lexer.step();
+                    lexer.has_newline_before = true;
+                    continue;
+                },
+
+                '\t', ' ' => {
+                    lexer.step();
+                    continue;
+                },
+
+                '(' => {
+                    lexer.step();
+                    lexer.token = T.t_open_paren;
+                },
+                ')' => {
+                    lexer.step();
+                    lexer.token = T.t_close_paren;
+                },
+                '[' => {
+                    lexer.step();
+                    lexer.token = T.t_open_bracket;
+                },
+                ']' => {
+                    lexer.step();
+                    lexer.token = T.t_close_bracket;
+                },
+                '{' => {
+                    lexer.step();
+                    lexer.token = T.t_open_brace;
+                },
+                '}' => {
+                    lexer.step();
+                    lexer.token = T.t_close_brace;
+                },
+                ',' => {
+                    lexer.step();
+                    lexer.token = T.t_comma;
+                },
+                ':' => {
+                    lexer.step();
+                    lexer.token = T.t_colon;
+                },
+                ';' => {
+                    lexer.step();
+                    lexer.token = T.t_semicolon;
+                },
+                '@' => {
+                    lexer.step();
+                    lexer.token = T.t_at;
+                },
+                '~' => {
+                    lexer.step();
+                    lexer.token = T.t_tilde;
+                },
+
+                '?' => {
+                    // '?' or '?.' or '??' or '??='
+                    lexer.step();
+                    switch (lexer.code_point) {
+                        '?' => {
+                            lexer.step();
+                            switch (lexer.code_point) {
+                                '=' => {
+                                    lexer.step();
+                                    lexer.token = T.t_question_question_equals;
+                                },
+                                else => {
+                                    lexer.token = T.t_question_question;
+                                },
+                            }
+                        },
+
+                        '.' => {
+                            lexer.token = T.t_question;
+                            const current = lexer.current;
+                            const contents = lexer.source.contents;
+
+                            // Lookahead to disambiguate with 'a?.1:b'
+                            if (current < contents.len) {
+                                const c = contents[current];
+                                if (c < '0' or c > '9') {
+                                    lexer.step();
+                                    lexer.token = T.t_question_dot;
+                                }
+                            }
+                        },
+                        else => {
+                            lexer.token = T.t_question;
+                        },
+                    }
+                },
+
+                '%' => {
+                    // '%' or '%='
+                    lexer.step();
+                    switch (lexer.code_point) {
+                        '=' => {
+                            lexer.step();
+                            lexer.token = T.t_percent_equals;
+                        },
+
+                        else => {
+                            lexer.token = T.t_percent;
+                        },
+                    }
+                },
+
+                else => {
+                    // Check for unusual whitespace characters
+                    if (isWhitespace(lexer.code_point)) {
+                        lexer.step();
+                        continue;
+                    }
+
+                    if (isIdentifierStart(lexer.code_point)) {
+                        lexer.step();
+                        while (isIdentifierContinue(lexer.code_point)) {
+                            lexer.step();
+                        }
+                        if (lexer.code_point == '\\') {
+
+                            // lexer.Identifier, lexer.Token = lexer.scanIdentifierWithEscapes(normalIdentifier);
+                        } else {
+                            lexer.token = T.t_identifier;
+                            lexer.identifier = lexer.raw();
+                        }
+                        break;
+                    }
+
+                    lexer.end = lexer.current;
+                    lexer.token = T.t_syntax_error;
+                },
+            }
+        }
+    }
+
+    pub fn expected(self: *Lexer, token: T) void {
+        if (tokenToString.has(text)) {
+            self.expectedString(text);
+        } else {
+            self.unexpected();
+        }
+    }
+
+    pub fn raw(self: *Lexer) []const u8 {
+        return self.source.contents[self.start..self.end];
+    }
+
+    pub fn expectedString(self: *Lexer, text: string) void {
+        var found = text;
+        if (self.source.contents.len == self.start) {
+            found = "end of file";
+        }
+        self.addRangeError(self.range(), "Expected %s but found %s", .{ text, found }, true);
+    }
+
+    pub fn range(self: *Lexer) logger.Range {
+        return logger.Range{
+            .start = self.start,
+            .len = self.end - self.start,
+        };
+    }
+
+    pub fn init(log: logger.Log, source: logger.Source, allocator: *std.mem.Allocator) !Lexer {
         var lex = Lexer{
             .log = log,
             .source = source,
-            .string_literal = &string_literal,
+            .string_literal = try std.ArrayList([]u16).initCapacity(allocator, 16),
             .prev_error_loc = -1,
         };
         lex.step();
-        lex.next();
+        // lex.next();
 
         return lex;
     }
 };
+
+fn isIdentifierStart(codepoint: CodePoint) bool {
+    switch (codepoint) {
+        'a'...'z', 'A'...'Z', '_', '$' => {
+            return true;
+        },
+        else => {
+            return false;
+        },
+    }
+}
+fn isIdentifierContinue(codepoint: CodePoint) bool {
+    switch (codepoint) {
+        '_', '$', '0'...'9', 'a'...'z', 'A'...'Z' => {
+            return true;
+        },
+        else => {},
+    }
+
+    // All ASCII identifier start code points are listed above
+    if (codepoint < 0x7F) {
+        return false;
+    }
+
+    // ZWNJ and ZWJ are allowed in identifiers
+    if (codepoint == 0x200C or codepoint == 0x200D) {
+        return true;
+    }
+
+    return false;
+}
+
+fn isWhitespace(codepoint: CodePoint) bool {
+    switch (codepoint) {
+        0x000B, // line tabulation
+        0x0009, // character tabulation
+        0x000C, // form feed
+        0x0020, // space
+        0x00A0, // no-break space
+        // Unicode "Space_Separator" code points
+        0x1680, // ogham space mark
+        0x2000, // en quad
+        0x2001, // em quad
+        0x2002, // en space
+        0x2003, // em space
+        0x2004, // three-per-em space
+        0x2005, // four-per-em space
+        0x2006, // six-per-em space
+        0x2007, // figure space
+        0x2008, // punctuation space
+        0x2009, // thin space
+        0x200A, // hair space
+        0x202F, // narrow no-break space
+        0x205F, // medium mathematical space
+        0x3000, // ideographic space
+        0xFEFF,
+        => {
+            return true;
+        }, // zero width non-breaking space
+        else => {
+            return false;
+        },
+    }
+}
 
 test "Lexer.step()" {
     const msgs = std.ArrayList(logger.Msg).init(std.testing.allocator);
@@ -142,15 +452,18 @@ test "Lexer.step()" {
         .msgs = msgs,
     };
 
-    var sourcefile = "for (let i = 0; i < 100; i++) { console.log('hi'); }".*;
-    var identifier_name = "loop".*;
     defer std.testing.allocator.free(msgs.items);
-    const source = logger.Source{ .index = 0, .contents = &sourcefile, .identifier_name = &identifier_name };
+    const source = logger.Source.initPathString("index.js", "for (let i = 0; i < 100; i++) { console.log('hi'); }", std.heap.page_allocator);
 
-    var lex = Lexer.init(log, source);
+    var lex = try Lexer.init(log, source, std.testing.allocator);
+    defer lex.string_literal.shrinkAndFree(0);
     std.testing.expect('f' == lex.code_point);
     lex.step();
     std.testing.expect('o' == lex.code_point);
     lex.step();
     std.testing.expect('r' == lex.code_point);
+    while (lex.current < source.contents.len) {
+        std.testing.expect(lex.code_point == source.contents[lex.current - 1]);
+        lex.step();
+    }
 }

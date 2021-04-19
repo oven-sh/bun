@@ -297,8 +297,6 @@ pub const Lexer = struct {
         lexer.has_newline_before = lexer.end == 0;
 
         lex: while (lexer.log.errors == 0) {
-            lexer.debugInfo();
-
             lexer.start = lexer.end;
             lexer.token = T.t_end_of_file;
 
@@ -1176,16 +1174,31 @@ fn test_lexer(contents: []const u8) Lexer {
 //     lex.next();
 // }
 
-test "Lexer.next() keywords" {
+test "Lexer.next() simple" {
     var lex = test_lexer("for (let i = 0; i < 100; i++) { }");
     lex.next();
     std.testing.expectEqualStrings("\"for\"", tokenToString.get(lex.token));
     lex.next();
     std.testing.expectEqualStrings("\"(\"", tokenToString.get(lex.token));
     lex.next();
-    std.testing.expectEqualStrings("\"let\"", tokenToString.get(lex.token));
+    std.testing.expectEqualStrings("let", lex.raw());
     lex.next();
-    std.testing.expectEqualStrings("\"identifier\"", tokenToString.get(lex.token));
+    std.testing.expectEqualStrings("i", lex.raw());
+    lex.next();
+    std.testing.expectEqualStrings("=", lex.raw());
+    lex.next();
+    std.testing.expectEqualStrings("0", lex.raw());
+    lex.next();
+    std.testing.expectEqualStrings(";", lex.raw());
+    lex.next();
+    std.testing.expectEqualStrings("i", lex.raw());
+    lex.next();
+    std.testing.expect(lex.number == 0.0);
+    std.testing.expectEqualStrings("<", lex.raw());
+    lex.next();
+    std.testing.expect(lex.number == 100.0);
+    std.testing.expectEqualStrings("100", lex.raw());
+    lex.next();
 }
 
 test "Lexer.step()" {

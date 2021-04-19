@@ -108,6 +108,7 @@ pub const Log = struct {
     }
 
     pub fn addRangeError(log: *Log, source: ?Source, r: Range, text: []u8) void {
+        log.errors += 1;
         log.addMsg(Msg{
             .kind = .Error,
             .data = rangeData(source, r, text),
@@ -115,6 +116,7 @@ pub const Log = struct {
     }
 
     pub fn addRangeWarning(log: *Log, source: ?Source, r: Range, text: []u8) void {
+        log.warnings += 1;
         log.addMsg(Msg{
             .kind = .warning,
             .data = rangeData(source, r, text),
@@ -129,6 +131,7 @@ pub const Log = struct {
     }
 
     pub fn addRangeErrorWithNotes(log: *Log, source: ?Source, r: Range, text: []u8, notes: []Data) void {
+        log.errors += 1;
         log.addMsg(Msg{
             .kind = Kind.err,
             .data = rangeData(source, r, text),
@@ -137,6 +140,7 @@ pub const Log = struct {
     }
 
     pub fn addRangeWarningWithNotes(log: *Log, source: ?Source, r: Range, text: []u8, notes: []Data) void {
+        log.warnings += 1;
         log.addMsg(Msg{
             .kind = .warning,
             .data = rangeData(source, r, text),
@@ -151,8 +155,8 @@ pub const Log = struct {
 
     // TODO:
     pub fn addError(self: *Log, _source: ?Source, loc: Loc, text: []u8) !void {
-        try self.addMsg(Msg{ .kind = .err, .data = rangeData(_source, Range{ .loc = loc }, text) });
         self.errors += 1;
+        try self.addMsg(Msg{ .kind = .err, .data = rangeData(_source, Range{ .loc = loc }, text) });
     }
 
     // TODO:

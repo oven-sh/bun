@@ -10,6 +10,9 @@ pub const Keywords = tables.Keywords;
 pub const tokenToString = tables.tokenToString;
 pub const jsxEntity = tables.jsxEntity;
 
+// TODO: JSON
+const IS_JSON_FILE = false;
+
 const string = []const u8;
 
 pub const Lexer = struct {
@@ -518,16 +521,16 @@ pub const Lexer = struct {
                             switch (lexer.code_point) {
                                 '=' => {
                                     lexer.step();
-                                    lexer.Token = TExclamationEqualsEquals;
+                                    lexer.token = T.t_exclamation_equals_equals;
                                 },
 
                                 else => {
-                                    lexer.Token = TExclamationEquals;
+                                    lexer.token = T.t_exclamation_equals;
                                 },
                             }
                         },
                         else => {
-                            lexer.Token = TExclamation;
+                            lexer.token = T.t_exclamation;
                         },
                     }
                 },
@@ -545,6 +548,114 @@ pub const Lexer = struct {
                         lexer.token = T.t_no_substitution_template_literal;
                     }
                     lexer.step();
+
+                    stringLiteral: while (true) {
+                        switch (lexer.codePoint) {
+                            '\\' => {
+                                needs_slow_path = true;
+                                lexer.step();
+
+                                // Handle Windows CRLF
+                                if (lexer.code_point == '\r' and IS_JSON_FILE) {
+                                    lexer.step();
+                                    if (lexer.code_point == '\n') {
+                                        lexer.step();
+                                    }
+                                    continue;
+                                }
+                            },
+                            // This indicates the end of the file
+
+                            -1 => {
+                                lexer.addError("Unterminated string literal");
+                            },
+
+                            '\r' => {
+                                if (quote != '`') {
+                                    lexer.addError("Unterminated string literal");
+                                }
+
+                                // Template literals require newline normalization
+                                needsSlowPath = true;
+                            },
+
+                            '\n' => {
+                                if (quote != '`') {
+                                    lexer.addError("Unterminated string literal");
+                                }
+                            },
+
+                            '$' => {
+                                if (quote == '`') {
+                                    lexer.step();
+                                    if (lexer.codePoint == '{') {
+                                        suffixLen = 2;
+                                        lexer.step();
+                                        if (lexer.rescan_close_brace_as_template_token) {
+                                            lexer.token = T.t_template_middle;
+                                        } else {
+                                            lexer.token = T.t_template_head;
+                                        }
+                                        break stringLiteral;
+                                    }
+                                    continue;
+                                }
+                            },
+
+                            quote => {
+                                lexer.step();
+                                break stringLiteral;
+                            },
+
+                            else => {
+                                // Non-ASCII strings need the slow path
+                                if (lexer.codePoint >= 0x80) {
+                                    needsSlowPath = true;
+                                } else if (IS_JSON_FILE and lexer.codePoint < 0x20) {
+                                    lexer.syntax_error();
+                                }
+                            },
+                        }
+                        lexer.step();
+                    }
+
+                    const text = lexer.source.Contents[lexer.start + 1 .. lexer.end - suffixLen];
+
+                    if (needsSlowPath) {
+                        // Slow path
+                        lexer.string_literal = lexer.decodeEscapeSequences(lexer.start + 1, text);
+                    } else {
+                        // Fast path
+
+                    }
+                },
+
+                '_', '$', 'a'...'z', 'A'...'Z' => {
+                    lexer.step();
+                    while (isIdentifierContinue(lexer.code_point)) {
+                        lexer.step();
+                    }
+
+                    if (lexer.codePoint == '\\') {
+                        lexer.scanIdentifierWithEscapes();
+                    } else {
+                        const contents = lexer.raw();
+                        lexer.identifier = contents;
+                        if (Keywords.get(contents)) |keyword| {
+                            lexer.token = keyword;
+                        } else {
+                            lexer.token = T.t_identifier;
+                        }
+                    }
+                },
+
+                '\\' => {
+                    // TODO: normal
+                    lexer.scanIdentifierWithEscapes();
+                },
+
+                '.', '0'...'9' => {
+                    lexer.parseNumericLiteralOrDot();
                 },
 
                 else => {

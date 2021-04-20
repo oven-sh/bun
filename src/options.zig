@@ -24,19 +24,31 @@ pub const defaultLoaders = std.ComptimeStringMap(Loader, .{
     .{ ".tsx", Loader.tsx },
 });
 
+pub const JSX = struct {
+    parse: bool = true,
+    factory: string = "React.createElement",
+    fragment: string = "jsx",
+};
+
+const TypeScript = struct {
+    parse: bool = false,
+};
+
 pub const TransformOptions = struct {
-    footer: []const u8 = "",
-    banner: []const u8 = "",
+    footer: string = "",
+    banner: string = "",
     define: std.StringHashMap(string),
     loader: Loader = Loader.tsx,
-    resolve_dir: []const u8 = "/",
+    resolve_dir: string = "/",
+    jsx_factory: string = "React.createElement",
+    jsx_fragment: string = "jsx",
+    ts: bool = true,
     react_fast_refresh: bool = false,
-    jsx_factory: []const u8 = "React.createElement",
-    jsx_pragma: []const u8 = "jsx",
-    inject: ?[][]const u8 = null,
-    public_url: []const u8 = "/",
+    inject: ?[]string = null,
+    public_url: string = "/",
     filesystem_cache: std.StringHashMap(fs.File),
     entry_point: *fs.File,
+    resolve_paths: bool = false,
 
     pub fn initUncached(allocator: *std.mem.Allocator, entryPointName: string, code: string) !TransformOptions {
         assert(entryPointName.len > 0);

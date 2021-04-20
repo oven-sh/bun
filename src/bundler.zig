@@ -5,11 +5,27 @@ const js_ast = @import("js_ast.zig");
 
 pub const Bundler = struct {
     options: options.TransformOptions,
-    logger: logger.Log,
+    log: logger.Log,
+    allocator: *std.mem.Allocator,
+    result: ?options.TransformResult = null,
 
     pub fn init(options: options.TransformOptions, allocator: *std.mem.Allocator) Bundler {
         var log = logger.Log{ .msgs = ArrayList(Msg).init(allocator) };
+
+        return Bundler{
+            .options = options,
+            .allocator = allocator,
+            .log = log,
+        };
     }
 
-    pub fn scan() void {}
+    pub fn scan(self: *Bundler) void {}
+
+    pub fn bundle(self: *Bundler) options.TransformResult {
+        var result = self.result;
+
+        var source = logger.Source.initFile(self.options.entry_point, self.allocator);
+
+        
+    }
 };

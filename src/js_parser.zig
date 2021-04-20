@@ -17,6 +17,10 @@ const Expr = js_ast.Expr;
 const Binding = js_ast.Binding;
 const locModuleScope = logger.Loc.Empty;
 
+fn notimpl() void {
+    std.debug.panic("Not implemented yet!!", .{});
+}
+
 const TempRef = struct {
     ref: js_ast.Ref,
     value: *js_ast.Expr,
@@ -152,6 +156,7 @@ pub const Parser = struct {
 
     pub const Options = struct {
         jsx: options.JSX,
+        ts: bool = true,
         ascii_only: bool = true,
         keep_names: bool = true,
         mangle_syntax: bool = false,
@@ -187,6 +192,7 @@ pub const Parser = struct {
         const lexer = try js_lexer.Lexer.init(log, source, allocator);
         return Parser{
             .options = Options{
+                .ts = transform.ts,
                 .jsx = options.JSX{
                     .parse = true,
                     .factory = transform.jsx_factory,
@@ -455,17 +461,17 @@ const P = struct {
         // during minification. These counts shouldn't include references inside dead
         // code regions since those will be culled.
         if (!p.is_control_flow_dead) {
-            p.symbols[ref.InnerIndex].use_count_estimate += 1;
-            var use = p.symbolUses[ref];
+            p.symbols[ref.inner_index].use_count_estimate += 1;
+            var use = p.symbol_uses[ref];
             use.count_estimate += 1;
-            p.symbolUses.put(ref, use);
+            p.symbol_uses.put(ref, use);
         }
 
         // The correctness of TypeScript-to-JavaScript conversion relies on accurate
         // symbol use counts for the whole file, including dead code regions. This is
         // tracked separately in a parser-only data structure.
-        if (p.options.ts.parse) {
-            p.tsUseCounts.items[ref.inner_index] += 1;
+        if (p.options.ts) {
+            p.ts_use_counts.items[ref.inner_index] += 1;
         }
     }
 
@@ -598,7 +604,35 @@ const P = struct {
         }
     }
 
-    pub fn parseStmt(p: *P, opts: *ParseStatementOptions) js_ast.Stmt {
+    pub fn forbidLexicalDecl(p: *P, loc: logger.Loc) !void {
+        try p.log.addRangeError(p.source, p.lexer.range(), "Cannot use a declaration in a single-statement context");
+    }
+
+    pub fn parseFnStmt(p: *P, loc: logger.Loc, opts: *ParseStatementOptions, asyncRange: ?logger.Range) !js_ast.Stmt {
+        const isGenerator = p.lexer.token == T.t_asterisk;
+        const isAsync = asyncRange != null;
+
+        //     if isGenerator {
+        //     p.markSyntaxFeature(compat.Generator, p.lexer.Range())
+        //     p.lexer.Next()
+        // } else if isAsync {
+        //     p.markLoweredSyntaxFeature(compat.AsyncAwait, asyncRange, compat.Generator)
+        // }
+
+        switch (opts.lexical_decl) {
+            .forbid => {
+                try p.forbidLexicalDecl(loc);
+            },
+            .allow_fn_inside_if, .allow_fn_inside_label => {
+                if (opts.is_typescript_declare or isGenerator or isAsync) {
+                    try p.forbidLexicalDecl(loc);
+                }
+            },
+            else => {},
+        }
+    }
+
+    pub fn parseStmt(p: *P, opts: *ParseStatementOptions) !js_ast.Stmt {
         var loc = p.lexer.loc();
         var stmt: js_ast.Stmt = undefined;
 
@@ -627,9 +661,72 @@ const P = struct {
                 if (opts.ts_decorators != null and p.lexer.token != js_lexer.T.t_class and p.lexer.token != js_lexer.T.t_default and !p.lexer.isContextualKeyword("abstract") and !p.lexer.isContextualKeyword("declare")) {
                     p.lexer.expected(js_lexer.T.t_class);
                 }
+
+                switch (p.lexer.token) {
+                    T.t_class, T.t_const, T.t_function, T.t_var => {
+                        opts.is_export = true;
+                        return p.parseStmt(opts);
+                    },
+
+                    T.t_import => {
+                        // "export import foo = bar"
+                        if (p.options.ts and (opts.is_module_scope or opts.is_namespace_scope)) {
+                            opts.is_export = true;
+                            return p.parseStmt(opts);
+                        }
+
+                        p.lexer.unexpected();
+                    },
+
+                    T.t_enum => {
+                        if (!p.options.ts) {
+                            p.lexer.unexpected();
+                        }
+
+                        opts.is_export = true;
+                        return p.parseStmt(opts);
+                    },
+
+                    T.t_identifier => {
+                        if (p.lexer.isContextualKeyword("let")) {
+                            opts.is_export = true;
+                            return p.parseStmt(opts);
+                        }
+
+                        if (opts.is_typescript_declare and p.lexer.isContextualKeyword("as")) {
+                            // "export as namespace ns;"
+                            p.lexer.next();
+                            p.lexer.expectContextualKeyword("namespace");
+                            p.lexer.expect(T.t_identifier);
+                            p.lexer.expectOrInsertSemicolon();
+
+                            return Stmt.init(S.TypeScript{}, loc);
+                        }
+
+                        if (p.lexer.isContextualKeyword("async")) {
+                            var asyncRange = p.lexer.range();
+                            p.lexer.next();
+                            if (p.lexer.has_newline_before) {
+                                try p.log.addRangeError(p.source, asyncRange, "Unexpected newline after \"async\"");
+                            }
+
+                            p.lexer.expect(T.t_function);
+                            opts.is_export = true;
+                            return try p.parseFnStmt(loc, opts, asyncRange);
+                        }
+
+                        return stmt;
+                    },
+
+                    else => {
+                        notimpl();
+                    },
+                }
             },
 
-            else => {},
+            else => {
+                notimpl();
+            },
         }
 
         return stmt;

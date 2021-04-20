@@ -263,17 +263,17 @@ pub const Lexer = struct {
 
     pub fn expect(self: *Lexer, token: T) void {
         if (self.token != token) {
-            lexer.expected(token);
+            self.expected(token);
         }
 
-        lexer.next();
+        self.next();
     }
 
     pub fn expectOrInsertSemicolon(lexer: *Lexer) void {
-        if (lexer.token == T.semicolon || (!lexer.has_newline_before and
-            lexer.token != T.close_brace and lexer.token != T.t_end_of_file))
+        if (lexer.token == T.t_semicolon or (!lexer.has_newline_before and
+            lexer.token != T.t_close_brace and lexer.token != T.t_end_of_file))
         {
-            lexer.expect(T.semicolon);
+            lexer.expect(T.t_semicolon);
         }
     }
 
@@ -297,6 +297,13 @@ pub const Lexer = struct {
                 std.debug.print(" <{s}> ", .{tokenToString.get(self.token)});
             }
         }
+    }
+
+    pub fn expectContextualKeyword(self: *Lexer, keyword: string) void {
+        if (!self.isContextualKeyword(keyword)) {
+            self.addError(self.start, "\"{s}\"", .{keyword}, true);
+        }
+        self.next();
     }
 
     pub fn next(lexer: *Lexer) void {
@@ -1166,6 +1173,28 @@ fn isWhitespace(codepoint: CodePoint) bool {
             return false;
         },
     }
+}
+
+// TODO: implement this to actually work right
+// this fn is a stub!
+pub fn rangeOfIdentifier(source: *Source, loc: logger.Loc) logger.Range {
+    var r = logger.Range{ .loc = loc, .len = 0 };
+    var i: usize = 0;
+    for (source.contents[loc..]) |c| {
+        if (isIdentifierStart(@as(c, CodePoint))) {
+            for (source.contents[loc + i ..]) |c_| {
+                if (!isIdentifierContinue(c_)) {
+                    r.len = i;
+                    return r;
+                }
+                i += 1;
+            }
+        }
+
+        i += 1;
+    }
+
+    return r;
 }
 
 fn float64(num: anytype) callconv(.Inline) f64 {

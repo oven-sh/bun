@@ -87,7 +87,7 @@ pub const Location = struct {
     }
 };
 
-pub const Data = struct { text: []u8, location: ?Location = null };
+pub const Data = struct { text: string, location: ?Location = null };
 
 pub const Msg = struct {
     kind: Kind = Kind.err,
@@ -106,14 +106,14 @@ pub const Log = struct {
     errors: u8 = 0,
     msgs: ArrayList(Msg),
 
-    pub fn addVerbose(log: *Log, source: ?Source, loc: Loc, text: []u8) !void {
+    pub fn addVerbose(log: *Log, source: ?Source, loc: Loc, text: string) !void {
         try log.addMsg(Msg{
             .kind = .verbose,
             .data = rangeData(source, Range{ .loc = loc }, text),
         });
     }
 
-    pub fn addVerboseWithNotes(source: ?Source, loc: Loc, text: []u8, notes: []Data) !void {
+    pub fn addVerboseWithNotes(source: ?Source, loc: Loc, text: string, notes: []Data) !void {
         try log.addMsg(Msg{
             .kind = .verbose,
             .data = rangeData(source, Range{ .loc = loc }, text),
@@ -121,7 +121,7 @@ pub const Log = struct {
         });
     }
 
-    pub fn addRangeError(log: *Log, source: ?Source, r: Range, text: []u8) !void {
+    pub fn addRangeError(log: *Log, source: ?Source, r: Range, text: string) !void {
         log.errors += 1;
         try log.addMsg(Msg{
             .kind = .err,
@@ -129,7 +129,7 @@ pub const Log = struct {
         });
     }
 
-    pub fn addRangeWarning(log: *Log, source: ?Source, r: Range, text: []u8) !void {
+    pub fn addRangeWarning(log: *Log, source: ?Source, r: Range, text: string) !void {
         log.warnings += 1;
         try log.addMsg(Msg{
             .kind = .warning,
@@ -137,14 +137,14 @@ pub const Log = struct {
         });
     }
 
-    pub fn addRangeDebug(log: *Log, source: ?Source, r: Range, text: []u8) !void {
+    pub fn addRangeDebug(log: *Log, source: ?Source, r: Range, text: string) !void {
         try log.addMsg(Msg{
             .kind = .debug,
             .data = rangeData(source, r, text),
         });
     }
 
-    pub fn addRangeErrorWithNotes(log: *Log, source: ?Source, r: Range, text: []u8, notes: []Data) !void {
+    pub fn addRangeErrorWithNotes(log: *Log, source: ?Source, r: Range, text: string, notes: []Data) !void {
         log.errors += 1;
         try log.addMsg(Msg{
             .kind = Kind.err,
@@ -153,7 +153,7 @@ pub const Log = struct {
         });
     }
 
-    pub fn addRangeWarningWithNotes(log: *Log, source: ?Source, r: Range, text: []u8, notes: []Data) !void {
+    pub fn addRangeWarningWithNotes(log: *Log, source: ?Source, r: Range, text: string, notes: []Data) !void {
         log.warnings += 1;
         try log.addMsg(Msg{
             .kind = .warning,
@@ -168,7 +168,7 @@ pub const Log = struct {
     }
 
     // TODO:
-    pub fn addError(self: *Log, _source: ?Source, loc: Loc, text: []u8) !void {
+    pub fn addError(self: *Log, _source: ?Source, loc: Loc, text: string) !void {
         self.errors += 1;
         try self.addMsg(Msg{ .kind = .err, .data = rangeData(_source, Range{ .loc = loc }, text) });
     }
@@ -281,7 +281,7 @@ pub const Source = struct {
     }
 };
 
-fn rangeData(source: ?Source, r: Range, text: []u8) Data {
+fn rangeData(source: ?Source, r: Range, text: string) Data {
     return Data{ .text = text, .location = Location.init_or_nil(source, r) };
 }
 

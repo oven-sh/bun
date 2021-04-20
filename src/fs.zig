@@ -40,7 +40,7 @@ pub const PathName = struct {
     pub fn nonUniqueNameString(self: *PathName, allocator: *std.mem.Allocator) !string {
         if (strings.eql("index", self.base)) {
             if (self.dir.len > 0) {
-                return MutableString.ensureValidIdentifier(PathName.init(self.dir), allocator);
+                return MutableString.ensureValidIdentifier(PathName.init(self.dir).dir, allocator);
             }
         }
 
@@ -84,13 +84,13 @@ pub const PathName = struct {
 };
 
 pub const Path = struct {
-    pretty_path: string,
+    pretty: string,
     text: string,
     namespace: string,
     name: PathName,
 
     pub fn init(text: string) Path {
-        return Path{ .pretty_path = text, .text = text, .namespace = "file", .name = PathName.init(text) };
+        return Path{ .pretty = text, .text = text, .namespace = "file", .name = PathName.init(text) };
     }
 
     pub fn isBefore(a: *Path, b: Path) bool {

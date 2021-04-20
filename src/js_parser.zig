@@ -1,9 +1,14 @@
 const std = @import("std");
 const logger = @import("logger.zig");
-const lexer = @import("js_lexer.zig");
-const ast = @import("js_ast.zig");
+const js_lexer = @import("js_lexer.zig");
+const importRecord = @import("import_record.zig");
+const js_ast = @import("js_ast.zig");
 const options = @import("options.zig");
+const alloc = @import("alloc.zig");
 usingnamespace @import("strings.zig");
+
+const Comment = js_ast._Comment;
+const locModuleScope = logger.Loc.Empty;
 
 const TempRef = struct {
     ref: js_ast.Ref,
@@ -12,13 +17,13 @@ const TempRef = struct {
 
 const ImportNamespaceCallOrConstruct = struct {
     ref: js_ast.Ref,
-    is_construct: bool,
+    is_construct: bool = false,
 };
 
 const ThenCatchChain = struct {
     next_target: js_ast.E,
-    has_multiple_args: bool,
-    has_catch: bool,
+    has_multiple_args: bool = false,
+    has_catch: bool = false,
 };
 
 const Map = std.AutoHashMap;
@@ -30,7 +35,7 @@ const StringRefMap = std.StringHashMap(js_ast.Ref);
 const StringBoolMap = std.StringHashMap(bool);
 const RefBoolMap = Map(js_ast.Ref, bool);
 const RefRefMap = Map(js_ast.Ref, js_ast.Ref);
-const ImportRecord = @import("import_record.zig").ImportRecord;
+const ImportRecord = importRecord.ImportRecord;
 const ScopeOrder = struct {
     loc: logger.Loc,
     scope: *js_ast.Scope,
@@ -130,36 +135,41 @@ const PropertyOpts = struct {
 
 pub const Parser = struct {
     options: Options,
-    lexer: lexer.Lexer,
+    lexer: js_lexer.Lexer,
     log: logger.Log,
     source: logger.Source,
     allocator: *std.mem.Allocator,
     p: ?*P,
 
-    pub const Result = struct { ast: ast.Ast, ok: bool = false };
+    pub const Result = struct { ast: js_ast.Ast, ok: bool = false };
 
-    const Options = struct {
+    pub const Options = struct {
         jsx: options.JSX,
-        asciiOnly: bool = true,
-        keepNames: bool = true,
-        mangleSyntax: bool = false,
-        mangeIdentifiers: bool = false,
-        omitRuntimeForTests: bool = false,
-        ignoreDCEAnnotations: bool = true,
-        preserveUnusedImportsTS: bool = false,
-        useDefineForClassFields: bool = false,
-        suppressWarningsAboutWeirdCode = true,
+        ascii_only: bool = true,
+        keep_names: bool = true,
+        mangle_syntax: bool = false,
+        mange_identifiers: bool = false,
+        omit_runtime_for_tests: bool = false,
+        ignore_dce_annotations: bool = true,
+        preserve_unused_imports_ts: bool = false,
+        use_define_for_class_fields: bool = false,
+        suppress_warnings_about_weird_code: bool = true,
         moduleType: ModuleType = ModuleType.esm,
     };
 
     pub fn parse(self: *Parser) !Result {
         if (self.p == null) {
-            self.p = try P.init(allocator, self.log, self.source, self.lexer, &self.options);
+            self.p = try P.init(self.allocator, self.log, self.source, self.lexer, self.options);
         }
 
         var result: Result = undefined;
 
-        if (self.p) |p| {}
+        if (self.p) |p| {
+            // Parse the file in the first pass, but do not bind symbols
+            var opts = ParseStatementOptions{ .is_module_scope = true };
+            const stmts = try p.parseStmtsUpTo(js_lexer.T.t_end_of_file, &opts);
+            try p.prepareForVisitPass();
+        }
 
         return result;
     }
@@ -167,7 +177,7 @@ pub const Parser = struct {
     pub fn init(transform: options.TransformOptions, allocator: *std.mem.Allocator) !Parser {
         const log = logger.Log{ .msgs = List(logger.Msg).init(allocator) };
         const source = logger.Source.initFile(transform.entry_point, allocator);
-        const lexer = try lexer.Lexer.init(log, source, allocator);
+        const lexer = try js_lexer.Lexer.init(log, source, allocator);
         return Parser{
             .options = Options{
                 .jsx = options.JSX{
@@ -176,7 +186,7 @@ pub const Parser = struct {
                     .fragment = transform.jsx_fragment,
                 },
             },
-
+            .allocator = allocator,
             .lexer = lexer,
             .source = source,
             .log = log,
@@ -194,19 +204,19 @@ scopeIndex: usize };
 const LexicalDecl = enum(u8) { forbid, allow_all, allow_fn_inside_if, allow_fn_inside_label };
 
 const ParseStatementOptions = struct {
-    ts_decorators: *DeferredTsDecorators,
+    ts_decorators: ?DeferredTsDecorators = null,
     lexical_decl: LexicalDecl = .forbid,
     is_module_scope: bool = false,
     is_namespace_scope: bool = false,
     is_export: bool = false,
     is_name_optional: bool = false, // For "export default" pseudo-statements,
-    is_type_script_declare: bool = false1,
+    is_typescript_declare: bool = false,
 };
 
 // P is for Parser!
 const P = struct {
     allocator: *std.mem.Allocator,
-    options: Options,
+    options: Parser.Options,
     log: logger.Log,
     source: logger.Source,
     lexer: js_lexer.Lexer,
@@ -221,8 +231,8 @@ const P = struct {
     fn_or_arrow_data_visit: FnOrArrowDataVisit,
     fn_only_data_visit: FnOnlyDataVisit,
     allocated_names: List(string),
-    latest_arrow_arg_loc: logger.Loc = -1,
-    forbid_suffix_after_as_loc: logger.Loc = -1,
+    latest_arrow_arg_loc: logger.Loc = logger.Loc.Empty,
+    forbid_suffix_after_as_loc: logger.Loc = logger.Loc.Empty,
     current_scope: *js_ast.Scope,
     scopes_for_current_part: List(*js_ast.Scope),
     symbols: List(js_ast.Symbol),
@@ -280,10 +290,10 @@ const P = struct {
     export_star_import_records: List(u32),
 
     // These are for handling ES6 imports and exports
-    es6_import_keyword: logger.Range = logger.Range.Empty,
-    es6_export_keyword: logger.Range = logger.Range.Empty,
-    enclosing_class_keyword: logger.Range = logger.Range.Empty,
-    import_items_for_namespace: Map(js_ast.Ref, map(string, js_ast.LocRef)),
+    es6_import_keyword: logger.Range = logger.Range.None,
+    es6_export_keyword: logger.Range = logger.Range.None,
+    enclosing_class_keyword: logger.Range = logger.Range.None,
+    import_items_for_namespace: Map(js_ast.Ref, std.StringHashMap(js_ast.LocRef)),
     is_import_item: RefBoolMap,
     named_imports: Map(js_ast.Ref, js_ast.NamedImport),
     named_exports: std.StringHashMap(js_ast.NamedExport),
@@ -314,7 +324,7 @@ const P = struct {
     call_target: js_ast.E,
     delete_target: js_ast.E,
     loop_body: js_ast.S,
-    module_scope: ?js_ast.Scope = null,
+    module_scope: *js_ast.Scope = undefined,
     is_control_flow_dead: bool = false,
 
     // Inside a TypeScript namespace, an "export declare" statement can be used
@@ -408,7 +418,7 @@ const P = struct {
     //     AssignmentExpression
     //     Expression , AssignmentExpression
     //
-    after_arrow_body_loc: logger.Loc = -1,
+    after_arrow_body_loc: logger.Loc = logger.Loc.Empty,
 
     pub fn deinit(parser: *P) void {
         parser.allocated_names.deinit();
@@ -483,12 +493,68 @@ const P = struct {
         }
     }
 
+    pub fn prepareForVisitPass(p: *P) !void {
+        try p.pushScopeForVisitPass(js_ast.Scope.Kind.entry, locModuleScope);
+        p.fn_or_arrow_data_visit.is_outside_fn_or_arrow = true;
+        p.module_scope = p.current_scope;
+        p.has_es_module_syntax = p.es6_import_keyword.len > 0 or p.es6_export_keyword.len > 0 or p.top_level_await_keyword.len > 0;
+
+        // ECMAScript modules are always interpreted as strict mode. This has to be
+        // done before "hoistSymbols" because strict mode can alter hoisting (!).
+        if (p.es6_import_keyword.len > 0) {
+            p.module_scope.recursiveSetStrictMode(js_ast.StrictModeKind.implicit_strict_mode_import);
+        } else if (p.es6_export_keyword.len > 0) {
+            p.module_scope.recursiveSetStrictMode(js_ast.StrictModeKind.implicit_strict_mode_export);
+        } else if (p.top_level_await_keyword.len > 0) {
+            p.module_scope.recursiveSetStrictMode(js_ast.StrictModeKind.implicit_strict_mode_top_level_await);
+        }
+
+        p.hoistSymbols(p.module_scope);
+    }
+
+    pub fn hoistSymbols(p: *P, scope: *js_ast.Scope) void {
+        if (!scope.kindStopsHoisting()) {
+            var iter = scope.members.iterator();
+            nextMember: while (iter.next()) |res| {
+                var symbol = p.symbols.items[res.value.ref.inner_index];
+                if (!symbol.isHoisted()) {
+                    continue :nextMember;
+                }
+            }
+        }
+    }
+
+    pub fn unshiftScopeOrder(self: *P) !ScopeOrder {
+        if (self.scopes_in_order.items.len == 0) {
+            var scope = try js_ast.Scope.initPtr(self.allocator);
+            return ScopeOrder{
+                .scope = scope,
+                .loc = logger.Loc.Empty,
+            };
+        } else {
+            return self.scopes_in_order.orderedRemove(0);
+        }
+    }
+
+    pub fn pushScopeForVisitPass(p: *P, kind: js_ast.Scope.Kind, loc: logger.Loc) !void {
+        const order = try p.unshiftScopeOrder();
+
+        // Sanity-check that the scopes generated by the first and second passes match
+        if (nql(order.loc, loc) or nql(order.scope.kind, kind)) {
+            std.debug.panic("Expected scope ({s}, {d}) in {s}, found scope ({s}, {d})", .{ kind, loc.start, p.source.path.pretty, order.scope.kind, order.loc.start });
+        }
+
+        p.current_scope = order.scope;
+
+        try p.scopes_for_current_part.append(order.scope);
+    }
+
     pub fn pushScopeForParsePass(p: *P, kind: js_ast.Scope.Kind, loc: logger.Loc) !int {
         var parent = p.current_scope;
-        var scope = try p.allocator.create(js_ast.Scope);
+        var scope = js_ast.Scope.initPtr(p.allocator);
         scope.kind = kind;
         scope.parent = parent;
-        scope.members = scope.members.init(p.allocator);
+
         scope.label_ref = null;
 
         if (parent) |_parent| {
@@ -506,47 +572,73 @@ const P = struct {
             }
         }
 
-        //       	// Copy down function arguments into the function body scope. That way we get
-        // // errors if a statement in the function body tries to re-declare any of the
-        // // arguments.
-        // if kind == js_ast.ScopeFunctionBody {
-        // 	if scope.Parent.Kind != js_ast.ScopeFunctionArgs {
-        // 		panic("Internal error")
-        // 	}
-        // 	for name, member := range scope.Parent.Members {
-        // 		// Don't copy down the optional function expression name. Re-declaring
-        // 		// the name of a function expression is allowed.
-        // 		kind := p.symbols[member.Ref.InnerIndex].Kind
-        // 		if kind != js_ast.SymbolHoistedFunction {
-        // 			scope.Members[name] = member
-        // 		}
-        // 	}
-        // }
+        // Copy down function arguments into the function body scope. That way we get
+        // errors if a statement in the function body tries to re-declare any of the
+        // arguments.
+        if (kind == js_ast.ScopeFunctionBody) {
+            if (scope.parent.kind != js_ast.ScopeFunctionArgs) {
+                std.debug.panic("Internal error");
+            }
+
+            // for name, member := range scope.parent.members {
+            // 	// Don't copy down the optional function expression name. Re-declaring
+            // 	// the name of a function expression is allowed.
+            // 	kind := p.symbols[member.Ref.InnerIndex].Kind
+            // 	if kind != js_ast.SymbolHoistedFunction {
+            // 		scope.Members[name] = member
+            // 	}
+            // }
+        }
     }
 
-    pub fn init(allocator: *std.mem.Allocator, log: logger.Log, source: logger.Source, lexer: js_lexer.Lexer, options: *Options) !*Parser {
+    pub fn parseStmtsUpTo(p: *P, eend: js_lexer.T, opts: *ParseStatementOptions) ![]js_ast.Stmt {
+        var stmts = List(js_ast.Stmt).init(p.allocator);
+        try stmts.ensureCapacity(1);
+
+        var returnWithoutSemicolonStart: i32 = -1;
+        opts.lexical_decl = .allow_all;
+        var isDirectivePrologue = true;
+
+        while (true) {
+            // var comments = p.lexer
+        }
+
+        return stmts.toOwnedSlice();
+    }
+
+    pub fn init(allocator: *std.mem.Allocator, log: logger.Log, source: logger.Source, lexer: js_lexer.Lexer, opts: Parser.Options) !*P {
         var parser = try allocator.create(P);
-        parser.allocated_names = List(string).init(allocator);
-        parser.scopes_for_current_part = List(*js_ast.Scope).init(allocator);
-        parser.symbols = List(js_ast.Symbol).init(allocator);
-        parser.ts_use_counts = List(u32).init(allocator);
-        parser.declared_symbols = List(js_ast.DeclaredSymbol).init(allocator);
-        parser.known_enum_values = Map(js_ast.Ref, std.StringHashMap(f64)).init(allocator);
-        parser.import_records = List(ImportRecord).init(allocator);
-        parser.import_records_for_current_part = List(u32).init(allocator);
-        parser.export_star_import_records = List(u32).init(allocator);
-        parser.import_items_for_namespace = Map(js_ast.Ref, Map(string, js_ast.LocRef)).init(allocator);
-        parser.named_imports = Map(js_ast.Ref, js_ast.NamedImport).init(allocator);
-        parser.top_level_symbol_to_parts = Map(js_ast.Ref, List(u32)).init(allocator);
-        parser.import_namespace_cc_map = Map(ImportNamespaceCallOrConstruct, bool).init(allocator);
-        parser.scopes_in_order = List(ScopeOrder).init(allocator);
-        parser.temp_refs_to_declare = List(TempRef).init(allocator);
-        parser.relocated_top_level_vars = List(js_ast.LocRef).init(allocator);
+        parser.allocated_names = @TypeOf(parser.allocated_names).init(allocator);
+        parser.scopes_for_current_part = @TypeOf(parser.scopes_for_current_part).init(allocator);
+        parser.symbols = @TypeOf(parser.symbols).init(allocator);
+        parser.ts_use_counts = @TypeOf(parser.ts_use_counts).init(allocator);
+        parser.declared_symbols = @TypeOf(parser.declared_symbols).init(allocator);
+        parser.known_enum_values = @TypeOf(parser.known_enum_values).init(allocator);
+        parser.import_records = @TypeOf(parser.import_records).init(allocator);
+        parser.import_records_for_current_part = @TypeOf(parser.import_records_for_current_part).init(allocator);
+        parser.export_star_import_records = @TypeOf(parser.export_star_import_records).init(allocator);
+        parser.import_items_for_namespace = @TypeOf(parser.import_items_for_namespace).init(allocator);
+        parser.named_imports = @TypeOf(parser.named_imports).init(allocator);
+        parser.top_level_symbol_to_parts = @TypeOf(parser.top_level_symbol_to_parts).init(allocator);
+        parser.import_namespace_cc_map = @TypeOf(parser.import_namespace_cc_map).init(allocator);
+        parser.scopes_in_order = @TypeOf(parser.scopes_in_order).init(allocator);
+        parser.temp_refs_to_declare = @TypeOf(parser.temp_refs_to_declare).init(allocator);
+        parser.relocated_top_level_vars = @TypeOf(parser.relocated_top_level_vars).init(allocator);
         parser.log = log;
         parser.allocator = allocator;
+        parser.options = opts;
         parser.source = source;
         parser.lexer = lexer;
 
         return parser;
     }
 };
+
+test "js_parser.init" {
+    try alloc.setup(std.heap.page_allocator);
+
+    const entryPointName = "/bacon/hello.js";
+    const code = "for (let i = 0; i < 100; i++) { console.log(\"hi\");\n}";
+    var parser = try Parser.init(try options.TransformOptions.initUncached(alloc.dynamic, entryPointName, code), alloc.dynamic);
+    const res = try parser.parse();
+}

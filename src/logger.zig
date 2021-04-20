@@ -25,7 +25,15 @@ pub const Kind = enum {
     }
 };
 
-pub const Loc = i32;
+pub const Loc = struct {
+    start: i32 = -1,
+
+    pub const Empty = Loc{ .start = -1 };
+
+    pub fn eql(loc: *Loc, other: Loc) bool {
+        return loc.start == other.start;
+    }
+};
 
 pub const Location = struct {
     file: string,
@@ -52,10 +60,10 @@ pub const Location = struct {
         if (_source) |source| {
             var data = source.initErrorPosition(r.loc);
             return Location{
-                .file = source.path.pretty_path,
+                .file = source.path.pretty,
                 .namespace = source.path.namespace,
-                .line = usize2Loc(data.line_count),
-                .column = usize2Loc(data.column_count),
+                .line = usize2Loc(data.line_count).start,
+                .column = usize2Loc(data.column_count).start,
                 .length = source.contents.len,
                 .line_text = source.contents[data.line_start..data.line_end],
             };
@@ -87,9 +95,9 @@ pub const Msg = struct {
 };
 
 pub const Range = struct {
-    loc: Loc = 0,
+    loc: Loc = Loc.Empty,
     len: i32 = 0,
-    const Empty = Range{ .loc = 0, .len = 0 };
+    pub const None = Range{ .loc = Loc.Empty, .len = 0 };
 };
 
 pub const Log = struct {
@@ -174,10 +182,10 @@ pub const Log = struct {
 };
 
 pub fn usize2Loc(loc: usize) Loc {
-    if (loc > std.math.maxInt(Loc)) {
-        return 9999;
+    if (loc > std.math.maxInt(i32)) {
+        return Loc.Empty;
     } else {
-        return @intCast(Loc, loc);
+        return Loc{ .start = @intCast(i32, loc) };
     }
 }
 
@@ -195,17 +203,23 @@ pub const Source = struct {
 
     pub fn initFile(file: fs.File, allocator: *std.mem.Allocator) Source {
         std.debug.assert(file.contents != null);
-        return Source{ .path = path, .identifier_name = file.path.name.nonUniqueNameString(allocator) catch unreachable, .contents = file.contents };
+        var name = file.path.name;
+        var identifier_name = name.nonUniqueNameString(allocator) catch unreachable;
+        if (file.contents) |contents| {
+            return Source{ .path = file.path, .identifier_name = identifier_name, .contents = contents };
+        } else {
+            std.debug.panic("Expected file.contents to not be null. {s}", .{file});
+        }
     }
 
     pub fn initPathString(pathString: string, contents: string) Source {
-        const path = fs.Path.init(pathString);
+        var path = fs.Path.init(pathString);
         return Source{ .path = path, .identifier_name = path.name.base, .contents = contents };
     }
 
     pub fn initErrorPosition(self: *const Source, _offset: Loc) ErrorPosition {
         var prev_code_point: u21 = 0;
-        var offset: usize = if (_offset < 0) 0 else @intCast(usize, _offset);
+        var offset: usize = if (_offset.start < 0) 0 else @intCast(usize, _offset.start);
 
         const contents = self.contents;
 

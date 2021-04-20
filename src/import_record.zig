@@ -1,7 +1,7 @@
 const fs = @import("fs.zig");
 const logger = @import("logger.zig");
 
-export const ImportKind = enum(u8) {
+pub const ImportKind = enum(u8) {
 
     // An entry point provided by the user
     entry_point,

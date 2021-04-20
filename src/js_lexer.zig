@@ -3,7 +3,9 @@ const logger = @import("logger.zig");
 const tables = @import("js_lexer_tables.zig");
 const alloc = @import("alloc.zig");
 const build_options = @import("build_options");
+const js_ast = @import("js_ast.zig");
 
+usingnamespace @import("ast/base.zig");
 usingnamespace @import("strings.zig");
 
 const _f = @import("./test/fixtures.zig");
@@ -33,25 +35,25 @@ pub const Lexer = struct {
     start: usize = 0,
     end: usize = 0,
     approximate_newline_count: i32 = 0,
-    legacy_octal_loc: logger.Loc = 0,
-    previous_backslash_quote_in_jsx: logger.Range = logger.Range{},
+    legacy_octal_loc: logger.Loc = logger.Loc.Empty,
+    previous_backslash_quote_in_jsx: logger.Range = logger.Range.None,
     token: T = T.t_end_of_file,
     has_newline_before: bool = false,
     has_pure_comment_before: bool = false,
     preserve_all_comments_before: bool = false,
     is_legacy_octal_literal: bool = false,
-    // comments_to_preserve_before: []js_ast.Comment,
-    // all_original_comments: []js_ast.Comment,
+    comments_to_preserve_before: ?[]js_ast.G.Comment = null,
+    all_original_comments: ?[]js_ast.G.Comment = null,
     code_point: CodePoint = -1,
-    string_literal: []u16,
+    string_literal: JavascriptString,
     identifier: []const u8 = "",
-    // jsx_factory_pragma_comment: js_ast.Span,
-    // jsx_fragment_pragma_comment: js_ast.Span,
-    // source_mapping_url: js_ast.Span,
+    jsx_factory_pragma_comment: ?js_ast.Span = null,
+    jsx_fragment_pragma_comment: ?js_ast.Span = null,
+    source_mapping_url: ?js_ast.Span = null,
     number: f64 = 0.0,
     rescan_close_brace_as_template_token: bool = false,
     for_global_name: bool = false,
-    prev_error_loc: i32 = -1,
+    prev_error_loc: logger.Loc = logger.Loc.Empty,
     allocator: *std.mem.Allocator,
 
     fn nextCodepointSlice(it: *Lexer) callconv(.Inline) ?[]const u8 {
@@ -76,7 +78,7 @@ pub const Lexer = struct {
 
     pub fn addError(self: *Lexer, _loc: usize, comptime format: []const u8, args: anytype, panic: bool) void {
         const loc = logger.usize2Loc(_loc);
-        if (loc == self.prev_error_loc) {
+        if (eql(loc, self.prev_error_loc)) {
             return;
         }
 
@@ -90,7 +92,7 @@ pub const Lexer = struct {
     }
 
     pub fn addRangeError(self: *Lexer, range: logger.Range, comptime format: []const u8, args: anytype, panic: bool) void {
-        if (loc == self.prev_error_loc) {
+        if (eql(loc, self.prev_error_loc)) {
             return;
         }
 
@@ -753,12 +755,12 @@ pub const Lexer = struct {
     }
 
     pub fn init(log: logger.Log, source: logger.Source, allocator: *std.mem.Allocator) !Lexer {
-        var empty_string_literal: []u16 = undefined;
+        var empty_string_literal: JavascriptString = undefined;
         var lex = Lexer{
             .log = log,
             .source = source,
             .string_literal = empty_string_literal,
-            .prev_error_loc = -1,
+            .prev_error_loc = logger.Loc.Empty,
             .allocator = allocator,
         };
         lex.step();

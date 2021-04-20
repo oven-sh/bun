@@ -1,6 +1,7 @@
 const std = @import("std");
 const log = @import("logger.zig");
 const fs = @import("fs.zig");
+const alloc = @import("alloc.zig");
 
 usingnamespace @import("strings.zig");
 
@@ -47,19 +48,17 @@ pub const TransformOptions = struct {
     inject: ?[]string = null,
     public_url: string = "/",
     filesystem_cache: std.StringHashMap(fs.File),
-    entry_point: *fs.File,
+    entry_point: fs.File,
     resolve_paths: bool = false,
 
     pub fn initUncached(allocator: *std.mem.Allocator, entryPointName: string, code: string) !TransformOptions {
         assert(entryPointName.len > 0);
 
-        const filesystemCache = std.StringHashMap(string).init(allocator);
+        var filesystemCache = std.StringHashMap(fs.File).init(allocator);
 
-        var entryPoint = !allocator.Create(fs.file);
-        entryPoint.path = fs.Path.init(entryPointName, allocator);
-        entryPoint.contents = code;
+        var entryPoint = fs.File{ .path = fs.Path.init(entryPointName), .contents = code, .mtime = null };
 
-        const define = std.StringHashMap(string).init(allocator);
+        var define = std.StringHashMap(string).init(allocator);
         try define.ensureCapacity(1);
 
         define.putAssumeCapacity("process.env.NODE_ENV", "development");
@@ -89,3 +88,12 @@ pub const OutputFile = struct {
 };
 
 pub const TransformResult = struct { errors: []log.Msg, warnings: []log.Msg, output_files: []OutputFile };
+
+test "TransformOptions.initUncached" {
+    try alloc.setup(std.heap.page_allocator);
+    const opts = try TransformOptions.initUncached(alloc.dynamic, "lol.jsx", "<Hi />");
+
+    std.testing.expectEqualStrings("lol", opts.entry_point.path.name.base);
+    std.testing.expectEqualStrings(".jsx", opts.entry_point.path.name.ext);
+    std.testing.expect(Loader.jsx == opts.loader);
+}

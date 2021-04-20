@@ -2,20 +2,9 @@ const std = @import("std");
 const logger = @import("logger.zig");
 
 usingnamespace @import("strings.zig");
+usingnamespace @import("ast/base.zig");
 
-const ast = @import("import_record.zig");
-
-pub const JavascriptStringValue = []const u16;
-
-pub const NodeIndex = u32;
-pub const NodeIndexNone = 4294967293;
-
-pub const DataIndex = u16;
-pub const DataIndexNone = 65533;
-
-pub const BindingNodeIndex = NodeIndex;
-pub const StmtNodeIndex = Stmt;
-pub const ExprNodeIndex = Expr;
+const ImportRecord = @import("import_record.zig").ImportRecord;
 
 // TODO: figure out if we actually need this
 // -- original comment --
@@ -49,8 +38,6 @@ pub const ImportItemStatus = enum(u8) {
 
 pub const LocRef = struct { loc: logger.Loc, ref: ?Ref };
 
-pub const Comment = struct { text: string };
-
 pub const FnBody = struct {
     loc: logger.Loc,
     stmts: []StmtNodeIndex,
@@ -73,8 +60,15 @@ pub const Fn = struct {
 };
 
 pub const Binding = struct {
-    type_: Type = Type.b_missing,
     data: B,
+};
+
+pub const B = union(enum) {
+    identifier: B.Identifier,
+    array: B.Array,
+    property: B.Property,
+    object: B.Object,
+    missing: B.Missing,
 
     pub const Type = enum {
         b_missing,
@@ -87,8 +81,6 @@ pub const Binding = struct {
         ref: Ref,
     };
 
-    pub const Object = struct { properties: []Property };
-
     pub const Property = struct {
         pub const Kind = enum {
             normal,
@@ -97,46 +89,31 @@ pub const Binding = struct {
             spread,
         };
 
-        key: NodeIndex,
-        value: NodeIndex = NodeIndexNone,
-        initializer: Kind = Kind.normal,
+        key: ExprNodeIndex,
+        value: ?BindingNodeIndex,
+        kind: Kind = Kind.normal,
+        initializer: ?ExprNodeIndex,
         is_computed: bool = false,
         is_method: bool = false,
         is_static: bool = false,
         was_shorthand: bool = false,
     };
 
-    pub const Array = struct {
-        binding: B,
-    };
-};
+    pub const Object = struct { properties: []Property };
 
-pub const B = union(enum) {
-    identifier: Binding.Identifier,
-    array: Binding.Array,
-    property: Binding.Property,
-    object: Binding.Object,
-    missing: Binding.Missing,
+    pub const Array = struct { binding: BindingNodeIndex, default_value: ?Expr };
+
+    pub const Missing = struct {};
 };
 
 pub const Arg = struct {
-    ts_decorators: ?[]ExprNodeIndex,
-    binding: B,
-    default: ?ExprNodeIndex,
+    ts_decorators: ?[]Expr = null,
+    binding: Binding,
+    default: ?Expr = null,
 
     // "constructor(public x: boolean) {}"
     is_typescript_ctor_field: bool = false,
 };
-
-pub const Class = struct {
-    class_keyword: logger.Range,
-    ts_decorators: ?[]ExprNodeIndex,
-    name: logger.Loc,
-    extends: ?ExprNodeIndex,
-    body_loc: logger.Loc,
-    properties: ?[]Property,
-};
-const _Class = Class;
 
 pub const ClauseItem = struct {
     alias: string,
@@ -154,9 +131,52 @@ pub const ClauseItem = struct {
     original_name: string,
 };
 
-pub const Decl = struct {
-    binding: Binding,
-    value: ?ExprNodeIndex,
+pub const G = struct {
+    pub const Decl = struct {
+        binding: BindingNodeIndex,
+        value: ?ExprNodeIndex = null,
+    };
+
+    pub const NamespaceAlias = struct {
+        namespace_ref: Ref,
+        alias: string,
+    };
+
+    pub const Class = struct {
+        class_keyword: logger.Range,
+        ts_decorators: ?[]ExprNodeIndex = null,
+        name: logger.Loc,
+        extends: ?ExprNodeIndex = null,
+        body_loc: logger.Loc,
+        properties: ?[]Property = null,
+    };
+
+    // invalid shadowing if left as Comment
+    pub const Comment = struct { loc: logger.Loc, text: string };
+
+    pub const Property = struct {
+        ts_decorators: []ExprNodeIndex,
+        key: ExprNodeIndex,
+
+        // This is omitted for class fields
+        value: ?Expr,
+
+        // This is used when parsing a pattern that uses default values:
+        //
+        //   [a = 1] = [];
+        //   ({a = 1} = {});
+        //
+        // It's also used for class fields:
+        //
+        //   class Foo { a = 1 }
+        //
+        initializer: ?ExprNodeIndex = null,
+        kind: B.Property.Kind,
+        is_computed: bool = false,
+        is_method: bool = false,
+        is_static: bool = false,
+        was_shorthand: bool = false,
+    };
 };
 
 pub const Symbol = struct {
@@ -176,7 +196,7 @@ pub const Symbol = struct {
     // mode, re-exported symbols are collapsed using MergeSymbols() and renamed
     // symbols from other files that end up at this symbol must be able to tell
     // if it has a namespace alias.
-    namespace_alias: *NamespaceAlias,
+    namespace_alias: *G.NamespaceAlias,
 
     // Used by the parser for single pass parsing. Symbols that have been merged
     // form a linked-list where the last link is the symbol to use. This link is
@@ -401,6 +421,10 @@ pub const Symbol = struct {
         return kind == Symbol.Kind.hoisted or kind == Symbol.Kind.hoisted_function;
     }
 
+    pub fn isHoisted(self: *Symbol) bool {
+        return Symbol.isKindHoisted(self.kind);
+    }
+
     pub fn isKindHoistedOrFunction(kind: Symbol.Kind) bool {
         return isKindHoisted(kind) or kind == Symbol.Kind.generator_or_async_function;
     }
@@ -429,7 +453,7 @@ pub const E = struct {
 
     pub const Unary = struct {
         op: Op.Code,
-        value: Expr,
+        value: ExprNodeIndex,
     };
 
     pub const Binary = struct {
@@ -518,7 +542,6 @@ pub const E = struct {
     };
 
     pub const Function = Fn;
-    pub const Class = _Class;
 
     pub const Identifier = struct {
         ref: Ref = Ref.None,
@@ -577,8 +600,8 @@ pub const E = struct {
 
     pub const JSXElement = struct {
         tag: ?ExprNodeIndex,
-        properties: []Property,
-        children: []Expr,
+        properties: []G.Property,
+        children: []ExprNodeIndex,
     };
 
     pub const Missing = struct {};
@@ -590,46 +613,48 @@ pub const E = struct {
     };
 
     pub const Object = struct {
-        properties: []Property,
+        properties: []G.Property,
         comma_after_spread: logger.Loc,
         is_single_line: bool,
         is_parenthesized: bool,
     };
 
-    pub const Spread = struct { value: Expr };
+    pub const Spread = struct { value: ExprNodeIndex };
 
     pub const String = struct {
-        value: JavascriptStringValue,
+        value: JavascriptString,
         legacy_octal_loc: logger.Loc,
         prefer_template: bool,
     };
 
     // value is in the Node
     pub const TemplatePart = struct {
-        value: Expr,
+        value: ExprNodeIndex,
         tail_loc: logger.Loc,
-        tail: JavascriptStringValue,
+        tail: JavascriptString,
         tail_raw: string,
     };
 
-    pub const Template = struct { tag: ?ExprNodeIndex, head: JavascriptStringValue, head_raw: string, // This is only filled out for tagged template literals
+    pub const Template = struct { tag: ?ExprNodeIndex, head: JavascriptString, head_raw: string, // This is only filled out for tagged template literals
     parts: ?[]TemplatePart, legacy_octal_loc: logger.Loc };
 
     pub const RegExp = struct {
         value: string,
     };
 
-    pub const Await = struct { value: Expr };
+    pub const Class = G.Class;
+
+    pub const Await = struct { value: ExprNodeIndex };
 
     pub const Yield = struct {
-        value: ?Expr,
+        value: ?ExprNodeIndex,
         is_star: bool,
     };
 
     pub const If = struct {
-        test_: Expr,
-        yes: Expr,
-        no: Expr,
+        test_: ExprNodeIndex,
+        yes: ExprNodeIndex,
+        no: ExprNodeIndex,
     };
 
     pub const RequireOrRequireResolve = struct {
@@ -637,7 +662,7 @@ pub const E = struct {
     };
 
     pub const Import = struct {
-        expr: Expr,
+        expr: ExprNodeIndex,
         import_record_index: u32,
 
         // Comments inside "import()" expressions have special meaning for Webpack.
@@ -647,7 +672,7 @@ pub const E = struct {
         // because esbuild is not Webpack. But we do preserve them since doing so is
         // harmless, easy to maintain, and useful to people. See the Webpack docs for
         // more info: https://webpack.js.org/api/module-methods/#magic-comments.
-        leading_interior_comments: []Comment,
+        leading_interior_comments: []G.Comment,
     };
 };
 
@@ -685,6 +710,21 @@ pub const Stmt = struct {
         s_break: S.Break,
         s_continue: S.Continue,
     };
+
+    pub fn caresAboutScope(self: *Stmt) bool {
+        return switch (self.data) {
+            .s_block, .s_empty, .s_debugger, .s_expr, .s_if, .s_for, .s_for_in, .s_for_of, .s_do_while, .s_while, .s_with, .s_try, .s_switch, .s_return, .s_throw, .s_break, .s_continue, .s_directive => {
+                return false;
+            },
+
+            .s_local => |local| {
+                return local.kind != Kind.k_var;
+            },
+            else => {
+                return true;
+            },
+        };
+    }
 };
 
 pub const Expr = struct {
@@ -761,7 +801,7 @@ pub const Expr = struct {
 pub const EnumValue = struct {
     loc: logger.Loc,
     ref: Ref,
-    name: []u16,
+    name: JavascriptString,
     value: ?ExprNodeIndex,
 };
 
@@ -770,7 +810,7 @@ pub const S = struct {
 
     pub const Comment = struct { text: string };
 
-    pub const Directive = struct { value: JavascriptStringValue, legacy_octal_loc: logger.Loc };
+    pub const Directive = struct { value: JavascriptString, legacy_octal_loc: logger.Loc };
 
     pub const ExportClause = struct { items: []ClauseItem };
 
@@ -812,14 +852,14 @@ pub const S = struct {
     };
 
     pub const Class = struct {
-        class: _Class,
+        class: G.Class,
         is_export: bool,
     };
 
     pub const If = struct {
         test_: ExprNodeIndex,
         yes: StmtNodeIndex,
-        no: StmtNodeIndex = NodeIndexNone,
+        no: ?StmtNodeIndex,
     };
 
     pub const For = struct {
@@ -877,14 +917,14 @@ pub const S = struct {
     // Otherwise: This is an auto-generated Ref for the namespace representing
     // the imported file. In this case StarLoc is nil. The NamespaceRef is used
     // when converting this module to a CommonJS module.
-    namespace_ref: Ref, default_name: *LocRef, items: *[]ClauseItem, star_name_loc: *logger.Loc, import_record_index: uint32, is_single_line: bool };
+    namespace_ref: Ref, default_name: *LocRef, items: *[]ClauseItem, star_name_loc: *logger.Loc, import_record_index: u32, is_single_line: bool };
 
     pub const Return = struct {};
     pub const Throw = struct {};
 
     pub const Local = struct {
         kind: Kind = Kind.k_var,
-        decls: []Decl,
+        decls: []G.Decl,
         is_export: bool = false,
         // The TypeScript compiler doesn't generate code for "import foo = bar"
         // statements where the import is never used.
@@ -908,7 +948,7 @@ pub const S = struct {
 
 pub const Catch = struct {
     loc: logger.Loc,
-    binding: *B,
+    binding: ?BindingNodeIndex,
     body: []StmtNodeIndex,
 };
 
@@ -1014,9 +1054,9 @@ pub const Op = struct {
         member,
     };
 
-    text: []const u8,
+    text: string,
     level: Level,
-    is_keyword: bool,
+    is_keyword: bool = false,
 
     const Table = []Op{
         // Prefix
@@ -1087,13 +1127,13 @@ pub const Op = struct {
 };
 
 pub const ArrayBinding = struct {
-    binding: Binding,
+    binding: BindingNodeIndex,
     default_value: ?ExprNodeIndex,
 };
 
 pub const Ast = struct {
     approximate_line_count: i32 = 0,
-    has_lazy_export = false,
+    has_lazy_export: bool = false,
 
     // This is a list of CommonJS features. When a file uses CommonJS features,
     // it's not a candidate for "flat bundling" and must be wrapped in its own
@@ -1105,19 +1145,19 @@ pub const Ast = struct {
 
     // This is a list of ES6 features. They are ranges instead of booleans so
     // that they can be used in log messages. Check to see if "Len > 0".
-    import_keyword: logger.Range = logger.Range.Empty, // Does not include TypeScript-specific syntax or "import()"
-    export_keyword: logger.Range = logger.Range.Empty, // Does not include TypeScript-specific syntax
-    top_level_await_keyword: logger.Range = logger.Range.Empty,
+    import_keyword: ?logger.Range = null, // Does not include TypeScript-specific syntax or "import()"
+    export_keyword: ?logger.Range = null, // Does not include TypeScript-specific syntax
+    top_level_await_keyword: ?logger.Range = null,
 
     // These are stored at the AST level instead of on individual AST nodes so
     // they can be manipulated efficiently without a full AST traversal
-    import_records: []ast.ImportRecord,
+    import_records: ?[]ImportRecord = null,
 
-    hashbang: ?string,
-    directive: ?string,
-    url_for_css: ?string,
-    parts: std.ArrayList([]Part),
-    symbols: std.ArrayList([]Symbol),
+    hashbang: ?string = null,
+    directive: ?string = null,
+    url_for_css: ?string = null,
+    parts: std.ArrayList(Part),
+    symbols: std.ArrayList(Symbol),
     module_scope: ?Scope,
     // char_freq:    *CharFreq,
     exports_ref: ?Ref,
@@ -1128,9 +1168,9 @@ pub const Ast = struct {
     // since we already have to traverse the AST then anyway and the parser pass
     // is conveniently fully parallelized.
     named_imports: std.AutoHashMap(Ref, NamedImport),
-    named_exports: std.AutoHashMap(string, NamedExport),
+    named_exports: std.StringHashMap(NamedExport),
     top_level_symbol_to_parts: std.AutoHashMap(Ref, []u32),
-    export_star_import_records: std.ArrayList([]u32),
+    export_star_import_records: std.ArrayList(u32),
 };
 
 pub const Span = struct {
@@ -1185,7 +1225,8 @@ pub const Dependency = struct {
 // shaking and can be assigned to separate chunks (i.e. output files) by code
 // splitting.
 pub const Part = struct {
-    stmts: []StmtNodeIndex,
+    stmts: []Stmt,
+    expr: []Expr,
     scopes: []*Scope,
 
     // Each is an index into the file-level import record list
@@ -1217,11 +1258,35 @@ pub const Part = struct {
     // This is true if this file has been marked as live by the tree shaking
     // algorithm.
     is_live: bool = false,
+
+    pub fn stmtAt(self: *Part, index: StmtNodeIndex) ?Stmt {
+        if (std.builtin.mode == std.builtin.Mode.ReleaseFast) {
+            return self.stmts[@intCast(usize, index)];
+        } else {
+            if (self.stmts.len > index) {
+                return self.stmts[@intCast(usize, index)];
+            }
+
+            return null;
+        }
+    }
+
+    pub fn exprAt(self: *Part, index: ExprNodeIndex) ?Expr {
+        if (std.builtin.mode == std.builtin.Mode.ReleaseFast) {
+            return self.expr[@intCast(usize, index)];
+        } else {
+            if (self.expr.len > index) {
+                return self.expr[@intCast(usize, index)];
+            }
+
+            return null;
+        }
+    }
 };
 
 pub const StmtOrExpr = union(enum) {
-    stmt: Stmt,
-    expr: Expr,
+    stmt: StmtNodeIndex,
+    expr: ExprNodeIndex,
 };
 
 pub const NamedImport = struct {
@@ -1260,13 +1325,13 @@ pub const StrictModeKind = enum {
 
 pub const Scope = struct {
     kind: Kind = Kind.block,
-    parent: ?Scope,
+    parent: ?*Scope,
     children: []*Scope,
-    members: std.AutoHashMap(string, Member),
-    generated: ?[]Ref,
+    members: std.StringHashMap(Member),
+    generated: ?[]Ref = null,
 
     // This is used to store the ref of the label symbol for ScopeLabel scopes.
-    label_ref: ?Ref,
+    label_ref: ?Ref = null,
     label_stmt_is_loop: bool = false,
 
     // If a scope contains a direct eval() expression, then none of the symbols
@@ -1277,7 +1342,7 @@ pub const Scope = struct {
     // This is to help forbid "arguments" inside class body scopes
     forbid_arguments: bool = false,
 
-    strict_mode: StrictModeKind = StrictModeKind.explicit_strict_mode,
+    strict_mode: StrictModeKind = StrictModeKind.sloppy_mode,
 
     pub const Member = struct { ref: Ref, loc: logger.Loc };
     pub const Kind = enum(u8) {
@@ -1292,30 +1357,27 @@ pub const Scope = struct {
         function_args,
         function_body,
     };
-};
 
-
-pub fn ensureValidIdentifier(base: string, allocator: *std.mem.Allocator) string {
-	// Convert it to an ASCII identifier. Note: If you change this to a non-ASCII
-	// identifier, you're going to potentially cause trouble with non-BMP code
-	// points in target environments that don't support bracketed Unicode escapes.
-	var needsGap = false;
-    var str = MutableString.initCopy(allocator: *std.mem.Allocator, str: anytype)
-	for (base) |c| { 
-		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (len(bytes) > 0 && c >= '0' && c <= '9') {
-			if needsGap {
-				bytes = append(bytes, '_')
-				needsGap = false
-			}
-			bytes = append(bytes, byte(c))
-		} else if len(bytes) > 0 {
-			needsGap = true
-		}        
+    pub fn recursiveSetStrictMode(s: *Scope, kind: StrictModeKind) void {
+        if (s.strict_mode == .sloppy_mode) {
+            s.strict_mode = kind;
+            for (s.children) |child| {
+                child.recursiveSetStrictMode(kind);
+            }
+        }
     }
 
-	// Make sure the name isn't empty
-	if len(bytes) == 0 {
-		return "_"
-	}
-	return string(bytes)
-}
+    pub fn kindStopsHoisting(s: *Scope) bool {
+        return @enumToInt(s.kind) > @enumToInt(Kind.entry);
+    }
+
+    pub fn initPtr(allocator: *std.mem.Allocator) !*Scope {
+        var scope = try allocator.create(Scope);
+        scope.members = @TypeOf(scope.members).init(allocator);
+        return scope;
+    }
+};
+
+// test "ast" {
+//     const ast = Ast{};
+// }

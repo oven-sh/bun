@@ -11,9 +11,16 @@ pub fn build(b: *std.build.Builder) void {
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
     const mode = b.standardReleaseOptions();
 
-    const exe = b.addExecutable("esdev", "src/main.zig");
+    var exe: *std.build.LibExeObjStep = undefined;
+    if (target.getCpuArch().isWasm()) {
+        exe = b.addExecutable("esdev", "src/main_wasm.zig");
+    } else {
+        exe = b.addExecutable("esdev", "src/main.zig");
+    }
+
     exe.setTarget(target);
     exe.setBuildMode(mode);
+
     exe.addLibPath("/usr/local/lib");
     exe.install();
 

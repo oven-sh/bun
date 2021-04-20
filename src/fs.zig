@@ -1,7 +1,11 @@
 const std = @import("std");
-const strings = @import("strings.zig");
+
+usingnamespace @import("strings.zig");
+
 const alloc = @import("alloc.zig");
 const expect = std.testing.expect;
+
+// pub const FilesystemImplementation = @import("fs_impl.zig");
 
 pub const FileSystem = struct { tree: std.AutoHashMap(FileSystemEntry) };
 
@@ -10,22 +14,44 @@ pub const FileSystemEntry = union(enum) {
     directory: Directory,
 };
 
-pub const File = struct { path: Path, mtime: ?usize, contents: ?[]u8 };
+pub const File = struct {
+    path: Path,
+    mtime: ?usize,
+    contents: ?string,
+};
 pub const Directory = struct { path: Path, mtime: ?usize, contents: []FileSystemEntry };
 
 pub const PathName = struct {
-    base: []u8,
-    dir: []u8,
-    ext: []u8,
+    base: string,
+    dir: string,
+    ext: string,
 
-    pub fn init(_path: []const u8, allocator: *std.mem.Allocator) PathName {
-        // TODO: leak.
-        var path: []u8 = allocator.alloc(u8, _path.len) catch unreachable;
-        std.mem.copy(u8, path, _path);
+    // For readability, the names of certain automatically-generated symbols are
+    // derived from the file name. For example, instead of the CommonJS wrapper for
+    // a file being called something like "require273" it can be called something
+    // like "require_react" instead. This function generates the part of these
+    // identifiers that's specific to the file path. It can take both an absolute
+    // path (OS-specific) and a path in the source code (OS-independent).
+    //
+    // Note that these generated names do not at all relate to the correctness of
+    // the code as far as avoiding symbol name collisions. These names still go
+    // through the renaming logic that all other symbols go through to avoid name
+    // collisions.
+    pub fn nonUniqueNameString(self: *PathName, allocator: *std.mem.Allocator) !string {
+        if (strings.eql("index", self.base)) {
+            if (self.dir.len > 0) {
+                return MutableString.ensureValidIdentifier(PathName.init(self.dir), allocator);
+            }
+        }
 
+        return MutableString.ensureValidIdentifier(self.base, allocator);
+    }
+
+    pub fn init(_path: string) PathName {
+        var path = _path;
         var base = path;
-        var dir = path;
         var ext = path;
+        var dir = path;
 
         var _i = strings.lastIndexOfChar(path, '/');
         while (_i) |i| {
@@ -58,13 +84,13 @@ pub const PathName = struct {
 };
 
 pub const Path = struct {
-    pretty_path: []const u8,
-    text: []const u8,
-    namespace: []const u8,
+    pretty_path: string,
+    text: string,
+    namespace: string,
     name: PathName,
 
-    pub fn init(text: []const u8, allocator: *std.mem.Allocator) Path {
-        return Path{ .pretty_path = text, .text = text, .namespace = "file", .name = PathName.init(text, allocator) };
+    pub fn init(text: string) Path {
+        return Path{ .pretty_path = text, .text = text, .namespace = "file", .name = PathName.init(text) };
     }
 
     pub fn isBefore(a: *Path, b: Path) bool {
@@ -77,7 +103,9 @@ pub const Path = struct {
 
 test "PathName.init" {
     var file = "/root/directory/file.ext".*;
-    const res = PathName.init(&file, std.heap.page_allocator);
+    const res = PathName.init(
+        &file,
+    );
     std.testing.expectEqualStrings(res.dir, "/root/directory");
     std.testing.expectEqualStrings(res.base, "file");
     std.testing.expectEqualStrings(res.ext, ".ext");

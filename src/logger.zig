@@ -1,5 +1,7 @@
 const std = @import("std");
-const strings = @import("strings.zig");
+
+usingnamespace @import("strings.zig");
+
 const fs = @import("fs.zig");
 const unicode = std.unicode;
 
@@ -13,7 +15,7 @@ pub const Kind = enum {
     note,
     debug,
 
-    pub fn string(self: Kind) []const u8 {
+    pub fn string(self: Kind) string {
         return switch (self) {
             .err => "error",
             .warn => "warn",
@@ -26,13 +28,13 @@ pub const Kind = enum {
 pub const Loc = i32;
 
 pub const Location = struct {
-    file: []const u8,
-    namespace: []const u8 = "file",
+    file: string,
+    namespace: string = "file",
     line: i32 = 1, // 1-based
     column: i32 = 0, // 0-based, in bytes
     length: usize = 0, // in bytes
-    line_text: ?[]const u8 = null,
-    suggestion: ?[]const u8 = null,
+    line_text: ?string = null,
+    suggestion: ?string = null,
 
     pub fn init(file: []u8, namespace: []u8, line: i32, column: i32, length: u32, line_text: ?[]u8, suggestion: ?[]u8) Location {
         return Location{
@@ -62,7 +64,7 @@ pub const Location = struct {
         }
     }
 
-    pub fn init_file(file: []const u8, line: i32, column: i32, length: u32, line_text: ?[]u8, suggestion: ?[]u8) Location {
+    pub fn init_file(file: string, line: i32, column: i32, length: u32, line_text: ?[]u8, suggestion: ?[]u8) Location {
         var namespace = "file".*;
 
         return Location{
@@ -84,7 +86,11 @@ pub const Msg = struct {
     data: Data,
 };
 
-pub const Range = struct { loc: Loc = 0, len: i32 = 0 };
+pub const Range = struct {
+    loc: Loc = 0,
+    len: i32 = 0,
+    const Empty = Range{ .loc = 0, .len = 0 };
+};
 
 pub const Log = struct {
     debug: bool = false,
@@ -178,17 +184,22 @@ pub fn usize2Loc(loc: usize) Loc {
 pub const Source = struct {
     path: fs.Path,
     index: u32 = 0,
-    contents: []const u8,
+    contents: string,
 
     // An identifier that is mixed in to automatically-generated symbol names to
     // improve readability. For example, if the identifier is "util" then the
     // symbol for an "export default" statement will be called "util_default".
-    identifier_name: []u8,
+    identifier_name: string,
 
     pub const ErrorPosition = struct { line_start: usize, line_end: usize, column_count: usize, line_count: usize };
 
-    pub fn initPathString(pathString: []const u8, contents: []const u8, allocator: *std.mem.Allocator) Source {
-        const path = fs.Path.init(pathString, allocator);
+    pub fn initFile(file: fs.File, allocator: *std.mem.Allocator) Source {
+        std.debug.assert(file.contents != null);
+        return Source{ .path = path, .identifier_name = file.path.name.nonUniqueNameString(allocator) catch unreachable, .contents = file.contents };
+    }
+
+    pub fn initPathString(pathString: string, contents: string) Source {
+        const path = fs.Path.init(pathString);
         return Source{ .path = path, .identifier_name = path.name.base, .contents = contents };
     }
 
@@ -256,7 +267,7 @@ pub const Source = struct {
     }
 };
 
-pub fn rangeData(source: ?Source, r: Range, text: []u8) Data {
+fn rangeData(source: ?Source, r: Range, text: []u8) Data {
     return Data{ .text = text, .location = Location.init_or_nil(source, r) };
 }
 

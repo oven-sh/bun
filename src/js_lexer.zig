@@ -4,6 +4,8 @@ const tables = @import("js_lexer_tables.zig");
 const alloc = @import("alloc.zig");
 const build_options = @import("build_options");
 
+usingnamespace @import("strings.zig");
+
 const _f = @import("./test/fixtures.zig");
 
 const unicode = std.unicode;
@@ -17,8 +19,6 @@ pub const jsxEntity = tables.jsxEntity;
 
 // TODO: JSON
 const IS_JSON_FILE = false;
-
-const string = []const u8;
 
 pub const Lexer = struct {
     // pub const Error = error{
@@ -1158,7 +1158,10 @@ fn test_lexer(contents: []const u8) Lexer {
         .msgs = msgs,
     };
 
-    const source = logger.Source.initPathString("index.js", contents, std.heap.page_allocator);
+    const source = logger.Source.initPathString(
+        "index.js",
+        contents,
+    );
     return Lexer.init(log, source, alloc.dynamic) catch unreachable;
 }
 
@@ -1208,7 +1211,10 @@ test "Lexer.step()" {
     };
 
     defer std.testing.allocator.free(msgs.items);
-    const source = logger.Source.initPathString("index.js", "for (let i = 0; i < 100; i++) { console.log('hi'); }", std.heap.page_allocator);
+    const source = logger.Source.initPathString(
+        "index.js",
+        "for (let i = 0; i < 100; i++) { console.log('hi'); }",
+    );
 
     var lex = try Lexer.init(log, source, std.testing.allocator);
     std.testing.expect('f' == lex.code_point);

@@ -106,56 +106,56 @@ pub const Log = struct {
     errors: u8 = 0,
     msgs: ArrayList(Msg),
 
-    pub fn addVerbose(log: *Log, source: ?Source, loc: Loc, text: []u8) void {
-        log.addMsg(Msg{
+    pub fn addVerbose(log: *Log, source: ?Source, loc: Loc, text: []u8) !void {
+        try log.addMsg(Msg{
             .kind = .verbose,
-            .data = rangeData(source, Range{ .Loc = loc }, text),
+            .data = rangeData(source, Range{ .loc = loc }, text),
         });
     }
 
-    pub fn addVerboseWithNotes(source: ?Source, loc: Loc, text: []u8, notes: []Data) void {
-        log.addMsg(Msg{
+    pub fn addVerboseWithNotes(source: ?Source, loc: Loc, text: []u8, notes: []Data) !void {
+        try log.addMsg(Msg{
             .kind = .verbose,
             .data = rangeData(source, Range{ .loc = loc }, text),
             .notes = notes,
         });
     }
 
-    pub fn addRangeError(log: *Log, source: ?Source, r: Range, text: []u8) void {
+    pub fn addRangeError(log: *Log, source: ?Source, r: Range, text: []u8) !void {
         log.errors += 1;
-        log.addMsg(Msg{
-            .kind = .Error,
+        try log.addMsg(Msg{
+            .kind = .err,
             .data = rangeData(source, r, text),
         });
     }
 
-    pub fn addRangeWarning(log: *Log, source: ?Source, r: Range, text: []u8) void {
+    pub fn addRangeWarning(log: *Log, source: ?Source, r: Range, text: []u8) !void {
         log.warnings += 1;
-        log.addMsg(Msg{
+        try log.addMsg(Msg{
             .kind = .warning,
             .data = rangeData(source, r, text),
         });
     }
 
-    pub fn addRangeDebug(log: *Log, source: ?Source, r: Range, text: []u8) void {
-        log.addMsg(Msg{
+    pub fn addRangeDebug(log: *Log, source: ?Source, r: Range, text: []u8) !void {
+        try log.addMsg(Msg{
             .kind = .debug,
             .data = rangeData(source, r, text),
         });
     }
 
-    pub fn addRangeErrorWithNotes(log: *Log, source: ?Source, r: Range, text: []u8, notes: []Data) void {
+    pub fn addRangeErrorWithNotes(log: *Log, source: ?Source, r: Range, text: []u8, notes: []Data) !void {
         log.errors += 1;
-        log.addMsg(Msg{
+        try log.addMsg(Msg{
             .kind = Kind.err,
             .data = rangeData(source, r, text),
             .notes = notes,
         });
     }
 
-    pub fn addRangeWarningWithNotes(log: *Log, source: ?Source, r: Range, text: []u8, notes: []Data) void {
+    pub fn addRangeWarningWithNotes(log: *Log, source: ?Source, r: Range, text: []u8, notes: []Data) !void {
         log.warnings += 1;
-        log.addMsg(Msg{
+        try log.addMsg(Msg{
             .kind = .warning,
             .data = rangeData(source, r, text),
             .notes = notes,

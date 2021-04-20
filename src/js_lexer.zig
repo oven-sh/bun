@@ -56,6 +56,10 @@ pub const Lexer = struct {
     prev_error_loc: logger.Loc = logger.Loc.Empty,
     allocator: *std.mem.Allocator,
 
+    pub fn loc(self: *Lexer) logger.Loc {
+        return logger.usize2Loc(self.start);
+    }
+
     fn nextCodepointSlice(it: *Lexer) callconv(.Inline) ?[]const u8 {
         if (it.current >= it.source.contents.len) {
             return null;
@@ -77,28 +81,28 @@ pub const Lexer = struct {
     }
 
     pub fn addError(self: *Lexer, _loc: usize, comptime format: []const u8, args: anytype, panic: bool) void {
-        const loc = logger.usize2Loc(_loc);
-        if (eql(loc, self.prev_error_loc)) {
+        var __loc = logger.usize2Loc(_loc);
+        if (__loc.eql(self.prev_error_loc)) {
             return;
         }
 
         const errorMessage = std.fmt.allocPrint(self.allocator, format, args) catch unreachable;
-        self.log.addError(self.source, loc, errorMessage) catch unreachable;
-        self.prev_error_loc = loc;
+        self.log.addError(self.source, __loc, errorMessage) catch unreachable;
+        self.prev_error_loc = __loc;
 
         // if (panic) {
         self.doPanic(errorMessage);
         // }
     }
 
-    pub fn addRangeError(self: *Lexer, range: logger.Range, comptime format: []const u8, args: anytype, panic: bool) void {
-        if (eql(loc, self.prev_error_loc)) {
+    pub fn addRangeError(self: *Lexer, r: logger.Range, comptime format: []const u8, args: anytype, panic: bool) void {
+        if (self.prev_error_loc.eql(r.loc)) {
             return;
         }
 
         const errorMessage = std.fmt.allocPrint(self.allocator, format, args) catch unreachable;
-        var msg = self.log.addRangeError(self.source, range, errorMessage);
-        self.prev_error_loc = loc;
+        var msg = self.log.addRangeError(self.source, r, errorMessage);
+        self.prev_error_loc = r.loc;
 
         if (panic) {
             self.doPanic(errorMessage);
@@ -728,15 +732,30 @@ pub const Lexer = struct {
     }
 
     pub fn expected(self: *Lexer, token: T) void {
-        if (tokenToString.has(text)) {
-            self.expectedString(text);
+        if (tokenToString.get(token).len > 0) {
+            self.expectedString(tokenToString.get(token));
         } else {
             self.unexpected();
         }
     }
 
+    pub fn unexpected(lexer: *Lexer) void {
+        var found: string = undefined;
+        if (lexer.start == lexer.source.contents.len) {
+            found = "end of file";
+        } else {
+            found = lexer.raw();
+        }
+
+        lexer.addRangeError(lexer.range(), "Unexpected {s}", .{found}, true);
+    }
+
     pub fn raw(self: *Lexer) []const u8 {
         return self.source.contents[self.start..self.end];
+    }
+
+    pub fn isContextualKeyword(self: *Lexer, keyword: string) bool {
+        return strings.eql(self.raw(), keyword);
     }
 
     pub fn expectedString(self: *Lexer, text: string) void {
@@ -744,13 +763,13 @@ pub const Lexer = struct {
         if (self.source.contents.len == self.start) {
             found = "end of file";
         }
-        self.addRangeError(self.range(), "Expected %s but found %s", .{ text, found }, true);
+        self.addRangeError(self.range(), "Expected {s} but found {s}", .{ text, found }, true);
     }
 
     pub fn range(self: *Lexer) logger.Range {
         return logger.Range{
-            .start = self.start,
-            .len = self.end - self.start,
+            .loc = logger.usize2Loc(self.start),
+            .len = std.math.lossyCast(i32, self.end - self.start),
         };
     }
 

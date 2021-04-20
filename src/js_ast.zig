@@ -680,7 +680,183 @@ pub const Stmt = struct {
     loc: logger.Loc,
     data: Data,
 
-    const Data = union(enum) {
+    pub fn init(t: anytype, loc: logger.Loc) Stmt {
+        switch (@TypeOf(t)) {
+            S.Block => {
+                return Stmt{
+                    .loc = loc,
+                    .data = Data{ .s_block = t },
+                };
+            },
+            S.Comment => {
+                return Stmt{
+                    .loc = loc,
+                    .data = Data{ .s_comment = t },
+                };
+            },
+            S.Directive => {
+                return Stmt{
+                    .loc = loc,
+                    .data = Data{ .s_directive = t },
+                };
+            },
+            S.ExportClause => {
+                return Stmt{
+                    .loc = loc,
+                    .data = Data{ .s_export_clause = t },
+                };
+            },
+            S.Empty => {
+                return Stmt{
+                    .loc = loc,
+                    .data = Data{ .s_empty = t },
+                };
+            },
+            S.TypeScript => {
+                return Stmt{
+                    .loc = loc,
+                    .data = Data{ .s_type_script = t },
+                };
+            },
+            S.Debugger => {
+                return Stmt{
+                    .loc = loc,
+                    .data = Data{ .s_debugger = t },
+                };
+            },
+            S.ExportFrom => {
+                return Stmt{
+                    .loc = loc,
+                    .data = Data{ .s_export_from = t },
+                };
+            },
+            S.ExportDefault => {
+                return Stmt{
+                    .loc = loc,
+                    .data = Data{ .s_export_default = t },
+                };
+            },
+            S.Enum => {
+                return Stmt{
+                    .loc = loc,
+                    .data = Data{ .s_enum = t },
+                };
+            },
+            S.Namespace => {
+                return Stmt{
+                    .loc = loc,
+                    .data = Data{ .s_namespace = t },
+                };
+            },
+            S.Function => {
+                return Stmt{
+                    .loc = loc,
+                    .data = Data{ .s_function = t },
+                };
+            },
+            S.Class => {
+                return Stmt{
+                    .loc = loc,
+                    .data = Data{ .s_class = t },
+                };
+            },
+            S.If => {
+                return Stmt{
+                    .loc = loc,
+                    .data = Data{ .s_if = t },
+                };
+            },
+            S.For => {
+                return Stmt{
+                    .loc = loc,
+                    .data = Data{ .s_for = t },
+                };
+            },
+            S.ForIn => {
+                return Stmt{
+                    .loc = loc,
+                    .data = Data{ .s_for_in = t },
+                };
+            },
+            S.ForOf => {
+                return Stmt{
+                    .loc = loc,
+                    .data = Data{ .s_for_of = t },
+                };
+            },
+            S.DoWhile => {
+                return Stmt{
+                    .loc = loc,
+                    .data = Data{ .s_do_while = t },
+                };
+            },
+            S.While => {
+                return Stmt{
+                    .loc = loc,
+                    .data = Data{ .s_while = t },
+                };
+            },
+            S.With => {
+                return Stmt{
+                    .loc = loc,
+                    .data = Data{ .s_with = t },
+                };
+            },
+            S.Try => {
+                return Stmt{
+                    .loc = loc,
+                    .data = Data{ .s_try = t },
+                };
+            },
+            S.Switch => {
+                return Stmt{
+                    .loc = loc,
+                    .data = Data{ .s_switch = t },
+                };
+            },
+            S.Import => {
+                return Stmt{
+                    .loc = loc,
+                    .data = Data{ .s_import = t },
+                };
+            },
+            S.Return => {
+                return Stmt{
+                    .loc = loc,
+                    .data = Data{ .s_return = t },
+                };
+            },
+            S.Throw => {
+                return Stmt{
+                    .loc = loc,
+                    .data = Data{ .s_throw = t },
+                };
+            },
+            S.Local => {
+                return Stmt{
+                    .loc = loc,
+                    .data = Data{ .s_local = t },
+                };
+            },
+            S.Break => {
+                return Stmt{
+                    .loc = loc,
+                    .data = Data{ .s_break = t },
+                };
+            },
+            S.Continue => {
+                return Stmt{
+                    .loc = loc,
+                    .data = Data{ .s_continue = t },
+                };
+            },
+            else => {
+                @compileError("Invalid type in Stmt.init");
+            },
+        }
+    }
+
+    pub const Data = union(enum) {
         s_block: S.Block,
         s_comment: S.Comment,
         s_directive: S.Directive,

@@ -6,6 +6,10 @@ usingnamespace @import("ast/base.zig");
 
 const ImportRecord = @import("import_record.zig").ImportRecord;
 
+pub const BindingNodeIndex = NodeIndex;
+pub const StmtNodeIndex = NodeIndex;
+pub const ExprNodeIndex = NodeIndex;
+
 // TODO: figure out if we actually need this
 // -- original comment --
 // Files are parsed in parallel for speed. We want to allow each parser to
@@ -37,27 +41,6 @@ pub const ImportItemStatus = enum(u8) {
 };
 
 pub const LocRef = struct { loc: logger.Loc, ref: ?Ref };
-
-pub const FnBody = struct {
-    loc: logger.Loc,
-    stmts: []StmtNodeIndex,
-};
-
-pub const Fn = struct {
-    name: ?LocRef,
-    open_parens_loc: logger.Loc,
-    args: []Arg,
-    body: FnBody,
-    arguments_ref: ?Ref,
-
-    is_async: bool = false,
-    is_generator: bool = false,
-    has_rest_arg: bool = false,
-    has_if_scope: bool = false,
-
-    // This is true if the function is a method
-    is_unique_formal_parameters: bool = false,
-};
 
 pub const Binding = struct {
     data: B,
@@ -106,15 +89,6 @@ pub const B = union(enum) {
     pub const Missing = struct {};
 };
 
-pub const Arg = struct {
-    ts_decorators: ?[]Expr = null,
-    binding: Binding,
-    default: ?Expr = null,
-
-    // "constructor(public x: boolean) {}"
-    is_typescript_ctor_field: bool = false,
-};
-
 pub const ClauseItem = struct {
     alias: string,
     alias_loc: logger.Loc,
@@ -159,7 +133,7 @@ pub const G = struct {
         key: ExprNodeIndex,
 
         // This is omitted for class fields
-        value: ?Expr,
+        value: ?ExprNodeIndex = null,
 
         // This is used when parsing a pattern that uses default values:
         //
@@ -176,6 +150,36 @@ pub const G = struct {
         is_method: bool = false,
         is_static: bool = false,
         was_shorthand: bool = false,
+    };
+
+    pub const FnBody = struct {
+        loc: logger.Loc,
+        stmts: []StmtNodeIndex,
+    };
+
+    pub const Fn = struct {
+        name: ?LocRef,
+        open_parens_loc: logger.Loc,
+        args: ?[]Arg = null,
+        body: ?FnBody = null,
+        arguments_ref: ?Ref,
+
+        is_async: bool = false,
+        is_generator: bool = false,
+        has_rest_arg: bool = false,
+        has_if_scope: bool = false,
+
+        // This is true if the function is a method
+        is_unique_formal_parameters: bool = false,
+    };
+
+    pub const Arg = struct {
+        ts_decorators: ?[]ExprNodeIndex = null,
+        binding: BindingNodeIndex,
+        default: ?ExprNodeIndex = null,
+
+        // "constructor(public x: boolean) {}"
+        is_typescript_ctor_field: bool = false,
     };
 };
 
@@ -533,8 +537,8 @@ pub const E = struct {
     };
 
     pub const Arrow = struct {
-        args: []Arg,
-        body: FnBody,
+        args: []G.Arg,
+        body: G.FnBody,
 
         is_async: bool = false,
         has_rest_arg: bool = false,
@@ -1023,7 +1027,7 @@ pub const S = struct {
     };
 
     pub const Function = struct {
-        func: Fn,
+        func: G.Fn,
         is_export: bool,
     };
 
@@ -1395,6 +1399,81 @@ pub const Dependency = struct {
     part_index: u32 = 0,
 };
 
+pub const ExprList = std.ArrayList(Expr);
+pub const StmtList = std.ArrayList(Stmt);
+pub const BindingList = std.ArrayList(Binding);
+pub const AstData = struct {
+    expr_list: ExprList,
+    stmt_list: StmtList,
+    binding_list: BindingList,
+
+    pub fn init(allocator: *std.mem.Allocator) AstData {
+        return AstData{
+            .expr_list = ExprList.init(allocator),
+            .stmt_list = StmtList.init(allocator),
+            .binding_list = BindingList.init(allocator),
+        };
+    }
+
+    pub fn deinit(self: *AstData) void {
+        self.expr_list.deinit();
+        self.stmt_list.deinit();
+        self.binding_list.deinit();
+    }
+
+    pub fn expr(self: *AstData, index: ExprNodeIndex) Expr {
+        return self.expr_list.items[index];
+    }
+
+    pub fn stmt(self: *AstData, index: StmtNodeIndex) Stmt {
+        return self.stmt_list.items[index];
+    }
+
+    pub fn binding(self: *AstData, index: BindingNodeIndex) Binding {
+        return self.binding_list.items[index];
+    }
+
+    pub fn add_(self: *AstData, t: anytype) !void {
+        return switch (@TypeOf(t)) {
+            Stmt => {
+                try self.stmt_list.append(t);
+            },
+            Expr => {
+                try self.expr_list.append(t);
+            },
+            Binding => {
+                try self.binding_list.append(t);
+            },
+            else => {
+                @compileError("Invalid type passed to AstData.add. Expected Stmt, Expr, or Binding.");
+            },
+        };
+    }
+
+    pub fn add(self: *AstData, t: anytype) !NodeIndex {
+        return switch (@TypeOf(t)) {
+            Stmt => {
+                var len = self.stmt_list.items.len;
+                try self.stmt_list.append(t);
+                return @intCast(StmtNodeIndex, len);
+            },
+            Expr => {
+                var len = self.expr_list.items.len;
+                try self.expr_list.append(t);
+                return @intCast(ExprNodeIndex, len);
+            },
+            Binding => {
+                var len = self.binding_list.items.len;
+                try self.binding_list.append(t);
+                return @intCast(BindingNodeIndex, len);
+            },
+            else => {
+                @compileError("Invalid type passed to AstData.add. Expected Stmt, Expr, or Binding.");
+            },
+        };
+    }
+};
+
 // Each file is made up of multiple parts, and each part consists of one or
 // more top-level statements. Parts are used for tree shaking and code
 // splitting analysis. Individual parts of a file can be discarded by tree
@@ -1403,6 +1482,7 @@ pub const Dependency = struct {
 pub const Part = struct {
     stmts: []Stmt,
     expr: []Expr,
+    bindings: []Binding,
     scopes: []*Scope,
 
     // Each is an index into the file-level import record list
@@ -1502,7 +1582,7 @@ pub const StrictModeKind = enum {
 pub const Scope = struct {
     kind: Kind = Kind.block,
     parent: ?*Scope,
-    children: []*Scope,
+    children: std.ArrayList(*Scope),
     members: std.StringHashMap(Member),
     generated: ?[]Ref = null,
 
@@ -1537,7 +1617,7 @@ pub const Scope = struct {
     pub fn recursiveSetStrictMode(s: *Scope, kind: StrictModeKind) void {
         if (s.strict_mode == .sloppy_mode) {
             s.strict_mode = kind;
-            for (s.children) |child| {
+            for (s.children.items) |child| {
                 child.recursiveSetStrictMode(kind);
             }
         }
@@ -1557,3 +1637,4 @@ pub const Scope = struct {
 // test "ast" {
 //     const ast = Ast{};
 // }
+

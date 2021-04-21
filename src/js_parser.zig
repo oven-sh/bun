@@ -6,10 +6,16 @@ const js_ast = @import("js_ast.zig");
 const options = @import("options.zig");
 const alloc = @import("alloc.zig");
 usingnamespace @import("strings.zig");
-
+usingnamespace @import("ast/base.zig");
 usingnamespace js_ast.G;
+
+const BindingNodeIndex = js_ast.BindingNodeIndex;
+const StmtNodeIndex = js_ast.StmtNodeIndex;
+const ExprNodeIndex = js_ast.ExprNodeIndex;
+
 const S = js_ast.S;
 const B = js_ast.B;
+const G = js_ast.G;
 const T = js_lexer.T;
 const E = js_ast.E;
 const Stmt = js_ast.Stmt;
@@ -56,14 +62,14 @@ const ScopeOrder = struct {
 // restored on the call stack around code that parses nested functions and
 // arrow expressions.
 const FnOrArrowDataParse = struct {
-    async_range: logger.Range,
-    arrow_arg_errors: void,
+    async_range: ?logger.Range = null,
     allow_await: bool = false,
     allow_yield: bool = false,
     allow_super_call: bool = false,
     is_top_level: bool = false,
     is_constructor: bool = false,
-    is_type_script_declare: bool = false,
+    is_typescript_declare: bool = false,
+    arrow_arg_errors: ?DeferredArrowArgErrors = null,
 
     // In TypeScript, forward declarations of functions have no bodies
     allow_missing_body_for_type_script: bool = false,
@@ -246,7 +252,7 @@ const P = struct {
     allocated_names: List(string),
     latest_arrow_arg_loc: logger.Loc = logger.Loc.Empty,
     forbid_suffix_after_as_loc: logger.Loc = logger.Loc.Empty,
-    current_scope: *js_ast.Scope,
+    current_scope: ?*js_ast.Scope = null,
     scopes_for_current_part: List(*js_ast.Scope),
     symbols: List(js_ast.Symbol),
     ts_use_counts: List(u32),
@@ -255,6 +261,8 @@ const P = struct {
     module_ref: js_ast.Ref = js_ast.Ref.None,
     import_meta_ref: js_ast.Ref = js_ast.Ref.None,
     promise_ref: ?js_ast.Ref = null,
+
+    data: js_ast.AstData,
 
     injected_define_symbols: []js_ast.Ref,
     symbol_uses: SymbolUseMap,
@@ -491,6 +499,18 @@ const P = struct {
         return null;
     }
 
+    pub fn logArrowArgErrors(errors: *DeferredArrowArgErrors) void {
+        if (errors.invalid_expr_await.len > 0) {
+            var r = errors.invalid_expr_await;
+            p.log.AddRangeError(&p.source, r, "Cannot use an \"await\" expression here");
+        }
+
+        if (errors.invalid_expr_yield.len > 0) {
+            var r = errors.invalid_expr_yield;
+            p.log.AddRangeError(&p.source, r, "Cannot use a \"yield\" expression here");
+        }
+    }
+
     pub fn keyNameForError(p: *P, key: js_ast.Expr) string {
         switch (key.data) {
             js_ast.E.String => {
@@ -509,7 +529,7 @@ const P = struct {
     pub fn prepareForVisitPass(p: *P) !void {
         try p.pushScopeForVisitPass(js_ast.Scope.Kind.entry, locModuleScope);
         p.fn_or_arrow_data_visit.is_outside_fn_or_arrow = true;
-        p.module_scope = p.current_scope;
+        p.module_scope = p.current_scope orelse unreachable;
         p.has_es_module_syntax = p.es6_import_keyword.len > 0 or p.es6_export_keyword.len > 0 or p.top_level_await_keyword.len > 0;
 
         // ECMAScript modules are always interpreted as strict mode. This has to be
@@ -562,18 +582,18 @@ const P = struct {
         try p.scopes_for_current_part.append(order.scope);
     }
 
-    pub fn pushScopeForParsePass(p: *P, kind: js_ast.Scope.Kind, loc: logger.Loc) !int {
-        var parent = p.current_scope;
-        var scope = js_ast.Scope.initPtr(p.allocator);
+    pub fn pushScopeForParsePass(p: *P, kind: js_ast.Scope.Kind, loc: logger.Loc) !usize {
+        var parent = p.current_scope orelse unreachable;
+        var scope = try js_ast.Scope.initPtr(p.allocator);
         scope.kind = kind;
         scope.parent = parent;
 
         scope.label_ref = null;
 
-        if (parent) |_parent| {
-            try _parent.children.append(scope);
-            scope.strict_mode = _parent.strict_mode;
-        }
+        var i = parent.children.items.len;
+
+        try parent.children.append(scope);
+        scope.strict_mode = parent.strict_mode;
         p.current_scope = scope;
 
         // Enforce that scope locations are strictly increasing to help catch bugs
@@ -581,16 +601,16 @@ const P = struct {
         if (p.scopes_in_order.items.len > 0) {
             const prev_start = p.scopes_in_order.items[p.scopes_in_order.items.len - 1].loc.start;
             if (prev_start >= loc.start) {
-                std.debug.panic("Scope location {i} must be greater than {i}", .{ loc.start, prev_start });
+                std.debug.panic("Scope location {d} must be greater than {d}", .{ loc.start, prev_start });
             }
         }
 
         // Copy down function arguments into the function body scope. That way we get
         // errors if a statement in the function body tries to re-declare any of the
         // arguments.
-        if (kind == js_ast.ScopeFunctionBody) {
-            if (scope.parent.kind != js_ast.ScopeFunctionArgs) {
-                std.debug.panic("Internal error");
+        if (kind == js_ast.Scope.Kind.function_body) {
+            if (parent.kind != js_ast.Scope.Kind.function_args) {
+                std.debug.panic("Internal error", .{});
             }
 
             // for name, member := range scope.parent.members {
@@ -602,13 +622,15 @@ const P = struct {
             // 	}
             // }
         }
+
+        return i;
     }
 
     pub fn forbidLexicalDecl(p: *P, loc: logger.Loc) !void {
         try p.log.addRangeError(p.source, p.lexer.range(), "Cannot use a declaration in a single-statement context");
     }
 
-    pub fn parseFnStmt(p: *P, loc: logger.Loc, opts: *ParseStatementOptions, asyncRange: ?logger.Range) !js_ast.Stmt {
+    pub fn parseFnStmt(p: *P, loc: logger.Loc, opts: *ParseStatementOptions, asyncRange: ?logger.Range) !NodeIndex {
         const isGenerator = p.lexer.token == T.t_asterisk;
         const isAsync = asyncRange != null;
 
@@ -623,6 +645,8 @@ const P = struct {
             .forbid => {
                 try p.forbidLexicalDecl(loc);
             },
+
+            // Allow certain function statements in certain single-statement contexts
             .allow_fn_inside_if, .allow_fn_inside_label => {
                 if (opts.is_typescript_declare or isGenerator or isAsync) {
                     try p.forbidLexicalDecl(loc);
@@ -630,16 +654,156 @@ const P = struct {
             },
             else => {},
         }
+
+        var name: ?js_ast.LocRef = null;
+        var nameText: string = undefined;
+
+        // The name is optional for "export default function() {}" pseudo-statements
+        if (!opts.is_name_optional or p.lexer.token == T.t_identifier) {
+            var nameLoc = p.lexer.loc();
+            nameText = p.lexer.identifier;
+            p.lexer.expect(T.t_identifier);
+            name = js_ast.LocRef{
+                .loc = nameLoc,
+                .ref = null,
+            };
+        }
+
+        // Even anonymous functions can have TypeScript type parameters
+        if (p.options.ts) {
+            p.skipTypescriptTypeParameters();
+        }
+
+        // Introduce a fake block scope for function declarations inside if statements
+        var ifStmtScopeIndex: usize = 0;
+        var hasIfScope = opts.lexical_decl == .allow_fn_inside_if;
+        if (hasIfScope) {
+            ifStmtScopeIndex = try p.pushScopeForParsePass(js_ast.Scope.Kind.block, loc);
+        }
+
+        var scopeIndex = try p.pushScopeForParsePass(js_ast.Scope.Kind.function_args, p.lexer.loc());
+        var func = p.parseFn(name, FnOrArrowDataParse{
+            .async_range = asyncRange,
+            .allow_await = isAsync,
+            .allow_yield = isGenerator,
+            .is_typescript_declare = opts.is_typescript_declare,
+
+            // Only allow omitting the body if we're parsing TypeScript
+            .allow_missing_body_for_type_script = p.options.ts,
+        });
+
+        // Don't output anything if it's just a forward declaration of a function
+        if (opts.is_typescript_declare or func.body == null) {
+            p.popAndDiscardScope(scopeIndex);
+        }
+        return 0;
     }
 
-    pub fn parseStmt(p: *P, opts: *ParseStatementOptions) !js_ast.Stmt {
+    pub fn popAndDiscardScope(p: *P, scope_index: usize) void {
+        // Move up to the parent scope
+        var to_discard = p.current_scope orelse unreachable;
+        var parent = to_discard.parent orelse unreachable;
+
+        p.current_scope = parent;
+
+        // Truncate the scope order where we started to pretend we never saw this scope
+        p.scopes_in_order.shrinkRetainingCapacity(scope_index);
+
+        var children = parent.children;
+        // Remove the last child from the parent scope
+        var last = children.items.len - 1;
+        if (children.items[last] != to_discard) {
+            std.debug.panic("Internal error", .{});
+        }
+
+        _ = children.popOrNull();
+    }
+
+    pub fn parseFn(p: *P, name: ?js_ast.LocRef, opts: FnOrArrowDataParse) G.Fn {
+        // if data.allowAwait && data.allowYield {
+        // 	p.markSyntaxFeature(compat.AsyncGenerator, data.asyncRange)
+        // }
+
+        var func = G.Fn{
+            .name = name,
+            .has_rest_arg = false,
+            .is_async = opts.allow_await,
+            .is_generator = opts.allow_yield,
+            .arguments_ref = null,
+            .open_parens_loc = p.lexer.loc(),
+        };
+        p.lexer.expect(T.t_open_paren);
+
+        // Await and yield are not allowed in function arguments
+        var old_fn_or_arrow_data = opts;
+        p.fn_or_arrow_data_parse.allow_await = false;
+        p.fn_or_arrow_data_parse.allow_yield = false;
+
+        // If "super()" is allowed in the body, it's allowed in the arguments
+        p.fn_or_arrow_data_parse.allow_super_call = opts.allow_super_call;
+
+        while (p.lexer.token != T.t_close_paren) {
+            // Skip over "this" type annotations
+            if (p.options.ts and p.lexer.token == T.t_this) {
+                p.lexer.next();
+                if (p.lexer.token == T.t_colon) {
+                    p.lexer.next();
+                    p.skipTypescriptType(js_ast.Op.Level.lowest);
+                }
+                if (p.lexer.token != T.t_comma) {
+                    break;
+                }
+
+                p.lexer.next();
+                continue;
+            }
+        }
+
+        var ts_decorators: []ExprNodeIndex = undefined;
+        if (opts.allow_ts_decorators) {
+            ts_decorators = p.parseTypeScriptDecorators();
+        }
+
+        if (!func.has_rest_arg and p.lexer.token == T.t_dot_dot_dot) {
+            // p.markSyntaxFeature
+            p.lexer.next();
+            func.has_rest_arg = true;
+        }
+
+        var is_typescript_ctor_field = false;
+        var is_identifier = p.lexer.token == T.t_identifier;
+        // var arg = p.parseBinding();
+
+        return func;
+    }
+
+    // pub fn parseBinding(p: *P)
+
+    // TODO:
+    pub fn parseTypeScriptDecorators(p: *P) []ExprNodeIndex {
+        notimpl();
+        return undefined;
+    }
+
+    // TODO:
+    pub fn skipTypescriptType(p: *P, level: js_ast.Op.Level) void {
+        notimpl();
+        return undefined;
+    }
+
+    // TODO:
+    pub fn skipTypescriptTypeParameters(p: *P) void {
+        notimpl();
+        return undefined;
+    }
+
+    pub fn parseStmt(p: *P, opts: *ParseStatementOptions) !NodeIndex {
         var loc = p.lexer.loc();
-        var stmt: js_ast.Stmt = undefined;
 
         switch (p.lexer.token) {
             js_lexer.T.t_semicolon => {
                 p.lexer.next();
-                return js_ast.Stmt.init(js_ast.S.Empty{}, loc);
+                return p.data.add(js_ast.Stmt.init(js_ast.S.Empty{}, loc));
             },
 
             js_lexer.T.t_export => {
@@ -700,7 +864,7 @@ const P = struct {
                             p.lexer.expect(T.t_identifier);
                             p.lexer.expectOrInsertSemicolon();
 
-                            return Stmt.init(S.TypeScript{}, loc);
+                            return p.data.add(Stmt.init(S.TypeScript{}, loc));
                         }
 
                         if (p.lexer.isContextualKeyword("async")) {
@@ -712,29 +876,29 @@ const P = struct {
 
                             p.lexer.expect(T.t_function);
                             opts.is_export = true;
-                            return try p.parseFnStmt(loc, opts, asyncRange);
+                            return p.parseFnStmt(loc, opts, asyncRange);
                         }
-
-                        return stmt;
                     },
 
                     else => {
                         notimpl();
+                        return @intCast(NodeIndex, 0);
                     },
                 }
             },
 
             else => {
                 notimpl();
+                return @intCast(NodeIndex, 0);
             },
         }
 
-        return stmt;
+        return @intCast(NodeIndex, 0);
     }
 
-    pub fn parseStmtsUpTo(p: *P, eend: js_lexer.T, opts: *ParseStatementOptions) ![]js_ast.Stmt {
-        var stmts = List(js_ast.Stmt).init(p.allocator);
-        try stmts.ensureCapacity(1);
+    pub fn parseStmtsUpTo(p: *P, eend: js_lexer.T, opts: *ParseStatementOptions) !void {
+        var data = p.data;
+        try data.stmt_list.ensureCapacity(1);
 
         var returnWithoutSemicolonStart: i32 = -1;
         opts.lexical_decl = .allow_all;
@@ -743,7 +907,7 @@ const P = struct {
         run: while (true) {
             if (p.lexer.comments_to_preserve_before) |comments| {
                 for (comments) |comment| {
-                    try stmts.append(Stmt.init(S.Comment{
+                    try data.add_(Stmt.init(S.Comment{
                         .text = comment.text,
                     }, p.lexer.loc()));
                 }
@@ -753,10 +917,10 @@ const P = struct {
                 break :run;
             }
 
-            var stmt = p.parseStmt(opts);
-        }
+            const node_index = p.parseStmt(opts) catch break :run;
 
-        return stmts.toOwnedSlice();
+            var stmt = p.data.stmt(node_index);
+        }
     }
 
     pub fn init(allocator: *std.mem.Allocator, log: logger.Log, source: logger.Source, lexer: js_lexer.Lexer, opts: Parser.Options) !*P {
@@ -782,9 +946,37 @@ const P = struct {
         parser.options = opts;
         parser.source = source;
         parser.lexer = lexer;
+        parser.data = js_ast.AstData.init(allocator);
 
         return parser;
     }
+};
+
+// The "await" and "yield" expressions are never allowed in argument lists but
+// may or may not be allowed otherwise depending on the details of the enclosing
+// function or module. This needs to be handled when parsing an arrow function
+// argument list because we don't know if these expressions are not allowed until
+// we reach the "=>" token (or discover the absence of one).
+//
+// Specifically, for await:
+//
+//   // This is ok
+//   async function foo() { (x = await y) }
+//
+//   // This is an error
+//   async function foo() { (x = await y) => {} }
+//
+// And for yield:
+//
+//   // This is ok
+//   function* foo() { (x = yield y) }
+//
+//   // This is an error
+//   function* foo() { (x = yield y) => {} }
+//
+const DeferredArrowArgErrors = struct {
+    invalid_expr_await: logger.Range = logger.Range.None,
+    invalid_expr_yield: logger.Range = logger.Range.None,
 };
 
 test "js_parser.init" {

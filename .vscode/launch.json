@@ -3,16 +3,21 @@
   "configurations": [
     {
       "name": "Test",
-      "type": "cppdbg",
+      "type": "lldb",
       "request": "launch",
-      "program": "${workspaceFolder}/zig-cache/bin/test",
-      "args": ["prevent-panic-by-passing-a-placeholder-arg"],
-      "preLaunchTask": "test",
-      "stopAtEntry": false,
+      "stdio": null,
+      "stopOnEntry": false,
+      "program": "/usr/local/bin/zig",
       "cwd": "${workspaceFolder}",
-      "environment": [],
-      "externalConsole": false,
-      "MIMode": "lldb"
+      "args": ["test", "${file}"],
+      "presentation": {
+        "hidden": false,
+        "group": "",
+        "order": 1
+      },
+      "env": {
+        "TERM": "xterm"
+      }
     },
 
     {

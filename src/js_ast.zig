@@ -26,6 +26,10 @@ pub const BindingNodeIndex = *Binding;
 pub const StmtNodeIndex = *Stmt;
 pub const ExprNodeIndex = *Expr;
 
+pub const ExprNodeList = []Expr;
+pub const StmtNodeList = []Stmt;
+pub const BindingNodeList = []Binding;
+
 // TODO: figure out if we actually need this
 // -- original comment --
 // Files are parsed in parallel for speed. We want to allow each parser to
@@ -40,10 +44,10 @@ pub const ExprNodeIndex = *Expr;
 // The maps can be merged quickly by creating a single outer array containing
 // all inner arrays from all parsed files.
 pub const Ref = struct {
-    source_index: u32 = 0,
+    source_index: ?u32 = null,
     inner_index: u32,
 
-    const None = Ref{ .source_index = std.math.maxInt(u32), .inner_index = std.math.maxInt(u32) };
+    const None = Ref{ .source_index = null, .inner_index = std.math.maxInt(u32) };
 };
 
 pub const ImportItemStatus = enum(u8) {
@@ -59,22 +63,47 @@ pub const ImportItemStatus = enum(u8) {
 pub const LocRef = struct { loc: logger.Loc, ref: ?Ref };
 
 pub const Binding = struct {
+    loc: logger.Loc,
     data: B,
-};
 
-pub const B = union(enum) {
-    identifier: B.Identifier,
-    array: B.Array,
-    property: B.Property,
-    object: B.Object,
-    missing: B.Missing,
-
-    pub const Type = enum {
-        b_missing,
+    pub const Tag = enum {
         b_identifier,
         b_array,
+        b_property,
         b_object,
+        b_missing,
     };
+
+    pub fn init(t: anytype, loc: logger.Loc) Binding {
+        switch (@TypeOf(t)) {
+            B.Identifier => {
+                return Binding{ .loc = loc, .data = B{ .b_identifier = t } };
+            },
+            B.Array => {
+                return Binding{ .loc = loc, .data = B{ .b_array = t } };
+            },
+            B.Property => {
+                return Binding{ .loc = loc, .data = B{ .b_property = t } };
+            },
+            B.Object => {
+                return Binding{ .loc = loc, .data = B{ .b_object = t } };
+            },
+            B.Missing => {
+                return Binding{ .loc = loc, .data = B{ .b_missing = t } };
+            },
+            else => {
+                @compileError("Invalid type passed to Binding.init");
+            },
+        }
+    }
+};
+
+pub const B = union(Binding.Tag) {
+    b_identifier: B.Identifier,
+    b_array: B.Array,
+    b_property: B.Property,
+    b_object: B.Object,
+    b_missing: B.Missing,
 
     pub const Identifier = struct {
         ref: Ref,
@@ -89,7 +118,7 @@ pub const B = union(enum) {
         };
 
         key: ExprNodeIndex,
-        value: ?BindingNodeIndex,
+        value: ?BindingNodeIndex = null,
         kind: Kind = Kind.normal,
         initializer: ?ExprNodeIndex,
         is_computed: bool = false,
@@ -100,7 +129,11 @@ pub const B = union(enum) {
 
     pub const Object = struct { properties: []Property };
 
-    pub const Array = struct { binding: BindingNodeIndex, default_value: ?Expr };
+    pub const Array = struct {
+        items: []ArrayBinding,
+        has_spread: bool = false,
+        is_single_line: bool = false,
+    };
 
     pub const Missing = struct {};
 };
@@ -134,7 +167,7 @@ pub const G = struct {
 
     pub const Class = struct {
         class_keyword: logger.Range,
-        ts_decorators: ?[]ExprNodeIndex = null,
+        ts_decorators: ?ExprNodeList = null,
         name: logger.Loc,
         extends: ?ExprNodeIndex = null,
         body_loc: logger.Loc,
@@ -145,7 +178,7 @@ pub const G = struct {
     pub const Comment = struct { loc: logger.Loc, text: string };
 
     pub const Property = struct {
-        ts_decorators: []ExprNodeIndex,
+        ts_decorators: ExprNodeList,
         key: ExprNodeIndex,
 
         // This is omitted for class fields
@@ -170,7 +203,7 @@ pub const G = struct {
 
     pub const FnBody = struct {
         loc: logger.Loc,
-        stmts: []StmtNodeIndex,
+        stmts: StmtNodeList,
     };
 
     pub const Fn = struct {
@@ -178,7 +211,7 @@ pub const G = struct {
         open_parens_loc: logger.Loc,
         args: ?[]Arg = null,
         body: ?FnBody = null,
-        arguments_ref: ?Ref,
+        arguments_ref: ?Ref = null,
 
         is_async: bool = false,
         is_generator: bool = false,
@@ -190,7 +223,7 @@ pub const G = struct {
     };
 
     pub const Arg = struct {
-        ts_decorators: ?[]ExprNodeIndex = null,
+        ts_decorators: ?ExprNodeList = null,
         binding: BindingNodeIndex,
         default: ?ExprNodeIndex = null,
 
@@ -222,7 +255,7 @@ pub const Symbol = struct {
     // form a linked-list where the last link is the symbol to use. This link is
     // an invalid ref if it's the last link. If this isn't invalid, you need to
     // FollowSymbols to get the real one.
-    link: ?Ref,
+    link: ?Ref = null,
 
     // An estimate of the number of uses of this symbol. This is used to detect
     // whether a symbol is used or not. For example, TypeScript imports that are
@@ -247,7 +280,7 @@ pub const Symbol = struct {
     // slot namespaces: regular symbols, label symbols, and private symbols.
     nested_scope_slot: ?u32 = null,
 
-    kind: Kind,
+    kind: Kind = Kind.other,
 
     // Certain symbols must not be renamed or minified. For example, the
     // "arguments" variable is declared by the runtime for every function.
@@ -410,7 +443,7 @@ pub const Symbol = struct {
     };
 
     pub const Use = struct {
-        count_estimate: u32,
+        count_estimate: u32 = 0,
     };
 
     pub const Map = struct {
@@ -465,10 +498,10 @@ ccontinue };
 
 pub const E = struct {
     pub const Array = struct {
-        items: []ExprNodeIndex,
-        comma_after_spread: logger.Loc,
-        is_single_line: bool,
-        is_parenthesized: bool,
+        items: ExprNodeList,
+        comma_after_spread: ?logger.Loc = null,
+        is_single_line: bool = false,
+        is_parenthesized: bool = false,
     };
 
     pub const Unary = struct {
@@ -488,7 +521,7 @@ pub const E = struct {
     pub const Undefined = struct {};
     pub const New = struct {
         target: ExprNodeIndex,
-        args: []ExprNodeIndex,
+        args: ExprNodeList,
 
         // True if there is a comment containing "@__PURE__" or "#__PURE__" preceding
         // this call expression. See the comment inside ECall for more details.
@@ -500,8 +533,8 @@ pub const E = struct {
     pub const Call = struct {
         // Node:
         target: ExprNodeIndex,
-        args: []ExprNodeIndex,
-        optional_chain: OptionalChain,
+        args: ExprNodeList,
+        optional_chain: ?OptionalChain = null,
         is_direct_eval: bool = false,
 
         // True if there is a comment containing "@__PURE__" or "#__PURE__" preceding
@@ -525,7 +558,7 @@ pub const E = struct {
         // target is Node
         name: string,
         name_loc: logger.Loc,
-        optional_chain: ?OptionalChain,
+        optional_chain: ?OptionalChain = null,
 
         // If true, this property access is known to be free of side-effects. That
         // means it can be removed if the resulting value isn't used.
@@ -545,7 +578,7 @@ pub const E = struct {
 
     pub const Index = struct {
         index: ExprNodeIndex,
-        optional_chain: ?OptionalChain,
+        optional_chain: ?OptionalChain = null,
 
         pub fn hasSameFlagsAs(a: *Index, b: *Index) bool {
             return (a.optional_chain == b.optional_chain);
@@ -619,9 +652,9 @@ pub const E = struct {
     };
 
     pub const JSXElement = struct {
-        tag: ?ExprNodeIndex,
+        tag: ?ExprNodeIndex = null,
         properties: []G.Property,
-        children: []ExprNodeIndex,
+        children: ExprNodeList,
     };
 
     pub const Missing = struct {};
@@ -634,17 +667,17 @@ pub const E = struct {
 
     pub const Object = struct {
         properties: []G.Property,
-        comma_after_spread: logger.Loc,
-        is_single_line: bool,
-        is_parenthesized: bool,
+        comma_after_spread: ?logger.Loc = null,
+        is_single_line: bool = false,
+        is_parenthesized: bool = false,
     };
 
     pub const Spread = struct { value: ExprNodeIndex };
 
     pub const String = struct {
         value: JavascriptString,
-        legacy_octal_loc: logger.Loc,
-        prefer_template: bool,
+        legacy_octal_loc: ?logger.Loc = null,
+        prefer_template: bool = false,
     };
 
     // value is in the Node
@@ -655,8 +688,8 @@ pub const E = struct {
         tail_raw: string,
     };
 
-    pub const Template = struct { tag: ?ExprNodeIndex, head: JavascriptString, head_raw: string, // This is only filled out for tagged template literals
-    parts: ?[]TemplatePart, legacy_octal_loc: logger.Loc };
+    pub const Template = struct { tag: ?ExprNodeIndex = null, head: JavascriptString, head_raw: string, // This is only filled out for tagged template literals
+    parts: ?[]TemplatePart = null, legacy_octal_loc: logger.Loc };
 
     pub const RegExp = struct {
         value: string,
@@ -667,8 +700,8 @@ pub const E = struct {
     pub const Await = struct { value: ExprNodeIndex };
 
     pub const Yield = struct {
-        value: ?ExprNodeIndex,
-        is_star: bool,
+        value: ?ExprNodeIndex = null,
+        is_star: bool = false,
     };
 
     pub const If = struct {
@@ -963,7 +996,146 @@ pub const Expr = struct {
 
     pub const Flags = enum { none, ts_decorator };
 
-    pub const Data = union(enum) {
+    pub fn init(data: anytype, loc: logger.Loc) Expr {
+        switch (@TypeOf(data)) {
+            E.Array => {
+                return Expr{ .loc = loc, .data = Data{ .e_array = data } };
+            },
+            E.Unary => {
+                return Expr{ .loc = loc, .data = Data{ .e_unary = data } };
+            },
+            E.Binary => {
+                return Expr{ .loc = loc, .data = Data{ .e_binary = data } };
+            },
+            E.Boolean => {
+                return Expr{ .loc = loc, .data = Data{ .e_boolean = data } };
+            },
+            E.Super => {
+                return Expr{ .loc = loc, .data = Data{ .e_super = data } };
+            },
+            E.Null => {
+                return Expr{ .loc = loc, .data = Data{ .e_null = data } };
+            },
+            E.Undefined => {
+                return Expr{ .loc = loc, .data = Data{ .e_undefined = data } };
+            },
+            E.New => {
+                return Expr{ .loc = loc, .data = Data{ .e_new = data } };
+            },
+            E.NewTarget => {
+                return Expr{ .loc = loc, .data = Data{ .e_new_target = data } };
+            },
+            E.ImportMeta => {
+                return Expr{ .loc = loc, .data = Data{ .e_import_meta = data } };
+            },
+            E.Call => {
+                return Expr{ .loc = loc, .data = Data{ .e_call = data } };
+            },
+            E.Dot => {
+                return Expr{ .loc = loc, .data = Data{ .e_dot = data } };
+            },
+            E.Index => {
+                return Expr{ .loc = loc, .data = Data{ .e_index = data } };
+            },
+            E.Arrow => {
+                return Expr{ .loc = loc, .data = Data{ .e_arrow = data } };
+            },
+            E.Identifier => {
+                return Expr{ .loc = loc, .data = Data{ .e_identifier = data } };
+            },
+            E.ImportIdentifier => {
+                return Expr{ .loc = loc, .data = Data{ .e_import_identifier = data } };
+            },
+            E.PrivateIdentifier => {
+                return Expr{ .loc = loc, .data = Data{ .e_private_identifier = data } };
+            },
+            E.JSXElement => {
+                return Expr{ .loc = loc, .data = Data{ .e_jsx_element = data } };
+            },
+            E.Missing => {
+                return Expr{ .loc = loc, .data = Data{ .e_missing = data } };
+            },
+            E.Number => {
+                return Expr{ .loc = loc, .data = Data{ .e_number = data } };
+            },
+            E.BigInt => {
+                return Expr{ .loc = loc, .data = Data{ .e_big_int = data } };
+            },
+            E.Object => {
+                return Expr{ .loc = loc, .data = Data{ .e_object = data } };
+            },
+            E.Spread => {
+                return Expr{ .loc = loc, .data = Data{ .e_spread = data } };
+            },
+            E.String => {
+                return Expr{ .loc = loc, .data = Data{ .e_string = data } };
+            },
+            E.TemplatePart => {
+                return Expr{ .loc = loc, .data = Data{ .e_template_part = data } };
+            },
+            E.Template => {
+                return Expr{ .loc = loc, .data = Data{ .e_template = data } };
+            },
+            E.RegExp => {
+                return Expr{ .loc = loc, .data = Data{ .e_reg_exp = data } };
+            },
+            E.Await => {
+                return Expr{ .loc = loc, .data = Data{ .e_await = data } };
+            },
+            E.Yield => {
+                return Expr{ .loc = loc, .data = Data{ .e_yield = data } };
+            },
+            E.If => {
+                return Expr{ .loc = loc, .data = Data{ .e_if = data } };
+            },
+            E.RequireOrRequireResolve => {
+                return Expr{ .loc = loc, .data = Data{ .e_require_or_require_resolve = data } };
+            },
+            E.Import => {
+                return Expr{ .loc = loc, .data = Data{ .e_import = data } };
+            },
+            else => {
+                @compileError("Invalid type passed to Expr.init");
+            },
+        }
+    }
+
+    pub const Tag = enum {
+        e_array,
+        e_unary,
+        e_binary,
+        e_boolean,
+        e_super,
+        e_null,
+        e_undefined,
+        e_new,
+        e_new_target,
+        e_import_meta,
+        e_call,
+        e_dot,
+        e_index,
+        e_arrow,
+        e_identifier,
+        e_import_identifier,
+        e_private_identifier,
+        e_jsx_element,
+        e_missing,
+        e_number,
+        e_big_int,
+        e_object,
+        e_spread,
+        e_string,
+        e_template_part,
+        e_template,
+        e_reg_exp,
+        e_await,
+        e_yield,
+        e_if,
+        e_require_or_require_resolve,
+        e_import,
+    };
+
+    pub const Data = union(Tag) {
         e_array: E.Array,
         e_unary: E.Unary,
         e_binary: E.Binary,
@@ -1038,7 +1210,7 @@ pub const EnumValue = struct {
 };
 
 pub const S = struct {
-    pub const Block = struct { stmts: []StmtNodeIndex };
+    pub const Block = struct { stmts: StmtNodeList };
 
     pub const Comment = struct { text: string };
 
@@ -1073,7 +1245,7 @@ pub const S = struct {
     pub const Namespace = struct {
         name: LocRef,
         arg: Ref,
-        stmts: []StmtNodeIndex,
+        stmts: StmtNodeList,
         is_export: bool,
     };
 
@@ -1119,10 +1291,10 @@ pub const S = struct {
     };
 
     pub const Try = struct {
-        body: []StmtNodeIndex,
+        body: StmtNodeList,
         body_loc: logger.Log,
-        catch_: ?Catch,
-        finally: ?Finally,
+        catch_: ?Catch = null,
+        finally: ?Finally = null,
     };
 
     pub const Switch = struct {
@@ -1150,8 +1322,8 @@ pub const S = struct {
     // when converting this module to a CommonJS module.
     namespace_ref: Ref, default_name: *LocRef, items: *[]ClauseItem, star_name_loc: *logger.Loc, import_record_index: u32, is_single_line: bool };
 
-    pub const Return = struct {};
-    pub const Throw = struct {};
+    pub const Return = struct { value: ?ExprNodeIndex = null };
+    pub const Throw = struct { value: ExprNodeIndex };
 
     pub const Local = struct {
         kind: Kind = Kind.k_var,
@@ -1180,15 +1352,15 @@ pub const S = struct {
 pub const Catch = struct {
     loc: logger.Loc,
     binding: ?BindingNodeIndex,
-    body: []StmtNodeIndex,
+    body: StmtNodeList,
 };
 
 pub const Finally = struct {
     loc: logger.Loc,
-    stmts: []StmtNodeIndex,
+    stmts: StmtNodeList,
 };
 
-pub const Case = struct { loc: logger.Loc, value: ?ExprNodeIndex, body: []StmtNodeIndex };
+pub const Case = struct { loc: logger.Loc, value: ?ExprNodeIndex, body: StmtNodeList };
 
 pub const Op = struct {
     // If you add a new token, remember to add it to "OpTable" too
@@ -1686,7 +1858,23 @@ pub const Scope = struct {
     }
 };
 
-// test "ast" {
-//     const ast = Ast{};
-// }
+test "Binding.init" {
+    var binding = Binding.init(
+        B.Identifier{ .ref = Ref{ .source_index = 0, .inner_index = 10 } },
+        logger.Loc{ .start = 1 },
+    );
+    std.testing.expect(binding.loc.start == 1);
+    std.testing.expect(@as(Binding.Tag, binding.data) == Binding.Tag.b_identifier);
+}
 
+test "Expr.init" {
+    var ident = Expr.init(E.Identifier{}, logger.Loc{ .start = 100 });
+    var list = [_]Expr{ident};
+    var expr = Expr.init(
+        E.Array{ .items = list[0..] },
+        logger.Loc{ .start = 1 },
+    );
+    std.testing.expect(expr.loc.start == 1);
+    std.testing.expect(@as(Expr.Tag, expr.data) == Expr.Tag.e_array);
+    std.testing.expect(expr.data.e_array.items[0].loc.start == 100);
+}

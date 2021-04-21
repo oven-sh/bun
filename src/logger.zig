@@ -285,7 +285,7 @@ pub const Source = struct {
     }
 };
 
-fn rangeData(source: ?Source, r: Range, text: string) Data {
+pub fn rangeData(source: ?Source, r: Range, text: string) Data {
     return Data{ .text = text, .location = Location.init_or_nil(source, r) };
 }
 

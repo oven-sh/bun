@@ -106,6 +106,7 @@ test "PathName.init" {
     const res = PathName.init(
         &file,
     );
+
     std.testing.expectEqualStrings(res.dir, "/root/directory");
     std.testing.expectEqualStrings(res.base, "file");
     std.testing.expectEqualStrings(res.ext, ".ext");

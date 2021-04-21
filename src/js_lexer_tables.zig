@@ -178,6 +178,18 @@ pub const Keywords = std.ComptimeStringMap(T, .{
     .{ "with", .t_with },
 });
 
+pub const StrictModeReservedWords = std.ComptimeStringMap(Bool, .{
+    .{ "implements", true },
+    .{ "interface", true },
+    .{ "let", true },
+    .{ "package", true },
+    .{ "private", true },
+    .{ "protected", true },
+    .{ "public", true },
+    .{ "static", true },
+    .{ "yield", true },
+});
+
 pub const CodePoint = i22;
 
 pub const TokenEnumType = std.EnumArray(T, []u8);

@@ -24,6 +24,7 @@ const Binding = js_ast.Binding;
 const Symbol = js_ast.Symbol;
 const Level = js_ast.Op.Level;
 const Op = js_ast.Op;
+const Scope = js_ast.Scope;
 const locModuleScope = logger.Loc.Empty;
 
 const s = Stmt.init;
@@ -35,6 +36,10 @@ fn notimpl() noreturn {
 
 fn lexerpanic() noreturn {
     std.debug.panic("LexerPanic", .{});
+}
+
+fn fail() noreturn {
+    std.debug.panic("Something went wrong :cry;", .{});
 }
 
 const TempRef = struct {
@@ -51,6 +56,26 @@ const ThenCatchChain = struct {
     next_target: js_ast.E,
     has_multiple_args: bool = false,
     has_catch: bool = false,
+};
+
+const StrictModeFeature = enum {
+    with_statement,
+    delete_bare_name,
+    for_in_var_init,
+    eval_or_arguments,
+    reserved_word,
+    legacy_octal_literal,
+    legacy_octal_escape,
+    if_else_function_stmt,
+};
+
+const SymbolMergeResult = enum {
+    forbidden,
+    replace_with_new,
+    overwrite_with_new,
+    keep_existing,
+    become_private_get_set_pair,
+    become_private_static_get_set_pair,
 };
 
 const Map = std.AutoHashMap;
@@ -170,6 +195,12 @@ const DeferredErrors = struct {
             to.array_spread_feature = inv;
         }
     }
+};
+
+const ParenExprOpts = struct {
+    async_range: ?logger.Range = null,
+    is_async: bool = false,
+    force_arrow_fn: bool = false,
 };
 
 const ModuleType = enum { esm };
@@ -561,6 +592,80 @@ const P = struct {
                 return "property";
             },
         }
+    }
+
+    pub fn canMergeSymbols(p: *P, scope: *js_ast.Scope, existing: Symbol.Kind, new: Symbol.Kind) SymbolMergeResult {
+        if (existing == .unbound) {
+            return .replace_with_new;
+        }
+
+        // In TypeScript, imports are allowed to silently collide with symbols within
+        // the module. Presumably this is because the imports may be type-only:
+        //
+        //   import {Foo} from 'bar'
+        //   class Foo {}
+        //
+        if (p.options.ts and existing == .import) {
+            return .replace_with_new;
+        }
+
+        // "enum Foo {} enum Foo {}"
+        // "namespace Foo { ... } enum Foo {}"
+        if (new == .ts_enum and (existing == .ts_enum or existing == .ts_namespace)) {
+            return .replace_with_new;
+        }
+
+        // "namespace Foo { ... } namespace Foo { ... }"
+        // "function Foo() {} namespace Foo { ... }"
+        // "enum Foo {} namespace Foo { ... }"
+        if (new == .ts_namespace) {
+            switch (existing) {
+                .ts_namespace, .hoisted_function, .generator_or_async_function, .ts_enum, .class => {
+                    return .keep_existing;
+                },
+                else => {},
+            }
+        }
+
+        // "var foo; var foo;"
+        // "var foo; function foo() {}"
+        // "function foo() {} var foo;"
+        // "function *foo() {} function *foo() {}" but not "{ function *foo() {} function *foo() {} }"
+        if (Symbol.isKindHoistedOrFunction(new) and Symbol.isKindHoistedOrFunction(existing) and (scope.kind == .entry or scope.kind == .function_body ||
+            (Symbol.isKindHoisted(new) and Symbol.isKindHoisted(existing))))
+        {
+            return .keep_existing;
+        }
+
+        // "get #foo() {} set #foo() {}"
+        // "set #foo() {} get #foo() {}"
+        if ((existing == .private_get and new == .private_set) or
+            (existing == .private_set and new == .private_get))
+        {
+            return .become_private_get_set_pair;
+        }
+        if ((existing == .private_static_get and new == .private_static_set) or
+            (existing == .private_static_set and new == .private_static_get))
+        {
+            return .become_private_static_get_set_pair;
+        }
+
+        // "try {} catch (e) { var e }"
+        if (existing == .catch_identifier and new == .hoisted) {
+            return .replace_with_new;
+        }
+
+        // "function() { var arguments }"
+        if (existing == .arguments and new == .hoisted) {
+            return .keep_existing;
+        }
+
+        // "function() { let arguments }"
+        if (existing == .arguments and new != .hoisted) {
+            return .overwrite_with_new;
+        }
+
+        return .forbidden;
     }
 
     pub fn prepareForVisitPass(p: *P) !void {
@@ -1025,7 +1130,8 @@ const P = struct {
                             }
 
                             defaultName = try createDefaultName(p, loc);
-                            var expr = p.parseSuffix(p.parseAsyncPrefixExpr(async_range, Level.comma), Level.comma, null, Level.lowest);
+                            // TODO: here
+                            var expr = try p.parseSuffix(try p.parseAsyncPrefixExpr(async_range, Level.comma), Level.comma, null, Expr.Flags.none);
                             p.lexer.expectOrInsertSemicolon();
                             // this is probably a panic
                             var value = js_ast.StmtOrExpr{ .expr = &expr };
@@ -1074,19 +1180,416 @@ const P = struct {
         return stmts.toOwnedSlice();
     }
 
+    pub fn markStrictModeFeature(p: *P, feature: StrictModeFeature, r: logger.Range, detail: string) !void {
+        var text: string = undefined;
+        var can_be_transformed = false;
+        switch (feature) {
+            .with_statement => {
+                text = "With statements";
+            },
+            .delete_bare_name => {
+                text = "\"delete\" of a bare identifier";
+            },
+            .for_in_var_init => {
+                text = "Variable initializers within for-in loops";
+                can_be_transformed = true;
+            },
+            .eval_or_arguments => {
+                text = try std.fmt.allocPrint(p.allocator, "Declarations with the name {s}", .{detail});
+            },
+            .reserved_word => {
+                text = try std.fmt.allocPrint(p.allocator, "{s} is a reserved word and", .{detail});
+            },
+            .legacy_octal_escape => {
+                text = "Legacy octal literals";
+            },
+            .legacy_octal_escape => {
+                text = "Legacy octal escape sequences";
+            },
+            .if_else_function_stmt => {
+                text = "Function declarations inside if statements";
+            },
+            else => {
+                text = "This feature";
+            },
+        }
+
+        if (p.current_scope) |scope| {
+            if (p.isStrictMode()) {
+                var why: string = "";
+                var notes: []logger.MsgData = undefined;
+                var where: logger.Range = undefined;
+                switch (scope.strict_mode) {
+                    .implicit_strict_mode_import => {
+                        where = p.es6_import_keyword;
+                    },
+                    .implicit_strict_mode_export => {
+                        where = p.es6_export_keyword;
+                    },
+                    .implicit_strict_mode_top_level_await => {
+                        where = p.top_level_await_keyword;
+                    },
+                    .implicit_strict_mode_class => {
+                        why = "All code inside a class is implicitly in strict mode";
+                        where = p.enclosing_class_keyword;
+                    },
+                }
+                if (why.len == 0) {
+                    why = try std.fmt.allocPrint(p.allocator, "This file is implicitly in strict mode because of the \"{s}\" keyword here", p.source.textForRange(where));
+                }
+
+                p.log.addRangeErrorWithNotes(p.source, r, std.fmt.allocPrint(p.allocator, "{s} cannot be used in strict mode", .{text}), []logger.Data{logger.rangeData(p.source, where, why)});
+            } else if (!can_be_transformed and p.isStrictModeOutputFormat()) {
+                p.log.addRangeError(p.source, r, std.fmt.allocPrint(p.allocator, "{s} cannot be used with \"esm\" due to strict mode", .{text}));
+            }
+        }
+    }
+
+    pub fn isStrictMode(p: *P) bool {
+        return p.current_scope.?.strict_mode != .sloppy_mode;
+    }
+
+    pub fn isStrictModeOutputFormat(p: *P) bool {
+        return true;
+    }
+
+    pub fn declareSymbol(p: *P, kind: Symbol.Kind, loc: logger.Loc, name: string) !Ref {
+        // p.checkForNonBMPCodePoint(loc, name)
+
+        // Forbid declaring a symbol with a reserved word in strict mode
+        if (p.isStrictMode() and js_lexer.StrictModeReservedWords.has(name)) {
+            p.markStrictModeFeature(reservedWord, js_lexer.rangeOfIdentifier(p.source, loc), name);
+        }
+
+        // Allocate a new symbol
+        var ref = p.newSymbol(kind, name);
+
+        const scope = p.current_scope orelse unreachable;
+        if (scope.members.get(name)) |existing| {
+            const symbol: Symbol = p.symbols.items[@intCast(usize, existing.ref.inner_index)];
+
+            switch (p.canMergeSymbols(p.current_scope, symbol.kind, kind)) {
+                .forbidden => {
+                    const r = js_lexer.rangeOfIdentifier(p.source.*, loc);
+                    var notes: []logger.Data = undefined;
+                    notes = []logger.Data{logger.rangeData(p.source, r, try std.fmt.allocPrint(p.allocator, "{s} has already been declared", .{name}))};
+                    p.log.addRangeErrorWithNotes(
+                        p.source,
+                        r,
+                        try std.fmt.allocPrint(p.allocator, "{s} was originally declared here", .{name}),
+                    );
+                    return existing.ref;
+                },
+                .keep_existing => {
+                    ref = existing.ref;
+                },
+                .replace_with_new => {
+                    symbol.link = ref;
+                },
+                .become_private_get_set_pair => {
+                    ref = existing.ref;
+                    symbol.kind = .private_get_set_pair;
+                },
+                .become_private_static_get_set_pair => {
+                    ref = existing.ref;
+                    symbol.kind = .private_static_get_set_pair;
+                },
+                .new => {},
+                else => unreachable,
+            }
+        }
+
+        try scope.members.put(name, js_ast.Scope.Member{ .ref = ref, .loc = loc });
+        return ref;
+    }
+
+    pub fn parseFnExpr(p: *P, loc: logger.Loc, is_async: bool, async_range: logger.Range) !ExprNodeIndex {
+        p.lexer.next();
+        const is_generator = p.lexer.token == T.t_asterisk;
+        if (is_generator) {
+            // p.markSyntaxFeature()
+            p.lexer.next();
+        } else if (is_async) {
+            // p.markLoweredSyntaxFeature(compat.AsyncAwait, asyncRange, compat.Generator)
+        }
+
+        var name: ?js_ast.LocRef = null;
+
+        p.pushScopeForParsePass(.function_args, loc);
+        defer p.popScope();
+
+        if (p.lexer.token == .t_identifier) {
+            name = p._(js_ast.LocRef{
+                .loc = loc,
+                .ref = null,
+            });
+
+            if (p.lexer.identifier.len > 0 and !strings.eql(p.lexer.identifier, "arguments")) {
+                name.ref = try p.declareSymbol(.hoisted_function, name.loc, p.lexer.identifier);
+            } else {
+                name.ref = try p.newSymbol(.hoisted_function, p.lexer.identifier);
+            }
+            p.lexer.next();
+        }
+
+        if (p.options.ts) {
+            p.skipTypescriptTypeParameters();
+        }
+
+        var func = p.parseFn(name, FnOrDDataParse{
+            .async_range = async_range,
+            .allow_await = is_async,
+            .allow_yield = is_generator,
+        });
+
+        return _(Expr.init(js_ast.E.Function{
+            .func = func,
+        }, loc));
+    }
+
+    pub fn parseFnBody(p: *P, data: FnOrArrowDataParse) !G.FnBody {
+        var oldFnOrArrowData = p.fn_or_arrow_data_parse;
+        var oldAllowIn = p.allow_in;
+        p.fn_or_arrow_data_parse = data;
+        p.allow_in = true;
+
+        p.pushScopeForParsePass(Scope.Kind.function_body, p.lexer.loc());
+        defer p.popScope();
+
+        p.lexer.expect(.t_open_brace);
+        const stmts = try p.parseStmtsUpTo(.t_close_brace, ParseStatementOptions{});
+        p.lexer.next();
+
+        p.allow_in = oldAllowIn;
+        p.fn_or_arrow_data_parse = oldFnOrArrowData;
+        return G.FnBody{ .loc = loc, .stmts = stmts };
+    }
+
+    pub fn parseArrowBody(p: *P, args: []js_ast.G.Arg, data: FnOrArrowDataParse) !E.Arrow {
+        var arrow_loc = p.lexer.loc();
+
+        // Newlines are not allowed before "=>"
+        if (p.lexer.has_newline_before) {
+            try p.log.addRangeError(p.source, p.lexer.range(), "Unexpected newline before \"=>\"");
+            fail();
+        }
+
+        p.lexer.expect(T.t_equals_greater_than);
+
+        for (args) |arg| {
+            try p.declareBinding(Symbol.Kind.hoisted, arg.binding, ParseStatementOptions{});
+        }
+
+        data.allow_super_call = p.fn_or_arrow_data_parse.allow_super_call;
+        if (p.lexer.token == .t_open_brace) {
+            var body = p.parseFnBody(data);
+            p.after_arrow_body_loc = p.lexer.loc();
+            return p._(E.Arrow{ .args = args, .body = body });
+        }
+
+        p.pushScopeForParsePass(Scope.Kind.function_body, arrow_loc);
+        defer p.popScope();
+
+        var old_fn_or_arrow_data = p.fn_or_arrow_data_parse;
+        p.fn_or_arrow_data_parse = data;
+        var expr = try p.parseExpr(Level.comma);
+        p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
+        return E.Arrow{ .args = args, .prefer_expr = true, .body = G.FnBody{ .loc = arrow_loc, .stmts = []StmtNodeIndex{p._(Stmt.init(S.Return{ .value = expr }, arrow_loc))} } };
+    }
+
+    pub fn declareBinding(p: *P, kind: Symbol.Kind, binding: BindingNodeIndex, opts: ParseStatementOptions) !void {
+        switch (binding.data) {
+            .b_identifier, .b_missing => |b| {
+                if (!opts.is_typescript_declare || (opts.is_namespace_scope and opts.is_export)) {
+                    b.ref = p.declareSymbol(kind, binding.loc, p.loadNameFromRef(b.ref));
+                }
+            },
+
+            .b_array => |b| {
+                for (b.items) |item| {
+                    p.declareBinding(kind, item.binding, opts);
+                }
+            },
+
+            .b_object => |b| {
+                for (b.properties) |prop| {
+                    p.declareBinding(kind, prop.value, opts);
+                }
+            },
+
+            else => {
+                @compileError("Missing binding type");
+            },
+        }
+    }
+
+    // Saves us from allocating a slice to the heap
+    pub fn parseArrowBodySingleArg(p: *P, arg: G.Arg, data: FnOrArrowDataParse) !E.Arrow {
+        var args: []G.Arg = []G.Arg{arg};
+        return p.parseArrowBody(args[0..], data);
+    }
+
+    // This is where the allocate memory to the heap for AST objects.
+    // This is a short name to keep the code more readable.
+    // It also swallows errors, but I think that's correct here.
+    // We can handle errors via the log.
+    // We'll have to deal with @wasmHeapGrow or whatever that thing is.
+    pub fn __(self: *P, comptime ast_object_type: type, instance: anytype) callconv(.Inline) *ast_object_type {
+        var obj = self.allocator.create(ast_object_type) catch unreachable;
+        obj = instance;
+        return obj;
+    }
+    pub fn _(self: *P, kind: anytype) callconv(.Inline) *@TypeOf(kind) {
+        return self.__(@TypeOf(kind), kind);
+    }
+
+    // The name is temporarily stored in the ref until the scope traversal pass
+    // happens, at which point a symbol will be generated and the ref will point
+    // to the symbol instead.
+    //
+    // The scope traversal pass will reconstruct the name using one of two methods.
+    // In the common case, the name is a slice of the file itself. In that case we
+    // can just store the slice and not need to allocate any extra memory. In the
+    // rare case, the name is an externally-allocated string. In that case we store
+    // an index to the string and use that index during the scope traversal pass.
+    pub fn storeNameInRef(p: *P, name: string) !js_ast.Ref {
+        // jarred: honestly, this is kind of magic to me
+        // but I think I think I understand it.
+        // the strings are slices.
+        // "name" is just a different place in p.source.contents's buffer
+        // Instead of copying a shit ton of strings everywhere
+        // we can just say "yeah this is really over here at inner_index"
+        // .source_index being null is used to identify was this allocated or is just in the orignial thing.
+        // you could never do this in JavaScript!!
+        const ptr0 = @ptrToInt(name);
+        const ptr1 = @ptrToInt(p.source.contents);
+
+        // Is the data in "name" a subset of the data in "p.source.Contents"?
+        if (ptr0 >= ptr1 and ptr0 + name.len < p.source.contents.len) {
+            std.debug.print("storeNameInRef fast path");
+            // The name is a slice of the file contents, so we can just reference it by
+            // length and don't have to allocate anything. This is the common case.
+            //
+            // It's stored as a negative value so we'll crash if we try to use it. That
+            // way we'll catch cases where we've forgotten to call loadNameFromRef().
+            // The length is the negative part because we know it's non-zero.
+            return js_ast.Ref{ .source_index = ptr1, .inner_index = (name.len + ptr0) };
+        } else {
+            std.debug.print("storeNameInRef slow path");
+            // The name is some memory allocated elsewhere. This is either an inline
+            // string constant in the parser or an identifier with escape sequences
+            // in the source code, which is very unusual. Stash it away for later.
+            // This uses allocations but it should hopefully be very uncommon.
+
+            // allocated_names is lazily allocated
+            if (p.allocated_names.capacity > 0) {
+                const inner_index = p.allocated_names.items.len;
+                try p.allocated_names.append(name);
+                return js_ast.Ref{ .source_index = 0x80000000, .inner_index = inner_index };
+            } else {
+                try p.allocated_names.initCapacity(p.allocator, 1);
+                p.allocated_names.appendAssumeCapacity(name);
+                return js_ast.Ref{ .source_index = 0x80000000, .inner_index = 0 };
+            }
+
+            // p.allocatedNames = append(p.allocatedNames, name)
+            // return ref
+        }
+    }
+
+    pub fn loadNameFromRef(p: *P, ref: js_ast.Ref) string {
+        if (ref.source_index == 0x80000000) {
+            return (p.allocated_names orelse unreachable)[ref.inner_index];
+        } else if (ref.source_index) |source_index| {
+            if (std.builtin.mode != std.builtin.Mode.ReleaseFast) {
+                std.debug.assert(ref.inner_index - source_index > 0);
+            }
+
+            return p.source.contents[ref.inner_index .. ref.inner_index - source_index];
+        } else {
+            std.debug.panic("Internal error: invalid symbol reference.", .{ref});
+            return p.source.contents[ref.inner_index .. ref.inner_index - source_index];
+        }
+    }
+
     // This parses an expression. This assumes we've already parsed the "async"
     // keyword and are currently looking at the following token.
-    pub fn parseAsyncPrefixExpr(p: *P, async_range: logger.Range, level: Level) Expr {
+    pub fn parseAsyncPrefixExpr(p: *P, async_range: logger.Range, level: Level) !Expr {
         // "async function() {}"
         if (!p.lexer.has_newline_before and p.lexer.token == T.t_function) {
-            return p.parseFnExpr(async_range.loc, true, async_range);
+            return try p.parseFnExpr(async_range.loc, true, async_range);
         }
 
         // Check the precedence level to avoid parsing an arrow function in
         // "new async () => {}". This also avoids parsing "new async()" as
         // "new (async())()" instead.
-        if (!p.lexer.has_newline_before and level < Level.member) {}
+        if (!p.lexer.has_newline_before and level < Level.member) {
+            switch (p.lexer.token) {
+                // "async => {}"
+                .t_equals_greater_than => {
+                    const arg = G.Arg{ .binding = p._(Binding.init(
+                        B.Identifier{
+                            .ref = p.storeNameInRef("async"),
+                        },
+                        async_range.loc,
+                    )) };
+                    p.pushScopeForParsePass(.function_args, async_range.loc);
+                    defer p.popScope();
+                    var arrowBody = try p.parseArrowBodySingleArg(arg, FnOrArrowDataParse{});
+                    return Expr.init(arrowBody, async_range.loc);
+                },
+                // "async x => {}"
+                .t_identifier => {
+                    // p.markLoweredSyntaxFeature();
+                    const ref = p.storeNameInRef(p.lexer.identifier);
+                    var arg = G.Arg{ .binding = p._(Binding.init(B.Identifier{
+                        .ref = ref,
+                    }, p.lexer.loc())) };
+                    p.lexer.next();
+
+                    p.pushScopeForParsePass(.function_args, async_range.loc);
+                    defer p.popScope();
+
+                    var arrowBody = try p.parseArrowBodySingleArg(arg, FnOrArrowDataParse{
+                        .allow_await = true,
+                    });
+                    arrowBody.is_async = true;
+                    return Expr.init(arrowBody, async_range.loc);
+                },
+
+                // "async()"
+                // "async () => {}"
+                .t_open_paren => {
+                    p.lexer.next();
+                    return p.parseParenExpr(async_range.loc, ParenExprOptions{ .is_async = true, .async_range = asyncRange });
+                },
+
+                // "async<T>()"
+                // "async <T>() => {}"
+                .t_less_than => {
+                    if (p.options.ts and p.trySkipTypeScriptTypeParametersThenOpenParenWithBacktracking) {
+                        p.lexer.next();
+                        return p.parseParenExpr(async_range.loc, ParenExprOptions{ .is_async = true, .async_range = asyncRange });
+                    }
+                },
+
+                else => {},
+            }
+        }
+
+        // "async"
+        // "async + 1"
+        return Expr.init(
+            E.Identifier{ .ref = p.storeNameInRef("async") },
+            async_range.loc,
+        );
     }
+
+    pub fn trySkipTypeScriptTypeParametersThenOpenParenWithBacktracking() void {
+        notimpl();
+    }
+
+    pub fn parseParenExpr(p: *P, loc: logger.Loc, opts: ParenExprOpts) !Expr {}
 
     pub fn popScope(p: *P) void {
         const current_scope = p.current_scope orelse unreachable;

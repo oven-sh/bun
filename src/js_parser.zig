@@ -21,10 +21,20 @@ const E = js_ast.E;
 const Stmt = js_ast.Stmt;
 const Expr = js_ast.Expr;
 const Binding = js_ast.Binding;
+const Symbol = js_ast.Symbol;
+const Level = js_ast.Op.Level;
+const Op = js_ast.Op;
 const locModuleScope = logger.Loc.Empty;
 
-fn notimpl() void {
+const s = Stmt.init;
+const e = Expr.init;
+
+fn notimpl() noreturn {
     std.debug.panic("Not implemented yet!!", .{});
+}
+
+fn lexerpanic() noreturn {
+    std.debug.panic("LexerPanic", .{});
 }
 
 const TempRef = struct {
@@ -46,6 +56,7 @@ const ThenCatchChain = struct {
 const Map = std.AutoHashMap;
 
 const List = std.ArrayList;
+const StmtList = List(Stmt);
 
 const SymbolUseMap = Map(js_ast.Ref, js_ast.Symbol.Use);
 const StringRefMap = std.StringHashMap(js_ast.Ref);
@@ -133,6 +144,32 @@ const FnOnlyDataVisit = struct {
     // or a class declaration). That means the top-level module scope "this" value
     // has been shadowed and is now inaccessible.
     is_this_nested: bool = false,
+};
+
+// Due to ES6 destructuring patterns, there are many cases where it's
+// impossible to distinguish between an array or object literal and a
+// destructuring assignment until we hit the "=" operator later on.
+// This object defers errors about being in one state or the other
+// until we discover which state we're in.
+const DeferredErrors = struct {
+    // These are errors for expressions
+    invalid_expr_default_value: ?logger.Range = null,
+    invalid_expr_after_question: ?logger.Range = null,
+    array_spread_feature: ?logger.Range = null,
+
+    pub fn mergeInto(self: *DeferredErrors, to: *DeferredErrors) void {
+        if (self.invalid_expr_default_value) |inv| {
+            to.invalid_expr_default_value = inv;
+        }
+
+        if (self.invalid_expr_after_question) |inv| {
+            to.invalid_expr_after_question = inv;
+        }
+
+        if (self.array_spread_feature) |inv| {
+            to.array_spread_feature = inv;
+        }
+    }
 };
 
 const ModuleType = enum { esm };
@@ -630,7 +667,21 @@ const P = struct {
         try p.log.addRangeError(p.source, p.lexer.range(), "Cannot use a declaration in a single-statement context");
     }
 
-    pub fn parseFnStmt(p: *P, loc: logger.Loc, opts: *ParseStatementOptions, asyncRange: ?logger.Range) !NodeIndex {
+    pub fn logExprErrors(p: *P, errors: *DeferredErrors) void {
+        if (errors.invalid_expr_default_value) |r| {
+            p.log.addRangeError(p.source, err, "Unexpected \"=\"", .{});
+        }
+
+        if (errors.invalid_expr_after_question) |r| {
+            p.log.addRangeError(p.source, r, "Unexpected %q", .{p.source.contents[r.loc.start..r.loc.end()]});
+        }
+
+        // if (errors.array_spread_feature) |err| {
+        //     p.markSyntaxFeature(compat.ArraySpread, errors.arraySpreadFeature)
+        // }
+    }
+
+    pub fn parseFnStmt(p: *P, loc: logger.Loc, opts: *ParseStatementOptions, asyncRange: ?logger.Range) !Stmt {
         const isGenerator = p.lexer.token == T.t_asterisk;
         const isAsync = asyncRange != null;
 
@@ -696,7 +747,11 @@ const P = struct {
         if (opts.is_typescript_declare or func.body == null) {
             p.popAndDiscardScope(scopeIndex);
         }
-        return 0;
+
+        return Stmt.init(S.Function{
+            .func = func,
+            .is_export = opts.is_export,
+        }, func.open_parens_loc);
     }
 
     pub fn popAndDiscardScope(p: *P, scope_index: usize) void {
@@ -782,28 +837,56 @@ const P = struct {
     // TODO:
     pub fn parseTypeScriptDecorators(p: *P) []ExprNodeIndex {
         notimpl();
-        return undefined;
     }
 
     // TODO:
     pub fn skipTypescriptType(p: *P, level: js_ast.Op.Level) void {
         notimpl();
-        return undefined;
     }
 
     // TODO:
     pub fn skipTypescriptTypeParameters(p: *P) void {
         notimpl();
-        return undefined;
     }
 
-    pub fn parseStmt(p: *P, opts: *ParseStatementOptions) !NodeIndex {
+    fn createDefaultName(p: *P, loc: logger.Loc) !js_ast.LocRef {
+        var identifier = try std.fmt.allocPrint(p.allocator, "{s}_default", .{p.source.identifier_name});
+
+        const name = js_ast.LocRef{ .loc = loc, .ref = try p.newSymbol(Symbol.Kind.other, identifier) };
+
+        var scope = p.current_scope orelse unreachable;
+
+        try scope.generated.append(name.ref orelse unreachable);
+
+        return name;
+    }
+
+    pub fn newSymbol(p: *P, kind: Symbol.Kind, identifier: string) !js_ast.Ref {
+        var ref = js_ast.Ref{
+            .source_index = p.source.index,
+            .inner_index = @intCast(u32, p.symbols.items.len),
+        };
+
+        try p.symbols.append(Symbol{
+            .kind = kind,
+            .original_name = identifier,
+            .link = null,
+        });
+
+        if (p.options.ts) {
+            try p.ts_use_counts.append(0);
+        }
+
+        return ref;
+    }
+
+    pub fn parseStmt(p: *P, opts: *ParseStatementOptions) !Stmt {
         var loc = p.lexer.loc();
 
         switch (p.lexer.token) {
             js_lexer.T.t_semicolon => {
                 p.lexer.next();
-                return p.data.add(js_ast.Stmt.init(js_ast.S.Empty{}, loc));
+                return Stmt.empty();
             },
 
             js_lexer.T.t_export => {
@@ -864,7 +947,7 @@ const P = struct {
                             p.lexer.expect(T.t_identifier);
                             p.lexer.expectOrInsertSemicolon();
 
-                            return p.data.add(Stmt.init(S.TypeScript{}, loc));
+                            return Stmt.init(S.TypeScript{}, loc);
                         }
 
                         if (p.lexer.isContextualKeyword("async")) {
@@ -876,29 +959,95 @@ const P = struct {
 
                             p.lexer.expect(T.t_function);
                             opts.is_export = true;
-                            return p.parseFnStmt(loc, opts, asyncRange);
+                            return try p.parseFnStmt(loc, opts, asyncRange);
                         }
+
+                        if (p.options.ts) {
+                            notimpl();
+
+                            // switch (p.lexer.identifier) {
+                            //     "type" => {
+                            //         // "export type foo = ..."
+                            //         const typeRange = p.lexer.range();
+                            //         if (p.lexer.has_newline_before) {
+                            //             p.lexer.addError(p.source, typeRange.end(), "Unexpected newline after \"type\"");
+                            //             return;
+                            //         }
+
+                            //     },
+                            // }
+                        }
+
+                        p.lexer.unexpected();
+                        lexerpanic();
                     },
 
+                    T.t_default => {
+                        if (!opts.is_module_scope and (!opts.is_namespace_scope or !opts.is_typescript_declare)) {
+                            p.lexer.unexpected();
+                            lexerpanic();
+                        }
+
+                        var defaultLoc = p.lexer.loc();
+                        p.lexer.next();
+
+                        // TypeScript decorators only work on class declarations
+                        // "@decorator export default class Foo {}"
+                        // "@decorator export default abstract class Foo {}"
+                        if (opts.ts_decorators != null and p.lexer.token != T.t_class and !p.lexer.isContextualKeyword("abstract")) {
+                            p.lexer.expected(T.t_class);
+                        }
+
+                        if (p.lexer.isContextualKeyword("async")) {
+                            var async_range = p.lexer.range();
+                            p.lexer.next();
+                            var defaultName: js_ast.LocRef = undefined;
+                            if (p.lexer.token == T.t_function and !p.lexer.has_newline_before) {
+                                p.lexer.next();
+                                var stmtOpts = ParseStatementOptions{
+                                    .is_name_optional = true,
+                                    .lexical_decl = .allow_all,
+                                };
+                                var stmt = try p.parseFnStmt(loc, &stmtOpts, async_range);
+                                if (@as(Stmt.Tag, stmt.data) == .s_type_script) {
+                                    // This was just a type annotation
+                                    return stmt;
+                                }
+
+                                if (stmt.data.s_function.func.name) |name| {
+                                    defaultName = js_ast.LocRef{ .loc = defaultLoc, .ref = name.ref };
+                                } else {
+                                    defaultName = try p.createDefaultName(defaultLoc);
+                                }
+                                // this is probably a panic
+                                var value = js_ast.StmtOrExpr{ .stmt = &stmt };
+                                return s(S.ExportDefault{ .default_name = defaultName, .value = value }, loc);
+                            }
+
+                            defaultName = try createDefaultName(p, loc);
+                            var expr = p.parseSuffix(p.parseAsyncPrefixExpr(async_range, Level.comma), Level.comma, null, Level.lowest);
+                            p.lexer.expectOrInsertSemicolon();
+                            // this is probably a panic
+                            var value = js_ast.StmtOrExpr{ .expr = &expr };
+                            return s(S.ExportDefault{ .default_name = defaultName, .value = value }, loc);
+                        }
+                    },
                     else => {
                         notimpl();
-                        return @intCast(NodeIndex, 0);
                     },
                 }
             },
 
             else => {
                 notimpl();
-                return @intCast(NodeIndex, 0);
             },
         }
 
-        return @intCast(NodeIndex, 0);
+        return js_ast.Stmt.empty();
     }
 
-    pub fn parseStmtsUpTo(p: *P, eend: js_lexer.T, opts: *ParseStatementOptions) !void {
-        var data = p.data;
-        try data.stmt_list.ensureCapacity(1);
+    pub fn parseStmtsUpTo(p: *P, eend: js_lexer.T, opts: *ParseStatementOptions) ![]Stmt {
+        var stmts = try StmtList.initCapacity(p.allocator, 1);
 
         var returnWithoutSemicolonStart: i32 = -1;
         opts.lexical_decl = .allow_all;
@@ -907,7 +1056,7 @@ const P = struct {
         run: while (true) {
             if (p.lexer.comments_to_preserve_before) |comments| {
                 for (comments) |comment| {
-                    try data.add_(Stmt.init(S.Comment{
+                    try stmts.append(Stmt.init(S.Comment{
                         .text = comment.text,
                     }, p.lexer.loc()));
                 }
@@ -917,10 +1066,87 @@ const P = struct {
                 break :run;
             }
 
-            const node_index = p.parseStmt(opts) catch break :run;
+            const stmt = p.parseStmt(opts) catch break :run;
 
-            var stmt = p.data.stmt(node_index);
+            try stmts.append(stmt);
         }
+
+        return stmts.toOwnedSlice();
+    }
+
+    // This parses an expression. This assumes we've already parsed the "async"
+    // keyword and are currently looking at the following token.
+    pub fn parseAsyncPrefixExpr(p: *P, async_range: logger.Range, level: Level) Expr {
+        // "async function() {}"
+        if (!p.lexer.has_newline_before and p.lexer.token == T.t_function) {
+            return p.parseFnExpr(async_range.loc, true, async_range);
+        }
+
+        // Check the precedence level to avoid parsing an arrow function in
+        // "new async () => {}". This also avoids parsing "new async()" as
+        // "new (async())()" instead.
+        if (!p.lexer.has_newline_before and level < Level.member) {}
+    }
+
+    pub fn popScope(p: *P) void {
+        const current_scope = p.current_scope orelse unreachable;
+        // We cannot rename anything inside a scope containing a direct eval() call
+        if (current_scope.contains_direct_eval) {
+            for (current_scope.members) |member| {
+                // Using direct eval when bundling is not a good idea in general because
+                // esbuild must assume that it can potentially reach anything in any of
+                // the containing scopes. We try to make it work but this isn't possible
+                // in some cases.
+                //
+                // For example, symbols imported using an ESM import are a live binding
+                // to the underlying symbol in another file. This is emulated during
+                // scope hoisting by erasing the ESM import and just referencing the
+                // underlying symbol in the flattened bundle directly. However, that
+                // symbol may have a different name which could break uses of direct
+                // eval:
+                //
+                //   // Before bundling
+                //   import { foo as bar } from './foo.js'
+                //   console.log(eval('bar'))
+                //
+                //   // After bundling
+                //   let foo = 123 // The contents of "foo.js"
+                //   console.log(eval('bar'))
+                //
+                // There really isn't any way to fix this. You can't just rename "foo" to
+                // "bar" in the example above because there may be a third bundled file
+                // that also contains direct eval and imports the same symbol with a
+                // different conflicting import alias. And there is no way to store a
+                // live binding to the underlying symbol in a variable with the import's
+                // name so that direct eval can access it:
+                //
+                //   // After bundling
+                //   let foo = 123 // The contents of "foo.js"
+                //   const bar = /* cannot express a live binding to "foo" here */
+                //   console.log(eval('bar'))
+                //
+                // Technically a "with" statement could potentially make this work (with
+                // a big hit to performance), but they are deprecated and are unavailable
+                // in strict mode. This is a non-starter since all ESM code is strict mode.
+                //
+                // So while we still try to obey the requirement that all symbol names are
+                // pinned when direct eval is present, we make an exception for top-level
+                // symbols in an ESM file when bundling is enabled. We make no guarantee
+                // that "eval" will be able to reach these symbols and we allow them to be
+                // renamed or removed by tree shaking.
+                // if (p.currentScope.parent == null and p.has_es_module_syntax) {
+                //     continue;
+                // }
+
+                p.symbols.items[member.ref.inner_index].must_not_be_renamed = true;
+            }
+        }
+
+        p.current_scope = current_scope.parent;
+    }
+
+    pub fn parseSuffix(p: *P, left: Expr, level: Level, errors: ?DeferredErrors, flags: Expr.Flags) Expr {
+        var loc = p.lexer.loc();
     }
 
     pub fn init(allocator: *std.mem.Allocator, log: logger.Log, source: logger.Source, lexer: js_lexer.Lexer, opts: Parser.Options) !*P {

@@ -2,6 +2,8 @@ const std = @import("std");
 const lex = @import("js_lexer.zig");
 const logger = @import("logger.zig");
 const alloc = @import("alloc.zig");
+const options = @import("options.zig");
+const js_parser = @import("js_parser.zig");
 
 pub fn main() anyerror!void {
     try alloc.setup(std.heap.page_allocator);
@@ -15,17 +17,11 @@ pub fn main() anyerror!void {
     // // }
 
     // // alloc
-    const msgs = std.ArrayList(logger.Msg).init(alloc.dynamic);
-    const log = logger.Log{
-        .msgs = msgs,
-    };
 
-    const source = logger.Source.initPathString("index.js", "for (let i = 0; i < 100; i++) { console.log('hi') aposkdpoaskdpokasdpokasdpokasdpokasdpoaksdpoaksdpoaskdpoaksdpoaksdpoaskdpoaskdpoasdk; }", alloc.dynamic);
+    const entryPointName = "/var/foo/index.js";
+    const code = "for (let i = 0; i < 100; i++) { console.log('hi') aposkdpoaskdpokasdpokasdpokasdpokasdpoaksdpoaksdpoaskdpoaksdpoaksdpoaskdpoaskdpoasdk; ";
+    var parser = try js_parser.Parser.init(try options.TransformOptions.initUncached(alloc.dynamic, entryPointName, code), alloc.dynamic);
+    var res = try parser.parse();
 
-    var lexer = try lex.Lexer.init(log, source, alloc.dynamic);
-    lexer.next();
-    while (lexer.token != lex.T.t_end_of_file) {
-        lexer.next();
-    }
-    const v = try std.io.getStdOut().write("Finished");
+    std.debug.print("{s}", .{res});
 }

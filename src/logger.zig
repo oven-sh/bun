@@ -98,6 +98,10 @@ pub const Range = struct {
     loc: Loc = Loc.Empty,
     len: i32 = 0,
     pub const None = Range{ .loc = Loc.Empty, .len = 0 };
+
+    pub fn end(self: *Range) Loc {
+        return Loc{ .start = self.start + self.len };
+    }
 };
 
 pub const Log = struct {

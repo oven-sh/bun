@@ -6,9 +6,25 @@ usingnamespace @import("ast/base.zig");
 
 const ImportRecord = @import("import_record.zig").ImportRecord;
 
-pub const BindingNodeIndex = NodeIndex;
-pub const StmtNodeIndex = NodeIndex;
-pub const ExprNodeIndex = NodeIndex;
+// I REALLY DID NOT WANT THESE TO BE POINTERS
+// Unfortunately, this appears to be a language limitation of Zig.
+// The problem was this:
+// - Nesting any of Expr, Binding, or Stmt cause a cyclic dependency
+//
+// If the performance seems inadaquete with pointers, we can switch away from
+// what esbuild is doing. esbuild seems to mostly copy from Go's AST source
+// Though it's also possible that `Stmt` and `Expr` are just really common words for parsing languages.
+// One idea was to use a set of three arrays
+// - stmt
+// - binding
+// - expr
+// then, instead of pointers, it would store an index relative to the root
+// these numbers could l    ikely be u16, so half the bits.
+// That approach really complicates stuff though
+// If it was easy to do "builders" in Zig then I think it would work.
+pub const BindingNodeIndex = *Binding;
+pub const StmtNodeIndex = *Stmt;
+pub const ExprNodeIndex = *Expr;
 
 // TODO: figure out if we actually need this
 // -- original comment --
@@ -200,7 +216,7 @@ pub const Symbol = struct {
     // mode, re-exported symbols are collapsed using MergeSymbols() and renamed
     // symbols from other files that end up at this symbol must be able to tell
     // if it has a namespace alias.
-    namespace_alias: *G.NamespaceAlias,
+    namespace_alias: ?G.NamespaceAlias = null,
 
     // Used by the parser for single pass parsing. Symbols that have been merged
     // form a linked-list where the last link is the symbol to use. This link is
@@ -216,7 +232,7 @@ pub const Symbol = struct {
     use_count_estimate: u32 = 0,
 
     // This is for generating cross-chunk imports and exports for code splitting.
-    chunk_index: ?u32,
+    chunk_index: ?u32 = null,
 
     // This is used for minification. Symbols that are declared in sibling scopes
     // can share a name. A good heuristic (from Google Closure Compiler) is to
@@ -229,14 +245,14 @@ pub const Symbol = struct {
     //
     // The parser fills this in for symbols inside nested scopes. There are three
     // slot namespaces: regular symbols, label symbols, and private symbols.
-    nested_scope_slot: ?u32,
+    nested_scope_slot: ?u32 = null,
 
     kind: Kind,
 
     // Certain symbols must not be renamed or minified. For example, the
     // "arguments" variable is declared by the runtime for every function.
     // Renaming can also break any identifier used inside a "with" statement.
-    must_not_be_renamed: bool,
+    must_not_be_renamed: bool = false,
 
     // We automatically generate import items for property accesses off of
     // namespace imports. This lets us remove the expensive namespace imports
@@ -255,7 +271,7 @@ pub const Symbol = struct {
     // compile-time error like we do for real import items. This status lets us
     // avoid this. We also need to be able to replace such import items with
     // undefined, which this status is also used for.
-    import_item_status: ImportItemStatus,
+    import_item_status: ImportItemStatus = ImportItemStatus.none,
 
     // Sometimes we lower private symbols even if they are supported. For example,
     // consider the following TypeScript code:
@@ -683,6 +699,9 @@ pub const E = struct {
 pub const Stmt = struct {
     loc: logger.Loc,
     data: Data,
+    pub fn empty() Stmt {
+        return Stmt.init(S.Empty{}, logger.Loc.Empty);
+    }
 
     pub fn init(t: anytype, loc: logger.Loc) Stmt {
         switch (@TypeOf(t)) {
@@ -860,7 +879,38 @@ pub const Stmt = struct {
         }
     }
 
-    pub const Data = union(enum) {
+    pub const Tag = enum {
+        s_block,
+        s_comment,
+        s_directive,
+        s_export_clause,
+        s_empty,
+        s_type_script,
+        s_debugger,
+        s_export_from,
+        s_export_default,
+        s_enum,
+        s_namespace,
+        s_function,
+        s_class,
+        s_if,
+        s_for,
+        s_for_in,
+        s_for_of,
+        s_do_while,
+        s_while,
+        s_with,
+        s_try,
+        s_switch,
+        s_import,
+        s_return,
+        s_throw,
+        s_local,
+        s_break,
+        s_continue,
+    };
+
+    pub const Data = union(Tag) {
         s_block: S.Block,
         s_comment: S.Comment,
         s_directive: S.Directive,
@@ -910,6 +960,8 @@ pub const Stmt = struct {
 pub const Expr = struct {
     loc: logger.Loc,
     data: Data,
+
+    pub const Flags = enum { none, ts_decorator };
 
     pub const Data = union(enum) {
         e_array: E.Array,
@@ -1008,9 +1060,8 @@ pub const S = struct {
         is_single_line: bool,
     };
 
-    pub const ExportDefault = struct {
-        default_name: LocRef, // value may be a SFunction or SClass
-    };
+    pub const ExportDefault = struct { default_name: LocRef, // value may be a SFunction or SClass
+    value: StmtOrExpr };
 
     pub const Enum = struct {
         name: LocRef,
@@ -1451,26 +1502,27 @@ pub const AstData = struct {
     }
 
     pub fn add(self: *AstData, t: anytype) !NodeIndex {
-        return switch (@TypeOf(t)) {
-            Stmt => {
-                var len = self.stmt_list.items.len;
-                try self.stmt_list.append(t);
-                return @intCast(StmtNodeIndex, len);
-            },
-            Expr => {
-                var len = self.expr_list.items.len;
-                try self.expr_list.append(t);
-                return @intCast(ExprNodeIndex, len);
-            },
-            Binding => {
-                var len = self.binding_list.items.len;
-                try self.binding_list.append(t);
-                return @intCast(BindingNodeIndex, len);
-            },
-            else => {
-                @compileError("Invalid type passed to AstData.add. Expected Stmt, Expr, or Binding.");
-            },
-        };
+        return &t;
+        // return switch (@TypeOf(t)) {
+        //     Stmt => {
+        //         var len = self.stmt_list.items.len;
+        //         try self.stmt_list.append(t);
+        //         return @intCast(StmtNodeIndex, len);
+        //     },
+        //     Expr => {
+        //         var len = self.expr_list.items.len;
+        //         try self.expr_list.append(t);
+        //         return @intCast(ExprNodeIndex, len);
+        //     },
+        //     Binding => {
+        //         var len = self.binding_list.items.len;
+        //         try self.binding_list.append(t);
+        //         return @intCast(BindingNodeIndex, len);
+        //     },
+        //     else => {
+        //         @compileError("Invalid type passed to AstData.add. Expected Stmt, Expr, or Binding.");
+        //     },
+        // };
     }
 };
 
@@ -1584,7 +1636,7 @@ pub const Scope = struct {
     parent: ?*Scope,
     children: std.ArrayList(*Scope),
     members: std.StringHashMap(Member),
-    generated: ?[]Ref = null,
+    generated: std.ArrayList(Ref),
 
     // This is used to store the ref of the label symbol for ScopeLabel scopes.
     label_ref: ?Ref = null,

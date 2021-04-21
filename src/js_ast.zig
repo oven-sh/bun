@@ -594,7 +594,7 @@ pub const E = struct {
         prefer_expr: bool = false, // Use shorthand if true and "Body" is a single return statement
     };
 
-    pub const Function = Fn;
+    pub const Function = struct { func: G.Fn };
 
     pub const Identifier = struct {
         ref: Ref = Ref.None,
@@ -695,7 +695,9 @@ pub const E = struct {
         value: string,
     };
 
-    pub const Class = G.Class;
+    pub const Class = struct {
+        class: G.Class,
+    };
 
     pub const Await = struct { value: ExprNodeIndex };
 
@@ -732,6 +734,7 @@ pub const E = struct {
 pub const Stmt = struct {
     loc: logger.Loc,
     data: Data,
+
     pub fn empty() Stmt {
         return Stmt.init(S.Empty{}, logger.Loc.Empty);
     }
@@ -1094,6 +1097,9 @@ pub const Expr = struct {
             E.Import => {
                 return Expr{ .loc = loc, .data = Data{ .e_import = data } };
             },
+            E.Function => {
+                return Expr{ .loc = loc, .data = Data{ .e_function = data } };
+            },
             else => {
                 @compileError("Invalid type passed to Expr.init");
             },
@@ -1109,6 +1115,7 @@ pub const Expr = struct {
         e_null,
         e_undefined,
         e_new,
+        e_function,
         e_new_target,
         e_import_meta,
         e_call,
@@ -1145,6 +1152,7 @@ pub const Expr = struct {
         e_undefined: E.Undefined,
         e_new: E.New,
         e_new_target: E.NewTarget,
+        e_function: E.Function,
         e_import_meta: E.ImportMeta,
         e_call: E.Call,
         e_dot: E.Dot,
@@ -1431,7 +1439,7 @@ pub const Op = struct {
         bin_logical_and_assign,
     };
 
-    pub const Level = enum {
+    pub const Level = enum(u8) {
         lowest,
         comma,
         spread,
@@ -1455,6 +1463,21 @@ pub const Op = struct {
         new,
         call,
         member,
+        pub fn lt(self: Level, b: Level) callconv(.Inline) bool {
+            return @enumToInt(self) < @enumToInt(b);
+        }
+        pub fn gt(self: Level, b: Level) callconv(.Inline) bool {
+            return @enumToInt(self) > @enumToInt(b);
+        }
+        pub fn gte(self: Level, b: Level) callconv(.Inline) bool {
+            return @enumToInt(self) >= @enumToInt(b);
+        }
+        pub fn lte(self: Level, b: Level) callconv(.Inline) bool {
+            return @enumToInt(self) <= @enumToInt(b);
+        }
+        pub fn eql(self: Level, b: Level) callconv(.Inline) bool {
+            return @enumToInt(self) == @enumToInt(b);
+        }
     };
 
     text: string,
@@ -1868,9 +1891,9 @@ test "Binding.init" {
 }
 
 test "Expr.init" {
-    var ident = Expr.init(E.Identifier{}, logger.Loc{ .start = 100 });
-    var list = [_]Expr{ident};
-    var expr = Expr.init(
+    const ident = Expr.init(E.Identifier{}, logger.Loc{ .start = 100 });
+    const list = [_]Expr{ident};
+    const expr = Expr.init(
         E.Array{ .items = list[0..] },
         logger.Loc{ .start = 1 },
     );

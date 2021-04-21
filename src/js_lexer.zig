@@ -18,6 +18,7 @@ pub const CodePoint = tables.CodePoint;
 pub const Keywords = tables.Keywords;
 pub const tokenToString = tables.tokenToString;
 pub const jsxEntity = tables.jsxEntity;
+pub const StrictModeReservedWords = tables.StrictModeReservedWords;
 
 // TODO: JSON
 const IS_JSON_FILE = false;
@@ -1179,12 +1180,13 @@ fn isWhitespace(codepoint: CodePoint) bool {
 // this fn is a stub!
 pub fn rangeOfIdentifier(source: *Source, loc: logger.Loc) logger.Range {
     var r = logger.Range{ .loc = loc, .len = 0 };
+    const offset = @intCast(usize, loc.start);
     var i: usize = 0;
-    for (source.contents[loc..]) |c| {
-        if (isIdentifierStart(@as(c, CodePoint))) {
-            for (source.contents[loc + i ..]) |c_| {
+    for (source.contents[offset..]) |c| {
+        if (isIdentifierStart(@as(CodePoint, c))) {
+            for (source.contents[offset + i ..]) |c_| {
                 if (!isIdentifierContinue(c_)) {
-                    r.len = i;
+                    r.len = std.math.lossyCast(i32, i);
                     return r;
                 }
                 i += 1;

@@ -5,7 +5,7 @@
       "label": "build",
       "type": "shell",
       "command": "zig build",
-      "problemMatcher": [],
+
       "group": {
         "kind": "build",
         "isDefault": true
@@ -24,9 +24,10 @@
     },
     {
       "label": "test",
-      "type": "process",
+      "type": "shell",
       "command": "zig",
       "args": ["test", "${file}", "-femit-bin=zig-cache/bin/test"],
+
       "group": {
         "kind": "test",
         "isDefault": true

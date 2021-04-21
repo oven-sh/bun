@@ -12,7 +12,12 @@ usingnamespace js_ast.G;
 const BindingNodeIndex = js_ast.BindingNodeIndex;
 const StmtNodeIndex = js_ast.StmtNodeIndex;
 const ExprNodeIndex = js_ast.ExprNodeIndex;
+const ExprNodeList = js_ast.ExprNodeList;
+const StmtNodeList = js_ast.StmtNodeList;
+const BindingNodeList = js_ast.BindingNodeList;
 
+const Ref = js_ast.Ref;
+const LocRef = js_ast.LocRef;
 const S = js_ast.S;
 const B = js_ast.B;
 const G = js_ast.G;
@@ -112,13 +117,17 @@ const FnOrArrowDataParse = struct {
 
     // Allow TypeScript decorators in function arguments
     allow_ts_decorators: bool = false,
+
+    pub fn i() FnOrArrowDataParse {
+        return FnOrArrowDataParse{ .allow_await = false };
+    }
 };
 
 // This is function-specific information used during visiting. It is saved and
 // restored on the call stack around code that parses nested functions and
 // arrow expressions.
 const FnOrArrowDataVisit = struct {
-    super_index_ref: *js_ast.Ref,
+    super_index_ref: ?*js_ast.Ref = null,
 
     is_arrow: bool = false,
     is_async: bool = false,
@@ -367,7 +376,7 @@ const P = struct {
     //
     //   var ns1;
     //   (function(ns2) {
-    //   })(ns1 || (ns1 = {}));
+    //   })(ns1 or (ns1 = {}));
     //
     // This variable is "ns2" not "ns1". It is only used during the second
     // "visit" pass.
@@ -433,11 +442,11 @@ const P = struct {
     // The TypeScript compiler compiles this into the following code (notice "f"
     // is missing):
     //
-    //   var a; (function (a_1) {})(a || (a = {}));
-    //   var b; (function (b_1) {})(b || (b = {}));
-    //   var c; (function (c_1) {})(c || (c = {}));
-    //   var d; (function (d_1) {})(d || (d = {}));
-    //   var e; (function (e_1) {})(e || (e = {}));
+    //   var a; (function (a_1) {})(a or (a = {}));
+    //   var b; (function (b_1) {})(b or (b = {}));
+    //   var c; (function (c_1) {})(c or (c = {}));
+    //   var d; (function (d_1) {})(d or (d = {}));
+    //   var e; (function (e_1) {})(e or (e = {}));
     //
     // Note that this should not be implemented by declaring symbols for "export
     // declare" statements because the TypeScript compiler doesn't generate any
@@ -467,7 +476,7 @@ const P = struct {
     //   var ns;
     //   (function (ns) {
     //       console.log(ns.a, ns.b, c, d, e);
-    //   })(ns || (ns = {}));
+    //   })(ns or (ns = {}));
     //
     // Relevant issue: https://github.com/evanw/esbuild/issues/1158
     has_non_local_export_declare_inside_namespace: bool = false,
@@ -631,7 +640,7 @@ const P = struct {
         // "var foo; function foo() {}"
         // "function foo() {} var foo;"
         // "function *foo() {} function *foo() {}" but not "{ function *foo() {} function *foo() {} }"
-        if (Symbol.isKindHoistedOrFunction(new) and Symbol.isKindHoistedOrFunction(existing) and (scope.kind == .entry or scope.kind == .function_body ||
+        if (Symbol.isKindHoistedOrFunction(new) and Symbol.isKindHoistedOrFunction(existing) and (scope.kind == .entry or scope.kind == .function_body or
             (Symbol.isKindHoisted(new) and Symbol.isKindHoisted(existing))))
         {
             return .keep_existing;
@@ -778,7 +787,7 @@ const P = struct {
         }
 
         if (errors.invalid_expr_after_question) |r| {
-            p.log.addRangeError(p.source, r, "Unexpected %q", .{p.source.contents[r.loc.start..r.loc.end()]});
+            p.log.addRangeError(p.source, r, "Unexpected %q", .{p.source.contents[r.loc.start..r.loc.endI()]});
         }
 
         // if (errors.array_spread_feature) |err| {
@@ -1200,7 +1209,7 @@ const P = struct {
             .reserved_word => {
                 text = try std.fmt.allocPrint(p.allocator, "{s} is a reserved word and", .{detail});
             },
-            .legacy_octal_escape => {
+            .legacy_octal_literal => {
                 text = "Legacy octal literals";
             },
             .legacy_octal_escape => {
@@ -1209,15 +1218,15 @@ const P = struct {
             .if_else_function_stmt => {
                 text = "Function declarations inside if statements";
             },
-            else => {
-                text = "This feature";
-            },
+            // else => {
+            //     text = "This feature";
+            // },
         }
 
         if (p.current_scope) |scope| {
             if (p.isStrictMode()) {
                 var why: string = "";
-                var notes: []logger.MsgData = undefined;
+                var notes: []logger.Data = undefined;
                 var where: logger.Range = undefined;
                 switch (scope.strict_mode) {
                     .implicit_strict_mode_import => {
@@ -1233,14 +1242,15 @@ const P = struct {
                         why = "All code inside a class is implicitly in strict mode";
                         where = p.enclosing_class_keyword;
                     },
+                    else => {},
                 }
                 if (why.len == 0) {
-                    why = try std.fmt.allocPrint(p.allocator, "This file is implicitly in strict mode because of the \"{s}\" keyword here", p.source.textForRange(where));
+                    why = try std.fmt.allocPrint(p.allocator, "This file is implicitly in strict mode because of the \"{s}\" keyword here", .{p.source.textForRange(where)});
                 }
 
-                p.log.addRangeErrorWithNotes(p.source, r, std.fmt.allocPrint(p.allocator, "{s} cannot be used in strict mode", .{text}), []logger.Data{logger.rangeData(p.source, where, why)});
+                try p.log.addRangeErrorWithNotes(p.source, r, try std.fmt.allocPrint(p.allocator, "{s} cannot be used in strict mode", .{text}), &([_]logger.Data{logger.rangeData(p.source, where, why)}));
             } else if (!can_be_transformed and p.isStrictModeOutputFormat()) {
-                p.log.addRangeError(p.source, r, std.fmt.allocPrint(p.allocator, "{s} cannot be used with \"esm\" due to strict mode", .{text}));
+                try p.log.addRangeError(p.source, r, try std.fmt.allocPrint(p.allocator, "{s} cannot be used with \"esm\" due to strict mode", .{text}));
             }
         }
     }
@@ -1258,26 +1268,22 @@ const P = struct {
 
         // Forbid declaring a symbol with a reserved word in strict mode
         if (p.isStrictMode() and js_lexer.StrictModeReservedWords.has(name)) {
-            p.markStrictModeFeature(reservedWord, js_lexer.rangeOfIdentifier(p.source, loc), name);
+            try p.markStrictModeFeature(.reserved_word, js_lexer.rangeOfIdentifier(&p.source, loc), name);
         }
 
         // Allocate a new symbol
-        var ref = p.newSymbol(kind, name);
+        var ref = try p.newSymbol(kind, name);
 
         const scope = p.current_scope orelse unreachable;
         if (scope.members.get(name)) |existing| {
-            const symbol: Symbol = p.symbols.items[@intCast(usize, existing.ref.inner_index)];
+            var symbol: Symbol = p.symbols.items[@intCast(usize, existing.ref.inner_index)];
 
-            switch (p.canMergeSymbols(p.current_scope, symbol.kind, kind)) {
+            switch (p.canMergeSymbols(scope, symbol.kind, kind)) {
                 .forbidden => {
-                    const r = js_lexer.rangeOfIdentifier(p.source.*, loc);
+                    const r = js_lexer.rangeOfIdentifier(&p.source, loc);
                     var notes: []logger.Data = undefined;
-                    notes = []logger.Data{logger.rangeData(p.source, r, try std.fmt.allocPrint(p.allocator, "{s} has already been declared", .{name}))};
-                    p.log.addRangeErrorWithNotes(
-                        p.source,
-                        r,
-                        try std.fmt.allocPrint(p.allocator, "{s} was originally declared here", .{name}),
-                    );
+                    notes = &([_]logger.Data{logger.rangeData(p.source, r, try std.fmt.allocPrint(p.allocator, "{s} has already been declared", .{name}))});
+                    try p.log.addRangeErrorWithNotes(p.source, r, try std.fmt.allocPrint(p.allocator, "{s} was originally declared here", .{name}), notes);
                     return existing.ref;
                 },
                 .keep_existing => {
@@ -1294,8 +1300,9 @@ const P = struct {
                     ref = existing.ref;
                     symbol.kind = .private_static_get_set_pair;
                 },
-                .new => {},
-                else => unreachable,
+
+                .overwrite_with_new => {},
+                // else => unreachable,
             }
         }
 
@@ -1303,7 +1310,7 @@ const P = struct {
         return ref;
     }
 
-    pub fn parseFnExpr(p: *P, loc: logger.Loc, is_async: bool, async_range: logger.Range) !ExprNodeIndex {
+    pub fn parseFnExpr(p: *P, loc: logger.Loc, is_async: bool, async_range: logger.Range) !Expr {
         p.lexer.next();
         const is_generator = p.lexer.token == T.t_asterisk;
         if (is_generator) {
@@ -1315,19 +1322,19 @@ const P = struct {
 
         var name: ?js_ast.LocRef = null;
 
-        p.pushScopeForParsePass(.function_args, loc);
+        _ = p.pushScopeForParsePass(.function_args, loc) catch unreachable;
         defer p.popScope();
 
         if (p.lexer.token == .t_identifier) {
-            name = p._(js_ast.LocRef{
+            name = js_ast.LocRef{
                 .loc = loc,
                 .ref = null,
-            });
+            };
 
             if (p.lexer.identifier.len > 0 and !strings.eql(p.lexer.identifier, "arguments")) {
-                name.ref = try p.declareSymbol(.hoisted_function, name.loc, p.lexer.identifier);
+                (name orelse unreachable).ref = try p.declareSymbol(.hoisted_function, (name orelse unreachable).loc, p.lexer.identifier);
             } else {
-                name.ref = try p.newSymbol(.hoisted_function, p.lexer.identifier);
+                (name orelse unreachable).ref = try p.newSymbol(.hoisted_function, p.lexer.identifier);
             }
             p.lexer.next();
         }
@@ -1336,28 +1343,30 @@ const P = struct {
             p.skipTypescriptTypeParameters();
         }
 
-        var func = p.parseFn(name, FnOrDDataParse{
+        var func = p.parseFn(name, FnOrArrowDataParse{
             .async_range = async_range,
             .allow_await = is_async,
             .allow_yield = is_generator,
         });
 
-        return _(Expr.init(js_ast.E.Function{
+        return Expr.init(js_ast.E.Function{
             .func = func,
-        }, loc));
+        }, loc);
     }
 
-    pub fn parseFnBody(p: *P, data: FnOrArrowDataParse) !G.FnBody {
+    pub fn parseFnBody(p: *P, data: *FnOrArrowDataParse) !G.FnBody {
         var oldFnOrArrowData = p.fn_or_arrow_data_parse;
         var oldAllowIn = p.allow_in;
-        p.fn_or_arrow_data_parse = data;
+        p.fn_or_arrow_data_parse = data.*;
         p.allow_in = true;
 
-        p.pushScopeForParsePass(Scope.Kind.function_body, p.lexer.loc());
+        const loc = p.lexer.loc();
+        _ = try p.pushScopeForParsePass(Scope.Kind.function_body, p.lexer.loc());
         defer p.popScope();
 
         p.lexer.expect(.t_open_brace);
-        const stmts = try p.parseStmtsUpTo(.t_close_brace, ParseStatementOptions{});
+        var opts = ParseStatementOptions{};
+        const stmts = p.parseStmtsUpTo(.t_close_brace, &opts) catch unreachable;
         p.lexer.next();
 
         p.allow_in = oldAllowIn;
@@ -1365,7 +1374,7 @@ const P = struct {
         return G.FnBody{ .loc = loc, .stmts = stmts };
     }
 
-    pub fn parseArrowBody(p: *P, args: []js_ast.G.Arg, data: FnOrArrowDataParse) !E.Arrow {
+    pub fn parseArrowBody(p: *P, args: []js_ast.G.Arg, data: *FnOrArrowDataParse) !E.Arrow {
         var arrow_loc = p.lexer.loc();
 
         // Newlines are not allowed before "=>"
@@ -1382,51 +1391,69 @@ const P = struct {
 
         data.allow_super_call = p.fn_or_arrow_data_parse.allow_super_call;
         if (p.lexer.token == .t_open_brace) {
-            var body = p.parseFnBody(data);
+            var body = try p.parseFnBody(data);
             p.after_arrow_body_loc = p.lexer.loc();
-            return p._(E.Arrow{ .args = args, .body = body });
+            return E.Arrow{ .args = args, .body = body };
         }
 
-        p.pushScopeForParsePass(Scope.Kind.function_body, arrow_loc);
+        _ = try p.pushScopeForParsePass(Scope.Kind.function_body, arrow_loc);
         defer p.popScope();
 
         var old_fn_or_arrow_data = p.fn_or_arrow_data_parse;
-        p.fn_or_arrow_data_parse = data;
-        var expr = try p.parseExpr(Level.comma);
+        p.fn_or_arrow_data_parse = data.*;
+
+        var expr = p.m(p.parseExpr(Level.comma));
         p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
-        return E.Arrow{ .args = args, .prefer_expr = true, .body = G.FnBody{ .loc = arrow_loc, .stmts = []StmtNodeIndex{p._(Stmt.init(S.Return{ .value = expr }, arrow_loc))} } };
+        var stmts = try p.allocator.alloc(Stmt, 1);
+        stmts[0] = Stmt.init(S.Return{ .value = expr }, arrow_loc);
+
+        return E.Arrow{ .args = args, .prefer_expr = true, .body = G.FnBody{ .loc = arrow_loc, .stmts = stmts } };
     }
 
     pub fn declareBinding(p: *P, kind: Symbol.Kind, binding: BindingNodeIndex, opts: ParseStatementOptions) !void {
         switch (binding.data) {
-            .b_identifier, .b_missing => |b| {
-                if (!opts.is_typescript_declare || (opts.is_namespace_scope and opts.is_export)) {
-                    b.ref = p.declareSymbol(kind, binding.loc, p.loadNameFromRef(b.ref));
+            .b_identifier => |*b| {
+                if (!opts.is_typescript_declare or (opts.is_namespace_scope and opts.is_export)) {
+                    b.ref = try p.declareSymbol(kind, binding.loc, p.loadNameFromRef(b.ref));
                 }
             },
+            .b_missing => |b| {},
 
-            .b_array => |b| {
+            .b_array => |*b| {
                 for (b.items) |item| {
-                    p.declareBinding(kind, item.binding, opts);
+                    p.declareBinding(kind, item.binding, opts) catch unreachable;
                 }
             },
 
-            .b_object => |b| {
+            .b_object => |*b| {
                 for (b.properties) |prop| {
-                    p.declareBinding(kind, prop.value, opts);
+                    const value = prop.value orelse std.debug.panic("Internal error: property {s} is missing a binding!", .{prop});
+                    p.declareBinding(kind, value, opts) catch unreachable;
                 }
             },
 
             else => {
-                @compileError("Missing binding type");
+                // @compileError("Missing binding type");
             },
         }
     }
 
     // Saves us from allocating a slice to the heap
-    pub fn parseArrowBodySingleArg(p: *P, arg: G.Arg, data: FnOrArrowDataParse) !E.Arrow {
-        var args: []G.Arg = []G.Arg{arg};
-        return p.parseArrowBody(args[0..], data);
+    pub fn parseArrowBodySingleArg(p: *P, arg: G.Arg, data: anytype) !E.Arrow {
+        switch (@TypeOf(data)) {
+            FnOrArrowDataParse => {
+                var args = [_]G.Arg{arg};
+
+                var d = data;
+
+                return p.parseArrowBody(args[0..], &d);
+            },
+            *FnOrArrowDataParse => {
+                var args = [_]G.Arg{arg};
+                return p.parseArrowBody(args[0..], data);
+            },
+            else => unreachable,
+        }
     }
 
     // This is where the allocate memory to the heap for AST objects.
@@ -1434,13 +1461,15 @@ const P = struct {
     // It also swallows errors, but I think that's correct here.
     // We can handle errors via the log.
     // We'll have to deal with @wasmHeapGrow or whatever that thing is.
-    pub fn __(self: *P, comptime ast_object_type: type, instance: anytype) callconv(.Inline) *ast_object_type {
+    pub fn mm(self: *P, comptime ast_object_type: type, instance: anytype) callconv(.Inline) *ast_object_type {
         var obj = self.allocator.create(ast_object_type) catch unreachable;
-        obj = instance;
+        obj.* = instance;
         return obj;
     }
-    pub fn _(self: *P, kind: anytype) callconv(.Inline) *@TypeOf(kind) {
-        return self.__(@TypeOf(kind), kind);
+
+    // mmmm memmory allocation
+    pub fn m(self: *P, kind: anytype) callconv(.Inline) *@TypeOf(kind) {
+        return self.mm(@TypeOf(kind), kind);
     }
 
     // The name is temporarily stored in the ref until the scope traversal pass
@@ -1461,21 +1490,21 @@ const P = struct {
         // we can just say "yeah this is really over here at inner_index"
         // .source_index being null is used to identify was this allocated or is just in the orignial thing.
         // you could never do this in JavaScript!!
-        const ptr0 = @ptrToInt(name);
-        const ptr1 = @ptrToInt(p.source.contents);
+        const ptr0 = @ptrToInt(name.ptr);
+        const ptr1 = @ptrToInt(p.source.contents.ptr);
 
         // Is the data in "name" a subset of the data in "p.source.Contents"?
         if (ptr0 >= ptr1 and ptr0 + name.len < p.source.contents.len) {
-            std.debug.print("storeNameInRef fast path");
+            std.debug.print("storeNameInRef fast path", .{});
             // The name is a slice of the file contents, so we can just reference it by
             // length and don't have to allocate anything. This is the common case.
             //
             // It's stored as a negative value so we'll crash if we try to use it. That
             // way we'll catch cases where we've forgotten to call loadNameFromRef().
             // The length is the negative part because we know it's non-zero.
-            return js_ast.Ref{ .source_index = ptr1, .inner_index = (name.len + ptr0) };
+            return js_ast.Ref{ .source_index = @intCast(u32, ptr0), .inner_index = (@intCast(u32, name.len) + @intCast(u32, ptr0)) };
         } else {
-            std.debug.print("storeNameInRef slow path");
+            std.debug.print("storeNameInRef slow path", .{});
             // The name is some memory allocated elsewhere. This is either an inline
             // string constant in the parser or an identifier with escape sequences
             // in the source code, which is very unusual. Stash it away for later.
@@ -1483,11 +1512,11 @@ const P = struct {
 
             // allocated_names is lazily allocated
             if (p.allocated_names.capacity > 0) {
-                const inner_index = p.allocated_names.items.len;
+                const inner_index = @intCast(u32, p.allocated_names.items.len);
                 try p.allocated_names.append(name);
                 return js_ast.Ref{ .source_index = 0x80000000, .inner_index = inner_index };
             } else {
-                try p.allocated_names.initCapacity(p.allocator, 1);
+                p.allocated_names = try @TypeOf(p.allocated_names).initCapacity(p.allocator, 1);
                 p.allocated_names.appendAssumeCapacity(name);
                 return js_ast.Ref{ .source_index = 0x80000000, .inner_index = 0 };
             }
@@ -1498,9 +1527,11 @@ const P = struct {
     }
 
     pub fn loadNameFromRef(p: *P, ref: js_ast.Ref) string {
-        if (ref.source_index == 0x80000000) {
-            return (p.allocated_names orelse unreachable)[ref.inner_index];
-        } else if (ref.source_index) |source_index| {
+        if (ref.source_index) |source_index| {
+            if (source_index == 0x80000000) {
+                return p.allocated_names.items[ref.inner_index];
+            }
+
             if (std.builtin.mode != std.builtin.Mode.ReleaseFast) {
                 std.debug.assert(ref.inner_index - source_index > 0);
             }
@@ -1508,7 +1539,6 @@ const P = struct {
             return p.source.contents[ref.inner_index .. ref.inner_index - source_index];
         } else {
             std.debug.panic("Internal error: invalid symbol reference.", .{ref});
-            return p.source.contents[ref.inner_index .. ref.inner_index - source_index];
         }
     }
 
@@ -1523,31 +1553,31 @@ const P = struct {
         // Check the precedence level to avoid parsing an arrow function in
         // "new async () => {}". This also avoids parsing "new async()" as
         // "new (async())()" instead.
-        if (!p.lexer.has_newline_before and level < Level.member) {
+        if (!p.lexer.has_newline_before and level.lt(.member)) {
             switch (p.lexer.token) {
                 // "async => {}"
                 .t_equals_greater_than => {
-                    const arg = G.Arg{ .binding = p._(Binding.init(
+                    const arg = G.Arg{ .binding = p.m(Binding.init(
                         B.Identifier{
-                            .ref = p.storeNameInRef("async"),
+                            .ref = try p.storeNameInRef("async"),
                         },
                         async_range.loc,
                     )) };
-                    p.pushScopeForParsePass(.function_args, async_range.loc);
+                    _ = p.pushScopeForParsePass(.function_args, async_range.loc) catch unreachable;
                     defer p.popScope();
-                    var arrowBody = try p.parseArrowBodySingleArg(arg, FnOrArrowDataParse{});
-                    return Expr.init(arrowBody, async_range.loc);
+                    var arrow_body = try p.parseArrowBodySingleArg(arg, FnOrArrowDataParse{});
+                    return Expr.init(arrow_body, async_range.loc);
                 },
                 // "async x => {}"
                 .t_identifier => {
                     // p.markLoweredSyntaxFeature();
-                    const ref = p.storeNameInRef(p.lexer.identifier);
-                    var arg = G.Arg{ .binding = p._(Binding.init(B.Identifier{
+                    const ref = try p.storeNameInRef(p.lexer.identifier);
+                    var arg = G.Arg{ .binding = p.m(Binding.init(B.Identifier{
                         .ref = ref,
                     }, p.lexer.loc())) };
                     p.lexer.next();
 
-                    p.pushScopeForParsePass(.function_args, async_range.loc);
+                    _ = try p.pushScopeForParsePass(.function_args, async_range.loc);
                     defer p.popScope();
 
                     var arrowBody = try p.parseArrowBodySingleArg(arg, FnOrArrowDataParse{
@@ -1589,13 +1619,92 @@ const P = struct {
         notimpl();
     }
 
-    pub fn parseParenExpr(p: *P, loc: logger.Loc, opts: ParenExprOpts) !Expr {}
+    pub fn parseExprOrBindings(p: *P, level: Level, errors: ?*DeferredErrors) Expr {
+        return p.parseExprCommon(level, errors, Expr.Flags.none);
+    }
+
+    pub fn parseExpr(p: *P, level: Level) Expr {
+        return p.parseExprCommon(level, null, Expr.Flags.none);
+    }
+
+    pub fn parseExprWithFlags(p: *P, level: Level, flags: Expr.Flags) Expr {
+        return p.parseExprCommon(level, null, flags);
+    }
+
+    pub fn parseExprCommon(p: *P, level: Level, errors: ?*DeferredErrors, flags: Expr.Flags) Expr {
+        const had_pure_comment_before = p.lexer.has_pure_comment_before and !p.options.ignore_dce_annotations;
+        var expr = p.parsePrefix(level, errors, flags);
+
+        // There is no formal spec for "__PURE__" comments but from reverse-
+        // engineering, it looks like they apply to the next CallExpression or
+        // NewExpression. So in "/* @__PURE__ */ a().b() + c()" the comment applies
+        // to the expression "a().b()".
+        if (had_pure_comment_before and level.lt(.call)) {
+            expr = p.parseSuffix(expr, .call - 1, errors, flags);
+            switch (expr.data) {
+                .e_call => |ex| {
+                    ex.can_be_unwrapped_if_unused = true;
+                },
+                .e_new => |ex| {
+                    ex.can_be_unwrapped_if_unused = true;
+                },
+                else => {},
+            }
+        }
+
+        return p.parseSuffix(expr, level, errors, flags);
+    }
+
+    // This assumes that the open parenthesis has already been parsed by the caller
+    pub fn parseParenExpr(p: *P, loc: logger.Loc, opts: ParenExprOpts) !Expr {
+        var items = List(Expr).initCapacity(p.allocator, 1);
+        var errors = DeferredErrors{};
+        var arrowArgErrors = DeferredArrowArgErrors{};
+        var spread_range = logger.Range{};
+        var type_colon_range = logger.Range{};
+        var comma_after_spread = logger.Loc{};
+
+        // Push a scope assuming this is an arrow function. It may not be, in which
+        // case we'll need to roll this change back. This has to be done ahead of
+        // parsing the arguments instead of later on when we hit the "=>" token and
+        // we know it's an arrow function because the arguments may have default
+        // values that introduce new scopes and declare new symbols. If this is an
+        // arrow function, then those new scopes will need to be parented under the
+        // scope of the arrow function itself.
+        const scopeIndex = p.pushScopeForParsePass(.function_args, loc);
+
+        // Allow "in" inside parentheses
+        var oldAllowIn = p.allow_in;
+        p.allow_in = true;
+
+        // Forbid "await" and "yield", but only for arrow functions
+        var old_fn_or_arrow_data = p.fn_or_arrow_data_parse;
+        p.fn_or_arrow_data_parse.arrow_arg_errors = arrowArgErrors;
+
+        // Scan over the comma-separated arguments or expressions
+        while (p.lexer.token != .t_close_paren) {
+            const item_loc = p.lexer.loc();
+            const is_spread = p.lexer.token == .t_dot_dot_dot;
+
+            if (is_spread) {
+                spread_range = p.lexer.range();
+                // p.markSyntaxFeature()
+                p.lexer.next();
+            }
+
+            p.latest_arrow_arg_loc = p.lexer.loc();
+            // TODO: here
+            var item = p.parseExprOrBindings(.comma, &errors);
+        }
+    }
 
     pub fn popScope(p: *P) void {
         const current_scope = p.current_scope orelse unreachable;
         // We cannot rename anything inside a scope containing a direct eval() call
         if (current_scope.contains_direct_eval) {
-            for (current_scope.members) |member| {
+            var iter = current_scope.members.iterator();
+            while (iter.next()) |member| {
+
                 // Using direct eval when bundling is not a good idea in general because
                 // esbuild must assume that it can potentially reach anything in any of
                 // the containing scopes. We try to make it work but this isn't possible
@@ -1641,14 +1750,14 @@ const P = struct {
                 //     continue;
                 // }
 
-                p.symbols.items[member.ref.inner_index].must_not_be_renamed = true;
+                p.symbols.items[member.value.ref.inner_index].must_not_be_renamed = true;
             }
         }
 
         p.current_scope = current_scope.parent;
     }
 
-    pub fn parseSuffix(p: *P, left: Expr, level: Level, errors: ?DeferredErrors, flags: Expr.Flags) Expr {
+    pub fn parseSuffix(p: *P, left: Expr, level: Level, errors: ?*DeferredErrors, flags: Expr.Flags) Expr {
         var loc = p.lexer.loc();
     }
 

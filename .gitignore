@@ -2,3 +2,5 @@
 zig-cache
 *.wasm
 
+*.o
+*.a

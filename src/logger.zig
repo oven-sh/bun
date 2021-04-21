@@ -28,6 +28,10 @@ pub const Kind = enum {
 pub const Loc = struct {
     start: i32 = -1,
 
+    pub fn toUsize(self: *Loc) usize {
+        return @intCast(usize, self.start);
+    }
+
     pub const Empty = Loc{ .start = -1 };
 
     pub fn eql(loc: *Loc, other: Loc) bool {
@@ -89,18 +93,18 @@ pub const Location = struct {
 
 pub const Data = struct { text: string, location: ?Location = null };
 
-pub const Msg = struct {
-    kind: Kind = Kind.err,
-    data: Data,
-};
+pub const Msg = struct { kind: Kind = Kind.err, data: Data, notes: ?[]Data = null };
 
 pub const Range = struct {
     loc: Loc = Loc.Empty,
     len: i32 = 0,
     pub const None = Range{ .loc = Loc.Empty, .len = 0 };
 
-    pub fn end(self: *Range) Loc {
-        return Loc{ .start = self.start + self.len };
+    pub fn end(self: *const Range) Loc {
+        return Loc{ .start = self.loc.start + self.len };
+    }
+    pub fn endI(self: *const Range) usize {
+        return std.math.lossyCast(usize, self.loc.start + self.len);
     }
 };
 
@@ -219,6 +223,10 @@ pub const Source = struct {
     pub fn initPathString(pathString: string, contents: string) Source {
         var path = fs.Path.init(pathString);
         return Source{ .path = path, .identifier_name = path.name.base, .contents = contents };
+    }
+
+    pub fn textForRange(self: *Source, r: Range) string {
+        return self.contents[std.math.lossyCast(usize, r.loc.start)..r.endI()];
     }
 
     pub fn initErrorPosition(self: *const Source, _offset: Loc) ErrorPosition {

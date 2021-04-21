@@ -178,7 +178,7 @@ pub const Keywords = std.ComptimeStringMap(T, .{
     .{ "with", .t_with },
 });
 
-pub const StrictModeReservedWords = std.ComptimeStringMap(Bool, .{
+pub const StrictModeReservedWords = std.ComptimeStringMap(bool, .{
     .{ "implements", true },
     .{ "interface", true },
     .{ "let", true },

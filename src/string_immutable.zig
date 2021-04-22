@@ -26,3 +26,11 @@ pub fn indexOf(self: string, str: u8) ?usize {
 pub fn eql(self: string, other: anytype) bool {
     return std.mem.eql(u8, self, other);
 }
+
+pub fn index(self: string, str: string) i32 {
+    if (std.mem.indexOf(u8, self, str)) |i| {
+        return @intCast(i32, i);
+    } else {
+        return -1;
+    }
+}

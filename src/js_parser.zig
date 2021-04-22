@@ -15,6 +15,7 @@ const ExprNodeIndex = js_ast.ExprNodeIndex;
 const ExprNodeList = js_ast.ExprNodeList;
 const StmtNodeList = js_ast.StmtNodeList;
 const BindingNodeList = js_ast.BindingNodeList;
+const assert = std.debug.assert;
 
 const Ref = js_ast.Ref;
 const LocRef = js_ast.LocRef;
@@ -32,8 +33,7 @@ const Op = js_ast.Op;
 const Scope = js_ast.Scope;
 const locModuleScope = logger.Loc.Empty;
 
-const s = Stmt.init;
-const e = Expr.init;
+const Tup = std.meta.Tuple;
 
 fn notimpl() noreturn {
     std.debug.panic("Not implemented yet!!", .{});
@@ -46,6 +46,8 @@ fn lexerpanic() noreturn {
 fn fail() noreturn {
     std.debug.panic("Something went wrong :cry;", .{});
 }
+
+const ExprBindingTuple = struct { expr: ?ExprNodeIndex = null, binding: ?Binding = null, override_expr: ?ExprNodeIndex = null };
 
 const TempRef = struct {
     ref: js_ast.Ref,
@@ -86,6 +88,7 @@ const SymbolMergeResult = enum {
 const Map = std.AutoHashMap;
 
 const List = std.ArrayList;
+const LocList = List(logger.Loc);
 const StmtList = List(Stmt);
 
 const SymbolUseMap = Map(js_ast.Ref, js_ast.Symbol.Use);
@@ -94,6 +97,7 @@ const StringBoolMap = std.StringHashMap(bool);
 const RefBoolMap = Map(js_ast.Ref, bool);
 const RefRefMap = Map(js_ast.Ref, js_ast.Ref);
 const ImportRecord = importRecord.ImportRecord;
+const Flags = js_ast.Flags;
 const ScopeOrder = struct {
     loc: logger.Loc,
     scope: *js_ast.Scope,
@@ -524,6 +528,29 @@ const P = struct {
     //
     after_arrow_body_loc: logger.Loc = logger.Loc.Empty,
 
+    pub fn s(p: *P, t: anytype, loc: logger.Loc) Stmt {
+        if (@typeInfo(@TypeOf(t)) == .Pointer) {
+            return Stmt.init(t, loc);
+        } else {
+            return Stmt.alloc(p.allocator, t, loc);
+        }
+    }
+    pub fn e(p: *P, t: anytype, loc: logger.Loc) Expr {
+        if (@typeInfo(@TypeOf(t)) == .Pointer) {
+            return Expr.init(t, loc);
+        } else {
+            return Expr.alloc(p.allocator, t, loc);
+        }
+    }
+
+    pub fn b(p: *P, t: anytype, loc: logger.Loc) Binding {
+        if (@typeInfo(@TypeOf(t)) == .Pointer) {
+            return Binding.init(t, loc);
+        } else {
+            return Binding.alloc(p.allocator, t, loc);
+        }
+    }
+
     pub fn deinit(parser: *P) void {
         parser.allocated_names.deinit();
         parser.scopes_for_current_part.deinit();
@@ -582,15 +609,15 @@ const P = struct {
         return null;
     }
 
-    pub fn logArrowArgErrors(errors: *DeferredArrowArgErrors) void {
+    pub fn logArrowArgErrors(p: *P, errors: *DeferredArrowArgErrors) void {
         if (errors.invalid_expr_await.len > 0) {
             var r = errors.invalid_expr_await;
-            p.log.AddRangeError(&p.source, r, "Cannot use an \"await\" expression here");
+            p.log.addRangeError(p.source, r, "Cannot use an \"await\" expression here") catch unreachable;
         }
 
         if (errors.invalid_expr_yield.len > 0) {
             var r = errors.invalid_expr_yield;
-            p.log.AddRangeError(&p.source, r, "Cannot use a \"yield\" expression here");
+            p.log.addRangeError(p.source, r, "Cannot use a \"yield\" expression here") catch unreachable;
         }
     }
 
@@ -783,6 +810,123 @@ const P = struct {
         return i;
     }
 
+    // Note: do not write to "p.log" in this function. Any errors due to conversion
+    // from expression to binding should be written to "invalidLog" instead. That
+    // way we can potentially keep this as an expression if it turns out it's not
+    // needed as a binding after all.
+    pub fn convertExprToBinding(p: *P, expr: ExprNodeIndex, invalid_loc: *LocList) ?Binding {
+        switch (expr.data) {
+            .e_missing => {
+                return p.b(B.Missing{}, expr.loc);
+            },
+            .e_identifier => |ex| {
+                return p.b(B.Identifier{ .ref = ex.ref }, expr.loc);
+            },
+            .e_array => |ex| {
+                if (ex.comma_after_spread) |spread| {
+                    invalid_loc.append(spread) catch unreachable;
+                }
+
+                if (ex.is_parenthesized) {
+                    invalid_loc.append(p.source.rangeOfOperatorBefore(expr.loc, "(").loc) catch unreachable;
+                }
+
+                // p.markSyntaxFeature(Destructing)
+                var items = List(js_ast.ArrayBinding).init(p.allocator);
+                for (items.items) |item| {
+                    var is_spread = true;
+                    switch (item.default_value.?.data) {
+                        .e_identifier => {},
+                        else => {
+                            // nested rest binding
+                            // p.markSyntaxFeature(compat.NestedRestBinding, p.source.RangeOfOperatorAfter(item.Loc, "["))
+                        },
+                    }
+                    var _expr = expr;
+                    const res = p.convertExprToBindingAndInitializer(&_expr, invalid_loc, is_spread);
+                    assert(res.binding != null);
+                    items.append(js_ast.ArrayBinding{ .binding = res.binding orelse unreachable, .default_value = res.override_expr }) catch unreachable;
+                }
+
+                return p.b(B.Array{
+                    .items = items.toOwnedSlice(),
+                    .has_spread = ex.comma_after_spread != null,
+                    .is_single_line = ex.is_single_line,
+                }, expr.loc);
+            },
+            .e_object => |ex| {
+                if (ex.comma_after_spread) |sp| {
+                    invalid_loc.append(sp) catch unreachable;
+                }
+
+                if (ex.is_parenthesized) {
+                    invalid_loc.append(p.source.rangeOfOperatorBefore(expr.loc, "(").loc) catch unreachable;
+                }
+                // p.markSyntaxFeature(compat.Destructuring, p.source.RangeOfOperatorAfter(expr.Loc, "{"))
+
+                var properties = List(B.Property).init(p.allocator);
+                for (ex.properties) |item| {
+                    if (item.flags.is_method or item.kind == .get or item.kind == .set) {
+                        invalid_loc.append(item.key.loc) catch unreachable;
+                        continue;
+                    }
+                    var value = &(item.value orelse unreachable);
+                    const tup = p.convertExprToBindingAndInitializer(value, invalid_loc, false);
+                    const initializer = tup.expr orelse item.initializer;
+
+                    properties.append(B.Property{
+                        .flags = Flags.Property{
+                            .is_spread = item.kind == .spread,
+                            .is_computed = item.flags.is_computed,
+                        },
+
+                        .key = item.key,
+                        .value = tup.binding orelse unreachable,
+                        .default_value = initializer,
+                    }) catch unreachable;
+                }
+
+                return p.b(B.Object{
+                    .properties = properties.toOwnedSlice(),
+                    .is_single_line = ex.is_single_line,
+                }, expr.loc);
+            },
+            else => {
+                invalid_loc.append(expr.loc) catch unreachable;
+                return null;
+            },
+        }
+
+        return null;
+    }
+
+    pub fn convertExprToBindingAndInitializer(p: *P, expr: *ExprNodeIndex, invalid_log: *LocList, is_spread: bool) ExprBindingTuple {
+        var initializer: ?ExprNodeIndex = null;
+        var override: ?ExprNodeIndex = null;
+        // zig syntax is sometimes painful
+        switch (expr.*.data) {
+            .e_binary => |bin| {
+                if (bin.op == .bin_assign) {
+                    initializer = bin.right;
+                    override = bin.left;
+                }
+            },
+            else => {},
+        }
+
+        var bind = p.convertExprToBinding(expr.*, invalid_log);
+        if (initializer) |initial| {
+            const equalsRange = p.source.rangeOfOperatorBefore(initial.loc, "=");
+            if (is_spread) {
+                p.log.addRangeError(p.source, equalsRange, "A rest argument cannot have a default initializer") catch unreachable;
+            } else {
+                // p.markSyntaxFeature();
+            }
+        }
+
+        return ExprBindingTuple{ .binding = bind, .expr = initializer };
+    }
+
     pub fn forbidLexicalDecl(p: *P, loc: logger.Loc) !void {
         try p.log.addRangeError(p.source, p.lexer.range(), "Cannot use a declaration in a single-statement context");
     }
@@ -868,9 +1012,10 @@ const P = struct {
             p.popAndDiscardScope(scopeIndex);
         }
 
-        return Stmt.init(S.Function{
+        func.flags.is_export = opts.is_export;
+
+        return p.s(S.Function{
             .func = func,
-            .is_export = opts.is_export,
         }, func.open_parens_loc);
     }
 
@@ -901,9 +1046,12 @@ const P = struct {
 
         var func = G.Fn{
             .name = name,
-            .has_rest_arg = false,
-            .is_async = opts.allow_await,
-            .is_generator = opts.allow_yield,
+            .flags = Flags.Function{
+                .has_rest_arg = false,
+                .is_async = opts.allow_await,
+                .is_generator = opts.allow_yield,
+            },
+
             .arguments_ref = null,
             .open_parens_loc = p.lexer.loc(),
         };
@@ -939,10 +1087,10 @@ const P = struct {
             ts_decorators = p.parseTypeScriptDecorators();
         }
 
-        if (!func.has_rest_arg and p.lexer.token == T.t_dot_dot_dot) {
+        if (!func.flags.has_rest_arg and p.lexer.token == T.t_dot_dot_dot) {
             // p.markSyntaxFeature
             p.lexer.next();
-            func.has_rest_arg = true;
+            func.flags.has_rest_arg = true;
         }
 
         var is_typescript_ctor_field = false;
@@ -1067,7 +1215,7 @@ const P = struct {
                             p.lexer.expect(T.t_identifier);
                             p.lexer.expectOrInsertSemicolon();
 
-                            return Stmt.init(S.TypeScript{}, loc);
+                            return p.s(S.TypeScript{}, loc);
                         }
 
                         if (p.lexer.isContextualKeyword("async")) {
@@ -1140,17 +1288,17 @@ const P = struct {
                                     defaultName = try p.createDefaultName(defaultLoc);
                                 }
                                 // this is probably a panic
-                                var value = js_ast.StmtOrExpr{ .stmt = &stmt };
-                                return s(S.ExportDefault{ .default_name = defaultName, .value = value }, loc);
+                                var value = js_ast.StmtOrExpr{ .stmt = stmt };
+                                return p.s(S.ExportDefault{ .default_name = defaultName, .value = value }, loc);
                             }
 
                             defaultName = try createDefaultName(p, loc);
                             // TODO: here
-                            var expr = try p.parseSuffix(try p.parseAsyncPrefixExpr(async_range, Level.comma), Level.comma, null, Expr.Flags.none);
+                            var expr = p.parseSuffix(try p.parseAsyncPrefixExpr(async_range, Level.comma), Level.comma, null, Expr.EFlags.none);
                             p.lexer.expectOrInsertSemicolon();
                             // this is probably a panic
-                            var value = js_ast.StmtOrExpr{ .expr = &expr };
-                            return s(S.ExportDefault{ .default_name = defaultName, .value = value }, loc);
+                            var value = js_ast.StmtOrExpr{ .expr = expr };
+                            return p.s(S.ExportDefault{ .default_name = defaultName, .value = value }, loc);
                         }
                     },
                     else => {
@@ -1177,7 +1325,7 @@ const P = struct {
         run: while (true) {
             if (p.lexer.comments_to_preserve_before) |comments| {
                 for (comments) |comment| {
-                    try stmts.append(Stmt.init(S.Comment{
+                    try stmts.append(p.s(S.Comment{
                         .text = comment.text,
                     }, p.lexer.loc()));
                 }
@@ -1355,7 +1503,7 @@ const P = struct {
             .allow_yield = is_generator,
         });
 
-        return Expr.init(js_ast.E.Function{
+        return p.e(js_ast.E.Function{
             .func = func,
         }, loc);
     }
@@ -1408,32 +1556,32 @@ const P = struct {
         var old_fn_or_arrow_data = p.fn_or_arrow_data_parse;
         p.fn_or_arrow_data_parse = data.*;
 
-        var expr = p.m(p.parseExpr(Level.comma));
+        var expr = p.parseExpr(Level.comma);
         p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
         var stmts = try p.allocator.alloc(Stmt, 1);
-        stmts[0] = Stmt.init(S.Return{ .value = expr }, arrow_loc);
+        stmts[0] = p.s(S.Return{ .value = expr }, arrow_loc);
 
         return E.Arrow{ .args = args, .prefer_expr = true, .body = G.FnBody{ .loc = arrow_loc, .stmts = stmts } };
     }
 
     pub fn declareBinding(p: *P, kind: Symbol.Kind, binding: BindingNodeIndex, opts: ParseStatementOptions) !void {
         switch (binding.data) {
-            .b_identifier => |*b| {
+            .b_identifier => |bind| {
                 if (!opts.is_typescript_declare or (opts.is_namespace_scope and opts.is_export)) {
-                    b.ref = try p.declareSymbol(kind, binding.loc, p.loadNameFromRef(b.ref));
+                    bind.ref = try p.declareSymbol(kind, binding.loc, p.loadNameFromRef(bind.ref));
                 }
             },
-            .b_missing => |b| {},
+            .b_missing => |*bind| {},
 
-            .b_array => |*b| {
-                for (b.items) |item| {
+            .b_array => |bind| {
+                for (bind.items) |item| {
                     p.declareBinding(kind, item.binding, opts) catch unreachable;
                 }
             },
 
-            .b_object => |*b| {
-                for (b.properties) |prop| {
-                    const value = prop.value orelse std.debug.panic("Internal error: property {s} is missing a binding!", .{prop});
+            .b_object => |bind| {
+                for (bind.properties) |*prop| {
+                    const value = prop.value;
                     p.declareBinding(kind, value, opts) catch unreachable;
                 }
             },
@@ -1533,16 +1681,16 @@ const P = struct {
     }
 
     pub fn loadNameFromRef(p: *P, ref: js_ast.Ref) string {
-        if (ref.source_index) |source_index| {
-            if (source_index == 0x80000000) {
+        if (!ref.isSourceNull()) {
+            if (ref.source_index == 0x80000000) {
                 return p.allocated_names.items[ref.inner_index];
             }
 
             if (std.builtin.mode != std.builtin.Mode.ReleaseFast) {
-                std.debug.assert(ref.inner_index - source_index > 0);
+                assert(ref.inner_index - ref.source_index > 0);
             }
 
-            return p.source.contents[ref.inner_index .. ref.inner_index - source_index];
+            return p.source.contents[ref.inner_index .. ref.inner_index - ref.source_index];
         } else {
             std.debug.panic("Internal error: invalid symbol reference. {s}", .{ref});
         }
@@ -1563,24 +1711,24 @@ const P = struct {
             switch (p.lexer.token) {
                 // "async => {}"
                 .t_equals_greater_than => {
-                    const arg = G.Arg{ .binding = p.m(Binding.init(
+                    const arg = G.Arg{ .binding = p.b(
                         B.Identifier{
                             .ref = try p.storeNameInRef("async"),
                         },
                         async_range.loc,
-                    )) };
+                    ) };
                     _ = p.pushScopeForParsePass(.function_args, async_range.loc) catch unreachable;
                     defer p.popScope();
                     var arrow_body = try p.parseArrowBodySingleArg(arg, FnOrArrowDataParse{});
-                    return Expr.init(arrow_body, async_range.loc);
+                    return p.e(arrow_body, async_range.loc);
                 },
                 // "async x => {}"
                 .t_identifier => {
                     // p.markLoweredSyntaxFeature();
                     const ref = try p.storeNameInRef(p.lexer.identifier);
-                    var arg = G.Arg{ .binding = p.m(Binding.init(B.Identifier{
+                    var arg = G.Arg{ .binding = p.b(B.Identifier{
                         .ref = ref,
-                    }, p.lexer.loc())) };
+                    }, p.lexer.loc()) };
                     p.lexer.next();
 
                     _ = try p.pushScopeForParsePass(.function_args, async_range.loc);
@@ -1590,7 +1738,7 @@ const P = struct {
                         .allow_await = true,
                     });
                     arrowBody.is_async = true;
-                    return Expr.init(arrowBody, async_range.loc);
+                    return p.e(arrowBody, async_range.loc);
                 },
 
                 // "async()"
@@ -1615,7 +1763,7 @@ const P = struct {
 
         // "async"
         // "async + 1"
-        return Expr.init(
+        return p.e(
             E.Identifier{ .ref = try p.storeNameInRef("async") },
             async_range.loc,
         );
@@ -1626,18 +1774,18 @@ const P = struct {
     }
 
     pub fn parseExprOrBindings(p: *P, level: Level, errors: ?*DeferredErrors) Expr {
-        return p.parseExprCommon(level, errors, Expr.Flags.none);
+        return p.parseExprCommon(level, errors, Expr.EFlags.none);
     }
 
     pub fn parseExpr(p: *P, level: Level) Expr {
-        return p.parseExprCommon(level, null, Expr.Flags.none);
+        return p.parseExprCommon(level, null, Expr.EFlags.none);
     }
 
-    pub fn parseExprWithFlags(p: *P, level: Level, flags: Expr.Flags) Expr {
+    pub fn parseExprWithFlags(p: *P, level: Level, flags: Expr.EFlags) Expr {
         return p.parseExprCommon(level, null, flags);
     }
 
-    pub fn parseExprCommon(p: *P, level: Level, errors: ?*DeferredErrors, flags: Expr.Flags) Expr {
+    pub fn parseExprCommon(p: *P, level: Level, errors: ?*DeferredErrors, flags: Expr.EFlags) Expr {
         const had_pure_comment_before = p.lexer.has_pure_comment_before and !p.options.ignore_dce_annotations;
         var expr = p.parsePrefix(level, errors, flags);
 
@@ -1647,7 +1795,7 @@ const P = struct {
         // to the expression "a().b()".
 
         if (had_pure_comment_before and level.lt(.call)) {
-            expr = p.parseSuffix(expr, .call - 1, errors, flags);
+            expr = p.parseSuffix(expr, @intToEnum(Level, @enumToInt(Level.call) - 1), errors, flags);
             switch (expr.data) {
                 .e_call => |ex| {
                     ex.can_be_unwrapped_if_unused = true;
@@ -1660,49 +1808,6 @@ const P = struct {
         }
 
         return p.parseSuffix(expr, level, errors, flags);
-    }
-
-    // This assumes that the open parenthesis has already been parsed by the caller
-    pub fn parseParenExpr(p: *P, loc: logger.Loc, opts: ParenExprOpts) !Expr {
-        var items = List(Expr).initCapacity(p.allocator, 1);
-        var errors = DeferredErrors{};
-        var arrowArgErrors = DeferredArrowArgErrors{};
-        var spread_range = logger.Range{};
-        var type_colon_range = logger.Range{};
-        var comma_after_spread = logger.Loc{};
-
-        // Push a scope assuming this is an arrow function. It may not be, in which
-        // case we'll need to roll this change back. This has to be done ahead of
-        // parsing the arguments instead of later on when we hit the "=>" token and
-        // we know it's an arrow function because the arguments may have default
-        // values that introduce new scopes and declare new symbols. If this is an
-        // arrow function, then those new scopes will need to be parented under the
-        // scope of the arrow function itself.
-        const scopeIndex = p.pushScopeForParsePass(.function_args, loc);
-
-        // Allow "in" inside parentheses
-        var oldAllowIn = p.allow_in;
-        p.allow_in = true;
-
-        // Forbid "await" and "yield", but only for arrow functions
-        var old_fn_or_arrow_data = p.fn_or_arrow_data_parse;
-        p.fn_or_arrow_data_parse.arrow_arg_errors = arrowArgErrors;
-
-        // Scan over the comma-separated arguments or expressions
-        while (p.lexer.token != .t_close_paren) {
-            const item_loc = p.lexer.loc();
-            const is_spread = p.lexer.token == .t_dot_dot_dot;
-
-            if (is_spread) {
-                spread_range = p.lexer.range();
-                // p.markSyntaxFeature()
-                p.lexer.next();
-            }
-
-            p.latest_arrow_arg_loc = p.lexer.loc();
-            // TODO: here
-            var item = p.parseExprOrBindings(.comma, &errors);
-        }
     }
 
     pub fn popScope(p: *P) void {
@@ -1766,10 +1871,10 @@ const P = struct {
 
     pub fn markExprAsParenthesized(p: *P, expr: *Expr) void {
         switch (expr.data) {
-            .e_array => |*ex| {
+            .e_array => |ex| {
                 ex.is_parenthesized = true;
             },
-            .e_object => |*ex| {
+            .e_object => |ex| {
                 ex.is_parenthesized = true;
             },
             else => {
@@ -1794,28 +1899,27 @@ const P = struct {
             .t_close_brace, .t_close_paren, .t_colon, .t_comma, .t_semicolon => {},
             else => {
                 if (isStar or !p.lexer.has_newline_before) {
-                    var expr = p.parseExpr(.yield);
-                    value = p.m(expr);
+                    value = p.parseExpr(.yield);
                 }
             },
         }
 
-        return e(E.Yield{
+        return p.e(E.Yield{
             .value = value,
             .is_star = isStar,
         }, loc);
     }
 
-    pub fn parseSuffix(p: *P, left: Expr, level: Level, errors: ?*DeferredErrors, flags: Expr.Flags) Expr {
+    pub fn parseSuffix(p: *P, left: Expr, level: Level, errors: ?*DeferredErrors, flags: Expr.EFlags) Expr {
         return _parseSuffix(p, left, level, errors orelse &DeferredErrors.None, flags);
     }
-    pub fn _parseSuffix(p: *P, left: Expr, level: Level, errors: *DeferredErrors, flags: Expr.Flags) callconv(.Inline) Expr {
+    pub fn _parseSuffix(p: *P, left: Expr, level: Level, errors: *DeferredErrors, flags: Expr.EFlags) callconv(.Inline) Expr {
         var expr: Expr = undefined;
         var loc = p.lexer.loc();
 
         return expr;
     }
-    pub fn _parsePrefix(p: *P, level: Level, errors: *DeferredErrors, flags: Expr.Flags) callconv(.Inline) Expr {
+    pub fn _parsePrefix(p: *P, level: Level, errors: *DeferredErrors, flags: Expr.EFlags) callconv(.Inline) Expr {
         const loc = p.lexer.loc();
         const l = @enumToInt(level);
 
@@ -1827,17 +1931,17 @@ const P = struct {
                 switch (p.lexer.token) {
                     .t_open_paren => {
                         if (l < @enumToInt(Level.call) and p.fn_or_arrow_data_parse.allow_super_call) {
-                            return e(E.Super{}, loc);
+                            return p.e(E.Super{}, loc);
                         }
                     },
                     .t_dot, .t_open_bracket => {
-                        return e(E.Super{}, loc);
+                        return p.e(E.Super{}, loc);
                     },
                     else => {},
                 }
 
                 p.log.addRangeError(p.source, superRange, "Unexpected \"super\"") catch unreachable;
-                return e(E.Super{}, loc);
+                return p.e(E.Super{}, loc);
             },
             .t_open_paren => {
                 p.lexer.next();
@@ -1858,19 +1962,19 @@ const P = struct {
             },
             .t_false => {
                 p.lexer.next();
-                return e(E.Boolean{ .value = false }, loc);
+                return p.e(E.Boolean{ .value = false }, loc);
             },
             .t_true => {
                 p.lexer.next();
-                return e(E.Boolean{ .value = true }, loc);
+                return p.e(E.Boolean{ .value = true }, loc);
             },
             .t_null => {
                 p.lexer.next();
-                return e(E.Null{}, loc);
+                return p.e(E.Null{}, loc);
             },
             .t_this => {
                 p.lexer.next();
-                return e(E.This{}, loc);
+                return p.e(E.This{}, loc);
             },
             .t_identifier => {
                 const name = p.lexer.identifier;
@@ -1900,12 +2004,12 @@ const P = struct {
                                     p.fn_or_arrow_data_parse.arrow_arg_errors = DeferredArrowArgErrors{ .invalid_expr_await = name_range };
                                 }
 
-                                var value = p.m(p.parseExpr(.prefix));
+                                var value = p.parseExpr(.prefix);
                                 if (p.lexer.token == T.t_asterisk_asterisk) {
                                     p.lexer.unexpected();
                                 }
 
-                                return e(E.Await{ .value = value }, loc);
+                                return p.e(E.Await{ .value = value }, loc);
                             }
                         }
                     } else if (strings.eql(name, "yield")) {
@@ -1939,18 +2043,18 @@ const P = struct {
                     if (p.lexer.token == .t_equals_greater_than) {
                         const ref = p.storeNameInRef(name) catch unreachable;
                         var args = p.allocator.alloc(Arg, 1) catch unreachable;
-                        args[0] = Arg{ .binding = p.m(Binding.init(B.Identifier{
+                        args[0] = Arg{ .binding = p.b(B.Identifier{
                             .ref = ref,
-                        }, loc)) };
+                        }, loc) };
 
                         _ = p.pushScopeForParsePass(.function_args, loc) catch unreachable;
                         defer p.popScope();
-                        return e(p.parseArrowBody(args, p.m(FnOrArrowDataParse{})) catch unreachable, loc);
+                        return p.e(p.parseArrowBody(args, p.m(FnOrArrowDataParse{})) catch unreachable, loc);
                     }
 
                     const ref = p.storeNameInRef(name) catch unreachable;
 
-                    return e(E.Identifier{
+                    return p.e(E.Identifier{
                         .ref = ref,
                     }, loc);
                 }
@@ -1978,14 +2082,144 @@ const P = struct {
             .t_import => {},
             else => {
                 p.lexer.unexpected();
-                return Expr.init(E.Missing{}, logger.Loc.Empty);
+                return p.e(E.Missing{}, logger.Loc.Empty);
             },
         }
 
-        return Expr.init(E.Missing{}, logger.Loc.Empty);
+        return p.e(E.Missing{}, logger.Loc.Empty);
     }
-    pub fn parsePrefix(p: *P, level: Level, errors: ?*DeferredErrors, flags: Expr.Flags) Expr {
+    pub fn parsePrefix(p: *P, level: Level, errors: ?*DeferredErrors, flags: Expr.EFlags) Expr {
         return p._parsePrefix(level, errors orelse &DeferredErrors.None, flags);
+    }
+
+    // This assumes that the open parenthesis has already been parsed by the caller
+    pub fn parseParenExpr(p: *P, loc: logger.Loc, opts: ParenExprOpts) !Expr {
+        var items_list = try List(Expr).initCapacity(p.allocator, 1);
+        var errors = DeferredErrors{};
+        var arrowArgErrors = DeferredArrowArgErrors{};
+        var spread_range = logger.Range{};
+        var type_colon_range = logger.Range{};
+        var comma_after_spread = logger.Loc{};
+
+        // Push a scope assuming this is an arrow function. It may not be, in which
+        // case we'll need to roll this change back. This has to be done ahead of
+        // parsing the arguments instead of later on when we hit the "=>" token and
+        // we know it's an arrow function because the arguments may have default
+        // values that introduce new scopes and declare new symbols. If this is an
+        // arrow function, then those new scopes will need to be parented under the
+        // scope of the arrow function itself.
+        const scopeIndex = p.pushScopeForParsePass(.function_args, loc);
+
+        // Allow "in" inside parentheses
+        var oldAllowIn = p.allow_in;
+        p.allow_in = true;
+
+        // Forbid "await" and "yield", but only for arrow functions
+        var old_fn_or_arrow_data = p.fn_or_arrow_data_parse;
+        p.fn_or_arrow_data_parse.arrow_arg_errors = arrowArgErrors;
+
+        // Scan over the comma-separated arguments or expressions
+        while (p.lexer.token != .t_close_paren) {
+            const item_loc = p.lexer.loc();
+            const is_spread = p.lexer.token == .t_dot_dot_dot;
+
+            if (is_spread) {
+                spread_range = p.lexer.range();
+                // p.markSyntaxFeature()
+                p.lexer.next();
+            }
+
+            // We don't know yet whether these are arguments or expressions, so parse
+            p.latest_arrow_arg_loc = p.lexer.loc();
+
+            var item = p.parseExprOrBindings(.comma, &errors);
+
+            if (is_spread) {
+                item = p.e(E.Spread{ .value = item }, loc);
+            }
+
+            // Skip over types
+            if (p.options.ts and p.lexer.token == .t_colon) {
+                type_colon_range = p.lexer.range();
+                p.lexer.next();
+                p.skipTypescriptType(.lowest);
+            }
+
+            if (p.options.ts and p.lexer.token == .t_equals and !p.forbid_suffix_after_as_loc.eql(p.lexer.loc())) {
+                p.lexer.next();
+                var expr = p.parseExpr(.comma);
+                item = item.assign(&expr, p.allocator);
+            }
+
+            items_list.append(item) catch unreachable;
+
+            if (p.lexer.token != .t_comma) {
+                break;
+            }
+
+            // Spread arguments must come last. If there's a spread argument followed
+            if (is_spread) {
+                comma_after_spread = p.lexer.loc();
+            }
+
+            // Eat the comma token
+            p.lexer.next();
+        }
+        var items = items_list.toOwnedSlice();
+
+        // The parenthetical construct must end with a close parenthesis
+        p.lexer.expect(.t_close_paren);
+
+        // Restore "in" operator status before we parse the arrow function body
+        p.allow_in = oldAllowIn;
+
+        // Also restore "await" and "yield" expression errors
+        p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
+
+        // Are these arguments to an arrow function?
+        if (p.lexer.token == .t_equals_greater_than or opts.force_arrow_fn or (p.options.ts and p.lexer.token == .t_colon)) {
+            var invalidLog = List(logger.Loc).init(p.allocator);
+            var args = List(G.Arg).init(p.allocator);
+
+            if (opts.is_async) {
+                // markl,oweredsyntaxpoksdpokasd
+            }
+
+            // First, try converting the expressions to bindings
+            for (items) |*_item| {
+                var item = _item;
+                var is_spread = false;
+                switch (item.data) {
+                    .e_spread => |v| {
+                        is_spread = true;
+                        item = &v.value;
+                    },
+                    else => {},
+                }
+
+                const tuple = p.convertExprToBindingAndInitializer(item, &invalidLog, is_spread);
+                assert(tuple.binding != null);
+                // double allocations
+                args.append(G.Arg{
+                    .binding = tuple.binding orelse unreachable,
+                    .default = tuple.expr,
+                }) catch unreachable;
+            }
+
+            // Avoid parsing TypeScript code like "a ? (1 + 2) : (3 + 4)" as an arrow
+            // function. The ":" after the ")" may be a return type annotation, so we
+            // attempt to convert the expressions to bindings first before deciding
+            // whether this is an arrow function, and only pick an arrow function if
+            // there were no conversion errors.
+            if (p.lexer.token == .t_equals_greater_than or (invalidLog.items.len == 0 and (p.trySkipTypeScriptTypeParametersThenOpenParenWithBacktracking() or opts.force_arrow_fn))) {
+                if (comma_after_spread.start > 0) {
+                    p.log.addRangeError(p.source, logger.Range{ .loc = comma_after_spread, .len = 1 }, "Unexpected \",\" after rest pattern") catch unreachable;
+                }
+                p.logArrowArgErrors(&arrowArgErrors);
+            }
+        }
+
+        return p.e(E.Missing{}, loc);
     }
 
     pub fn init(allocator: *std.mem.Allocator, log: logger.Log, source: logger.Source, lexer: js_lexer.Lexer, opts: Parser.Options) !*P {

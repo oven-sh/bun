@@ -6,25 +6,33 @@ usingnamespace @import("ast/base.zig");
 
 const ImportRecord = @import("import_record.zig").ImportRecord;
 
-// I REALLY DID NOT WANT THESE TO BE POINTERS
-// Unfortunately, this appears to be a language limitation of Zig.
-// The problem was this:
-// - Nesting any of Expr, Binding, or Stmt cause a cyclic dependency
-//
-// If the performance seems inadaquete with pointers, we can switch away from
-// what esbuild is doing. esbuild seems to mostly copy from Go's AST source
-// Though it's also possible that `Stmt` and `Expr` are just really common words for parsing languages.
-// One idea was to use a set of three arrays
-// - stmt
-// - binding
-// - expr
-// then, instead of pointers, it would store an index relative to the root
-// these numbers could l    ikely be u16, so half the bits.
-// That approach really complicates stuff though
-// If it was easy to do "builders" in Zig then I think it would work.
-pub const BindingNodeIndex = *Binding;
-pub const StmtNodeIndex = *Stmt;
-pub const ExprNodeIndex = *Expr;
+// There are three types.
+// 1. Expr (expression)
+// 2. Stmt (statement)
+// 3. Binding
+// Q: "What's the difference between an expression and a statement?"
+// A:  > Expression: Something which evaluates to a value. Example: 1+2/x
+//     > Statement: A line of code which does something. Example: GOTO 100
+//     > https://stackoverflow.com/questions/19132/expression-versus-statement/19224#19224
+
+// Expr, Binding, and Stmt each wrap a Data:
+// Data is where the actual data where the node lives.
+// There are four possible versions of this structure:
+// [ ] 1.  *Expr, *Stmt, *Binding
+// [ ] 1a. *Expr, *Stmt, *Binding something something dynamic dispatch
+// [ ] 2.  *Data
+// [x] 3.  Data.(*) (The union value in Data is a pointer)
+// I chose #3 mostly for code simplification -- sometimes, the data is modified in-place.
+// But also it uses the least memory.
+// Since Data is a union, the size in bytes of Data is the max of all types
+// So with #1 or #2, if S.Function consumes 768 bits, that means Data must be >= 768 bits
+// Which means "true" in codenow takes up over 768 bits, probably more than what v8 spends
+// With this approach, Data is the size of a pointer. The value of the type decides the size.
+// It's not really clear which approach is best without benchmarking it.
+
+pub const BindingNodeIndex = Binding;
+pub const StmtNodeIndex = Stmt;
+pub const ExprNodeIndex = Expr;
 
 pub const ExprNodeList = []Expr;
 pub const StmtNodeList = []Stmt;
@@ -43,11 +51,19 @@ pub const BindingNodeList = []Binding;
 // be an array of arrays indexed first by source index, then by inner index.
 // The maps can be merged quickly by creating a single outer array containing
 // all inner arrays from all parsed files.
-pub const Ref = struct {
-    source_index: ?u32 = null,
-    inner_index: u32,
+pub const Ref = packed struct {
+    source_index: Ref.Int = std.math.maxInt(Ref.Int),
+    inner_index: Ref.Int,
 
-    const None = Ref{ .source_index = null, .inner_index = std.math.maxInt(u32) };
+    const Int = u32;
+    const None = Ref{ .inner_index = std.math.maxInt(Ref.Int) };
+    pub fn isNull(self: *const Ref) bool {
+        return self.source_index == std.math.maxInt(Ref.Int) and self.inner_index == std.math.maxInt(Ref.Int);
+    }
+
+    pub fn isSourceNull(self: *const Ref) bool {
+        return self.source_index == std.math.maxInt(Ref.Int);
+    }
 };
 
 pub const ImportItemStatus = packed enum {
@@ -62,11 +78,41 @@ pub const ImportItemStatus = packed enum {
 
 pub const LocRef = struct { loc: logger.Loc, ref: ?Ref };
 
+pub const Flags = struct {
+
+    // Instead of 4 bytes for booleans, we can store it in 4 bits
+    // It will still round up to 1 byte. But that's 3 bytes less!
+    pub const Property = packed struct {
+        is_computed: bool = false,
+        is_method: bool = false,
+        is_static: bool = false,
+        was_shorthand: bool = false,
+        is_spread: bool = false,
+
+        const None = Flags.Property{};
+    };
+
+    pub const Function = packed struct {
+        is_async: bool = false,
+        is_generator: bool = false,
+        has_rest_arg: bool = false,
+        has_if_scope: bool = false,
+
+        // This is true if the function is a method
+        is_unique_formal_parameters: bool = false,
+
+        // Only applicable to function statements.
+        is_export: bool = false,
+
+        const None = Flags.Function{};
+    };
+};
+
 pub const Binding = struct {
     loc: logger.Loc,
     data: B,
 
-    pub const Tag = enum {
+    pub const Tag = packed enum {
         b_identifier,
         b_array,
         b_property,
@@ -76,19 +122,19 @@ pub const Binding = struct {
 
     pub fn init(t: anytype, loc: logger.Loc) Binding {
         switch (@TypeOf(t)) {
-            B.Identifier => {
+            *B.Identifier => {
                 return Binding{ .loc = loc, .data = B{ .b_identifier = t } };
             },
-            B.Array => {
+            *B.Array => {
                 return Binding{ .loc = loc, .data = B{ .b_array = t } };
             },
-            B.Property => {
+            *B.Property => {
                 return Binding{ .loc = loc, .data = B{ .b_property = t } };
             },
-            B.Object => {
+            *B.Object => {
                 return Binding{ .loc = loc, .data = B{ .b_object = t } };
             },
-            B.Missing => {
+            *B.Missing => {
                 return Binding{ .loc = loc, .data = B{ .b_missing = t } };
             },
             else => {
@@ -96,38 +142,60 @@ pub const Binding = struct {
             },
         }
     }
+
+    pub fn alloc(allocator: *std.mem.Allocator, t: anytype, loc: logger.Loc) Binding {
+        switch (@TypeOf(t)) {
+            B.Identifier => {
+                var data = allocator.create(B.Identifier) catch unreachable;
+                data.* = t;
+                return Binding{ .loc = loc, .data = B{ .b_identifier = data } };
+            },
+            B.Array => {
+                var data = allocator.create(B.Array) catch unreachable;
+                data.* = t;
+                return Binding{ .loc = loc, .data = B{ .b_array = data } };
+            },
+            B.Property => {
+                var data = allocator.create(B.Property) catch unreachable;
+                data.* = t;
+                return Binding{ .loc = loc, .data = B{ .b_property = data } };
+            },
+            B.Object => {
+                var data = allocator.create(B.Object) catch unreachable;
+                data.* = t;
+                return Binding{ .loc = loc, .data = B{ .b_object = data } };
+            },
+            B.Missing => {
+                var data = allocator.create(B.Missing) catch unreachable;
+                data.* = t;
+                return Binding{ .loc = loc, .data = B{ .b_missing = data } };
+            },
+            else => {
+                @compileError("Invalid type passed to Binding.alloc");
+            },
+        }
+    }
 };
 
 pub const B = union(Binding.Tag) {
-    b_identifier: B.Identifier,
-    b_array: B.Array,
-    b_property: B.Property,
-    b_object: B.Object,
-    b_missing: B.Missing,
+    b_identifier: *B.Identifier,
+    b_array: *B.Array,
+    b_property: *B.Property,
+    b_object: *B.Object,
+    b_missing: *B.Missing,
 
     pub const Identifier = struct {
         ref: Ref,
     };
 
     pub const Property = struct {
-        pub const Kind = enum {
-            normal,
-            get,
-            set,
-            spread,
-        };
-
+        flags: Flags.Property = Flags.Property.None,
         key: ExprNodeIndex,
-        value: ?BindingNodeIndex = null,
-        kind: Kind = Kind.normal,
-        initializer: ?ExprNodeIndex,
-        is_computed: bool = false,
-        is_method: bool = false,
-        is_static: bool = false,
-        was_shorthand: bool = false,
+        value: BindingNodeIndex,
+        default_value: ?ExprNodeIndex = null,
     };
 
-    pub const Object = struct { properties: []Property };
+    pub const Object = struct { properties: []Property, is_single_line: bool = false };
 
     pub const Array = struct {
         items: []ArrayBinding,
@@ -166,11 +234,11 @@ pub const G = struct {
     };
 
     pub const Class = struct {
-        class_keyword: logger.Range,
+        class_keyword: logger.Range = logger.Range.None,
         ts_decorators: ?ExprNodeList = null,
-        name: logger.Loc,
+        name: logger.Loc = logger.Loc.Empty,
         extends: ?ExprNodeIndex = null,
-        body_loc: logger.Loc,
+        body_loc: logger.Loc = logger.Loc.Empty,
         properties: []Property = &([_]Property{}),
     };
 
@@ -194,11 +262,15 @@ pub const G = struct {
         //   class Foo { a = 1 }
         //
         initializer: ?ExprNodeIndex = null,
-        kind: B.Property.Kind,
-        is_computed: bool = false,
-        is_method: bool = false,
-        is_static: bool = false,
-        was_shorthand: bool = false,
+        kind: Kind = Kind.normal,
+        flags: Flags.Property = Flags.Property.None,
+
+        pub const Kind = packed enum {
+            normal,
+            get,
+            set,
+            spread,
+        };
     };
 
     pub const FnBody = struct {
@@ -213,13 +285,7 @@ pub const G = struct {
         body: ?FnBody = null,
         arguments_ref: ?Ref = null,
 
-        is_async: bool = false,
-        is_generator: bool = false,
-        has_rest_arg: bool = false,
-        has_if_scope: bool = false,
-
-        // This is true if the function is a method
-        is_unique_formal_parameters: bool = false,
+        flags: Flags.Function = Flags.Function.None,
     };
 
     pub const Arg = struct {
@@ -487,7 +553,7 @@ pub const Symbol = struct {
     }
 };
 
-pub const OptionalChain = packed enum {
+pub const OptionalChain = packed enum(u2) {
 
 // "a?.b"
 start,
@@ -504,7 +570,7 @@ pub const E = struct {
         is_parenthesized: bool = false,
     };
 
-    pub const Unary = packed struct {
+    pub const Unary = struct {
         op: Op.Code,
         value: ExprNodeIndex,
     };
@@ -597,7 +663,7 @@ pub const E = struct {
 
     pub const Function = struct { func: G.Fn };
 
-    pub const Identifier = struct {
+    pub const Identifier = packed struct {
         ref: Ref = Ref.None,
 
         // If we're inside a "with" statement, this identifier may be a property
@@ -636,7 +702,7 @@ pub const E = struct {
     // "{x}" shorthand syntax wasn't aware that the "x" in this case is actually
     // "{x: importedNamespace.x}". This separate type forces code to opt-in to
     // doing this instead of opt-out.
-    pub const ImportIdentifier = struct {
+    pub const ImportIdentifier = packed struct {
         ref: Ref,
 
         // If true, this was originally an identifier expression such as "foo". If
@@ -737,178 +803,103 @@ pub const Stmt = struct {
     data: Data,
 
     pub fn empty() Stmt {
-        return Stmt.init(S.Empty{}, logger.Loc.Empty);
+        return Stmt.init(&Stmt.None, logger.Loc.Empty);
     }
 
-    pub fn init(t: anytype, loc: logger.Loc) Stmt {
-        switch (@TypeOf(t)) {
+    var None = S.Empty{};
+
+    pub fn init(st: anytype, loc: logger.Loc) Stmt {
+        if (@typeInfo(@TypeOf(st)) != .Pointer) {
+            @compileError("Stmt.init needs a pointer.");
+        }
+
+        switch (@TypeOf(st.*)) {
             S.Block => {
-                return Stmt{
-                    .loc = loc,
-                    .data = Data{ .s_block = t },
-                };
+                return Stmt{ .loc = loc, .data = Data{ .s_block = st } };
+            },
+            S.SExpr => {
+                return Stmt{ .loc = loc, .data = Data{ .s_expr = st } };
             },
             S.Comment => {
-                return Stmt{
-                    .loc = loc,
-                    .data = Data{ .s_comment = t },
-                };
+                return Stmt{ .loc = loc, .data = Data{ .s_comment = st } };
             },
             S.Directive => {
-                return Stmt{
-                    .loc = loc,
-                    .data = Data{ .s_directive = t },
-                };
+                return Stmt{ .loc = loc, .data = Data{ .s_directive = st } };
             },
             S.ExportClause => {
-                return Stmt{
-                    .loc = loc,
-                    .data = Data{ .s_export_clause = t },
-                };
+                return Stmt{ .loc = loc, .data = Data{ .s_export_clause = st } };
             },
             S.Empty => {
-                return Stmt{
-                    .loc = loc,
-                    .data = Data{ .s_empty = t },
-                };
+                return Stmt{ .loc = loc, .data = Data{ .s_empty = st } };
             },
             S.TypeScript => {
-                return Stmt{
-                    .loc = loc,
-                    .data = Data{ .s_type_script = t },
-                };
+                return Stmt{ .loc = loc, .data = Data{ .s_type_script = st } };
             },
             S.Debugger => {
-                return Stmt{
-                    .loc = loc,
-                    .data = Data{ .s_debugger = t },
-                };
+                return Stmt{ .loc = loc, .data = Data{ .s_debugger = st } };
             },
             S.ExportFrom => {
-                return Stmt{
-                    .loc = loc,
-                    .data = Data{ .s_export_from = t },
-                };
+                return Stmt{ .loc = loc, .data = Data{ .s_export_from = st } };
             },
             S.ExportDefault => {
-                return Stmt{
-                    .loc = loc,
-                    .data = Data{ .s_export_default = t },
-                };
+                return Stmt{ .loc = loc, .data = Data{ .s_export_default = st } };
             },
             S.Enum => {
-                return Stmt{
-                    .loc = loc,
-                    .data = Data{ .s_enum = t },
-                };
+                return Stmt{ .loc = loc, .data = Data{ .s_enum = st } };
             },
             S.Namespace => {
-                return Stmt{
-                    .loc = loc,
-                    .data = Data{ .s_namespace = t },
-                };
+                return Stmt{ .loc = loc, .data = Data{ .s_namespace = st } };
             },
             S.Function => {
-                return Stmt{
-                    .loc = loc,
-                    .data = Data{ .s_function = t },
-                };
+                return Stmt{ .loc = loc, .data = Data{ .s_function = st } };
             },
             S.Class => {
-                return Stmt{
-                    .loc = loc,
-                    .data = Data{ .s_class = t },
-                };
+                return Stmt{ .loc = loc, .data = Data{ .s_class = st } };
             },
             S.If => {
-                return Stmt{
-                    .loc = loc,
-                    .data = Data{ .s_if = t },
-                };
+                return Stmt{ .loc = loc, .data = Data{ .s_if = st } };
             },
             S.For => {
-                return Stmt{
-                    .loc = loc,
-                    .data = Data{ .s_for = t },
-                };
+                return Stmt{ .loc = loc, .data = Data{ .s_for = st } };
             },
             S.ForIn => {
-                return Stmt{
-                    .loc = loc,
-                    .data = Data{ .s_for_in = t },
-                };
+                return Stmt{ .loc = loc, .data = Data{ .s_for_in = st } };
             },
             S.ForOf => {
-                return Stmt{
-                    .loc = loc,
-                    .data = Data{ .s_for_of = t },
-                };
+                return Stmt{ .loc = loc, .data = Data{ .s_for_of = st } };
             },
             S.DoWhile => {
-                return Stmt{
-                    .loc = loc,
-                    .data = Data{ .s_do_while = t },
-                };
+                return Stmt{ .loc = loc, .data = Data{ .s_do_while = st } };
             },
             S.While => {
-                return Stmt{
-                    .loc = loc,
-                    .data = Data{ .s_while = t },
-                };
+                return Stmt{ .loc = loc, .data = Data{ .s_while = st } };
             },
             S.With => {
-                return Stmt{
-                    .loc = loc,
-                    .data = Data{ .s_with = t },
-                };
+                return Stmt{ .loc = loc, .data = Data{ .s_with = st } };
             },
             S.Try => {
-                return Stmt{
-                    .loc = loc,
-                    .data = Data{ .s_try = t },
-                };
+                return Stmt{ .loc = loc, .data = Data{ .s_try = st } };
             },
             S.Switch => {
-                return Stmt{
-                    .loc = loc,
-                    .data = Data{ .s_switch = t },
-                };
+                return Stmt{ .loc = loc, .data = Data{ .s_switch = st } };
             },
             S.Import => {
-                return Stmt{
-                    .loc = loc,
-                    .data = Data{ .s_import = t },
-                };
+                return Stmt{ .loc = loc, .data = Data{ .s_import = st } };
             },
             S.Return => {
-                return Stmt{
-                    .loc = loc,
-                    .data = Data{ .s_return = t },
-                };
+                return Stmt{ .loc = loc, .data = Data{ .s_return = st } };
             },
             S.Throw => {
-                return Stmt{
-                    .loc = loc,
-                    .data = Data{ .s_throw = t },
-                };
+                return Stmt{ .loc = loc, .data = Data{ .s_throw = st } };
             },
             S.Local => {
-                return Stmt{
-                    .loc = loc,
-                    .data = Data{ .s_local = t },
-                };
+                return Stmt{ .loc = loc, .data = Data{ .s_local = st } };
             },
             S.Break => {
-                return Stmt{
-                    .loc = loc,
-                    .data = Data{ .s_break = t },
-                };
+                return Stmt{ .loc = loc, .data = Data{ .s_break = st } };
             },
             S.Continue => {
-                return Stmt{
-                    .loc = loc,
-                    .data = Data{ .s_continue = t },
-                };
+                return Stmt{ .loc = loc, .data = Data{ .s_continue = st } };
             },
             else => {
                 @compileError("Invalid type in Stmt.init");
@@ -916,7 +907,160 @@ pub const Stmt = struct {
         }
     }
 
-    pub const Tag = enum {
+    pub fn alloc(allocator: *std.mem.Allocator, origData: anytype, loc: logger.Loc) Stmt {
+        switch (@TypeOf(origData)) {
+            S.Block => {
+                var st = allocator.create(S.Block) catch unreachable;
+                st.* = origData;
+                return Stmt{ .loc = loc, .data = Data{ .s_block = st } };
+            },
+            S.SExpr => {
+                var st = allocator.create(S.SExpr) catch unreachable;
+                st.* = origData;
+                return Stmt{ .loc = loc, .data = Data{ .s_expr = st } };
+            },
+            S.Comment => {
+                var st = allocator.create(S.Comment) catch unreachable;
+                st.* = origData;
+                return Stmt{ .loc = loc, .data = Data{ .s_comment = st } };
+            },
+            S.Directive => {
+                var st = allocator.create(S.Directive) catch unreachable;
+                st.* = origData;
+                return Stmt{ .loc = loc, .data = Data{ .s_directive = st } };
+            },
+            S.ExportClause => {
+                var st = allocator.create(S.ExportClause) catch unreachable;
+                st.* = origData;
+                return Stmt{ .loc = loc, .data = Data{ .s_export_clause = st } };
+            },
+            S.Empty => {
+                var st = allocator.create(S.Empty) catch unreachable;
+                st.* = origData;
+                return Stmt{ .loc = loc, .data = Data{ .s_empty = st } };
+            },
+            S.TypeScript => {
+                var st = allocator.create(S.TypeScript) catch unreachable;
+                st.* = origData;
+                return Stmt{ .loc = loc, .data = Data{ .s_type_script = st } };
+            },
+            S.Debugger => {
+                var st = allocator.create(S.Debugger) catch unreachable;
+                st.* = origData;
+                return Stmt{ .loc = loc, .data = Data{ .s_debugger = st } };
+            },
+            S.ExportFrom => {
+                var st = allocator.create(S.ExportFrom) catch unreachable;
+                st.* = origData;
+                return Stmt{ .loc = loc, .data = Data{ .s_export_from = st } };
+            },
+            S.ExportDefault => {
+                var st = allocator.create(S.ExportDefault) catch unreachable;
+                st.* = origData;
+                return Stmt{ .loc = loc, .data = Data{ .s_export_default = st } };
+            },
+            S.Enum => {
+                var st = allocator.create(S.Enum) catch unreachable;
+                st.* = origData;
+                return Stmt{ .loc = loc, .data = Data{ .s_enum = st } };
+            },
+            S.Namespace => {
+                var st = allocator.create(S.Namespace) catch unreachable;
+                st.* = origData;
+                return Stmt{ .loc = loc, .data = Data{ .s_namespace = st } };
+            },
+            S.Function => {
+                var st = allocator.create(S.Function) catch unreachable;
+                st.* = origData;
+                return Stmt{ .loc = loc, .data = Data{ .s_function = st } };
+            },
+            S.Class => {
+                var st = allocator.create(S.Class) catch unreachable;
+                st.* = origData;
+                return Stmt{ .loc = loc, .data = Data{ .s_class = st } };
+            },
+            S.If => {
+                var st = allocator.create(S.If) catch unreachable;
+                st.* = origData;
+                return Stmt{ .loc = loc, .data = Data{ .s_if = st } };
+            },
+            S.For => {
+                var st = allocator.create(S.For) catch unreachable;
+                st.* = origData;
+                return Stmt{ .loc = loc, .data = Data{ .s_for = st } };
+            },
+            S.ForIn => {
+                var st = allocator.create(S.ForIn) catch unreachable;
+                st.* = origData;
+                return Stmt{ .loc = loc, .data = Data{ .s_for_in = st } };
+            },
+            S.ForOf => {
+                var st = allocator.create(S.ForOf) catch unreachable;
+                st.* = origData;
+                return Stmt{ .loc = loc, .data = Data{ .s_for_of = st } };
+            },
+            S.DoWhile => {
+                var st = allocator.create(S.DoWhile) catch unreachable;
+                st.* = origData;
+                return Stmt{ .loc = loc, .data = Data{ .s_do_while = st } };
+            },
+            S.While => {
+                var st = allocator.create(S.While) catch unreachable;
+                st.* = origData;
+                return Stmt{ .loc = loc, .data = Data{ .s_while = st } };
+            },
+            S.With => {
+                var st = allocator.create(S.With) catch unreachable;
+                st.* = origData;
+                return Stmt{ .loc = loc, .data = Data{ .s_with = st } };
+            },
+            S.Try => {
+                var st = allocator.create(S.Try) catch unreachable;
+                st.* = origData;
+                return Stmt{ .loc = loc, .data = Data{ .s_try = st } };
+            },
+            S.Switch => {
+                var st = allocator.create(S.Switch) catch unreachable;
+                st.* = origData;
+                return Stmt{ .loc = loc, .data = Data{ .s_switch = st } };
+            },
+            S.Import => {
+                var st = allocator.create(S.Import) catch unreachable;
+                st.* = origData;
+                return Stmt{ .loc = loc, .data = Data{ .s_import = st } };
+            },
+            S.Return => {
+                var st = allocator.create(S.Return) catch unreachable;
+                st.* = origData;
+                return Stmt{ .loc = loc, .data = Data{ .s_return = st } };
+            },
+            S.Throw => {
+                var st = allocator.create(S.Throw) catch unreachable;
+                st.* = origData;
+                return Stmt{ .loc = loc, .data = Data{ .s_throw = st } };
+            },
+            S.Local => {
+                var st = allocator.create(S.Local) catch unreachable;
+                st.* = origData;
+                return Stmt{ .loc = loc, .data = Data{ .s_local = st } };
+            },
+            S.Break => {
+                var st = allocator.create(S.Break) catch unreachable;
+                st.* = origData;
+                return Stmt{ .loc = loc, .data = Data{ .s_break = st } };
+            },
+            S.Continue => {
+                var st = allocator.create(S.Continue) catch unreachable;
+                st.* = origData;
+                return Stmt{ .loc = loc, .data = Data{ .s_continue = st } };
+            },
+            else => {
+                @compileError("Invalid type in Stmt.init");
+            },
+        }
+    }
+
+    pub const Tag = packed enum {
         s_block,
         s_comment,
         s_directive,
@@ -945,37 +1089,39 @@ pub const Stmt = struct {
         s_local,
         s_break,
         s_continue,
+        s_expr,
     };
 
     pub const Data = union(Tag) {
-        s_block: S.Block,
-        s_comment: S.Comment,
-        s_directive: S.Directive,
-        s_export_clause: S.ExportClause,
-        s_empty: S.Empty,
-        s_type_script: S.TypeScript,
-        s_debugger: S.Debugger,
-        s_export_from: S.ExportFrom,
-        s_export_default: S.ExportDefault,
-        s_enum: S.Enum,
-        s_namespace: S.Namespace,
-        s_function: S.Function,
-        s_class: S.Class,
-        s_if: S.If,
-        s_for: S.For,
-        s_for_in: S.ForIn,
-        s_for_of: S.ForOf,
-        s_do_while: S.DoWhile,
-        s_while: S.While,
-        s_with: S.With,
-        s_try: S.Try,
-        s_switch: S.Switch,
-        s_import: S.Import,
-        s_return: S.Return,
-        s_throw: S.Throw,
-        s_local: S.Local,
-        s_break: S.Break,
-        s_continue: S.Continue,
+        s_block: *S.Block,
+        s_expr: *S.SExpr,
+        s_comment: *S.Comment,
+        s_directive: *S.Directive,
+        s_export_clause: *S.ExportClause,
+        s_empty: *S.Empty,
+        s_type_script: *S.TypeScript,
+        s_debugger: *S.Debugger,
+        s_export_from: *S.ExportFrom,
+        s_export_default: *S.ExportDefault,
+        s_enum: *S.Enum,
+        s_namespace: *S.Namespace,
+        s_function: *S.Function,
+        s_class: *S.Class,
+        s_if: *S.If,
+        s_for: *S.For,
+        s_for_in: *S.ForIn,
+        s_for_of: *S.ForOf,
+        s_do_while: *S.DoWhile,
+        s_while: *S.While,
+        s_with: *S.With,
+        s_try: *S.Try,
+        s_switch: *S.Switch,
+        s_import: *S.Import,
+        s_return: *S.Return,
+        s_throw: *S.Throw,
+        s_local: *S.Local,
+        s_break: *S.Break,
+        s_continue: *S.Continue,
     };
 
     pub fn caresAboutScope(self: *Stmt) bool {
@@ -998,111 +1144,391 @@ pub const Expr = struct {
     loc: logger.Loc,
     data: Data,
 
-    pub const Flags = enum { none, ts_decorator };
+    pub const EFlags = enum { none, ts_decorator };
 
-    pub fn init(data: anytype, loc: logger.Loc) Expr {
-        switch (@TypeOf(data)) {
+    pub fn init(exp: anytype, loc: logger.Loc) Expr {
+        switch (@TypeOf(exp)) {
+            *E.Array => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{ .e_array = exp },
+                };
+            },
+            *E.Unary => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{ .e_unary = exp },
+                };
+            },
+            *E.Binary => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{ .e_binary = exp },
+                };
+            },
+            *E.This => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{ .e_this = exp },
+                };
+            },
+            *E.Boolean => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{ .e_boolean = exp },
+                };
+            },
+            *E.Super => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{ .e_super = exp },
+                };
+            },
+            *E.Null => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{ .e_null = exp },
+                };
+            },
+            *E.Undefined => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{ .e_undefined = exp },
+                };
+            },
+            *E.New => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{ .e_new = exp },
+                };
+            },
+            *E.NewTarget => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{ .e_new_target = exp },
+                };
+            },
+            *E.Function => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{ .e_function = exp },
+                };
+            },
+            *E.ImportMeta => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{ .e_import_meta = exp },
+                };
+            },
+            *E.Call => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{ .e_call = exp },
+                };
+            },
+            *E.Dot => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{ .e_dot = exp },
+                };
+            },
+            *E.Index => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{ .e_index = exp },
+                };
+            },
+            *E.Arrow => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{ .e_arrow = exp },
+                };
+            },
+            *E.Identifier => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{ .e_identifier = exp },
+                };
+            },
+            *E.ImportIdentifier => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{ .e_import_identifier = exp },
+                };
+            },
+            *E.PrivateIdentifier => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{ .e_private_identifier = exp },
+                };
+            },
+            *E.JSXElement => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{ .e_jsx_element = exp },
+                };
+            },
+            *E.Missing => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{ .e_missing = exp },
+                };
+            },
+            *E.Number => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{ .e_number = exp },
+                };
+            },
+            *E.BigInt => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{ .e_big_int = exp },
+                };
+            },
+            *E.Object => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{ .e_object = exp },
+                };
+            },
+            *E.Spread => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{ .e_spread = exp },
+                };
+            },
+            *E.String => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{ .e_string = exp },
+                };
+            },
+            *E.TemplatePart => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{ .e_template_part = exp },
+                };
+            },
+            *E.Template => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{ .e_template = exp },
+                };
+            },
+            *E.RegExp => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{ .e_reg_exp = exp },
+                };
+            },
+            *E.Await => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{ .e_await = exp },
+                };
+            },
+            *E.Yield => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{ .e_yield = exp },
+                };
+            },
+            *E.If => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{ .e_if = exp },
+                };
+            },
+            *E.RequireOrRequireResolve => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{ .e_require_or_require_resolve = exp },
+                };
+            },
+            *E.Import => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{ .e_import = exp },
+                };
+            },
+            else => {
+                @compileError("Expr.init needs a pointer to E.*");
+            },
+        }
+    }
+
+    pub fn alloc(allocator: *std.mem.Allocator, st: anytype, loc: logger.Loc) Expr {
+        switch (@TypeOf(st)) {
             E.Array => {
-                return Expr{ .loc = loc, .data = Data{ .e_array = data } };
+                var dat = allocator.create(E.Array) catch unreachable;
+                dat.* = st;
+                return Expr{ .loc = loc, .data = Data{ .e_array = dat } };
             },
             E.Unary => {
-                return Expr{ .loc = loc, .data = Data{ .e_unary = data } };
+                var dat = allocator.create(E.Unary) catch unreachable;
+                dat.* = st;
+                return Expr{ .loc = loc, .data = Data{ .e_unary = dat } };
             },
             E.Binary => {
-                return Expr{ .loc = loc, .data = Data{ .e_binary = data } };
-            },
-            E.Boolean => {
-                return Expr{ .loc = loc, .data = Data{ .e_boolean = data } };
-            },
-            E.Super => {
-                return Expr{ .loc = loc, .data = Data{ .e_super = data } };
-            },
-            E.Null => {
-                return Expr{ .loc = loc, .data = Data{ .e_null = data } };
+                var dat = allocator.create(E.Binary) catch unreachable;
+                dat.* = st;
+                return Expr{ .loc = loc, .data = Data{ .e_binary = dat } };
             },
             E.This => {
-                return Expr{ .loc = loc, .data = Data{ .e_this = data } };
+                var dat = allocator.create(E.This) catch unreachable;
+                dat.* = st;
+                return Expr{ .loc = loc, .data = Data{ .e_this = dat } };
+            },
+            E.Boolean => {
+                var dat = allocator.create(E.Boolean) catch unreachable;
+                dat.* = st;
+                return Expr{ .loc = loc, .data = Data{ .e_boolean = dat } };
+            },
+            E.Super => {
+                var dat = allocator.create(E.Super) catch unreachable;
+                dat.* = st;
+                return Expr{ .loc = loc, .data = Data{ .e_super = dat } };
+            },
+            E.Null => {
+                var dat = allocator.create(E.Null) catch unreachable;
+                dat.* = st;
+                return Expr{ .loc = loc, .data = Data{ .e_null = dat } };
             },
             E.Undefined => {
-                return Expr{ .loc = loc, .data = Data{ .e_undefined = data } };
+                var dat = allocator.create(E.Undefined) catch unreachable;
+                dat.* = st;
+                return Expr{ .loc = loc, .data = Data{ .e_undefined = dat } };
             },
             E.New => {
-                return Expr{ .loc = loc, .data = Data{ .e_new = data } };
+                var dat = allocator.create(E.New) catch unreachable;
+                dat.* = st;
+                return Expr{ .loc = loc, .data = Data{ .e_new = dat } };
             },
             E.NewTarget => {
-                return Expr{ .loc = loc, .data = Data{ .e_new_target = data } };
-            },
-            E.ImportMeta => {
-                return Expr{ .loc = loc, .data = Data{ .e_import_meta = data } };
-            },
-            E.Call => {
-                return Expr{ .loc = loc, .data = Data{ .e_call = data } };
-            },
-            E.Dot => {
-                return Expr{ .loc = loc, .data = Data{ .e_dot = data } };
-            },
-            E.Index => {
-                return Expr{ .loc = loc, .data = Data{ .e_index = data } };
-            },
-            E.Arrow => {
-                return Expr{ .loc = loc, .data = Data{ .e_arrow = data } };
-            },
-            E.Identifier => {
-                return Expr{ .loc = loc, .data = Data{ .e_identifier = data } };
-            },
-            E.ImportIdentifier => {
-                return Expr{ .loc = loc, .data = Data{ .e_import_identifier = data } };
-            },
-            E.PrivateIdentifier => {
-                return Expr{ .loc = loc, .data = Data{ .e_private_identifier = data } };
-            },
-            E.JSXElement => {
-                return Expr{ .loc = loc, .data = Data{ .e_jsx_element = data } };
-            },
-            E.Missing => {
-                return Expr{ .loc = loc, .data = Data{ .e_missing = data } };
-            },
-            E.Number => {
-                return Expr{ .loc = loc, .data = Data{ .e_number = data } };
-            },
-            E.BigInt => {
-                return Expr{ .loc = loc, .data = Data{ .e_big_int = data } };
-            },
-            E.Object => {
-                return Expr{ .loc = loc, .data = Data{ .e_object = data } };
-            },
-            E.Spread => {
-                return Expr{ .loc = loc, .data = Data{ .e_spread = data } };
-            },
-            E.String => {
-                return Expr{ .loc = loc, .data = Data{ .e_string = data } };
-            },
-            E.TemplatePart => {
-                return Expr{ .loc = loc, .data = Data{ .e_template_part = data } };
-            },
-            E.Template => {
-                return Expr{ .loc = loc, .data = Data{ .e_template = data } };
-            },
-            E.RegExp => {
-                return Expr{ .loc = loc, .data = Data{ .e_reg_exp = data } };
-            },
-            E.Await => {
-                return Expr{ .loc = loc, .data = Data{ .e_await = data } };
-            },
-            E.Yield => {
-                return Expr{ .loc = loc, .data = Data{ .e_yield = data } };
-            },
-            E.If => {
-                return Expr{ .loc = loc, .data = Data{ .e_if = data } };
-            },
-            E.RequireOrRequireResolve => {
-                return Expr{ .loc = loc, .data = Data{ .e_require_or_require_resolve = data } };
-            },
-            E.Import => {
-                return Expr{ .loc = loc, .data = Data{ .e_import = data } };
+                var dat = allocator.create(E.NewTarget) catch unreachable;
+                dat.* = st;
+                return Expr{ .loc = loc, .data = Data{ .e_new_target = dat } };
             },
             E.Function => {
-                return Expr{ .loc = loc, .data = Data{ .e_function = data } };
+                var dat = allocator.create(E.Function) catch unreachable;
+                dat.* = st;
+                return Expr{ .loc = loc, .data = Data{ .e_function = dat } };
+            },
+            E.ImportMeta => {
+                var dat = allocator.create(E.ImportMeta) catch unreachable;
+                dat.* = st;
+                return Expr{ .loc = loc, .data = Data{ .e_import_meta = dat } };
+            },
+            E.Call => {
+                var dat = allocator.create(E.Call) catch unreachable;
+                dat.* = st;
+                return Expr{ .loc = loc, .data = Data{ .e_call = dat } };
+            },
+            E.Dot => {
+                var dat = allocator.create(E.Dot) catch unreachable;
+                dat.* = st;
+                return Expr{ .loc = loc, .data = Data{ .e_dot = dat } };
+            },
+            E.Index => {
+                var dat = allocator.create(E.Index) catch unreachable;
+                dat.* = st;
+                return Expr{ .loc = loc, .data = Data{ .e_index = dat } };
+            },
+            E.Arrow => {
+                var dat = allocator.create(E.Arrow) catch unreachable;
+                dat.* = st;
+                return Expr{ .loc = loc, .data = Data{ .e_arrow = dat } };
+            },
+            E.Identifier => {
+                var dat = allocator.create(E.Identifier) catch unreachable;
+                dat.* = st;
+                return Expr{ .loc = loc, .data = Data{ .e_identifier = dat } };
+            },
+            E.ImportIdentifier => {
+                var dat = allocator.create(E.ImportIdentifier) catch unreachable;
+                dat.* = st;
+                return Expr{ .loc = loc, .data = Data{ .e_import_identifier = dat } };
+            },
+            E.PrivateIdentifier => {
+                var dat = allocator.create(E.PrivateIdentifier) catch unreachable;
+                dat.* = st;
+                return Expr{ .loc = loc, .data = Data{ .e_private_identifier = dat } };
+            },
+            E.JSXElement => {
+                var dat = allocator.create(E.JSXElement) catch unreachable;
+                dat.* = st;
+                return Expr{ .loc = loc, .data = Data{ .e_jsx_element = dat } };
+            },
+            E.Missing => {
+                var dat = allocator.create(E.Missing) catch unreachable;
+                dat.* = st;
+                return Expr{ .loc = loc, .data = Data{ .e_missing = dat } };
+            },
+            E.Number => {
+                var dat = allocator.create(E.Number) catch unreachable;
+                dat.* = st;
+                return Expr{ .loc = loc, .data = Data{ .e_number = dat } };
+            },
+            E.BigInt => {
+                var dat = allocator.create(E.BigInt) catch unreachable;
+                dat.* = st;
+                return Expr{ .loc = loc, .data = Data{ .e_big_int = dat } };
+            },
+            E.Object => {
+                var dat = allocator.create(E.Object) catch unreachable;
+                dat.* = st;
+                return Expr{ .loc = loc, .data = Data{ .e_object = dat } };
+            },
+            E.Spread => {
+                var dat = allocator.create(E.Spread) catch unreachable;
+                dat.* = st;
+                return Expr{ .loc = loc, .data = Data{ .e_spread = dat } };
+            },
+            E.String => {
+                var dat = allocator.create(E.String) catch unreachable;
+                dat.* = st;
+                return Expr{ .loc = loc, .data = Data{ .e_string = dat } };
+            },
+            E.TemplatePart => {
+                var dat = allocator.create(E.TemplatePart) catch unreachable;
+                dat.* = st;
+                return Expr{ .loc = loc, .data = Data{ .e_template_part = dat } };
+            },
+            E.Template => {
+                var dat = allocator.create(E.Template) catch unreachable;
+                dat.* = st;
+                return Expr{ .loc = loc, .data = Data{ .e_template = dat } };
+            },
+            E.RegExp => {
+                var dat = allocator.create(E.RegExp) catch unreachable;
+                dat.* = st;
+                return Expr{ .loc = loc, .data = Data{ .e_reg_exp = dat } };
+            },
+            E.Await => {
+                var dat = allocator.create(E.Await) catch unreachable;
+                dat.* = st;
+                return Expr{ .loc = loc, .data = Data{ .e_await = dat } };
+            },
+            E.Yield => {
+                var dat = allocator.create(E.Yield) catch unreachable;
+                dat.* = st;
+                return Expr{ .loc = loc, .data = Data{ .e_yield = dat } };
+            },
+            E.If => {
+                var dat = allocator.create(E.If) catch unreachable;
+                dat.* = st;
+                return Expr{ .loc = loc, .data = Data{ .e_if = dat } };
+            },
+            E.RequireOrRequireResolve => {
+                var dat = allocator.create(E.RequireOrRequireResolve) catch unreachable;
+                dat.* = st;
+                return Expr{ .loc = loc, .data = Data{ .e_require_or_require_resolve = dat } };
+            },
+            E.Import => {
+                var dat = allocator.create(E.Import) catch unreachable;
+                dat.* = st;
+                return Expr{ .loc = loc, .data = Data{ .e_import = dat } };
             },
             else => {
                 @compileError("Invalid type passed to Expr.init");
@@ -1110,7 +1536,7 @@ pub const Expr = struct {
         }
     }
 
-    pub const Tag = enum {
+    pub const Tag = packed enum {
         e_array,
         e_unary,
         e_binary,
@@ -1147,41 +1573,140 @@ pub const Expr = struct {
         e_this,
     };
 
+    pub fn assign(a: *Expr, b: *Expr, allocator: *std.mem.Allocator) Expr {
+        std.debug.assert(a != b);
+        return alloc(allocator, E.Binary{
+            .op = .bin_assign,
+            .left = a.*,
+            .right = b.*,
+        }, a.loc);
+    }
+    pub fn at(expr: *Expr, t: anytype, allocator: *std.mem.allocator) callconv(.Inline) Expr {
+        return alloc(allocator, t, loc);
+    }
+
+    // Wraps the provided expression in the "!" prefix operator. The expression
+    // will potentially be simplified to avoid generating unnecessary extra "!"
+    // operators. For example, calling this with "!!x" will return "!x" instead
+    // of returning "!!!x".
+    pub fn not(expr: Expr, allocator: *std.mem.Allocator) Expr {
+        return maybeSimplifyNot(&expr, allocator) orelse expr;
+    }
+
+    // The given "expr" argument should be the operand of a "!" prefix operator
+    // (i.e. the "x" in "!x"). This returns a simplified expression for the
+    // whole operator (i.e. the "!x") if it can be simplified, or false if not.
+    // It's separate from "Not()" above to avoid allocation on failure in case
+    // that is undesired.
+    pub fn maybeSimplifyNot(expr: *Expr, allocator: *std.mem.Allocator) ?Expr {
+        switch (expr.data) {
+            .e_null, .e_undefined => {
+                return expr.at(E.Boolean{ .value = true }, allocator);
+            },
+            .e_boolean => |b| {
+                return expr.at(E.Boolean{ .value = b.value }, allocator);
+            },
+            .e_number => |n| {
+                return expr.at(E.Boolean{ .value = (n.value == 0 or std.math.isNan(n.value)) }, allocator);
+            },
+            .e_big_int => |b| {
+                return expr.at(E.Boolean{ .value = strings.eql(b.value, "0") }, allocator);
+            },
+            .e_function,
+            .e_arrow,
+            .e_reg_exp,
+            => |b| {
+                return expr.at(E.Boolean{ .value = false }, allocator);
+            },
+            // "!!!a" => "!a"
+            .e_unary => |un| {
+                if (un.op == Op.Code.un_not and isBooleanValue(un.value)) {
+                    return un.value.*;
+                }
+            },
+            .e_binary => |*ex| {
+                // TODO: evaluate whether or not it is safe to do this mutation since it's modifying in-place.
+                // Make sure that these transformations are all safe for special values.
+                // For example, "!(a < b)" is not the same as "a >= b" if a and/or b are
+                // NaN (or undefined, or null, or possibly other problem cases too).
+                switch (ex.op) {
+                    Op.Code.bin_loose_eq => {
+                        ex.op = .bin_loose_ne;
+                        return expr.*;
+                    },
+                    Op.Code.bin_op_loose_ne => {
+                        ex.op = .bin_loose_eq;
+                        return expr.*;
+                    },
+                    Op.Code.bin_op_strict_eq => {
+                        ex.op = .bin_strict_ne;
+                        return expr.*;
+                    },
+                    Op.Code.bin_op_strict_ne => {
+                        ex.op = .bin_strict_eq;
+                        return expr.*;
+                    },
+                    Op.Code.bin_op_comma => {
+                        ex.right = ex.right.not();
+                        return expr.*;
+                    },
+                    else => {},
+                }
+            },
+
+            else => {},
+        }
+
+        return null;
+    }
+
+    pub fn assignStmt(a: *Expr, b: *Expr, allocator: *std.mem.Allocator) Stmt {
+        return Stmt.alloc(
+            allocator,
+            S.SExpr{
+                .op = .assign,
+                .left = a,
+                .right = b,
+            },
+            loc,
+        );
+    }
+
     pub const Data = union(Tag) {
-        e_array: E.Array,
-        e_unary: E.Unary,
-        e_binary: E.Binary,
-        e_this: E.This,
-        e_boolean: E.Boolean,
-        e_super: E.Super,
-        e_null: E.Null,
-        e_undefined: E.Undefined,
-        e_new: E.New,
-        e_new_target: E.NewTarget,
-        e_function: E.Function,
-        e_import_meta: E.ImportMeta,
-        e_call: E.Call,
-        e_dot: E.Dot,
-        e_index: E.Index,
-        e_arrow: E.Arrow,
-        e_identifier: E.Identifier,
-        e_import_identifier: E.ImportIdentifier,
-        e_private_identifier: E.PrivateIdentifier,
-        e_jsx_element: E.JSXElement,
-        e_missing: E.Missing,
-        e_number: E.Number,
-        e_big_int: E.BigInt,
-        e_object: E.Object,
-        e_spread: E.Spread,
-        e_string: E.String,
-        e_template_part: E.TemplatePart,
-        e_template: E.Template,
-        e_reg_exp: E.RegExp,
-        e_await: E.Await,
-        e_yield: E.Yield,
-        e_if: E.If,
-        e_require_or_require_resolve: E.RequireOrRequireResolve,
-        e_import: E.Import,
+        e_array: *E.Array,
+        e_unary: *E.Unary,
+        e_binary: *E.Binary,
+        e_this: *E.This,
+        e_boolean: *E.Boolean,
+        e_super: *E.Super,
+        e_null: *E.Null,
+        e_undefined: *E.Undefined,
+        e_new: *E.New,
+        e_new_target: *E.NewTarget,
+        e_function: *E.Function,
+        e_import_meta: *E.ImportMeta,
+        e_call: *E.Call,
+        e_dot: *E.Dot,
+        e_index: *E.Index,
+        e_arrow: *E.Arrow,
+        e_identifier: *E.Identifier,
+        e_import_identifier: *E.ImportIdentifier,
+        e_private_identifier: *E.PrivateIdentifier,
+        e_jsx_element: *E.JSXElement,
+        e_missing: *E.Missing,
+        e_number: *E.Number,
+        e_big_int: *E.BigInt,
+        e_object: *E.Object,
+        e_spread: *E.Spread,
+        e_string: *E.String,
+        e_template_part: *E.TemplatePart,
+        e_template: *E.Template,
+        e_reg_exp: *E.RegExp,
+        e_await: *E.Await,
+        e_yield: *E.Yield,
+        e_if: *E.If,
+        e_require_or_require_resolve: *E.RequireOrRequireResolve,
+        e_import: *E.Import,
 
         pub fn isOptionalChain(self: *Expr) bool {
             return switch (self) {
@@ -1225,6 +1750,14 @@ pub const EnumValue = struct {
 
 pub const S = struct {
     pub const Block = struct { stmts: StmtNodeList };
+    pub const SExpr = struct {
+        value: ExprNodeIndex,
+
+        // This is set to true for automatically-generated expressions that should
+        // not affect tree shaking. For example, calling a function from the runtime
+        // that doesn't have externally-visible side effects.
+        does_not_affect_tree_shaking: bool,
+    };
 
     pub const Comment = struct { text: string };
 
@@ -1265,7 +1798,6 @@ pub const S = struct {
 
     pub const Function = struct {
         func: G.Fn,
-        is_export: bool,
     };
 
     pub const Class = struct {
@@ -1366,7 +1898,7 @@ pub const S = struct {
 
 pub const Catch = struct {
     loc: logger.Loc,
-    binding: ?BindingNodeIndex,
+    binding: ?BindingNodeIndex = null,
     body: StmtNodeList,
 };
 
@@ -1379,7 +1911,7 @@ pub const Case = struct { loc: logger.Loc, value: ?ExprNodeIndex, body: StmtNode
 
 pub const Op = struct {
     // If you add a new token, remember to add it to "OpTable" too
-    pub const Code = packed enum(u8) {
+    pub const Code = packed enum(u6) {
         // Prefix
         un_pos,
         un_neg,
@@ -1446,7 +1978,7 @@ pub const Op = struct {
         bin_logical_and_assign,
     };
 
-    pub const Level = packed enum(u23) {
+    pub const Level = packed enum(u6) {
         lowest,
         comma,
         spread,
@@ -1642,12 +2174,12 @@ pub fn isDynamicExport(exp: ExportsKind) bool {
     return kind == .cjs || kind == .esm_with_dyn;
 }
 
-pub const DeclaredSymbol = struct {
+pub const DeclaredSymbol = packed struct {
     ref: Ref,
     is_top_level: bool = false,
 };
 
-pub const Dependency = struct {
+pub const Dependency = packed struct {
     source_index: u32 = 0,
     part_index: u32 = 0,
 };
@@ -1889,7 +2421,8 @@ pub const Scope = struct {
 };
 
 test "Binding.init" {
-    var binding = Binding.init(
+    var binding = Binding.alloc(
+        std.heap.page_allocator,
         B.Identifier{ .ref = Ref{ .source_index = 0, .inner_index = 10 } },
         logger.Loc{ .start = 1 },
     );
@@ -1906,7 +2439,8 @@ test "Binding.init" {
 }
 
 test "Stmt.init" {
-    var stmt = Stmt.init(
+    var stmt = Stmt.alloc(
+        std.heap.page_allocator,
         S.Continue{},
         logger.Loc{ .start = 1 },
     );
@@ -1948,9 +2482,11 @@ test "Stmt.init" {
 }
 
 test "Expr.init" {
-    const ident = Expr.init(E.Identifier{}, logger.Loc{ .start = 100 });
+    var allocator = std.heap.page_allocator;
+    const ident = Expr.alloc(allocator, E.Identifier{}, logger.Loc{ .start = 100 });
     var list = [_]Expr{ident};
-    var expr = Expr.init(
+    var expr = Expr.alloc(
+        allocator,
         E.Array{ .items = list[0..] },
         logger.Loc{ .start = 1 },
     );
@@ -1958,8 +2494,10 @@ test "Expr.init" {
     std.testing.expect(@as(Expr.Tag, expr.data) == Expr.Tag.e_array);
     std.testing.expect(expr.data.e_array.items[0].loc.start == 100);
 
-    std.debug.print("--logger.Loc            {d} bits\n", .{@bitSizeOf(logger.Loc)});
-    std.debug.print("--logger.Range          {d} bits\n", .{@bitSizeOf(logger.Range)});
+    std.debug.print("--Ref                      {d} bits\n", .{@bitSizeOf(Ref)});
+    std.debug.print("--LocRef                   {d} bits\n", .{@bitSizeOf(LocRef)});
+    std.debug.print("--logger.Loc               {d} bits\n", .{@bitSizeOf(logger.Loc)});
+    std.debug.print("--logger.Range             {d} bits\n", .{@bitSizeOf(logger.Range)});
     std.debug.print("----------Expr:            {d} bits\n", .{@bitSizeOf(Expr)});
     std.debug.print("ExprNodeList:              {d} bits\n", .{@bitSizeOf(ExprNodeList)});
     std.debug.print("E.Array:                   {d} bits\n", .{@bitSizeOf(E.Array)});
@@ -1998,3 +2536,75 @@ test "Expr.init" {
     std.debug.print("E.Import:                  {d} bits\n", .{@bitSizeOf(E.Import)});
     std.debug.print("----------Expr:            {d} bits\n", .{@bitSizeOf(Expr)});
 }
+
+// -- ESBuild bit sizes
+// EArray             | 256
+// EArrow             | 512
+// EAwait             | 192
+// EBinary            | 448
+// ECall              | 448
+// EDot               | 384
+// EIdentifier        | 96
+// EIf                | 576
+// EImport            | 448
+// EImportIdentifier  | 96
+// EIndex             | 448
+// EJSXElement        | 448
+// ENew               | 448
+// EnumValue          | 384
+// EObject            | 256
+// EPrivateIdentifier | 64
+// ERequire           | 32
+// ERequireResolve    | 32
+// EString            | 256
+// ETemplate          | 640
+// EUnary             | 256
+// Expr               | 192
+// ExprOrStmt         | 128
+// EYield             | 128
+// Finally            | 256
+// Fn                 | 704
+// FnBody             | 256
+// LocRef             | 96
+// NamedExport        | 96
+// NamedImport        | 512
+// NameMinifier       | 256
+// NamespaceAlias     | 192
+// opTableEntry       | 256
+// Part               | 1088
+// Property           | 640
+// PropertyBinding    | 512
+// Ref                | 64
+// SBlock             | 192
+// SBreak             | 64
+// SClass             | 704
+// SComment           | 128
+// SContinue          | 64
+// Scope              | 704
+// ScopeMember        | 96
+// SDirective         | 256
+// SDoWhile           | 384
+// SEnum              | 448
+// SExportClause      | 256
+// SExportDefault     | 256
+// SExportEquals      | 192
+// SExportFrom        | 320
+// SExportStar        | 192
+// SExpr              | 256
+// SFor               | 384
+// SForIn             | 576
+// SForOf             | 640
+// SFunction          | 768
+// SIf                | 448
+// SImport            | 320
+// SLabel             | 320
+// SLazyExport        | 192
+// SLocal             | 256
+// SNamespace         | 448
+// Span               | 192
+// SReturn            | 64
+// SSwitch            | 448
+// SThrow             | 192
+// Stmt               | 192
+// STry               | 384
+// -- ESBuild bit sizes

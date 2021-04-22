@@ -28,7 +28,13 @@ pub const Kind = enum {
 pub const Loc = packed struct {
     start: i32 = -1,
 
+    // TODO: remove this stupidity
     pub fn toUsize(self: *Loc) usize {
+        return @intCast(usize, self.start);
+    }
+
+    // TODO: remove this stupidity
+    pub fn i(self: *const Loc) usize {
         return @intCast(usize, self.start);
     }
 
@@ -226,7 +232,31 @@ pub const Source = struct {
     }
 
     pub fn textForRange(self: *Source, r: Range) string {
-        return self.contents[std.math.lossyCast(usize, r.loc.start)..r.endI()];
+        return self.contents[r.loc.i()..r.endI()];
+    }
+
+    pub fn rangeOfOperatorBefore(self: *Source, loc: Loc, op: string) Range {
+        const text = self.contents[0..loc.i()];
+        const index = strings.index(text, op);
+        if (index >= 0) {
+            return Range{ .loc = Loc{
+                .start = loc.start + index,
+            }, .len = @intCast(i32, op.len) };
+        }
+
+        return Range{ .loc = loc };
+    }
+
+    pub fn rangeOfOperatorAfter(self: *Source, loc: Loc, op: string) Range {
+        const text = self.contents[loc.i()..];
+        const index = strings.index(text, op);
+        if (index >= 0) {
+            return Range{ .loc = Loc{
+                .start = loc.start + index,
+            }, .len = op.len };
+        }
+
+        return Range{ .loc = loc };
     }
 
     pub fn initErrorPosition(self: *const Source, _offset: Loc) ErrorPosition {

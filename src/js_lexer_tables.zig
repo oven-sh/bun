@@ -137,6 +137,17 @@ pub const T = enum(u8) {
     pub fn isReservedWord() bool {
         return self >= T.t_break and self <= T.t_with;
     }
+
+    pub fn isString(self: T) bool {
+        switch (self) {
+            T.t_no_substitution_template_literal, T.t_string_literal, T.t_template_head, T.t_template_middle, T.t_template_tail => {
+                return true;
+            },
+            else => {
+                return false;
+            },
+        }
+    }
 };
 
 pub const Keywords = std.ComptimeStringMap(T, .{

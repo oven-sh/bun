@@ -90,10 +90,8 @@ pub const Lexer = struct {
         const errorMessage = std.fmt.allocPrint(self.allocator, format, args) catch unreachable;
         self.log.addError(self.source, __loc, errorMessage) catch unreachable;
         self.prev_error_loc = __loc;
-
-        // if (panic) {
-        self.doPanic(errorMessage);
-        // }
+        var msg = self.log.msgs.items[self.log.msgs.items.len - 1];
+        msg.formatNoWriter(std.debug.panic);
     }
 
     pub fn addRangeError(self: *Lexer, r: logger.Range, comptime format: []const u8, args: anytype, panic: bool) void {
@@ -167,7 +165,7 @@ pub const Lexer = struct {
                     lexer.step();
 
                     // Handle Windows CRLF
-                    if (lexer.code_point == '\r' and IS_JSON_FILE) {
+                    if (lexer.code_point == '\r' and !IS_JSON_FILE) {
                         lexer.step();
                         if (lexer.code_point == '\n') {
                             lexer.step();
@@ -791,9 +789,72 @@ pub const Lexer = struct {
             .allocator = allocator,
         };
         lex.step();
-        // lex.next();
+        lex.next();
 
         return lex;
+    }
+
+    pub fn rescanCloseBraceAsTemplateToken(lexer: *Lexer) void {
+        if (lexer.token != .t_close_brace) {
+            lexer.expected(.t_close_brace);
+        }
+
+        lexer.rescan_close_brace_as_template_token = true;
+        lexer.code_point = '`';
+        lexer.current = lexer.end;
+        lexer.end -= 1;
+        lexer.next();
+        lexer.rescan_close_brace_as_template_token = false;
+    }
+
+    pub fn rawTemplateContents(lexer: *Lexer) string {
+        var text: string = undefined;
+
+        switch (lexer.token) {
+            .t_no_substitution_template_literal, .t_template_tail => {
+                text = lexer.source.contents[lexer.start + 1 .. lexer.end - 1];
+            },
+            .t_template_middle, .t_template_head => {
+                text = lexer.source.contents[lexer.start + 1 .. lexer.end - 2];
+            },
+            else => {},
+        }
+
+        if (strings.indexOfChar(text, '\r') == null) {
+            return text;
+        }
+
+        // From the specification:
+        //
+        // 11.8.6.1 Static Semantics: TV and TRV
+        //
+        // TV excludes the code units of LineContinuation while TRV includes
+        // them. <CR><LF> and <CR> LineTerminatorSequences are normalized to
+        // <LF> for both TV and TRV. An explicit EscapeSequence is needed to
+        // include a <CR> or <CR><LF> sequence.
+        var bytes = MutableString.initCopy(lexer.allocator, text.len) catch unreachable;
+        var end: usize = 0;
+        var i: usize = 0;
+        var c: u8 = '0';
+        while (i < bytes.list.items.len) {
+            c = bytes.list.items[i];
+            i += 1;
+
+            if (c == '\r') {
+                // Convert '\r\n' into '\n'
+                if (i < bytes.list.items.len and bytes.list.items[i] == '\n') {
+                    i += 1;
+                }
+
+                // Convert '\r' into '\n'
+                c = '\n';
+            }
+
+            bytes.list.items[end] = c;
+            end += 1;
+        }
+
+        return bytes.toOwnedSliceLength(end + 1);
     }
 
     fn parseNumericLiteralOrDot(lexer: *Lexer) void {
@@ -1231,7 +1292,6 @@ fn test_lexer(contents: []const u8) Lexer {
 
 test "Lexer.next() simple" {
     var lex = test_lexer("for (let i = 0; i < 100; i++) { }");
-    lex.next();
     std.testing.expectEqualStrings("\"for\"", tokenToString.get(lex.token));
     lex.next();
     std.testing.expectEqualStrings("\"(\"", tokenToString.get(lex.token));
@@ -1256,26 +1316,41 @@ test "Lexer.next() simple" {
     lex.next();
 }
 
-test "Lexer.step()" {
+pub fn test_stringLiteralEquals(expected: string, source_text: string) void {
     const msgs = std.ArrayList(logger.Msg).init(std.testing.allocator);
     const log = logger.Log{
         .msgs = msgs,
     };
 
     defer std.testing.allocator.free(msgs.items);
-    const source = logger.Source.initPathString(
+
+    var source = logger.Source.initPathString(
         "index.js",
-        "for (let i = 0; i < 100; i++) { console.log('hi'); }",
+        source_text,
     );
 
-    var lex = try Lexer.init(log, source, std.testing.allocator);
-    std.testing.expect('f' == lex.code_point);
-    lex.step();
-    std.testing.expect('o' == lex.code_point);
-    lex.step();
-    std.testing.expect('r' == lex.code_point);
-    while (lex.current < source.contents.len) {
-        std.testing.expect(lex.code_point == source.contents[lex.current - 1]);
-        lex.step();
+    var lex = try Lexer.init(log, source, std.heap.page_allocator);
+    while (!lex.token.isString() and lex.token != .t_end_of_file) {
+        lex.next();
     }
+
+    var lit = std.unicode.utf16leToUtf8Alloc(std.heap.page_allocator, lex.string_literal) catch unreachable;
+    std.testing.expectEqualStrings(expected, lit);
+}
+
+pub fn test_skipTo(lexer: *Lexer, n: string) void {
+    var i: usize = 0;
+    while (i < n.len) {
+        lexer.next();
+        i += 1;
+    }
+}
+
+test "Lexer.rawTemplateContents" {
+    test_stringLiteralEquals("hello!", "const a = 'hello!';");
+    test_stringLiteralEquals("hello!hi", "const b = 'hello!hi';");
+    test_stringLiteralEquals("hello!\n\nhi", "const b = `hello!\n\nhi`;");
+    // TODO: \r\n
+    // test_stringLiteralEquals("hello!\nhi", "const b = `hello!\r\nhi`;");
+    test_stringLiteralEquals("hello!", "const b = `hello!${\"hi\"}`");
 }

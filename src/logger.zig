@@ -99,7 +99,18 @@ pub const Location = struct {
 
 pub const Data = struct { text: string, location: ?Location = null };
 
-pub const Msg = struct { kind: Kind = Kind.err, data: Data, notes: ?[]Data = null };
+pub const Msg = struct {
+    kind: Kind = Kind.err,
+    data: Data,
+    notes: ?[]Data = null,
+    pub fn format(msg: *const Msg, to: anytype, formatterFunc: @TypeOf(std.fmt.format)) !void {
+        try formatterFunc(to, "\n\n{s}: {s}\n{s}\n{s}:{}:{}", .{ msg.kind.string(), msg.data.text, msg.data.location.?.line_text, msg.data.location.?.file, msg.data.location.?.line, msg.data.location.?.column });
+    }
+
+    pub fn formatNoWriter(msg: *const Msg, comptime formatterFunc: @TypeOf(std.debug.panic)) void {
+        formatterFunc("\n\n{s}: {s}\n{s}\n{s}:{}:{}", .{ msg.kind.string(), msg.data.text, msg.data.location.?.line_text, msg.data.location.?.file, msg.data.location.?.line, msg.data.location.?.column });
+    }
+};
 
 pub const Range = packed struct {
     loc: Loc = Loc.Empty,
@@ -190,7 +201,7 @@ pub const Log = struct {
     // TODO:
     pub fn print(self: *Log, to: anytype) !void {
         for (self.msgs.items) |msg| {
-            try std.fmt.format(to, "\n\n{s}: {s}\n{s}\n{s}:{}:{}", .{ msg.kind.string(), msg.data.text, msg.data.location.?.line_text, msg.data.location.?.file, msg.data.location.?.line, msg.data.location.?.column });
+            try msg.format(to, std.fmt.format);
         }
     }
 };

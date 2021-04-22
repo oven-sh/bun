@@ -70,8 +70,8 @@ pub const MutableString = struct {
         try self.list.append(self.allocator, char);
     }
 
-    pub fn appendCharAssumeCapacity(self: *MutableString, char: u8) !void {
-        try self.list.appendAssumeCapacity(self.allocator, char);
+    pub fn appendCharAssumeCapacity(self: *MutableString, char: u8) void {
+        self.list.appendAssumeCapacity(char);
     }
 
     pub fn append(self: *MutableString, char: []const u8) !void {
@@ -80,6 +80,15 @@ pub const MutableString = struct {
 
     pub fn appendAssumeCapacity(self: *MutableString, char: []const u8) !void {
         try self.list.appendSliceAssumeCapacity(self.allocator, char);
+    }
+
+    pub fn toOwnedSlice(self: *MutableString) string {
+        return self.list.toOwnedSlice(self.allocator);
+    }
+
+    pub fn toOwnedSliceLength(self: *MutableString, length: usize) string {
+        self.list.shrinkAndFree(self.allocator, length);
+        return self.list.toOwnedSlice(self.allocator);
     }
 
     // pub fn deleteAt(self: *MutableString, i: usize)  {

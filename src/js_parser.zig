@@ -1910,6 +1910,53 @@ const P = struct {
         }, loc);
     }
 
+    pub fn parseTemplateParts(p: *P, include_raw: bool) Tup([]E.TemplatePart, logger.Loc) {
+        var parts = List(E.TemplatePart).initCapacity(p.allocator, 1) catch unreachable;
+        // Allow "in" inside template literals
+        var oldAllowIn = p.allow_in;
+        p.allow_in = true;
+        var legacy_octal_loc = logger.Loc.Empty;
+
+        parseTemplatePart: while (true) {
+            p.lexer.next();
+            var value = p.parseExpr(.lowest);
+            var tail_loc = p.lexer.loc();
+            p.lexer.rescanCloseBraceAsTemplateToken();
+            var tail = p.lexer.string_literal;
+            var tailRaw = "";
+
+            if (include_raw) {
+                tail_raw = p.lexer.rawTemplateContents();
+            } else if (p.lexer.legacy_octal_loc.start > tail_loc.start) {
+                legacy_octal_loc = p.lexer.legacy_octal_loc;
+            }
+
+
+            if (p.lexer.token == .t_template_tail) {
+
+            }
+        }
+
+        return .{parts.toOwnedSlice(), legacy_octal_loc};
+    }
+
+    // This assumes the caller has already checked for TStringLiteral or TNoSubstitutionTemplateLiteral
+    pub fn parseStringLiteral(p: *P) Expr {
+        var legacy_octal_loc: logger.Loc = logger.Loc.Empty;
+        var loc = p.lexer.loc();
+        if (p.lexer.legacy_octal_loc.start > loc.start) {
+            legacy_octal_loc = p.lexer.legacy_octal_loc;
+        }
+
+        const expr = p.e(E.String{
+            .value = p.lexer.string_literal,
+            .legacy_octal_loc = legacy_octal_loc,
+            .prefer_template = p.lexer.token == .t_no_substitution_template_literal,
+        }, loc);
+        p.lexer.next();
+        return expr;
+    }
+
     pub fn parseSuffix(p: *P, left: Expr, level: Level, errors: ?*DeferredErrors, flags: Expr.EFlags) Expr {
         return _parseSuffix(p, left, level, errors orelse &DeferredErrors.None, flags);
     }
@@ -2059,8 +2106,16 @@ const P = struct {
                     }, loc);
                 }
             },
-            .t_string_literal, .t_no_substitution_template_literal => {},
-            .t_template_head => {},
+            .t_string_literal, .t_no_substitution_template_literal => {
+                return p.parseStringLiteral();
+            },
+            .t_template_head => {
+                var legacy_octal_loc = logger.Loc.Empty;
+                var head = p.lexer.string_literal;
+                if (p.lexer.legacy_octal_loc.start > loc.start) {
+                    legacy_octal_loc = p.lexer.legacy_octal_loc;
+                }
+            },
             .t_numeric_literal => {},
             .t_big_integer_literal => {},
             .t_slash, .t_slash_equals => {},

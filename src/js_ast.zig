@@ -26,10 +26,13 @@ const ImportRecord = @import("import_record.zig").ImportRecord;
 // But also it uses the least memory.
 // Since Data is a union, the size in bytes of Data is the max of all types
 // So with #1 or #2, if S.Function consumes 768 bits, that means Data must be >= 768 bits
-// Which means "true" in codenow takes up over 768 bits, probably more than what v8 spends
-// With this approach, Data is the size of a pointer. The value of the type decides the size.
+// Which means "true" in code now takes up over 768 bits, probably more than what v8 spends
+// Instead, this approach means Data is the size of a pointer.
 // It's not really clear which approach is best without benchmarking it.
-
+// The downside with this approach is potentially worse memory locality, since the data for the node is somewhere else.
+// But it could also be better memory locality due to smaller in-memory size (more likely to hit the cache)
+// only benchmarks will provide an answer!
+// But we must have pointers somewhere in here because can't have types that contain themselves
 pub const BindingNodeIndex = Binding;
 pub const StmtNodeIndex = Stmt;
 pub const ExprNodeIndex = Expr;

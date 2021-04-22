@@ -25,7 +25,7 @@ pub const Kind = enum {
     }
 };
 
-pub const Loc = struct {
+pub const Loc = packed struct {
     start: i32 = -1,
 
     pub fn toUsize(self: *Loc) usize {
@@ -95,7 +95,7 @@ pub const Data = struct { text: string, location: ?Location = null };
 
 pub const Msg = struct { kind: Kind = Kind.err, data: Data, notes: ?[]Data = null };
 
-pub const Range = struct {
+pub const Range = packed struct {
     loc: Loc = Loc.Empty,
     len: i32 = 0,
     pub const None = Range{ .loc = Loc.Empty, .len = 0 };

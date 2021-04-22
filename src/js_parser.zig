@@ -99,6 +99,12 @@ const ScopeOrder = struct {
     scope: *js_ast.Scope,
 };
 
+const ParenExprOpts = struct {
+    async_range: logger.Range = logger.Range.None,
+    is_async: bool = false,
+    force_arrow_fn: bool = false,
+};
+
 // This is function-specific information used during parsing. It is saved and
 // restored on the call stack around code that parses nested functions and
 // arrow expressions.
@@ -204,12 +210,12 @@ const DeferredErrors = struct {
             to.array_spread_feature = inv;
         }
     }
-};
 
-const ParenExprOpts = struct {
-    async_range: ?logger.Range = null,
-    is_async: bool = false,
-    force_arrow_fn: bool = false,
+    var None = DeferredErrors{
+        .invalid_expr_default_value = null,
+        .invalid_expr_after_question = null,
+        .array_spread_feature = null,
+    };
 };
 
 const ModuleType = enum { esm };
@@ -1538,7 +1544,7 @@ const P = struct {
 
             return p.source.contents[ref.inner_index .. ref.inner_index - source_index];
         } else {
-            std.debug.panic("Internal error: invalid symbol reference.", .{ref});
+            std.debug.panic("Internal error: invalid symbol reference. {s}", .{ref});
         }
     }
 
@@ -1591,15 +1597,15 @@ const P = struct {
                 // "async () => {}"
                 .t_open_paren => {
                     p.lexer.next();
-                    return p.parseParenExpr(async_range.loc, ParenExprOptions{ .is_async = true, .async_range = asyncRange });
+                    return p.parseParenExpr(async_range.loc, ParenExprOpts{ .is_async = true, .async_range = async_range });
                 },
 
                 // "async<T>()"
                 // "async <T>() => {}"
                 .t_less_than => {
-                    if (p.options.ts and p.trySkipTypeScriptTypeParametersThenOpenParenWithBacktracking) {
+                    if (p.options.ts and p.trySkipTypeScriptTypeParametersThenOpenParenWithBacktracking()) {
                         p.lexer.next();
-                        return p.parseParenExpr(async_range.loc, ParenExprOptions{ .is_async = true, .async_range = asyncRange });
+                        return p.parseParenExpr(async_range.loc, ParenExprOpts{ .is_async = true, .async_range = async_range });
                     }
                 },
 
@@ -1610,12 +1616,12 @@ const P = struct {
         // "async"
         // "async + 1"
         return Expr.init(
-            E.Identifier{ .ref = p.storeNameInRef("async") },
+            E.Identifier{ .ref = try p.storeNameInRef("async") },
             async_range.loc,
         );
     }
 
-    pub fn trySkipTypeScriptTypeParametersThenOpenParenWithBacktracking() void {
+    pub fn trySkipTypeScriptTypeParametersThenOpenParenWithBacktracking(self: *P) bool {
         notimpl();
     }
 
@@ -1639,6 +1645,7 @@ const P = struct {
         // engineering, it looks like they apply to the next CallExpression or
         // NewExpression. So in "/* @__PURE__ */ a().b() + c()" the comment applies
         // to the expression "a().b()".
+
         if (had_pure_comment_before and level.lt(.call)) {
             expr = p.parseSuffix(expr, .call - 1, errors, flags);
             switch (expr.data) {
@@ -1757,8 +1764,228 @@ const P = struct {
         p.current_scope = current_scope.parent;
     }
 
+    pub fn markExprAsParenthesized(p: *P, expr: *Expr) void {
+        switch (expr.data) {
+            .e_array => |*ex| {
+                ex.is_parenthesized = true;
+            },
+            .e_object => |*ex| {
+                ex.is_parenthesized = true;
+            },
+            else => {
+                return;
+            },
+        }
+    }
+
+    pub fn parseYieldExpr(p: *P, loc: logger.Loc) Expr {
+        // Parse a yield-from expression, which yields from an iterator
+        const isStar = p.lexer.token == T.t_asterisk;
+
+        if (isStar) {
+            if (p.lexer.has_newline_before) {
+                p.lexer.unexpected();
+            }
+            p.lexer.next();
+        }
+
+        var value: ?ExprNodeIndex = null;
+        switch (p.lexer.token) {
+            .t_close_brace, .t_close_paren, .t_colon, .t_comma, .t_semicolon => {},
+            else => {
+                if (isStar or !p.lexer.has_newline_before) {
+                    var expr = p.parseExpr(.yield);
+                    value = p.m(expr);
+                }
+            },
+        }
+
+        return e(E.Yield{
+            .value = value,
+            .is_star = isStar,
+        }, loc);
+    }
+
     pub fn parseSuffix(p: *P, left: Expr, level: Level, errors: ?*DeferredErrors, flags: Expr.Flags) Expr {
+        return _parseSuffix(p, left, level, errors orelse &DeferredErrors.None, flags);
+    }
+    pub fn _parseSuffix(p: *P, left: Expr, level: Level, errors: *DeferredErrors, flags: Expr.Flags) callconv(.Inline) Expr {
+        var expr: Expr = undefined;
         var loc = p.lexer.loc();
+
+        return expr;
+    }
+    pub fn _parsePrefix(p: *P, level: Level, errors: *DeferredErrors, flags: Expr.Flags) callconv(.Inline) Expr {
+        const loc = p.lexer.loc();
+        const l = @enumToInt(level);
+
+        switch (p.lexer.token) {
+            .t_super => {
+                const superRange = p.lexer.range();
+                p.lexer.next();
+
+                switch (p.lexer.token) {
+                    .t_open_paren => {
+                        if (l < @enumToInt(Level.call) and p.fn_or_arrow_data_parse.allow_super_call) {
+                            return e(E.Super{}, loc);
+                        }
+                    },
+                    .t_dot, .t_open_bracket => {
+                        return e(E.Super{}, loc);
+                    },
+                    else => {},
+                }
+
+                p.log.addRangeError(p.source, superRange, "Unexpected \"super\"") catch unreachable;
+                return e(E.Super{}, loc);
+            },
+            .t_open_paren => {
+                p.lexer.next();
+
+                // Arrow functions aren't allowed in the middle of expressions
+                if (l > @enumToInt(Level.assign)) {
+                    const oldAllowIn = p.allow_in;
+                    p.allow_in = true;
+
+                    var value = p.parseExpr(Level.lowest);
+                    p.markExprAsParenthesized(&value);
+                    p.lexer.expect(.t_close_paren);
+                    p.allow_in = oldAllowIn;
+                    return value;
+                }
+
+                return p.parseParenExpr(loc, ParenExprOpts{}) catch unreachable;
+            },
+            .t_false => {
+                p.lexer.next();
+                return e(E.Boolean{ .value = false }, loc);
+            },
+            .t_true => {
+                p.lexer.next();
+                return e(E.Boolean{ .value = true }, loc);
+            },
+            .t_null => {
+                p.lexer.next();
+                return e(E.Null{}, loc);
+            },
+            .t_this => {
+                p.lexer.next();
+                return e(E.This{}, loc);
+            },
+            .t_identifier => {
+                const name = p.lexer.identifier;
+                const name_range = p.lexer.range();
+                const raw = p.lexer.raw();
+                p.lexer.next();
+
+                // Handle async and await expressions
+                if (name.len == 5) {
+                    if (strings.eql(name, "async")) {
+                        if (strings.eql(raw, "async")) {
+                            return p.parseAsyncPrefixExpr(name_range, level) catch unreachable;
+                        }
+                    } else if (strings.eql(name, "await")) {
+                        if (p.fn_or_arrow_data_parse.allow_await) {
+                            if (!strings.eql(raw, "await")) {
+                                p.log.addRangeError(p.source, name_range, "The keyword \"await\" cannot be escaped.") catch unreachable;
+                            } else {
+                                if (p.fn_or_arrow_data_parse.is_top_level) {
+                                    p.top_level_await_keyword = name_range;
+                                    // p.markSyntaxFeature()
+                                }
+
+                                if (p.fn_or_arrow_data_parse.arrow_arg_errors) |*err| {
+                                    err.invalid_expr_await = name_range;
+                                } else {
+                                    p.fn_or_arrow_data_parse.arrow_arg_errors = DeferredArrowArgErrors{ .invalid_expr_await = name_range };
+                                }
+
+                                var value = p.m(p.parseExpr(.prefix));
+                                if (p.lexer.token == T.t_asterisk_asterisk) {
+                                    p.lexer.unexpected();
+                                }
+
+                                return e(E.Await{ .value = value }, loc);
+                            }
+                        }
+                    } else if (strings.eql(name, "yield")) {
+                        if (p.fn_or_arrow_data_parse.allow_yield) {
+                            if (strings.eql(raw, "yield")) {
+                                p.log.addRangeError(p.source, name_range, "The keyword \"yield\" cannot be escaped") catch unreachable;
+                            } else {
+                                if (l > @enumToInt(Level.assign)) {
+                                    p.log.addRangeError(p.source, name_range, "Cannot use a \"yield\" here without parentheses") catch unreachable;
+                                }
+
+                                if (p.fn_or_arrow_data_parse.arrow_arg_errors) |*err| {
+                                    err.invalid_expr_yield = name_range;
+                                }
+
+                                return p.parseYieldExpr(loc);
+                            }
+                        } else if (!p.lexer.has_newline_before) {
+                            // Try to gracefully recover if "yield" is used in the wrong place
+
+                            switch (p.lexer.token) {
+                                .t_null, .t_identifier, .t_false, .t_true, .t_numeric_literal, .t_big_integer_literal, .t_string_literal => {
+                                    p.log.addRangeError(p.source, name_range, "Cannot use \"yield\" outside a generator function") catch unreachable;
+                                },
+                                else => {},
+                            }
+                        }
+                    }
+
+                    // Handle the start of an arrow expression
+                    if (p.lexer.token == .t_equals_greater_than) {
+                        const ref = p.storeNameInRef(name) catch unreachable;
+                        var args = p.allocator.alloc(Arg, 1) catch unreachable;
+                        args[0] = Arg{ .binding = p.m(Binding.init(B.Identifier{
+                            .ref = ref,
+                        }, loc)) };
+
+                        _ = p.pushScopeForParsePass(.function_args, loc) catch unreachable;
+                        defer p.popScope();
+                        return e(p.parseArrowBody(args, p.m(FnOrArrowDataParse{})) catch unreachable, loc);
+                    }
+
+                    const ref = p.storeNameInRef(name) catch unreachable;
+
+                    return e(E.Identifier{
+                        .ref = ref,
+                    }, loc);
+                }
+            },
+            .t_string_literal, .t_no_substitution_template_literal => {},
+            .t_template_head => {},
+            .t_numeric_literal => {},
+            .t_big_integer_literal => {},
+            .t_slash, .t_slash_equals => {},
+            .t_void => {},
+            .t_typeof => {},
+            .t_delete => {},
+            .t_plus => {},
+            .t_minus => {},
+            .t_tilde => {},
+            .t_exclamation => {},
+            .t_minus_minus => {},
+            .t_plus_plus => {},
+            .t_function => {},
+            .t_class => {},
+            .t_new => {},
+            .t_open_bracket => {},
+            .t_open_brace => {},
+            .t_less_than => {},
+            .t_import => {},
+            else => {
+                p.lexer.unexpected();
+                return Expr.init(E.Missing{}, logger.Loc.Empty);
+            },
+        }
+
+        return Expr.init(E.Missing{}, logger.Loc.Empty);
+    }
+    pub fn parsePrefix(p: *P, level: Level, errors: ?*DeferredErrors, flags: Expr.Flags) Expr {
+        return p._parsePrefix(level, errors orelse &DeferredErrors.None, flags);
     }
 
     pub fn init(allocator: *std.mem.Allocator, log: logger.Log, source: logger.Source, lexer: js_lexer.Lexer, opts: Parser.Options) !*P {

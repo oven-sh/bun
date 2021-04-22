@@ -50,7 +50,7 @@ pub const Ref = struct {
     const None = Ref{ .source_index = null, .inner_index = std.math.maxInt(u32) };
 };
 
-pub const ImportItemStatus = enum(u8) {
+pub const ImportItemStatus = packed enum {
     none,
 
     // The linker doesn't report import/export mismatch errors
@@ -171,7 +171,7 @@ pub const G = struct {
         name: logger.Loc,
         extends: ?ExprNodeIndex = null,
         body_loc: logger.Loc,
-        properties: ?[]Property = null,
+        properties: []Property = &([_]Property{}),
     };
 
     // invalid shadowing if left as Comment
@@ -209,7 +209,7 @@ pub const G = struct {
     pub const Fn = struct {
         name: ?LocRef,
         open_parens_loc: logger.Loc,
-        args: ?[]Arg = null,
+        args: []Arg = &([_]Arg{}),
         body: ?FnBody = null,
         arguments_ref: ?Ref = null,
 
@@ -487,7 +487,7 @@ pub const Symbol = struct {
     }
 };
 
-pub const OptionalChain = enum {
+pub const OptionalChain = packed enum {
 
 // "a?.b"
 start,
@@ -504,7 +504,7 @@ pub const E = struct {
         is_parenthesized: bool = false,
     };
 
-    pub const Unary = struct {
+    pub const Unary = packed struct {
         op: Op.Code,
         value: ExprNodeIndex,
     };
@@ -518,6 +518,7 @@ pub const E = struct {
     pub const Boolean = struct { value: bool };
     pub const Super = struct {};
     pub const Null = struct {};
+    pub const This = struct {};
     pub const Undefined = struct {};
     pub const New = struct {
         target: ExprNodeIndex,
@@ -1019,6 +1020,9 @@ pub const Expr = struct {
             E.Null => {
                 return Expr{ .loc = loc, .data = Data{ .e_null = data } };
             },
+            E.This => {
+                return Expr{ .loc = loc, .data = Data{ .e_this = data } };
+            },
             E.Undefined => {
                 return Expr{ .loc = loc, .data = Data{ .e_undefined = data } };
             },
@@ -1140,12 +1144,14 @@ pub const Expr = struct {
         e_if,
         e_require_or_require_resolve,
         e_import,
+        e_this,
     };
 
     pub const Data = union(Tag) {
         e_array: E.Array,
         e_unary: E.Unary,
         e_binary: E.Binary,
+        e_this: E.This,
         e_boolean: E.Boolean,
         e_super: E.Super,
         e_null: E.Null,
@@ -1295,12 +1301,13 @@ pub const S = struct {
     pub const With = struct {
         value: ExprNodeIndex,
         body: StmtNodeIndex,
-        body_loc: logger.Log,
+        body_loc: logger.Loc,
     };
 
     pub const Try = struct {
+        body_loc: logger.Loc,
         body: StmtNodeList,
-        body_loc: logger.Log,
+
         catch_: ?Catch = null,
         finally: ?Finally = null,
     };
@@ -1349,11 +1356,11 @@ pub const S = struct {
     };
 
     pub const Break = struct {
-        label: *LocRef,
+        label: ?LocRef = null,
     };
 
     pub const Continue = struct {
-        label: *LocRef,
+        label: ?LocRef = null,
     };
 };
 
@@ -1372,7 +1379,7 @@ pub const Case = struct { loc: logger.Loc, value: ?ExprNodeIndex, body: StmtNode
 
 pub const Op = struct {
     // If you add a new token, remember to add it to "OpTable" too
-    pub const Code = enum {
+    pub const Code = packed enum(u8) {
         // Prefix
         un_pos,
         un_neg,
@@ -1439,7 +1446,7 @@ pub const Op = struct {
         bin_logical_and_assign,
     };
 
-    pub const Level = enum(u8) {
+    pub const Level = packed enum(u23) {
         lowest,
         comma,
         spread,
@@ -1817,7 +1824,7 @@ pub const NamedExport = struct {
     alias_loc: logger.Loc,
 };
 
-pub const StrictModeKind = enum {
+pub const StrictModeKind = packed enum(u7) {
     sloppy_mode,
     explicit_strict_mode,
     implicit_strict_mode_import,
@@ -1888,16 +1895,106 @@ test "Binding.init" {
     );
     std.testing.expect(binding.loc.start == 1);
     std.testing.expect(@as(Binding.Tag, binding.data) == Binding.Tag.b_identifier);
+
+    std.debug.print("-------Binding:           {d} bits\n", .{@bitSizeOf(Binding)});
+    std.debug.print("B.Identifier:             {d} bits\n", .{@bitSizeOf(B.Identifier)});
+    std.debug.print("B.Array:                  {d} bits\n", .{@bitSizeOf(B.Array)});
+    std.debug.print("B.Property:               {d} bits\n", .{@bitSizeOf(B.Property)});
+    std.debug.print("B.Object:                 {d} bits\n", .{@bitSizeOf(B.Object)});
+    std.debug.print("B.Missing:                {d} bits\n", .{@bitSizeOf(B.Missing)});
+    std.debug.print("-------Binding:           {d} bits\n", .{@bitSizeOf(Binding)});
+}
+
+test "Stmt.init" {
+    var stmt = Stmt.init(
+        S.Continue{},
+        logger.Loc{ .start = 1 },
+    );
+    std.testing.expect(stmt.loc.start == 1);
+    std.testing.expect(@as(Stmt.Tag, stmt.data) == Stmt.Tag.s_continue);
+
+    std.debug.print("-----Stmt       {d} bits\n", .{@bitSizeOf(Stmt)});
+    std.debug.print("StmtNodeList:   {d} bits\n", .{@bitSizeOf(StmtNodeList)});
+    std.debug.print("StmtOrExpr:     {d} bits\n", .{@bitSizeOf(StmtOrExpr)});
+    std.debug.print("S.Block         {d} bits\n", .{@bitSizeOf(S.Block)});
+    std.debug.print("S.Comment       {d} bits\n", .{@bitSizeOf(S.Comment)});
+    std.debug.print("S.Directive     {d} bits\n", .{@bitSizeOf(S.Directive)});
+    std.debug.print("S.ExportClause  {d} bits\n", .{@bitSizeOf(S.ExportClause)});
+    std.debug.print("S.Empty         {d} bits\n", .{@bitSizeOf(S.Empty)});
+    std.debug.print("S.TypeScript    {d} bits\n", .{@bitSizeOf(S.TypeScript)});
+    std.debug.print("S.Debugger      {d} bits\n", .{@bitSizeOf(S.Debugger)});
+    std.debug.print("S.ExportFrom    {d} bits\n", .{@bitSizeOf(S.ExportFrom)});
+    std.debug.print("S.ExportDefault {d} bits\n", .{@bitSizeOf(S.ExportDefault)});
+    std.debug.print("S.Enum          {d} bits\n", .{@bitSizeOf(S.Enum)});
+    std.debug.print("S.Namespace     {d} bits\n", .{@bitSizeOf(S.Namespace)});
+    std.debug.print("S.Function      {d} bits\n", .{@bitSizeOf(S.Function)});
+    std.debug.print("S.Class         {d} bits\n", .{@bitSizeOf(S.Class)});
+    std.debug.print("S.If            {d} bits\n", .{@bitSizeOf(S.If)});
+    std.debug.print("S.For           {d} bits\n", .{@bitSizeOf(S.For)});
+    std.debug.print("S.ForIn         {d} bits\n", .{@bitSizeOf(S.ForIn)});
+    std.debug.print("S.ForOf         {d} bits\n", .{@bitSizeOf(S.ForOf)});
+    std.debug.print("S.DoWhile       {d} bits\n", .{@bitSizeOf(S.DoWhile)});
+    std.debug.print("S.While         {d} bits\n", .{@bitSizeOf(S.While)});
+    std.debug.print("S.With          {d} bits\n", .{@bitSizeOf(S.With)});
+    std.debug.print("S.Try           {d} bits\n", .{@bitSizeOf(S.Try)});
+    std.debug.print("S.Switch        {d} bits\n", .{@bitSizeOf(S.Switch)});
+    std.debug.print("S.Import        {d} bits\n", .{@bitSizeOf(S.Import)});
+    std.debug.print("S.Return        {d} bits\n", .{@bitSizeOf(S.Return)});
+    std.debug.print("S.Throw         {d} bits\n", .{@bitSizeOf(S.Throw)});
+    std.debug.print("S.Local         {d} bits\n", .{@bitSizeOf(S.Local)});
+    std.debug.print("S.Break         {d} bits\n", .{@bitSizeOf(S.Break)});
+    std.debug.print("S.Continue      {d} bits\n", .{@bitSizeOf(S.Continue)});
+    std.debug.print("-----Stmt       {d} bits\n", .{@bitSizeOf(Stmt)});
 }
 
 test "Expr.init" {
     const ident = Expr.init(E.Identifier{}, logger.Loc{ .start = 100 });
-    const list = [_]Expr{ident};
-    const expr = Expr.init(
+    var list = [_]Expr{ident};
+    var expr = Expr.init(
         E.Array{ .items = list[0..] },
         logger.Loc{ .start = 1 },
     );
     std.testing.expect(expr.loc.start == 1);
     std.testing.expect(@as(Expr.Tag, expr.data) == Expr.Tag.e_array);
     std.testing.expect(expr.data.e_array.items[0].loc.start == 100);
+
+    std.debug.print("--logger.Loc            {d} bits\n", .{@bitSizeOf(logger.Loc)});
+    std.debug.print("--logger.Range          {d} bits\n", .{@bitSizeOf(logger.Range)});
+    std.debug.print("----------Expr:            {d} bits\n", .{@bitSizeOf(Expr)});
+    std.debug.print("ExprNodeList:              {d} bits\n", .{@bitSizeOf(ExprNodeList)});
+    std.debug.print("E.Array:                   {d} bits\n", .{@bitSizeOf(E.Array)});
+
+    std.debug.print("E.Unary:                   {d} bits\n", .{@bitSizeOf(E.Unary)});
+    std.debug.print("E.Binary:                  {d} bits\n", .{@bitSizeOf(E.Binary)});
+    std.debug.print("E.Boolean:                 {d} bits\n", .{@bitSizeOf(E.Boolean)});
+    std.debug.print("E.Super:                   {d} bits\n", .{@bitSizeOf(E.Super)});
+    std.debug.print("E.Null:                    {d} bits\n", .{@bitSizeOf(E.Null)});
+    std.debug.print("E.Undefined:               {d} bits\n", .{@bitSizeOf(E.Undefined)});
+    std.debug.print("E.New:                     {d} bits\n", .{@bitSizeOf(E.New)});
+    std.debug.print("E.NewTarget:               {d} bits\n", .{@bitSizeOf(E.NewTarget)});
+    std.debug.print("E.Function:                {d} bits\n", .{@bitSizeOf(E.Function)});
+    std.debug.print("E.ImportMeta:              {d} bits\n", .{@bitSizeOf(E.ImportMeta)});
+    std.debug.print("E.Call:                    {d} bits\n", .{@bitSizeOf(E.Call)});
+    std.debug.print("E.Dot:                     {d} bits\n", .{@bitSizeOf(E.Dot)});
+    std.debug.print("E.Index:                   {d} bits\n", .{@bitSizeOf(E.Index)});
+    std.debug.print("E.Arrow:                   {d} bits\n", .{@bitSizeOf(E.Arrow)});
+    std.debug.print("E.Identifier:              {d} bits\n", .{@bitSizeOf(E.Identifier)});
+    std.debug.print("E.ImportIdentifier:        {d} bits\n", .{@bitSizeOf(E.ImportIdentifier)});
+    std.debug.print("E.PrivateIdentifier:       {d} bits\n", .{@bitSizeOf(E.PrivateIdentifier)});
+    std.debug.print("E.JSXElement:              {d} bits\n", .{@bitSizeOf(E.JSXElement)});
+    std.debug.print("E.Missing:                 {d} bits\n", .{@bitSizeOf(E.Missing)});
+    std.debug.print("E.Number:                  {d} bits\n", .{@bitSizeOf(E.Number)});
+    std.debug.print("E.BigInt:                  {d} bits\n", .{@bitSizeOf(E.BigInt)});
+    std.debug.print("E.Object:                  {d} bits\n", .{@bitSizeOf(E.Object)});
+    std.debug.print("E.Spread:                  {d} bits\n", .{@bitSizeOf(E.Spread)});
+    std.debug.print("E.String:                  {d} bits\n", .{@bitSizeOf(E.String)});
+    std.debug.print("E.TemplatePart:            {d} bits\n", .{@bitSizeOf(E.TemplatePart)});
+    std.debug.print("E.Template:                {d} bits\n", .{@bitSizeOf(E.Template)});
+    std.debug.print("E.RegExp:                  {d} bits\n", .{@bitSizeOf(E.RegExp)});
+    std.debug.print("E.Await:                   {d} bits\n", .{@bitSizeOf(E.Await)});
+    std.debug.print("E.Yield:                   {d} bits\n", .{@bitSizeOf(E.Yield)});
+    std.debug.print("E.If:                      {d} bits\n", .{@bitSizeOf(E.If)});
+    std.debug.print("E.RequireOrRequireResolve: {d} bits\n", .{@bitSizeOf(E.RequireOrRequireResolve)});
+    std.debug.print("E.Import:                  {d} bits\n", .{@bitSizeOf(E.Import)});
+    std.debug.print("----------Expr:            {d} bits\n", .{@bitSizeOf(Expr)});
 }

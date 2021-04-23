@@ -1656,13 +1656,46 @@ const P = struct {
                 }, loc);
             },
             .t_do => {
-                notimpl();
+                p.lexer.next();
+                var stmtOpts = ParseStatementOptions{};
+                const body = p.parseStmt(&stmtOpts) catch unreachable;
+                p.lexer.expect(.t_while);
+                p.lexer.expect(.t_open_paren);
+                const test_ = p.parseExpr(.lowest);
+                p.lexer.expect(.t_close_paren);
+
+                // This is a weird corner case where automatic semicolon insertion applies
+                // even without a newline present
+                if (p.lexer.token == .t_semicolon) {
+                    p.lexer.next();
+                }
+                return p.s(S.DoWhile{ .body = body, .test_ = test_ }, loc);
             },
             .t_while => {
-                notimpl();
+                p.lexer.next();
+
+                p.lexer.expect(.t_open_paren);
+                const test_ = p.parseExpr(.lowest);
+                const body_loc = p.lexer.loc();
+                p.lexer.expect(.t_close_paren);
+
+                var stmtOpts = ParseStatementOptions{};
+
+                // Push a scope so we make sure to prevent any bare identifiers referenced
+                // within the body from being renamed. Renaming them might change the
+                // semantics of the code.
+                _ = try p.pushScopeForParsePass(.with, body_loc);
+                const body = p.parseStmt(&stmtOpts) catch unreachable;
+                p.popScope();
+
+                return p.s(S.With{ .body = body, .value = test_, .body_loc = body_loc }, loc);
             },
             .t_with => {
-                notimpl();
+                p.lexer.next();
+                p.lexer.expect(.t_open_paren);
+                const test_ = p.parseExpr(.lowest);
+                const body_loc = p.lexer.loc();
+                p.lexer.expect(.t_close_paren);
             },
             .t_switch => {
                 notimpl();

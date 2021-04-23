@@ -1698,7 +1698,54 @@ const P = struct {
                 p.lexer.expect(.t_close_paren);
             },
             .t_switch => {
-                notimpl();
+                p.lexer.next();
+
+                p.lexer.expect(.t_open_paren);
+                const test_ = p.parseExpr(.lowest);
+                p.lexer.expect(.t_close_paren);
+
+                const body_loc = p.lexer.loc();
+                _ = try p.pushScopeForParsePass(.block, body_loc);
+                defer p.popScope();
+
+                p.lexer.expect(.t_open_brace);
+                var cases = List(js_ast.Case).init(p.allocator);
+                var foundDefault = false;
+                var stmtOpts = ParseStatementOptions{ .lexical_decl = .allow_all };
+                var value: ?js_ast.Expr = null;
+                while (p.lexer.token != .t_close_brace) {
+                    var body = List(js_ast.Stmt).init(p.allocator);
+                    value = null;
+                    if (p.lexer.token == .t_default) {
+                        if (foundDefault) {
+                            try p.log.addRangeError(p.source, p.lexer.range(), "Multiple default clauses are not allowed");
+                            fail();
+                        }
+
+                        foundDefault = true;
+                        p.lexer.next();
+                        p.lexer.expect(.t_colon);
+                    } else {
+                        p.lexer.expect(.t_case);
+                        value = p.parseExpr(.lowest);
+                        p.lexer.expect(.t_colon);
+                    }
+
+                    caseBody: while (true) {
+                        switch (p.lexer.token) {
+                            .t_close_brace, .t_case, .t_default => {
+                                break :caseBody;
+                            },
+                            else => {
+                                stmtOpts = ParseStatementOptions{ .lexical_decl = .allow_all };
+                                try body.append(p.parseStmt(&stmtOpts) catch unreachable);
+                            },
+                        }
+                    }
+                    try cases.append(js_ast.Case{ .value = value, .body = body.toOwnedSlice(), .loc = logger.Loc.Empty });
+                }
+                p.lexer.expect(.t_close_brace);
+                return p.s(S.Switch{ .test_ = test_, .body_loc = body_loc, .cases = cases.toOwnedSlice() }, loc);
             },
             .t_try => {
                 notimpl();

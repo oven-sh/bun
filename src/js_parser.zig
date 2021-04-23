@@ -1148,8 +1148,8 @@ const P = struct {
 
     pub fn newSymbol(p: *P, kind: Symbol.Kind, identifier: string) !js_ast.Ref {
         var ref = js_ast.Ref{
-            .source_index = p.source.index,
-            .inner_index = @intCast(u32, p.symbols.items.len),
+            .source_index = @intCast(Ref.Int, p.source.index),
+            .inner_index = @intCast(Ref.Int, p.symbols.items.len),
         };
 
         try p.symbols.append(Symbol{
@@ -1163,6 +1163,64 @@ const P = struct {
         }
 
         return ref;
+    }
+
+    pub fn parseClassStmt(p: *P, loc: logger.Loc, opts: *ParseStatementOptions) Stmt {
+        var name: ?js_ast.LocRef = null;
+        var class_keyword = p.lexer.range();
+        if (p.lexer.token == .t_class) {
+            //marksyntaxfeature
+            p.lexer.next();
+        } else {
+            p.lexer.expected(.t_class);
+        }
+
+        var is_identifier = p.lexer.token == .t_identifier;
+        var is_strict_modereserved_word = is_identifier and js_lexer.StrictModeReservedWords.has(p.lexer.identifier);
+
+        if (!opts.is_name_optional or (is_identifier and !is_strict_modereserved_word)) {
+            var name_loc = p.lexer.loc();
+            var name_text = p.lexer.identifier;
+            if (is_strict_modereserved_word) {
+                p.lexer.unexpected();
+            }
+
+            p.lexer.expect(.t_identifier);
+            name = LocRef{ .loc = name_loc, .ref = null };
+            if (!opts.is_typescript_declare) {
+                (name orelse unreachable).ref = p.declareSymbol(.class, name_loc, name_text) catch unreachable;
+            }
+        }
+
+        // Even anonymous classes can have TypeScript type parameters
+        if (p.options.ts) {
+            p.skipTypescriptTypeParameters();
+        }
+        var class_opts = ParseClassOptions{
+            .allow_ts_decorators = true,
+            .is_type_script_declare = opts.is_typescript_declare,
+        };
+        if (opts.ts_decorators) |dec| {
+            class_opts.ts_decorators = dec.values;
+        }
+
+        var scope_index = p.pushScopeForParsePass(.class_name, loc) catch unreachable;
+        var class = p.parseClass(class_keyword, name, class_opts);
+
+        if (opts.is_typescript_declare) {
+            p.popAndDiscardScope(scope_index);
+            if (opts.is_namespace_scope and opts.is_export) {
+                p.has_non_local_export_declare_inside_namespace = true;
+            }
+
+            return p.s(S.TypeScript{}, loc);
+        }
+
+        p.popScope();
+        return p.s(S.Class{
+            .class = class,
+            .is_export = opts.is_export,
+        }, loc);
     }
 
     pub fn parseStmt(p: *P, opts: *ParseStatementOptions) !Stmt {
@@ -1310,13 +1368,98 @@ const P = struct {
                             }
 
                             defaultName = try createDefaultName(p, loc);
-                            // TODO: here
+
                             var expr = p.parseSuffix(try p.parseAsyncPrefixExpr(async_range, Level.comma), Level.comma, null, Expr.EFlags.none);
                             p.lexer.expectOrInsertSemicolon();
                             // this is probably a panic
                             var value = js_ast.StmtOrExpr{ .expr = expr };
                             return p.s(S.ExportDefault{ .default_name = defaultName, .value = value }, loc);
                         }
+
+                        if (p.lexer.token == .t_function or p.lexer.token == .t_class or p.lexer.isContextualKeyword("interface")) {
+                            var _opts = ParseStatementOptions{
+                                .ts_decorators = opts.ts_decorators,
+                                .is_name_optional = true,
+                                .lexical_decl = .allow_all,
+                            };
+                            var stmt = p.parseStmt(&_opts) catch unreachable;
+
+                            var default_name: js_ast.LocRef = undefined;
+
+                            switch (stmt.data) {
+                                // This was just a type annotation
+                                .s_type_script => {
+                                    return stmt;
+                                },
+
+                                .s_function => |func_container| {
+                                    if (func_container.func.name) |name| {
+                                        default_name = LocRef{ .loc = defaultLoc, .ref = name.ref };
+                                    } else {}
+                                },
+                                .s_class => |class| {
+                                    if (class.class.class_name) |name| {
+                                        default_name = LocRef{ .loc = defaultLoc, .ref = name.ref };
+                                    } else {}
+                                },
+                                else => {
+                                    std.debug.panic("Internal error: unexpected stmt {s}", .{stmt});
+                                },
+                            }
+
+                            return p.s(
+                                S.ExportDefault{ .default_name = default_name, .value = js_ast.StmtOrExpr{ .stmt = stmt } },
+                                loc,
+                            );
+                        }
+
+                        const is_identifier = p.lexer.token == .t_identifier;
+                        const name = p.lexer.identifier;
+                        var expr = p.parseExpr(.comma);
+
+                        // Handle the default export of an abstract class in TypeScript
+                        if (p.options.ts and is_identifier and (p.lexer.token == .t_class or opts.ts_decorators != null) and strings.eql(name, "abstract")) {
+                            switch (expr.data) {
+                                .e_identifier => |ident| {
+                                    var stmtOpts = ParseStatementOptions{
+                                        .ts_decorators = opts.ts_decorators,
+                                        .is_name_optional = true,
+                                    };
+                                    const stmt: Stmt = p.parseClassStmt(loc, &stmtOpts);
+
+                                    // Use the statement name if present, since it's a better name
+                                    var default_name: LocRef = undefined;
+                                    switch (stmt.data) {
+                                        .s_class => |class| {
+                                            var ref: Ref = undefined;
+                                            var picked = false;
+                                            if (class.class.class_name) |loc_ref| {
+                                                if (loc_ref.ref) |_ref| {
+                                                    ref = _ref;
+                                                    picked = true;
+                                                }
+                                            }
+
+                                            if (!picked) {
+                                                ref = (createDefaultName(p, defaultLoc) catch unreachable).ref orelse unreachable;
+                                            }
+                                            default_name = LocRef{ .loc = defaultLoc, .ref = ref };
+                                        },
+                                        else => {
+                                            default_name = createDefaultName(p, defaultLoc) catch unreachable;
+                                        },
+                                    }
+
+                                    return p.s(S.ExportDefault{ .default_name = default_name, .value = js_ast.StmtOrExpr{ .stmt = stmt } }, loc);
+                                },
+                                else => {
+                                    std.debug.panic("internal error: unexpected", .{});
+                                },
+                            }
+                        }
+
+                        p.lexer.expectOrInsertSemicolon();
+                        return p.s(S.ExportDefault{ .default_name = createDefaultName(p, loc) catch unreachable, .value = js_ast.StmtOrExpr{ .expr = expr } }, loc);
                     },
                     else => {
                         notimpl();
@@ -1673,7 +1816,7 @@ const P = struct {
             // It's stored as a negative value so we'll crash if we try to use it. That
             // way we'll catch cases where we've forgotten to call loadNameFromRef().
             // The length is the negative part because we know it's non-zero.
-            return js_ast.Ref{ .source_index = @intCast(u32, ptr0), .inner_index = (@intCast(u32, name.len) + @intCast(u32, ptr0)) };
+            return js_ast.Ref{ .source_index = @intCast(Ref.Int, ptr0), .inner_index = (@intCast(Ref.Int, name.len) + @intCast(Ref.Int, ptr0)) };
         } else {
             // std.debug.print("storeNameInRef slow path", .{});
             // The name is some memory allocated elsewhere. This is either an inline
@@ -1683,13 +1826,13 @@ const P = struct {
 
             // allocated_names is lazily allocated
             if (p.allocated_names.capacity > 0) {
-                const inner_index = @intCast(u32, p.allocated_names.items.len);
+                const inner_index = @intCast(Ref.Int, p.allocated_names.items.len);
                 try p.allocated_names.append(name);
-                return js_ast.Ref{ .source_index = 0x80000000, .inner_index = inner_index };
+                return js_ast.Ref{ .source_index = std.math.maxInt(Ref.Int), .inner_index = inner_index };
             } else {
                 p.allocated_names = try @TypeOf(p.allocated_names).initCapacity(p.allocator, 1);
                 p.allocated_names.appendAssumeCapacity(name);
-                return js_ast.Ref{ .source_index = 0x80000000, .inner_index = 0 };
+                return js_ast.Ref{ .source_index = std.math.maxInt(Ref.Int), .inner_index = 0 };
             }
 
             // p.allocatedNames = append(p.allocatedNames, name)
@@ -3550,7 +3693,7 @@ const P = struct {
 
                 const class = p.parseClass(classKeyword, name, ParseClassOptions{});
                 p.popScope();
-                return p.e(E.Class{ .class = class }, loc);
+                return p.e(class, loc);
             },
             .t_new => {
                 p.lexer.next();

@@ -58,7 +58,8 @@ pub const Ref = packed struct {
     source_index: Ref.Int = std.math.maxInt(Ref.Int),
     inner_index: Ref.Int,
 
-    const Int = u32;
+    // 2 bits of padding for whatever is the parent
+    pub const Int = u31;
     const None = Ref{ .inner_index = std.math.maxInt(Ref.Int) };
     pub fn isNull(self: *const Ref) bool {
         return self.source_index == std.math.maxInt(Ref.Int) and self.inner_index == std.math.maxInt(Ref.Int);
@@ -773,9 +774,7 @@ pub const E = struct {
         value: string,
     };
 
-    pub const Class = struct {
-        class: G.Class,
-    };
+    pub const Class = G.Class;
 
     pub const Await = struct { value: ExprNodeIndex };
 
@@ -812,6 +811,10 @@ pub const E = struct {
 pub const Stmt = struct {
     loc: logger.Loc,
     data: Data,
+
+    pub fn isTypeScript(self: *Stmt) bool {
+        return @as(Stmt.Tag, self.data) == .s_type_script;
+    }
 
     pub fn empty() Stmt {
         return Stmt.init(&Stmt.None, logger.Loc.Empty);
@@ -2175,10 +2178,7 @@ pub const S = struct {
         func: G.Fn,
     };
 
-    pub const Class = struct {
-        class: G.Class,
-        is_export: bool,
-    };
+    pub const Class = struct { class: G.Class, is_export: bool = false };
 
     pub const If = struct {
         test_: ExprNodeIndex,

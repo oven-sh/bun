@@ -1632,7 +1632,28 @@ const P = struct {
                 return p.s(S.Local{ .kind = .k_const, .decls = decls, .is_export = opts.is_export }, loc);
             },
             .t_if => {
-                notimpl();
+                p.lexer.next();
+                p.lexer.expect(.t_open_paren);
+                const test_ = p.parseExpr(.lowest);
+                p.lexer.expect(.t_close_paren);
+                var stmtOpts = ParseStatementOptions{
+                    .lexical_decl = .allow_fn_inside_if,
+                };
+                const yes = p.parseStmt(&stmtOpts) catch unreachable;
+                var no: ?Stmt = null;
+                if (p.lexer.token == .t_else) {
+                    p.lexer.next();
+                    stmtOpts = ParseStatementOptions{
+                        .lexical_decl = .allow_fn_inside_if,
+                    };
+                    no = p.parseStmt(&stmtOpts) catch unreachable;
+                }
+
+                return p.s(S.If{
+                    .test_ = test_,
+                    .yes = yes,
+                    .no = no,
+                }, loc);
             },
             .t_do => {
                 notimpl();

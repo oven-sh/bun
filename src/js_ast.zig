@@ -237,6 +237,15 @@ pub const G = struct {
         alias: string,
     };
 
+    pub const ExportStarAlias = struct {
+        loc: logger.Loc,
+
+        // Although this alias name starts off as being the same as the statement's
+        // namespace symbol, it may diverge if the namespace symbol name is minified.
+        // The original alias name is preserved here to avoid this scenario.
+        original_name: string,
+    };
+
     pub const Class = struct {
         class_keyword: logger.Range = logger.Range.None,
         ts_decorators: ExprNodeList = &([_]Expr{}),
@@ -822,252 +831,228 @@ pub const Stmt = struct {
 
     var None = S.Empty{};
 
-    pub fn init(st: anytype, loc: logger.Loc) Stmt {
-        if (@typeInfo(@TypeOf(st)) != .Pointer) {
+    pub fn init(origData: anytype, loc: logger.Loc) Stmt {
+        if (@typeInfo(@TypeOf(origData)) != .Pointer) {
             @compileError("Stmt.init needs a pointer.");
         }
 
-        switch (@TypeOf(st.*)) {
+        switch (@TypeOf(origData.*)) {
             S.Block => {
-                return Stmt{ .loc = loc, .data = Data{ .s_block = st } };
-            },
-            S.SExpr => {
-                return Stmt{ .loc = loc, .data = Data{ .s_expr = st } };
-            },
-            S.Comment => {
-                return Stmt{ .loc = loc, .data = Data{ .s_comment = st } };
-            },
-            S.Directive => {
-                return Stmt{ .loc = loc, .data = Data{ .s_directive = st } };
-            },
-            S.ExportClause => {
-                return Stmt{ .loc = loc, .data = Data{ .s_export_clause = st } };
-            },
-            S.Empty => {
-                return Stmt{ .loc = loc, .data = Data{ .s_empty = st } };
-            },
-            S.TypeScript => {
-                return Stmt{ .loc = loc, .data = Data{ .s_type_script = st } };
-            },
-            S.Debugger => {
-                return Stmt{ .loc = loc, .data = Data{ .s_debugger = st } };
-            },
-            S.ExportFrom => {
-                return Stmt{ .loc = loc, .data = Data{ .s_export_from = st } };
-            },
-            S.ExportDefault => {
-                return Stmt{ .loc = loc, .data = Data{ .s_export_default = st } };
-            },
-            S.Enum => {
-                return Stmt{ .loc = loc, .data = Data{ .s_enum = st } };
-            },
-            S.Namespace => {
-                return Stmt{ .loc = loc, .data = Data{ .s_namespace = st } };
-            },
-            S.Function => {
-                return Stmt{ .loc = loc, .data = Data{ .s_function = st } };
-            },
-            S.Class => {
-                return Stmt{ .loc = loc, .data = Data{ .s_class = st } };
-            },
-            S.If => {
-                return Stmt{ .loc = loc, .data = Data{ .s_if = st } };
-            },
-            S.For => {
-                return Stmt{ .loc = loc, .data = Data{ .s_for = st } };
-            },
-            S.ForIn => {
-                return Stmt{ .loc = loc, .data = Data{ .s_for_in = st } };
-            },
-            S.ForOf => {
-                return Stmt{ .loc = loc, .data = Data{ .s_for_of = st } };
-            },
-            S.DoWhile => {
-                return Stmt{ .loc = loc, .data = Data{ .s_do_while = st } };
-            },
-            S.While => {
-                return Stmt{ .loc = loc, .data = Data{ .s_while = st } };
-            },
-            S.With => {
-                return Stmt{ .loc = loc, .data = Data{ .s_with = st } };
-            },
-            S.Try => {
-                return Stmt{ .loc = loc, .data = Data{ .s_try = st } };
-            },
-            S.Switch => {
-                return Stmt{ .loc = loc, .data = Data{ .s_switch = st } };
-            },
-            S.Import => {
-                return Stmt{ .loc = loc, .data = Data{ .s_import = st } };
-            },
-            S.Return => {
-                return Stmt{ .loc = loc, .data = Data{ .s_return = st } };
-            },
-            S.Throw => {
-                return Stmt{ .loc = loc, .data = Data{ .s_throw = st } };
-            },
-            S.Local => {
-                return Stmt{ .loc = loc, .data = Data{ .s_local = st } };
+                return Stmt.comptime_init("s_block", S.Block, origData, loc);
             },
             S.Break => {
-                return Stmt{ .loc = loc, .data = Data{ .s_break = st } };
+                return Stmt.comptime_init("s_break", S.Break, origData, loc);
+            },
+            S.Class => {
+                return Stmt.comptime_init("s_class", S.Class, origData, loc);
+            },
+            S.Comment => {
+                return Stmt.comptime_init("s_comment", S.Comment, origData, loc);
             },
             S.Continue => {
-                return Stmt{ .loc = loc, .data = Data{ .s_continue = st } };
+                return Stmt.comptime_init("s_continue", S.Continue, origData, loc);
+            },
+            S.Debugger => {
+                return Stmt.comptime_init("s_debugger", S.Debugger, origData, loc);
+            },
+            S.Directive => {
+                return Stmt.comptime_init("s_directive", S.Directive, origData, loc);
+            },
+            S.DoWhile => {
+                return Stmt.comptime_init("s_do_while", S.DoWhile, origData, loc);
+            },
+            S.Empty => {
+                return Stmt.comptime_init("s_empty", S.Empty, origData, loc);
+            },
+            S.Enum => {
+                return Stmt.comptime_init("s_enum", S.Enum, origData, loc);
+            },
+            S.ExportClause => {
+                return Stmt.comptime_init("s_export_clause", S.ExportClause, origData, loc);
+            },
+            S.ExportDefault => {
+                return Stmt.comptime_init("s_export_default", S.ExportDefault, origData, loc);
+            },
+            S.ExportEquals => {
+                return Stmt.comptime_init("s_export_equals", S.ExportEquals, origData, loc);
+            },
+            S.ExportFrom => {
+                return Stmt.comptime_init("s_export_from", S.ExportFrom, origData, loc);
+            },
+            S.ExportStar => {
+                return Stmt.comptime_init("s_export_star", S.ExportStar, origData, loc);
+            },
+            S.SExpr => {
+                return Stmt.comptime_init("s_expr", S.SExpr, origData, loc);
+            },
+            S.ForIn => {
+                return Stmt.comptime_init("s_for_in", S.ForIn, origData, loc);
+            },
+            S.ForOf => {
+                return Stmt.comptime_init("s_for_of", S.ForOf, origData, loc);
+            },
+            S.For => {
+                return Stmt.comptime_init("s_for", S.For, origData, loc);
+            },
+            S.Function => {
+                return Stmt.comptime_init("s_function", S.Function, origData, loc);
+            },
+            S.If => {
+                return Stmt.comptime_init("s_if", S.If, origData, loc);
+            },
+            S.Import => {
+                return Stmt.comptime_init("s_import", S.Import, origData, loc);
+            },
+            S.Label => {
+                return Stmt.comptime_init("s_label", S.Label, origData, loc);
+            },
+            S.LazyExport => {
+                return Stmt.comptime_init("s_lazy_export", S.LazyExport, origData, loc);
+            },
+            S.Local => {
+                return Stmt.comptime_init("s_local", S.Local, origData, loc);
+            },
+            S.Namespace => {
+                return Stmt.comptime_init("s_namespace", S.Namespace, origData, loc);
+            },
+            S.Return => {
+                return Stmt.comptime_init("s_return", S.Return, origData, loc);
+            },
+            S.Switch => {
+                return Stmt.comptime_init("s_switch", S.Switch, origData, loc);
+            },
+            S.Throw => {
+                return Stmt.comptime_init("s_throw", S.Throw, origData, loc);
+            },
+            S.Try => {
+                return Stmt.comptime_init("s_try", S.Try, origData, loc);
+            },
+            S.TypeScript => {
+                return Stmt.comptime_init("s_type_script", S.TypeScript, origData, loc);
+            },
+            S.While => {
+                return Stmt.comptime_init("s_while", S.While, origData, loc);
+            },
+            S.With => {
+                return Stmt.comptime_init("s_with", S.With, origData, loc);
             },
             else => {
                 @compileError("Invalid type in Stmt.init");
             },
         }
     }
+    fn comptime_alloc(allocator: *std.mem.Allocator, comptime tag_name: string, comptime typename: type, origData: anytype, loc: logger.Loc) callconv(.Inline) Stmt {
+        var st = allocator.create(typename) catch unreachable;
+        st.* = origData;
+        return Stmt{ .loc = loc, .data = @unionInit(Data, tag_name, st) };
+    }
+
+    fn comptime_init(comptime tag_name: string, comptime typename: type, origData: anytype, loc: logger.Loc) callconv(.Inline) Stmt {
+        return Stmt{ .loc = loc, .data = @unionInit(Data, tag_name, origData) };
+    }
 
     pub fn alloc(allocator: *std.mem.Allocator, origData: anytype, loc: logger.Loc) Stmt {
         switch (@TypeOf(origData)) {
             S.Block => {
-                var st = allocator.create(S.Block) catch unreachable;
-                st.* = origData;
-                return Stmt{ .loc = loc, .data = Data{ .s_block = st } };
-            },
-            S.SExpr => {
-                var st = allocator.create(S.SExpr) catch unreachable;
-                st.* = origData;
-                return Stmt{ .loc = loc, .data = Data{ .s_expr = st } };
-            },
-            S.Comment => {
-                var st = allocator.create(S.Comment) catch unreachable;
-                st.* = origData;
-                return Stmt{ .loc = loc, .data = Data{ .s_comment = st } };
-            },
-            S.Directive => {
-                var st = allocator.create(S.Directive) catch unreachable;
-                st.* = origData;
-                return Stmt{ .loc = loc, .data = Data{ .s_directive = st } };
-            },
-            S.ExportClause => {
-                var st = allocator.create(S.ExportClause) catch unreachable;
-                st.* = origData;
-                return Stmt{ .loc = loc, .data = Data{ .s_export_clause = st } };
-            },
-            S.Empty => {
-                var st = allocator.create(S.Empty) catch unreachable;
-                st.* = origData;
-                return Stmt{ .loc = loc, .data = Data{ .s_empty = st } };
-            },
-            S.TypeScript => {
-                var st = allocator.create(S.TypeScript) catch unreachable;
-                st.* = origData;
-                return Stmt{ .loc = loc, .data = Data{ .s_type_script = st } };
-            },
-            S.Debugger => {
-                var st = allocator.create(S.Debugger) catch unreachable;
-                st.* = origData;
-                return Stmt{ .loc = loc, .data = Data{ .s_debugger = st } };
-            },
-            S.ExportFrom => {
-                var st = allocator.create(S.ExportFrom) catch unreachable;
-                st.* = origData;
-                return Stmt{ .loc = loc, .data = Data{ .s_export_from = st } };
-            },
-            S.ExportDefault => {
-                var st = allocator.create(S.ExportDefault) catch unreachable;
-                st.* = origData;
-                return Stmt{ .loc = loc, .data = Data{ .s_export_default = st } };
-            },
-            S.Enum => {
-                var st = allocator.create(S.Enum) catch unreachable;
-                st.* = origData;
-                return Stmt{ .loc = loc, .data = Data{ .s_enum = st } };
-            },
-            S.Namespace => {
-                var st = allocator.create(S.Namespace) catch unreachable;
-                st.* = origData;
-                return Stmt{ .loc = loc, .data = Data{ .s_namespace = st } };
-            },
-            S.Function => {
-                var st = allocator.create(S.Function) catch unreachable;
-                st.* = origData;
-                return Stmt{ .loc = loc, .data = Data{ .s_function = st } };
-            },
-            S.Class => {
-                var st = allocator.create(S.Class) catch unreachable;
-                st.* = origData;
-                return Stmt{ .loc = loc, .data = Data{ .s_class = st } };
-            },
-            S.If => {
-                var st = allocator.create(S.If) catch unreachable;
-                st.* = origData;
-                return Stmt{ .loc = loc, .data = Data{ .s_if = st } };
-            },
-            S.For => {
-                var st = allocator.create(S.For) catch unreachable;
-                st.* = origData;
-                return Stmt{ .loc = loc, .data = Data{ .s_for = st } };
-            },
-            S.ForIn => {
-                var st = allocator.create(S.ForIn) catch unreachable;
-                st.* = origData;
-                return Stmt{ .loc = loc, .data = Data{ .s_for_in = st } };
-            },
-            S.ForOf => {
-                var st = allocator.create(S.ForOf) catch unreachable;
-                st.* = origData;
-                return Stmt{ .loc = loc, .data = Data{ .s_for_of = st } };
-            },
-            S.DoWhile => {
-                var st = allocator.create(S.DoWhile) catch unreachable;
-                st.* = origData;
-                return Stmt{ .loc = loc, .data = Data{ .s_do_while = st } };
-            },
-            S.While => {
-                var st = allocator.create(S.While) catch unreachable;
-                st.* = origData;
-                return Stmt{ .loc = loc, .data = Data{ .s_while = st } };
-            },
-            S.With => {
-                var st = allocator.create(S.With) catch unreachable;
-                st.* = origData;
-                return Stmt{ .loc = loc, .data = Data{ .s_with = st } };
-            },
-            S.Try => {
-                var st = allocator.create(S.Try) catch unreachable;
-                st.* = origData;
-                return Stmt{ .loc = loc, .data = Data{ .s_try = st } };
-            },
-            S.Switch => {
-                var st = allocator.create(S.Switch) catch unreachable;
-                st.* = origData;
-                return Stmt{ .loc = loc, .data = Data{ .s_switch = st } };
-            },
-            S.Import => {
-                var st = allocator.create(S.Import) catch unreachable;
-                st.* = origData;
-                return Stmt{ .loc = loc, .data = Data{ .s_import = st } };
-            },
-            S.Return => {
-                var st = allocator.create(S.Return) catch unreachable;
-                st.* = origData;
-                return Stmt{ .loc = loc, .data = Data{ .s_return = st } };
-            },
-            S.Throw => {
-                var st = allocator.create(S.Throw) catch unreachable;
-                st.* = origData;
-                return Stmt{ .loc = loc, .data = Data{ .s_throw = st } };
-            },
-            S.Local => {
-                var st = allocator.create(S.Local) catch unreachable;
-                st.* = origData;
-                return Stmt{ .loc = loc, .data = Data{ .s_local = st } };
+                return Stmt.comptime_alloc(allocator, "s_block", S.Block, origData, loc);
             },
             S.Break => {
-                var st = allocator.create(S.Break) catch unreachable;
-                st.* = origData;
-                return Stmt{ .loc = loc, .data = Data{ .s_break = st } };
+                return Stmt.comptime_alloc(allocator, "s_break", S.Break, origData, loc);
+            },
+            S.Class => {
+                return Stmt.comptime_alloc(allocator, "s_class", S.Class, origData, loc);
+            },
+            S.Comment => {
+                return Stmt.comptime_alloc(allocator, "s_comment", S.Comment, origData, loc);
             },
             S.Continue => {
-                var st = allocator.create(S.Continue) catch unreachable;
-                st.* = origData;
-                return Stmt{ .loc = loc, .data = Data{ .s_continue = st } };
+                return Stmt.comptime_alloc(allocator, "s_continue", S.Continue, origData, loc);
             },
+            S.Debugger => {
+                return Stmt.comptime_alloc(allocator, "s_debugger", S.Debugger, origData, loc);
+            },
+            S.Directive => {
+                return Stmt.comptime_alloc(allocator, "s_directive", S.Directive, origData, loc);
+            },
+            S.DoWhile => {
+                return Stmt.comptime_alloc(allocator, "s_do_while", S.DoWhile, origData, loc);
+            },
+            S.Empty => {
+                return Stmt.comptime_alloc(allocator, "s_empty", S.Empty, origData, loc);
+            },
+            S.Enum => {
+                return Stmt.comptime_alloc(allocator, "s_enum", S.Enum, origData, loc);
+            },
+            S.ExportClause => {
+                return Stmt.comptime_alloc(allocator, "s_export_clause", S.ExportClause, origData, loc);
+            },
+            S.ExportDefault => {
+                return Stmt.comptime_alloc(allocator, "s_export_default", S.ExportDefault, origData, loc);
+            },
+            S.ExportEquals => {
+                return Stmt.comptime_alloc(allocator, "s_export_equals", S.ExportEquals, origData, loc);
+            },
+            S.ExportFrom => {
+                return Stmt.comptime_alloc(allocator, "s_export_from", S.ExportFrom, origData, loc);
+            },
+            S.ExportStar => {
+                return Stmt.comptime_alloc(allocator, "s_export_star", S.ExportStar, origData, loc);
+            },
+            S.SExpr => {
+                return Stmt.comptime_alloc(allocator, "s_expr", S.SExpr, origData, loc);
+            },
+            S.ForIn => {
+                return Stmt.comptime_alloc(allocator, "s_for_in", S.ForIn, origData, loc);
+            },
+            S.ForOf => {
+                return Stmt.comptime_alloc(allocator, "s_for_of", S.ForOf, origData, loc);
+            },
+            S.For => {
+                return Stmt.comptime_alloc(allocator, "s_for", S.For, origData, loc);
+            },
+            S.Function => {
+                return Stmt.comptime_alloc(allocator, "s_function", S.Function, origData, loc);
+            },
+            S.If => {
+                return Stmt.comptime_alloc(allocator, "s_if", S.If, origData, loc);
+            },
+            S.Import => {
+                return Stmt.comptime_alloc(allocator, "s_import", S.Import, origData, loc);
+            },
+            S.Label => {
+                return Stmt.comptime_alloc(allocator, "s_label", S.Label, origData, loc);
+            },
+            S.LazyExport => {
+                return Stmt.comptime_alloc(allocator, "s_lazy_export", S.LazyExport, origData, loc);
+            },
+            S.Local => {
+                return Stmt.comptime_alloc(allocator, "s_local", S.Local, origData, loc);
+            },
+            S.Namespace => {
+                return Stmt.comptime_alloc(allocator, "s_namespace", S.Namespace, origData, loc);
+            },
+            S.Return => {
+                return Stmt.comptime_alloc(allocator, "s_return", S.Return, origData, loc);
+            },
+            S.Switch => {
+                return Stmt.comptime_alloc(allocator, "s_switch", S.Switch, origData, loc);
+            },
+            S.Throw => {
+                return Stmt.comptime_alloc(allocator, "s_throw", S.Throw, origData, loc);
+            },
+            S.Try => {
+                return Stmt.comptime_alloc(allocator, "s_try", S.Try, origData, loc);
+            },
+            S.TypeScript => {
+                return Stmt.comptime_alloc(allocator, "s_type_script", S.TypeScript, origData, loc);
+            },
+            S.While => {
+                return Stmt.comptime_alloc(allocator, "s_while", S.While, origData, loc);
+            },
+            S.With => {
+                return Stmt.comptime_alloc(allocator, "s_with", S.With, origData, loc);
+            },
+
             else => {
                 @compileError("Invalid type in Stmt.init");
             },
@@ -1076,66 +1061,74 @@ pub const Stmt = struct {
 
     pub const Tag = packed enum {
         s_block,
-        s_comment,
-        s_directive,
-        s_export_clause,
-        s_empty,
-        s_type_script,
-        s_debugger,
-        s_export_from,
-        s_export_default,
-        s_enum,
-        s_namespace,
-        s_function,
+        s_break,
         s_class,
-        s_if,
-        s_for,
+        s_comment,
+        s_continue,
+        s_debugger,
+        s_directive,
+        s_do_while,
+        s_empty,
+        s_enum,
+        s_export_clause,
+        s_export_default,
+        s_export_equals,
+        s_export_from,
+        s_export_star,
+        s_expr,
         s_for_in,
         s_for_of,
-        s_do_while,
+        s_for,
+        s_function,
+        s_if,
+        s_import,
+        s_label,
+        s_lazy_export,
+        s_local,
+        s_namespace,
+        s_return,
+        s_switch,
+        s_throw,
+        s_try,
+        s_type_script,
         s_while,
         s_with,
-        s_try,
-        s_switch,
-        s_import,
-        s_return,
-        s_throw,
-        s_local,
-        s_break,
-        s_continue,
-        s_expr,
     };
 
     pub const Data = union(Tag) {
         s_block: *S.Block,
-        s_expr: *S.SExpr,
-        s_comment: *S.Comment,
-        s_directive: *S.Directive,
-        s_export_clause: *S.ExportClause,
-        s_empty: *S.Empty,
-        s_type_script: *S.TypeScript,
-        s_debugger: *S.Debugger,
-        s_export_from: *S.ExportFrom,
-        s_export_default: *S.ExportDefault,
-        s_enum: *S.Enum,
-        s_namespace: *S.Namespace,
-        s_function: *S.Function,
+        s_break: *S.Break,
         s_class: *S.Class,
-        s_if: *S.If,
-        s_for: *S.For,
+        s_comment: *S.Comment,
+        s_continue: *S.Continue,
+        s_debugger: *S.Debugger,
+        s_directive: *S.Directive,
+        s_do_while: *S.DoWhile,
+        s_empty: *S.Empty,
+        s_enum: *S.Enum,
+        s_export_clause: *S.ExportClause,
+        s_export_default: *S.ExportDefault,
+        s_export_equals: *S.ExportEquals,
+        s_export_from: *S.ExportFrom,
+        s_export_star: *S.ExportStar,
+        s_expr: *S.SExpr,
         s_for_in: *S.ForIn,
         s_for_of: *S.ForOf,
-        s_do_while: *S.DoWhile,
+        s_for: *S.For,
+        s_function: *S.Function,
+        s_if: *S.If,
+        s_import: *S.Import,
+        s_label: *S.Label,
+        s_lazy_export: *S.LazyExport,
+        s_local: *S.Local,
+        s_namespace: *S.Namespace,
+        s_return: *S.Return,
+        s_switch: *S.Switch,
+        s_throw: *S.Throw,
+        s_try: *S.Try,
+        s_type_script: *S.TypeScript,
         s_while: *S.While,
         s_with: *S.With,
-        s_try: *S.Try,
-        s_switch: *S.Switch,
-        s_import: *S.Import,
-        s_return: *S.Return,
-        s_throw: *S.Throw,
-        s_local: *S.Local,
-        s_break: *S.Break,
-        s_continue: *S.Continue,
     };
 
     pub fn caresAboutScope(self: *Stmt) bool {
@@ -2141,9 +2134,24 @@ pub const S = struct {
 
     pub const Directive = struct { value: JavascriptString, legacy_octal_loc: logger.Loc };
 
-    pub const ExportClause = struct { items: []ClauseItem };
+    pub const ExportClause = struct { items: []ClauseItem, is_single_line: bool = false };
 
     pub const Empty = struct {};
+
+    pub const ExportStar = struct {
+        namespace_ref: Ref,
+        alias: ?G.ExportStarAlias = null,
+        import_record_index: u32,
+    };
+
+    // This is an "export = value;" statement in TypeScript
+    pub const ExportEquals = struct { value: ExprNodeIndex };
+
+    // The decision of whether to export an expression using "module.exports" or
+    // "export default" is deferred until linking using this statement kind
+    pub const LazyExport = struct { value: ExprNodeIndex };
+
+    pub const Label = struct { name: LocRef, stmt: StmtNodeIndex };
 
     // This is a stand-in for a TypeScript type declaration
     pub const TypeScript = struct {};
@@ -2194,9 +2202,13 @@ pub const S = struct {
     // May be a SConst, SLet, SVar, or SExpr
     init: StmtNodeIndex, value: ExprNodeIndex, body: StmtNodeIndex };
 
-    pub const ForOf = struct { is_await: bool,
-    // May be a SConst, SLet, SVar, or SExpr
-    init: StmtNodeIndex, value: ExprNodeIndex, body: StmtNodeIndex };
+    pub const ForOf = struct {
+        is_await: bool = false,
+        // May be a SConst, SLet, SVar, or SExpr
+        init: StmtNodeIndex,
+        value: ExprNodeIndex,
+        body: StmtNodeIndex,
+    };
 
     pub const DoWhile = struct { body: StmtNodeIndex, test_: ExprNodeIndex };
 

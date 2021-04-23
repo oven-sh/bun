@@ -29,6 +29,10 @@ pub fn eql(self: string, other: anytype) bool {
     return std.mem.eql(u8, self, other);
 }
 
+pub fn append(allocator: *std.mem.Allocator, self: string, other: string) !string {
+    return std.fmt.allocPrint(allocator, "{s}{s}", .{ self, other });
+}
+
 pub fn index(self: string, str: string) i32 {
     if (std.mem.indexOf(u8, self, str)) |i| {
         return @intCast(i32, i);

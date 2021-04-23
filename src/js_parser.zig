@@ -5,10 +5,13 @@ const importRecord = @import("import_record.zig");
 const js_ast = @import("js_ast.zig");
 const options = @import("options.zig");
 const alloc = @import("alloc.zig");
+
+const fs = @import("fs.zig");
 usingnamespace @import("strings.zig");
 usingnamespace @import("ast/base.zig");
 usingnamespace js_ast.G;
 
+const ImportKind = importRecord.ImportKind;
 const BindingNodeIndex = js_ast.BindingNodeIndex;
 const StmtNodeIndex = js_ast.StmtNodeIndex;
 const ExprNodeIndex = js_ast.ExprNodeIndex;
@@ -64,6 +67,8 @@ const ThenCatchChain = struct {
     has_multiple_args: bool = false,
     has_catch: bool = false,
 };
+
+const ParsedPath = struct { loc: logger.Loc, text: string };
 
 const StrictModeFeature = enum {
     with_statement,
@@ -304,6 +309,8 @@ pub const Parser = struct {
         };
     }
 };
+
+const ExportClauseResult = struct { clauses: []js_ast.ClauseItem = &([_]js_ast.ClauseItem{}), is_single_line: bool = false };
 
 const DeferredTsDecorators = struct {
     values: []js_ast.Expr,
@@ -1461,8 +1468,83 @@ const P = struct {
                         p.lexer.expectOrInsertSemicolon();
                         return p.s(S.ExportDefault{ .default_name = createDefaultName(p, loc) catch unreachable, .value = js_ast.StmtOrExpr{ .expr = expr } }, loc);
                     },
+                    T.t_asterisk => {
+                        if (!opts.is_module_scope and !(opts.is_namespace_scope or !opts.is_typescript_declare)) {
+                            p.lexer.unexpected();
+                        }
+
+                        p.lexer.next();
+                        var namespace_ref: js_ast.Ref = undefined;
+                        var alias: ?js_ast.G.ExportStarAlias = null;
+                        var path_loc: logger.Loc = undefined;
+                        var path_text: string = undefined;
+
+                        if (p.lexer.isContextualKeyword("as")) {
+                            // "export * as ns from 'path'"
+                            const name = p.lexer.identifier;
+                            namespace_ref = p.storeNameInRef(name) catch unreachable;
+                            alias = G.ExportStarAlias{ .loc = p.lexer.loc(), .original_name = name };
+                            if (!p.lexer.isIdentifierOrKeyword()) {
+                                p.lexer.expect(.t_identifier);
+                            }
+                            p.checkForNonBMPCodePoint((alias orelse unreachable).loc, name);
+                            p.lexer.next();
+                            p.lexer.expectContextualKeyword("from");
+                            const parsedPath = p.parsePath();
+                            path_loc = parsedPath.loc;
+                            path_text = parsedPath.text;
+                        } else {
+                            // "export * from 'path'"
+                            p.lexer.expectContextualKeyword("from");
+                            const parsedPath = p.parsePath();
+                            path_loc = parsedPath.loc;
+                            path_text = parsedPath.text;
+                            var path_name = fs.PathName.init(strings.append(p.allocator, path_text, "_star") catch unreachable);
+                            namespace_ref = p.storeNameInRef(path_name.nonUniqueNameString(p.allocator) catch unreachable) catch unreachable;
+                        }
+
+                        var import_record_index = p.addImportRecord(ImportKind.stmt, path_loc, path_text);
+                        p.lexer.expectOrInsertSemicolon();
+                        return p.s(S.ExportStar{
+                            .namespace_ref = namespace_ref,
+                            .alias = alias,
+                            .import_record_index = import_record_index,
+                        }, loc);
+                    },
+                    T.t_open_brace => {
+                        if (!opts.is_module_scope and !(opts.is_namespace_scope or !opts.is_typescript_declare)) {
+                            p.lexer.unexpected();
+                        }
+
+                        const export_clause = p.parseExportClause();
+                        if (p.lexer.isContextualKeyword("from")) {
+                            p.lexer.expectContextualKeyword("from");
+                            const parsedPath = p.parsePath();
+                            const import_record_index = p.addImportRecord(.stmt, parsedPath.loc, parsedPath.text);
+                            var path_name = fs.PathName.init(strings.append(p.allocator, "import_", parsedPath.text) catch unreachable);
+                            const namespace_ref = p.storeNameInRef(path_name.nonUniqueNameString(p.allocator) catch unreachable) catch unreachable;
+                            p.lexer.expectOrInsertSemicolon();
+                            return p.s(S.ExportFrom{ .items = export_clause.clauses, .is_single_line = export_clause.is_single_line, .namespace_ref = namespace_ref, .import_record_index = import_record_index }, loc);
+                        }
+                        p.lexer.expectOrInsertSemicolon();
+                        return p.s(S.ExportClause{ .items = export_clause.clauses, .is_single_line = export_clause.is_single_line }, loc);
+                    },
+                    T.t_equals => {
+                        // "export = value;"
+
+                        p.es6_export_keyword = previousExportKeyword; // This wasn't an ESM export statement after all
+                        if (p.options.ts) {
+                            p.lexer.next();
+                            var value = p.parseExpr(.lowest);
+                            p.lexer.expectOrInsertSemicolon();
+                            return p.s(S.ExportEquals{ .value = value }, loc);
+                        }
+                        p.lexer.unexpected();
+                        return Stmt.empty();
+                    },
                     else => {
-                        notimpl();
+                        p.lexer.unexpected();
+                        return Stmt.empty();
                     },
                 }
             },
@@ -1474,6 +1556,114 @@ const P = struct {
 
         return js_ast.Stmt.empty();
     }
+
+    pub fn parseExportClause(p: *P) ExportClauseResult {
+        var items = List(js_ast.ClauseItem).initCapacity(p.allocator, 1) catch unreachable;
+        var first_keyword_item_loc = logger.Loc{};
+        p.lexer.expect(.t_open_brace);
+        var is_single_line = !p.lexer.has_newline_before;
+
+        while (p.lexer.token != .t_close_brace) {
+            var alias = p.lexer.identifier;
+            var alias_loc = p.lexer.loc();
+
+            var name = LocRef{
+                .loc = alias_loc,
+                .ref = p.storeNameInRef(alias) catch unreachable,
+            };
+            var original_name = alias;
+
+            // The name can actually be a keyword if we're really an "export from"
+            // statement. However, we won't know until later. Allow keywords as
+            // identifiers for now and throw an error later if there's no "from".
+            //
+            //   // This is fine
+            //   export { default } from 'path'
+            //
+            //   // This is a syntax error
+            //   export { default }
+            //
+            if (p.lexer.token != .t_identifier) {
+                if (!p.lexer.isIdentifierOrKeyword()) {
+                    p.lexer.expect(.t_identifier);
+                }
+                if (first_keyword_item_loc.start == 0) {
+                    first_keyword_item_loc = p.lexer.loc();
+                }
+            }
+
+            p.checkForNonBMPCodePoint(alias_loc, alias);
+            p.lexer.next();
+
+            if (p.lexer.isContextualKeyword("as")) {
+                p.lexer.next();
+                alias = p.lexer.identifier;
+                alias_loc = p.lexer.loc();
+
+                // The alias may be a keyword
+                if (!p.lexer.isIdentifierOrKeyword()) {
+                    p.lexer.expect(.t_identifier);
+                }
+                p.checkForNonBMPCodePoint(alias_loc, alias);
+                p.lexer.next();
+            }
+
+            items.append(js_ast.ClauseItem{
+                .alias = alias,
+                .alias_loc = alias_loc,
+                .name = name,
+                .original_name = original_name,
+            }) catch unreachable;
+
+            // we're done if there's no comma
+            if (p.lexer.token != .t_comma) {
+                break;
+            }
+
+            if (p.lexer.has_newline_before) {
+                is_single_line = false;
+            }
+            p.lexer.next();
+            if (p.lexer.has_newline_before) {
+                is_single_line = false;
+            }
+        }
+
+        if (p.lexer.has_newline_before) {
+            is_single_line = false;
+        }
+        p.lexer.expect(.t_close_brace);
+
+        // Throw an error here if we found a keyword earlier and this isn't an
+        // "export from" statement after all
+        if (first_keyword_item_loc.start != 0 and !p.lexer.isContextualKeyword("from")) {
+            const r = js_lexer.rangeOfIdentifier(&p.source, first_keyword_item_loc);
+            p.lexer.addRangeError(r, "Expected identifier but found \"{s}\"", .{p.source.textForRange(r)}, true);
+        }
+
+        return ExportClauseResult{
+            .clauses = items.toOwnedSlice(),
+            .is_single_line = is_single_line,
+        };
+    }
+
+    pub fn parsePath(p: *P) ParsedPath {
+        var path = ParsedPath{
+            .loc = p.lexer.loc(),
+            .text = p.lexer.utf16ToString(p.lexer.string_literal),
+        };
+
+        if (p.lexer.token == .t_no_substitution_template_literal) {
+            p.lexer.next();
+        } else {
+            p.lexer.expect(.t_string_literal);
+        }
+
+        return path;
+    }
+
+    // TODO:
+    pub fn checkForNonBMPCodePoint(p: *P, loc: logger.Loc, name: string) void {}
 
     pub fn parseStmtsUpTo(p: *P, eend: js_lexer.T, opts: *ParseStatementOptions) ![]Stmt {
         var stmts = try StmtList.initCapacity(p.allocator, 1);
@@ -1968,6 +2158,17 @@ const P = struct {
         }
 
         return p.parseSuffix(expr, level, errors, flags);
+    }
+
+    pub fn addImportRecord(p: *P, kind: ImportKind, loc: logger.Loc, name: string) u32 {
+        var index = p.import_records.items.len;
+        const record = ImportRecord{
+            .kind = kind,
+            .range = p.source.rangeOfString(loc),
+            .path = fs.Path.init(name),
+        };
+        p.import_records.append(record) catch unreachable;
+        return @intCast(u32, index);
     }
 
     pub fn popScope(p: *P) void {

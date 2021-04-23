@@ -303,7 +303,7 @@ pub const Lexer = struct {
         }
     }
 
-    pub fn expectContextualKeyword(self: *Lexer, keyword: string) void {
+    pub fn expectContextualKeyword(self: *Lexer, comptime keyword: string) void {
         if (!self.isContextualKeyword(keyword)) {
             self.addError(self.start, "\"{s}\"", .{keyword}, true);
         }
@@ -765,7 +765,7 @@ pub const Lexer = struct {
         return self.source.contents[self.start..self.end];
     }
 
-    pub fn isContextualKeyword(self: *Lexer, keyword: string) bool {
+    pub fn isContextualKeyword(self: *Lexer, comptime keyword: string) bool {
         return self.token == .t_identifier and strings.eql(self.raw(), keyword);
     }
 
@@ -844,7 +844,7 @@ pub const Lexer = struct {
 
     // TODO: use wtf-8 encoding.
     pub fn utf16ToString(lexer: *Lexer, js: JavascriptString) string {
-        return std.unicode.utf16leToUtf8Alloc(lexer.alloc, js) catch unreachable;
+        return std.unicode.utf16leToUtf8Alloc(lexer.allocator, js) catch unreachable;
     }
 
     pub fn nextInsideJSXElement() void {

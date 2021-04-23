@@ -266,6 +266,33 @@ pub const Source = struct {
         return Range{ .loc = loc };
     }
 
+    pub fn rangeOfString(self: *Source, loc: Loc) Range {
+        const text = self.contents[loc.i()..];
+
+        if (text.len == 0) {
+            return Range.None;
+        }
+
+        const quote = text[0];
+
+        if (quote == '"' or quote == '\'') {
+            var i: usize = 1;
+            var c: u8 = undefined;
+            while (i < text.len) {
+                c = text[i];
+
+                if (c == quote) {
+                    return Range{ .loc = loc, .len = @intCast(i32, i + 1) };
+                } else if (c == '\\') {
+                    i += 1;
+                }
+                i += 1;
+            }
+        }
+
+        return Range{ .loc = loc, .len = 0 };
+    }
+
     pub fn rangeOfOperatorAfter(self: *Source, loc: Loc, op: string) Range {
         const text = self.contents[loc.i()..];
         const index = strings.index(text, op);

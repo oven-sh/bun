@@ -1748,7 +1748,78 @@ const P = struct {
                 return p.s(S.Switch{ .test_ = test_, .body_loc = body_loc, .cases = cases.toOwnedSlice() }, loc);
             },
             .t_try => {
-                notimpl();
+                p.lexer.next();
+                const body_loc = p.lexer.loc();
+                p.lexer.expect(.t_open_brace);
+                _ = try p.pushScopeForParsePass(.block, loc);
+                var stmtOpts = ParseStatementOptions{};
+                const body = p.parseStmtsUpTo(.t_close_brace, &stmtOpts) catch unreachable;
+                p.popScope();
+                p.lexer.next();
+
+                var catch_: ?js_ast.Catch = null;
+                var finally: ?js_ast.Finally = null;
+
+                if (p.lexer.token == .t_catch) {
+                    const catch_loc = p.lexer.loc();
+                    _ = try p.pushScopeForParsePass(.block, catch_loc);
+                    p.lexer.next();
+                    var binding: ?js_ast.Binding = null;
+
+                    // The catch binding is optional, and can be omitted
+                    // jarred: TIL!
+                    if (p.lexer.token != .t_open_brace) {
+                        p.lexer.expect(.t_open_paren);
+                        const value = p.parseBinding();
+
+                        // Skip over types
+                        if (p.options.ts and p.lexer.token == .t_colon) {
+                            p.lexer.expect(.t_colon);
+                            p.skipTypescriptType(.lowest);
+                        }
+
+                        p.lexer.expect(.t_close_paren);
+
+                        // Bare identifiers are a special case
+                        var kind = Symbol.Kind.other;
+                        switch (value.data) {
+                            .b_identifier => {
+                                kind = .catch_identifier;
+                            },
+                            else => {},
+                        }
+                        stmtOpts = ParseStatementOptions{};
+                        try p.declareBinding(kind, value, &stmtOpts);
+                    }
+
+                    p.lexer.expect(.t_open_brace);
+                    stmtOpts = ParseStatementOptions{};
+                    const stmts = p.parseStmtsUpTo(.t_close_brace, &stmtOpts) catch unreachable;
+                    p.lexer.next();
+                    catch_ = js_ast.Catch{
+                        .loc = catch_loc,
+                        .binding = binding,
+                        .body = stmts,
+                    };
+                    p.popScope();
+                }
+
+                if (p.lexer.token == .t_finally or catch_ == null) {
+                    const finally_loc = p.lexer.loc();
+                    _ = try p.pushScopeForParsePass(.block, finally_loc);
+                    p.lexer.expect(.t_finally);
+                    p.lexer.expect(.t_open_brace);
+                    stmtOpts = ParseStatementOptions{};
+                    const stmts = p.parseStmtsUpTo(.t_close_brace, &stmtOpts) catch unreachable;
+                    p.lexer.next();
+                    finally = js_ast.Finally{ .loc = finally_loc, .stmts = stmts };
+                    p.popScope();
+                }
+
+                return p.s(
+                    S.Try{ .body_loc = body_loc, .body = body, .catch_ = catch_, .finally = finally },
+                    loc,
+                );
             },
             .t_for => {
                 notimpl();

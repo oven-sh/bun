@@ -36,6 +36,11 @@ const Op = js_ast.Op;
 const Scope = js_ast.Scope;
 const locModuleScope = logger.Loc.Empty;
 
+const ExprOrLetStmt = struct {
+    stmt_or_expr: js_ast.StmtOrExpr,
+    decls: []G.Decl = &([_]G.Decl{}),
+};
+
 const Tup = std.meta.Tuple;
 
 fn notimpl() noreturn {
@@ -1822,7 +1827,149 @@ const P = struct {
                 );
             },
             .t_for => {
-                notimpl();
+                _ = try p.pushScopeForParsePass(.block, loc);
+                defer p.popScope();
+
+                p.lexer.next();
+
+                // "for await (let x of y) {}"
+                var isForAwait = p.lexer.isContextualKeyword("await");
+                if (isForAwait) {
+                    const await_range = p.lexer.range();
+                    if (!p.fn_or_arrow_data_parse.allow_await) {
+                        try p.log.addRangeError(p.source, await_range, "Cannot use \"await\" outside an async function");
+                        isForAwait = false;
+                    } else {
+                        // TODO: improve error handling here
+                        //         		didGenerateError := p.markSyntaxFeature(compat.ForAwait, awaitRange)
+                        // if p.fnOrArrowDataParse.isTopLevel && !didGenerateError {
+                        // 	p.topLevelAwaitKeyword = awaitRange
+                        // 	p.markSyntaxFeature(compat.TopLevelAwait, awaitRange)
+                        // }
+                    }
+                    p.lexer.next();
+                }
+
+                p.lexer.expect(.t_open_paren);
+
+                var init_: ?Stmt = null;
+                var test_: ?Expr = null;
+                var update: ?Expr = null;
+
+                // "in" expressions aren't allowed here
+                p.allow_in = false;
+
+                var bad_let_range: ?logger.Range = null;
+                if (p.lexer.isContextualKeyword("let")) {
+                    bad_let_range = p.lexer.range();
+                }
+
+                var decls: []G.Decl = &([_]G.Decl{});
+                var init_loc = p.lexer.loc();
+                var is_var = false;
+                switch (p.lexer.token) {
+                    // for (var )
+                    .t_var => {
+                        is_var = true;
+                        p.lexer.next();
+                        var stmtOpts = ParseStatementOptions{};
+                        decls = p.parseAndDeclareDecls(.hoisted, &stmtOpts);
+                        init_ = p.s(S.Local{ .kind = .k_const, .decls = decls }, init_loc);
+                    },
+                    // for (const )
+                    .t_const => {
+                        p.lexer.next();
+                        var stmtOpts = ParseStatementOptions{};
+                        decls = p.parseAndDeclareDecls(.cconst, &stmtOpts);
+                        init_ = p.s(S.Local{ .kind = .k_const, .decls = decls }, init_loc);
+                    },
+                    // for (;)
+                    .t_semicolon => {},
+                    else => {
+                        var stmtOpts = ParseStatementOptions{ .lexical_decl = .allow_all };
+
+                        const res = try p.parseExprOrLetStmt(&stmtOpts);
+                        switch (res.stmt_or_expr) {
+                            .stmt => |stmt| {
+                                bad_let_range = null;
+                                init_ = stmt;
+                            },
+                            .expr => |expr| {
+                                init_ = p.s(S.SExpr{
+                                    .value = expr,
+                                }, init_loc);
+                            },
+                        }
+                    },
+                }
+
+                // "in" expressions are allowed again
+                p.allow_in = true;
+
+                // Detect for-of loops
+                if (p.lexer.isContextualKeyword("of") or isForAwait) {
+                    if (bad_let_range) |r| {
+                        try p.log.addRangeError(p.source, r, "\"let\" must be wrapped in parentheses to be used as an expression here");
+                        fail();
+                    }
+
+                    if (isForAwait and !p.lexer.isContextualKeyword("of")) {
+                        if (init_) |init_stmt| {
+                            p.lexer.expectedString("\"of\"");
+                        } else {
+                            p.lexer.unexpected();
+                        }
+                    }
+
+                    try p.forbidInitializers(decls, "of", false);
+                    p.lexer.next();
+                    const value = p.parseExpr(.comma);
+                    p.lexer.expect(.t_close_paren);
+                    var stmtOpts = ParseStatementOptions{};
+                    const body = p.parseStmt(&stmtOpts) catch unreachable;
+                    return p.s(S.ForOf{ .is_await = isForAwait, .init = init_ orelse unreachable, .value = value, .body = body }, loc);
+                }
+
+                // Detect for-in loops
+                if (p.lexer.token == .t_in) {
+                    try p.forbidInitializers(decls, "in", false);
+                    p.lexer.next();
+                    const value = p.parseExpr(.comma);
+                    p.lexer.expect(.t_close_paren);
+                    var stmtOpts = ParseStatementOptions{};
+                    const body = p.parseStmt(&stmtOpts) catch unreachable;
+                    return p.s(S.ForIn{ .init = init_ orelse unreachable, .value = value, .body = body }, loc);
+                }
+
+                // Only require "const" statement initializers when we know we're a normal for loop
+                if (init_) |init_stmt| {
+                    switch (init_stmt.data) {
+                        .s_local => |local| {
+                            if (local.kind == .k_const) {
+                                try p.requireInitializers(decls);
+                            }
+                        },
+                        else => {},
+                    }
+                }
+
+                p.lexer.expect(.t_semicolon);
+                if (p.lexer.token != .t_semicolon) {
+                    test_ = p.parseExpr(.lowest);
+                }
+
+                p.lexer.expect(.t_semicolon);
+
+                if (p.lexer.token != .t_close_paren) {
+                    update = p.parseExpr(.lowest);
+                }
+
+                var stmtOpts = ParseStatementOptions{};
+                const body = p.parseStmt(&stmtOpts) catch unreachable;
+                return p.s(
+                    S.For{ .init = init_, .test_ = test_, .update = update, .body = body },
+                    loc,
+                );
             },
             .t_import => {
                 notimpl();
@@ -1852,6 +1999,61 @@ const P = struct {
         }
 
         return js_ast.Stmt.empty();
+    }
+
+    pub fn forbidInitializers(p: *P, decls: []G.Decl, loop_type: string, is_var: bool) !void {
+        if (decls.len > 1) {
+            try p.log.addErrorFmt(p.source, decls[0].binding.loc, p.allocator, "for-{s} loops must have a single declaration", .{loop_type});
+        } else if (decls.len == 1) {
+            if (decls[0].value) |value| {
+                if (is_var) {
+
+                    // This is a weird special case. Initializers are allowed in "var"
+                    // statements with identifier bindings.
+                    return;
+                }
+
+                try p.log.addErrorFmt(p.source, value.loc, p.allocator, "for-{s} loop variables cannot have an initializer", .{loop_type});
+            }
+        }
+    }
+
+    pub fn parseExprOrLetStmt(p: *P, opts: *ParseStatementOptions) !ExprOrLetStmt {
+        var let_range = p.lexer.range();
+        var raw = p.lexer.raw();
+
+        if (p.lexer.token != .t_identifier or !strings.eql(raw, "let")) {
+            return ExprOrLetStmt{ .stmt_or_expr = js_ast.StmtOrExpr{ .expr = p.parseExpr(.lowest) } };
+        }
+
+        p.lexer.next();
+
+        switch (p.lexer.token) {
+            .t_identifier, .t_open_bracket, .t_open_brace => {
+                if (opts.lexical_decl == .allow_all or !p.lexer.has_newline_before or p.lexer.token == .t_open_bracket) {
+                    if (opts.lexical_decl != .allow_all) {
+                        try p.forbidLexicalDecl(let_range.loc);
+                    }
+
+                    const decls = p.parseAndDeclareDecls(.other, opts);
+                    return ExprOrLetStmt{
+                        .stmt_or_expr = js_ast.StmtOrExpr{
+                            .stmt = p.s(S.Local{
+                                .kind = .k_let,
+                                .decls = decls,
+                                .is_export = opts.is_export,
+                            }, let_range.loc),
+                        },
+                        .decls = decls,
+                    };
+                }
+            },
+            else => {},
+        }
+
+        const ref = p.storeNameInRef(raw) catch unreachable;
+        const expr = p.e(E.Identifier{ .ref = ref }, let_range.loc);
+        return ExprOrLetStmt{ .stmt_or_expr = js_ast.StmtOrExpr{ .expr = p.parseExpr(.lowest) } };
     }
 
     pub fn requireInitializers(p: *P, decls: []G.Decl) !void {

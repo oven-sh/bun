@@ -162,6 +162,14 @@ pub const Log = struct {
         });
     }
 
+    pub fn addErrorFmt(log: *Log, source: ?Source, l: Loc, allocator: *std.mem.Allocator, comptime text: string, args: anytype) !void {
+        log.errors += 1;
+        try log.addMsg(Msg{
+            .kind = .err,
+            .data = rangeData(source, Range{ .loc = l }, std.fmt.allocPrint(allocator, text, args) catch unreachable),
+        });
+    }
+
     pub fn addRangeWarning(log: *Log, source: ?Source, r: Range, text: string) !void {
         log.warnings += 1;
         try log.addMsg(Msg{

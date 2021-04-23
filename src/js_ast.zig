@@ -2127,7 +2127,7 @@ pub const S = struct {
         // This is set to true for automatically-generated expressions that should
         // not affect tree shaking. For example, calling a function from the runtime
         // that doesn't have externally-visible side effects.
-        does_not_affect_tree_shaking: bool,
+        does_not_affect_tree_shaking: bool = false,
     };
 
     pub const Comment = struct { text: string };
@@ -2196,7 +2196,7 @@ pub const S = struct {
 
     pub const For = struct {
     // May be a SConst, SLet, SVar, or SExpr
-    init: StmtNodeIndex, test_: ?ExprNodeIndex, update: ?ExprNodeIndex, body: StmtNodeIndex };
+    init: ?StmtNodeIndex = null, test_: ?ExprNodeIndex = null, update: ?ExprNodeIndex = null, body: StmtNodeIndex };
 
     pub const ForIn = struct {
     // May be a SConst, SLet, SVar, or SExpr

@@ -201,6 +201,10 @@ const DeferredErrors = struct {
     invalid_expr_after_question: ?logger.Range = null,
     array_spread_feature: ?logger.Range = null,
 
+    pub fn isEmpty(self: *DeferredErrors) bool {
+        return self.invalid_expr_default_value == null and self.invalid_expr_after_question == null and self.array_spread_feature == null;
+    }
+
     pub fn mergeInto(self: *DeferredErrors, to: *DeferredErrors) void {
         if (self.invalid_expr_default_value) |inv| {
             to.invalid_expr_default_value = inv;
@@ -875,7 +879,7 @@ const P = struct {
                 var properties = List(B.Property).init(p.allocator);
                 for (ex.properties) |item| {
                     if (item.flags.is_method or item.kind == .get or item.kind == .set) {
-                        invalid_loc.append(item.key.loc) catch unreachable;
+                        invalid_loc.append(item.key.?.loc) catch unreachable;
                         continue;
                     }
                     var value = &(item.value orelse unreachable);
@@ -888,8 +892,8 @@ const P = struct {
                             .is_computed = item.flags.is_computed,
                         },
 
-                        .key = item.key,
-                        .value = tup.binding orelse unreachable,
+                        .key = item.key orelse std.debug.panic("Internal error: Expected {s} to have a key.", .{item}),
+                        .value = tup.binding orelse std.debug.panic("Internal error: Expected {s} to have a binding.", .{tup}),
                         .default_value = initializer,
                     }) catch unreachable;
                 }
@@ -941,11 +945,15 @@ const P = struct {
 
     pub fn logExprErrors(p: *P, errors: *DeferredErrors) void {
         if (errors.invalid_expr_default_value) |r| {
-            p.log.addRangeError(p.source, err, "Unexpected \"=\"", .{});
+            p.log.addRangeError(
+                p.source,
+                r,
+                "Unexpected \"=\"",
+            ) catch unreachable;
         }
 
         if (errors.invalid_expr_after_question) |r| {
-            p.log.addRangeError(p.source, r, "Unexpected %q", .{p.source.contents[r.loc.start..r.loc.endI()]});
+            p.log.addRangeErrorFmt(p.source, r, p.allocator, "Unexpected {s}", .{p.source.contents[r.loc.i()..r.endI()]}) catch unreachable;
         }
 
         // if (errors.array_spread_feature) |err| {
@@ -2373,7 +2381,7 @@ const P = struct {
 
                 // Forbid decorators on class constructors
                 if (opts.ts_decorators.len > 0) {
-                    switch (property.key.data) {
+                    switch ((property.key orelse std.debug.panic("Internal error: Expected property {s} to have a key.", .{property})).data) {
                         .e_string => |str| {
                             if (strings.eqlUtf16("constructor", str.value)) {
                                 p.log.addError(p.source, first_decorator_loc, "TypeScript does not allow decorators on class constructors") catch unreachable;
@@ -2463,6 +2471,37 @@ const P = struct {
         }, loc);
         p.lexer.next();
         return expr;
+    }
+
+    pub fn parseCallArgs(p: *P) []Expr {
+        // Allow "in" inside call arguments
+        const old_allow_in = p.allow_in;
+        p.allow_in = true;
+
+        var args = List(Expr).init(p.allocator);
+        p.lexer.expect(.t_open_paren);
+
+        while (p.lexer.token != .t_close_paren) {
+            const loc = p.lexer.loc();
+            const is_spread = p.lexer.token == .t_dot_dot_dot;
+            if (is_spread) {
+                // p.mark_syntax_feature(compat.rest_argument, p.lexer.range());
+                p.lexer.next();
+            }
+            var arg = p.parseExpr(.comma);
+            if (is_spread) {
+                arg = p.e(E.Spread{ .value = arg }, loc);
+            }
+            args.append(arg) catch unreachable;
+            if (p.lexer.token != .t_comma) {
+                break;
+            }
+            p.lexer.next();
+        }
+
+        p.lexer.expect(.t_close_paren);
+        p.allow_in = old_allow_in;
+        return args.toOwnedSlice();
     }
 
     pub fn parseSuffix(p: *P, left: Expr, level: Level, errors: ?*DeferredErrors, flags: Expr.EFlags) Expr {
@@ -2760,9 +2799,166 @@ const P = struct {
                 p.popScope();
                 return p.e(E.Class{ .class = class }, loc);
             },
-            .t_new => {},
-            .t_open_bracket => {},
-            .t_open_brace => {},
+            .t_new => {
+                p.lexer.next();
+
+                // Special-case the weird "new.target" expression here
+
+                const target = p.parseExprWithFlags(.member, flags);
+                var args: []Expr = &([_]Expr{});
+
+                if (p.options.ts) {
+                    // Skip over TypeScript non-null assertions
+                    if (p.lexer.token == .t_exclamation and !p.lexer.has_newline_before) {
+                        p.lexer.next();
+                    }
+
+                    // Skip over TypeScript type arguments here if there are any
+                    if (p.lexer.token == .t_less_than) {
+                        p.trySkipTypeScriptTypeArgumentsWithBacktracking();
+                    }
+                }
+
+                if (p.lexer.token == .t_open_paren) {
+                    args = p.parseCallArgs();
+                }
+
+                return p.e(E.New{
+                    .target = target,
+                    .args = args,
+                }, loc);
+            },
+            .t_open_bracket => {
+                p.lexer.next();
+                var is_single_line = !p.lexer.has_newline_before;
+                var items = List(Expr).init(p.allocator);
+                var self_errors = DeferredErrors{};
+                var comma_after_spread = logger.Loc{};
+
+                // Allow "in" inside arrays
+                const old_allow_in = p.allow_in;
+                p.allow_in = true;
+
+                while (p.lexer.token != .t_close_bracket) {
+                    switch (p.lexer.token) {
+                        .t_comma => {
+                            items.append(p.e(E.Missing{}, p.lexer.loc())) catch unreachable;
+                        },
+                        .t_dot_dot_dot => {
+                            // this might be wrong.
+                            errors.array_spread_feature = p.lexer.range();
+
+                            const dots_loc = p.lexer.loc();
+                            p.lexer.next();
+                            items.append(
+                                p.parseExprOrBindings(.comma, &self_errors),
+                            ) catch unreachable;
+                        },
+                        else => {
+                            items.append(
+                                p.parseExprOrBindings(.comma, &self_errors),
+                            ) catch unreachable;
+                        },
+                    }
+
+                    if (p.lexer.token != .t_comma) {
+                        break;
+                    }
+
+                    if (p.lexer.has_newline_before) {
+                        is_single_line = false;
+                    }
+
+                    p.lexer.next();
+
+                    if (p.lexer.has_newline_before) {
+                        is_single_line = false;
+                    }
+                }
+
+                if (p.lexer.has_newline_before) {
+                    is_single_line = false;
+                }
+
+                p.lexer.expect(.t_close_bracket);
+                p.allow_in = old_allow_in;
+
+                if (p.willNeedBindingPattern()) {} else if (errors.isEmpty()) {
+                    // Is this an expression?
+                    p.logExprErrors(&self_errors);
+                } else {
+                    // In this case, we can't distinguish between the two yet
+                    self_errors.mergeInto(errors);
+                }
+                return p.e(E.Array{
+                    .items = items.toOwnedSlice(),
+                    .comma_after_spread = comma_after_spread,
+                    .is_single_line = is_single_line,
+                }, loc);
+            },
+            .t_open_brace => {
+                p.lexer.next();
+                var is_single_line = !p.lexer.has_newline_before;
+                var properties = List(G.Property).init(p.allocator);
+                var self_errors = DeferredErrors{};
+                var comma_after_spread = logger.Loc{};
+
+                // Allow "in" inside object literals
+                const old_allow_in = p.allow_in;
+                p.allow_in = true;
+
+                while (p.lexer.token != .t_close_brace and p.lexer.token != .t_end_of_file) {
+                    if (p.lexer.token == .t_dot_dot_dot) {
+                        p.lexer.next();
+                        properties.append(G.Property{ .kind = .spread, .value = p.parseExpr(.comma) }) catch unreachable;
+
+                        // Commas are not allowed here when destructuring
+                        if (p.lexer.token == .t_comma) {
+                            comma_after_spread = p.lexer.loc();
+                        }
+                    } else {
+                        // This property may turn out to be a type in TypeScript, which should be ignored
+                        var propertyOpts = PropertyOpts{};
+                        if (p.parseProperty(.normal, &propertyOpts, &self_errors)) |prop| {
+                            properties.append(prop) catch unreachable;
+                        }
+                    }
+
+                    if (p.lexer.token != .t_comma) {
+                        break;
+                    }
+
+                    if (p.lexer.has_newline_before) {
+                        is_single_line = false;
+                    }
+
+                    p.lexer.next();
+
+                    if (p.lexer.has_newline_before) {
+                        is_single_line = false;
+                    }
+                }
+
+                if (p.lexer.has_newline_before) {
+                    is_single_line = false;
+                }
+
+                p.lexer.expect(.t_close_brace);
+                p.allow_in = old_allow_in;
+
+                if (p.willNeedBindingPattern()) {} else if (errors.isEmpty()) {
+                    // Is this an expression?
+                    p.logExprErrors(&self_errors);
+                } else {
+                    // In this case, we can't distinguish between the two yet
+                    self_errors.mergeInto(errors);
+                }
+                return p.e(E.Object{
+                    .properties = properties.toOwnedSlice(),
+                    .comma_after_spread = comma_after_spread,
+                    .is_single_line = is_single_line,
+                }, loc);
+            },
             .t_less_than => {},
             .t_import => {},
             else => {
@@ -2772,6 +2968,30 @@ const P = struct {
         }
 
         return p.e(E.Missing{}, logger.Loc.Empty);
+    }
+
+    pub fn willNeedBindingPattern(p: *P) bool {
+        switch (p.lexer.token) {
+            .t_equals => {
+                // "[a] = b;"
+                return true;
+            },
+            .t_in => {
+                // "for ([a] in b) {}"
+                return !p.allow_in;
+            },
+            .t_identifier => {
+                // "for ([a] of b) {}"
+                return p.allow_in and p.lexer.isContextualKeyword("of");
+            },
+            else => {
+                return false;
+            },
+        }
+    }
+
+    pub fn trySkipTypeScriptTypeArgumentsWithBacktracking(p: *P) void {
+        notimpl();
     }
     pub fn parsePrefix(p: *P, level: Level, errors: ?*DeferredErrors, flags: Expr.EFlags) Expr {
         return p._parsePrefix(level, errors orelse &DeferredErrors.None, flags);

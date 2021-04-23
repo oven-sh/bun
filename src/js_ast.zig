@@ -250,7 +250,8 @@ pub const G = struct {
 
     pub const Property = struct {
         ts_decorators: ExprNodeList = &([_]Expr{}),
-        key: ExprNodeIndex,
+        // Key is optional for spread
+        key: ?ExprNodeIndex = null,
 
         // This is omitted for class fields
         value: ?ExprNodeIndex = null,

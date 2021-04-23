@@ -627,6 +627,7 @@ pub const E = struct {
 
     pub const Dot = struct {
         // target is Node
+        target: ExprNodeIndex,
         name: string,
         name_loc: logger.Loc,
         optional_chain: ?OptionalChain = null,
@@ -649,6 +650,7 @@ pub const E = struct {
 
     pub const Index = struct {
         index: ExprNodeIndex,
+        target: ExprNodeIndex,
         optional_chain: ?OptionalChain = null,
 
         pub fn hasSameFlagsAs(a: *Index, b: *Index) bool {
@@ -759,8 +761,13 @@ pub const E = struct {
         tail_raw: string,
     };
 
-    pub const Template = struct { tag: ?ExprNodeIndex = null, head: JavascriptString, head_raw: string, // This is only filled out for tagged template literals
-    parts: ?[]TemplatePart = null, legacy_octal_loc: logger.Loc };
+    pub const Template = struct {
+        tag: ?ExprNodeIndex = null,
+        head: JavascriptString,
+        head_raw: string, // This is only filled out for tagged template literals
+        parts: ?[]TemplatePart = null,
+        legacy_octal_loc: logger.Loc = logger.Loc.Empty,
+    };
 
     pub const RegExp = struct {
         value: string,
@@ -1587,6 +1594,357 @@ pub const Expr = struct {
         e_import,
         e_this,
         e_class,
+
+        pub fn isArray(self: Tag) bool {
+            switch (self) {
+                .e_array => {
+                    return true;
+                },
+                else => {
+                    return false;
+                },
+            }
+        }
+        pub fn isUnary(self: Tag) bool {
+            switch (self) {
+                .e_unary => {
+                    return true;
+                },
+                else => {
+                    return false;
+                },
+            }
+        }
+        pub fn isBinary(self: Tag) bool {
+            switch (self) {
+                .e_binary => {
+                    return true;
+                },
+                else => {
+                    return false;
+                },
+            }
+        }
+        pub fn isThis(self: Tag) bool {
+            switch (self) {
+                .e_this => {
+                    return true;
+                },
+                else => {
+                    return false;
+                },
+            }
+        }
+        pub fn isClass(self: Tag) bool {
+            switch (self) {
+                .e_class => {
+                    return true;
+                },
+                else => {
+                    return false;
+                },
+            }
+        }
+        pub fn isBoolean(self: Tag) bool {
+            switch (self) {
+                .e_boolean => {
+                    return true;
+                },
+                else => {
+                    return false;
+                },
+            }
+        }
+        pub fn isSuper(self: Tag) bool {
+            switch (self) {
+                .e_super => {
+                    return true;
+                },
+                else => {
+                    return false;
+                },
+            }
+        }
+        pub fn isNull(self: Tag) bool {
+            switch (self) {
+                .e_null => {
+                    return true;
+                },
+                else => {
+                    return false;
+                },
+            }
+        }
+        pub fn isUndefined(self: Tag) bool {
+            switch (self) {
+                .e_undefined => {
+                    return true;
+                },
+                else => {
+                    return false;
+                },
+            }
+        }
+        pub fn isNew(self: Tag) bool {
+            switch (self) {
+                .e_new => {
+                    return true;
+                },
+                else => {
+                    return false;
+                },
+            }
+        }
+        pub fn isNewTarget(self: Tag) bool {
+            switch (self) {
+                .e_new_target => {
+                    return true;
+                },
+                else => {
+                    return false;
+                },
+            }
+        }
+        pub fn isFunction(self: Tag) bool {
+            switch (self) {
+                .e_function => {
+                    return true;
+                },
+                else => {
+                    return false;
+                },
+            }
+        }
+        pub fn isImportMeta(self: Tag) bool {
+            switch (self) {
+                .e_import_meta => {
+                    return true;
+                },
+                else => {
+                    return false;
+                },
+            }
+        }
+        pub fn isCall(self: Tag) bool {
+            switch (self) {
+                .e_call => {
+                    return true;
+                },
+                else => {
+                    return false;
+                },
+            }
+        }
+        pub fn isDot(self: Tag) bool {
+            switch (self) {
+                .e_dot => {
+                    return true;
+                },
+                else => {
+                    return false;
+                },
+            }
+        }
+        pub fn isIndex(self: Tag) bool {
+            switch (self) {
+                .e_index => {
+                    return true;
+                },
+                else => {
+                    return false;
+                },
+            }
+        }
+        pub fn isArrow(self: Tag) bool {
+            switch (self) {
+                .e_arrow => {
+                    return true;
+                },
+                else => {
+                    return false;
+                },
+            }
+        }
+        pub fn isIdentifier(self: Tag) bool {
+            switch (self) {
+                .e_identifier => {
+                    return true;
+                },
+                else => {
+                    return false;
+                },
+            }
+        }
+        pub fn isImportIdentifier(self: Tag) bool {
+            switch (self) {
+                .e_import_identifier => {
+                    return true;
+                },
+                else => {
+                    return false;
+                },
+            }
+        }
+        pub fn isPrivateIdentifier(self: Tag) bool {
+            switch (self) {
+                .e_private_identifier => {
+                    return true;
+                },
+                else => {
+                    return false;
+                },
+            }
+        }
+        pub fn isJsxElement(self: Tag) bool {
+            switch (self) {
+                .e_jsx_element => {
+                    return true;
+                },
+                else => {
+                    return false;
+                },
+            }
+        }
+        pub fn isMissing(self: Tag) bool {
+            switch (self) {
+                .e_missing => {
+                    return true;
+                },
+                else => {
+                    return false;
+                },
+            }
+        }
+        pub fn isNumber(self: Tag) bool {
+            switch (self) {
+                .e_number => {
+                    return true;
+                },
+                else => {
+                    return false;
+                },
+            }
+        }
+        pub fn isBigInt(self: Tag) bool {
+            switch (self) {
+                .e_big_int => {
+                    return true;
+                },
+                else => {
+                    return false;
+                },
+            }
+        }
+        pub fn isObject(self: Tag) bool {
+            switch (self) {
+                .e_object => {
+                    return true;
+                },
+                else => {
+                    return false;
+                },
+            }
+        }
+        pub fn isSpread(self: Tag) bool {
+            switch (self) {
+                .e_spread => {
+                    return true;
+                },
+                else => {
+                    return false;
+                },
+            }
+        }
+        pub fn isString(self: Tag) bool {
+            switch (self) {
+                .e_string => {
+                    return true;
+                },
+                else => {
+                    return false;
+                },
+            }
+        }
+        pub fn isTemplatePart(self: Tag) bool {
+            switch (self) {
+                .e_template_part => {
+                    return true;
+                },
+                else => {
+                    return false;
+                },
+            }
+        }
+        pub fn isTemplate(self: Tag) bool {
+            switch (self) {
+                .e_template => {
+                    return true;
+                },
+                else => {
+                    return false;
+                },
+            }
+        }
+        pub fn isRegExp(self: Tag) bool {
+            switch (self) {
+                .e_reg_exp => {
+                    return true;
+                },
+                else => {
+                    return false;
+                },
+            }
+        }
+        pub fn isAwait(self: Tag) bool {
+            switch (self) {
+                .e_await => {
+                    return true;
+                },
+                else => {
+                    return false;
+                },
+            }
+        }
+        pub fn isYield(self: Tag) bool {
+            switch (self) {
+                .e_yield => {
+                    return true;
+                },
+                else => {
+                    return false;
+                },
+            }
+        }
+        pub fn isIf(self: Tag) bool {
+            switch (self) {
+                .e_if => {
+                    return true;
+                },
+                else => {
+                    return false;
+                },
+            }
+        }
+        pub fn isRequireOrRequireResolve(self: Tag) bool {
+            switch (self) {
+                .e_require_or_require_resolve => {
+                    return true;
+                },
+                else => {
+                    return false;
+                },
+            }
+        }
+        pub fn isImport(self: Tag) bool {
+            switch (self) {
+                .e_import => {
+                    return true;
+                },
+                else => {
+                    return false;
+                },
+            }
+        }
     };
 
     pub fn assign(a: *Expr, b: *Expr, allocator: *std.mem.Allocator) Expr {
@@ -2033,6 +2391,14 @@ pub const Op = struct {
         }
         pub fn eql(self: Level, b: Level) callconv(.Inline) bool {
             return @enumToInt(self) == @enumToInt(b);
+        }
+
+        pub fn sub(self: Level, comptime i: anytype) callconv(.Inline) Level {
+            return @intToEnum(Level, @enumToInt(self) - i);
+        }
+
+        pub fn add(self: Level, comptime i: anytype) callconv(.Inline) Level {
+            return @intToEnum(Level, @enumToInt(self) + i);
         }
     };
 

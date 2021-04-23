@@ -130,12 +130,12 @@ pub const T = enum(u8) {
     t_while,
     t_with,
 
-    pub fn isAssign() bool {
-        return self >= T.t_ampersand_ampersand_equals and self <= T.t_slash_equals;
+    pub fn isAssign(self: T) bool {
+        return @enumToInt(self) >= @enumToInt(T.t_ampersand_ampersand_equals) and @enumToInt(self) <= @enumToInt(T.t_slash_equals);
     }
 
-    pub fn isReservedWord() bool {
-        return self >= T.t_break and self <= T.t_with;
+    pub fn isReservedWord(self: T) bool {
+        return @enumToInt(self) >= @enumToInt(T.t_break) and @enumToInt(self) <= @enumToInt(T.t_with);
     }
 
     pub fn isString(self: T) bool {

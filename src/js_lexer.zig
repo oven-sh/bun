@@ -847,6 +847,10 @@ pub const Lexer = struct {
         return std.unicode.utf16leToUtf8Alloc(lexer.alloc, js) catch unreachable;
     }
 
+    pub fn nextInsideJSXElement() void {
+        std.debug.panic("JSX not implemented yet.", .{});
+    }
+
     fn scanRegExpValidateAndStep(lexer: *Lexer) void {
         if (lexer.code_point == '\\') {
             lexer.step();

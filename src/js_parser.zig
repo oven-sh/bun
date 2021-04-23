@@ -2959,14 +2959,130 @@ const P = struct {
                     .is_single_line = is_single_line,
                 }, loc);
             },
-            .t_less_than => {},
-            .t_import => {},
+            .t_less_than => {
+                // This is a very complicated and highly ambiguous area of TypeScript
+                // syntax. Many similar-looking things are overloaded.
+                //
+                // TS:
+                //
+                //   A type cast:
+                //     <A>(x)
+                //     <[]>(x)
+                //     <A[]>(x)
+                //
+                //   An arrow function with type parameters:
+                //     <A>(x) => {}
+                //     <A, B>(x) => {}
+                //     <A = B>(x) => {}
+                //     <A extends B>(x) => {}
+                //
+                // TSX:
+                //
+                //   A JSX element:
+                //     <A>(x) => {}</A>
+                //     <A extends>(x) => {}</A>
+                //     <A extends={false}>(x) => {}</A>
+                //
+                //   An arrow function with type parameters:
+                //     <A, B>(x) => {}
+                //     <A extends B>(x) => {}
+                //
+                //   A syntax error:
+                //     <[]>(x)
+                //     <A[]>(x)
+                //     <A>(x) => {}
+                //     <A = B>(x) => {}
+                if (p.options.ts and p.options.jsx.parse) {
+                    var oldLexer = p.lexer;
+
+                    p.lexer.next();
+                    // Look ahead to see if this should be an arrow function instead
+                    var is_ts_arrow_fn = false;
+
+                    if (p.lexer.token == .t_identifier) {
+                        p.lexer.next();
+                        if (p.lexer.token == .t_comma) {
+                            is_ts_arrow_fn = true;
+                        } else if (p.lexer.token == .t_extends) {
+                            p.lexer.next();
+                            is_ts_arrow_fn = p.lexer.token != .t_equals and p.lexer.token != .t_greater_than;
+                        }
+                    }
+
+                    // Restore the lexer
+                    p.lexer = oldLexer;
+
+                    if (is_ts_arrow_fn) {
+                        p.skipTypescriptTypeParameters();
+                        p.lexer.expect(.t_open_paren);
+                        return p.parseParenExpr(loc, ParenExprOpts{ .force_arrow_fn = true }) catch unreachable;
+                    }
+                }
+
+                if (p.options.jsx.parse) {
+                    notimpl();
+                }
+
+                if (p.options.ts) {
+                    notimpl();
+                }
+
+                p.lexer.unexpected();
+                return p.e(E.Missing{}, logger.Loc.Empty);
+            },
+            .t_import => {
+                p.lexer.next();
+                return p.parseImportExpr(loc, level);
+            },
             else => {
                 p.lexer.unexpected();
                 return p.e(E.Missing{}, logger.Loc.Empty);
             },
         }
 
+        return p.e(E.Missing{}, logger.Loc.Empty);
+    }
+
+    // Note: The caller has already parsed the "import" keyword
+    pub fn parseImportExpr(p: *P, loc: logger.Loc, level: Level) Expr {
+        // Parse an "import.meta" expression
+        if (p.lexer.token == .t_dot) {
+            p.es6_import_keyword = js_lexer.rangeOfIdentifier(&p.source, loc);
+            p.lexer.next();
+            if (p.lexer.isContextualKeyword("meta")) {
+                const r = p.lexer.range();
+                p.lexer.next();
+                p.has_import_meta = true;
+                return p.e(E.ImportMeta{}, loc);
+            } else {
+                p.lexer.expectedString("\"meta\"");
+            }
+        }
+
+        if (level.gt(.call)) {
+            const r = js_lexer.rangeOfIdentifier(&p.source, loc);
+            p.log.addRangeError(p.source, r, "Cannot use an \"import\" expression here without parentheses") catch unreachable;
+        }
+        // allow "in" inside call arguments;
+        var old_allow_in = p.allow_in;
+        p.allow_in = true;
+
+        p.lexer.preserve_all_comments_before = true;
+        p.lexer.expect(.t_open_paren);
+        const comments = p.lexer.comments_to_preserve_before;
+        p.lexer.preserve_all_comments_before = false;
+
+        const value = p.parseExpr(.comma);
+        p.lexer.expect(.t_close_paren);
+
+        p.allow_in = old_allow_in;
+        return p.e(E.Import{ .expr = value, .leading_interior_comments = comments orelse &([_]G.Comment{}), .import_record_index = 0 }, loc);
+    }
+
+    pub fn parseJSXElement(loc: logger.Loc) Expr {
+        // Parse the tag
+        //var startRange, startText, startTag := p.parseJSXTag();÷
+        notimpl();
         return p.e(E.Missing{}, logger.Loc.Empty);
     }
 

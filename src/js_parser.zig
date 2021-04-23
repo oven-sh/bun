@@ -317,7 +317,7 @@ const DeferredTsDecorators = struct {
 
     // If this turns out to be a "declare class" statement, we need to undo the
     // scopes that were potentially pushed while parsing the decorator arguments.
-    scopeIndex: usize,
+    scope_index: usize,
 };
 
 const LexicalDecl = enum(u8) { forbid, allow_all, allow_fn_inside_if, allow_fn_inside_label };
@@ -1549,12 +1549,117 @@ const P = struct {
                 }
             },
 
+            .t_function => {
+                p.lexer.next();
+                return p.parseFnStmt(loc, opts, null);
+            },
+            .t_enum => {
+                if (!p.options.ts) {
+                    p.lexer.unexpected();
+                }
+                return p.parseTypescriptEnumStmt(loc, opts);
+            },
+            .t_at => {
+                // Parse decorators before class statements, which are potentially exported
+                if (p.options.ts) {
+                    const scope_index = p.scopes_in_order.items.len;
+                    const ts_decorators = p.parseTypeScriptDecorators();
+
+                    // If this turns out to be a "declare class" statement, we need to undo the
+                    // scopes that were potentially pushed while parsing the decorator arguments.
+                    // That can look like any one of the following:
+                    //
+                    //   "@decorator declare class Foo {}"
+                    //   "@decorator declare abstract class Foo {}"
+                    //   "@decorator export declare class Foo {}"
+                    //   "@decorator export declare abstract class Foo {}"
+                    //
+                    opts.ts_decorators = DeferredTsDecorators{
+                        .values = ts_decorators,
+                        .scope_index = scope_index,
+                    };
+
+                    // "@decorator class Foo {}"
+                    // "@decorator abstract class Foo {}"
+                    // "@decorator declare class Foo {}"
+                    // "@decorator declare abstract class Foo {}"
+                    // "@decorator export class Foo {}"
+                    // "@decorator export abstract class Foo {}"
+                    // "@decorator export declare class Foo {}"
+                    // "@decorator export declare abstract class Foo {}"
+                    // "@decorator export default class Foo {}"
+                    // "@decorator export default abstract class Foo {}"
+                    if (p.lexer.token != .t_class and p.lexer.token != .t_export and !p.lexer.isContextualKeyword("abstract") and !p.lexer.isContextualKeyword("declare")) {
+                        p.lexer.expected(.t_class);
+                    }
+
+                    return p.parseStmt(opts);
+                }
+                notimpl();
+            },
+            .t_class => {
+                notimpl();
+            },
+            .t_var => {
+                notimpl();
+            },
+            .t_const => {
+                notimpl();
+            },
+            .t_if => {
+                notimpl();
+            },
+            .t_do => {
+                notimpl();
+            },
+            .t_while => {
+                notimpl();
+            },
+            .t_with => {
+                notimpl();
+            },
+            .t_switch => {
+                notimpl();
+            },
+            .t_try => {
+                notimpl();
+            },
+            .t_for => {
+                notimpl();
+            },
+            .t_import => {
+                notimpl();
+            },
+            .t_break => {
+                notimpl();
+            },
+            .t_continue => {
+                notimpl();
+            },
+            .t_return => {
+                notimpl();
+            },
+            .t_throw => {
+                notimpl();
+            },
+            .t_debugger => {
+                notimpl();
+            },
+            .t_open_brace => {
+                notimpl();
+            },
+
             else => {
                 notimpl();
             },
         }
 
         return js_ast.Stmt.empty();
+    }
+
+    pub fn parseTypescriptEnumStmt(p: *P, loc: logger.Loc, opts: *ParseStatementOptions) Stmt {
+        notimpl();
+        // return Stmt.empty();
     }
 
     pub fn parseExportClause(p: *P) ExportClauseResult {

@@ -1111,6 +1111,7 @@ const P = struct {
 
         var is_typescript_ctor_field = false;
         var is_identifier = p.lexer.token == T.t_identifier;
+        // TODO: parseFn
         // var arg = p.parseBinding();
 
         return func;
@@ -1665,7 +1666,7 @@ const P = struct {
 
         // Is the data in "name" a subset of the data in "p.source.Contents"?
         if (ptr0 >= ptr1 and ptr0 + name.len < p.source.contents.len) {
-            std.debug.print("storeNameInRef fast path", .{});
+            // std.debug.print("storeNameInRef fast path", .{});
             // The name is a slice of the file contents, so we can just reference it by
             // length and don't have to allocate anything. This is the common case.
             //
@@ -1674,7 +1675,7 @@ const P = struct {
             // The length is the negative part because we know it's non-zero.
             return js_ast.Ref{ .source_index = @intCast(u32, ptr0), .inner_index = (@intCast(u32, name.len) + @intCast(u32, ptr0)) };
         } else {
-            std.debug.print("storeNameInRef slow path", .{});
+            // std.debug.print("storeNameInRef slow path", .{});
             // The name is some memory allocated elsewhere. This is either an inline
             // string constant in the parser or an identifier with escape sequences
             // in the source code, which is very unusual. Stash it away for later.

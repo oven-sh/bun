@@ -19,6 +19,7 @@ pub const Keywords = tables.Keywords;
 pub const tokenToString = tables.tokenToString;
 pub const jsxEntity = tables.jsxEntity;
 pub const StrictModeReservedWords = tables.StrictModeReservedWords;
+pub const PropertyModifierKeyword = tables.PropertyModifierKeyword;
 
 // TODO: JSON
 const IS_JSON_FILE = false;
@@ -142,6 +143,10 @@ pub const Lexer = struct {
         }
 
         return it.source.contents[original_i..end_ix];
+    }
+
+    pub fn isIdentifierOrKeyword(lexer: Lexer) bool {
+        return @enumToInt(lexer.token) >= @enumToInt(T.t_identifier);
     }
 
     fn parseStringLiteral(lexer: *Lexer) void {
@@ -761,7 +766,7 @@ pub const Lexer = struct {
     }
 
     pub fn isContextualKeyword(self: *Lexer, keyword: string) bool {
-        return strings.eql(self.raw(), keyword);
+        return self.token == .t_identifier and strings.eql(self.raw(), keyword);
     }
 
     pub fn expectedString(self: *Lexer, text: string) void {
@@ -792,6 +797,73 @@ pub const Lexer = struct {
         lex.next();
 
         return lex;
+    }
+
+    pub fn scanRegExp(lexer: *Lexer) void {
+        while (true) {
+            switch (lexer.code_point) {
+                '/' => {
+                    lexer.step();
+                    while (isIdentifierContinue(lexer.code_point)) {
+                        switch (lexer.code_point) {
+                            'g', 'i', 'm', 's', 'u', 'y' => {
+                                lexer.step();
+                            },
+                            else => {
+                                lexer.syntaxError();
+                            },
+                        }
+                    }
+                },
+                '[' => {
+                    lexer.step();
+                    while (lexer.code_point != ']') {
+                        lexer.scanRegExpValidateAndStep();
+                    }
+                    lexer.step();
+                },
+                else => {
+                    lexer.scanRegExpValidateAndStep();
+                },
+            }
+        }
+    }
+
+    // TODO: use wtf-8 encoding.
+    pub fn stringToUTF16(lexer: *Lexer, str: string) JavascriptString {
+        var buf: JavascriptString = lexer.allocator.alloc(u16, std.mem.len(str)) catch unreachable;
+        var i: usize = 0;
+        // theres prob a faster/better way
+        for (str) |char| {
+            buf[i] = char;
+            i += 1;
+        }
+
+        return buf;
+    }
+
+    // TODO: use wtf-8 encoding.
+    pub fn utf16ToString(lexer: *Lexer, js: JavascriptString) string {
+        return std.unicode.utf16leToUtf8Alloc(lexer.alloc, js) catch unreachable;
+    }
+
+    fn scanRegExpValidateAndStep(lexer: *Lexer) void {
+        if (lexer.code_point == '\\') {
+            lexer.step();
+        }
+
+        switch (lexer.code_point) {
+            '\r', '\n', 0x2028, 0x2029 => {
+                // Newlines aren't allowed in regular expressions
+                lexer.syntaxError();
+            },
+            -1 => { // EOF
+                lexer.syntaxError();
+            },
+            else => {
+                lexer.step();
+            },
+        }
     }
 
     pub fn rescanCloseBraceAsTemplateToken(lexer: *Lexer) void {
@@ -832,7 +904,7 @@ pub const Lexer = struct {
         // them. <CR><LF> and <CR> LineTerminatorSequences are normalized to
         // <LF> for both TV and TRV. An explicit EscapeSequence is needed to
         // include a <CR> or <CR><LF> sequence.
-        var bytes = MutableString.initCopy(lexer.allocator, text.len) catch unreachable;
+        var bytes = MutableString.initCopy(lexer.allocator, text) catch unreachable;
         var end: usize = 0;
         var i: usize = 0;
         var c: u8 = '0';

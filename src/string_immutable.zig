@@ -1,6 +1,8 @@
 const std = @import("std");
 const expect = std.testing.expect;
 
+const JavascriptString = @import("ast/base.zig").JavascriptString;
+
 usingnamespace @import("string_types.zig");
 
 pub fn containsChar(self: string, char: u8) bool {
@@ -33,4 +35,8 @@ pub fn index(self: string, str: string) i32 {
     } else {
         return -1;
     }
+}
+
+pub fn eqlUtf16(comptime self: string, other: JavascriptString) bool {
+    return std.mem.eql(u16, std.unicode.utf8ToUtf16LeStringLiteral(self), other);
 }

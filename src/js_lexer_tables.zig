@@ -203,6 +203,34 @@ pub const StrictModeReservedWords = std.ComptimeStringMap(bool, .{
 
 pub const CodePoint = i22;
 
+pub const PropertyModifierKeyword = enum {
+    p_abstract,
+    p_async,
+    p_declare,
+    p_get,
+    p_override,
+    p_private,
+    p_protected,
+    p_public,
+    p_readonly,
+    p_set,
+    p_static,
+
+    pub const List = std.ComptimeStringMap(PropertyModifierKeyword, .{
+        .{ "abstract", .p_abstract },
+        .{ "async", .p_async },
+        .{ "declare", .p_declare },
+        .{ "get", .p_get },
+        .{ "override", .p_override },
+        .{ "private", .p_private },
+        .{ "protected", .p_protected },
+        .{ "public", .p_public },
+        .{ "readonly", .p_readonly },
+        .{ "set", .p_set },
+        .{ "static", .p_static },
+    });
+};
+
 pub const TokenEnumType = std.EnumArray(T, []u8);
 
 pub const tokenToString = comptime {

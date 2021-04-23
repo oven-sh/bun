@@ -154,6 +154,14 @@ pub const Log = struct {
         });
     }
 
+    pub fn addRangeErrorFmt(log: *Log, source: ?Source, r: Range, allocator: *std.mem.Allocator, comptime text: string, args: anytype) !void {
+        log.errors += 1;
+        try log.addMsg(Msg{
+            .kind = .err,
+            .data = rangeData(source, r, std.fmt.allocPrint(allocator, text, args) catch unreachable),
+        });
+    }
+
     pub fn addRangeWarning(log: *Log, source: ?Source, r: Range, text: string) !void {
         log.warnings += 1;
         try log.addMsg(Msg{

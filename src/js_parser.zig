@@ -225,7 +225,7 @@ const DeferredErrors = struct {
 const ModuleType = enum { esm };
 
 const PropertyOpts = struct {
-    async_range: ?logger.Range,
+    async_range: logger.Range = logger.Range.None,
     is_async: bool = false,
     is_generator: bool = false,
 
@@ -234,7 +234,7 @@ const PropertyOpts = struct {
     is_class: bool = false,
     class_has_extends: bool = false,
     allow_ts_decorators: bool = false,
-    ts_decorators: []js_ast.Expr,
+    ts_decorators: []Expr = &[_]Expr{},
 };
 
 pub const Parser = struct {
@@ -301,13 +301,21 @@ pub const Parser = struct {
     }
 };
 
-const DeferredTsDecorators = struct { values: []js_ast.Expr,
+const DeferredTsDecorators = struct {
+    values: []js_ast.Expr,
 
-// If this turns out to be a "declare class" statement, we need to undo the
-// scopes that were potentially pushed while parsing the decorator arguments.
-scopeIndex: usize };
+    // If this turns out to be a "declare class" statement, we need to undo the
+    // scopes that were potentially pushed while parsing the decorator arguments.
+    scopeIndex: usize,
+};
 
 const LexicalDecl = enum(u8) { forbid, allow_all, allow_fn_inside_if, allow_fn_inside_label };
+
+const ParseClassOptions = struct {
+    ts_decorators: []Expr = &[_]Expr{},
+    allow_ts_decorators: bool = false,
+    is_type_script_declare: bool = false,
+};
 
 const ParseStatementOptions = struct {
     ts_decorators: ?DeferredTsDecorators = null,
@@ -623,10 +631,10 @@ const P = struct {
 
     pub fn keyNameForError(p: *P, key: js_ast.Expr) string {
         switch (key.data) {
-            js_ast.E.String => {
+            .e_string => {
                 return p.lexer.raw();
             },
-            js_ast.E.PrivateIdentifier => {
+            .e_private_identifier => {
                 return p.lexer.raw();
                 // return p.loadNameFromRef()
             },
@@ -1910,7 +1918,497 @@ const P = struct {
         }, loc);
     }
 
-    pub fn parseTemplateParts(p: *P, include_raw: bool) Tup([]E.TemplatePart, logger.Loc) {
+    pub fn parseProperty(p: *P, kind: Property.Kind, opts: *PropertyOpts, errors: ?*DeferredErrors) ?G.Property {
+        var key: Expr = undefined;
+        var key_range = p.lexer.range();
+        var is_computed = false;
+
+        switch (p.lexer.token) {
+            .t_numeric_literal => {
+                key = p.e(E.Number{
+                    .value = p.lexer.number,
+                }, p.lexer.loc());
+                // p.checkForLegacyOctalLiteral()
+                p.lexer.next();
+            },
+            .t_string_literal => {
+                key = p.parseStringLiteral();
+            },
+            .t_big_integer_literal => {
+                key = p.e(E.BigInt{ .value = p.lexer.identifier }, p.lexer.loc());
+                // markSyntaxFeature
+                p.lexer.next();
+            },
+            .t_private_identifier => {
+                if (!opts.is_class or opts.ts_decorators.len > 0) {
+                    p.lexer.expected(.t_identifier);
+                }
+
+                key = p.e(E.PrivateIdentifier{ .ref = p.storeNameInRef(p.lexer.identifier) catch unreachable }, p.lexer.loc());
+                p.lexer.next();
+            },
+            .t_open_bracket => {
+                is_computed = true;
+                // p.markSyntaxFeature(compat.objectExtensions, p.lexer.range())
+                p.lexer.next();
+                const wasIdentifier = p.lexer.token == .t_identifier;
+                const expr = p.parseExpr(.comma);
+
+                // Handle index signatures
+                if (p.options.ts and p.lexer.token == .t_colon and wasIdentifier and opts.is_class) {
+                    switch (expr.data) {
+                        .e_identifier => |ident| {
+                            p.lexer.next();
+                            p.skipTypescriptType(.lowest);
+                            p.lexer.expect(.t_close_bracket);
+                            p.lexer.expect(.t_colon);
+                            p.skipTypescriptType(.lowest);
+                            p.lexer.expectOrInsertSemicolon();
+
+                            // Skip this property entirely
+                            return null;
+                        },
+                        else => {},
+                    }
+                }
+
+                p.lexer.expect(.t_close_brace);
+                key = expr;
+            },
+            .t_asterisk => {
+                if (kind != .normal or opts.is_generator) {
+                    p.lexer.unexpected();
+                }
+
+                p.lexer.next();
+                opts.is_generator = true;
+                return p.parseProperty(.normal, opts, errors);
+            },
+
+            else => {
+                const name = p.lexer.identifier;
+                const raw = p.lexer.raw();
+                const name_range = p.lexer.range();
+
+                if (!p.lexer.isIdentifierOrKeyword()) {
+                    p.lexer.expect(.t_identifier);
+                }
+
+                p.lexer.next();
+
+                // Support contextual keywords
+                if (kind == .normal and !opts.is_generator) {
+                    // Does the following token look like a key?
+                    var couldBeModifierKeyword = p.lexer.isIdentifierOrKeyword();
+                    if (!couldBeModifierKeyword) {
+                        switch (p.lexer.token) {
+                            .t_open_bracket, .t_numeric_literal, .t_string_literal, .t_asterisk, .t_private_identifier => {
+                                couldBeModifierKeyword = true;
+                            },
+                            else => {},
+                        }
+                    }
+
+                    // If so, check for a modifier keyword
+                    if (couldBeModifierKeyword) {
+                        // TODO: micro-optimization, use a smaller list for non-typescript files.
+                        if (js_lexer.PropertyModifierKeyword.List.get(name)) |keyword| {
+                            switch (keyword) {
+                                .p_get => {
+                                    if (!opts.is_async and strings.eql(raw, name)) {
+                                        // p.markSyntaxFeautre(ObjectAccessors, name_range)
+                                        return p.parseProperty(.get, opts, null);
+                                    }
+                                },
+
+                                .p_set => {
+                                    if (!opts.is_async and strings.eql(raw, name)) {
+                                        // p.markSyntaxFeautre(ObjectAccessors, name_range)
+                                        return p.parseProperty(.set, opts, null);
+                                    }
+                                },
+                                .p_async => {
+                                    if (!opts.is_async and strings.eql(raw, name)) {
+                                        opts.is_async = true;
+                                        opts.async_range = name_range;
+
+                                        // p.markSyntaxFeautre(ObjectAccessors, name_range)
+                                        return p.parseProperty(kind, opts, null);
+                                    }
+                                },
+                                .p_static => {
+                                    if (!opts.is_static and !opts.is_async and !opts.is_class and strings.eql(raw, name)) {
+                                        opts.is_static = true;
+                                        return p.parseProperty(kind, opts, null);
+                                    }
+                                },
+                                .p_private, .p_protected, .p_public, .p_readonly, .p_abstract, .p_declare, .p_override => {
+                                    // Skip over TypeScript keywords
+                                    if (opts.is_class and p.options.ts and strings.eql(raw, name)) {
+                                        return p.parseProperty(kind, opts, null);
+                                    }
+                                },
+                            }
+                        }
+                    }
+                }
+
+                key = p.e(E.String{
+                    .value = p.lexer.stringToUTF16(name),
+                }, name_range.loc);
+
+                // Parse a shorthand property
+                if (!opts.is_class and kind == .normal and p.lexer.token != .t_colon and p.lexer.token != .t_open_paren and p.lexer.token != .t_less_than and !opts.is_generator and !js_lexer.Keywords.has(name)) {
+                    if ((p.fn_or_arrow_data_parse.allow_await and strings.eql(name, "await")) or (p.fn_or_arrow_data_parse.allow_yield and strings.eql(name, "yield"))) {
+                        // TODO: add fmt to addRangeError
+                        p.log.addRangeError(p.source, name_range, "Cannot use \"yield\" or \"await\" here.") catch unreachable;
+                    }
+
+                    const ref = p.storeNameInRef(name) catch unreachable;
+                    const value = p.e(E.Identifier{ .ref = ref }, key.loc);
+
+                    // Destructuring patterns have an optional default value
+                    var initializer: ?Expr = null;
+                    if (errors != null and p.lexer.token == .t_equals) {
+                        (errors orelse unreachable).invalid_expr_default_value = p.lexer.range();
+                        p.lexer.next();
+                        initializer = p.parseExpr(.comma);
+                    }
+
+                    return G.Property{
+                        .kind = kind,
+                        .key = key,
+                        .value = value,
+                        .initializer = initializer,
+                        .flags = Flags.Property{ .was_shorthand = true },
+                    };
+                }
+            },
+        }
+
+        if (p.options.ts) {
+            // "class X { foo?: number }"
+            // "class X { foo!: number }"
+            if (opts.is_class and (p.lexer.token == .t_question or p.lexer.token == .t_exclamation)) {
+                p.lexer.next();
+            }
+
+            // "class X { foo?<T>(): T }"
+            // "const x = { foo<T>(): T {} }"
+            p.skipTypescriptTypeParameters();
+        }
+
+        // Parse a class field with an optional initial value
+        if (opts.is_class and kind == .normal and !opts.is_async and !opts.is_generator and p.lexer.token != .t_open_paren) {
+            var initializer: ?Expr = null;
+
+            // Forbid the names "constructor" and "prototype" in some cases
+            if (!is_computed) {
+                switch (key.data) {
+                    .e_string => |str| {
+                        if (std.mem.eql(u16, str.value, std.unicode.utf8ToUtf16LeStringLiteral("constructor")) or (opts.is_static and std.mem.eql(u16, str.value, std.unicode.utf8ToUtf16LeStringLiteral("prototype")))) {
+                            // TODO: fmt error message to include string value.
+                            p.log.addRangeError(p.source, key_range, "Invalid field name") catch unreachable;
+                        }
+                    },
+                    else => {},
+                }
+            }
+
+            // Skip over types
+            if (p.options.ts and p.lexer.token == .t_colon) {
+                p.lexer.next();
+                p.skipTypescriptType(.lowest);
+            }
+
+            if (p.lexer.token == .t_equals) {
+                p.lexer.next();
+                initializer = p.parseExpr(.comma);
+            }
+
+            // Special-case private identifiers
+            switch (key.data) {
+                .e_private_identifier => |private| {
+                    const name = p.loadNameFromRef(private.ref);
+                    if (strings.eql(name, "#constructor")) {
+                        p.log.addRangeError(p.source, key_range, "Invalid field name \"#constructor\"") catch unreachable;
+                    }
+
+                    var declare: js_ast.Symbol.Kind = undefined;
+                    if (opts.is_static) {
+                        declare = .private_static_field;
+                    } else {
+                        declare = .private_field;
+                    }
+                    private.ref = p.declareSymbol(declare, key.loc, name) catch unreachable;
+                },
+                else => {},
+            }
+
+            p.lexer.expectOrInsertSemicolon();
+
+            return G.Property{
+                .ts_decorators = opts.ts_decorators,
+                .kind = kind,
+                .flags = Flags.Property{
+                    .is_computed = is_computed,
+                    .is_static = opts.is_static,
+                },
+                .key = key,
+                .initializer = initializer,
+            };
+        }
+
+        // Parse a method expression
+        if (p.lexer.token == .t_open_paren or kind != .normal or opts.is_class or opts.is_async or opts.is_generator) {
+            if (p.lexer.token == .t_open_paren and kind != .get and kind != .set) {
+                // markSyntaxFeature object extensions
+            }
+
+            const loc = p.lexer.loc();
+            const scope_index = p.pushScopeForParsePass(.function_args, loc) catch unreachable;
+            var is_constructor = false;
+
+            // Forbid the names "constructor" and "prototype" in some cases
+            if (opts.is_class and !is_computed) {
+                switch (key.data) {
+                    .e_string => |str| {
+                        if (!opts.is_static and strings.eqlUtf16("constructor", str.value)) {
+                            if (kind == .get) {
+                                p.log.addRangeError(p.source, key_range, "Class constructor cannot be a getter") catch unreachable;
+                            } else if (kind == .set) {
+                                p.log.addRangeError(p.source, key_range, "Class constructor cannot be a setter") catch unreachable;
+                            } else if (opts.is_async) {
+                                p.log.addRangeError(p.source, key_range, "Class constructor cannot be an async function") catch unreachable;
+                            } else if (opts.is_generator) {
+                                p.log.addRangeError(p.source, key_range, "Class constructor cannot be a generator function") catch unreachable;
+                            } else {
+                                is_constructor = true;
+                            }
+                        } else if (opts.is_static and strings.eqlUtf16("prototype", str.value)) {
+                            p.log.addRangeError(p.source, key_range, "Invalid static method name \"prototype\"") catch unreachable;
+                        }
+                    },
+                    else => {},
+                }
+            }
+
+            var func = p.parseFn(null, FnOrArrowDataParse{
+                .async_range = opts.async_range,
+                .allow_await = opts.is_async,
+                .allow_yield = opts.is_generator,
+                .allow_super_call = opts.class_has_extends and is_constructor,
+                .allow_ts_decorators = opts.allow_ts_decorators,
+                .is_constructor = is_constructor,
+
+                // Only allow omitting the body if we're parsing TypeScript class
+                .allow_missing_body_for_type_script = p.options.ts and opts.is_class,
+            });
+
+            // "class Foo { foo(): void; foo(): void {} }"
+            if (func.body == null) {
+                // Skip this property entirely
+                p.popAndDiscardScope(scope_index);
+                return null;
+            }
+
+            p.popScope();
+            func.flags.is_unique_formal_parameters = true;
+            const value = p.e(E.Function{ .func = func }, loc);
+
+            // Enforce argument rules for accessors
+            switch (kind) {
+                .get => {
+                    if (func.args.len > 0) {
+                        const r = js_lexer.rangeOfIdentifier(&p.source, func.args[0].binding.loc);
+                        p.log.addRangeErrorFmt(p.source, r, p.allocator, "Getter {s} must have zero arguments", .{p.keyNameForError(key)}) catch unreachable;
+                    }
+                },
+                .set => {
+                    if (func.args.len != 1) {
+                        var r = js_lexer.rangeOfIdentifier(&p.source, func.args[0].binding.loc);
+                        if (func.args.len > 1) {
+                            r = js_lexer.rangeOfIdentifier(&p.source, func.args[1].binding.loc);
+                        }
+                        p.log.addRangeErrorFmt(p.source, r, p.allocator, "Setter {s} must have exactly 1 argument", .{p.keyNameForError(key)}) catch unreachable;
+                    }
+                },
+                else => {},
+            }
+
+            // Special-case private identifiers
+            switch (key.data) {
+                .e_private_identifier => |private| {
+                    var declare: Symbol.Kind = undefined;
+                    var suffix: string = undefined;
+                    switch (kind) {
+                        .get => {
+                            if (opts.is_static) {
+                                declare = .private_static_get;
+                            } else {
+                                declare = .private_get;
+                            }
+                            suffix = "_get";
+                        },
+                        .set => {
+                            if (opts.is_static) {
+                                declare = .private_static_set;
+                            } else {
+                                declare = .private_set;
+                            }
+                            suffix = "_set";
+                        },
+                        else => {
+                            if (opts.is_static) {
+                                declare = .private_static_method;
+                            } else {
+                                declare = .private_method;
+                            }
+                            suffix = "_fn";
+                        },
+                    }
+
+                    const name = p.loadNameFromRef(private.ref);
+                    if (strings.eql(name, "#constructor")) {
+                        p.log.addRangeError(p.source, key_range, "Invalid method name \"#constructor\"") catch unreachable;
+                    }
+                    private.ref = p.declareSymbol(declare, key.loc, name) catch unreachable;
+                },
+                else => {},
+            }
+
+            return G.Property{
+                .ts_decorators = opts.ts_decorators,
+                .kind = kind,
+                .flags = Flags.Property{
+                    .is_computed = is_computed,
+                    .is_method = true,
+                    .is_static = opts.is_static,
+                },
+                .key = key,
+                .value = value,
+            };
+        }
+
+        p.lexer.expect(.t_colon);
+
+        const value = p.parseExprOrBindings(.comma, errors);
+
+        return G.Property{
+            .ts_decorators = &[_]Expr{},
+            .kind = kind,
+            .flags = Flags.Property{
+                .is_computed = is_computed,
+            },
+            .key = key,
+            .value = value,
+        };
+    }
+
+    // By the time we call this, the identifier and type parameters have already
+    // been parsed. We need to start parsing from the "extends" clause.
+    pub fn parseClass(p: *P, class_keyword: logger.Range, name: ?js_ast.LocRef, class_opts: ParseClassOptions) G.Class {
+        var extends: ?Expr = null;
+
+        if (p.lexer.token == .t_extends) {
+            p.lexer.next();
+            extends = p.parseExpr(.new);
+        }
+
+        // TypeScript's type argument parser inside expressions backtracks if the
+        // first token after the end of the type parameter list is "{", so the
+        // parsed expression above will have backtracked if there are any type
+        // arguments. This means we have to re-parse for any type arguments here.
+        // This seems kind of wasteful to me but it's what the official compiler
+        // does and it probably doesn't have that high of a performance overhead
+        // because "extends" clauses aren't that frequent, so it should be ok.
+        if (p.options.ts) {
+            p.skipTypeScriptTypeArguments(false); // isInsideJSXElement
+        }
+
+        if (p.options.ts and p.lexer.isContextualKeyword("implements")) {
+            p.lexer.next();
+
+            while (true) {
+                p.skipTypescriptType(.lowest);
+                if (p.lexer.token != .t_comma) {
+                    break;
+                }
+                p.lexer.next();
+            }
+        }
+
+        var body_loc = p.lexer.loc();
+        p.lexer.expect(T.t_open_brace);
+        var properties = List(G.Property).init(p.allocator);
+
+        // Allow "in" and private fields inside class bodies
+        const old_allow_in = p.allow_in;
+        const old_allow_private_identifiers = p.allow_private_identifiers;
+        p.allow_in = true;
+        p.allow_private_identifiers = true;
+
+        // A scope is needed for private identifiers
+        const scopeIndex = p.pushScopeForParsePass(.class_body, body_loc) catch unreachable;
+
+        var opts = PropertyOpts{ .is_class = true, .allow_ts_decorators = class_opts.allow_ts_decorators, .class_has_extends = extends != null };
+
+        while (p.lexer.token != .t_close_brace) {
+            if (p.lexer.token == .t_semicolon) {
+                p.lexer.next();
+                continue;
+            }
+
+            // Parse decorators for this property
+            const first_decorator_loc = p.lexer.loc();
+            if (opts.allow_ts_decorators) {
+                opts.ts_decorators = p.parseTypeScriptDecorators();
+            } else {
+                opts.ts_decorators = &[_]Expr{};
+            }
+
+            // This property may turn out to be a type in TypeScript, which should be ignored
+            if (p.parseProperty(.normal, &opts, null)) |property| {
+                properties.append(property) catch unreachable;
+
+                // Forbid decorators on class constructors
+                if (opts.ts_decorators.len > 0) {
+                    switch (property.key.data) {
+                        .e_string => |str| {
+                            if (strings.eqlUtf16("constructor", str.value)) {
+                                p.log.addError(p.source, first_decorator_loc, "TypeScript does not allow decorators on class constructors") catch unreachable;
+                            }
+                        },
+                        else => {},
+                    }
+                }
+            }
+        }
+
+        if (class_opts.is_type_script_declare) {
+            p.popAndDiscardScope(scopeIndex);
+        } else {
+            p.popScope();
+        }
+
+        p.allow_in = old_allow_in;
+        p.allow_private_identifiers = old_allow_private_identifiers;
+
+        return G.Class{
+            .class_name = name,
+            .extends = extends,
+            .ts_decorators = class_opts.ts_decorators,
+            .class_keyword = class_keyword,
+            .body_loc = body_loc,
+            .properties = properties.toOwnedSlice(),
+        };
+    }
+
+    pub fn skipTypeScriptTypeArguments(p: *P, isInsideJSXElement: bool) void {
+        notimpl();
+    }
+
+    pub fn parseTemplateParts(p: *P, include_raw: bool) std.meta.Tuple(&[_]type{ []E.TemplatePart, logger.Loc }) {
         var parts = List(E.TemplatePart).initCapacity(p.allocator, 1) catch unreachable;
         // Allow "in" inside template literals
         var oldAllowIn = p.allow_in;
@@ -1923,7 +2421,7 @@ const P = struct {
             var tail_loc = p.lexer.loc();
             p.lexer.rescanCloseBraceAsTemplateToken();
             var tail = p.lexer.string_literal;
-            var tailRaw = "";
+            var tail_raw: string = "";
 
             if (include_raw) {
                 tail_raw = p.lexer.rawTemplateContents();
@@ -1931,13 +2429,23 @@ const P = struct {
                 legacy_octal_loc = p.lexer.legacy_octal_loc;
             }
 
+            parts.append(E.TemplatePart{
+                .value = value,
+                .tail_loc = tail_loc,
+                .tail = tail,
+                .tail_raw = tail_raw,
+            }) catch unreachable;
 
             if (p.lexer.token == .t_template_tail) {
-
+                p.lexer.next();
+                break :parseTemplatePart;
             }
+            std.debug.assert(p.lexer.token != .t_end_of_file);
         }
 
-        return .{parts.toOwnedSlice(), legacy_octal_loc};
+        p.allow_in = oldAllowIn;
+
+        return .{ .@"0" = parts.toOwnedSlice(), .@"1" = legacy_octal_loc };
     }
 
     // This assumes the caller has already checked for TStringLiteral or TNoSubstitutionTemplateLiteral
@@ -2112,24 +2620,146 @@ const P = struct {
             .t_template_head => {
                 var legacy_octal_loc = logger.Loc.Empty;
                 var head = p.lexer.string_literal;
+                var head_raw = p.lexer.raw();
                 if (p.lexer.legacy_octal_loc.start > loc.start) {
                     legacy_octal_loc = p.lexer.legacy_octal_loc;
                 }
+
+                var resp = p.parseTemplateParts(false);
+                const parts: []E.TemplatePart = resp.@"0";
+                const tail_legacy_octal_loc: logger.Loc = resp.@"1";
+                if (tail_legacy_octal_loc.start > 0) {
+                    legacy_octal_loc = tail_legacy_octal_loc;
+                }
+                // Check if TemplateLiteral is unsupported. We don't care for this product.`
+                // if ()
+
+                return p.e(E.Template{ .head = head, .parts = parts, .legacy_octal_loc = legacy_octal_loc, .head_raw = head_raw }, loc);
             },
-            .t_numeric_literal => {},
-            .t_big_integer_literal => {},
-            .t_slash, .t_slash_equals => {},
-            .t_void => {},
-            .t_typeof => {},
-            .t_delete => {},
-            .t_plus => {},
-            .t_minus => {},
-            .t_tilde => {},
-            .t_exclamation => {},
-            .t_minus_minus => {},
-            .t_plus_plus => {},
-            .t_function => {},
-            .t_class => {},
+            .t_numeric_literal => {
+                const value = p.e(E.Number{ .value = p.lexer.number }, loc);
+                // p.checkForLegacyOctalLiteral()
+                p.lexer.next();
+                return value;
+            },
+            .t_big_integer_literal => {
+                const value = p.lexer.identifier;
+                // markSyntaxFeature bigInt
+                p.lexer.next();
+                return p.e(E.BigInt{ .value = value }, loc);
+            },
+            .t_slash, .t_slash_equals => {
+                p.lexer.scanRegExp();
+                const value = p.lexer.raw();
+                p.lexer.next();
+                return p.e(E.RegExp{ .value = value }, loc);
+            },
+            .t_void => {
+                p.lexer.next();
+                const value = p.parseExpr(.prefix);
+                if (p.lexer.token == .t_asterisk_asterisk) {
+                    p.lexer.unexpected();
+                }
+
+                return p.e(E.Unary{
+                    .op = .un_void,
+                    .value = value,
+                }, loc);
+            },
+            .t_typeof => {
+                p.lexer.next();
+                const value = p.parseExpr(.prefix);
+                if (p.lexer.token == .t_asterisk_asterisk) {
+                    p.lexer.unexpected();
+                }
+
+                return p.e(E.Unary{ .op = .un_typeof, .value = value }, loc);
+            },
+            .t_delete => {
+                p.lexer.next();
+                const value = p.parseExpr(.prefix);
+                if (p.lexer.token == .t_asterisk_asterisk) {
+                    p.lexer.unexpected();
+                }
+                // TODO: add error deleting private identifier
+                // const private = value.data.e_private_identifier;
+                // if (private) |private| {
+                //     const name = p.loadNameFromRef(private.ref);
+                //     p.log.addRangeError(index.loc, )
+                // }
+
+                return p.e(E.Unary{ .op = .un_delete, .value = value }, loc);
+            },
+            .t_plus => {
+                p.lexer.next();
+                const value = p.parseExpr(.prefix);
+                if (p.lexer.token == .t_asterisk_asterisk) {
+                    p.lexer.unexpected();
+                }
+
+                return p.e(E.Unary{ .op = .un_pos, .value = value }, loc);
+            },
+            .t_minus => {
+                p.lexer.next();
+                const value = p.parseExpr(.prefix);
+                if (p.lexer.token == .t_asterisk_asterisk) {
+                    p.lexer.unexpected();
+                }
+
+                return p.e(E.Unary{ .op = .un_neg, .value = value }, loc);
+            },
+            .t_tilde => {
+                p.lexer.next();
+                const value = p.parseExpr(.prefix);
+                if (p.lexer.token == .t_asterisk_asterisk) {
+                    p.lexer.unexpected();
+                }
+
+                return p.e(E.Unary{ .op = .un_cpl, .value = value }, loc);
+            },
+            .t_exclamation => {
+                p.lexer.next();
+                const value = p.parseExpr(.prefix);
+                if (p.lexer.token == .t_asterisk_asterisk) {
+                    p.lexer.unexpected();
+                }
+
+                return p.e(E.Unary{ .op = .un_not, .value = value }, loc);
+            },
+            .t_minus_minus => {
+                p.lexer.next();
+                return p.e(E.Unary{ .op = .un_pre_dec, .value = p.parseExpr(.prefix) }, loc);
+            },
+            .t_plus_plus => {
+                p.lexer.next();
+                return p.e(E.Unary{ .op = .un_pre_inc, .value = p.parseExpr(.prefix) }, loc);
+            },
+            .t_function => {
+                return p.parseFnExpr(loc, false, logger.Range.None) catch unreachable;
+            },
+            .t_class => {
+                const classKeyword = p.lexer.range();
+                // markSyntaxFEatuer class
+                p.lexer.next();
+                var name: ?js_ast.LocRef = null;
+
+                _ = p.pushScopeForParsePass(.class_name, loc) catch unreachable;
+
+                // Parse an optional class name
+                if (p.lexer.token == .t_identifier and !js_lexer.StrictModeReservedWords.has(p.lexer.identifier)) {
+                    name = js_ast.LocRef{ .loc = p.lexer.loc(), .ref = p.newSymbol(.other, p.lexer.identifier) catch unreachable };
+                    p.lexer.next();
+                }
+
+                // Even anonymous classes can have TypeScript type parameters
+                if (p.options.ts) {
+                    p.skipTypescriptTypeParameters();
+                }
+
+                const class = p.parseClass(classKeyword, name, ParseClassOptions{});
+                p.popScope();
+                return p.e(E.Class{ .class = class }, loc);
+            },
             .t_new => {},
             .t_open_bracket => {},
             .t_open_brace => {},

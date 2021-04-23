@@ -238,8 +238,8 @@ pub const G = struct {
 
     pub const Class = struct {
         class_keyword: logger.Range = logger.Range.None,
-        ts_decorators: ?ExprNodeList = null,
-        name: logger.Loc = logger.Loc.Empty,
+        ts_decorators: ExprNodeList = &([_]Expr{}),
+        class_name: ?LocRef = null,
         extends: ?ExprNodeIndex = null,
         body_loc: logger.Loc = logger.Loc.Empty,
         properties: []Property = &([_]Property{}),
@@ -249,7 +249,7 @@ pub const G = struct {
     pub const Comment = struct { loc: logger.Loc, text: string };
 
     pub const Property = struct {
-        ts_decorators: ExprNodeList,
+        ts_decorators: ExprNodeList = &([_]Expr{}),
         key: ExprNodeIndex,
 
         // This is omitted for class fields
@@ -1313,6 +1313,12 @@ pub const Expr = struct {
                     .data = Data{ .e_template_part = exp },
                 };
             },
+            *E.Class => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{ .e_class = exp },
+                };
+            },
             *E.Template => {
                 return Expr{
                     .loc = loc,
@@ -1367,6 +1373,11 @@ pub const Expr = struct {
                 var dat = allocator.create(E.Array) catch unreachable;
                 dat.* = st;
                 return Expr{ .loc = loc, .data = Data{ .e_array = dat } };
+            },
+            E.Class => {
+                var dat = allocator.create(E.Class) catch unreachable;
+                dat.* = st;
+                return Expr{ .loc = loc, .data = Data{ .e_class = dat } };
             },
             E.Unary => {
                 var dat = allocator.create(E.Unary) catch unreachable;
@@ -1574,6 +1585,7 @@ pub const Expr = struct {
         e_require_or_require_resolve,
         e_import,
         e_this,
+        e_class,
     };
 
     pub fn assign(a: *Expr, b: *Expr, allocator: *std.mem.Allocator) Expr {
@@ -1680,6 +1692,7 @@ pub const Expr = struct {
         e_unary: *E.Unary,
         e_binary: *E.Binary,
         e_this: *E.This,
+        e_class: *E.Class,
         e_boolean: *E.Boolean,
         e_super: *E.Super,
         e_null: *E.Null,

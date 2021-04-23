@@ -2488,7 +2488,7 @@ pub const Op = struct {
 
 pub const ArrayBinding = struct {
     binding: BindingNodeIndex,
-    default_value: ?ExprNodeIndex,
+    default_value: ?ExprNodeIndex = null,
 };
 
 pub const Ast = struct {

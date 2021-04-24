@@ -2210,13 +2210,32 @@ const P = struct {
                 return p.s(S.Return{ .value = value }, loc);
             },
             .t_throw => {
-                notimpl();
+                p.lexer.next();
+                if (p.lexer.has_newline_before) {
+                    try p.log.addError(p.source, logger.Loc{
+                        .start = loc.start + 5,
+                    }, "Unexpected newline after \"throw\"");
+                    fail();
+                }
+                const expr = p.parseExpr(.lowest);
+                p.lexer.expectOrInsertSemicolon();
+                return p.s(S.Throw{ .value = expr }, loc);
             },
             .t_debugger => {
-                notimpl();
+                p.lexer.next();
+                p.lexer.expectOrInsertSemicolon();
+                return p.s(S.Debugger{}, loc);
             },
             .t_open_brace => {
-                notimpl();
+                _ = try p.pushScopeForParsePass(.block, loc);
+                defer p.popScope();
+                p.lexer.next();
+                var stmtOpts = ParseStatementOptions{};
+                const stmts = p.parseStmtsUpTo(.t_close_brace, &stmtOpts) catch unreachable;
+                p.lexer.next();
+                return p.s(S.Block{
+                    .stmts = stmts,
+                }, loc);
             },
 
             else => {

@@ -1187,6 +1187,16 @@ const P = struct {
         return ref;
     }
 
+    pub fn parseLabelName(p: *P) !?js_ast.LocRef {
+        if (p.lexer.token != .t_identifier or p.lexer.has_newline_before) {
+            return null;
+        }
+
+        const name = LocRef{ .loc = p.lexer.loc(), .ref = try p.storeNameInRef(p.lexer.identifier) };
+        p.lexer.next();
+        return name;
+    }
+
     pub fn parseClassStmt(p: *P, loc: logger.Loc, opts: *ParseStatementOptions) Stmt {
         var name: ?js_ast.LocRef = null;
         var class_keyword = p.lexer.range();
@@ -2173,13 +2183,31 @@ const P = struct {
                 return p.s(stmt, loc);
             },
             .t_break => {
-                notimpl();
+                p.lexer.next();
+                const name = try p.parseLabelName();
+                p.lexer.expectOrInsertSemicolon();
+                return p.s(S.Break{ .label = name }, loc);
             },
             .t_continue => {
-                notimpl();
+                p.lexer.next();
+                const name = try p.parseLabelName();
+                p.lexer.expectOrInsertSemicolon();
+                return p.s(S.Continue{ .label = name }, loc);
             },
             .t_return => {
-                notimpl();
+                p.lexer.next();
+                var value: ?Expr = null;
+                if ((p.lexer.token != .t_semicolon and
+                    !p.lexer.has_newline_before and
+                    p.lexer.token != .t_close_brace and
+                    p.lexer.token != .t_end_of_file))
+                {
+                    value = p.parseExpr(.lowest);
+                }
+                p.latest_return_had_semicolon = p.lexer.token == .t_semicolon;
+                p.lexer.expectOrInsertSemicolon();
+
+                return p.s(S.Return{ .value = value }, loc);
             },
             .t_throw => {
                 notimpl();

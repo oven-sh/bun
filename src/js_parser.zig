@@ -13,6 +13,7 @@ usingnamespace js_ast.G;
 
 const ImportKind = importRecord.ImportKind;
 const BindingNodeIndex = js_ast.BindingNodeIndex;
+
 const StmtNodeIndex = js_ast.StmtNodeIndex;
 const ExprNodeIndex = js_ast.ExprNodeIndex;
 const ExprNodeList = js_ast.ExprNodeList;
@@ -997,14 +998,15 @@ const P = struct {
                 std.debug.panic("Internal error", .{});
             }
 
-            // for name, member := range scope.parent.members {
-            // 	// Don't copy down the optional function expression name. Re-declaring
-            // 	// the name of a function expression is allowed.
-            // 	kind := p.symbols[member.Ref.InnerIndex].Kind
-            // 	if kind != js_ast.SymbolHoistedFunction {
-            // 		scope.Members[name] = member
-            // 	}
-            // }
+            var iter = scope.parent.?.members.iterator();
+            while (iter.next()) |entry| {
+                // 	// Don't copy down the optional function expression name. Re-declaring
+                // 	// the name of a function expression is allowed.
+                const adjacent_symbols = p.symbols.items[entry.value.ref.inner_index];
+                if (adjacent_symbols.kind != .hoisted_function) {
+                    try scope.members.put(entry.key, entry.value);
+                }
+            }
         }
 
         return i;

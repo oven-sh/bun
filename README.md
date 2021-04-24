@@ -59,6 +59,30 @@ There's a number of reasons for this:
 
 #### Different constraints enable performance improvements
 
-If bundler means "merge N source files into 1 or few source file(s)", esdev is most definitely not a bundler. Unlike most bundlers today, esdev deliberately outputs 
+If bundler means "merge N source files into 1 or few source file(s)", esdev is most definitely not a bundler. Unlike most bundlers today, esdev deliberately outputs
 
-If bundler means "turn my development code into something a browser can run", 
+If bundler means "turn my development code into something a browser can run",
+
+### Compatibility Table
+
+Key:
+
+- ✅ means "compatible"
+- ❌ means "not supported, and no plans to change that"
+- ⌛ means "in-progress"
+- 🗓️ means "planned" or "eventually but work has not started"
+- ❓ means "unknown"
+
+| Feature                            | esbuild | esdev |
+| ---------------------------------- | ------- | ----- |
+| Minification                       | ✅      | ❌    |
+| JSX (transform)                    | ✅      | ⌛    |
+| TypeScript (transform)             | ✅      | ⌛    |
+| Hot Module Reloading               | ❌[1]   | ⌛    |
+| React Fast Refresh                 | ❌[1]   | ⌛    |
+| Tree Shaking                       | ✅      | ⌛    |
+| Incremental builds                 | ✅      | ⌛    |
+| Support older browsers             | ✅      | ❌[2] |
+| Plugins                            | ✅      | ⌛[3] |
+| AST Plugins                        | ❌      | ❌[4] |
+| Filesystem Cache API (for plugins) | ❓      | 🗓️[4] |

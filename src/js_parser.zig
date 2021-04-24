@@ -5831,10 +5831,83 @@ const P = struct {
     }
 
     pub fn visitExpr(p: *P, expr: Expr) Expr {
-        return p.visitExprInOut(expr, in);
+        return p.visitExprInOut(expr, ExprIn{});
     }
 
-    pub fn visitExprInOut(p: *P, expr: Expr, in: ExprIn) Expr {}
+    pub fn valueForThis(p: *P, loc: logger.Loc) ?Expr {
+        // Substitute "this" if we're inside a static class property initializer
+        if (p.fn_only_data_visit.this_class_static_ref) |*ref| {
+            p.recordUsage(ref);
+            return p.e(E.Identifier{ .ref = ref.* }, loc);
+        }
+
+        // oroigianlly was !=- modepassthrough
+        if (!p.fn_only_data_visit.is_this_nested) {
+            if (p.has_es_module_syntax) {
+                // In an ES6 module, "this" is supposed to be undefined. Instead of
+                // doing this at runtime using "fn.call(undefined)", we do it at
+                // compile time using expression substitution here.
+                return p.e(E.Undefined{}, loc);
+            } else {
+                // In a CommonJS module, "this" is supposed to be the same as "exports".
+                // Instead of doing this at runtime using "fn.call(module.exports)", we
+                // do it at compile time using expression substitution here.
+                p.recordUsage(&p.exports_ref);
+                return p.e(E.Identifier{ .ref = p.exports_ref }, loc);
+            }
+        }
+
+        return null;
+    }
+
+    pub fn visitExprInOut(p: *P, expr: Expr, in: ExprIn) Expr {
+        switch (expr.data) {
+            .e_null, .e_super, .e_boolean, .e_big_int, .e_reg_exp, .e_new_target, .e_undefined => {},
+            .e_string => |e_| {
+                // idc about legacy octal loc
+                // if e.LegacyOctalLoc.Start > 0 {
+            },
+            .e_number => |e_| {
+                // idc about legacy octal loc
+            },
+            .e_this => |e_| {
+                if (p.valueForThis(expr.loc)) |exp| {
+                    return exp;
+                }
+
+                //         		// Capture "this" inside arrow functions that will be lowered into normal
+                // // function expressions for older language environments
+                // if p.fnOrArrowDataVisit.isArrow && p.options.unsupportedJSFeatures.Has(compat.Arrow) && p.fnOnlyDataVisit.isThisNested {
+                // 	return js_ast.Expr{Loc: expr.Loc, Data: &js_ast.EIdentifier{Ref: p.captureThis()}}, exprOut{}
+                // }
+            },
+            .e_import_meta => |exp| {},
+            .e_spread => |exp| {
+                return p.visitExpr(exp.value);
+            },
+            .e_identifier => |e_| {},
+            .e_private_identifier => |e_| {},
+            .e_jsx_element => |e_| {},
+            .e_template => |e_| {},
+            .e_binary => |e_| {},
+            .e_index => |e_| {},
+            .e_unary => |e_| {},
+            .e_dot => |e_| {},
+            .e_if => |e_| {},
+            .e_await => |e_| {},
+            .e_yield => |e_| {},
+            .e_array => |e_| {},
+            .e_object => |e_| {},
+            .e_import => |e_| {},
+            .e_call => |e_| {},
+            .e_new => |e_| {},
+            .e_arrow => |e_| {},
+            .e_function => |e_| {},
+            .e_class => |e_| {},
+            else => {},
+        }
+        return expr;
+    }
 
     pub fn visitAndAppendStmt(p: *P, stmts: *List(Stmt), stmt: *Stmt) !void {
         switch (stmt.data) {
@@ -5938,7 +6011,7 @@ const P = struct {
                 switch (data.value) {
                     .expr => |*expr| {
                         const was_anonymous_named_expr = expr.isAnonymousNamed();
-                        data.value.expr = p.m(p.visitExpr(expr));
+                        data.value.expr = p.m(p.visitExpr(expr.*));
 
                         // Optionally preserve the name
                         data.value.expr = p.maybeKeepExprSymbolName(expr, "default", was_anonymous_named_expr);

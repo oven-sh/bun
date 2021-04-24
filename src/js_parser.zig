@@ -43,6 +43,11 @@ const ExprOrLetStmt = struct {
 
 const Tup = std.meta.Tuple;
 
+// This function exists to tie all of these checks together in one place
+fn isEvalOrArguments(name: string) bool {
+    return strings.eql(name, "eval") or strings.eql(name, "arguments");
+}
+
 fn notimpl() noreturn {
     std.debug.panic("Not implemented yet!!", .{});
 }
@@ -234,6 +239,11 @@ const DeferredErrors = struct {
         .invalid_expr_after_question = null,
         .array_spread_feature = null,
     };
+};
+
+const ImportClause = struct {
+    items: []js_ast.ClauseItem = &([_]js_ast.ClauseItem{}),
+    is_single_line: bool = false,
 };
 
 const ModuleType = enum { esm };
@@ -1521,7 +1531,7 @@ const P = struct {
                             p.lexer.unexpected();
                         }
 
-                        const export_clause = p.parseExportClause();
+                        const export_clause = try p.parseExportClause();
                         if (p.lexer.isContextualKeyword("from")) {
                             p.lexer.expectContextualKeyword("from");
                             const parsedPath = p.parsePath();
@@ -1972,7 +1982,195 @@ const P = struct {
                 );
             },
             .t_import => {
-                notimpl();
+                const previous_import_keyword = p.es6_import_keyword;
+                p.es6_import_keyword = p.lexer.range();
+                p.lexer.next();
+                var stmt: S.Import = S.Import{
+                    .namespace_ref = undefined,
+                    .import_record_index = std.math.maxInt(u32),
+                };
+                var was_originally_bare_import = false;
+
+                // "export import foo = bar"
+                if ((opts.is_export or (opts.is_namespace_scope and !opts.is_typescript_declare)) and p.lexer.token != .t_identifier) {
+                    p.lexer.expected(.t_identifier);
+                }
+
+                switch (p.lexer.token) {
+                    // "import('path')"
+                    // "import.meta"
+                    .t_open_paren, .t_dot => {
+                        p.es6_import_keyword = previous_import_keyword; // this wasn't an esm import statement after all
+                        const expr = p.parseSuffix(p.parseImportExpr(loc, .lowest), .lowest, null, Expr.EFlags.none);
+                        p.lexer.expectOrInsertSemicolon();
+                        return p.s(S.SExpr{
+                            .value = expr,
+                        }, loc);
+                    },
+                    .t_string_literal, .t_no_substitution_template_literal => {
+                        // "import 'path'"
+                        if (!opts.is_module_scope and (!opts.is_namespace_scope or !opts.is_typescript_declare)) {
+                            p.lexer.unexpected();
+                            fail();
+                        }
+                        was_originally_bare_import = true;
+                    },
+                    .t_asterisk => {
+                        // "import * as ns from 'path'"
+                        if (!opts.is_module_scope and (!opts.is_namespace_scope or !opts.is_typescript_declare)) {
+                            p.lexer.unexpected();
+                            fail();
+                        }
+
+                        p.lexer.next();
+                        p.lexer.expectContextualKeyword("as");
+                        stmt = S.Import{
+                            .namespace_ref = try p.storeNameInRef(p.lexer.identifier),
+                            .star_name_loc = p.lexer.loc(),
+                            .import_record_index = std.math.maxInt(u32),
+                        };
+                        p.lexer.expect(.t_identifier);
+                        p.lexer.expectContextualKeyword("from");
+                    },
+                    .t_open_brace => {
+                        // "import * as ns from 'path'"
+                        if (!opts.is_module_scope and (!opts.is_namespace_scope or !opts.is_typescript_declare)) {
+                            p.lexer.unexpected();
+                            fail();
+                        }
+                        var importClause = try p.parseImportClause();
+                        stmt = S.Import{ .namespace_ref = undefined, .import_record_index = std.math.maxInt(u32), .items = importClause.items, .is_single_line = importClause.is_single_line };
+                        p.lexer.expectContextualKeyword("from");
+                    },
+                    .t_identifier => {
+                        // "import defaultItem from 'path'"
+                        // "import foo = bar"
+                        if (!opts.is_module_scope and (!opts.is_namespace_scope)) {
+                            p.lexer.unexpected();
+                            fail();
+                        }
+
+                        const default_name = p.lexer.identifier;
+                        stmt = S.Import{ .namespace_ref = undefined, .import_record_index = std.math.maxInt(u32), .default_name = LocRef{
+                            .loc = p.lexer.loc(),
+                            .ref = try p.storeNameInRef(default_name),
+                        } };
+                        p.lexer.next();
+
+                        if (p.options.ts) {
+                            // Skip over type-only imports
+                            if (strings.eql(default_name, "type")) {
+                                switch (p.lexer.token) {
+                                    .t_identifier => {
+                                        if (!strings.eql(p.lexer.identifier, "from")) {
+                                            // "import type foo from 'bar';"
+                                            p.lexer.next();
+                                            p.lexer.expectContextualKeyword("from");
+                                            _ = p.parsePath();
+                                            p.lexer.expectOrInsertSemicolon();
+                                            return p.s(S.TypeScript{}, loc);
+                                        }
+                                    },
+                                    .t_asterisk => {
+                                        // "import type * as foo from 'bar';"
+                                        p.lexer.next();
+                                        p.lexer.expectContextualKeyword("as");
+                                        p.lexer.expect(.t_identifier);
+                                        p.lexer.expectContextualKeyword("from");
+                                        _ = p.parsePath();
+                                        p.lexer.expectOrInsertSemicolon();
+                                        return p.s(S.TypeScript{}, loc);
+                                    },
+
+                                    .t_open_brace => {
+                                        // "import type {foo} from 'bar';"
+                                        _ = try p.parseImportClause();
+                                        p.lexer.expectContextualKeyword("from");
+                                        _ = p.parsePath();
+                                        p.lexer.expectOrInsertSemicolon();
+                                        return p.s(S.TypeScript{}, loc);
+                                    },
+                                    else => {},
+                                }
+                            }
+
+                            // Parse TypeScript import assignment statements
+                            p.es6_import_keyword = previous_import_keyword; // This wasn't an ESM import statement after all;
+                            return p.parseTypeScriptImportEqualsStmt(loc, opts, logger.Loc.Empty, default_name);
+                        }
+
+                        if (p.lexer.token == .t_comma) {
+                            p.lexer.next();
+
+                            switch (p.lexer.token) {
+                                // "import defaultItem, * as ns from 'path'"
+                                .t_asterisk => {
+                                    p.lexer.next();
+                                    p.lexer.expectContextualKeyword("as");
+                                    stmt.namespace_ref = try p.storeNameInRef(p.lexer.identifier);
+                                    stmt.star_name_loc = p.lexer.loc();
+                                    p.lexer.expect(.t_identifier);
+                                },
+                                // "import defaultItem, {item1, item2} from 'path'"
+                                .t_open_brace => {
+                                    const importClause = try p.parseImportClause();
+                                    stmt.items = importClause.items;
+                                    stmt.is_single_line = importClause.is_single_line;
+                                },
+                                else => {
+                                    p.lexer.unexpected();
+                                },
+                            }
+
+                            p.lexer.expectContextualKeyword("from");
+                        }
+                    },
+                    else => {
+                        p.lexer.unexpected();
+                        fail();
+                    },
+                }
+
+                const path = p.parsePath();
+                stmt.import_record_index = p.addImportRecord(.stmt, path.loc, path.text);
+                p.import_records.items[stmt.import_record_index].was_originally_bare_import = was_originally_bare_import;
+                p.lexer.expectOrInsertSemicolon();
+
+                if (stmt.star_name_loc) |star| {
+                    stmt.namespace_ref = try p.declareSymbol(.import, star, p.loadNameFromRef(stmt.namespace_ref));
+                } else {
+                    var path_name = fs.PathName.init(strings.append(p.allocator, "import_", path.text) catch unreachable);
+                    const name = try path_name.nonUniqueNameString(p.allocator);
+                    stmt.namespace_ref = try p.newSymbol(.other, name);
+                    var scope: *Scope = p.current_scope orelse unreachable;
+                    try scope.generated.append(stmt.namespace_ref);
+                }
+
+                var item_refs = std.StringHashMap(LocRef).init(p.allocator);
+
+                // Link the default item to the namespace
+                if (stmt.default_name) |*name_loc| {
+                    const name = p.loadNameFromRef(name_loc.ref orelse unreachable);
+                    const ref = try p.declareSymbol(.import, name_loc.loc, name);
+                    try p.is_import_item.put(ref, true);
+                    name_loc.ref = ref;
+                }
+
+                if (stmt.items.len > 0) {
+                    try item_refs.ensureCapacity(@intCast(u32, stmt.items.len));
+                    for (stmt.items) |*item| {
+                        const name = p.loadNameFromRef(item.name.ref orelse unreachable);
+                        const ref = try p.declareSymbol(.import, item.name.loc, name);
+                        p.checkForNonBMPCodePoint(item.alias_loc, item.alias);
+                        try p.is_import_item.put(ref, true);
+                        item.name.ref = ref;
+                        item_refs.putAssumeCapacity(item.alias, LocRef{ .loc = item.name.loc, .ref = ref });
+                    }
+                }
+
+                // Track the items for this namespace
+                try p.import_items_for_namespace.put(stmt.namespace_ref, item_refs);
+                return p.s(stmt, loc);
             },
             .t_break => {
                 notimpl();
@@ -1999,6 +2197,97 @@ const P = struct {
         }
 
         return js_ast.Stmt.empty();
+    }
+
+    pub fn parseTypeScriptImportEqualsStmt(p: *P, loc: logger.Loc, opts: *ParseStatementOptions, default_name_loc: logger.Loc, default_name: string) Stmt {
+        notimpl();
+    }
+
+    pub fn parseClauseAlias(p: *P, kind: string) !string {
+        const loc = p.lexer.loc();
+
+        // The alias may now be a string (see https://github.com/tc39/ecma262/pull/2154)
+        if (p.lexer.token == .t_string_literal) {
+            if (p.lexer.utf16ToStringWithValidation(p.lexer.string_literal)) |alias| {
+                return alias;
+            } else |err| {
+                const r = p.source.rangeOfString(loc);
+                // TODO: improve error message
+                try p.log.addRangeErrorFmt(p.source, r, p.allocator, "Invalid {s} alias because it contains an unpaired Unicode surrogate (like emoji)", .{kind});
+                return p.source.textForRange(r);
+            }
+        }
+
+        // The alias may be a keyword
+        if (!p.lexer.isIdentifierOrKeyword()) {
+            p.lexer.expect(.t_identifier);
+        }
+
+        const alias = p.lexer.identifier;
+        p.checkForNonBMPCodePoint(loc, alias);
+        return alias;
+    }
+
+    pub fn parseImportClause(
+        p: *P,
+    ) !ImportClause {
+        var items = List(js_ast.ClauseItem).init(p.allocator);
+        p.lexer.expect(.t_open_brace);
+        var is_single_line = !p.lexer.has_newline_before;
+
+        while (p.lexer.token != .t_close_brace) {
+            // The alias may be a keyword;
+            const isIdentifier = p.lexer.token == .t_identifier;
+            const alias_loc = p.lexer.loc();
+            const alias = try p.parseClauseAlias("import");
+            var name = LocRef{ .loc = alias_loc, .ref = try p.storeNameInRef(alias) };
+            var original_name = alias;
+            p.lexer.next();
+
+            if (p.lexer.isContextualKeyword("as")) {
+                p.lexer.next();
+                original_name = p.lexer.identifier;
+                name = LocRef{ .loc = alias_loc, .ref = try p.storeNameInRef(alias) };
+                p.lexer.expect(.t_identifier);
+            } else if (!isIdentifier) {
+                // An import where the name is a keyword must have an alias
+                p.lexer.expectedString("\"as\"");
+            }
+
+            // Reject forbidden names
+            if (isEvalOrArguments(original_name)) {
+                const r = js_lexer.rangeOfIdentifier(&p.source, name.loc);
+                try p.log.addRangeErrorFmt(p.source, r, p.allocator, "Cannot use \"{s}\" as an identifier here", .{original_name});
+            }
+
+            try items.append(js_ast.ClauseItem{
+                .alias = alias,
+                .alias_loc = alias_loc,
+                .name = name,
+                .original_name = original_name,
+            });
+
+            if (p.lexer.token != .t_comma) {
+                break;
+            }
+
+            if (p.lexer.has_newline_before) {
+                is_single_line = false;
+            }
+
+            p.lexer.next();
+
+            if (p.lexer.has_newline_before) {
+                is_single_line = false;
+            }
+        }
+
+        if (p.lexer.has_newline_before) {
+            is_single_line = false;
+        }
+
+        p.lexer.expect(.t_close_brace);
+        return ImportClause{ .items = items.toOwnedSlice(), .is_single_line = is_single_line };
     }
 
     pub fn forbidInitializers(p: *P, decls: []G.Decl, loop_type: string, is_var: bool) !void {
@@ -2356,14 +2645,14 @@ const P = struct {
         // return Stmt.empty();
     }
 
-    pub fn parseExportClause(p: *P) ExportClauseResult {
+    pub fn parseExportClause(p: *P) !ExportClauseResult {
         var items = List(js_ast.ClauseItem).initCapacity(p.allocator, 1) catch unreachable;
         var first_keyword_item_loc = logger.Loc{};
         p.lexer.expect(.t_open_brace);
         var is_single_line = !p.lexer.has_newline_before;
 
         while (p.lexer.token != .t_close_brace) {
-            var alias = p.lexer.identifier;
+            var alias = try p.parseClauseAlias("export");
             var alias_loc = p.lexer.loc();
 
             var name = LocRef{
@@ -2396,14 +2685,9 @@ const P = struct {
 
             if (p.lexer.isContextualKeyword("as")) {
                 p.lexer.next();
-                alias = p.lexer.identifier;
+                alias = try p.parseClauseAlias("export");
                 alias_loc = p.lexer.loc();
 
-                // The alias may be a keyword
-                if (!p.lexer.isIdentifierOrKeyword()) {
-                    p.lexer.expect(.t_identifier);
-                }
-                p.checkForNonBMPCodePoint(alias_loc, alias);
                 p.lexer.next();
             }
 

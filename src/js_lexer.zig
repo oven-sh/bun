@@ -843,6 +843,11 @@ pub const Lexer = struct {
     }
 
     // TODO: use wtf-8 encoding.
+    pub fn utf16ToStringWithValidation(lexer: *Lexer, js: JavascriptString) !string {
+        return std.unicode.utf16leToUtf8Alloc(lexer.allocator, js);
+    }
+
+    // TODO: use wtf-8 encoding.
     pub fn utf16ToString(lexer: *Lexer, js: JavascriptString) string {
         return std.unicode.utf16leToUtf8Alloc(lexer.allocator, js) catch unreachable;
     }

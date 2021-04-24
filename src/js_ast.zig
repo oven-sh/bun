@@ -2248,13 +2248,19 @@ pub const S = struct {
     // Many parts are optional and can be combined in different ways. The only
     // restriction is that you cannot have both a clause and a star namespace.
     pub const Import = struct {
-    // If this is a star import: This is a Ref for the namespace symbol. The Loc
-    // for the symbol is StarLoc.
-    //
-    // Otherwise: This is an auto-generated Ref for the namespace representing
-    // the imported file. In this case StarLoc is nil. The NamespaceRef is used
-    // when converting this module to a CommonJS module.
-    namespace_ref: Ref, default_name: *LocRef, items: *[]ClauseItem, star_name_loc: *logger.Loc, import_record_index: u32, is_single_line: bool };
+        // If this is a star import: This is a Ref for the namespace symbol. The Loc
+        // for the symbol is StarLoc.
+        //
+        // Otherwise: This is an auto-generated Ref for the namespace representing
+        // the imported file. In this case StarLoc is nil. The NamespaceRef is used
+        // when converting this module to a CommonJS module.
+        namespace_ref: Ref,
+        default_name: ?LocRef = null,
+        items: []ClauseItem = &([_]ClauseItem{}),
+        star_name_loc: ?logger.Loc = null,
+        import_record_index: u32,
+        is_single_line: bool = false,
+    };
 
     pub const Return = struct { value: ?ExprNodeIndex = null };
     pub const Throw = struct { value: ExprNodeIndex };

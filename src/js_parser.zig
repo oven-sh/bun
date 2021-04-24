@@ -2239,11 +2239,213 @@ const P = struct {
             },
 
             else => {
-                notimpl();
+                const is_identifier = p.lexer.token == .t_identifier;
+                const name = p.lexer.identifier;
+                var emiss = E.Missing{};
+                // Parse either an async function, an async expression, or a normal expression
+                var expr: Expr = Expr{ .loc = loc, .data = Expr.Data{ .e_missing = &emiss } };
+                if (is_identifier and strings.eql(p.lexer.raw(), "async")) {
+                    var async_range = p.lexer.range();
+                    p.lexer.next();
+                    if (p.lexer.token == .t_function and !p.lexer.has_newline_before) {
+                        p.lexer.next();
+                        return try p.parseFnStmt(async_range.loc, opts, async_range);
+                    }
+
+                    expr = p.parseSuffix(try p.parseAsyncPrefixExpr(async_range, .lowest), .lowest, null, Expr.EFlags.none);
+                } else {
+                    const exprOrLet = try p.parseExprOrLetStmt(opts);
+                    switch (exprOrLet.stmt_or_expr) {
+                        .stmt => |stmt| {
+                            p.lexer.expectOrInsertSemicolon();
+                            return stmt;
+                        },
+                        else => {},
+                    }
+                }
+
+                if (is_identifier) {
+                    switch (expr.data) {
+                        .e_identifier => |ident| {
+                            if (p.lexer.token == .t_colon and opts.ts_decorators == null) {
+                                _ = try p.pushScopeForParsePass(.label, loc);
+                                defer p.popScope();
+
+                                // Parse a labeled statement
+                                p.lexer.next();
+
+                                const _name = LocRef{ .loc = expr.loc, .ref = ident.ref };
+                                var nestedOpts = ParseStatementOptions{};
+
+                                switch (opts.lexical_decl) {
+                                    .allow_all, .allow_fn_inside_label => {
+                                        nestedOpts.lexical_decl = .allow_fn_inside_label;
+                                    },
+                                    else => {},
+                                }
+                                var stmt = p.parseStmt(&nestedOpts) catch unreachable;
+                                return p.s(S.Label{ .name = _name, .stmt = stmt }, loc);
+                            }
+                        },
+                        else => {},
+                    }
+
+                    if (p.options.ts) {
+                        if (js_lexer.TypescriptStmtKeyword.List.get(name)) |ts_stmt| {
+                            switch (ts_stmt) {
+                                .ts_stmt_type => {
+                                    if (p.lexer.token == .t_identifier and !p.lexer.has_newline_before) {
+                                        // "type Foo = any"
+                                        var stmtOpts = ParseStatementOptions{ .is_module_scope = opts.is_module_scope };
+                                        p.skipTypescriptTypeStmt(&stmtOpts);
+                                        return p.s(S.TypeScript{}, loc);
+                                    }
+                                },
+                                .ts_stmt_namespace, .ts_stmt_module => {
+                                    // "namespace Foo {}"
+                                    // "module Foo {}"
+                                    // "declare module 'fs' {}"
+                                    // "declare module 'fs';"
+                                    if (((opts.is_module_scope or opts.is_namespace_scope) and (p.lexer.token == .t_identifier or
+                                        (p.lexer.token == .t_string_literal and opts.is_typescript_declare))))
+                                    {
+                                        return p.parseTypescriptNamespaceTmt(loc, opts);
+                                    }
+                                },
+                                .ts_stmt_interface => {
+                                    // "interface Foo {}"
+                                    var stmtOpts = ParseStatementOptions{ .is_module_scope = opts.is_module_scope };
+
+                                    p.skipTypeScriptInterfaceStmt(&stmtOpts);
+                                    return p.s(S.TypeScript{}, loc);
+                                },
+                                .ts_stmt_abstract => {
+                                    if (p.lexer.token == .t_class or opts.ts_decorators != null) {
+                                        return p.parseClassStmt(loc, opts);
+                                    }
+                                },
+                                .ts_stmt_global => {
+                                    // "declare module 'fs' { global { namespace NodeJS {} } }"
+                                    if (opts.is_namespace_scope and opts.is_typescript_declare and p.lexer.token == .t_open_brace) {
+                                        p.lexer.next();
+                                        _ = p.parseStmtsUpTo(.t_close_brace, opts) catch unreachable;
+                                        p.lexer.next();
+                                        return p.s(S.TypeScript{}, loc);
+                                    }
+                                },
+                                .ts_stmt_declare => {
+                                    opts.lexical_decl = .allow_all;
+                                    opts.is_typescript_declare = true;
+
+                                    // "@decorator declare class Foo {}"
+                                    // "@decorator declare abstract class Foo {}"
+                                    if (opts.ts_decorators != null and p.lexer.token != .t_class and !p.lexer.isContextualKeyword("abstract")) {
+                                        p.lexer.expected(.t_class);
+                                    }
+
+                                    // "declare global { ... }"
+                                    if (p.lexer.isContextualKeyword("global")) {
+                                        p.lexer.next();
+                                        p.lexer.expect(.t_open_brace);
+                                        _ = p.parseStmtsUpTo(.t_close_brace, opts) catch unreachable;
+                                        p.lexer.next();
+                                        return p.s(S.TypeScript{}, loc);
+                                    }
+
+                                    // "declare const x: any"
+                                    const stmt = p.parseStmt(opts) catch unreachable;
+                                    if (opts.ts_decorators) |decs| {
+                                        p.discardScopesUpTo(decs.scope_index);
+                                    }
+
+                                    // Unlike almost all uses of "declare", statements that use
+                                    // "export declare" with "var/let/const" inside a namespace affect
+                                    // code generation. They cause any declared bindings to be
+                                    // considered exports of the namespace. Identifier references to
+                                    // those names must be converted into property accesses off the
+                                    // namespace object:
+                                    //
+                                    //   namespace ns {
+                                    //     export declare const x
+                                    //     export function y() { return x }
+                                    //   }
+                                    //
+                                    //   (ns as any).x = 1
+                                    //   console.log(ns.y())
+                                    //
+                                    // In this example, "return x" must be replaced with "return ns.x".
+                                    // This is handled by replacing each "export declare" statement
+                                    // inside a namespace with an "export var" statement containing all
+                                    // of the declared bindings. That "export var" statement will later
+                                    // cause identifiers to be transformed into property accesses.
+                                    if (opts.is_namespace_scope and opts.is_export) {
+                                        var decls: []G.Decl = &([_]G.Decl{});
+                                        switch (stmt.data) {
+                                            .s_local => |local| {
+                                                var _decls = try List(G.Decl).initCapacity(p.allocator, local.decls.len);
+                                                for (local.decls) |decl| {
+                                                    try extractDeclsForBinding(decl.binding, &_decls);
+                                                }
+                                                decls = _decls.toOwnedSlice();
+                                            },
+                                            else => {},
+                                        }
+
+                                        if (decls.len > 0) {
+                                            return p.s(S.Local{
+                                                .kind = .k_var,
+                                                .is_export = true,
+                                                .decls = decls,
+                                            }, loc);
+                                        }
+                                    }
+
+                                    return p.s(S.TypeScript{}, loc);
+                                },
+                            }
+                        }
+                    }
+                }
+
+                p.lexer.expectOrInsertSemicolon();
+                return p.s(S.SExpr{ .value = expr }, loc);
             },
         }
 
         return js_ast.Stmt.empty();
+    }
+
+    pub fn discardScopesUpTo(p: *P, scope_index: usize) void {
+        // Remove any direct children from their parent
+        var scope = p.current_scope orelse unreachable;
+        var children = scope.children;
+        for (p.scopes_in_order.items[scope_index..]) |child| {
+            if (child.scope.parent == p.current_scope) {
+                var i: usize = children.items.len - 1;
+                while (i >= 0) {
+                    if (children.items[i] == child.scope) {
+                        _ = children.orderedRemove(i);
+                        break;
+                    }
+                    i -= 1;
+                }
+            }
+        }
+
+        // Truncate the scope order where we started to pretend we never saw this scope
+        p.scopes_in_order.shrinkAndFree(scope_index);
+    }
+
+    pub fn skipTypescriptTypeStmt(p: *P, opts: *ParseStatementOptions) void {
+        notimpl();
+    }
+
+    pub fn parseTypescriptNamespaceTmt(p: *P, loc: logger.Loc, opts: *ParseStatementOptions) Stmt {
+        notimpl();
+    }
+
+    pub fn skipTypeScriptInterfaceStmt(p: *P, opts: *ParseStatementOptions) void {
+        notimpl();
     }
 
     pub fn parseTypeScriptImportEqualsStmt(p: *P, loc: logger.Loc, opts: *ParseStatementOptions, default_name_loc: logger.Loc, default_name: string) Stmt {
@@ -5340,6 +5542,25 @@ const P = struct {
     }
     pub fn parsePrefix(p: *P, level: Level, errors: ?*DeferredErrors, flags: Expr.EFlags) Expr {
         return p._parsePrefix(level, errors orelse &DeferredErrors.None, flags);
+    }
+
+    fn extractDeclsForBinding(binding: Binding, decls: *List(G.Decl)) !void {
+        switch (binding.data) {
+            .b_property, .b_missing => {},
+            .b_identifier => {
+                try decls.append(G.Decl{ .binding = binding });
+            },
+            .b_array => |arr| {
+                for (arr.items) |item| {
+                    extractDeclsForBinding(item.binding, decls) catch unreachable;
+                }
+            },
+            .b_object => |obj| {
+                for (obj.properties) |prop| {
+                    extractDeclsForBinding(prop.value, decls) catch unreachable;
+                }
+            },
+        }
     }
 
     // This assumes that the open parenthesis has already been parsed by the caller

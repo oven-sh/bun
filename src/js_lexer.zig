@@ -20,6 +20,7 @@ pub const tokenToString = tables.tokenToString;
 pub const jsxEntity = tables.jsxEntity;
 pub const StrictModeReservedWords = tables.StrictModeReservedWords;
 pub const PropertyModifierKeyword = tables.PropertyModifierKeyword;
+pub const TypescriptStmtKeyword = tables.TypescriptStmtKeyword;
 
 // TODO: JSON
 const IS_JSON_FILE = false;
@@ -265,7 +266,7 @@ pub const Lexer = struct {
         }
     }
 
-    pub fn expect(self: *Lexer, token: T) void {
+    pub fn expect(self: *Lexer, comptime token: T) void {
         if (self.token != token) {
             self.expected(token);
         }

@@ -485,6 +485,47 @@ pub const tokenToString = comptime {
     return tokenEnums;
 };
 
+pub const TypescriptStmtKeyword = enum {
+    ts_stmt_type,
+    ts_stmt_namespace,
+    ts_stmt_module,
+    ts_stmt_interface,
+    ts_stmt_abstract,
+    ts_stmt_global,
+    ts_stmt_declare,
+
+    pub const List = std.ComptimeStringMap(TypescriptStmtKeyword, .{
+        .{
+            "type",
+            TypescriptStmtKeyword.ts_stmt_type,
+        },
+        .{
+            "namespace",
+            TypescriptStmtKeyword.ts_stmt_namespace,
+        },
+        .{
+            "module",
+            TypescriptStmtKeyword.ts_stmt_module,
+        },
+        .{
+            "interface",
+            TypescriptStmtKeyword.ts_stmt_interface,
+        },
+        .{
+            "abstract",
+            TypescriptStmtKeyword.ts_stmt_abstract,
+        },
+        .{
+            "global",
+            TypescriptStmtKeyword.ts_stmt_global,
+        },
+        .{
+            "declare",
+            TypescriptStmtKeyword.ts_stmt_declare,
+        },
+    });
+};
+
 pub const JSXEntityMap = std.StringHashMap(CodePoint);
 
 pub var jsxEntity: JSXEntityMap = undefined;

@@ -21,11 +21,11 @@ Goals:
 - Support `defines` like in esbuild
 - Support esbuild plugins
 - Support importing CSS files from JavaScript
+- Tree-shaking
 
 Non-goals:
 
 - Bundling for production
-- Tree-shaking
 - Minification
 - AST plugins
 - Support Node.js
@@ -65,31 +65,31 @@ If bundler means "turn my development code into something a browser can run",
 
 ### Compatibility Table
 
-Key:
-
-| Feature                            | esbuild | esdev |
-| ---------------------------------- | ------- | ----- |
-| Minification                       | ✅      | ❌    |
-| JSX (transform)                    | ✅      | ⌛    |
-| TypeScript (transform)             | ✅      | ⌛    |
-| Hot Module Reloading               | ❌[1]   | ⌛    |
-| React Fast Refresh                 | ❌[1]   | ⌛    |
-| Tree Shaking                       | ✅      | ⌛    |
-| Incremental builds                 | ✅      | ⌛    |
-| CSS                                | ✅      | 🗓️    |
-| Support older browsers             | ✅      | ❌[2] |
-| Plugins                            | ✅      | ⌛[3] |
-| AST Plugins                        | ❌      | ❌[4] |
-| Filesystem Cache API (for plugins) | ❓      | 🗓️[4] |
+| Feature                              | esbuild | esdev |
+| ------------------------------------ | ------- | ----- |
+| React Fast Refresh                   | ❌[1]   | ⌛    |
+| Hot Module Reloading                 | ❌[1]   | ⌛    |
+| Minification                         | ✅      | ❌    |
+| JSX (transform)                      | ✅      | ⌛    |
+| TypeScript (transform)               | ✅      | ⌛    |
+| Tree Shaking                         | ✅      | ⌛    |
+| Incremental builds                   | ✅      | ⌛    |
+| CSS                                  | ✅      | 🗓️    |
+| CommonJS, IIFE, UMD outputs          | ✅      | ❌    |
+| Support older browsers               | ✅      | ❌[2] |
+| Plugins                              | ✅      | ⌛[3] |
+| AST Plugins                          | ❌      | ❌[4] |
+| Filesystem Cache API (for plugins)   | ❓      | 🗓️[4] |
+| Transform to ESM with `bundle` false | ❓      | ⌛    |
 
 Key:
 |Tag | Meaning
 |----|----------------------------------------------|
-| ✅ | "compatible" |
-| ❌ | "not supported, and no plans to change that" |
-| ⌛ | "in-progress" |
-| 🗓️ | "planned" or "eventually but work has not started" |
-| ❓ | "unknown" |
+| ✅ | Compatible |
+| ❌ | Not supported, and no plans to change that |
+| ⌛ | In-progress |
+| 🗓️ | Planned" or "eventually but work has not started |
+| ❓ | Unknown |
 
 Citations:
 [1]:

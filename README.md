@@ -76,6 +76,8 @@ If bundler means "turn my development code into something a browser can run",
 | Incremental builds                   | ✅      | ⌛    |
 | CSS                                  | ✅      | 🗓️    |
 | CommonJS, IIFE, UMD outputs          | ✅      | ❌    |
+| Node.js build target                 | ✅      | ❌    |
+| Browser build target                 | ✅      | ⌛    |
 | Support older browsers               | ✅      | ❌[2] |
 | Plugins                              | ✅      | ⌛[3] |
 | AST Plugins                          | ❌      | ❌[4] |
@@ -88,8 +90,8 @@ Key:
 | ✅ | Compatible |
 | ❌ | Not supported, and no plans to change that |
 | ⌛ | In-progress |
-| 🗓️ | Planned" or "eventually but work has not started |
+| 🗓️ | Planned but work has not started |
 | ❓ | Unknown |
 
-Citations:
-[1]:
+Notes:
+[1]: https://esbuild.github.io/faq/#upcoming-roadmap

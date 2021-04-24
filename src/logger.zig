@@ -178,6 +178,14 @@ pub const Log = struct {
         });
     }
 
+    pub fn addWarning(log: *Log, source: ?Source, l: Loc, text: string) !void {
+        log.warnings += 1;
+        try log.addMsg(Msg{
+            .kind = .warn,
+            .data = rangeData(source, Range{ .loc = l }, text),
+        });
+    }
+
     pub fn addRangeDebug(log: *Log, source: ?Source, r: Range, text: string) !void {
         try log.addMsg(Msg{
             .kind = .debug,

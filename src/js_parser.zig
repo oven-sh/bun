@@ -41,12 +41,91 @@ const ExprOrLetStmt = struct {
     decls: []G.Decl = &([_]G.Decl{}),
 };
 
+const ExprIn = struct {
+    // This tells us if there are optional chain expressions (EDot, EIndex, or
+    // ECall) that are chained on to this expression. Because of the way the AST
+    // works, chaining expressions on to this expression means they are our
+    // parent expressions.
+    //
+    // Some examples:
+    //
+    //   a?.b.c  // EDot
+    //   a?.b[c] // EIndex
+    //   a?.b()  // ECall
+    //
+    // Note that this is false if our parent is a node with a OptionalChain
+    // value of OptionalChainStart. That means it's the start of a new chain, so
+    // it's not considered part of this one.
+    //
+    // Some examples:
+    //
+    //   a?.b?.c   // EDot
+    //   a?.b?.[c] // EIndex
+    //   a?.b?.()  // ECall
+    //
+    // Also note that this is false if our parent is a node with a OptionalChain
+    // value of OptionalChainNone. That means it's outside parentheses, which
+    // means it's no longer part of the chain.
+    //
+    // Some examples:
+    //
+    //   (a?.b).c  // EDot
+    //   (a?.b)[c] // EIndex
+    //   (a?.b)()  // ECall
+    //
+    has_chain_parent: bool = false,
+
+    // If our parent is an ECall node with an OptionalChain value of
+    // OptionalChainStart, then we will need to store the value for the "this" of
+    // that call somewhere if the current expression is an optional chain that
+    // ends in a property access. That's because the value for "this" will be
+    // used twice: once for the inner optional chain and once for the outer
+    // optional chain.
+    //
+    // Example:
+    //
+    //   // Original
+    //   a?.b?.();
+    //
+    //   // Lowered
+    //   var _a;
+    //   (_a = a == null ? void 0 : a.b) == null ? void 0 : _a.call(a);
+    //
+    // In the example above we need to store "a" as the value for "this" so we
+    // can substitute it back in when we call "_a" if "_a" is indeed present.
+    // See also "thisArgFunc" and "thisArgWrapFunc" in "exprOut".
+    store_this_arg_for_parent_optional_chain: bool = false,
+
+    // Certain substitutions of identifiers are disallowed for assignment targets.
+    // For example, we shouldn't transform "undefined = 1" into "void 0 = 1". This
+    // isn't something real-world code would do but it matters for conformance
+    // tests.
+    assign_target: js_ast.AssignTarget = js_ast.AssignTarget.none,
+};
+
+const ExprOut = struct {
+    // True if the child node is an optional chain node (EDot, EIndex, or ECall
+    // with an IsOptionalChain value of true)
+    child_contains_optional_chain: bool = false,
+};
+
 const Tup = std.meta.Tuple;
 
 // This function exists to tie all of these checks together in one place
 fn isEvalOrArguments(name: string) bool {
     return strings.eql(name, "eval") or strings.eql(name, "arguments");
 }
+
+const PrependTempRefsOpts = struct {
+    fn_body_loc: ?logger.Loc = null,
+    kind: StmtsKind = StmtsKind.none,
+};
+
+pub const StmtsKind = enum {
+    none,
+    loop_body,
+    fn_body,
+};
 
 fn notimpl() noreturn {
     std.debug.panic("Not implemented yet!!", .{});
@@ -63,8 +142,8 @@ fn fail() noreturn {
 const ExprBindingTuple = struct { expr: ?ExprNodeIndex = null, binding: ?Binding = null, override_expr: ?ExprNodeIndex = null };
 
 const TempRef = struct {
-    ref: js_ast.Ref,
-    value: *js_ast.Expr,
+    ref: Ref,
+    value: ?Expr = null,
 };
 
 const ImportNamespaceCallOrConstruct = struct {
@@ -173,18 +252,18 @@ const FnOnlyDataVisit = struct {
     // This is a reference to the magic "arguments" variable that exists inside
     // functions in JavaScript. It will be non-nil inside functions and nil
     // otherwise.
-    arguments_ref: *js_ast.Ref,
+    arguments_ref: ?js_ast.Ref = null,
 
     // Arrow functions don't capture the value of "this" and "arguments". Instead,
     // the values are inherited from the surrounding context. If arrow functions
     // are turned into regular functions due to lowering, we will need to generate
     // local variables to capture these values so they are preserved correctly.
-    this_capture_ref: *js_ast.Ref,
-    arguments_capture_ref: *js_ast.Ref,
+    this_capture_ref: ?js_ast.Ref = null,
+    arguments_capture_ref: ?js_ast.Ref = null,
 
     // Inside a static class property initializer, "this" expressions should be
     // replaced with the class name.
-    this_class_static_ref: *js_ast.Ref,
+    this_class_static_ref: ?js_ast.Ref = null,
 
     // If we're inside an async arrow function and async functions are not
     // supported, then we will have to convert that arrow function to a generator
@@ -298,6 +377,35 @@ pub const Parser = struct {
             var opts = ParseStatementOptions{ .is_module_scope = true };
             const stmts = try p.parseStmtsUpTo(js_lexer.T.t_end_of_file, &opts);
             try p.prepareForVisitPass();
+
+            // ESM is always strict mode. I don't think we need this.
+            // // Strip off a leading "use strict" directive when not bundling
+            // var directive = "";
+
+            // Insert a variable for "import.meta" at the top of the file if it was used.
+            // We don't need to worry about "use strict" directives because this only
+            // happens when bundling, in which case we are flatting the module scopes of
+            // all modules together anyway so such directives are meaningless.
+            if (!p.import_meta_ref.isNull()) {
+                // heap so it lives beyond this function call
+                var decls = try p.allocator.alloc(G.Decl, 1);
+                decls[0] = Decl{ .binding = p.b(B.Identifier{
+                    .ref = p.import_meta_ref,
+                }, logger.Loc.Empty), .value = p.e(E.Object{}, logger.Loc.Empty) };
+                var importMetaStatement = p.s(S.Local{
+                    .kind = .k_const,
+                    .decls = decls,
+                }, logger.Loc.Empty);
+            }
+
+            var parts = try List(js_ast.Part).initCapacity(p.allocator, 1);
+            try p.appendPart(parts, stmts);
+
+            // Pop the module scope to apply the "ContainsDirectEval" rules
+            p.popScope();
+
+            result = p.toAST(parts);
+            result.source_map_comment = p.lexer.source_mapping_url;
         }
 
         return result;
@@ -325,6 +433,11 @@ pub const Parser = struct {
     }
 };
 
+const FindSymbolResult = struct {
+    ref: Ref,
+    declare_loc: ?logger.Loc = null,
+    is_inside_with_scope: bool = false,
+};
 const ExportClauseResult = struct { clauses: []js_ast.ClauseItem = &([_]js_ast.ClauseItem{}), is_single_line: bool = false };
 
 const DeferredTsDecorators = struct {
@@ -373,7 +486,7 @@ const P = struct {
     allocated_names: List(string),
     latest_arrow_arg_loc: logger.Loc = logger.Loc.Empty,
     forbid_suffix_after_as_loc: logger.Loc = logger.Loc.Empty,
-    current_scope: ?*js_ast.Scope = null,
+    current_scope: *js_ast.Scope = null,
     scopes_for_current_part: List(*js_ast.Scope),
     symbols: List(js_ast.Symbol),
     ts_use_counts: List(u32),
@@ -604,19 +717,72 @@ const P = struct {
         parser.relocated_top_level_vars.deinit();
     }
 
-    pub fn findSymbol(self: *P, loc: logger.Loc, name: string) ?js_ast.Symbol {
-        return null;
+    pub fn findSymbol(p: *P, loc: logger.Loc, name: string) !FindSymbolResult {
+        var ref: Ref = undefined;
+        var declare_loc: logger.Loc = undefined;
+        var is_inside_with_scope = false;
+        var did_forbid_argumen = false;
+        var scope = p.current_scope;
+
+        while (true) {
+
+            // Track if we're inside a "with" statement body
+            if (scope.kind == .with) {
+                is_inside_with_scope = true;
+            }
+
+            // Forbid referencing "arguments" inside class bodies
+            if (scope.forbid_arguments and strings.eql(name, "arguments") and !did_forbid_argumen) {
+                const r = js_lexer.rangeOfIdentifier(&p.source, loc);
+                p.log.addRangeErrorFmt(p.source, r, p.allocator, "Cannot access \"{s}\" here", .{name}) catch unreachable;
+                did_forbid_argumen = true;
+            }
+
+            // Is the symbol a member of this scope?
+            if (scope.members.get(name)) |member| {
+                ref = member.ref;
+                declare_loc = member.loc;
+                break;
+            }
+
+            if (scope.parent) |parent| {
+                scope = parent;
+            } else {
+                // Allocate an "unbound" symbol
+                p.checkForNonBMPCodePoint(loc, name);
+                ref = try p.newSymbol(.unbound, name);
+                declare_loc = loc;
+                try p.module_scope.members.put(name, js_ast.Scope.Member{ .ref = ref, .loc = logger.Loc.Empty });
+                break;
+            }
+        }
+
+        // If we had to pass through a "with" statement body to get to the symbol
+        // declaration, then this reference could potentially also refer to a
+        // property on the target object of the "with" statement. We must not rename
+        // it or we risk changing the behavior of the code.
+        if (is_inside_with_scope) {
+            p.symbols.items[ref.inner_index].must_not_be_renamed = true;
+        }
+
+        // Track how many times we've referenced this symbol
+        p.recordUsage(&ref);
+        return FindSymbolResult{
+            .ref = ref,
+            .declare_loc = declare_loc,
+            .is_inside_with_scope = is_inside_with_scope,
+        };
     }
 
-    pub fn recordUsage(self: *P, ref: *js_ast.Ref) void {
+    pub fn recordUsage(p: *P, ref: *js_ast.Ref) void {
         // The use count stored in the symbol is used for generating symbol names
         // during minification. These counts shouldn't include references inside dead
         // code regions since those will be culled.
         if (!p.is_control_flow_dead) {
-            p.symbols[ref.inner_index].use_count_estimate += 1;
-            var use = p.symbol_uses[ref];
+            p.symbols.items[ref.inner_index].use_count_estimate += 1;
+            var use = p.symbol_uses.get(ref.*) orelse unreachable;
             use.count_estimate += 1;
-            p.symbol_uses.put(ref, use);
+            p.symbol_uses.put(ref.*, use) catch unreachable;
         }
 
         // The correctness of TypeScript-to-JavaScript conversion relies on accurate
@@ -747,7 +913,7 @@ const P = struct {
     pub fn prepareForVisitPass(p: *P) !void {
         try p.pushScopeForVisitPass(js_ast.Scope.Kind.entry, locModuleScope);
         p.fn_or_arrow_data_visit.is_outside_fn_or_arrow = true;
-        p.module_scope = p.current_scope orelse unreachable;
+        p.module_scope = p.current_scope;
         p.has_es_module_syntax = p.es6_import_keyword.len > 0 or p.es6_export_keyword.len > 0 or p.top_level_await_keyword.len > 0;
 
         // ECMAScript modules are always interpreted as strict mode. This has to be
@@ -801,7 +967,7 @@ const P = struct {
     }
 
     pub fn pushScopeForParsePass(p: *P, kind: js_ast.Scope.Kind, loc: logger.Loc) !usize {
-        var parent = p.current_scope orelse unreachable;
+        var parent = p.current_scope;
         var scope = try js_ast.Scope.initPtr(p.allocator);
         scope.kind = kind;
         scope.parent = parent;
@@ -1059,7 +1225,7 @@ const P = struct {
 
     pub fn popAndDiscardScope(p: *P, scope_index: usize) void {
         // Move up to the parent scope
-        var to_discard = p.current_scope orelse unreachable;
+        var to_discard = p.current_scope;
         var parent = to_discard.parent orelse unreachable;
 
         p.current_scope = parent;
@@ -1161,7 +1327,7 @@ const P = struct {
 
         const name = js_ast.LocRef{ .loc = loc, .ref = try p.newSymbol(Symbol.Kind.other, identifier) };
 
-        var scope = p.current_scope orelse unreachable;
+        var scope = p.current_scope;
 
         try scope.generated.append(name.ref orelse unreachable);
 
@@ -2152,7 +2318,7 @@ const P = struct {
                     var path_name = fs.PathName.init(strings.append(p.allocator, "import_", path.text) catch unreachable);
                     const name = try path_name.nonUniqueNameString(p.allocator);
                     stmt.namespace_ref = try p.newSymbol(.other, name);
-                    var scope: *Scope = p.current_scope orelse unreachable;
+                    var scope: *Scope = p.current_scope;
                     try scope.generated.append(stmt.namespace_ref);
                 }
 
@@ -2417,7 +2583,7 @@ const P = struct {
 
     pub fn discardScopesUpTo(p: *P, scope_index: usize) void {
         // Remove any direct children from their parent
-        var scope = p.current_scope orelse unreachable;
+        var scope = p.current_scope;
         var children = scope.children;
         for (p.scopes_in_order.items[scope_index..]) |child| {
             if (child.scope.parent == p.current_scope) {
@@ -3017,9 +3183,80 @@ const P = struct {
                 break :run;
             }
 
-            const stmt = p.parseStmt(opts) catch break :run;
+            var stmt = p.parseStmt(opts) catch break :run;
+
+            // Skip TypeScript types entirely
+            if (p.options.ts) {
+                switch (stmt.data) {
+                    .s_type_script => {
+                        continue;
+                    },
+                    else => {},
+                }
+            }
+
+            // Parse one or more directives at the beginning
+            if (isDirectivePrologue) {
+                isDirectivePrologue = false;
+                switch (stmt.data) {
+                    .s_expr => |expr| {
+                        switch (expr.value.data) {
+                            .e_string => |str| {
+                                if (!str.prefer_template) {
+                                    stmt.data = Stmt.Data{
+                                        .s_directive = p.m(S.Directive{
+                                            .value = str.value,
+                                            // .legacy_octal_loc = str.legacy_octal_loc,
+                                        }),
+                                    };
+                                    isDirectivePrologue = true;
+
+                                    if (strings.eqlUtf16("use strict", str.value)) {
+                                        // Track "use strict" directives
+                                        p.current_scope.strict_mode = .explicit_strict_mode;
+                                    } else if (strings.eqlUtf16("use asm", str.value)) {
+                                        stmt.data = Stmt.Data{ .s_empty = p.m(S.Empty{}) };
+                                    }
+                                }
+                            },
+                            else => {},
+                        }
+                    },
+                    else => {},
+                }
+            }
 
             try stmts.append(stmt);
+
+            // Warn about ASI and return statements. Here's an example of code with
+            // this problem: https://github.com/rollup/rollup/issues/3729
+            if (!p.options.suppress_warnings_about_weird_code) {
+                var needsCheck = true;
+                switch (stmt.data) {
+                    .s_return => |ret| {
+                        if (ret.value == null and !p.latest_return_had_semicolon) {
+                            returnWithoutSemicolonStart = stmt.loc.start;
+                            needsCheck = false;
+                        }
+                    },
+                    else => {},
+                }
+
+                if (needsCheck and returnWithoutSemicolonStart != -1) {
+                    switch (stmt.data) {
+                        .s_expr => |exp| {
+                            try p.log.addWarning(
+                                p.source,
+                                logger.Loc{ .start = returnWithoutSemicolonStart + 6 },
+                                "The following expression is not returned because of an automatically-inserted semicolon",
+                            );
+                        },
+                        else => {},
+                    }
+
+                    returnWithoutSemicolonStart = -1;
+                }
+            }
         }
 
         return stmts.toOwnedSlice();
@@ -3059,40 +3296,39 @@ const P = struct {
             // },
         }
 
-        if (p.current_scope) |scope| {
-            if (p.isStrictMode()) {
-                var why: string = "";
-                var notes: []logger.Data = undefined;
-                var where: logger.Range = undefined;
-                switch (scope.strict_mode) {
-                    .implicit_strict_mode_import => {
-                        where = p.es6_import_keyword;
-                    },
-                    .implicit_strict_mode_export => {
-                        where = p.es6_export_keyword;
-                    },
-                    .implicit_strict_mode_top_level_await => {
-                        where = p.top_level_await_keyword;
-                    },
-                    .implicit_strict_mode_class => {
-                        why = "All code inside a class is implicitly in strict mode";
-                        where = p.enclosing_class_keyword;
-                    },
-                    else => {},
-                }
-                if (why.len == 0) {
-                    why = try std.fmt.allocPrint(p.allocator, "This file is implicitly in strict mode because of the \"{s}\" keyword here", .{p.source.textForRange(where)});
-                }
-
-                try p.log.addRangeErrorWithNotes(p.source, r, try std.fmt.allocPrint(p.allocator, "{s} cannot be used in strict mode", .{text}), &([_]logger.Data{logger.rangeData(p.source, where, why)}));
-            } else if (!can_be_transformed and p.isStrictModeOutputFormat()) {
-                try p.log.addRangeError(p.source, r, try std.fmt.allocPrint(p.allocator, "{s} cannot be used with \"esm\" due to strict mode", .{text}));
+        var scope = p.current_scope;
+        if (p.isStrictMode()) {
+            var why: string = "";
+            var notes: []logger.Data = undefined;
+            var where: logger.Range = undefined;
+            switch (scope.strict_mode) {
+                .implicit_strict_mode_import => {
+                    where = p.es6_import_keyword;
+                },
+                .implicit_strict_mode_export => {
+                    where = p.es6_export_keyword;
+                },
+                .implicit_strict_mode_top_level_await => {
+                    where = p.top_level_await_keyword;
+                },
+                .implicit_strict_mode_class => {
+                    why = "All code inside a class is implicitly in strict mode";
+                    where = p.enclosing_class_keyword;
+                },
+                else => {},
             }
+            if (why.len == 0) {
+                why = try std.fmt.allocPrint(p.allocator, "This file is implicitly in strict mode because of the \"{s}\" keyword here", .{p.source.textForRange(where)});
+            }
+
+            try p.log.addRangeErrorWithNotes(p.source, r, try std.fmt.allocPrint(p.allocator, "{s} cannot be used in strict mode", .{text}), &([_]logger.Data{logger.rangeData(p.source, where, why)}));
+        } else if (!can_be_transformed and p.isStrictModeOutputFormat()) {
+            try p.log.addRangeError(p.source, r, try std.fmt.allocPrint(p.allocator, "{s} cannot be used with \"esm\" due to strict mode", .{text}));
         }
     }
 
     pub fn isStrictMode(p: *P) bool {
-        return p.current_scope.?.strict_mode != .sloppy_mode;
+        return p.current_scope.strict_mode != .sloppy_mode;
     }
 
     pub fn isStrictModeOutputFormat(p: *P) bool {
@@ -3110,7 +3346,7 @@ const P = struct {
         // Allocate a new symbol
         var ref = try p.newSymbol(kind, name);
 
-        const scope = p.current_scope orelse unreachable;
+        const scope = p.current_scope;
         if (scope.members.get(name)) |existing| {
             var symbol: Symbol = p.symbols.items[@intCast(usize, existing.ref.inner_index)];
 
@@ -3505,7 +3741,7 @@ const P = struct {
     }
 
     pub fn popScope(p: *P) void {
-        const current_scope = p.current_scope orelse unreachable;
+        const current_scope = p.current_scope;
         // We cannot rename anything inside a scope containing a direct eval() call
         if (current_scope.contains_direct_eval) {
             var iter = current_scope.members.iterator();
@@ -3560,7 +3796,7 @@ const P = struct {
             }
         }
 
-        p.current_scope = current_scope.parent;
+        p.current_scope = current_scope.parent orelse std.debug.panic("Internal error: attempted to call popScope() on the topmost scope", .{});
     }
 
     pub fn markExprAsParenthesized(p: *P, expr: *Expr) void {
@@ -5542,6 +5778,253 @@ const P = struct {
     }
     pub fn parsePrefix(p: *P, level: Level, errors: ?*DeferredErrors, flags: Expr.EFlags) Expr {
         return p._parsePrefix(level, errors orelse &DeferredErrors.None, flags);
+    }
+
+    pub fn appendPart(p: *P, parts: List(js_ast.Part), stmts: []Stmt) !void {
+        p.symbol_uses = SymbolUseMap.init(p.allocator);
+        p.declared_symbols.deinit();
+        p.import_records_for_current_part.deinit();
+        p.scopes_for_current_part.deinit();
+        var opts = PrependTempRefsOpts{};
+        var partStmts = List(Stmt).fromOwnedSlice(p.allocator, stmts);
+        try p.visitStmtsAndPrependTempRefs(&partStmts, &opts);
+
+        // Insert any relocated variable statements now
+        if (p.relocated_top_level_vars.items.len > 0) {
+            var already_declared = RefBoolMap.init(p.allocator);
+
+            // Follow links because "var" declarations may be merged due to hoisting
+
+            // while (true) {
+            //     const link = p.symbols.items[local.ref.inner_index].link;
+            // }
+        }
+        // TODO: here
+    }
+
+    pub fn visitStmtsAndPrependTempRefs(p: *P, stmts: *List(Stmt), opts: *PrependTempRefsOpts) !void {
+        var old_temp_refs = p.temp_refs_to_declare;
+        var old_temp_ref_count = p.temp_ref_count;
+        p.temp_refs_to_declare.deinit();
+        p.temp_refs_to_declare = @TypeOf(p.temp_refs_to_declare).init(p.allocator);
+        p.temp_ref_count = 0;
+
+        try p.visitStmts(stmts, opts.kind);
+
+        // Prepend values for "this" and "arguments"
+        if (opts.fn_body_loc != null) {
+            // Capture "this"
+            if (p.fn_only_data_visit.this_capture_ref) |ref| {
+                try p.temp_refs_to_declare.append(TempRef{
+                    .ref = ref,
+                    .value = p.e(E.This{}, opts.fn_body_loc orelse std.debug.panic("Internal error: Expected opts.fn_body_loc to exist", .{})),
+                });
+            }
+        }
+    }
+
+    pub fn recordDeclaredSymbol(p: *P, ref: Ref) !void {
+        try p.declared_symbols.append(js_ast.DeclaredSymbol{
+            .ref = ref,
+            .is_top_level = p.current_scope == p.module_scope,
+        });
+    }
+
+    pub fn visitExpr(p: *P, expr: Expr) Expr {
+        return p.visitExprInOut(expr, in);
+    }
+
+    pub fn visitExprInOut(p: *P, expr: Expr, in: ExprIn) Expr {}
+
+    pub fn visitAndAppendStmt(p: *P, stmts: *List(Stmt), stmt: *Stmt) !void {
+        switch (stmt.data) {
+            // These don't contain anything to traverse
+
+            .s_debugger, .s_empty, .s_comment => {},
+            .s_type_script => |data| {
+                // Erase TypeScript constructs from the output completely
+                return;
+            },
+            .s_directive => |data| {
+                //         	if p.isStrictMode() && s.LegacyOctalLoc.Start > 0 {
+                // 	p.markStrictModeFeature(legacyOctalEscape, p.source.RangeOfLegacyOctalEscape(s.LegacyOctalLoc), "")
+                // }
+                return;
+            },
+            .s_import => |data| {
+                try p.recordDeclaredSymbol(data.namespace_ref);
+
+                if (data.default_name) |default_name| {
+                    try p.recordDeclaredSymbol(default_name.ref orelse unreachable);
+                }
+
+                if (data.items.len > 0) {
+                    for (data.items) |*item| {
+                        try p.recordDeclaredSymbol(item.name.ref orelse unreachable);
+                    }
+                }
+            },
+            .s_export_clause => |data| {
+                // "export {foo}"
+                var end: usize = 0;
+                for (data.items) |*item| {
+                    const name = p.loadNameFromRef(item.name.ref orelse unreachable);
+                    const symbol = try p.findSymbol(item.alias_loc, name);
+                    const ref = symbol.ref;
+
+                    if (p.symbols.items[ref.inner_index].kind == .unbound) {
+                        // Silently strip exports of non-local symbols in TypeScript, since
+                        // those likely correspond to type-only exports. But report exports of
+                        // non-local symbols as errors in JavaScript.
+                        if (!p.options.ts) {
+                            const r = js_lexer.rangeOfIdentifier(&p.source, item.name.loc);
+                            try p.log.addRangeErrorFmt(p.source, r, p.allocator, "\"{s}\" is not declared in this file", .{name});
+                            continue;
+                        }
+                        continue;
+                    }
+
+                    item.name.ref = ref;
+                    data.items[end] = item.*;
+                    end += 1;
+                }
+                // esbuild: "Note: do not remove empty export statements since TypeScript uses them as module markers"
+                // jarred: does that mean we can remove them here, since we're not bundling for production?
+                data.items = data.items[0..end];
+            },
+            .s_export_from => |data| {
+                // "export {foo} from 'path'"
+                const name = p.loadNameFromRef(data.namespace_ref);
+                data.namespace_ref = try p.newSymbol(.other, name);
+                try p.current_scope.generated.append(data.namespace_ref);
+                try p.recordDeclaredSymbol(data.namespace_ref);
+
+                // This is a re-export and the symbols created here are used to reference
+                for (data.items) |*item| {
+                    const _name = p.loadNameFromRef(item.name.ref orelse unreachable);
+                    const ref = try p.newSymbol(.other, _name);
+                    try p.current_scope.generated.append(data.namespace_ref);
+                    try p.recordDeclaredSymbol(data.namespace_ref);
+                    item.name.ref = ref;
+                }
+            },
+            .s_export_star => |data| {
+                // "export {foo} from 'path'"
+                const name = p.loadNameFromRef(data.namespace_ref);
+                data.namespace_ref = try p.newSymbol(.other, name);
+                try p.current_scope.generated.append(data.namespace_ref);
+                try p.recordDeclaredSymbol(data.namespace_ref);
+
+                // "export * as ns from 'path'"
+                if (data.alias) |alias| {
+                    // "import * as ns from 'path'"
+                    // "export {ns}"
+
+                    // jarred: For now, just always do this transform.
+                    // because Safari doesn't support it and I've seen cases where this breaks
+                    // TODO: backport unsupportedJSFeatures map
+                    p.recordUsage(&data.namespace_ref);
+                    try stmts.ensureCapacity(stmts.items.len + 2);
+                    stmts.appendAssumeCapacity(p.s(S.Import{ .namespace_ref = data.namespace_ref, .star_name_loc = alias.loc, .import_record_index = data.import_record_index }, stmt.loc));
+
+                    var items = try List(js_ast.ClauseItem).initCapacity(p.allocator, 1);
+                    items.appendAssumeCapacity(js_ast.ClauseItem{ .alias = alias.original_name, .original_name = alias.original_name, .alias_loc = alias.loc, .name = LocRef{ .loc = alias.loc, .ref = data.namespace_ref } });
+                    stmts.appendAssumeCapacity(p.s(S.ExportClause{ .items = items.toOwnedSlice(), .is_single_line = true }, stmt.loc));
+                }
+            },
+            .s_export_default => |data| {
+                try p.recordDeclaredSymbol(data.default_name.ref orelse unreachable);
+
+                switch (data.value) {
+                    .expr => |*expr| {
+                        const was_anonymous_named_expr = expr.isAnonymousNamed();
+                        data.value.expr = p.m(p.visitExpr(expr));
+
+                        // Optionally preserve the name
+                        data.value.expr = p.maybeKeepExprSymbolName(expr, "default", was_anonymous_named_expr);
+
+                        // Discard type-only export default statements
+                        if (p.options.ts) {
+                            switch (expr.data) {
+                                .e_identifier => |ident| {
+                                    const symbol = p.symbols.items[ident.ref.inner_index];
+                                    if (symbol.kind == .unbound) {
+                                        if (p.local_type_names.get(symbol.original_name)) |local_type| {
+                                            if (local_type.value) {
+                                                return;
+                                            }
+                                        }
+                                    }
+                                },
+                                else => {},
+                            }
+                        }
+                    },
+
+                    .stmt => |st| {},
+                }
+            },
+            .s_export_equals => |data| {},
+            .s_break => |data| {},
+            .s_continue => |data| {},
+            .s_label => |data| {},
+            .s_local => |data| {},
+            .s_expr => |data| {},
+            .s_throw => |data| {},
+            .s_return => |data| {},
+            .s_block => |data| {},
+            .s_with => |data| {},
+            .s_while => |data| {},
+            .s_do_while => |data| {},
+            .s_if => |data| {},
+            .s_for => |data| {},
+            .s_for_in => |data| {},
+            .s_for_of => |data| {},
+            .s_try => |data| {},
+            .s_switch => |data| {},
+            .s_function => |data| {},
+            .s_class => |data| {},
+            .s_enum => |data| {},
+            .s_namespace => |data| {},
+            else => {},
+        }
+
+        // if we get this far, it stays
+        try stmts.append(stmt.*);
+    }
+
+    fn visitStmts(p: *P, stmts: *List(Stmt), kind: StmtsKind) !void {
+        // Save the current control-flow liveness. This represents if we are
+        // currently inside an "if (false) { ... }" block.
+        var old_is_control_flow_dead = p.is_control_flow_dead;
+
+        // visit all statements first
+        var visited = try List(Stmt).initCapacity(p.allocator, stmts.items.len);
+        var before = List(Stmt).init(p.allocator);
+        var after = List(Stmt).init(p.allocator);
+        for (stmts.items) |*stmt| {
+            switch (stmt.data) {
+                .s_export_equals => {
+                    // TypeScript "export = value;" becomes "module.exports = value;". This
+                    // must happen at the end after everything is parsed because TypeScript
+                    // moves this statement to the end when it generates code.
+                    try p.visitAndAppendStmt(&after, stmt);
+                    continue;
+                },
+                .s_function => |data| {
+                    // Manually hoist block-level function declarations to preserve semantics.
+                    // This is only done for function declarations that are not generators
+                    // or async functions, since this is a backwards-compatibility hack from
+                    // Annex B of the JavaScript standard.
+                    if (!p.current_scope.kindStopsHoisting() and p.symbols.items[data.func.name.?.ref.?.inner_index].kind == .hoisted_function) {
+                        try p.visitAndAppendStmt(&before, stmt);
+                        continue;
+                    }
+                },
+                else => {},
+            }
+            try p.visitAndAppendStmt(&visited, stmt);
+        }
     }
 
     fn extractDeclsForBinding(binding: Binding, decls: *List(G.Decl)) !void {

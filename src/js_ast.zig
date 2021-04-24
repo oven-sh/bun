@@ -80,12 +80,18 @@ pub const ImportItemStatus = packed enum {
     missing,
 };
 
+pub const AssignTarget = enum {
+    none,
+    replace, // "a = b"
+    update, // "a += b"
+};
+
 pub const LocRef = struct { loc: logger.Loc, ref: ?Ref };
 
 pub const Flags = struct {
 
-    // Instead of 4 bytes for booleans, we can store it in 4 bits
-    // It will still round up to 1 byte. But that's 3 bytes less!
+    // Instead of 5 bytes for booleans, we can store it in 5 bits
+    // It will still round up to 1 byte. But that's 4 bytes less!
     pub const Property = packed struct {
         is_computed: bool = false,
         is_method: bool = false,
@@ -749,7 +755,7 @@ pub const E = struct {
     };
 
     pub const Object = struct {
-        properties: []G.Property,
+        properties: []G.Property = &([_]G.Property{}),
         comma_after_spread: ?logger.Loc = null,
         is_single_line: bool = false,
         is_parenthesized: bool = false,
@@ -1152,6 +1158,23 @@ pub const Expr = struct {
     data: Data,
 
     pub const EFlags = enum { none, ts_decorator };
+
+    pub fn isAnonymousNamed(e: *Expr) bool {
+        switch (e.data) {
+            .e_arrow => {
+                return true;
+            },
+            .e_function => |func| {
+                return func.func.name == null;
+            },
+            .e_class => |class| {
+                return class.class_name == null;
+            },
+            else => {
+                return false;
+            },
+        }
+    }
 
     pub fn init(exp: anytype, loc: logger.Loc) Expr {
         switch (@TypeOf(exp)) {
@@ -2132,7 +2155,7 @@ pub const S = struct {
 
     pub const Comment = struct { text: string };
 
-    pub const Directive = struct { value: JavascriptString, legacy_octal_loc: logger.Loc };
+    pub const Directive = struct { value: JavascriptString, legacy_octal_loc: ?logger.Loc = null };
 
     pub const ExportClause = struct { items: []ClauseItem, is_single_line: bool = false };
 
@@ -2668,8 +2691,6 @@ pub const AstData = struct {
 // splitting.
 pub const Part = struct {
     stmts: []Stmt,
-    expr: []Expr,
-    bindings: []Binding,
     scopes: []*Scope,
 
     // Each is an index into the file-level import record list
@@ -2701,30 +2722,6 @@ pub const Part = struct {
     // This is true if this file has been marked as live by the tree shaking
     // algorithm.
     is_live: bool = false,
-
-    pub fn stmtAt(self: *Part, index: StmtNodeIndex) ?Stmt {
-        if (std.builtin.mode == std.builtin.Mode.ReleaseFast) {
-            return self.stmts[@intCast(usize, index)];
-        } else {
-            if (self.stmts.len > index) {
-                return self.stmts[@intCast(usize, index)];
-            }
-
-            return null;
-        }
-    }
-
-    pub fn exprAt(self: *Part, index: ExprNodeIndex) ?Expr {
-        if (std.builtin.mode == std.builtin.Mode.ReleaseFast) {
-            return self.expr[@intCast(usize, index)];
-        } else {
-            if (self.expr.len > index) {
-                return self.expr[@intCast(usize, index)];
-            }
-
-            return null;
-        }
-    }
 };
 
 pub const StmtOrExpr = union(enum) {
@@ -2816,7 +2813,12 @@ pub const Scope = struct {
 
     pub fn initPtr(allocator: *std.mem.Allocator) !*Scope {
         var scope = try allocator.create(Scope);
-        scope.members = @TypeOf(scope.members).init(allocator);
+        scope.* = Scope{
+            .members = @TypeOf(scope.members).init(allocator),
+            .children = @TypeOf(scope.children).init(allocator),
+            .generated = @TypeOf(scope.generated).init(allocator),
+            .parent = null,
+        };
         return scope;
     }
 };

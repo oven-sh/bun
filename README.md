@@ -67,12 +67,6 @@ If bundler means "turn my development code into something a browser can run",
 
 Key:
 
-- ✅ means "compatible"
-- ❌ means "not supported, and no plans to change that"
-- ⌛ means "in-progress"
-- 🗓️ means "planned" or "eventually but work has not started"
-- ❓ means "unknown"
-
 | Feature                            | esbuild | esdev |
 | ---------------------------------- | ------- | ----- |
 | Minification                       | ✅      | ❌    |
@@ -82,7 +76,20 @@ Key:
 | React Fast Refresh                 | ❌[1]   | ⌛    |
 | Tree Shaking                       | ✅      | ⌛    |
 | Incremental builds                 | ✅      | ⌛    |
+| CSS                                | ✅      | 🗓️    |
 | Support older browsers             | ✅      | ❌[2] |
 | Plugins                            | ✅      | ⌛[3] |
 | AST Plugins                        | ❌      | ❌[4] |
 | Filesystem Cache API (for plugins) | ❓      | 🗓️[4] |
+
+Key:
+|Tag | Meaning
+|----|----------------------------------------------|
+| ✅ | "compatible" |
+| ❌ | "not supported, and no plans to change that" |
+| ⌛ | "in-progress" |
+| 🗓️ | "planned" or "eventually but work has not started" |
+| ❓ | "unknown" |
+
+Citations:
+[1]:

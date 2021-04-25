@@ -3173,12 +3173,10 @@ const P = struct {
         var isDirectivePrologue = true;
 
         run: while (true) {
-            if (p.lexer.comments_to_preserve_before) |comments| {
-                for (comments) |comment| {
-                    try stmts.append(p.s(S.Comment{
-                        .text = comment.text,
-                    }, p.lexer.loc()));
-                }
+            for (p.lexer.comments_to_preserve_before.items) |comment| {
+                try stmts.append(p.s(S.Comment{
+                    .text = comment.text,
+                }, p.lexer.loc()));
             }
 
             if (p.lexer.token == .t_end_of_file) {
@@ -5737,14 +5735,14 @@ const P = struct {
 
         p.lexer.preserve_all_comments_before = true;
         p.lexer.expect(.t_open_paren);
-        const comments = p.lexer.comments_to_preserve_before;
+        const comments = p.lexer.comments_to_preserve_before.toOwnedSlice();
         p.lexer.preserve_all_comments_before = false;
 
         const value = p.parseExpr(.comma);
         p.lexer.expect(.t_close_paren);
 
         p.allow_in = old_allow_in;
-        return p.e(E.Import{ .expr = value, .leading_interior_comments = comments orelse &([_]G.Comment{}), .import_record_index = 0 }, loc);
+        return p.e(E.Import{ .expr = value, .leading_interior_comments = comments, .import_record_index = 0 }, loc);
     }
 
     pub fn parseJSXElement(loc: logger.Loc) Expr {
@@ -5866,7 +5864,7 @@ const P = struct {
         switch (expr.data) {
             .e_null, .e_super, .e_boolean, .e_big_int, .e_reg_exp, .e_new_target, .e_undefined => {},
             .e_string => |e_| {
-                // idc about legacy octal loc
+                // If you're using this, you're probably not using 0-prefixed legacy octal notation
                 // if e.LegacyOctalLoc.Start > 0 {
             },
             .e_number => |e_| {
@@ -6013,27 +6011,27 @@ const P = struct {
                 switch (data.value) {
                     .expr => |*expr| {
                         const was_anonymous_named_expr = expr.isAnonymousNamed();
-                        data.value.expr = p.m(p.visitExpr(expr.*));
+                        // data.value.expr = p.m(p.visitExpr(expr.*));
 
-                        // Optionally preserve the name
-                        data.value.expr = p.maybeKeepExprSymbolName(expr, "default", was_anonymous_named_expr);
+                        // // Optionally preserve the name
+                        // data.value.expr = p.maybeKeepExprSymbolName(expr, "default", was_anonymous_named_expr);
 
-                        // Discard type-only export default statements
-                        if (p.options.ts) {
-                            switch (expr.data) {
-                                .e_identifier => |ident| {
-                                    const symbol = p.symbols.items[ident.ref.inner_index];
-                                    if (symbol.kind == .unbound) {
-                                        if (p.local_type_names.get(symbol.original_name)) |local_type| {
-                                            if (local_type.value) {
-                                                return;
-                                            }
-                                        }
-                                    }
-                                },
-                                else => {},
-                            }
-                        }
+                        // // Discard type-only export default statements
+                        // if (p.options.ts) {
+                        //     switch (expr.data) {
+                        //         .e_identifier => |ident| {
+                        //             const symbol = p.symbols.items[ident.ref.inner_index];
+                        //             if (symbol.kind == .unbound) {
+                        //                 if (p.local_type_names.get(symbol.original_name)) |local_type| {
+                        //                     if (local_type.value) {
+                        //                         return;
+                        //                     }
+                        //                 }
+                        //             }
+                        //         },
+                        //         else => {},
+                        //     }
+                        // }
                     },
 
                     .stmt => |st| {},

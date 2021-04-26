@@ -258,6 +258,7 @@ fn expectPrintedJSON(_contents: string, expected: string) void {
 test "ParseJSON" {
     expectPrintedJSON("true", "true");
     expectPrintedJSON("false", "false");
+    expectPrintedJSON("1", "1");
 }
 
 test "ParseJSON DuplicateKey warning" {

@@ -2874,6 +2874,8 @@ pub const Scope = struct {
     }
 };
 
+pub fn printmem(comptime format: string, args: anytype) void {}
+
 test "Binding.init" {
     var binding = Binding.alloc(
         std.heap.page_allocator,
@@ -2883,13 +2885,13 @@ test "Binding.init" {
     std.testing.expect(binding.loc.start == 1);
     std.testing.expect(@as(Binding.Tag, binding.data) == Binding.Tag.b_identifier);
 
-    std.debug.print("-------Binding:           {d} bits\n", .{@bitSizeOf(Binding)});
-    std.debug.print("B.Identifier:             {d} bits\n", .{@bitSizeOf(B.Identifier)});
-    std.debug.print("B.Array:                  {d} bits\n", .{@bitSizeOf(B.Array)});
-    std.debug.print("B.Property:               {d} bits\n", .{@bitSizeOf(B.Property)});
-    std.debug.print("B.Object:                 {d} bits\n", .{@bitSizeOf(B.Object)});
-    std.debug.print("B.Missing:                {d} bits\n", .{@bitSizeOf(B.Missing)});
-    std.debug.print("-------Binding:           {d} bits\n", .{@bitSizeOf(Binding)});
+    printmem("-------Binding:           {d} bits\n", .{@bitSizeOf(Binding)});
+    printmem("B.Identifier:             {d} bits\n", .{@bitSizeOf(B.Identifier)});
+    printmem("B.Array:                  {d} bits\n", .{@bitSizeOf(B.Array)});
+    printmem("B.Property:               {d} bits\n", .{@bitSizeOf(B.Property)});
+    printmem("B.Object:                 {d} bits\n", .{@bitSizeOf(B.Object)});
+    printmem("B.Missing:                {d} bits\n", .{@bitSizeOf(B.Missing)});
+    printmem("-------Binding:           {d} bits\n", .{@bitSizeOf(Binding)});
 }
 
 test "Stmt.init" {
@@ -2901,38 +2903,38 @@ test "Stmt.init" {
     std.testing.expect(stmt.loc.start == 1);
     std.testing.expect(@as(Stmt.Tag, stmt.data) == Stmt.Tag.s_continue);
 
-    std.debug.print("-----Stmt       {d} bits\n", .{@bitSizeOf(Stmt)});
-    std.debug.print("StmtNodeList:   {d} bits\n", .{@bitSizeOf(StmtNodeList)});
-    std.debug.print("StmtOrExpr:     {d} bits\n", .{@bitSizeOf(StmtOrExpr)});
-    std.debug.print("S.Block         {d} bits\n", .{@bitSizeOf(S.Block)});
-    std.debug.print("S.Comment       {d} bits\n", .{@bitSizeOf(S.Comment)});
-    std.debug.print("S.Directive     {d} bits\n", .{@bitSizeOf(S.Directive)});
-    std.debug.print("S.ExportClause  {d} bits\n", .{@bitSizeOf(S.ExportClause)});
-    std.debug.print("S.Empty         {d} bits\n", .{@bitSizeOf(S.Empty)});
-    std.debug.print("S.TypeScript    {d} bits\n", .{@bitSizeOf(S.TypeScript)});
-    std.debug.print("S.Debugger      {d} bits\n", .{@bitSizeOf(S.Debugger)});
-    std.debug.print("S.ExportFrom    {d} bits\n", .{@bitSizeOf(S.ExportFrom)});
-    std.debug.print("S.ExportDefault {d} bits\n", .{@bitSizeOf(S.ExportDefault)});
-    std.debug.print("S.Enum          {d} bits\n", .{@bitSizeOf(S.Enum)});
-    std.debug.print("S.Namespace     {d} bits\n", .{@bitSizeOf(S.Namespace)});
-    std.debug.print("S.Function      {d} bits\n", .{@bitSizeOf(S.Function)});
-    std.debug.print("S.Class         {d} bits\n", .{@bitSizeOf(S.Class)});
-    std.debug.print("S.If            {d} bits\n", .{@bitSizeOf(S.If)});
-    std.debug.print("S.For           {d} bits\n", .{@bitSizeOf(S.For)});
-    std.debug.print("S.ForIn         {d} bits\n", .{@bitSizeOf(S.ForIn)});
-    std.debug.print("S.ForOf         {d} bits\n", .{@bitSizeOf(S.ForOf)});
-    std.debug.print("S.DoWhile       {d} bits\n", .{@bitSizeOf(S.DoWhile)});
-    std.debug.print("S.While         {d} bits\n", .{@bitSizeOf(S.While)});
-    std.debug.print("S.With          {d} bits\n", .{@bitSizeOf(S.With)});
-    std.debug.print("S.Try           {d} bits\n", .{@bitSizeOf(S.Try)});
-    std.debug.print("S.Switch        {d} bits\n", .{@bitSizeOf(S.Switch)});
-    std.debug.print("S.Import        {d} bits\n", .{@bitSizeOf(S.Import)});
-    std.debug.print("S.Return        {d} bits\n", .{@bitSizeOf(S.Return)});
-    std.debug.print("S.Throw         {d} bits\n", .{@bitSizeOf(S.Throw)});
-    std.debug.print("S.Local         {d} bits\n", .{@bitSizeOf(S.Local)});
-    std.debug.print("S.Break         {d} bits\n", .{@bitSizeOf(S.Break)});
-    std.debug.print("S.Continue      {d} bits\n", .{@bitSizeOf(S.Continue)});
-    std.debug.print("-----Stmt       {d} bits\n", .{@bitSizeOf(Stmt)});
+    printmem("-----Stmt       {d} bits\n", .{@bitSizeOf(Stmt)});
+    printmem("StmtNodeList:   {d} bits\n", .{@bitSizeOf(StmtNodeList)});
+    printmem("StmtOrExpr:     {d} bits\n", .{@bitSizeOf(StmtOrExpr)});
+    printmem("S.Block         {d} bits\n", .{@bitSizeOf(S.Block)});
+    printmem("S.Comment       {d} bits\n", .{@bitSizeOf(S.Comment)});
+    printmem("S.Directive     {d} bits\n", .{@bitSizeOf(S.Directive)});
+    printmem("S.ExportClause  {d} bits\n", .{@bitSizeOf(S.ExportClause)});
+    printmem("S.Empty         {d} bits\n", .{@bitSizeOf(S.Empty)});
+    printmem("S.TypeScript    {d} bits\n", .{@bitSizeOf(S.TypeScript)});
+    printmem("S.Debugger      {d} bits\n", .{@bitSizeOf(S.Debugger)});
+    printmem("S.ExportFrom    {d} bits\n", .{@bitSizeOf(S.ExportFrom)});
+    printmem("S.ExportDefault {d} bits\n", .{@bitSizeOf(S.ExportDefault)});
+    printmem("S.Enum          {d} bits\n", .{@bitSizeOf(S.Enum)});
+    printmem("S.Namespace     {d} bits\n", .{@bitSizeOf(S.Namespace)});
+    printmem("S.Function      {d} bits\n", .{@bitSizeOf(S.Function)});
+    printmem("S.Class         {d} bits\n", .{@bitSizeOf(S.Class)});
+    printmem("S.If            {d} bits\n", .{@bitSizeOf(S.If)});
+    printmem("S.For           {d} bits\n", .{@bitSizeOf(S.For)});
+    printmem("S.ForIn         {d} bits\n", .{@bitSizeOf(S.ForIn)});
+    printmem("S.ForOf         {d} bits\n", .{@bitSizeOf(S.ForOf)});
+    printmem("S.DoWhile       {d} bits\n", .{@bitSizeOf(S.DoWhile)});
+    printmem("S.While         {d} bits\n", .{@bitSizeOf(S.While)});
+    printmem("S.With          {d} bits\n", .{@bitSizeOf(S.With)});
+    printmem("S.Try           {d} bits\n", .{@bitSizeOf(S.Try)});
+    printmem("S.Switch        {d} bits\n", .{@bitSizeOf(S.Switch)});
+    printmem("S.Import        {d} bits\n", .{@bitSizeOf(S.Import)});
+    printmem("S.Return        {d} bits\n", .{@bitSizeOf(S.Return)});
+    printmem("S.Throw         {d} bits\n", .{@bitSizeOf(S.Throw)});
+    printmem("S.Local         {d} bits\n", .{@bitSizeOf(S.Local)});
+    printmem("S.Break         {d} bits\n", .{@bitSizeOf(S.Break)});
+    printmem("S.Continue      {d} bits\n", .{@bitSizeOf(S.Continue)});
+    printmem("-----Stmt       {d} bits\n", .{@bitSizeOf(Stmt)});
 }
 
 test "Expr.init" {
@@ -2948,47 +2950,47 @@ test "Expr.init" {
     std.testing.expect(@as(Expr.Tag, expr.data) == Expr.Tag.e_array);
     std.testing.expect(expr.data.e_array.items[0].loc.start == 100);
 
-    std.debug.print("--Ref                      {d} bits\n", .{@bitSizeOf(Ref)});
-    std.debug.print("--LocRef                   {d} bits\n", .{@bitSizeOf(LocRef)});
-    std.debug.print("--logger.Loc               {d} bits\n", .{@bitSizeOf(logger.Loc)});
-    std.debug.print("--logger.Range             {d} bits\n", .{@bitSizeOf(logger.Range)});
-    std.debug.print("----------Expr:            {d} bits\n", .{@bitSizeOf(Expr)});
-    std.debug.print("ExprNodeList:              {d} bits\n", .{@bitSizeOf(ExprNodeList)});
-    std.debug.print("E.Array:                   {d} bits\n", .{@bitSizeOf(E.Array)});
+    printmem("--Ref                      {d} bits\n", .{@bitSizeOf(Ref)});
+    printmem("--LocRef                   {d} bits\n", .{@bitSizeOf(LocRef)});
+    printmem("--logger.Loc               {d} bits\n", .{@bitSizeOf(logger.Loc)});
+    printmem("--logger.Range             {d} bits\n", .{@bitSizeOf(logger.Range)});
+    printmem("----------Expr:            {d} bits\n", .{@bitSizeOf(Expr)});
+    printmem("ExprNodeList:              {d} bits\n", .{@bitSizeOf(ExprNodeList)});
+    printmem("E.Array:                   {d} bits\n", .{@bitSizeOf(E.Array)});
 
-    std.debug.print("E.Unary:                   {d} bits\n", .{@bitSizeOf(E.Unary)});
-    std.debug.print("E.Binary:                  {d} bits\n", .{@bitSizeOf(E.Binary)});
-    std.debug.print("E.Boolean:                 {d} bits\n", .{@bitSizeOf(E.Boolean)});
-    std.debug.print("E.Super:                   {d} bits\n", .{@bitSizeOf(E.Super)});
-    std.debug.print("E.Null:                    {d} bits\n", .{@bitSizeOf(E.Null)});
-    std.debug.print("E.Undefined:               {d} bits\n", .{@bitSizeOf(E.Undefined)});
-    std.debug.print("E.New:                     {d} bits\n", .{@bitSizeOf(E.New)});
-    std.debug.print("E.NewTarget:               {d} bits\n", .{@bitSizeOf(E.NewTarget)});
-    std.debug.print("E.Function:                {d} bits\n", .{@bitSizeOf(E.Function)});
-    std.debug.print("E.ImportMeta:              {d} bits\n", .{@bitSizeOf(E.ImportMeta)});
-    std.debug.print("E.Call:                    {d} bits\n", .{@bitSizeOf(E.Call)});
-    std.debug.print("E.Dot:                     {d} bits\n", .{@bitSizeOf(E.Dot)});
-    std.debug.print("E.Index:                   {d} bits\n", .{@bitSizeOf(E.Index)});
-    std.debug.print("E.Arrow:                   {d} bits\n", .{@bitSizeOf(E.Arrow)});
-    std.debug.print("E.Identifier:              {d} bits\n", .{@bitSizeOf(E.Identifier)});
-    std.debug.print("E.ImportIdentifier:        {d} bits\n", .{@bitSizeOf(E.ImportIdentifier)});
-    std.debug.print("E.PrivateIdentifier:       {d} bits\n", .{@bitSizeOf(E.PrivateIdentifier)});
-    std.debug.print("E.JSXElement:              {d} bits\n", .{@bitSizeOf(E.JSXElement)});
-    std.debug.print("E.Missing:                 {d} bits\n", .{@bitSizeOf(E.Missing)});
-    std.debug.print("E.Number:                  {d} bits\n", .{@bitSizeOf(E.Number)});
-    std.debug.print("E.BigInt:                  {d} bits\n", .{@bitSizeOf(E.BigInt)});
-    std.debug.print("E.Object:                  {d} bits\n", .{@bitSizeOf(E.Object)});
-    std.debug.print("E.Spread:                  {d} bits\n", .{@bitSizeOf(E.Spread)});
-    std.debug.print("E.String:                  {d} bits\n", .{@bitSizeOf(E.String)});
-    std.debug.print("E.TemplatePart:            {d} bits\n", .{@bitSizeOf(E.TemplatePart)});
-    std.debug.print("E.Template:                {d} bits\n", .{@bitSizeOf(E.Template)});
-    std.debug.print("E.RegExp:                  {d} bits\n", .{@bitSizeOf(E.RegExp)});
-    std.debug.print("E.Await:                   {d} bits\n", .{@bitSizeOf(E.Await)});
-    std.debug.print("E.Yield:                   {d} bits\n", .{@bitSizeOf(E.Yield)});
-    std.debug.print("E.If:                      {d} bits\n", .{@bitSizeOf(E.If)});
-    std.debug.print("E.RequireOrRequireResolve: {d} bits\n", .{@bitSizeOf(E.RequireOrRequireResolve)});
-    std.debug.print("E.Import:                  {d} bits\n", .{@bitSizeOf(E.Import)});
-    std.debug.print("----------Expr:            {d} bits\n", .{@bitSizeOf(Expr)});
+    printmem("E.Unary:                   {d} bits\n", .{@bitSizeOf(E.Unary)});
+    printmem("E.Binary:                  {d} bits\n", .{@bitSizeOf(E.Binary)});
+    printmem("E.Boolean:                 {d} bits\n", .{@bitSizeOf(E.Boolean)});
+    printmem("E.Super:                   {d} bits\n", .{@bitSizeOf(E.Super)});
+    printmem("E.Null:                    {d} bits\n", .{@bitSizeOf(E.Null)});
+    printmem("E.Undefined:               {d} bits\n", .{@bitSizeOf(E.Undefined)});
+    printmem("E.New:                     {d} bits\n", .{@bitSizeOf(E.New)});
+    printmem("E.NewTarget:               {d} bits\n", .{@bitSizeOf(E.NewTarget)});
+    printmem("E.Function:                {d} bits\n", .{@bitSizeOf(E.Function)});
+    printmem("E.ImportMeta:              {d} bits\n", .{@bitSizeOf(E.ImportMeta)});
+    printmem("E.Call:                    {d} bits\n", .{@bitSizeOf(E.Call)});
+    printmem("E.Dot:                     {d} bits\n", .{@bitSizeOf(E.Dot)});
+    printmem("E.Index:                   {d} bits\n", .{@bitSizeOf(E.Index)});
+    printmem("E.Arrow:                   {d} bits\n", .{@bitSizeOf(E.Arrow)});
+    printmem("E.Identifier:              {d} bits\n", .{@bitSizeOf(E.Identifier)});
+    printmem("E.ImportIdentifier:        {d} bits\n", .{@bitSizeOf(E.ImportIdentifier)});
+    printmem("E.PrivateIdentifier:       {d} bits\n", .{@bitSizeOf(E.PrivateIdentifier)});
+    printmem("E.JSXElement:              {d} bits\n", .{@bitSizeOf(E.JSXElement)});
+    printmem("E.Missing:                 {d} bits\n", .{@bitSizeOf(E.Missing)});
+    printmem("E.Number:                  {d} bits\n", .{@bitSizeOf(E.Number)});
+    printmem("E.BigInt:                  {d} bits\n", .{@bitSizeOf(E.BigInt)});
+    printmem("E.Object:                  {d} bits\n", .{@bitSizeOf(E.Object)});
+    printmem("E.Spread:                  {d} bits\n", .{@bitSizeOf(E.Spread)});
+    printmem("E.String:                  {d} bits\n", .{@bitSizeOf(E.String)});
+    printmem("E.TemplatePart:            {d} bits\n", .{@bitSizeOf(E.TemplatePart)});
+    printmem("E.Template:                {d} bits\n", .{@bitSizeOf(E.Template)});
+    printmem("E.RegExp:                  {d} bits\n", .{@bitSizeOf(E.RegExp)});
+    printmem("E.Await:                   {d} bits\n", .{@bitSizeOf(E.Await)});
+    printmem("E.Yield:                   {d} bits\n", .{@bitSizeOf(E.Yield)});
+    printmem("E.If:                      {d} bits\n", .{@bitSizeOf(E.If)});
+    printmem("E.RequireOrRequireResolve: {d} bits\n", .{@bitSizeOf(E.RequireOrRequireResolve)});
+    printmem("E.Import:                  {d} bits\n", .{@bitSizeOf(E.Import)});
+    printmem("----------Expr:            {d} bits\n", .{@bitSizeOf(Expr)});
 }
 
 // -- ESBuild bit sizes

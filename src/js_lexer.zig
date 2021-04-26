@@ -335,7 +335,6 @@ pub fn NewLexerType(comptime jsonOptions: ?JSONOptions) type {
                 switch (lexer.code_point) {
                     -1 => {
                         lexer.token = T.t_end_of_file;
-                        break :lex;
                     },
 
                     '#' => {

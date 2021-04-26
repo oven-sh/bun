@@ -307,7 +307,38 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     notimpl();
                 },
                 .e_number => |e| {
-                    notimpl();
+                    const value = e.value;
+                    const absValue = std.math.fabs(value);
+
+                    if (std.math.isNan(value)) {
+                        p.printSpaceBeforeIdentifier();
+                        p.print("NaN");
+                    } else if (std.math.isPositiveInf(value)) {
+                        p.printSpaceBeforeIdentifier();
+                        p.print("Infinity");
+                    } else if (std.math.isNegativeInf(value)) {
+                        if (level.gte(.prefix)) {
+                            p.print("(-Infinity)");
+                        } else {
+                            p.printSpaceBeforeIdentifier();
+                            p.print("(-Infinity)");
+                        }
+                    } else if (!std.math.signbit(value)) {} else if (level.gte(.prefix)) {
+                        // Expressions such as "(-1).toString" need to wrap negative numbers.
+                        // Instead of testing for "value < 0" we test for "signbit(value)" and
+                        // "!isNaN(value)" because we need this to be true for "-0" and "-0 < 0"
+                        // is false.
+                        p.print("(-");
+                        p.printNonNegativeFloat(absValue);
+                        p.print(")");
+                    } else {
+                        p.printSpaceBeforeIdentifier(Op.Code.un_neg);
+                        p.print("-");
+                        p.printNonNegativeFloat(absValue);
+
+                        // Remember the end of the latest number
+                        p.prev_num_end = p.js.lenI();
+                    }
                 },
                 .e_identifier => |e| {
                     notimpl();

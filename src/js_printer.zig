@@ -36,10 +36,10 @@ const Ast = js_ast.Ast;
 const hex_chars = "0123456789ABCDEF";
 const first_ascii = 0x20;
 const last_ascii = 0x7E;
-const first_high_surrogate = 0xD800;
-const last_high_surrogate = 0xDBFF;
-const first_low_surrogate = 0xDC00;
-const last_low_surrogate = 0xDFFF;
+const first_high_surrogate: u21 = 0xD800;
+const last_high_surrogate: u21 = 0xDBFF;
+const first_low_surrogate: u21 = 0xDC00;
+const last_low_surrogate: u21 = 0xDFFF;
 
 fn notimpl() void {
     std.debug.panic("Not implemented yet!", .{});
@@ -161,6 +161,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
 
         pub fn print(p: *Printer, str: anytype) void {
             switch (@TypeOf(str)) {
+                comptime_int => {
+                    p.js.appendChar(str) catch unreachable;
+                },
                 string => {
                     p.js.append(str) catch unreachable;
                 },
@@ -168,6 +171,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.js.appendChar(str) catch unreachable;
                 },
                 u16 => {
+                    p.js.appendChar(@intCast(u8, str)) catch unreachable;
+                },
+                u21 => {
                     p.js.appendChar(@intCast(u8, str)) catch unreachable;
                 },
                 else => {
@@ -303,10 +309,13 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
 
         pub fn printQuotedUTF16(e: *Printer, text: JavascriptString, quote: u8) void {
             // utf-8 is a max of 4 bytes
-            var temp = [4]u8{ 0, 0, 0, 0 };
+            // we leave two extra chars for "\" and "u"
+            var temp = [6]u8{ 0, 0, 0, 0, 0, 0 };
             var i: usize = 0;
             const n: usize = text.len;
-            var c: u16 = 0;
+            var r: u21 = 0;
+            var c: u21 = 0;
+            var width: u3 = 0;
 
             e.js.growIfNeeded(text.len) catch unreachable;
 
@@ -320,7 +329,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     // that treats null characters as the end of the string.
                     0x00 => {
                         // We don't want "\x001" to be written as "\01"
-                        if (i < n) {
+                        if (i < n and text[i] >= '0' and text[i] <= '9') {
                             e.print("\\x00");
                         } else {
                             e.print("\\0");
@@ -347,21 +356,119 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                             e.print("\\n");
                         }
                     },
-                    0x0D => {
+                    std.ascii.control_code.CR => {
                         e.print("\\r");
                     },
-                    0x0B => {
-                        e.print("\\r");
+                    // \v
+                    std.ascii.control_code.VT => {
+                        e.print("\\v");
                     },
-                    0x5C => {},
-                    '\'' => {},
-                    '"' => {},
-                    '`' => {},
-                    '$' => {},
-                    0x2028 => {},
-                    0x2029 => {},
-                    0xFEFF => {},
-                    else => {},
+                    // "\\"
+                    92 => {
+                        e.print("\\");
+                    },
+                    '\'' => {
+                        if (quote == '\'') {
+                            e.print("\\");
+                        }
+                        e.print("'");
+                    },
+                    '"' => {
+                        if (quote == '"') {
+                            e.print("\\");
+                        }
+
+                        e.print("\"");
+                    },
+                    '`' => {
+                        if (quote == '`') {
+                            e.print("\\");
+                        }
+
+                        e.print('`');
+                    },
+                    '$' => {
+                        if (quote == '`' and i < n and text[i] == '{') {
+                            e.print("\\");
+                        }
+
+                        e.print('$');
+                    },
+                    0x2028 => {
+                        e.print("\\u2028");
+                    },
+                    0x2029 => {
+                        e.print("\\u2029");
+                    },
+                    0xFEFF => {
+                        e.print("\\uFEFF");
+                    },
+                    else => {
+                        switch (c) {
+                            // Common case: just append a single byte
+                            // we know it's not 0 since we already checked
+                            1...last_ascii => {
+                                e.print(@intCast(u8, c));
+                            },
+                            first_high_surrogate...last_high_surrogate => {
+
+                                // Is there a next character?
+
+                                if (i < n) {
+                                    const c2 = text[i];
+
+                                    if (c2 >= first_high_surrogate and c2 <= last_low_surrogate) {
+                                        // this is some magic to me
+                                        r = (c << 10) + c2 + (0x10000 - (first_high_surrogate << 10) - first_low_surrogate);
+                                        i += 1;
+                                        // Escape this character if UTF-8 isn't allowed
+                                        if (ascii_only) {
+                                            // this is more magic!!
+                                            const bytes = [_]u8{
+                                                '\\', 'u', hex_chars[c >> 12],  hex_chars[(c >> 8) & 15],  hex_chars[(c >> 4) & 15],  hex_chars[c & 15],
+                                                '\\', 'u', hex_chars[c2 >> 12], hex_chars[(c2 >> 8) & 15], hex_chars[(c2 >> 4) & 15], hex_chars[c2 & 15],
+                                            };
+                                            e.print(&bytes);
+
+                                            continue;
+                                            // Otherwise, encode to UTF-8
+                                        } else {
+                                            width = std.unicode.utf8Encode(r, &temp) catch unreachable;
+                                            e.print(temp[0..width]);
+                                            continue;
+                                        }
+                                    }
+                                }
+
+                                // Write an unpaired high surrogate
+                                temp = [_]u8{ '\\', 'u', hex_chars[c >> 12], hex_chars[(c >> 8) & 15], hex_chars[(c >> 4) & 15], hex_chars[c & 15] };
+                                e.print(&temp);
+                            },
+                            // Is this an unpaired low surrogate or four-digit hex escape?
+                            first_low_surrogate...last_low_surrogate => {
+                                // Write an unpaired high surrogate
+                                temp = [_]u8{ '\\', 'u', hex_chars[c >> 12], hex_chars[(c >> 8) & 15], hex_chars[(c >> 4) & 15], hex_chars[c & 15] };
+                                e.print(&temp);
+                            },
+                            else => {
+                                // this extra branch should get compiled
+                                if (ascii_only) {
+                                    if (c > 0xFF) {
+                                        // Write an unpaired high surrogate
+                                        temp = [_]u8{ '\\', 'u', hex_chars[c >> 12], hex_chars[(c >> 8) & 15], hex_chars[(c >> 4) & 15], hex_chars[c & 15] };
+                                        e.print(&temp);
+                                    } else {
+                                        // Can this be a two-digit hex escape?
+                                        const quad = [_]u8{ '\\', 'x', hex_chars[c >> 4], hex_chars[c & 15] };
+                                        e.print(&quad);
+                                    }
+                                } else {
+                                    width = std.unicode.utf8Encode(c, &temp) catch unreachable;
+                                    e.print(temp[0..width]);
+                                }
+                            },
+                        }
+                    },
                 }
             }
         }
@@ -458,7 +565,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     notimpl();
                 },
                 .e_big_int => |e| {
-                    notimpl();
+                    p.printSpaceBeforeIdentifier();
+                    p.print(e.value);
+                    p.print('n');
                 },
                 .e_number => |e| {
                     const value = e.value;
@@ -525,23 +634,23 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
         }
 
         pub fn printSpaceBeforeOperator(p: *Printer, next: Op.Code) void {
-            // if (p.prev_op_end == p.js.lenI()) {
-            // const prev = p.prev_op;
-            // "+ + y" => "+ +y"
-            // "+ ++ y" => "+ ++y"
-            // "x + + y" => "x+ +y"
-            // "x ++ + y" => "x+++y"
-            // "x + ++ y" => "x+ ++y"
-            // "-- >" => "-- >"
-            // "< ! --" => "<! --"
-            // if (((prev == Op.Code.bin_add or prev == Op.Code.un_pos) and (next == Op.Code.bin_add or next == Op.Code.un_pos or next == Op.Code.un_pre_inc)) or
-            //     ((prev == Op.Code.bin_sub or prev == Op.Code.un_neg) and (next == Op.Code.bin_sub or next == Op.Code.un_neg or next == Op.Code.un_pre_dec)) or
-            //     (prev == Op.Code.un_post_dec and next == Op.Code.bin_gt) or
-            //     (prev == Op.Code.un_not and next == Op.Code.un_pre_dec and p.js.len() > 1 and p.js.list.items[p.js.list.items.len - 2] == '<'))
-            // {
-            //     p.print(" ");
-            // }
-            // }
+            if (p.prev_op_end == p.js.lenI()) {
+                const prev = p.prev_op;
+                // "+ + y" => "+ +y"
+                // "+ ++ y" => "+ ++y"
+                // "x + + y" => "x+ +y"
+                // "x ++ + y" => "x+++y"
+                // "x + ++ y" => "x+ ++y"
+                // "-- >" => "-- >"
+                // "< ! --" => "<! --"
+                if (((prev == Op.Code.bin_add or prev == Op.Code.un_pos) and (next == Op.Code.bin_add or next == Op.Code.un_pos or next == Op.Code.un_pre_inc)) or
+                    ((prev == Op.Code.bin_sub or prev == Op.Code.un_neg) and (next == Op.Code.bin_sub or next == Op.Code.un_neg or next == Op.Code.un_pre_dec)) or
+                    (prev == Op.Code.un_post_dec and next == Op.Code.bin_gt) or
+                    (prev == Op.Code.un_not and next == Op.Code.un_pre_dec and p.js.len() > 1 and p.js.list.items[p.js.list.items.len - 2] == '<'))
+                {
+                    p.print(" ");
+                }
+            }
         }
 
         pub fn printProperty(p: *Printer, prop: G.Property) void {

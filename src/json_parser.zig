@@ -268,6 +268,8 @@ test "ParseJSON" {
     expectPrintedJSON("19.12", "19.12");
     expectPrintedJSON("3.4159820837456", "3.4159820837456");
     expectPrintedJSON("-10000.25", "-10000.25");
+    expectPrintedJSON("\"hi\"", "\"hi\"");
+    // TODO: emoji?
 }
 
 test "ParseJSON DuplicateKey warning" {

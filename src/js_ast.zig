@@ -2372,7 +2372,7 @@ pub const Case = struct { loc: logger.Loc, value: ?ExprNodeIndex, body: StmtNode
 
 pub const Op = struct {
     // If you add a new token, remember to add it to "OpTable" too
-    pub const Code = packed enum(u6) {
+    pub const Code = enum {
         // Prefix
         un_pos,
         un_neg,

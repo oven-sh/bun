@@ -33,6 +33,14 @@ const Scope = js_ast.Scope;
 const locModuleScope = logger.Loc.Empty;
 const Ast = js_ast.Ast;
 
+const hex_chars = "0123456789ABCDEF";
+const first_ascii = 0x20;
+const last_ascii = 0x7E;
+const first_high_surrogate = 0xD800;
+const last_high_surrogate = 0xDBFF;
+const first_low_surrogate = 0xDC00;
+const last_low_surrogate = 0xDFFF;
+
 fn notimpl() void {
     std.debug.panic("Not implemented yet!", .{});
 }
@@ -100,6 +108,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
         prev_reg_exp_end: i32 = -1,
         call_target: ?Expr.Data = null,
         int_to_bytes_buffer: [64]u8 = [_]u8{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+        writer: MutableString.Writer,
         allocator: *std.mem.Allocator,
 
         const Printer = @This();
@@ -150,8 +159,21 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
         //     }
         // }
 
-        pub fn print(p: *Printer, str: string) void {
-            p.js.append(str) catch unreachable;
+        pub fn print(p: *Printer, str: anytype) void {
+            switch (@TypeOf(str)) {
+                string => {
+                    p.js.append(str) catch unreachable;
+                },
+                u8 => {
+                    p.js.appendChar(str) catch unreachable;
+                },
+                u16 => {
+                    p.js.appendChar(@intCast(u8, str)) catch unreachable;
+                },
+                else => {
+                    p.js.append(@as(string, str)) catch unreachable;
+                },
+            }
         }
 
         pub fn unsafePrint(p: *Printer, str: string) void {
@@ -184,7 +206,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
         pub fn printSemicolonIfNeeded(p: *Printer) void {
             notimpl();
         }
-        pub fn printSpaceBeforeIdentifier(p: *Printer) void {
+        pub fn printSpaceBeforeIdentifier(
+            p: *Printer,
+        ) void {
             const n = p.js.len();
             if (n > 0 and (js_lexer.isIdentifierContinue(p.js.list.items[n - 1]) or n == p.prev_reg_exp_end)) {
                 p.print(" ");
@@ -223,6 +247,125 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
         pub fn printClass(p: *Printer, class: G.Class) void {
             notimpl();
         }
+
+        pub fn bestQuoteCharForString(p: *Printer, str: JavascriptString, allow_backtick: bool) u8 {
+            var single_cost: usize = 0;
+            var double_cost: usize = 0;
+            var backtick_cost: usize = 0;
+            var char: u8 = 0;
+            var i: usize = 0;
+            while (i < str.len) {
+                switch (str[i]) {
+                    '\'' => {
+                        single_cost += 1;
+                    },
+                    '"' => {
+                        double_cost += 1;
+                    },
+                    '`' => {
+                        backtick_cost += 1;
+                    },
+                    '$' => {
+                        if (i + 1 < str.len and str[i + 1] == '{') {
+                            backtick_cost += 1;
+                        }
+                    },
+                    else => {},
+                }
+                i += 1;
+            }
+
+            char = '"';
+            if (double_cost > single_cost) {
+                char = '\'';
+
+                if (single_cost > backtick_cost and allow_backtick) {
+                    char = '`';
+                }
+            } else if (double_cost > backtick_cost and allow_backtick) {
+                char = '`';
+            }
+
+            return char;
+        }
+
+        pub fn printNonNegativeFloat(p: *Printer, float: f64) void {
+            // cool thing about languages like this
+            // i know this is going to be in the stack and not the heap
+            var parts = [_]u8{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+
+            // normally, you pay the cost of parsing a string formatter at runtime
+            // not in zig! CI pays for it instead
+            // its probably still doing some unnecessary integer conversion somewhere though
+            var slice = std.fmt.bufPrint(&parts, "{d}", .{float}) catch unreachable;
+            p.js.list.appendSlice(p.allocator, slice) catch unreachable;
+        }
+
+        pub fn printQuotedUTF16(e: *Printer, text: JavascriptString, quote: u8) void {
+            // utf-8 is a max of 4 bytes
+            var temp = [4]u8{ 0, 0, 0, 0 };
+            var i: usize = 0;
+            const n: usize = text.len;
+            var c: u16 = 0;
+
+            e.js.growIfNeeded(text.len) catch unreachable;
+
+            while (i < n) {
+                c = text[i];
+                i += 1;
+
+                // TODO: here
+                switch (c) {
+                    // Special-case the null character since it may mess with code written in C
+                    // that treats null characters as the end of the string.
+                    0x00 => {
+                        // We don't want "\x001" to be written as "\01"
+                        if (i < n) {
+                            e.print("\\x00");
+                        } else {
+                            e.print("\\0");
+                        }
+                    },
+
+                    // Special-case the bell character since it may cause dumping this file to
+                    // the terminal to make a sound, which is undesirable. Note that we can't
+                    // use an octal literal to print this shorter since octal literals are not
+                    // allowed in strict mode (or in template strings).
+                    0x07 => {
+                        e.print("\\x07");
+                    },
+                    0x08 => {
+                        e.print("\\b");
+                    },
+                    0x0C => {
+                        e.print("\\f");
+                    },
+                    '\n' => {
+                        if (quote == '`') {
+                            e.print("\n");
+                        } else {
+                            e.print("\\n");
+                        }
+                    },
+                    0x0D => {
+                        e.print("\\r");
+                    },
+                    0x0B => {
+                        e.print("\\r");
+                    },
+                    0x5C => {},
+                    '\'' => {},
+                    '"' => {},
+                    '`' => {},
+                    '$' => {},
+                    0x2028 => {},
+                    0x2029 => {},
+                    0xFEFF => {},
+                    else => {},
+                }
+            }
+        }
+
         pub fn printExpr(p: *Printer, expr: Expr, level: Level, flags: ExprFlag) void {
             p.addSourceMapping(expr.loc);
 
@@ -295,7 +438,18 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.print(if (e.value) "true" else "false");
                 },
                 .e_string => |e| {
-                    notimpl();
+                    // If this was originally a template literal, print it as one as long as we're not minifying
+                    if (e.prefer_template) {
+                        p.print("`");
+                        p.printQuotedUTF16(e.value, '`');
+                        p.print("`");
+                        return;
+                    }
+
+                    const c = p.bestQuoteCharForString(e.value, true);
+                    p.print(c);
+                    p.printQuotedUTF16(e.value, c);
+                    p.print(c);
                 },
                 .e_template => |e| {
                     notimpl();
@@ -323,7 +477,13 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                             p.printSpaceBeforeIdentifier();
                             p.print("(-Infinity)");
                         }
-                    } else if (!std.math.signbit(value)) {} else if (level.gte(.prefix)) {
+                    } else if (!std.math.signbit(value)) {
+                        p.printSpaceBeforeIdentifier();
+                        p.printNonNegativeFloat(absValue);
+
+                        // Remember the end of the latest number
+                        p.prev_num_end = p.js.lenI();
+                    } else if (level.gte(.prefix)) {
                         // Expressions such as "(-1).toString" need to wrap negative numbers.
                         // Instead of testing for "value < 0" we test for "signbit(value)" and
                         // "!isNaN(value)" because we need this to be true for "-0" and "-0 < 0"
@@ -332,7 +492,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         p.printNonNegativeFloat(absValue);
                         p.print(")");
                     } else {
-                        p.printSpaceBeforeIdentifier(Op.Code.un_neg);
+                        p.printSpaceBeforeOperator(Op.Code.un_neg);
                         p.print("-");
                         p.printNonNegativeFloat(absValue);
 
@@ -362,6 +522,26 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     std.debug.panic("Unexpected expression of type {s}", .{expr.data});
                 },
             }
+        }
+
+        pub fn printSpaceBeforeOperator(p: *Printer, next: Op.Code) void {
+            // if (p.prev_op_end == p.js.lenI()) {
+            // const prev = p.prev_op;
+            // "+ + y" => "+ +y"
+            // "+ ++ y" => "+ ++y"
+            // "x + + y" => "x+ +y"
+            // "x ++ + y" => "x+++y"
+            // "x + ++ y" => "x+ ++y"
+            // "-- >" => "-- >"
+            // "< ! --" => "<! --"
+            // if (((prev == Op.Code.bin_add or prev == Op.Code.un_pos) and (next == Op.Code.bin_add or next == Op.Code.un_pos or next == Op.Code.un_pre_inc)) or
+            //     ((prev == Op.Code.bin_sub or prev == Op.Code.un_neg) and (next == Op.Code.bin_sub or next == Op.Code.un_neg or next == Op.Code.un_pre_dec)) or
+            //     (prev == Op.Code.un_post_dec and next == Op.Code.bin_gt) or
+            //     (prev == Op.Code.un_not and next == Op.Code.un_pre_dec and p.js.len() > 1 and p.js.list.items[p.js.list.items.len - 2] == '<'))
+            // {
+            //     p.print(" ");
+            // }
+            // }
         }
 
         pub fn printProperty(p: *Printer, prop: G.Property) void {
@@ -438,12 +618,14 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
         }
 
         pub fn init(allocator: *std.mem.Allocator, tree: Ast, symbols: Symbol.Map, opts: Options) !Printer {
+            var js = try MutableString.init(allocator, 1024);
             return Printer{
                 .allocator = allocator,
                 .import_records = tree.import_records,
                 .options = opts,
                 .symbols = symbols,
-                .js = try MutableString.init(allocator, 1024),
+                .js = js,
+                .writer = js.writer(),
             };
         }
     };

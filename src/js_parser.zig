@@ -405,8 +405,15 @@ pub const Parser = struct {
             // Pop the module scope to apply the "ContainsDirectEval" rules
             p.popScope();
 
-            result = p.toAST(parts);
-            result.source_map_comment = p.lexer.source_mapping_url;
+            result.ast = js_ast.Ast{
+                .parts = parts.toOwnedSlice(),
+                .symbols = p.symbols.toOwnedSlice(),
+                .module_scope = p.module_scope.*,
+            };
+            result.ok = true;
+
+            // result = p.toAST(parts);
+            // result.source_map_comment = p.lexer.source_mapping_url;
         }
 
         return result;

@@ -595,7 +595,7 @@ pub fn NewLexerType(comptime jsonOptions: ?JSONOptions) type {
                             },
 
                             else => {
-                                lexer.token = T.t_plus;
+                                lexer.token = T.t_minus;
                             },
                         }
                     },

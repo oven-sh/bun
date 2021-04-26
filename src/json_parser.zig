@@ -210,6 +210,9 @@ pub fn ParseTSConfig(log: logger.Loc, source: logger.Source, allocator: *std.mem
 
 const duplicateKeyJson = "{ \"name\": \"valid\", \"name\": \"invalid\" }";
 
+const js_printer = @import("js_printer.zig");
+const renamer = @import("renamer.zig");
+
 fn expectPrintedJSON(_contents: string, expected: string) void {
     if (alloc.dynamic_manager == null) {
         alloc.setup(std.heap.page_allocator) catch unreachable;
@@ -219,15 +222,14 @@ fn expectPrintedJSON(_contents: string, expected: string) void {
     std.mem.copy(u8, contents, _contents);
     contents[contents.len - 1] = ';';
     var log = logger.Log.init(alloc.dynamic);
-    const js_printer = @import("js_printer.zig");
-    const renamer = @import("renamer.zig");
+    defer log.msgs.deinit();
 
     var source = logger.Source.initPathString(
         "source.json",
         contents,
     );
     const expr = try ParseJSON(&source, &log, alloc.dynamic);
-    var stmt = Stmt.alloc(std.heap.page_allocator, S.SExpr{ .value = expr }, logger.Loc{ .start = 0 });
+    var stmt = Stmt.alloc(alloc.dynamic, S.SExpr{ .value = expr }, logger.Loc{ .start = 0 });
 
     var part = js_ast.Part{
         .stmts = &([_]Stmt{stmt}),
@@ -238,7 +240,7 @@ fn expectPrintedJSON(_contents: string, expected: string) void {
         std.debug.panic("--FAIL--\nExpr {s}\nLog: {s}\n--FAIL--", .{ expr, log.msgs.items[0].data.text });
     }
 
-    const result = js_printer.printAst(std.heap.page_allocator, tree, symbol_map, true, js_printer.Options{ .to_module_ref = Ref{ .inner_index = 0 } }) catch unreachable;
+    const result = js_printer.printAst(alloc.dynamic, tree, symbol_map, true, js_printer.Options{ .to_module_ref = Ref{ .inner_index = 0 } }) catch unreachable;
 
     var js = result.js;
 
@@ -259,6 +261,13 @@ test "ParseJSON" {
     expectPrintedJSON("true", "true");
     expectPrintedJSON("false", "false");
     expectPrintedJSON("1", "1");
+    expectPrintedJSON("10", "10");
+    expectPrintedJSON("100", "100");
+    expectPrintedJSON("100.1", "100.1");
+    expectPrintedJSON("19.1", "19.1");
+    expectPrintedJSON("19.12", "19.12");
+    expectPrintedJSON("3.4159820837456", "3.4159820837456");
+    expectPrintedJSON("-10000.25", "-10000.25");
 }
 
 test "ParseJSON DuplicateKey warning" {

@@ -7,15 +7,24 @@ pub const MutableString = struct {
     allocator: *std.mem.Allocator,
     list: std.ArrayListUnmanaged(u8),
 
-    pub const Writer = std.io.Writer(@This(), anyerror, MutableString.writeAll);
+    pub const Writer = std.io.Writer(*@This(), anyerror, MutableString.writeAll);
     pub fn writer(self: *MutableString) Writer {
         return Writer{
             .context = self,
         };
     }
 
-    pub fn writeAll(self: *MutableString, bytes: []u8) !usize {
-        try self.list.appendSlice(self.allocator, bytes);
+    pub fn growIfNeeded(self: *MutableString, amount: usize) !void {
+        const new_capacity = self.list.items.len + amount;
+        if (self.list.capacity < new_capacity) {
+            try self.list.ensureCapacity(self.allocator, new_capacity);
+        }
+    }
+
+    pub fn writeAll(self: *MutableString, bytes: string) !usize {
+        const new_capacity = self.list.items.len + bytes.len;
+        try self.list.ensureCapacity(self.allocator, new_capacity);
+        self.list.appendSliceAssumeCapacity(bytes);
         return self.list.items.len;
     }
 
@@ -74,7 +83,11 @@ pub const MutableString = struct {
         }
     }
     pub fn growBy(self: *MutableString, amount: usize) callconv(.Inline) !void {
-        try self.list.ensureCapacity(self.allocator, self.list.capacity + amount);
+        try self.ensureCapacity(self.list.capacity + amount);
+    }
+
+    pub fn ensureCapacity(self: *MutableString, amount: usize) callconv(.Inline) !void {
+        try self.list.ensureCapacity(self.allocator, amount);
     }
 
     pub fn deinit(self: *MutableString) !void {

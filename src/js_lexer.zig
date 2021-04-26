@@ -35,11 +35,12 @@ pub fn NewLexerType(comptime jsonOptions: ?JSONOptions) type {
         // };
 
         // err: ?@This().Error,
-        log: logger.Log,
+        log: *logger.Log,
         source: logger.Source,
         current: usize = 0,
         start: usize = 0,
         end: usize = 0,
+        did_panic: bool = false,
         approximate_newline_count: i32 = 0,
         legacy_octal_loc: logger.Loc = logger.Loc.Empty,
         previous_backslash_quote_in_jsx: logger.Range = logger.Range.None,
@@ -92,8 +93,7 @@ pub fn NewLexerType(comptime jsonOptions: ?JSONOptions) type {
                 return;
             }
 
-            const errorMessage = std.fmt.allocPrint(self.allocator, format, args) catch unreachable;
-            self.log.addError(self.source, __loc, errorMessage) catch unreachable;
+            self.log.addErrorFmt(self.source, __loc, self.allocator, format, args) catch unreachable;
             self.prev_error_loc = __loc;
             var msg = self.log.msgs.items[self.log.msgs.items.len - 1];
             msg.formatNoWriter(std.debug.panic);
@@ -114,7 +114,11 @@ pub fn NewLexerType(comptime jsonOptions: ?JSONOptions) type {
         }
 
         fn doPanic(self: *@This(), content: []const u8) void {
-            std.debug.panic("{s}", .{content});
+            if (@import("builtin").is_test) {
+                self.did_panic = true;
+            } else {
+                std.debug.panic("{s}", .{content});
+            }
         }
 
         pub fn codePointEql(self: *@This(), a: u8) bool {
@@ -324,7 +328,7 @@ pub fn NewLexerType(comptime jsonOptions: ?JSONOptions) type {
         pub fn next(lexer: *@This()) void {
             lexer.has_newline_before = lexer.end == 0;
 
-            lex: while (lexer.log.errors == 0) {
+            lex: while (true) {
                 lexer.start = lexer.end;
                 lexer.token = T.t_end_of_file;
 
@@ -841,11 +845,7 @@ pub fn NewLexerType(comptime jsonOptions: ?JSONOptions) type {
                         } else {
                             const contents = lexer.raw();
                             lexer.identifier = contents;
-                            if (Keywords.get(contents)) |keyword| {
-                                lexer.token = keyword;
-                            } else {
-                                lexer.token = T.t_identifier;
-                            }
+                            lexer.token = Keywords.get(contents) orelse T.t_identifier;
                         }
                     },
 
@@ -960,11 +960,11 @@ pub fn NewLexerType(comptime jsonOptions: ?JSONOptions) type {
             };
         }
 
-        pub fn init(log: logger.Log, source: logger.Source, allocator: *std.mem.Allocator) !@This() {
+        pub fn init(log: *logger.Log, source: *logger.Source, allocator: *std.mem.Allocator) !@This() {
             var empty_string_literal: JavascriptString = undefined;
             var lex = @This(){
                 .log = log,
-                .source = source,
+                .source = source.*,
                 .string_literal = empty_string_literal,
                 .prev_error_loc = logger.Loc.Empty,
                 .allocator = allocator,
@@ -1437,7 +1437,7 @@ pub const Lexer = NewLexerType(null);
 pub const JSONLexer = NewLexerType(JSONOptions{ .allow_comments = false, .allow_trailing_commas = false });
 pub const TSConfigJSONLexer = NewLexerType(JSONOptions{ .allow_comments = true, .allow_trailing_commas = true });
 
-fn isIdentifierStart(codepoint: CodePoint) bool {
+pub fn isIdentifierStart(codepoint: CodePoint) bool {
     switch (codepoint) {
         'a'...'z', 'A'...'Z', '_', '$' => {
             return true;
@@ -1447,10 +1447,13 @@ fn isIdentifierStart(codepoint: CodePoint) bool {
         },
     }
 }
-fn isIdentifierContinue(codepoint: CodePoint) bool {
+pub fn isIdentifierContinue(codepoint: CodePoint) bool {
     switch (codepoint) {
         '_', '$', '0'...'9', 'a'...'z', 'A'...'Z' => {
             return true;
+        },
+        -1 => {
+            return false;
         },
         else => {},
     }
@@ -1468,7 +1471,7 @@ fn isIdentifierContinue(codepoint: CodePoint) bool {
     return false;
 }
 
-fn isWhitespace(codepoint: CodePoint) bool {
+pub fn isWhitespace(codepoint: CodePoint) bool {
     switch (codepoint) {
         0x000B, // line tabulation
         0x0009, // character tabulation
@@ -1528,18 +1531,15 @@ fn float64(num: anytype) callconv(.Inline) f64 {
     return @intToFloat(f64, num);
 }
 
-fn test_lexer(contents: []const u8) @This() {
+fn test_lexer(contents: []const u8) Lexer {
     alloc.setup(std.heap.page_allocator) catch unreachable;
-    const msgs = std.ArrayList(logger.Msg).init(alloc.dynamic);
-    const log = logger.Log{
-        .msgs = msgs,
-    };
-
-    const source = logger.Source.initPathString(
+    var log = alloc.dynamic.create(logger.Log) catch unreachable;
+    log.* = logger.Log.init(alloc.dynamic);
+    var source = logger.Source.initPathString(
         "index.js",
         contents,
     );
-    return @This().init(log, source, alloc.dynamic) catch unreachable;
+    return Lexer.init(log, &source, alloc.dynamic) catch unreachable;
 }
 
 // test "@This().next()" {
@@ -1554,35 +1554,49 @@ fn test_lexer(contents: []const u8) @This() {
 //     lex.next();
 // }
 
+fn expectStr(lexer: *Lexer, expected: string, actual: string) void {
+    if (lexer.log.errors > 0 or lexer.log.warnings > 0) {
+        std.debug.panic("{s}", .{lexer.log.msgs.items});
+        // const msg: logger.Msg = lexer.log.msgs.items[0];
+        // msg.formatNoWriter(std.debug.panic);
+    }
+    std.testing.expectEqual(lexer.log.errors, 0);
+    std.testing.expectEqual(lexer.log.warnings, 0);
+    std.testing.expectEqual(false, lexer.did_panic);
+    std.testing.expectEqual(@as(usize, 0), lexer.log.errors);
+    std.testing.expectEqual(@as(usize, 0), lexer.log.warnings);
+    std.testing.expectEqualStrings(expected, actual);
+}
+
 test "Lexer.next() simple" {
     var lex = test_lexer("for (let i = 0; i < 100; i++) { }");
-    std.testing.expectEqualStrings("\"for\"", tokenToString.get(lex.token));
+    expectStr(&lex, "\"for\"", tokenToString.get(lex.token));
     lex.next();
-    std.testing.expectEqualStrings("\"(\"", tokenToString.get(lex.token));
+    expectStr(&lex, "\"(\"", tokenToString.get(lex.token));
     lex.next();
-    std.testing.expectEqualStrings("let", lex.raw());
+    expectStr(&lex, "let", lex.raw());
     lex.next();
-    std.testing.expectEqualStrings("i", lex.raw());
+    expectStr(&lex, "i", lex.raw());
     lex.next();
-    std.testing.expectEqualStrings("=", lex.raw());
+    expectStr(&lex, "=", lex.raw());
     lex.next();
-    std.testing.expectEqualStrings("0", lex.raw());
+    expectStr(&lex, "0", lex.raw());
     lex.next();
-    std.testing.expectEqualStrings(";", lex.raw());
+    expectStr(&lex, ";", lex.raw());
     lex.next();
-    std.testing.expectEqualStrings("i", lex.raw());
+    expectStr(&lex, "i", lex.raw());
     lex.next();
     std.testing.expect(lex.number == 0.0);
-    std.testing.expectEqualStrings("<", lex.raw());
+    expectStr(&lex, "<", lex.raw());
     lex.next();
     std.testing.expect(lex.number == 100.0);
-    std.testing.expectEqualStrings("100", lex.raw());
+    expectStr(&lex, "100", lex.raw());
     lex.next();
 }
 
 pub fn test_stringLiteralEquals(expected: string, source_text: string) void {
-    const msgs = std.ArrayList(logger.Msg).init(std.testing.allocator);
-    const log = logger.Log{
+    var msgs = std.ArrayList(logger.Msg).init(std.testing.allocator);
+    var log = logger.Log{
         .msgs = msgs,
     };
 
@@ -1593,7 +1607,7 @@ pub fn test_stringLiteralEquals(expected: string, source_text: string) void {
         source_text,
     );
 
-    var lex = try @This().init(log, source, std.heap.page_allocator);
+    var lex = try Lexer.init(&log, &source, std.heap.page_allocator);
     while (!lex.token.isString() and lex.token != .t_end_of_file) {
         lex.next();
     }

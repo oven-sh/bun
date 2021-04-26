@@ -10,7 +10,7 @@ pub const Bundler = struct {
     result: ?options.TransformResult = null,
 
     pub fn init(options: options.TransformOptions, allocator: *std.mem.Allocator) Bundler {
-        var log = logger.Log{ .msgs = ArrayList(Msg).init(allocator) };
+        var log = logger.Log.init(allocator);
 
         return Bundler{
             .options = options,
@@ -25,7 +25,5 @@ pub const Bundler = struct {
         var result = self.result;
 
         var source = logger.Source.initFile(self.options.entry_point, self.allocator);
-
-        
     }
 };

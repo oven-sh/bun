@@ -7,6 +7,18 @@ pub const MutableString = struct {
     allocator: *std.mem.Allocator,
     list: std.ArrayListUnmanaged(u8),
 
+    pub const Writer = std.io.Writer(@This(), anyerror, MutableString.writeAll);
+    pub fn writer(self: *MutableString) Writer {
+        return Writer{
+            .context = self,
+        };
+    }
+
+    pub fn writeAll(self: *MutableString, bytes: []u8) !usize {
+        try self.list.appendSlice(self.allocator, bytes);
+        return self.list.items.len;
+    }
+
     pub fn init(allocator: *std.mem.Allocator, capacity: usize) !MutableString {
         return MutableString{ .allocator = allocator, .list = try std.ArrayListUnmanaged(u8).initCapacity(allocator, capacity) };
     }
@@ -61,25 +73,29 @@ pub const MutableString = struct {
             try self.list.replaceRange(self.allocator, 0, std.mem.len(str[0..]), str[0..]);
         }
     }
+    pub fn growBy(self: *MutableString, amount: usize) callconv(.Inline) !void {
+        try self.list.ensureCapacity(self.allocator, self.list.capacity + amount);
+    }
 
     pub fn deinit(self: *MutableString) !void {
         self.list.deinit(self.allocator);
     }
-
-    pub fn appendChar(self: *MutableString, char: u8) !void {
+    pub fn appendChar(self: *MutableString, char: u8) callconv(.Inline) !void {
         try self.list.append(self.allocator, char);
     }
-
-    pub fn appendCharAssumeCapacity(self: *MutableString, char: u8) void {
+    pub fn appendCharAssumeCapacity(self: *MutableString, char: u8) callconv(.Inline) void {
         self.list.appendAssumeCapacity(char);
     }
-
-    pub fn append(self: *MutableString, char: []const u8) !void {
+    pub fn append(self: *MutableString, char: []const u8) callconv(.Inline) !void {
         try self.list.appendSlice(self.allocator, char);
     }
-
-    pub fn appendAssumeCapacity(self: *MutableString, char: []const u8) !void {
-        try self.list.appendSliceAssumeCapacity(self.allocator, char);
+    pub fn appendAssumeCapacity(self: *MutableString, char: []const u8) callconv(.Inline) void {
+        self.list.appendSliceAssumeCapacity(
+            char,
+        );
+    }
+    pub fn lenI(self: *MutableString) callconv(.Inline) i32 {
+        return @intCast(i32, self.list.items.len);
     }
 
     pub fn toOwnedSlice(self: *MutableString) string {

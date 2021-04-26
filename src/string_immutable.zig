@@ -25,6 +25,52 @@ pub fn indexOf(self: string, str: u8) ?usize {
     return std.mem.indexOf(u8, self, str);
 }
 
+pub fn startsWith(self: string, str: string) bool {
+    if (str.len > self.len) {
+        return false;
+    }
+
+    var i: usize = 0;
+    while (i < str.len) {
+        if (str[i] != self[i]) {
+            return false;
+        }
+        i += 1;
+    }
+
+    return true;
+}
+
+pub fn endsWithAny(self: string, str: string) bool {
+    const end = self[self.len - 1];
+    for (str) |char| {
+        if (char == end) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+pub fn lastNonwhitespace(self: string, str: string) bool {
+ 
+}
+
+pub fn endsWithAnyComptime(self: string, comptime str: string) bool {
+    if (str.len < 10) {
+        const last = self[self.len - 1];
+        inline while (str) |char| {
+            if (char == last) {
+                return true;
+            }
+        }
+
+        return false;
+    } else {
+        return endsWithAny(self, str);
+    }
+}
+
 pub fn eql(self: string, other: anytype) bool {
     return std.mem.eql(u8, self, other);
 }

@@ -68,6 +68,10 @@ pub const Ref = packed struct {
     pub fn isSourceNull(self: *const Ref) bool {
         return self.source_index == std.math.maxInt(Ref.Int);
     }
+
+    pub fn eql(ref: *Ref, b: Ref) bool {
+        return ref.inner_index == b.inner_index and ref.source_index == b.source_index;
+    }
 };
 
 pub const ImportItemStatus = packed enum {
@@ -550,6 +554,22 @@ pub const Symbol = struct {
             var symbols_for_source: [][]Symbol = try allocator.alloc([]Symbol, sourceCount);
             return Map{ .symbols_for_source = symbols_for_source };
         }
+
+        pub fn follow(symbols: *Map, ref: Ref) Ref {
+            if (symbols.get(ref)) |*symbol| {
+                if (symbol.link) |link| {
+                    if (!link.eql(ref)) {
+                        symbol.link = ref;
+                    }
+
+                    return link;
+                } else {
+                    return symbol;
+                }
+            } else {
+                return ref;
+            }
+        }
     };
 
     pub fn isKindPrivate(kind: Symbol.Kind) bool {
@@ -767,6 +787,10 @@ pub const E = struct {
         value: JavascriptString,
         legacy_octal_loc: ?logger.Loc = null,
         prefer_template: bool = false,
+
+        pub fn string(s: *String, allocator: *std.mem.Allocator) !string {
+            return try std.unicode.utf16leToUtf8Alloc(allocator, s.value);
+        }
     };
 
     // value is in the Node
@@ -804,8 +828,12 @@ pub const E = struct {
         no: ExprNodeIndex,
     };
 
+    pub const Require = struct {
+        import_record_index: u32 = 0,
+    };
+
     pub const RequireOrRequireResolve = struct {
-        import_record_index: u32,
+        import_record_index: u32 = 0,
     };
 
     pub const Import = struct {
@@ -1376,18 +1404,26 @@ pub const Expr = struct {
                     .data = Data{ .e_if = exp },
                 };
             },
-            *E.RequireOrRequireResolve => {
-                return Expr{
-                    .loc = loc,
-                    .data = Data{ .e_require_or_require_resolve = exp },
-                };
-            },
+
             *E.Import => {
                 return Expr{
                     .loc = loc,
                     .data = Data{ .e_import = exp },
                 };
             },
+            *E.Require => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{ .e_require = exp },
+                };
+            },
+            *E.RequireOrRequireResolve => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{ .e_require_or_require_resolve = exp },
+                };
+            },
+
             else => {
                 @compileError("Expr.init needs a pointer to E.*");
             },
@@ -1571,6 +1607,12 @@ pub const Expr = struct {
                 dat.* = st;
                 return Expr{ .loc = loc, .data = Data{ .e_import = dat } };
             },
+            E.Require => {
+                var dat = allocator.create(E.Require) catch unreachable;
+                dat.* = st;
+                return Expr{ .loc = loc, .data = Data{ .e_require = dat } };
+            },
+
             else => {
                 @compileError("Invalid type passed to Expr.init");
             },
@@ -1613,6 +1655,8 @@ pub const Expr = struct {
         e_import,
         e_this,
         e_class,
+
+        e_require,
 
         pub fn isArray(self: Tag) bool {
             switch (self) {
@@ -2099,6 +2143,7 @@ pub const Expr = struct {
         e_await: *E.Await,
         e_yield: *E.Yield,
         e_if: *E.If,
+        e_require: *E.Require,
         e_require_or_require_resolve: *E.RequireOrRequireResolve,
         e_import: *E.Import,
 
@@ -2540,26 +2585,32 @@ pub const Ast = struct {
 
     // These are stored at the AST level instead of on individual AST nodes so
     // they can be manipulated efficiently without a full AST traversal
-    import_records: ?[]ImportRecord = null,
+    import_records: []ImportRecord = &([_]ImportRecord{}),
 
     hashbang: ?string = null,
     directive: ?string = null,
     url_for_css: ?string = null,
-    parts: std.ArrayList(Part),
-    symbols: std.ArrayList(Symbol),
-    module_scope: ?Scope,
+    parts: []Part,
+    symbols: []Symbol = &([_]Symbol{}),
+    module_scope: ?Scope = null,
     // char_freq:    *CharFreq,
-    exports_ref: ?Ref,
-    module_ref: ?Ref,
-    wrapper_ref: ?Ref,
+    exports_ref: ?Ref = null,
+    module_ref: ?Ref = null,
+    wrapper_ref: ?Ref = null,
 
     // These are used when bundling. They are filled in during the parser pass
     // since we already have to traverse the AST then anyway and the parser pass
     // is conveniently fully parallelized.
-    named_imports: std.AutoHashMap(Ref, NamedImport),
-    named_exports: std.StringHashMap(NamedExport),
-    top_level_symbol_to_parts: std.AutoHashMap(Ref, []u32),
-    export_star_import_records: std.ArrayList(u32),
+    named_imports: std.AutoHashMap(Ref, NamedImport) = undefined,
+    named_exports: std.StringHashMap(NamedExport) = undefined,
+    top_level_symbol_to_parts: std.AutoHashMap(Ref, []u32) = undefined,
+    export_star_import_records: std.ArrayList(u32) = undefined,
+
+    pub fn initTest(parts: []Part) Ast {
+        return Ast{
+            .parts = parts,
+        };
+    }
 };
 
 pub const Span = struct {
@@ -2691,23 +2742,23 @@ pub const AstData = struct {
 // splitting.
 pub const Part = struct {
     stmts: []Stmt,
-    scopes: []*Scope,
+    scopes: []*Scope = &([_]*Scope{}),
 
     // Each is an index into the file-level import record list
-    import_record_indices: std.ArrayList(u32),
+    import_record_indices: std.ArrayList(u32) = undefined,
 
     // All symbols that are declared in this part. Note that a given symbol may
     // have multiple declarations, and so may end up being declared in multiple
     // parts (e.g. multiple "var" declarations with the same name). Also note
     // that this list isn't deduplicated and may contain duplicates.
-    declared_symbols: std.ArrayList(DeclaredSymbol),
+    declared_symbols: std.ArrayList(DeclaredSymbol) = undefined,
 
     // An estimate of the number of uses of all symbols used within this part.
-    symbol_uses: std.AutoHashMap(Ref, Symbol.Use),
+    symbol_uses: std.AutoHashMap(Ref, Symbol.Use) = undefined,
 
     // The indices of the other parts in this file that are needed if this part
     // is needed.
-    dependencies: std.ArrayList(Dependency),
+    dependencies: std.ArrayList(Dependency) = undefined,
 
     // If true, this part can be removed if none of the declared symbols are
     // used. If the file containing this part is imported, then all parts that

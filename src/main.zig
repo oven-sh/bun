@@ -20,7 +20,10 @@ pub fn main() anyerror!void {
 
     const entryPointName = "/var/foo/index.js";
     const code = "for (let i = 0; i < 100; i++) { console.log('hi') aposkdpoaskdpokasdpokasdpokasdpokasdpoaksdpoaksdpoaskdpoaksdpoaksdpoaskdpoaskdpoasdk; ";
-    var parser = try js_parser.Parser.init(try options.TransformOptions.initUncached(alloc.dynamic, entryPointName, code), alloc.dynamic);
+    var log = logger.Log.init(alloc.dynamic);
+    const opts = try options.TransformOptions.initUncached(alloc.dynamic, entryPointName, code);
+    var source = logger.Source.initFile(opts.entry_point, alloc.dynamic);
+    var parser = try js_parser.Parser.init(opts, &log, &source, alloc.dynamic);
     var res = try parser.parse();
 
     std.debug.print("{s}", .{res});

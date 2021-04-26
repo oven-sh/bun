@@ -344,7 +344,7 @@ const PropertyOpts = struct {
 pub const Parser = struct {
     options: Options,
     lexer: js_lexer.Lexer,
-    log: logger.Log,
+    log: *logger.Log,
     source: logger.Source,
     allocator: *std.mem.Allocator,
     p: ?*P,
@@ -412,9 +412,7 @@ pub const Parser = struct {
         return result;
     }
 
-    pub fn init(transform: options.TransformOptions, allocator: *std.mem.Allocator) !Parser {
-        const log = logger.Log{ .msgs = List(logger.Msg).init(allocator) };
-        const source = logger.Source.initFile(transform.entry_point, allocator);
+    pub fn init(transform: options.TransformOptions, log: *logger.Log, source: *logger.Source, allocator: *std.mem.Allocator) !Parser {
         const lexer = try js_lexer.Lexer.init(log, source, allocator);
         return Parser{
             .options = Options{
@@ -427,7 +425,7 @@ pub const Parser = struct {
             },
             .allocator = allocator,
             .lexer = lexer,
-            .source = source,
+            .source = source.*,
             .log = log,
             .p = null,
         };
@@ -471,7 +469,7 @@ const ParseStatementOptions = struct {
 const P = struct {
     allocator: *std.mem.Allocator,
     options: Parser.Options,
-    log: logger.Log,
+    log: *logger.Log,
     source: logger.Source,
     lexer: js_lexer.Lexer,
     allow_in: bool = false,
@@ -6249,7 +6247,7 @@ const P = struct {
         return p.e(E.Missing{}, loc);
     }
 
-    pub fn init(allocator: *std.mem.Allocator, log: logger.Log, source: logger.Source, lexer: js_lexer.Lexer, opts: Parser.Options) !*P {
+    pub fn init(allocator: *std.mem.Allocator, log: *logger.Log, source: logger.Source, lexer: js_lexer.Lexer, opts: Parser.Options) !*P {
         var parser = try allocator.create(P);
         parser.allocated_names = @TypeOf(parser.allocated_names).init(allocator);
         parser.scopes_for_current_part = @TypeOf(parser.scopes_for_current_part).init(allocator);

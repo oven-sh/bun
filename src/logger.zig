@@ -103,7 +103,7 @@ pub const Msg = struct {
     kind: Kind = Kind.err,
     data: Data,
     notes: ?[]Data = null,
-    pub fn format(msg: *const Msg, to: anytype, formatterFunc: @TypeOf(std.fmt.format)) !void {
+    pub fn doFormat(msg: *const Msg, to: anytype, formatterFunc: @TypeOf(std.fmt.format)) !void {
         try formatterFunc(to, "\n\n{s}: {s}\n{s}\n{s}:{}:{}", .{ msg.kind.string(), msg.data.text, msg.data.location.?.line_text, msg.data.location.?.file, msg.data.location.?.line, msg.data.location.?.column });
     }
 
@@ -127,9 +127,15 @@ pub const Range = packed struct {
 
 pub const Log = struct {
     debug: bool = false,
-    warnings: u8 = 0,
-    errors: u8 = 0,
+    warnings: usize = 0,
+    errors: usize = 0,
     msgs: ArrayList(Msg),
+
+    pub fn init(allocator: *std.mem.Allocator) Log {
+        return Log{
+            .msgs = ArrayList(Msg).init(allocator),
+        };
+    }
 
     pub fn addVerbose(log: *Log, source: ?Source, loc: Loc, text: string) !void {
         try log.addMsg(Msg{
@@ -179,7 +185,7 @@ pub const Log = struct {
     }
 
     pub fn addWarningFmt(log: *Log, source: ?Source, l: Loc, allocator: *std.mem.Allocator, comptime text: string, args: anytype) !void {
-        log.errors += 1;
+        log.warnings += 1;
         try log.addMsg(Msg{
             .kind = .err,
             .data = rangeData(source, Range{ .loc = l }, std.fmt.allocPrint(allocator, text, args) catch unreachable),
@@ -187,9 +193,9 @@ pub const Log = struct {
     }
 
     pub fn addRangeWarningFmt(log: *Log, source: ?Source, r: Range, allocator: *std.mem.Allocator, comptime text: string, args: anytype) !void {
-        log.errors += 1;
+        log.warnings += 1;
         try log.addMsg(Msg{
-            .kind = .err,
+            .kind = .warn,
             .data = rangeData(source, r, std.fmt.allocPrint(allocator, text, args) catch unreachable),
         });
     }
@@ -241,7 +247,7 @@ pub const Log = struct {
     // TODO:
     pub fn print(self: *Log, to: anytype) !void {
         for (self.msgs.items) |msg| {
-            try msg.format(to, std.fmt.format);
+            try msg.doFormat(to, std.fmt.format);
         }
     }
 };
@@ -406,7 +412,8 @@ pub fn rangeData(source: ?Source, r: Range, text: string) Data {
 }
 
 test "print msg" {
-    var log = Log{ .msgs = ArrayList(Msg).init(std.testing.allocator) };
+    var msgs = ArrayList(Msg).init(std.testing.allocator);
+    var log = Log{ .msgs = msgs };
     defer log.msgs.deinit();
     var filename = "test.js".*;
     var syntax = "for(i = 0;)".*;
@@ -420,5 +427,5 @@ test "print msg" {
 
     const stdout = std.io.getStdOut().writer();
 
-    try log.print(stdout);
+    // try log.print(stdout);
 }

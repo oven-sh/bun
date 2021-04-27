@@ -89,6 +89,36 @@ pub fn eqlUtf16(comptime self: string, other: JavascriptString) bool {
     return std.mem.eql(u16, std.unicode.utf8ToUtf16LeStringLiteral(self), other);
 }
 
+pub fn utf16EqlString(text: []u16, str: string) bool {
+    if (text.len > str.len) {
+        // Strings can't be equal if UTF-16 encoding is longer than UTF-8 encoding
+        return false;
+    }
+
+    var temp = [4]byte{ 0, 0, 0, 0 };
+    const n = text.len;
+}
+
+pub fn encodeWTF8Rune(p: []byte, b: u8) u3 {
+    // Negative values are erroneous. Making it unsigned addresses the problem.
+    const i = @intCast(u32, b);
+    switch (i) {
+        0...0x7F => {
+            p[0] = b;
+            return 1;
+        },
+        (0x7FF + 1)...0xFFFF => {
+            std.debug.panic("emoji not implemented yet!", .{});
+        },
+        (0x7F + 1)...(0x7FF) => {
+            std.debug.panic("emoji not implemented yet!", .{});
+        },
+        else => {
+            std.debug.panic("emoji not implemented yet!", .{});
+        },
+    }
+}
+
 pub fn toUTF16Buf(in: string, out: []u16) usize {
     var utf8Iterator = std.unicode.Utf8Iterator{ .bytes = in, .i = 0 };
 

@@ -240,7 +240,10 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
             p.print(";\n");
         }
         pub fn printSemicolonIfNeeded(p: *Printer) void {
-            notimpl();
+            if (p.needs_semicolon) {
+                p.print(";");
+                p.needs_semicolon = false;
+            }
         }
         pub fn printSpaceBeforeIdentifier(
             p: *Printer,
@@ -264,29 +267,139 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
         }
 
         pub fn printBody(p: *Printer, stmt: Stmt) void {
-            notimpl();
+            switch (stmt.data) {
+                .s_block => |block| {
+                    p.printSpace();
+                    p.printBlock(stmt.loc, block.stmts);
+                    p.printNewline();
+                },
+                else => {
+                    p.printNewline();
+                    p.options.indent += 1;
+                    p.printStmt(stmt) catch unreachable;
+                    p.options.indent -= 1;
+                },
+            }
         }
         pub fn printBlock(p: *Printer, loc: logger.Loc, stmts: []Stmt) void {
-            notimpl();
+            p.addSourceMapping(loc);
+            p.print("{");
+            p.printNewline();
+
+            p.options.indent += 1;
+            for (stmts) |stmt| {
+                p.printSemicolonIfNeeded();
+                p.printStmt(stmt) catch unreachable;
+            }
+            p.options.indent -= 1;
+            p.needs_semicolon = false;
+
+            p.printIndent();
+            p.print("}");
         }
         pub fn printDecls(p: *Printer, keyword: string, decls: []G.Decl, flags: ExprFlag) void {
-            notimpl();
+            p.print(keyword);
+            p.printSpace();
+
+            var i: usize = 0;
+
+            while (i < decls.len) : (i += 1) {
+                if (i != 0) {
+                    p.print(",");
+                    p.printSpace();
+                }
+
+                const decl = decls[i];
+
+                p.printBinding(decl.binding);
+
+                if (decl.value) |value| {
+                    p.printSpace();
+                    p.print("=");
+                    p.printSpace();
+                    p.printExpr(value, .comma, ExprFlag.None());
+                }
+            }
         }
 
         // noop for now
         pub fn addSourceMapping(p: *Printer, loc: logger.Loc) void {}
 
         pub fn printSymbol(p: *Printer, ref: Ref) void {
-            notimpl();
+            const name = p.renamer.nameForSymbol(ref);
+
+            p.printIdentifier(name);
         }
         pub fn printClauseAlias(p: *Printer, alias: string) void {
-            notimpl();
+            if (js_lexer.isIdentifier(alias)) {
+                p.printSpaceBeforeIdentifier();
+                p.printIdentifier(alias);
+            } else {
+                p.printQuotedUTF8(alias, false);
+            }
         }
+
+        pub fn printFnArgs(p: *Printer, args: []G.Arg, has_rest_arg: bool, is_arrow: bool) void {
+            const wrap = true;
+
+            if (wrap) {
+                p.print("(");
+            }
+
+            var i: usize = 0;
+            while (i < args.len) : (i += 1) {
+                if (i != 0) {}
+
+                if (has_rest_arg and i + 1 == args.len) {
+                    p.print("...");
+                }
+                const arg = args[i];
+
+                p.printBinding(arg.binding);
+                if (arg.default) |default| {
+                    p.printSpace();
+                    p.print("=");
+                    p.printSpace();
+                    p.printExpr(default, .comma, ExprFlag.None());
+                }
+            }
+
+            if (wrap) {
+                p.print(")");
+            }
+        }
+
         pub fn printFunc(p: *Printer, func: G.Fn) void {
-            notimpl();
+            p.printFnArgs(func.args, func.flags.has_rest_arg, false);
+            p.printSpace();
+            p.printBlock(func.body.?.loc, func.body.?.stmts);
         }
         pub fn printClass(p: *Printer, class: G.Class) void {
-            notimpl();
+            if (class.extends) |extends| {}
+
+            p.printSpace();
+
+            p.addSourceMapping(class.body_loc);
+            p.print("{");
+            p.printNewline();
+            p.options.indent += 1;
+
+            for (class.properties) |item| {
+                p.printSemicolonIfNeeded();
+                p.printIndent();
+                p.printProperty(item);
+
+                if (item.value == null) {
+                    p.printSemicolonAfterStatement();
+                } else {
+                    p.printNewline();
+                }
+            }
+
+            p.needs_semicolon = false;
+            p.options.indent -= 1;
+            p.printIndent();
+            p.print("}");
         }
 
         pub fn bestQuoteCharForString(p: *Printer, str: anytype, allow_backtick: bool) u8 {
@@ -1474,8 +1587,109 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
             p.print(")");
         }
 
-        pub fn printProperty(p: *Printer, prop: G.Property) void {
-            notimpl();
+        pub fn printProperty(p: *Printer, item: G.Property) void {
+            if (item.kind == .spread) {
+                p.print("...");
+                p.printExpr(item.value.?, .comma, ExprFlag.None());
+            }
+
+            if (item.flags.is_static) {
+                p.print("static");
+                p.printSpace();
+            }
+
+            switch (item.kind) {
+                .get => {
+                    p.printSpaceBeforeIdentifier();
+                    p.print("get");
+                    p.printSpace();
+                },
+                .set => {
+                    p.printSpaceBeforeIdentifier();
+                    p.print("set");
+                    p.printSpace();
+                },
+                else => {},
+            }
+
+            if (item.value) |val| {
+                switch (val.data) {
+                    .e_function => |func| {
+                        if (item.flags.is_method) {
+                            p.printSpaceBeforeIdentifier();
+                            p.print("set");
+                            p.printSpace();
+                        }
+
+                        if (func.func.flags.is_generator) {
+                            p.print("*");
+                        }
+                    },
+                    else => {},
+                }
+            }
+
+            if (item.flags.is_computed) {
+                p.print("[");
+                p.printExpr(item.key.?, .comma, ExprFlag.None());
+                p.print("]");
+
+                if (item.value) |val| {
+                    switch (val.data) {
+                        .e_function => |func| {
+                            if (item.flags.is_method) {
+                                p.printFunc(func.func);
+                                return;
+                            }
+                        },
+                        else => {},
+                    }
+
+                    p.print(":");
+                    p.printSpace();
+                    p.printExpr(val, .comma, ExprFlag.None());
+                }
+
+                if (item.initializer) |initial| {
+                    p.printSpace();
+                    p.print("=");
+                    p.printSpace();
+                    p.printExpr(initial, .comma, ExprFlag.None());
+                }
+                return;
+            }
+
+            switch (item.key.?.data) {
+                .e_private_identifier => |key| {
+                    p.printSymbol(key.ref);
+                },
+                .e_string => |key| {
+                    p.addSourceMapping(item.key.?.loc);
+                    if (p.canPrintIdentifierUTF16(key.value)) {
+                        p.printSpaceBeforeIdentifier();
+                        p.printIdentifierUTF16(key.value) catch unreachable;
+
+                        // Use a shorthand property if the names are the same
+                        if (item.value) |val| {
+                            switch (val.data) {
+                                .e_identifier => |e| {
+                                    const name = p.renamer.nameForSymbol(e.ref);
+                                    // if (strings) {}
+                                },
+                                .e_import_identifier => |e| {},
+                                else => {},
+                            }
+                        } else {}
+                    }
+                },
+                else => {},
+            }
+
+            if (item.kind != .normal) {}
+
+            if (item.value) |val| {}
+
+            if (item.initializer) |initial| {}
         }
         pub fn printBinding(p: *Printer, binding: Binding) void {
             notimpl();
@@ -2114,7 +2328,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     continue;
                 }
 
-                const width = std.unicode.utf8Encode(c, temp);
+                const width = try std.unicode.utf8Encode(c, &temp);
                 p.print(temp[0..width]);
             }
         }

@@ -1530,9 +1530,9 @@ pub fn isIdentifierUTF16(text: JavascriptString) bool {
 
     var i: usize = 0;
     while (i < n) : (i += 1) {
-        var r1 = text[i];
+        var r1 = @intCast(i32, text[i]);
         if (r1 >= 0xD800 and r1 <= 0xDBFF and i + 1 < n) {
-            const r2 = text[i + 1];
+            const r2 = @intCast(i32, text[i + 1]);
             if (r2 >= 0xDC00 and r2 <= 0xDFFF) {
                 r1 = (r1 << 10) + r2 + (0x10000 - (0xD800 << 10) - 0xDC00);
                 i += 1;
@@ -1543,7 +1543,7 @@ pub fn isIdentifierUTF16(text: JavascriptString) bool {
                 return false;
             }
         } else {
-            if (!isIDentifierContinue(@intCast(u21, r1))) {
+            if (!isIdentifierContinue(@intCast(u21, r1))) {
                 return false;
             }
         }

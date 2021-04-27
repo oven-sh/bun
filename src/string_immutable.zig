@@ -95,26 +95,66 @@ pub fn utf16EqlString(text: []u16, str: string) bool {
         return false;
     }
 
-    var temp = [4]byte{ 0, 0, 0, 0 };
+    var temp = [4]u8{ 0, 0, 0, 0 };
     const n = text.len;
+    var j: usize = 0;
+    var i: usize = 0;
+    // TODO: is it safe to just make this u32 or u21?
+    var r1: i32 = undefined;
+    var k: u4 = 0;
+    while (i < n) : (i += 1) {
+        r1 = text[i];
+        if (r1 >= 0xD800 and r1 <= 0xDBFF and i + 1 < n) {
+            const r2: i32 = text[i + 1];
+            if (r2 >= 0xDC00 and r2 <= 0xDFFF) {
+                r1 = (r1 - 0xD800) << 10 | (r2 - 0xDC00) + 0x10000;
+                i += 1;
+            }
+        }
+
+        const width = encodeWTF8Rune(&temp, r1);
+        if (j + width > str.len) {
+            return false;
+        }
+        k = 0;
+        while (k < width) : (k += 1) {
+            if (temp[k] != str[j]) {
+                return false;
+            }
+            j += 1;
+        }
+    }
+
+    return j == str.len;
 }
 
-pub fn encodeWTF8Rune(p: []byte, b: u8) u3 {
+// This is a clone of golang's "utf8.EncodeRune" that has been modified to encode using
+// WTF-8 instead. See https://simonsapin.github.io/wtf-8/ for more info.
+pub fn encodeWTF8Rune(p: []u8, r: i32) u3 {
     // Negative values are erroneous. Making it unsigned addresses the problem.
-    const i = @intCast(u32, b);
+    const i = @intCast(u32, r);
     switch (i) {
         0...0x7F => {
-            p[0] = b;
+            p[0] = @intCast(u8, r);
             return 1;
         },
-        (0x7FF + 1)...0xFFFF => {
-            std.debug.panic("emoji not implemented yet!", .{});
+        (0x7F + 1)...0x7FF => {
+            p[0] = 0xC0 | @intCast(u8, r >> 6);
+            p[1] = 0x80 | @intCast(u8, r) & 0x3F;
+            return 2;
         },
-        (0x7F + 1)...(0x7FF) => {
-            std.debug.panic("emoji not implemented yet!", .{});
+        (0x7FF + 1)...0xFFFF => {
+            p[0] = 0xE0 | @intCast(u8, r >> 12);
+            p[1] = 0x80 | @intCast(u8, r >> 6) & 0x3F;
+            p[2] = 0x80 | @intCast(u8, r) & 0x3F;
+            return 3;
         },
         else => {
-            std.debug.panic("emoji not implemented yet!", .{});
+            p[0] = 0xF0 | @intCast(u8, r >> 18);
+            p[1] = 0x80 | @intCast(u8, r >> 12) & 0x3F;
+            p[2] = 0x80 | @intCast(u8, r >> 6) & 0x3F;
+            p[3] = 0x80 | @intCast(u8, r) & 0x3F;
+            return 4;
         },
     }
 }

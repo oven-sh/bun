@@ -1651,10 +1651,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                 }
 
                 if (item.initializer) |initial| {
-                    p.printSpace();
-                    p.print("=");
-                    p.printSpace();
-                    p.printExpr(initial, .comma, ExprFlag.None());
+                    p.printInitializer(initial);
                 }
                 return;
             }
@@ -1673,24 +1670,79 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         if (item.value) |val| {
                             switch (val.data) {
                                 .e_identifier => |e| {
-                                    const name = p.renamer.nameForSymbol(e.ref);
+                                    if (strings.utf16EqlString(key.value, p.renamer.nameForSymbol(e.ref))) {
+                                        if (item.initializer) |initial| {
+                                            p.printInitializer(initial);
+                                        }
+                                        return;
+                                    }
                                     // if (strings) {}
                                 },
-                                .e_import_identifier => |e| {},
+                                .e_import_identifier => |e| {
+                                    const ref = p.symbols.follow(e.ref);
+                                    if (p.symbols.get(ref)) |symbol| {
+                                        if (symbol.namespace_alias == null and strings.utf16EqlString(key.value, p.renamer.nameForSymbol(e.ref))) {
+                                            if (item.initializer) |initial| {
+                                                p.printInitializer(initial);
+                                            }
+                                            return;
+                                        }
+                                    }
+                                },
                                 else => {},
                             }
-                        } else {}
+                        }
+                    } else {
+                        const c = p.bestQuoteCharForString(key.value, false);
+                        p.print(c);
+                        p.printQuotedUTF16(key.value, c);
+                        p.print(c);
                     }
                 },
-                else => {},
+                else => {
+                    p.printExpr(item.key.?, .lowest, ExprFlag{});
+                },
             }
 
-            if (item.kind != .normal) {}
+            if (item.kind != .normal) {
+                switch (item.value.?.data) {
+                    .e_function => |func| {
+                        p.printFunc(func.func);
+                        return;
+                    },
+                    else => {},
+                }
+            }
 
-            if (item.value) |val| {}
+            if (item.value) |val| {
+                switch (val.data) {
+                    .e_function => |f| {
+                        if (item.flags.is_method) {
+                            p.printFunc(f.func);
 
-            if (item.initializer) |initial| {}
+                            return;
+                        }
+                    },
+                    else => {},
+                }
+
+                p.print(":");
+                p.printSpace();
+                p.printExpr(val, .comma, ExprFlag{});
+            }
+
+            if (item.initializer) |initial| {
+                p.printInitializer(initial);
+            }
         }
+
+        pub fn printInitializer(p: *Printer, initial: Expr) void {
+            p.printSpace();
+            p.print("=");
+            p.printSpace();
+            p.printExpr(initial, .comma, ExprFlag.None());
+        }
+
         pub fn printBinding(p: *Printer, binding: Binding) void {
             notimpl();
         }

@@ -8,6 +8,7 @@ const json_parser = @import("json_parser.zig");
 const js_printer = @import("js_printer.zig");
 const js_ast = @import("js_ast.zig");
 const linker = @import("linker.zig");
+usingnamespace @import("ast/base.zig");
 
 pub fn main() anyerror!void {
     try alloc.setup(std.heap.page_allocator);
@@ -34,7 +35,10 @@ pub fn main() anyerror!void {
     switch (opts.loader) {
         .json => {
             var expr = try json_parser.ParseJSON(&source, &log, alloc.dynamic);
-            var stmt = js_ast.Stmt.alloc(alloc.dynamic, js_ast.S.SExpr{ .value = expr }, logger.Loc{ .start = 0 });
+            var stmt = js_ast.Stmt.alloc(alloc.dynamic, js_ast.S.ExportDefault{
+                .value = js_ast.StmtOrExpr{ .expr = expr },
+                .default_name = js_ast.LocRef{ .loc = logger.Loc{}, .ref = Ref{} },
+            }, logger.Loc{ .start = 0 });
             var part = js_ast.Part{
                 .stmts = &([_]js_ast.Stmt{stmt}),
             };

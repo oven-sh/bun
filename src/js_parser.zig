@@ -21,7 +21,6 @@ const StmtNodeList = js_ast.StmtNodeList;
 const BindingNodeList = js_ast.BindingNodeList;
 const assert = std.debug.assert;
 
-const Ref = js_ast.Ref;
 const LocRef = js_ast.LocRef;
 const S = js_ast.S;
 const B = js_ast.B;

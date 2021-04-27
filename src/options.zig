@@ -56,7 +56,10 @@ pub const TransformOptions = struct {
 
         var filesystemCache = std.StringHashMap(fs.File).init(allocator);
 
-        var entryPoint = fs.File{ .path = fs.Path.init(entryPointName), .contents = code, .mtime = null };
+        var entryPoint = fs.File{
+            .path = fs.Path.init(entryPointName),
+            .contents = code,
+        };
 
         var define = std.StringHashMap(string).init(allocator);
         try define.ensureCapacity(1);

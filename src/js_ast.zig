@@ -41,39 +41,6 @@ pub const ExprNodeList = []Expr;
 pub const StmtNodeList = []Stmt;
 pub const BindingNodeList = []Binding;
 
-// TODO: figure out if we actually need this
-// -- original comment --
-// Files are parsed in parallel for speed. We want to allow each parser to
-// generate symbol IDs that won't conflict with each other. We also want to be
-// able to quickly merge symbol tables from all files into one giant symbol
-// table.
-//
-// We can accomplish both goals by giving each symbol ID two parts: a source
-// index that is unique to the parser goroutine, and an inner index that
-// increments as the parser generates new symbol IDs. Then a symbol map can
-// be an array of arrays indexed first by source index, then by inner index.
-// The maps can be merged quickly by creating a single outer array containing
-// all inner arrays from all parsed files.
-pub const Ref = packed struct {
-    source_index: Ref.Int = std.math.maxInt(Ref.Int),
-    inner_index: Ref.Int,
-
-    // 2 bits of padding for whatever is the parent
-    pub const Int = u31;
-    const None = Ref{ .inner_index = std.math.maxInt(Ref.Int) };
-    pub fn isNull(self: *const Ref) bool {
-        return self.source_index == std.math.maxInt(Ref.Int) and self.inner_index == std.math.maxInt(Ref.Int);
-    }
-
-    pub fn isSourceNull(self: *const Ref) bool {
-        return self.source_index == std.math.maxInt(Ref.Int);
-    }
-
-    pub fn eql(ref: *Ref, b: Ref) bool {
-        return ref.inner_index == b.inner_index and ref.source_index == b.source_index;
-    }
-};
-
 pub const ImportItemStatus = packed enum {
     none,
 
@@ -547,7 +514,7 @@ pub const Symbol = struct {
         symbols_for_source: [][]Symbol = undefined,
 
         pub fn get(self: *Map, ref: Ref) ?Symbol {
-            self.symbols_for_source[ref.source_index][ref.inner_index];
+            return self.symbols_for_source[ref.source_index][ref.inner_index];
         }
 
         pub fn init(sourceCount: usize, allocator: *std.mem.Allocator) !Map {
@@ -557,15 +524,12 @@ pub const Symbol = struct {
 
         pub fn follow(symbols: *Map, ref: Ref) Ref {
             if (symbols.get(ref)) |*symbol| {
-                if (symbol.link) |link| {
-                    if (!link.eql(ref)) {
-                        symbol.link = ref;
-                    }
-
-                    return link;
-                } else {
-                    return symbol;
+                const link = symbol.link orelse return ref;
+                if (!link.eql(ref)) {
+                    symbol.link = ref;
                 }
+
+                return symbol.link orelse unreachable;
             } else {
                 return ref;
             }
@@ -805,7 +769,7 @@ pub const E = struct {
         tag: ?ExprNodeIndex = null,
         head: JavascriptString,
         head_raw: string, // This is only filled out for tagged template literals
-        parts: ?[]TemplatePart = null,
+        parts: []TemplatePart = &([_]TemplatePart{}),
         legacy_octal_loc: logger.Loc = logger.Loc.Empty,
     };
 
@@ -829,16 +793,16 @@ pub const E = struct {
     };
 
     pub const Require = struct {
-        import_record_index: u32 = 0,
+        import_record_index: Ref.Int = 0,
     };
 
     pub const RequireOrRequireResolve = struct {
-        import_record_index: u32 = 0,
+        import_record_index: Ref.Int = 0,
     };
 
     pub const Import = struct {
         expr: ExprNodeIndex,
-        import_record_index: u32,
+        import_record_index: Ref.Int,
 
         // Comments inside "import()" expressions have special meaning for Webpack.
         // Preserving comments inside these expressions makes it possible to use
@@ -2109,6 +2073,15 @@ pub const Expr = struct {
         );
     }
 
+    pub fn isOptionalChain(self: *const @This()) bool {
+        return switch (self.data) {
+            .e_dot => |dot| dot.optional_chain != null,
+            .e_index => |dot| dot.optional_chain != null,
+            .e_call => |dot| dot.optional_chain != null,
+            else => false,
+        };
+    }
+
     pub const Data = union(Tag) {
         e_array: *E.Array,
         e_unary: *E.Unary,
@@ -2146,15 +2119,6 @@ pub const Expr = struct {
         e_require: *E.Require,
         e_require_or_require_resolve: *E.RequireOrRequireResolve,
         e_import: *E.Import,
-
-        pub fn isOptionalChain(self: *Expr) bool {
-            return switch (self) {
-                Expr.e_dot => |dot| dot.optional_chain != null,
-                Expr.e_index => |dot| dot.optional_chain != null,
-                Expr.e_call => |dot| dot.optional_chain != null,
-                else => false,
-            };
-        }
 
         pub fn isBooleanValue(self: *Expr) bool {
             // TODO:
@@ -2371,7 +2335,7 @@ pub const Finally = struct {
 pub const Case = struct { loc: logger.Loc, value: ?ExprNodeIndex, body: StmtNodeList };
 
 pub const Op = struct {
-    // If you add a new token, remember to add it to "OpTable" too
+    // If you add a new token, remember to add it to "Table" too
     pub const Code = enum {
         // Prefix
         un_pos,
@@ -2437,6 +2401,33 @@ pub const Op = struct {
         bin_nullish_coalescing_assign,
         bin_logical_or_assign,
         bin_logical_and_assign,
+
+        pub fn unaryAssignTarget(code: Op.Code) AssignTarget {
+            if (@enumToInt(code) >= @enumToInt(Op.Code.un_pre_dec) and @enumToInt(code) <= @enumToInt(Op.Code.un_post_inc)) {
+                return AssignTarget.update;
+            } else {
+                return AssignTarget.none;
+            }
+        }
+        pub fn isLeftAssociative(code: Op.Code) bool {
+            return @enumToInt(code) >= @enumToInt(Op.Code.bin_add) and @enumToInt(code) < @enumToInt(Op.Code.bin_comma) and code != .bin_pow;
+        }
+        pub fn isRightAssociative(code: Op.Code) bool {
+            return @enumToInt(code) >= @enumToInt(Op.Code.bin_assign) or code == .bin_pow;
+        }
+        pub fn binaryAssignTarget(code: Op.Code) AssignTarget {
+            if (code == .bin_assign) {
+                return AssignTarget.replace;
+            } else if (@enumToInt(code) > @enumToInt(Op.Code.bin_assign)) {
+                return .update;
+            } else {
+                return .none;
+            }
+        }
+
+        pub fn isPrefix(code: Op.Code) bool {
+            return @enumToInt(code) < @enumToInt(Op.Code.un_post_dec);
+        }
     };
 
     pub const Level = packed enum(u6) {
@@ -2492,71 +2483,84 @@ pub const Op = struct {
     level: Level,
     is_keyword: bool = false,
 
-    const Table = []Op{
+    pub fn init(triple: anytype) Op {
+        return Op{
+            .text = triple.@"0",
+            .level = triple.@"1",
+            .is_keyword = triple.@"2",
+        };
+    }
+
+    pub const TableType: std.EnumArray(Op.Code, Op);
+    pub const Table = comptime {
+        var table = std.EnumArray(Op.Code, Op).initUndefined();
+
         // Prefix
-        .{ "+", Level.prefix, false },
-        .{ "-", Level.prefix, false },
-        .{ "~", Level.prefix, false },
-        .{ "!", Level.prefix, false },
-        .{ "void", Level.prefix, true },
-        .{ "typeof", Level.prefix, true },
-        .{ "delete", Level.prefix, true },
+        table.set(Op.Code.un_pos, Op.init(.{ "+", Level.prefix, false }));
+        table.set(Op.Code.un_neg, Op.init(.{ "-", Level.prefix, false }));
+        table.set(Op.Code.un_cpl, Op.init(.{ "~", Level.prefix, false }));
+        table.set(Op.Code.un_not, Op.init(.{ "!", Level.prefix, false }));
+        table.set(Op.Code.un_void, Op.init(.{ "void", Level.prefix, true }));
+        table.set(Op.Code.un_typeof, Op.init(.{ "typeof", Level.prefix, true }));
+        table.set(Op.Code.un_delete, Op.init(.{ "delete", Level.prefix, true }));
 
         // Prefix update
-        .{ "--", Level.prefix, false },
-        .{ "++", Level.prefix, false },
+        table.set(Op.Code.un_pre_dec, Op.init(.{ "--", Level.prefix, false }));
+        table.set(Op.Code.un_pre_inc, Op.init(.{ "++", Level.prefix, false }));
 
         // Postfix update
-        .{ "--", Level.postfix, false },
-        .{ "++", Level.postfix, false },
+        table.set(Op.Code.un_post_dec, Op.init(.{ "--", Level.postfix, false }));
+        table.set(Op.Code.un_post_inc, Op.init(.{ "++", Level.postfix, false }));
 
         // Left-associative
-        .{ "+", Level.add, false },
-        .{ "-", Level.add, false },
-        .{ "*", Level.multiply, false },
-        .{ "/", Level.multiply, false },
-        .{ "%", Level.multiply, false },
-        .{ "**", Level.exponentiation, false }, // Right-associative
-        .{ "<", Level.compare, false },
-        .{ "<=", Level.compare, false },
-        .{ ">", Level.compare, false },
-        .{ ">=", Level.compare, false },
-        .{ "in", Level.compare, true },
-        .{ "instanceof", Level.compare, true },
-        .{ "<<", Level.shift, false },
-        .{ ">>", Level.shift, false },
-        .{ ">>>", Level.shift, false },
-        .{ "==", Level.equals, false },
-        .{ "!=", Level.equals, false },
-        .{ "===", Level.equals, false },
-        .{ "!==", Level.equals, false },
-        .{ "??", Level.nullish_coalescing, false },
-        .{ "||", Level.logical_or, false },
-        .{ "&&", Level.logical_and, false },
-        .{ "|", Level.bitwise_or, false },
-        .{ "&", Level.bitwise_and, false },
-        .{ "^", Level.bitwise_xor, false },
+        table.set(Op.Code.bin_add, Op.init(.{ "+", Level.add, false }));
+        table.set(Op.Code.bin_sub, Op.init(.{ "-", Level.add, false }));
+        table.set(Op.Code.bin_mul, Op.init(.{ "*", Level.multiply, false }));
+        table.set(Op.Code.bin_div, Op.init(.{ "/", Level.multiply, false }));
+        table.set(Op.Code.bin_rem, Op.init(.{ "%", Level.multiply, false }));
+        table.set(Op.Code.bin_pow, Op.init(.{ "**", Level.exponentiation, false }));
+        table.set(Op.Code.bin_lt, Op.init(.{ "<", Level.compare, false }));
+        table.set(Op.Code.bin_le, Op.init(.{ "<=", Level.compare, false }));
+        table.set(Op.Code.bin_gt, Op.init(.{ ">", Level.compare, false }));
+        table.set(Op.Code.bin_ge, Op.init(.{ ">=", Level.compare, false }));
+        table.set(Op.Code.bin_in, Op.init(.{ "in", Level.compare, true }));
+        table.set(Op.Code.bin_instanceof, Op.init(.{ "instanceof", Level.compare, true }));
+        table.set(Op.Code.bin_shl, Op.init(.{ "<<", Level.shift, false }));
+        table.set(Op.Code.bin_shr, Op.init(.{ ">>", Level.shift, false }));
+        table.set(Op.Code.bin_u_shr, Op.init(.{ ">>>", Level.shift, false }));
+        table.set(Op.Code.bin_loose_eq, Op.init(.{ "==", Level.equals, false }));
+        table.set(Op.Code.bin_loose_ne, Op.init(.{ "!=", Level.equals, false }));
+        table.set(Op.Code.bin_strict_eq, Op.init(.{ "===", Level.equals, false }));
+        table.set(Op.Code.bin_strict_ne, Op.init(.{ "!==", Level.equals, false }));
+        table.set(Op.Code.bin_nullish_coalescing, Op.init(.{ "??", Level.nullish_coalescing, false }));
+        table.set(Op.Code.bin_logical_or, Op.init(.{ "||", Level.logical_or, false }));
+        table.set(Op.Code.bin_logical_and, Op.init(.{ "&&", Level.logical_and, false }));
+        table.set(Op.Code.bin_bitwise_or, Op.init(.{ "|", Level.bitwise_or, false }));
+        table.set(Op.Code.bin_bitwise_and, Op.init(.{ "&", Level.bitwise_and, false }));
+        table.set(Op.Code.bin_bitwise_xor, Op.init(.{ "^", Level.bitwise_xor, false }));
 
         // Non-associative
-        .{ ",", LComma, false },
+        table.set(Op.Code.bin_comma, Op.init(.{ ",", Level.comma, false }));
 
         // Right-associative
-        .{ "=", Level.assign, false },
-        .{ "+=", Level.assign, false },
-        .{ "-=", Level.assign, false },
-        .{ "*=", Level.assign, false },
-        .{ "/=", Level.assign, false },
-        .{ "%=", Level.assign, false },
-        .{ "**=", Level.assign, false },
-        .{ "<<=", Level.assign, false },
-        .{ ">>=", Level.assign, false },
-        .{ ">>>=", Level.assign, false },
-        .{ "|=", Level.assign, false },
-        .{ "&=", Level.assign, false },
-        .{ "^=", Level.assign, false },
-        .{ "??=", Level.assign, false },
-        .{ "||=", Level.assign, false },
-        .{ "&&=", Level.assign, false },
+        table.set(Op.Code.bin_assign, Op.init(.{ "=", Level.assign, false }));
+        table.set(Op.Code.bin_add_assign, Op.init(.{ "+=", Level.assign, false }));
+        table.set(Op.Code.bin_sub_assign, Op.init(.{ "-=", Level.assign, false }));
+        table.set(Op.Code.bin_mul_assign, Op.init(.{ "*=", Level.assign, false }));
+        table.set(Op.Code.bin_div_assign, Op.init(.{ "/=", Level.assign, false }));
+        table.set(Op.Code.bin_rem_assign, Op.init(.{ "%=", Level.assign, false }));
+        table.set(Op.Code.bin_pow_assign, Op.init(.{ "**=", Level.assign, false }));
+        table.set(Op.Code.bin_shl_assign, Op.init(.{ "<<=", Level.assign, false }));
+        table.set(Op.Code.bin_shr_assign, Op.init(.{ ">>=", Level.assign, false }));
+        table.set(Op.Code.bin_u_shr_assign, Op.init(.{ ">>>=", Level.assign, false }));
+        table.set(Op.Code.bin_bitwise_or_assign, Op.init(.{ "|=", Level.assign, false }));
+        table.set(Op.Code.bin_bitwise_and_assign, Op.init(.{ "&=", Level.assign, false }));
+        table.set(Op.Code.bin_bitwise_xor_assign, Op.init(.{ "^=", Level.assign, false }));
+        table.set(Op.Code.bin_nullish_coalescing_assign, Op.init(.{ "??=", Level.assign, false }));
+        table.set(Op.Code.bin_logical_or_assign, Op.init(.{ "||=", Level.assign, false }));
+        table.set(Op.Code.bin_logical_and_assign, Op.init(.{ "&&=", Level.assign, false }));
+
+        return table;
     };
 };
 

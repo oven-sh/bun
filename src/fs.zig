@@ -7,19 +7,75 @@ const expect = std.testing.expect;
 
 // pub const FilesystemImplementation = @import("fs_impl.zig");
 
-pub const FileSystem = struct { tree: std.AutoHashMap(FileSystemEntry) };
+//
+pub const Stat = packed struct {
+    // milliseconds
+    mtime: i64 = 0,
+    // last queried timestamp
+    qtime: i64 = 0,
+    kind: FileSystemEntry.Kind,
+};
 
-pub const FileSystemEntry = union(enum) {
+pub const FileSystem = struct {
+    // This maps paths relative to absolute_working_dir to the structure of arrays of paths
+    stats: std.StringHashMap(Stat) = undefined,
+    entries: std.ArrayList(FileSystemEntry),
+
+    absolute_working_dir = "/",
+    implementation: anytype = undefined,
+
+    // pub fn statBatch(fs: *FileSystemEntry, paths: []string) ![]?Stat {
+
+    // }
+    // pub fn stat(fs: *FileSystemEntry, path: string) !Stat {
+
+    // }
+    // pub fn readFile(fs: *FileSystemEntry, path: string) ?string {
+
+    // }
+    // pub fn readDir(fs: *FileSystemEntry, path: string) ?[]string {
+
+    // }
+
+    pub fn Implementation(comptime Context: type) type {
+        return struct {
+            context: *Context,
+
+            pub fn statBatch(context: *Context, path: string) ![]?Stat {
+                return try context.statBatch(path);
+            }
+
+            pub fn stat(context: *Context, path: string) !?Stat {
+                return try context.stat(path);
+            }
+
+            pub fn readFile(context: *Context, path: string) !?File {
+                return try context.readFile(path);
+            }
+
+            pub fn readDir(context: *Context, path: string) []string {
+                return context.readdir(path);
+            }
+        };
+    }
+};
+
+pub const FileNotFound = struct {};
+
+pub const FileSystemEntry = union(FileSystemEntry.Kind) {
     file: File,
     directory: Directory,
+    not_found: FileNotFound,
+
+    pub const Kind = enum(u8) {
+        file,
+        directory,
+        not_found,
+    };
 };
 
-pub const File = struct {
-    path: Path,
-    mtime: ?usize,
-    contents: ?string,
-};
-pub const Directory = struct { path: Path, mtime: ?usize, contents: []FileSystemEntry };
+pub const Directory = struct { path: Path, contents: []string };
+pub const File = struct { path: Path, contents: string };
 
 pub const PathName = struct {
     base: string,

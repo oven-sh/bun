@@ -6,6 +6,7 @@ const options = @import("options.zig");
 const js_parser = @import("js_parser.zig");
 const js_printer = @import("js_printer.zig");
 const js_ast = @import("js_ast.zig");
+const linker = @import("linker.zig");
 
 pub fn main() anyerror!void {
     try alloc.setup(std.heap.page_allocator);
@@ -28,8 +29,15 @@ pub fn main() anyerror!void {
     var source = logger.Source.initFile(opts.entry_point, alloc.dynamic);
     var parser = try js_parser.Parser.init(opts, &log, &source, alloc.dynamic);
     var res = try parser.parse();
-
-    const printed = try js_printer.printAst(alloc.dynamic, res.ast, js_ast.Symbol.Map{}, false, js_printer.Options{ .to_module_ref = js_ast.Ref{ .inner_index = 0 } });
+    var _linker = linker.Linker{};
+    const printed = try js_printer.printAst(
+        alloc.dynamic,
+        res.ast,
+        js_ast.Symbol.Map{},
+        false,
+        js_printer.Options{ .to_module_ref = js_ast.Ref{ .inner_index = 0 } },
+        &_linker,
+    );
 
     std.debug.print("{s}\n{s}", .{ res, printed });
 }

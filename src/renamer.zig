@@ -1,4 +1,6 @@
 const js_ast = @import("js_ast.zig");
+usingnamespace @import("strings.zig");
+const std = @import("std");
 
 pub const Renamer = struct {
     symbols: js_ast.Symbol.Map,

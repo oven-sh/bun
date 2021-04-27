@@ -1,5 +1,7 @@
 const fs = @import("fs.zig");
 const logger = @import("logger.zig");
+const std = @import("std");
+usingnamespace @import("ast/base.zig");
 
 pub const ImportKind = enum(u8) {
 
@@ -31,6 +33,8 @@ pub const ImportKind = enum(u8) {
 pub const ImportRecord = struct {
     range: logger.Range,
     path: fs.Path,
+
+    source_index: Ref.Int = std.math.maxInt(Ref.Int),
 
     // Sometimes the parser creates an import record and decides it isn't needed.
     // For example, TypeScript code may have import statements that later turn

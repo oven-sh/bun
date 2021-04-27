@@ -22,7 +22,6 @@ const StmtNodeList = js_ast.StmtNodeList;
 const BindingNodeList = js_ast.BindingNodeList;
 const assert = std.debug.assert;
 
-const Ref = js_ast.Ref;
 const LocRef = js_ast.LocRef;
 const S = js_ast.S;
 const B = js_ast.B;
@@ -239,8 +238,9 @@ fn expectPrintedJSON(_contents: string, expected: string) void {
     if (log.msgs.items.len > 0) {
         std.debug.panic("--FAIL--\nExpr {s}\nLog: {s}\n--FAIL--", .{ expr, log.msgs.items[0].data.text });
     }
+    var linker = @import("linker.zig").Linker{};
 
-    const result = js_printer.printAst(alloc.dynamic, tree, symbol_map, true, js_printer.Options{ .to_module_ref = Ref{ .inner_index = 0 } }) catch unreachable;
+    const result = js_printer.printAst(alloc.dynamic, tree, symbol_map, true, js_printer.Options{ .to_module_ref = Ref{ .inner_index = 0 } }, &linker) catch unreachable;
 
     var js = result.js;
 

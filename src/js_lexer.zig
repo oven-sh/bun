@@ -1503,6 +1503,55 @@ pub fn isWhitespace(codepoint: CodePoint) bool {
     }
 }
 
+pub fn isIdentifier(text: string) bool {
+    if (text.len == 0) {
+        return false;
+    }
+
+    var iter = std.unicode.Utf8Iterator{ .bytes = text, .i = 0 };
+    if (!isIdentifierStart(iter.nextCodepoint() orelse unreachable)) {
+        return false;
+    }
+
+    while (iter.nextCodepoint()) |codepoint| {
+        if (!isIdentifierContinue(@intCast(CodePoint, codepoint))) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+pub fn isIdentifierUTF16(text: JavascriptString) bool {
+    const n = text.len;
+    if (n == 0) {
+        return false;
+    }
+
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        var r1 = text[i];
+        if (r1 >= 0xD800 and r1 <= 0xDBFF and i + 1 < n) {
+            const r2 = text[i + 1];
+            if (r2 >= 0xDC00 and r2 <= 0xDFFF) {
+                r1 = (r1 << 10) + r2 + (0x10000 - (0xD800 << 10) - 0xDC00);
+                i += 1;
+            }
+        }
+        if (i == 0) {
+            if (!isIdentifierStart(@intCast(u21, r1))) {
+                return false;
+            }
+        } else {
+            if (!isIDentifierContinue(@intCast(u21, r1))) {
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
 // TODO: implement this to actually work right
 // this fn is a stub!
 pub fn rangeOfIdentifier(source: *Source, loc: logger.Loc) logger.Range {

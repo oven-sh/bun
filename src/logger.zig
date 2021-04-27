@@ -273,14 +273,10 @@ pub const Source = struct {
     pub const ErrorPosition = struct { line_start: usize, line_end: usize, column_count: usize, line_count: usize };
 
     pub fn initFile(file: fs.File, allocator: *std.mem.Allocator) Source {
-        std.debug.assert(file.contents != null);
         var name = file.path.name;
         var identifier_name = name.nonUniqueNameString(allocator) catch unreachable;
-        if (file.contents) |contents| {
-            return Source{ .path = file.path, .identifier_name = identifier_name, .contents = contents };
-        } else {
-            std.debug.panic("Expected file.contents to not be null. {s}", .{file});
-        }
+
+        return Source{ .path = file.path, .identifier_name = identifier_name, .contents = file.contents };
     }
 
     pub fn initPathString(pathString: string, contents: string) Source {

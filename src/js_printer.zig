@@ -865,7 +865,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         flags.has_non_optional_chain_parent = true;
                     }
                     p.printExpr(e.target, .postfix, flags);
-                    // Zig compiler bug: e.optional_chain == null or e.optional_chain == .start causes broken LLVM IR
+                    // Ironic Zig compiler bug: e.optional_chain == null or e.optional_chain == .start causes broken LLVM IR
                     // https://github.com/ziglang/zig/issues/6059
                     const isOptionalChain = (e.optional_chain orelse js_ast.OptionalChain.ccontinue) == js_ast.OptionalChain.start;
 
@@ -1489,32 +1489,551 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                 .s_comment => |s| {
                     p.printIndentedComment(s.text);
                 },
-                .s_function => |s| {},
-                .s_class => |s| {},
-                .s_empty => |s| {},
-                .s_export_default => |s| {},
-                .s_export_star => |s| {},
-                .s_export_clause => |s| {},
-                .s_export_from => |s| {},
-                .s_local => |s| {},
-                .s_if => |s| {},
-                .s_do_while => |s| {},
-                .s_for_in => |s| {},
-                .s_for_of => |s| {},
-                .s_while => |s| {},
-                .s_with => |s| {},
-                .s_label => |s| {},
-                .s_try => |s| {},
-                .s_for => |s| {},
-                .s_switch => |s| {},
-                .s_import => |s| {},
-                .s_block => |s| {},
-                .s_debugger => |s| {},
-                .s_directive => |s| {},
-                .s_break => |s| {},
-                .s_continue => |s| {},
-                .s_return => |s| {},
-                .s_throw => |s| {},
+                .s_function => |s| {
+                    p.printIndent();
+                    p.printSpaceBeforeIdentifier();
+                    if (s.func.flags.is_export) {
+                        p.print("export ");
+                    }
+                    if (s.func.flags.is_async) {
+                        p.print("async ");
+                    }
+                    p.print("function");
+                    if (s.func.flags.is_generator) {
+                        p.print("*");
+                        p.printSpace();
+                    }
+                    const name = s.func.name orelse std.debug.panic("Internal error: expected func to have a name ref\n{s}", .{s});
+                    const nameRef = name.ref orelse std.debug.panic("Internal error: expected func to have a name\n{s}", .{s});
+                    p.printSymbol(nameRef);
+                    p.printFunc(s.func);
+                    p.printNewline();
+                },
+                .s_class => |s| {
+                    p.printIndent();
+                    p.printSpaceBeforeIdentifier();
+                    if (s.is_export) {
+                        p.print("export ");
+                    }
+                    p.print("class");
+                    p.printSymbol(s.class.class_name.?.ref.?);
+                    p.printClass(s.class);
+                    p.printNewline();
+                },
+                .s_empty => |s| {
+                    p.printIndent();
+                    p.print(";");
+                    p.printNewline();
+                },
+                .s_export_default => |s| {
+                    p.printIndent();
+                    p.printSpaceBeforeIdentifier();
+                    p.print("export default");
+                    p.printSpace();
+
+                    switch (s.value) {
+                        .expr => |expr| {
+                            // Functions and classes must be wrapped to avoid confusion with their statement forms
+                            p.export_default_start = p.js.lenI();
+                            p.printExpr(expr, .comma, ExprFlag.None());
+                            p.printSemicolonAfterStatement();
+                            return;
+                        },
+                        .stmt => |s2| {
+                            switch (s2.data) {
+                                .s_function => |func| {
+                                    p.printSpaceBeforeIdentifier();
+                                    if (func.func.flags.is_async) {
+                                        p.print("async ");
+                                    }
+                                    p.print("function");
+                                    if (func.func.flags.is_generator) {
+                                        p.print("*");
+                                        p.printSpace();
+                                    }
+                                    if (func.func.name) |name| {
+                                        p.printSymbol(name.ref orelse std.debug.panic("Internal error: Expected func to have a name ref\n{s}", .{func}));
+                                    }
+                                    p.printFunc(func.func);
+                                    p.printNewline();
+                                },
+                                .s_class => |class| {
+                                    p.printSpaceBeforeIdentifier();
+                                    p.print("class");
+                                    if (class.class.class_name) |name| {
+                                        p.printSymbol(name.ref orelse std.debug.panic("Internal error: Expected class to have a name ref\n{s}", .{class}));
+                                    }
+                                    p.printClass(class.class);
+                                    p.printNewline();
+                                },
+                                else => {
+                                    std.debug.panic("Internal error: unexpected export default stmt data {s}", .{s});
+                                },
+                            }
+                        },
+                    }
+                },
+                .s_export_star => |s| {
+                    p.printIndent();
+                    p.printSpaceBeforeIdentifier();
+                    p.print("export");
+                    p.printSpace();
+                    p.print("*");
+                    p.printSpace();
+                    if (s.alias) |alias| {
+                        p.print("as");
+                        p.printSpace();
+                        p.printClauseAlias(alias.original_name);
+                        p.printSpace();
+                        p.printSpaceBeforeIdentifier();
+                    }
+                    p.print("from");
+                    p.printSpace();
+                    p.printQuotedUTF8(p.import_records[s.import_record_index].path.text, false);
+                    p.printSemicolonAfterStatement();
+                },
+                .s_export_clause => |s| {
+                    p.printIndent();
+                    p.printSpaceBeforeIdentifier();
+                    p.print("export");
+                    p.printSpace();
+                    p.print("{");
+
+                    if (!s.is_single_line) {
+                        p.options.indent += 1;
+                    }
+
+                    var i: usize = 0;
+                    while (i < s.items.len) : (i += 1) {
+                        if (i != 0) {
+                            p.print(",");
+                            if (s.is_single_line) {
+                                p.printSpace();
+                            }
+                        }
+
+                        if (!s.is_single_line) {
+                            p.printNewline();
+                            p.printIndent();
+                        }
+                        const item = s.items[i];
+                        const name = p.renamer.nameForSymbol(item.name.ref.?);
+                        p.printIdentifier(name);
+                        if (!strings.eql(name, item.alias)) {
+                            p.print(" as");
+                            p.printSpace();
+                            p.printClauseAlias(item.alias);
+                        }
+                    }
+
+                    if (!s.is_single_line) {
+                        p.options.indent -= 1;
+                        p.printNewline();
+                        p.printIndent();
+                    }
+
+                    p.print("}");
+                    p.printSemicolonAfterStatement();
+                },
+                .s_export_from => |s| {
+                    p.printIndent();
+                    p.printSpaceBeforeIdentifier();
+                    p.print("export");
+                    p.printSpace();
+                    p.print("{");
+
+                    if (!s.is_single_line) {
+                        p.options.indent += 1;
+                    }
+
+                    var i: usize = 0;
+
+                    while (i < s.items.len) : (i += 1) {
+                        if (i != 0) {
+                            p.print(",");
+                            if (s.is_single_line) {
+                                p.printSpace();
+                            }
+                        }
+
+                        if (!s.is_single_line) {
+                            p.printNewline();
+                            p.printIndent();
+                        }
+                        const item = s.items[i];
+                        const name = p.renamer.nameForSymbol(item.name.ref.?);
+                        p.printIdentifier(name);
+                        if (!strings.eql(name, item.alias)) {
+                            p.print(" as");
+                            p.printSpace();
+                            p.printClauseAlias(item.alias);
+                        }
+                    }
+
+                    if (!s.is_single_line) {
+                        p.options.indent -= 1;
+                        p.printNewline();
+                        p.printIndent();
+                    }
+
+                    p.print("}");
+                    p.printSpace();
+                    p.print("from");
+                    p.printSpace();
+                    p.printQuotedUTF8(p.import_records[s.import_record_index].path.text, false);
+                    p.printSemicolonAfterStatement();
+                },
+                .s_local => |s| {
+                    switch (s.kind) {
+                        .k_const => {
+                            p.printDeclStmt(s.is_export, "const", s.decls);
+                        },
+                        .k_let => {
+                            p.printDeclStmt(s.is_export, "let", s.decls);
+                        },
+                        .k_var => {
+                            p.printDeclStmt(s.is_export, "var", s.decls);
+                        },
+                    }
+                },
+                .s_if => |s| {
+                    p.printIndent();
+                    p.printIf(s);
+                },
+                .s_do_while => |s| {
+                    p.printIndent();
+                    p.printSpaceBeforeIdentifier();
+                    p.print("do");
+                    switch (s.body.data) {
+                        .s_block => |block| {
+                            p.printSpace();
+                            p.printBlock(s.body.loc, block.stmts);
+                            p.printSpace();
+                        },
+                        else => {
+                            p.printNewline();
+                            p.options.indent += 1;
+                            p.printStmt(s.body) catch unreachable;
+                            p.printSemicolonIfNeeded();
+                            p.options.indent -= 1;
+                            p.printIndent();
+                        },
+                    }
+
+                    p.print("while");
+                    p.printSpace();
+                    p.print("(");
+                    p.printExpr(s.test_, .lowest, ExprFlag.None());
+                    p.print(")");
+                    p.printSemicolonAfterStatement();
+                },
+                .s_for_in => |s| {
+                    p.printIndent();
+                    p.printSpaceBeforeIdentifier();
+                    p.print("for");
+                    p.printSpace();
+                    p.print("(");
+                    p.printForLoopInit(s.init);
+                    p.printSpace();
+                    p.printSpaceBeforeIdentifier();
+                    p.print("in");
+                    p.printSpace();
+                    p.printExpr(s.value, .lowest, ExprFlag.None());
+                    p.print(")");
+                    p.printBody(s.body);
+                },
+                .s_for_of => |s| {
+                    p.printIndent();
+                    p.printSpaceBeforeIdentifier();
+                    p.print("for");
+                    if (s.is_await) {
+                        p.print(" await");
+                    }
+                    p.printSpace();
+                    p.print("(");
+                    p.for_of_init_start = p.js.lenI();
+                    p.printForLoopInit(s.init);
+                    p.printSpace();
+                    p.printSpaceBeforeIdentifier();
+                    p.print("of");
+                    p.printSpace();
+                    p.printExpr(s.value, .comma, ExprFlag.None());
+                    p.print(")");
+                    p.printBody(s.body);
+                },
+                .s_while => |s| {
+                    p.printIndent();
+                    p.printSpaceBeforeIdentifier();
+                    p.print("while");
+                    p.printSpace();
+                    p.print("(");
+                    p.printExpr(s.test_, .lowest, ExprFlag.None());
+                    p.print(")");
+                    p.printBody(s.body);
+                },
+                .s_with => |s| {
+                    p.printIndent();
+                    p.printSpaceBeforeIdentifier();
+                    p.print("with");
+                    p.printSpace();
+                    p.print("(");
+                    p.printExpr(s.value, .lowest, ExprFlag.None());
+                    p.print(")");
+                    p.printBody(s.body);
+                },
+                .s_label => |s| {
+                    p.printIndent();
+                    p.printSymbol(s.name.ref orelse std.debug.panic("Internal error: expected label to have a name {s}", .{s}));
+                    p.print(":");
+                    p.printBody(s.stmt);
+                },
+                .s_try => |s| {
+                    p.printIndent();
+                    p.printSpaceBeforeIdentifier();
+                    p.print("try");
+                    p.printSpace();
+                    p.printBlock(s.body_loc, s.body);
+
+                    if (s.catch_) |catch_| {
+                        p.printSpace();
+                        p.print("catch");
+                        if (catch_.binding) |binding| {
+                            p.printSpace();
+                            p.print("(");
+                            p.printBinding(binding);
+                            p.print(")");
+                        }
+                        p.printSpace();
+                        p.printBlock(catch_.loc, catch_.body);
+                    }
+
+                    if (s.finally) |finally| {
+                        p.printSpace();
+                        p.print("finally");
+                        p.printSpace();
+                        p.printBlock(finally.loc, finally.stmts);
+                    }
+
+                    p.printNewline();
+                },
+                .s_for => |s| {
+                    p.printIndent();
+                    p.printSpaceBeforeIdentifier();
+                    p.print("for");
+                    p.printSpace();
+                    p.print("(");
+
+                    if (s.test_) |test_| {
+                        p.printExpr(test_, .lowest, ExprFlag.None());
+                    }
+
+                    p.print(";");
+                    p.printSpace();
+
+                    if (s.update) |update| {
+                        p.printExpr(update, .lowest, ExprFlag.None());
+                    }
+
+                    p.print(")");
+                    p.printBody(s.body);
+                },
+                .s_switch => |s| {
+                    p.printIndent();
+                    p.printSpaceBeforeIdentifier();
+                    p.print("switch");
+                    p.printSpace();
+                    p.print("(");
+
+                    p.printExpr(s.test_, .lowest, ExprFlag.None());
+
+                    p.print(")");
+                    p.printSpace();
+                    p.print("{");
+                    p.printNewline();
+                    p.options.indent += 1;
+
+                    for (s.cases) |c| {
+                        p.printSemicolonIfNeeded();
+                        p.printIndent();
+
+                        if (c.value) |val| {
+                            p.print("case");
+                            p.printSpace();
+                            p.printExpr(val, .logical_and, ExprFlag.None());
+                        } else {
+                            p.print("default");
+                        }
+
+                        p.print(":");
+
+                        if (c.body.len == 1) {
+                            switch (c.body[0].data) {
+                                .s_block => |block| {
+                                    p.printSpace();
+                                    p.printBlock(c.body[0].loc, block.stmts);
+                                    p.printNewline();
+                                    continue;
+                                },
+                                else => {},
+                            }
+                        }
+
+                        p.printNewline();
+                        p.options.indent += 1;
+                        for (c.body) |st| {
+                            p.printSemicolonIfNeeded();
+                            p.printStmt(st) catch unreachable;
+                        }
+                        p.options.indent -= 1;
+                    }
+
+                    p.options.indent -= 1;
+                    p.printIndent();
+                    p.print("}");
+                    p.printNewline();
+                    p.needs_semicolon = false;
+                },
+                .s_import => |s| {
+                    var item_count: usize = 0;
+                    p.printIndent();
+                    p.printSpaceBeforeIdentifier();
+                    p.print("import");
+                    p.printSpace();
+
+                    if (s.default_name) |name| {
+                        p.printSymbol(name.ref.?);
+                        item_count += 1;
+                    }
+
+                    if (s.items.len > 0) {
+                        if (item_count > 0) {
+                            p.print(",");
+                            p.printSpace();
+                        }
+
+                        p.print("{");
+                        if (!s.is_single_line) {
+                            p.options.indent -= 1;
+                        }
+
+                        var i: usize = 0;
+                        while (i < s.items.len) : (i += 1) {
+                            if (i != 0) {
+                                p.print(",");
+                                if (s.is_single_line) {
+                                    p.printSpace();
+                                }
+                            }
+
+                            if (!s.is_single_line) {
+                                p.printNewline();
+                                p.printIndent();
+                            }
+
+                            const item = s.items[i];
+                            p.printClauseAlias(item.alias);
+                            const name = p.renamer.nameForSymbol(item.name.ref.?);
+                            if (!strings.eql(name, item.alias)) {
+                                p.printSpace();
+                                p.printSpaceBeforeIdentifier();
+                                p.print("as ");
+                                p.printIdentifier(name);
+                            }
+                        }
+
+                        if (!s.is_single_line) {
+                            p.options.indent -= 1;
+                            p.printNewline();
+                            p.printIndent();
+                        }
+                        p.print("}");
+                        item_count += 1;
+                    }
+
+                    if (s.star_name_loc) |star| {
+                        if (item_count > 0) {
+                            p.print(",");
+                            p.printSpace();
+                        }
+
+                        p.print("*");
+                        p.printSpace();
+                        p.print("as ");
+                        p.printSymbol(s.namespace_ref);
+                        item_count += 1;
+                    }
+
+                    if (item_count > 0) {
+                        p.printSpace();
+                        p.printSpaceBeforeIdentifier();
+                        p.print("from");
+                        p.printSpace();
+                    }
+
+                    p.printQuotedUTF8(p.import_records[s.import_record_index].path.text, false);
+                    p.printSemicolonAfterStatement();
+                },
+                .s_block => |s| {
+                    p.printIndent();
+                    p.printBlock(stmt.loc, s.stmts);
+                    p.printNewline();
+                },
+                .s_debugger => |s| {
+                    p.printIndent();
+                    p.printSpaceBeforeIdentifier();
+                    p.print("debugger");
+                    p.printSemicolonAfterStatement();
+                },
+                .s_directive => |s| {
+                    const c = p.bestQuoteCharForString(s.value, false);
+                    p.printIndent();
+                    p.printSpaceBeforeIdentifier();
+                    p.print(c);
+                    p.printQuotedUTF16(s.value, c);
+                    p.print(c);
+                    p.printSemicolonAfterStatement();
+                },
+                .s_break => |s| {
+                    p.printIndent();
+                    p.printSpaceBeforeIdentifier();
+                    p.print("break");
+                    if (s.label) |label| {
+                        p.print(" ");
+                        p.printSymbol(label.ref.?);
+                    }
+
+                    p.printSemicolonAfterStatement();
+                },
+                .s_continue => |s| {
+                    p.printIndent();
+                    p.printSpaceBeforeIdentifier();
+                    p.print("continue");
+
+                    if (s.label) |label| {
+                        p.print(" ");
+                        p.printSymbol(label.ref.?);
+                    }
+                    p.printSemicolonAfterStatement();
+                },
+                .s_return => |s| {
+                    p.printIndent();
+                    p.printSpaceBeforeIdentifier();
+                    p.print("return");
+
+                    if (s.value) |value| {
+                        p.printSpace();
+                        p.printExpr(value, .lowest, ExprFlag.None());
+                    }
+                    p.printSemicolonAfterStatement();
+                },
+                .s_throw => |s| {
+                    p.printIndent();
+                    p.printSpaceBeforeIdentifier();
+                    p.print("throw");
+                    p.printSpace();
+                    p.printExpr(s.value, .lowest, ExprFlag.None());
+                    p.printSemicolonAfterStatement();
+                },
                 .s_expr => |s| {
                     p.printIndent();
                     p.stmt_start = p.js.lenI();
@@ -1525,6 +2044,41 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     std.debug.panic("Unexpected statement of type {s}", .{@TypeOf(stmt)});
                 },
             }
+        }
+
+        pub fn printForLoopInit(p: *Printer, initSt: Stmt) void {
+            switch (initSt.data) {
+                .s_expr => |s| {
+                    p.printExpr(
+                        s.value,
+                        .lowest,
+                        ExprFlag{ .forbid_in = true, .expr_result_is_unused = true },
+                    );
+                },
+                .s_local => |s| {
+                    switch (s.kind) {
+                        .k_var => {
+                            p.printDecls("var", s.decls, ExprFlag{ .forbid_in = true });
+                        },
+                        .k_let => {
+                            p.printDecls("let", s.decls, ExprFlag{ .forbid_in = true });
+                        },
+                        .k_const => {
+                            p.printDecls("const", s.decls, ExprFlag{ .forbid_in = true });
+                        },
+                    }
+                },
+                else => {
+                    std.debug.panic("Internal error: Unexpected stmt in for loop {s}", .{initSt});
+                },
+            }
+        }
+        pub fn printIf(p: *Printer, s: *S.If) void {
+            notimpl();
+        }
+
+        pub fn printDeclStmt(p: *Printer, is_export: bool, keyword: string, decls: []G.Decl) void {
+            notimpl();
         }
 
         pub fn printIdentifier(p: *Printer, identifier: string) void {

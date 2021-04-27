@@ -26,6 +26,7 @@ pub fn main() anyerror!void {
     const opts = try options.TransformOptions.initUncached(alloc.dynamic, entryPointName, code);
     var log = logger.Log.init(alloc.dynamic);
     var source = logger.Source.initFile(opts.entry_point, alloc.dynamic);
+
     var parser = try js_parser.Parser.init(opts, &log, &source, alloc.dynamic);
     var res = try parser.parse();
 

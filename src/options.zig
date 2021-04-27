@@ -14,10 +14,12 @@ pub const Loader = enum {
     tsx,
     css,
     file,
+    json,
 };
 
 pub const defaultLoaders = std.ComptimeStringMap(Loader, .{
     .{ ".jsx", Loader.jsx },
+    .{ ".json", Loader.json },
     .{ ".js", Loader.js },
     .{ ".mjs", Loader.js },
     .{ ".css", Loader.css },

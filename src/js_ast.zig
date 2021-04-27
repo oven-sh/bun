@@ -2779,6 +2779,11 @@ pub const Part = struct {
     is_live: bool = false,
 };
 
+pub const Result = struct {
+    ast: Ast,
+    ok: bool = false,
+};
+
 pub const StmtOrExpr = union(enum) {
     stmt: StmtNodeIndex,
     expr: ExprNodeIndex,

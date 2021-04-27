@@ -197,6 +197,8 @@ const ScopeOrder = struct {
     scope: *js_ast.Scope,
 };
 
+pub const Result = js_ast.Result;
+
 const ParenExprOpts = struct {
     async_range: logger.Range = logger.Range.None,
     is_async: bool = false,
@@ -347,8 +349,6 @@ pub const Parser = struct {
     source: logger.Source,
     allocator: *std.mem.Allocator,
     p: ?*P,
-
-    pub const Result = struct { ast: js_ast.Ast, ok: bool = false };
 
     pub const Options = struct {
         jsx: options.JSX,

@@ -138,11 +138,15 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
 
                     while (p.lexer.token != .t_close_brace) {
                         if (properties.items.len > 0) {
-                            is_single_line = if (p.lexer.has_newline_before) false else is_single_line;
+                            if (p.lexer.has_newline_before) {
+                                is_single_line = false;
+                            }
                             if (!p.parseMaybeTrailingComma(.t_close_brace)) {
                                 break;
                             }
-                            is_single_line = if (p.lexer.has_newline_before) false else is_single_line;
+                            if (p.lexer.has_newline_before) {
+                                is_single_line = false;
+                            }
                         }
 
                         var key_string = p.lexer.string_literal;
@@ -162,7 +166,9 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
                         properties.append(G.Property{ .key = key, .value = value }) catch unreachable;
                     }
 
-                    is_single_line = if (p.lexer.has_newline_before) false else is_single_line;
+                    if (p.lexer.has_newline_before) {
+                        is_single_line = false;
+                    }
                     p.lexer.expect(.t_close_brace);
                     return p.e(E.Object{
                         .properties = properties.toOwnedSlice(),
@@ -269,6 +275,9 @@ test "ParseJSON" {
     expectPrintedJSON("3.4159820837456", "3.4159820837456");
     expectPrintedJSON("-10000.25", "-10000.25");
     expectPrintedJSON("\"hi\"", "\"hi\"");
+    expectPrintedJSON("{\"hi\": 1, \"hey\": \"200\", \"boom\": {\"yo\": true}}", "({\"hi\": 1, \"hey\": \"200\", \"boom\": {\"yo\": true}})");
+    expectPrintedJSON("{\"hi\": \"hey\"}", "({hi: \"hey\"})");
+    expectPrintedJSON("{\"hi\": [\"hey\", \"yo\"]}", "({hi:[\"hey\",\"yo\"]})");
     // TODO: emoji?
 }
 

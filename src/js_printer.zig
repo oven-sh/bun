@@ -77,6 +77,10 @@ pub const Options = struct {
     // If we're writing out a source map, this table of line start indices lets
     // us do binary search on to figure out what line a given AST node came from
     // line_offset_tables: []LineOffsetTable
+
+    pub fn unindent(self: *Options) void {
+        self.indent = if (self.indent > 0) self.indent - 1 else 0;
+    }
 };
 
 pub const PrintResult = struct { js: string, source_map: ?SourceMapChunk = null };
@@ -185,8 +189,8 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
         //     }
         // }
 
-        pub fn printFmt(p: *Printer, fmt: comptime string, args: anytype) void {
-            std.fmt.bufPrint(p.writer, fmt, args);
+        pub fn printFmt(p: *Printer, comptime fmt: string, args: anytype) void {
+            std.fmt.format(p.writer, fmt, args) catch unreachable;
         }
 
         pub fn print(p: *Printer, str: anytype) void {
@@ -226,7 +230,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
             p.js.growBy(p.options.indent * "  ".len) catch unreachable;
             while (p.options.indent > 0) {
                 p.unsafePrint("  ");
-                p.options.indent -= 1;
+                p.options.unindent();
             }
         }
 
@@ -277,7 +281,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.printNewline();
                     p.options.indent += 1;
                     p.printStmt(stmt) catch unreachable;
-                    p.options.indent -= 1;
+                    p.options.unindent();
                 },
             }
         }
@@ -291,7 +295,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                 p.printSemicolonIfNeeded();
                 p.printStmt(stmt) catch unreachable;
             }
-            p.options.indent -= 1;
+            p.options.unindent();
             p.needs_semicolon = false;
 
             p.printIndent();
@@ -397,7 +401,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
             }
 
             p.needs_semicolon = false;
-            p.options.indent -= 1;
+            p.options.unindent();
             p.printIndent();
             p.print("}");
         }
@@ -683,7 +687,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                 p.printQuotedUTF8(record.path.text, true);
                 if (leading_interior_comments.len > 0) {
                     p.printNewline();
-                    p.options.indent -= 1;
+                    p.options.unindent();
                     p.printIndent();
                 }
 
@@ -954,7 +958,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
 
                         if (e.leading_interior_comments.len > 0) {
                             p.printNewline();
-                            p.options.indent -= 1;
+                            p.options.unindent();
                             p.printIndent();
                         }
                         p.print(")");
@@ -1174,7 +1178,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         }
 
                         if (!e.is_single_line) {
-                            p.options.indent -= 1;
+                            p.options.unindent();
                             p.printNewline();
                             p.printIndent();
                         }
@@ -1212,7 +1216,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         }
 
                         if (!e.is_single_line) {
-                            p.options.indent -= 1;
+                            p.options.unindent();
                             p.printNewline();
                             p.printIndent();
                         }
@@ -1744,8 +1748,160 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
         }
 
         pub fn printBinding(p: *Printer, binding: Binding) void {
-            notimpl();
+            p.addSourceMapping(binding.loc);
+
+            switch (binding.data) {
+                .b_missing => {},
+                .b_identifier => |b| {
+                    p.printSymbol(b.ref);
+                },
+                .b_array => |b| {
+                    p.print("[");
+                    if (b.items.len > 0) {
+                        if (!b.is_single_line) {
+                            p.options.indent += 1;
+                        }
+
+                        var i: usize = 0;
+                        while (i < b.items.len) : (i += 1) {
+                            if (i != 0) {
+                                p.print(",");
+                                if (b.is_single_line) {
+                                    p.printSpace();
+                                }
+                            }
+
+                            if (!b.is_single_line) {
+                                p.printNewline();
+                                p.printIndent();
+                            }
+
+                            const is_last = i + 1 == b.items.len;
+                            if (b.has_spread and is_last) {
+                                p.print("...");
+                            }
+
+                            const item = b.items[i];
+                            p.printBinding(item.binding);
+
+                            p.maybePrintDefaultBindingValue(item);
+
+                            // Make sure there's a comma after trailing missing items
+                            if (is_last) {
+                                switch (item.binding.data) {
+                                    .b_missing => |ok| {
+                                        p.print(",");
+                                    },
+                                    else => {},
+                                }
+                            }
+                        }
+
+                        if (!b.is_single_line) {
+                            p.options.unindent();
+                            p.printNewline();
+                            p.printIndent();
+                        }
+                    }
+
+                    p.print("]");
+                },
+                .b_object => |b| {
+                    p.print("{");
+                    if (b.properties.len > 0) {
+                        if (!b.is_single_line) {
+                            p.options.indent += 1;
+                        }
+
+                        var i: usize = 0;
+                        while (i < b.properties.len) : (i += 1) {
+                            if (i != 0) {
+                                p.print(",");
+                                if (b.is_single_line) {
+                                    p.printSpace();
+                                }
+                            }
+
+                            if (!b.is_single_line) {
+                                p.printNewline();
+                                p.printIndent();
+                            }
+
+                            const property = b.properties[i];
+
+                            if (property.flags.is_spread) {
+                                p.print("...");
+                            } else {
+                                if (property.flags.is_computed) {
+                                    p.print("[");
+                                    p.printExpr(property.key, .comma, ExprFlag.None());
+                                    p.print("]:");
+                                    p.printSpace();
+
+                                    p.printBinding(property.value);
+                                    p.maybePrintDefaultBindingValue(property);
+                                    continue;
+                                }
+
+                                switch (property.key.data) {
+                                    .e_string => |str| {
+                                        if (p.canPrintIdentifierUTF16(str.value)) {
+                                            p.addSourceMapping(property.key.loc);
+                                            p.printSpaceBeforeIdentifier();
+                                            p.printIdentifierUTF16(str.value) catch unreachable;
+
+                                            // Use a shorthand property if the names are the same
+                                            switch (property.value.data) {
+                                                .b_identifier => |id| {
+                                                    if (strings.utf16EqlString(str.value, p.renamer.nameForSymbol(id.ref))) {
+                                                        p.maybePrintDefaultBindingValue(property);
+                                                        continue;
+                                                    }
+                                                },
+                                                else => {
+                                                    p.printExpr(property.key, .lowest, ExprFlag.None());
+                                                },
+                                            }
+                                        } else {
+                                            p.printExpr(property.key, .lowest, ExprFlag.None());
+                                        }
+                                    },
+                                    else => {
+                                        p.printExpr(property.key, .lowest, ExprFlag.None());
+                                    },
+                                }
+
+                                p.print(":");
+                                p.printSpace();
+                            }
+
+                            p.printBinding(property.value);
+                            p.maybePrintDefaultBindingValue(property);
+                        }
+
+                        if (!b.is_single_line) {
+                            p.options.unindent();
+                            p.printNewline();
+                            p.printIndent();
+                        }
+                    }
+                    p.print("}");
+                },
+                else => {
+                    std.debug.panic("Unexpected binding of type {s}", .{binding});
+                },
+            }
         }
+
+        pub fn maybePrintDefaultBindingValue(p: *Printer, property: anytype) void {
+            if (property.default_value) |default| {
+                p.printSpace();
+                p.print("=");
+                p.printSpace();
+                p.printExpr(default, .comma, ExprFlag.None());
+            }
+        }
+
         pub fn printStmt(p: *Printer, stmt: Stmt) !void {
             p.comptime_flush();
 
@@ -1893,7 +2049,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     }
 
                     if (!s.is_single_line) {
-                        p.options.indent -= 1;
+                        p.options.unindent();
                         p.printNewline();
                         p.printIndent();
                     }
@@ -1937,7 +2093,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     }
 
                     if (!s.is_single_line) {
-                        p.options.indent -= 1;
+                        p.options.unindent();
                         p.printNewline();
                         p.printIndent();
                     }
@@ -1981,7 +2137,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                             p.options.indent += 1;
                             p.printStmt(s.body) catch unreachable;
                             p.printSemicolonIfNeeded();
-                            p.options.indent -= 1;
+                            p.options.unindent();
                             p.printIndent();
                         },
                     }
@@ -2150,10 +2306,10 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                             p.printSemicolonIfNeeded();
                             p.printStmt(st) catch unreachable;
                         }
-                        p.options.indent -= 1;
+                        p.options.unindent();
                     }
 
-                    p.options.indent -= 1;
+                    p.options.unindent();
                     p.printIndent();
                     p.print("}");
                     p.printNewline();
@@ -2179,7 +2335,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
 
                         p.print("{");
                         if (!s.is_single_line) {
-                            p.options.indent -= 1;
+                            p.options.unindent();
                         }
 
                         var i: usize = 0;
@@ -2208,7 +2364,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         }
 
                         if (!s.is_single_line) {
-                            p.options.indent -= 1;
+                            p.options.unindent();
                             p.printNewline();
                             p.printIndent();
                         }
@@ -2340,11 +2496,122 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
             }
         }
         pub fn printIf(p: *Printer, s: *S.If) void {
-            notimpl();
+            p.printSpaceBeforeIdentifier();
+            p.print("if");
+            p.printSpace();
+            p.print("(");
+            p.printExpr(s.test_, .lowest, ExprFlag.None());
+            p.print(")");
+
+            switch (s.yes.data) {
+                .s_block => |block| {
+                    p.printSpace();
+                    p.printBlock(s.yes.loc, block.stmts);
+
+                    if (s.no != null) {
+                        p.printSpace();
+                    } else {
+                        p.printNewline();
+                    }
+                },
+                else => {
+                    if (wrapToAvoidAmbiguousElse(&s.yes.data)) {
+                        p.printSpace();
+                        p.print("{");
+                        p.printNewline();
+
+                        p.options.indent += 1;
+                        p.printStmt(s.yes) catch unreachable;
+                        p.options.unindent();
+                        p.needs_semicolon = false;
+
+                        p.printIndent();
+                        p.print("}");
+
+                        if (s.no != null) {
+                            p.printSpace();
+                        } else {
+                            p.printNewline();
+                        }
+                    } else {
+                        p.printNewline();
+                        p.options.indent += 1;
+                        p.printStmt(s.yes) catch unreachable;
+                        p.options.unindent();
+
+                        if (s.no != null) {
+                            p.printIndent();
+                        }
+                    }
+                },
+            }
+
+            if (s.no) |no_block| {
+                p.printSemicolonIfNeeded();
+                p.printSpaceBeforeIdentifier();
+                p.print("else");
+
+                switch (no_block.data) {
+                    .s_block => |no| {
+                        p.printSpace();
+                        p.printBlock(no_block.loc, no.stmts);
+                        p.printNewline();
+                    },
+                    .s_if => |no| {
+                        p.printIf(no);
+                    },
+                    else => {
+                        p.printNewline();
+                        p.options.indent += 1;
+                        p.printStmt(no_block) catch unreachable;
+                        p.options.unindent();
+                    },
+                }
+            }
+        }
+
+        pub fn wrapToAvoidAmbiguousElse(_s: *Stmt.Data) bool {
+            var s = _s;
+
+            while (true) {
+                switch (s.*) {
+                    .s_if => |*current| {
+                        if (current.*.no) |*no| {
+                            s = &no.data;
+                        } else {
+                            return true;
+                        }
+                    },
+                    .s_for => |current| {
+                        s = &current.body.data;
+                    },
+                    .s_for_in => |current| {
+                        s = &current.body.data;
+                    },
+                    .s_for_of => |current| {
+                        s = &current.body.data;
+                    },
+                    .s_while => |current| {
+                        s = &current.body.data;
+                    },
+                    .s_with => |current| {
+                        s = &current.body.data;
+                    },
+                    else => {
+                        return false;
+                    },
+                }
+            }
         }
 
         pub fn printDeclStmt(p: *Printer, is_export: bool, keyword: string, decls: []G.Decl) void {
-            notimpl();
+            p.printIndent();
+            p.printSpaceBeforeIdentifier();
+            if (is_export) {
+                p.print("export ");
+            }
+            p.printDecls(keyword, decls, ExprFlag.None());
+            p.printSemicolonAfterStatement();
         }
 
         pub fn printIdentifier(p: *Printer, identifier: string) void {

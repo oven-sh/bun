@@ -264,7 +264,11 @@ const ScopeOrder = struct {
     loc: logger.Loc,
     scope: *js_ast.Scope,
 };
-
+const EnumValueType = enum {
+    unknown,
+    string,
+    numeric,
+};
 pub const Result = js_ast.Result;
 
 const ParenExprOpts = struct {
@@ -6468,7 +6472,7 @@ pub const P = struct {
                     data.value = p.visitExpr(val);
 
                     // "return undefined;" can safely just always be "return;"
-                    if (@as(Expr.Tag, data.value.?.data) == .e_undefined) {
+                    if (data.value != null and @as(Expr.Tag, data.value.?.data) == .e_undefined) {
                         // Returning undefined is implicit
                         data.value = null;
                     }
@@ -6585,22 +6589,259 @@ pub const P = struct {
                 // p.lowerObjectRestInForLoopInit(s.Init, &s.Body)
             },
             .s_try => |data| {
-                notimpl();
+                {
+                    p.pushScopeForVisitPass(.block, stmt.loc) catch unreachable;
+                    defer p.popScope();
+                    p.fn_or_arrow_data_visit.try_body_count += 1;
+                    defer p.fn_or_arrow_data_visit.try_body_count -= 1;
+                    var _stmts = List(Stmt).fromOwnedSlice(p.allocator, data.body);
+                    p.visitStmts(&_stmts, StmtsKind.none) catch unreachable;
+                    data.body = _stmts.toOwnedSlice();
+                }
+
+                if (data.catch_) |*catch_| {
+                    p.pushScopeForVisitPass(.block, catch_.loc) catch unreachable;
+                    defer p.popScope();
+                    var _stmts = List(Stmt).fromOwnedSlice(p.allocator, data.body);
+                    p.visitStmts(&_stmts, StmtsKind.none) catch unreachable;
+                    catch_.body = _stmts.toOwnedSlice();
+                }
+
+                if (data.finally) |*finally| {
+                    p.pushScopeForVisitPass(.block, finally.loc) catch unreachable;
+                    var _stmts = List(Stmt).fromOwnedSlice(p.allocator, data.body);
+                    p.visitStmts(&_stmts, StmtsKind.none) catch unreachable;
+                    finally.stmts = _stmts.toOwnedSlice();
+                    p.popScope();
+                }
             },
             .s_switch => |data| {
-                notimpl();
+                data.test_ = p.visitExpr(data.test_);
+                {
+                    p.pushScopeForVisitPass(.block, data.body_loc) catch unreachable;
+                    defer p.popScope();
+                    var old_is_inside_Swsitch = p.fn_or_arrow_data_visit.is_inside_switch;
+                    p.fn_or_arrow_data_visit.is_inside_switch = true;
+                    defer p.fn_or_arrow_data_visit.is_inside_switch = old_is_inside_Swsitch;
+                    var i: usize = 0;
+                    while (i < data.cases.len) : (i += 1) {
+                        const case = data.cases[i];
+                        if (case.value) |val| {
+                            data.cases[i].value = p.visitExpr(val);
+                            // TODO: error messages
+                            // Check("case", *c.Value, c.Value.Loc)
+                            // 				p.warnAboutTypeofAndString(s.Test, *c.Value)
+                        }
+                        var _stmts = List(Stmt).fromOwnedSlice(p.allocator, case.body);
+                        p.visitStmts(&_stmts, StmtsKind.none) catch unreachable;
+                        data.cases[i].body = _stmts.toOwnedSlice();
+                    }
+                }
+                // TODO: duplicate case checker
+
             },
             .s_function => |data| {
-                notimpl();
+                p.visitFunc(&data.func, data.func.open_parens_loc);
+
+                // Handle exporting this function from a namespace
+                if (data.func.flags.is_export and p.enclosing_namespace_arg_ref != null) {
+                    const enclosing_namespace_arg_ref = p.enclosing_namespace_arg_ref orelse unreachable;
+                    stmts.ensureUnusedCapacity(3) catch unreachable;
+                    stmts.appendAssumeCapacity(stmt.*);
+                    // i wonder if this will crash
+                    stmts.appendAssumeCapacity(Expr.assignStmt(p.e(E.Dot{
+                        .target = p.e(E.Identifier{ .ref = enclosing_namespace_arg_ref }, stmt.loc),
+                        .name = p.symbols.items[data.func.name.?.ref.?.inner_index].original_name,
+                        .name_loc = data.func.name.?.loc,
+                    }, stmt.loc), p.e(E.Identifier{ .ref = data.func.name.?.ref.? }, data.func.name.?.loc), p.allocator));
+                } else {
+                    stmts.ensureUnusedCapacity(2) catch unreachable;
+                    stmts.appendAssumeCapacity(stmt.*);
+                }
+
+                stmts.appendAssumeCapacity(
+                    // i wonder if this will crash
+                    p.keepStmtSymbolName(
+                        data.func.name.?.loc,
+                        data.func.name.?.ref.?,
+                        p.symbols.items[data.func.name.?.ref.?.inner_index].original_name,
+                    ),
+                );
+                return;
             },
             .s_class => |data| {
-                notimpl();
+                const shadow_ref = p.visitClass(stmt.loc, &data.class);
+
+                // Remove the export flag inside a namespace
+                const was_export_inside_namespace = data.is_export and p.enclosing_namespace_arg_ref != null;
+                if (was_export_inside_namespace) {
+                    data.is_export = false;
+                }
+
+                // Lower class field syntax for browsers that don't support it
+                stmts.appendSlice(p.lowerClass(js_ast.StmtOrExpr{ .stmt = stmt.* }, shadow_ref)) catch unreachable;
+
+                // Handle exporting this class from a namespace
+                if (was_export_inside_namespace) {
+                    stmts.appendAssumeCapacity(Expr.assignStmt(p.e(E.Dot{
+                        .target = p.e(E.Identifier{ .ref = p.enclosing_namespace_arg_ref.? }, stmt.loc),
+                        .name = p.symbols.items[data.class.class_name.?.ref.?.inner_index].original_name,
+                        .name_loc = data.class.class_name.?.loc,
+                    }, stmt.loc), p.e(E.Identifier{ .ref = data.class.class_name.?.ref.? }, data.class.class_name.?.loc), p.allocator));
+                }
+
+                return;
             },
             .s_enum => |data| {
-                notimpl();
+                p.recordDeclaredSymbol(data.name.ref.?) catch unreachable;
+                p.pushScopeForVisitPass(.entry, stmt.loc) catch unreachable;
+                defer p.popScope();
+                p.recordDeclaredSymbol(data.arg) catch unreachable;
+
+                // Scan ahead for any variables inside this namespace. This must be done
+                // ahead of time before visiting any statements inside the namespace
+                // because we may end up visiting the uses before the declarations.
+                // We need to convert the uses into property accesses on the namespace.
+                for (data.values) |value| {
+                    if (!value.ref.isNull()) {
+                        p.is_exported_inside_namespace.put(value.ref, data.arg) catch unreachable;
+                    }
+                }
+
+                // Values without initializers are initialized to one more than the
+                // previous value if the previous value is numeric. Otherwise values
+                // without initializers are initialized to undefined.
+                var next_numeric_value: f64 = 0.0;
+                var has_numeric_value = true;
+                var value_exprs = List(Expr).initCapacity(p.allocator, data.values.len) catch unreachable;
+
+                // Track values so they can be used by constant folding. We need to follow
+                // links here in case the enum was merged with a preceding namespace
+                var values_so_far = std.StringHashMap(f64).init(p.allocator);
+                p.known_enum_values.put(data.name.ref orelse p.panic("Expected data.name.ref", .{}), values_so_far) catch unreachable;
+                p.known_enum_values.put(data.arg, values_so_far) catch unreachable;
+
+                // We normally don't fold numeric constants because they might increase code
+                // size, but it's important to fold numeric constants inside enums since
+                // that's what the TypeScript compiler does.
+                const old_should_fold_numeric_constants = p.should_fold_numeric_constants;
+                p.should_fold_numeric_constants = true;
+                defer p.should_fold_numeric_constants = old_should_fold_numeric_constants;
+                for (data.values) |*enum_value| {
+                    // gotta allocate here so it lives after this function stack frame goes poof
+                    const name = p.lexer.utf16ToString(enum_value.name);
+                    var assign_target: Expr = undefined;
+                    var enum_value_type: EnumValueType = EnumValueType.unknown;
+                    if (enum_value.value != null) {
+                        enum_value.value = p.visitExpr(enum_value.value.?);
+                        switch (enum_value.value.?.data) {
+                            .e_number => |num| {
+                                values_so_far.put(name, num.value) catch unreachable;
+                                enum_value_type = .numeric;
+                                next_numeric_value = num.value + 1.0;
+                            },
+                            .e_string => |str| {
+                                enum_value_type = .string;
+                            },
+                            else => {},
+                        }
+                    } else if (enum_value_type == .numeric) {
+                        enum_value.value = p.e(E.Number{ .value = next_numeric_value }, enum_value.loc);
+                        values_so_far.put(name, next_numeric_value) catch unreachable;
+                        next_numeric_value += 1;
+                    } else {
+                        enum_value.value = p.e(E.Undefined{}, enum_value.loc);
+                    }
+                    // "Enum['Name'] = value"
+
+                    assign_target = Expr.assign(p.e(E.Index{
+                        .target = p.e(
+                            E.Identifier{ .ref = data.arg },
+                            enum_value.loc,
+                        ),
+                        .index = p.e(
+                            E.String{ .value = enum_value.name },
+                            enum_value.loc,
+                        ),
+                    }, enum_value.loc), enum_value.value orelse unreachable, p.allocator);
+
+                    p.recordUsage(&data.arg);
+
+                    // String-valued enums do not form a two-way map
+                    if (enum_value_type == .string) {
+                        value_exprs.append(assign_target) catch unreachable;
+                    } else {
+                        // "Enum[assignTarget] = 'Name'"
+                        value_exprs.append(Expr.assign(p.e(E.Index{
+                            .target = p.e(
+                                E.Identifier{ .ref = data.arg },
+                                enum_value.loc,
+                            ),
+                            .index = assign_target,
+                        }, enum_value.loc), p.e(E.String{ .value = enum_value.name }, enum_value.loc), p.allocator)) catch unreachable;
+                    }
+                }
+                p.recordUsage(&data.arg);
+
+                var value_stmts = List(Stmt).initCapacity(p.allocator, value_exprs.items.len) catch unreachable;
+                // Generate statements from expressions
+
+                for (value_exprs.items) |expr| {
+                    value_stmts.appendAssumeCapacity(p.s(S.SExpr{ .value = expr }, expr.loc));
+                }
+                value_exprs.deinit();
+                p.generateClosureForTypescriptNameSpaceOrEnum(
+                    stmts,
+                    stmt.loc,
+                    data.is_export,
+                    data.name.loc,
+                    data.name.ref.?,
+                    data.arg,
+                    value_stmts.toOwnedSlice(),
+                );
+                return;
             },
             .s_namespace => |data| {
-                notimpl();
+                p.recordDeclaredSymbol(data.name.ref.?) catch unreachable;
+
+                // Scan ahead for any variables inside this namespace. This must be done
+                // ahead of time before visiting any statements inside the namespace
+                // because we may end up visiting the uses before the declarations.
+                // We need to convert the uses into property accesses on the namespace.
+                for (data.stmts) |child_stmt| {
+                    switch (child_stmt.data) {
+                        .s_local => |local| {
+                            if (local.is_export) {
+                                p.markExportedDeclsInsideNamespace(data.arg, local.decls);
+                            }
+                        },
+                        else => {},
+                    }
+                }
+
+                var prepend_temp_refs = PrependTempRefsOpts{ .kind = StmtsKind.fn_body };
+                var prepend_list = List(Stmt).fromOwnedSlice(p.allocator, data.stmts);
+
+                {
+                    const old_enclosing_namespace_arg_ref = p.enclosing_namespace_arg_ref;
+                    p.enclosing_namespace_arg_ref = data.arg;
+                    defer p.enclosing_namespace_arg_ref = old_enclosing_namespace_arg_ref;
+                    p.pushScopeForVisitPass(.entry, stmt.loc) catch unreachable;
+                    defer p.popScope();
+                    p.recordDeclaredSymbol(data.arg) catch unreachable;
+                    p.visitStmtsAndPrependTempRefs(&prepend_list, &prepend_temp_refs) catch unreachable;
+                }
+
+                p.generateClosureForTypescriptNameSpaceOrEnum(
+                    stmts,
+                    stmt.loc,
+                    data.is_export,
+                    data.name.loc,
+                    data.name.ref.?,
+                    data.arg,
+                    prepend_list.toOwnedSlice(),
+                );
+                return;
             },
             else => {
                 notimpl();
@@ -6609,6 +6850,27 @@ pub const P = struct {
 
         // if we get this far, it stays
         try stmts.append(stmt.*);
+    }
+
+    pub fn markExportedDeclsInsideNamespace(p: *P, ns_ref: Ref, decls: []G.Decl) void {
+        notimpl();
+    }
+
+    pub fn generateClosureForTypescriptNameSpaceOrEnum(
+        p: *P,
+        stmts: *List(Stmt),
+        stmt_loc: logger.Loc,
+        is_export: bool,
+        name_loc: logger.Loc,
+        name_ref: Ref,
+        arg_ref: Ref,
+        stmts_inside_closure: []Stmt,
+    ) void {
+        notimpl();
+    }
+
+    pub fn lowerClass(p: *P, stmtorexpr: js_ast.StmtOrExpr, ref: Ref) []Stmt {
+        notimpl();
     }
 
     pub fn visitForLoopInit(p: *P, stmt: Stmt, is_in_or_of: bool) Stmt {
@@ -6667,8 +6929,81 @@ pub const P = struct {
         notimpl();
     }
 
-    pub fn visitBinding(p: *P, binding: BindingNodeIndex, duplicate_arg_check: ?StringBoolMap) void {
-        notimpl();
+    pub fn visitBinding(p: *P, binding: BindingNodeIndex, duplicate_arg_check: ?*StringBoolMap) void {
+        switch (binding.data) {
+            .b_missing => {},
+            .b_identifier => |bind| {
+                p.recordDeclaredSymbol(bind.ref) catch unreachable;
+                const name = p.symbols.items[bind.ref.inner_index].original_name;
+                if (isEvalOrArguments(name)) {
+                    p.markStrictModeFeature(.eval_or_arguments, js_lexer.rangeOfIdentifier(&p.source, binding.loc), name) catch unreachable;
+                }
+
+                if (duplicate_arg_check) |dup| {
+                    const res = dup.getOrPut(name) catch unreachable;
+                    if (res.found_existing) {
+                        p.log.addRangeErrorFmt(
+                            p.source,
+                            js_lexer.rangeOfIdentifier(&p.source, binding.loc),
+                            p.allocator,
+                            "\"{s}\" cannot be bound multiple times in the same parameter list",
+                            .{name},
+                        ) catch unreachable;
+                    }
+                    res.entry.value = true;
+                }
+            },
+            .b_array => |bind| {
+                for (bind.items) |*item| {
+                    p.visitBinding(item.binding, duplicate_arg_check);
+                    if (item.default_value) |default_value| {
+                        const was_anonymous_named_expr = p.isAnonymousNamedExpr(default_value);
+                        item.default_value = p.visitExpr(default_value);
+
+                        switch (item.binding.data) {
+                            .b_identifier => |bind_| {
+                                item.default_value = p.maybeKeepExprSymbolName(
+                                    item.default_value orelse unreachable,
+                                    p.symbols.items[bind_.ref.inner_index].original_name,
+                                    was_anonymous_named_expr,
+                                );
+                            },
+                            else => {},
+                        }
+                    }
+                }
+            },
+            .b_object => |bind| {
+                var i: usize = 0;
+                while (i < bind.properties.len) : (i += 1) {
+                    var property = bind.properties[i];
+                    if (!property.flags.is_spread) {
+                        property.key = p.visitExpr(property.key);
+                    }
+
+                    p.visitBinding(property.value, duplicate_arg_check);
+                    if (property.default_value) |default_value| {
+                        const was_anonymous_named_expr = p.isAnonymousNamedExpr(default_value);
+                        property.default_value = p.visitExpr(default_value);
+
+                        switch (property.value.data) {
+                            .b_identifier => |bind_| {
+                                property.default_value = p.maybeKeepExprSymbolName(
+                                    property.default_value orelse unreachable,
+                                    p.symbols.items[bind_.ref.inner_index].original_name,
+                                    was_anonymous_named_expr,
+                                );
+                            },
+                            else => {},
+                        }
+                    }
+                    bind.properties[i] = property;
+                }
+            },
+            else => {
+                p.panic("Unexpected binding {s}", .{binding});
+            },
+        }
     }
 
     pub fn visitLoopBody(p: *P, stmt: StmtNodeIndex) StmtNodeIndex {

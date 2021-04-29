@@ -6,6 +6,9 @@ const js_ast = @import("js_ast.zig");
 const options = @import("options.zig");
 const alloc = @import("alloc.zig");
 
+const js_printer = @import("js_printer.zig");
+const renamer = @import("renamer.zig");
+
 const fs = @import("fs.zig");
 usingnamespace @import("strings.zig");
 usingnamespace @import("ast/base.zig");
@@ -40,6 +43,71 @@ const ExprOrLetStmt = struct {
     stmt_or_expr: js_ast.StmtOrExpr,
     decls: []G.Decl = &([_]G.Decl{}),
 };
+
+const FunctionKind = enum { stmt, expr };
+
+const EightLetterMatcher = strings.ExactSizeMatcher(8);
+
+const AsyncPrefixExpression = enum {
+    none,
+    is_yield,
+    is_async,
+    is_await,
+
+    pub fn find(ident: string) AsyncPrefixExpression {
+        if (ident.len != 5) {
+            return .none;
+        }
+
+        switch (EightLetterMatcher.match(ident)) {
+            EightLetterMatcher.case("yield") => {
+                return .is_yield;
+            },
+            EightLetterMatcher.case("await") => {
+                return .is_await;
+            },
+            EightLetterMatcher.case("async") => {
+                return .is_async;
+            },
+
+            else => {
+                return .none;
+            },
+        }
+    }
+};
+
+fn statementCaresAboutScope(stmt: Stmt) bool {
+    switch (stmt.data) {
+        .s_block,
+        .s_empty,
+        .s_debugger,
+        .s_expr,
+        .s_if,
+        .s_for,
+        .s_for_in,
+        .s_for_of,
+        .s_do_while,
+        .s_while,
+        .s_with,
+        .s_try,
+        .s_switch,
+        .s_return,
+        .s_throw,
+        .s_break,
+        .s_continue,
+        .s_directive,
+        => {
+            return false;
+        },
+        .s_local => |s| {
+            return s.kind != .k_var;
+        },
+        else => {
+            return true;
+        },
+    }
+}
 
 const ExprIn = struct {
     // This tells us if there are optional chain expressions (EDot, EIndex, or
@@ -205,13 +273,19 @@ const ParenExprOpts = struct {
     force_arrow_fn: bool = false,
 };
 
+const AwaitOrYield = enum {
+    allow_ident,
+    allow_expr,
+    forbid_all,
+};
+
 // This is function-specific information used during parsing. It is saved and
 // restored on the call stack around code that parses nested functions and
 // arrow expressions.
 const FnOrArrowDataParse = struct {
     async_range: ?logger.Range = null,
-    allow_await: bool = false,
-    allow_yield: bool = false,
+    allow_await: AwaitOrYield = AwaitOrYield.allow_ident,
+    allow_yield: AwaitOrYield = AwaitOrYield.allow_ident,
     allow_super_call: bool = false,
     is_top_level: bool = false,
     is_constructor: bool = false,
@@ -225,7 +299,7 @@ const FnOrArrowDataParse = struct {
     allow_ts_decorators: bool = false,
 
     pub fn i() FnOrArrowDataParse {
-        return FnOrArrowDataParse{ .allow_await = false };
+        return FnOrArrowDataParse{ .allow_await = AwaitOrYield.forbid_all };
     }
 };
 
@@ -352,7 +426,7 @@ pub const Parser = struct {
 
     pub const Options = struct {
         jsx: options.JSX,
-        ts: bool = true,
+        ts: bool = false,
         ascii_only: bool = true,
         keep_names: bool = true,
         mangle_syntax: bool = false,
@@ -375,8 +449,10 @@ pub const Parser = struct {
         if (self.p) |p| {
             // Parse the file in the first pass, but do not bind symbols
             var opts = ParseStatementOptions{ .is_module_scope = true };
+            debugl("<p.parseStmtsUpTo>");
             const stmts = try p.parseStmtsUpTo(js_lexer.T.t_end_of_file, &opts);
-            try p.prepareForVisitPass();
+            debugl("</p.parseStmtsUpTo>");
+            // try p.prepareForVisitPass();
 
             // ESM is always strict mode. I don't think we need this.
             // // Strip off a leading "use strict" directive when not bundling
@@ -398,18 +474,21 @@ pub const Parser = struct {
                 }, logger.Loc.Empty);
             }
 
+            debugl("<p.appendPart>");
             var parts = try List(js_ast.Part).initCapacity(p.allocator, 1);
-            try p.appendPart(parts, stmts);
+            try p.appendPart(&parts, stmts);
+            debugl("</p.appendPart>");
 
             // Pop the module scope to apply the "ContainsDirectEval" rules
-            p.popScope();
-
+            // p.popScope();
+            debugl("<result.Ast>");
             result.ast = js_ast.Ast{
                 .parts = parts.toOwnedSlice(),
                 .symbols = p.symbols.toOwnedSlice(),
-                .module_scope = p.module_scope.*,
+                // .module_scope = p.module_scope.*,
             };
             result.ok = true;
+            debugl("</result.Ast>");
 
             // result = p.toAST(parts);
             // result.source_map_comment = p.lexer.source_mapping_url;
@@ -422,9 +501,9 @@ pub const Parser = struct {
         const lexer = try js_lexer.Lexer.init(log, source, allocator);
         return Parser{
             .options = Options{
-                .ts = transform.ts,
+                .ts = transform.loader == .tsx or transform.loader == .ts,
                 .jsx = options.JSX{
-                    .parse = true,
+                    .parse = transform.loader == .tsx or transform.loader == .jsx,
                     .factory = transform.jsx_factory,
                     .fragment = transform.jsx_fragment,
                 },
@@ -437,6 +516,8 @@ pub const Parser = struct {
         };
     }
 };
+
+const FindLabelSymbolResult = struct { ref: Ref, is_loop: bool, found: bool = false };
 
 const FindSymbolResult = struct {
     ref: Ref,
@@ -472,7 +553,8 @@ const ParseStatementOptions = struct {
 };
 
 // P is for Parser!
-const P = struct {
+// public only because of Binding.ToExpr
+pub const P = struct {
     allocator: *std.mem.Allocator,
     options: Parser.Options,
     log: *logger.Log,
@@ -491,7 +573,7 @@ const P = struct {
     allocated_names: List(string),
     latest_arrow_arg_loc: logger.Loc = logger.Loc.Empty,
     forbid_suffix_after_as_loc: logger.Loc = logger.Loc.Empty,
-    current_scope: *js_ast.Scope = null,
+    current_scope: *js_ast.Scope = undefined,
     scopes_for_current_part: List(*js_ast.Scope),
     symbols: List(js_ast.Symbol),
     ts_use_counts: List(u32),
@@ -580,10 +662,10 @@ const P = struct {
     // The visit pass binds identifiers to declared symbols, does constant
     // folding, substitutes compile-time variable definitions, and lowers certain
     // syntactic constructs as appropriate.
-    stmt_expr_value: js_ast.E,
-    call_target: js_ast.E,
-    delete_target: js_ast.E,
-    loop_body: js_ast.S,
+    stmt_expr_value: Expr.Data,
+    call_target: Expr.Data,
+    delete_target: Expr.Data,
+    loop_body: Stmt.Data,
     module_scope: *js_ast.Scope = undefined,
     is_control_flow_dead: bool = false,
 
@@ -647,6 +729,9 @@ const P = struct {
     // warnings about non-string import paths will be omitted inside try blocks.
     await_target: ?js_ast.E = null,
 
+    to_expr_wrapper_namespace: Binding2ExprWrapper.Namespace,
+    to_expr_wrapper_hoisted: Binding2ExprWrapper.Hoisted,
+
     // This helps recognize the "import().catch()" pattern. We also try to avoid
     // warning about this just like the "try { await import() }" pattern.
     then_catch_chain: ThenCatchChain,
@@ -679,6 +764,11 @@ const P = struct {
     //     Expression , AssignmentExpression
     //
     after_arrow_body_loc: logger.Loc = logger.Loc.Empty,
+
+    const Binding2ExprWrapper = struct {
+        pub const Namespace = Binding.ToExpr(P, P.wrapIdentifierNamespace);
+        pub const Hoisted = Binding.ToExpr(P, P.wrapIdentifierHoisting);
+    };
 
     pub fn s(p: *P, t: anytype, loc: logger.Loc) Stmt {
         if (@typeInfo(@TypeOf(t)) == .Pointer) {
@@ -932,6 +1022,10 @@ const P = struct {
         }
 
         p.hoistSymbols(p.module_scope);
+
+        p.require_ref = try p.newSymbol(.unbound, "require");
+        p.exports_ref = try p.newSymbol(.hoisted, "exports");
+        p.module_ref = try p.newSymbol(.hoisted, "module");
     }
 
     pub fn hoistSymbols(p: *P, scope: *js_ast.Scope) void {
@@ -963,7 +1057,7 @@ const P = struct {
 
         // Sanity-check that the scopes generated by the first and second passes match
         if (!order.loc.eql(loc) or order.scope.kind != kind) {
-            std.debug.panic("Expected scope ({s}, {d}) in {s}, found scope ({s}, {d})", .{ kind, loc.start, p.source.path.pretty, order.scope.kind, order.loc.start });
+            p.panic("Expected scope ({s}, {d}) in {s}, found scope ({s}, {d})", .{ kind, loc.start, p.source.path.pretty, order.scope.kind, order.loc.start });
         }
 
         p.current_scope = order.scope;
@@ -972,17 +1066,21 @@ const P = struct {
     }
 
     pub fn pushScopeForParsePass(p: *P, kind: js_ast.Scope.Kind, loc: logger.Loc) !usize {
-        var parent = p.current_scope;
-        var scope = try js_ast.Scope.initPtr(p.allocator);
+        debugl("<pushScopeForParsePass>");
+        defer debugl("</pushScopeForParsePass>");
+        var scope = try Scope.initPtr(p.allocator);
         scope.kind = kind;
-        scope.parent = parent;
-
         scope.label_ref = null;
 
-        var i = parent.children.items.len;
+        var parent: *Scope = undefined;
 
-        try parent.children.append(scope);
-        scope.strict_mode = parent.strict_mode;
+        if (kind != .entry) {
+            parent = p.current_scope;
+            scope.parent = parent;
+            try parent.children.append(scope);
+            scope.strict_mode = parent.strict_mode;
+        }
+
         p.current_scope = scope;
 
         // Enforce that scope locations are strictly increasing to help catch bugs
@@ -990,7 +1088,7 @@ const P = struct {
         if (p.scopes_in_order.items.len > 0) {
             const prev_start = p.scopes_in_order.items[p.scopes_in_order.items.len - 1].loc.start;
             if (prev_start >= loc.start) {
-                std.debug.panic("Scope location {d} must be greater than {d}", .{ loc.start, prev_start });
+                p.panic("Scope location {d} must be greater than {d}", .{ loc.start, prev_start });
             }
         }
 
@@ -999,7 +1097,7 @@ const P = struct {
         // arguments.
         if (kind == js_ast.Scope.Kind.function_body) {
             if (parent.kind != js_ast.Scope.Kind.function_args) {
-                std.debug.panic("Internal error", .{});
+                p.panic("Internal error", .{});
             }
 
             var iter = scope.parent.?.members.iterator();
@@ -1013,7 +1111,11 @@ const P = struct {
             }
         }
 
-        return i;
+        // Remember the length in case we call popAndDiscardScope() later
+        const scope_index = p.scopes_in_order.items.len;
+        try p.scopes_in_order.append(ScopeOrder{ .loc = loc, .scope = scope });
+
+        return scope_index;
     }
 
     // Note: do not write to "p.log" in this function. Any errors due to conversion
@@ -1086,8 +1188,8 @@ const P = struct {
                             .is_computed = item.flags.is_computed,
                         },
 
-                        .key = item.key orelse std.debug.panic("Internal error: Expected {s} to have a key.", .{item}),
-                        .value = tup.binding orelse std.debug.panic("Internal error: Expected {s} to have a binding.", .{tup}),
+                        .key = item.key orelse p.panic("Internal error: Expected {s} to have a key.", .{item}),
+                        .value = tup.binding orelse p.panic("Internal error: Expected {s} to have a binding.", .{tup}),
                         .default_value = initializer,
                     }) catch unreachable;
                 }
@@ -1209,8 +1311,8 @@ const P = struct {
         var scopeIndex = try p.pushScopeForParsePass(js_ast.Scope.Kind.function_args, p.lexer.loc());
         var func = p.parseFn(name, FnOrArrowDataParse{
             .async_range = asyncRange,
-            .allow_await = isAsync,
-            .allow_yield = isGenerator,
+            .allow_await = if (isAsync) AwaitOrYield.allow_expr else AwaitOrYield.allow_ident,
+            .allow_yield = if (isGenerator) AwaitOrYield.allow_expr else AwaitOrYield.allow_ident,
             .is_typescript_declare = opts.is_typescript_declare,
 
             // Only allow omitting the body if we're parsing TypeScript
@@ -1220,7 +1322,37 @@ const P = struct {
         // Don't output anything if it's just a forward declaration of a function
         if (opts.is_typescript_declare or func.body == null) {
             p.popAndDiscardScope(scopeIndex);
+
+            // Balance the fake block scope introduced above
+            if (hasIfScope) {
+                p.popScope();
+            }
+
+            if (opts.is_typescript_declare and opts.is_namespace_scope and opts.is_export) {
+                p.has_non_local_export_declare_inside_namespace = true;
+            }
+
+            return p.s(S.TypeScript{}, loc);
         }
+
+        // Balance the fake block scope introduced above
+        if (hasIfScope) {
+            p.popScope();
+        }
+
+        // Only declare the function after we know if it had a body or not. Otherwise
+        // TypeScript code such as this will double-declare the symbol:
+        //
+        //     function foo(): void;
+        //     function foo(): void {}
+        //
+        if (name) |*name_| {
+            const kind = if (isGenerator or isAsync) Symbol.Kind.generator_or_async_function else Symbol.Kind.hoisted_function;
+            name_.ref = try p.declareSymbol(kind, name_.loc, nameText);
+        }
+        func.name = name;
+
+        func.flags.has_if_scope = hasIfScope;
 
         func.flags.is_export = opts.is_export;
 
@@ -1243,7 +1375,7 @@ const P = struct {
         // Remove the last child from the parent scope
         var last = children.items.len - 1;
         if (children.items[last] != to_discard) {
-            std.debug.panic("Internal error", .{});
+            p.panic("Internal error", .{});
         }
 
         _ = children.popOrNull();
@@ -1258,8 +1390,8 @@ const P = struct {
             .name = name,
             .flags = Flags.Function{
                 .has_rest_arg = false,
-                .is_async = opts.allow_await,
-                .is_generator = opts.allow_yield,
+                .is_async = opts.allow_await == .allow_expr,
+                .is_generator = opts.allow_yield == .allow_expr,
             },
 
             .arguments_ref = null,
@@ -1269,12 +1401,12 @@ const P = struct {
 
         // Await and yield are not allowed in function arguments
         var old_fn_or_arrow_data = opts;
-        p.fn_or_arrow_data_parse.allow_await = false;
-        p.fn_or_arrow_data_parse.allow_yield = false;
+        p.fn_or_arrow_data_parse.allow_await = if (opts.allow_await == .allow_expr) AwaitOrYield.forbid_all else AwaitOrYield.allow_ident;
+        p.fn_or_arrow_data_parse.allow_yield = if (opts.allow_yield == .allow_expr) AwaitOrYield.forbid_all else AwaitOrYield.allow_ident;
 
         // If "super()" is allowed in the body, it's allowed in the arguments
         p.fn_or_arrow_data_parse.allow_super_call = opts.allow_super_call;
-
+        var args = List(G.Arg).init(p.allocator);
         while (p.lexer.token != T.t_close_paren) {
             // Skip over "this" type annotations
             if (p.options.ts and p.lexer.token == T.t_this) {
@@ -1290,28 +1422,136 @@ const P = struct {
                 p.lexer.next();
                 continue;
             }
-        }
 
-        var ts_decorators: []ExprNodeIndex = undefined;
-        if (opts.allow_ts_decorators) {
-            ts_decorators = p.parseTypeScriptDecorators();
-        }
+            var ts_decorators: []ExprNodeIndex = undefined;
+            if (opts.allow_ts_decorators) {
+                ts_decorators = p.parseTypeScriptDecorators();
+            }
 
-        if (!func.flags.has_rest_arg and p.lexer.token == T.t_dot_dot_dot) {
-            // p.markSyntaxFeature
+            if (!func.flags.has_rest_arg and p.lexer.token == T.t_dot_dot_dot) {
+                // p.markSyntaxFeature
+                p.lexer.next();
+                func.flags.has_rest_arg = true;
+            }
+
+            var is_typescript_ctor_field = false;
+            var is_identifier = p.lexer.token == T.t_identifier;
+            var text = p.lexer.identifier;
+            var arg = p.parseBinding();
+
+            if (p.options.ts and is_identifier and opts.is_constructor) {
+                // Skip over TypeScript accessibility modifiers, which turn this argument
+                // into a class field when used inside a class constructor. This is known
+                // as a "parameter property" in TypeScript.
+                while (true) {
+                    switch (p.lexer.token) {
+                        .t_identifier, .t_open_brace, .t_open_bracket => {
+                            if (!js_lexer.TypeScriptAccessibilityModifier.has(p.lexer.identifier)) {
+                                break;
+                            }
+
+                            is_typescript_ctor_field = true;
+
+                            // TypeScript requires an identifier binding
+                            if (p.lexer.token != .t_identifier) {
+                                p.lexer.expect(.t_identifier);
+                            }
+                            text = p.lexer.identifier;
+
+                            // Re-parse the binding (the current binding is the TypeScript keyword)
+                            arg = p.parseBinding();
+                        },
+                        else => {
+                            break;
+                        },
+                    }
+                }
+
+                // "function foo(a?) {}"
+                if (p.lexer.token == .t_question) {
+                    p.lexer.next();
+                }
+
+                // "function foo(a: any) {}"
+                if (p.lexer.token == .t_colon) {
+                    p.lexer.next();
+                    p.skipTypescriptType(.lowest);
+                }
+            }
+
+            var parseStmtOpts = ParseStatementOptions{};
+            p.declareBinding(.hoisted, arg, &parseStmtOpts) catch unreachable;
+
+            var default_value: Expr = undefined;
+            if (!func.flags.has_rest_arg and p.lexer.token == .t_equals) {
+                // p.markSyntaxFeature
+                p.lexer.next();
+                default_value = p.parseExpr(.comma);
+            }
+
+            args.append(G.Arg{
+                .ts_decorators = ts_decorators,
+                .binding = arg,
+                .default = default_value,
+
+                // We need to track this because it affects code generation
+                .is_typescript_ctor_field = is_typescript_ctor_field,
+            }) catch unreachable;
+
+            if (p.lexer.token != .t_comma) {
+                break;
+            }
+
+            if (func.flags.has_rest_arg) {
+                // JavaScript does not allow a comma after a rest argument
+                if (opts.is_typescript_declare) {
+                    // TypeScript does allow a comma after a rest argument in a "declare" context
+                    p.lexer.next();
+                } else {
+                    p.lexer.expect(.t_close_paren);
+                }
+
+                break;
+            }
+
             p.lexer.next();
-            func.flags.has_rest_arg = true;
         }
 
-        var is_typescript_ctor_field = false;
-        var is_identifier = p.lexer.token == T.t_identifier;
-        // TODO: parseFn
-        // var arg = p.parseBinding();
+        // Reserve the special name "arguments" in this scope. This ensures that it
+        // shadows any variable called "arguments" in any parent scopes. But only do
+        // this if it wasn't already declared above because arguments are allowed to
+        // be called "arguments", in which case the real "arguments" is inaccessible.
+        if (!p.current_scope.members.contains("arguments")) {
+            func.arguments_ref = p.declareSymbol(.arguments, func.open_parens_loc, "arguments") catch unreachable;
+            p.symbols.items[func.arguments_ref.?.inner_index].must_not_be_renamed = true;
+        }
+
+        p.lexer.expect(.t_close_paren);
+        p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
+
+        // "function foo(): any {}"
+        if (p.options.ts and p.lexer.token == .t_colon) {
+            p.lexer.next();
+            p.skipTypescriptReturnType();
+        }
+
+        // "function foo(): any;"
+        if (opts.allow_missing_body_for_type_script and p.lexer.token != .t_open_brace) {
+            p.lexer.expectOrInsertSemicolon();
+            return func;
+        }
+        var tempOpts = opts;
+        func.body = p.parseFnBody(&tempOpts) catch unreachable;
 
         return func;
     }
 
     // pub fn parseBinding(p: *P)
+
+    // TODO:
+    pub fn skipTypescriptReturnType(p: *P) void {
+        notimpl();
+    }
 
     // TODO:
     pub fn parseTypeScriptDecorators(p: *P) []ExprNodeIndex {
@@ -1431,12 +1671,12 @@ const P = struct {
         var loc = p.lexer.loc();
 
         switch (p.lexer.token) {
-            js_lexer.T.t_semicolon => {
+            .t_semicolon => {
                 p.lexer.next();
                 return Stmt.empty();
             },
 
-            js_lexer.T.t_export => {
+            .t_export => {
                 var previousExportKeyword = p.es6_export_keyword;
                 if (opts.is_module_scope) {
                     p.es6_export_keyword = p.lexer.range();
@@ -1607,7 +1847,7 @@ const P = struct {
                                     } else {}
                                 },
                                 else => {
-                                    std.debug.panic("Internal error: unexpected stmt {s}", .{stmt});
+                                    p.panic("Internal error: unexpected stmt {s}", .{stmt});
                                 },
                             }
 
@@ -1657,7 +1897,7 @@ const P = struct {
                                     return p.s(S.ExportDefault{ .default_name = default_name, .value = js_ast.StmtOrExpr{ .stmt = stmt } }, loc);
                                 },
                                 else => {
-                                    std.debug.panic("internal error: unexpected", .{});
+                                    p.panic("internal error: unexpected", .{});
                                 },
                             }
                         }
@@ -2028,16 +2268,16 @@ const P = struct {
                 var isForAwait = p.lexer.isContextualKeyword("await");
                 if (isForAwait) {
                     const await_range = p.lexer.range();
-                    if (!p.fn_or_arrow_data_parse.allow_await) {
+                    if (p.fn_or_arrow_data_parse.allow_await != .allow_expr) {
                         try p.log.addRangeError(p.source, await_range, "Cannot use \"await\" outside an async function");
                         isForAwait = false;
                     } else {
                         // TODO: improve error handling here
                         //         		didGenerateError := p.markSyntaxFeature(compat.ForAwait, awaitRange)
-                        // if p.fnOrArrowDataParse.isTopLevel && !didGenerateError {
-                        // 	p.topLevelAwaitKeyword = awaitRange
-                        // 	p.markSyntaxFeature(compat.TopLevelAwait, awaitRange)
-                        // }
+                        if (p.fn_or_arrow_data_parse.is_top_level) {
+                            p.top_level_await_keyword = await_range;
+                            // p.markSyntaxFeature(compat.TopLevelAwait, awaitRange)
+                        }
                     }
                     p.lexer.next();
                 }
@@ -2768,18 +3008,18 @@ const P = struct {
 
     pub fn requireInitializers(p: *P, decls: []G.Decl) !void {
         for (decls) |decl| {
-            if (decl.value) |val| {
+            if (decl.value == null) {
                 switch (decl.binding.data) {
                     .b_identifier => |ident| {
                         const r = js_lexer.rangeOfIdentifier(&p.source, decl.binding.loc);
                         try p.log.addRangeErrorFmt(p.source, r, p.allocator, "The constant \"{s}\" must be initialized", .{p.symbols.items[ident.ref.inner_index].original_name});
-                        return;
+                        // return;/
                     },
-                    else => {},
+                    else => {
+                        try p.log.addError(p.source, decl.binding.loc, "This constant must be initialized");
+                    },
                 }
             }
-
-            try p.log.addError(p.source, decl.binding.loc, "This constant must be initialized");
         }
     }
 
@@ -2789,7 +3029,7 @@ const P = struct {
         switch (p.lexer.token) {
             .t_identifier => {
                 const name = p.lexer.identifier;
-                if ((p.fn_or_arrow_data_parse.allow_await and strings.eql(name, "await")) or (p.fn_or_arrow_data_parse.allow_yield and strings.eql(name, "yield"))) {
+                if ((p.fn_or_arrow_data_parse.allow_await != .allow_ident and strings.eql(name, "await")) or (p.fn_or_arrow_data_parse.allow_yield != .allow_ident and strings.eql(name, "yield"))) {
                     // TODO: add fmt to addRangeError
                     p.log.addRangeError(p.source, p.lexer.range(), "Cannot use \"yield\" or \"await\" here.") catch unreachable;
                 }
@@ -3183,7 +3423,7 @@ const P = struct {
                 }, p.lexer.loc()));
             }
 
-            if (p.lexer.token == .t_end_of_file) {
+            if (p.lexer.token == eend) {
                 break :run;
             }
 
@@ -3386,6 +3626,26 @@ const P = struct {
         return ref;
     }
 
+    pub fn validateFunctionName(p: *P, func: G.Fn, kind: FunctionKind) void {
+        if (func.name) |name| {
+            const original_name = p.symbols.items[name.ref.?.inner_index].original_name;
+
+            if (func.flags.is_async and strings.eql(original_name, "await")) {
+                p.log.addRangeError(
+                    p.source,
+                    js_lexer.rangeOfIdentifier(&p.source, name.loc),
+                    "An async function cannot be named \"await\"",
+                ) catch unreachable;
+            } else if (kind == .expr and func.flags.is_generator and strings.eql(original_name, "yield")) {
+                p.log.addRangeError(
+                    p.source,
+                    js_lexer.rangeOfIdentifier(&p.source, name.loc),
+                    "An generator function expression cannot be named \"yield\"",
+                ) catch unreachable;
+            }
+        }
+    }
+
     pub fn parseFnExpr(p: *P, loc: logger.Loc, is_async: bool, async_range: logger.Range) !Expr {
         p.lexer.next();
         const is_generator = p.lexer.token == T.t_asterisk;
@@ -3412,6 +3672,7 @@ const P = struct {
             } else {
                 (name orelse unreachable).ref = try p.newSymbol(.hoisted_function, p.lexer.identifier);
             }
+            debug("FUNC NAME {s}", .{p.lexer.identifier});
             p.lexer.next();
         }
 
@@ -3421,9 +3682,11 @@ const P = struct {
 
         var func = p.parseFn(name, FnOrArrowDataParse{
             .async_range = async_range,
-            .allow_await = is_async,
-            .allow_yield = is_generator,
+            .allow_await = if (is_async) .allow_expr else .allow_ident,
+            .allow_yield = if (is_generator) .allow_expr else .allow_ident,
         });
+
+        p.validateFunctionName(func, .expr);
 
         return p.e(js_ast.E.Function{
             .func = func,
@@ -3549,74 +3812,23 @@ const P = struct {
         return self.mm(@TypeOf(kind), kind);
     }
 
-    // The name is temporarily stored in the ref until the scope traversal pass
-    // happens, at which point a symbol will be generated and the ref will point
-    // to the symbol instead.
-    //
-    // The scope traversal pass will reconstruct the name using one of two methods.
-    // In the common case, the name is a slice of the file itself. In that case we
-    // can just store the slice and not need to allocate any extra memory. In the
-    // rare case, the name is an externally-allocated string. In that case we store
-    // an index to the string and use that index during the scope traversal pass.
+    // Doing this the fast way is too complicated for now.
     pub fn storeNameInRef(p: *P, name: string) !js_ast.Ref {
-        // jarred: honestly, this is kind of magic to me
-        // but I think I think I understand it.
-        // the strings are slices.
-        // "name" is just a different place in p.source.contents's buffer
-        // Instead of copying a shit ton of strings everywhere
-        // we can just say "yeah this is really over here at inner_index"
-        // .source_index being null is used to identify was this allocated or is just in the orignial thing.
-        // you could never do this in JavaScript!!
-        const ptr0 = @ptrToInt(name.ptr);
-        const ptr1 = @ptrToInt(p.source.contents.ptr);
-
-        // Is the data in "name" a subset of the data in "p.source.Contents"?
-        if (ptr0 >= ptr1 and ptr0 + name.len < p.source.contents.len) {
-            // std.debug.print("storeNameInRef fast path", .{});
-            // The name is a slice of the file contents, so we can just reference it by
-            // length and don't have to allocate anything. This is the common case.
-            //
-            // It's stored as a negative value so we'll crash if we try to use it. That
-            // way we'll catch cases where we've forgotten to call loadNameFromRef().
-            // The length is the negative part because we know it's non-zero.
-            return js_ast.Ref{ .source_index = @intCast(Ref.Int, ptr0), .inner_index = (@intCast(Ref.Int, name.len) + @intCast(Ref.Int, ptr0)) };
+        // allocated_names is lazily allocated
+        if (p.allocated_names.capacity > 0) {
+            const inner_index = @intCast(Ref.Int, p.allocated_names.items.len);
+            try p.allocated_names.append(name);
+            return js_ast.Ref{ .source_index = std.math.maxInt(Ref.Int), .inner_index = inner_index };
         } else {
-            // std.debug.print("storeNameInRef slow path", .{});
-            // The name is some memory allocated elsewhere. This is either an inline
-            // string constant in the parser or an identifier with escape sequences
-            // in the source code, which is very unusual. Stash it away for later.
-            // This uses allocations but it should hopefully be very uncommon.
-
-            // allocated_names is lazily allocated
-            if (p.allocated_names.capacity > 0) {
-                const inner_index = @intCast(Ref.Int, p.allocated_names.items.len);
-                try p.allocated_names.append(name);
-                return js_ast.Ref{ .source_index = std.math.maxInt(Ref.Int), .inner_index = inner_index };
-            } else {
-                p.allocated_names = try @TypeOf(p.allocated_names).initCapacity(p.allocator, 1);
-                p.allocated_names.appendAssumeCapacity(name);
-                return js_ast.Ref{ .source_index = std.math.maxInt(Ref.Int), .inner_index = 0 };
-            }
-
-            // p.allocatedNames = append(p.allocatedNames, name)
-            // return ref
+            p.allocated_names = try @TypeOf(p.allocated_names).initCapacity(p.allocator, 1);
+            p.allocated_names.appendAssumeCapacity(name);
+            return js_ast.Ref{ .source_index = std.math.maxInt(Ref.Int), .inner_index = 0 };
         }
     }
 
     pub fn loadNameFromRef(p: *P, ref: js_ast.Ref) string {
-        if (!ref.isSourceNull()) {
-            if (ref.source_index == 0x80000000) {
-                return p.allocated_names.items[ref.inner_index];
-            }
-
-            if (std.builtin.mode != std.builtin.Mode.ReleaseFast) {
-                assert(ref.inner_index - ref.source_index > 0);
-            }
-
-            return p.source.contents[ref.inner_index .. ref.inner_index - ref.source_index];
-        } else {
-            std.debug.panic("Internal error: invalid symbol reference. {s}", .{ref});
-        }
+        assert(ref.inner_index < p.allocated_names.items.len);
+        return p.allocated_names.items[ref.inner_index];
     }
 
     // This parses an expression. This assumes we've already parsed the "async"
@@ -3634,34 +3846,38 @@ const P = struct {
             switch (p.lexer.token) {
                 // "async => {}"
                 .t_equals_greater_than => {
-                    const arg = G.Arg{ .binding = p.b(
-                        B.Identifier{
-                            .ref = try p.storeNameInRef("async"),
-                        },
-                        async_range.loc,
-                    ) };
-                    _ = p.pushScopeForParsePass(.function_args, async_range.loc) catch unreachable;
-                    defer p.popScope();
-                    var arrow_body = try p.parseArrowBodySingleArg(arg, FnOrArrowDataParse{});
-                    return p.e(arrow_body, async_range.loc);
+                    if (level.lte(.assign)) {
+                        const arg = G.Arg{ .binding = p.b(
+                            B.Identifier{
+                                .ref = try p.storeNameInRef("async"),
+                            },
+                            async_range.loc,
+                        ) };
+                        _ = p.pushScopeForParsePass(.function_args, async_range.loc) catch unreachable;
+                        defer p.popScope();
+                        var arrow_body = try p.parseArrowBodySingleArg(arg, FnOrArrowDataParse{});
+                        return p.e(arrow_body, async_range.loc);
+                    }
                 },
                 // "async x => {}"
                 .t_identifier => {
-                    // p.markLoweredSyntaxFeature();
-                    const ref = try p.storeNameInRef(p.lexer.identifier);
-                    var arg = G.Arg{ .binding = p.b(B.Identifier{
-                        .ref = ref,
-                    }, p.lexer.loc()) };
-                    p.lexer.next();
+                    if (level.lte(.assign)) {
+                        // p.markLoweredSyntaxFeature();
+                        const ref = try p.storeNameInRef(p.lexer.identifier);
+                        var arg = G.Arg{ .binding = p.b(B.Identifier{
+                            .ref = ref,
+                        }, p.lexer.loc()) };
+                        p.lexer.next();
 
-                    _ = try p.pushScopeForParsePass(.function_args, async_range.loc);
-                    defer p.popScope();
+                        _ = try p.pushScopeForParsePass(.function_args, async_range.loc);
+                        defer p.popScope();
 
-                    var arrowBody = try p.parseArrowBodySingleArg(arg, FnOrArrowDataParse{
-                        .allow_await = true,
-                    });
-                    arrowBody.is_async = true;
-                    return p.e(arrowBody, async_range.loc);
+                        var arrowBody = try p.parseArrowBodySingleArg(arg, FnOrArrowDataParse{
+                            .allow_await = .allow_expr,
+                        });
+                        arrowBody.is_async = true;
+                        return p.e(arrowBody, async_range.loc);
+                    }
                 },
 
                 // "async()"
@@ -3800,7 +4016,7 @@ const P = struct {
             }
         }
 
-        p.current_scope = current_scope.parent orelse std.debug.panic("Internal error: attempted to call popScope() on the topmost scope", .{});
+        p.current_scope = current_scope.parent orelse p.panic("Internal error: attempted to call popScope() on the topmost scope", .{});
     }
 
     pub fn markExprAsParenthesized(p: *P, expr: *Expr) void {
@@ -3985,7 +4201,7 @@ const P = struct {
 
                 // Parse a shorthand property
                 if (!opts.is_class and kind == .normal and p.lexer.token != .t_colon and p.lexer.token != .t_open_paren and p.lexer.token != .t_less_than and !opts.is_generator and !js_lexer.Keywords.has(name)) {
-                    if ((p.fn_or_arrow_data_parse.allow_await and strings.eql(name, "await")) or (p.fn_or_arrow_data_parse.allow_yield and strings.eql(name, "yield"))) {
+                    if ((p.fn_or_arrow_data_parse.allow_await != .allow_ident and strings.eql(name, "await")) or (p.fn_or_arrow_data_parse.allow_yield != .allow_ident and strings.eql(name, "yield"))) {
                         // TODO: add fmt to addRangeError
                         p.log.addRangeError(p.source, name_range, "Cannot use \"yield\" or \"await\" here.") catch unreachable;
                     }
@@ -4121,8 +4337,8 @@ const P = struct {
 
             var func = p.parseFn(null, FnOrArrowDataParse{
                 .async_range = opts.async_range,
-                .allow_await = opts.is_async,
-                .allow_yield = opts.is_generator,
+                .allow_await = if (opts.is_async) AwaitOrYield.allow_expr else AwaitOrYield.allow_ident,
+                .allow_yield = if (opts.is_generator) AwaitOrYield.allow_expr else AwaitOrYield.allow_ident,
                 .allow_super_call = opts.class_has_extends and is_constructor,
                 .allow_ts_decorators = opts.allow_ts_decorators,
                 .is_constructor = is_constructor,
@@ -4299,7 +4515,7 @@ const P = struct {
 
                 // Forbid decorators on class constructors
                 if (opts.ts_decorators.len > 0) {
-                    switch ((property.key orelse std.debug.panic("Internal error: Expected property {s} to have a key.", .{property})).data) {
+                    switch ((property.key orelse p.panic("Internal error: Expected property {s} to have a key.", .{property})).data) {
                         .e_string => |str| {
                             if (strings.eqlUtf16("constructor", str.value)) {
                                 p.log.addError(p.source, first_decorator_loc, "TypeScript does not allow decorators on class constructors") catch unreachable;
@@ -5183,6 +5399,17 @@ const P = struct {
             }
         }
     }
+
+    pub fn panic(p: *P, comptime str: string, args: anytype) noreturn {
+        p.log.addRangeErrorFmt(p.source, p.lexer.range(), p.allocator, str, args) catch unreachable;
+
+        var fixedBuffer = [_]u8{0} ** 4096;
+        var stream = std.io.fixedBufferStream(&fixedBuffer);
+
+        p.log.print(stream.writer()) catch unreachable;
+        std.debug.panic("{s}", .{fixedBuffer});
+    }
+
     pub fn _parsePrefix(p: *P, level: Level, errors: *DeferredErrors, flags: Expr.EFlags) Expr {
         const loc = p.lexer.loc();
         const l = @enumToInt(level);
@@ -5247,81 +5474,101 @@ const P = struct {
                 p.lexer.next();
 
                 // Handle async and await expressions
-                if (name.len == 5) {
-                    if (strings.eql(name, "async")) {
-                        if (strings.eql(raw, "async")) {
+                switch (AsyncPrefixExpression.find(name)) {
+                    .is_async => {
+                        if (AsyncPrefixExpression.find(raw) != .is_async) {
                             return p.parseAsyncPrefixExpr(name_range, level) catch unreachable;
                         }
-                    } else if (strings.eql(name, "await")) {
-                        if (p.fn_or_arrow_data_parse.allow_await) {
-                            if (!strings.eql(raw, "await")) {
-                                p.log.addRangeError(p.source, name_range, "The keyword \"await\" cannot be escaped.") catch unreachable;
-                            } else {
-                                if (p.fn_or_arrow_data_parse.is_top_level) {
-                                    p.top_level_await_keyword = name_range;
-                                    // p.markSyntaxFeature()
-                                }
+                    },
 
-                                if (p.fn_or_arrow_data_parse.arrow_arg_errors) |*err| {
-                                    err.invalid_expr_await = name_range;
+                    .is_await => {
+                        switch (p.fn_or_arrow_data_parse.allow_await) {
+                            .forbid_all => {
+                                p.log.addRangeError(p.source, name_range, "The keyword \"await\" cannot be used here.") catch unreachable;
+                            },
+                            .allow_expr => {
+                                if (AsyncPrefixExpression.find(raw) != .is_await) {
+                                    p.log.addRangeError(p.source, name_range, "The keyword \"await\" cannot be escaped.") catch unreachable;
                                 } else {
-                                    p.fn_or_arrow_data_parse.arrow_arg_errors = DeferredArrowArgErrors{ .invalid_expr_await = name_range };
-                                }
+                                    if (p.fn_or_arrow_data_parse.is_top_level) {
+                                        p.top_level_await_keyword = name_range;
+                                    }
 
-                                var value = p.parseExpr(.prefix);
-                                if (p.lexer.token == T.t_asterisk_asterisk) {
-                                    p.lexer.unexpected();
-                                }
+                                    if (p.fn_or_arrow_data_parse.arrow_arg_errors) |*args| {
+                                        args.invalid_expr_await = name_range;
+                                    }
 
-                                return p.e(E.Await{ .value = value }, loc);
-                            }
+                                    const value = p.parseExpr(.prefix);
+                                    if (p.lexer.token == T.t_asterisk_asterisk) {
+                                        p.lexer.unexpected();
+                                    }
+
+                                    return p.e(E.Await{ .value = value }, loc);
+                                }
+                            },
+                            .allow_ident => {},
                         }
-                    } else if (strings.eql(name, "yield")) {
-                        if (p.fn_or_arrow_data_parse.allow_yield) {
-                            if (strings.eql(raw, "yield")) {
-                                p.log.addRangeError(p.source, name_range, "The keyword \"yield\" cannot be escaped") catch unreachable;
-                            } else {
-                                if (l > @enumToInt(Level.assign)) {
-                                    p.log.addRangeError(p.source, name_range, "Cannot use a \"yield\" here without parentheses") catch unreachable;
+                    },
+
+                    .is_yield => {
+                        switch (p.fn_or_arrow_data_parse.allow_yield) {
+                            .forbid_all => {
+                                p.log.addRangeError(p.source, name_range, "The keyword \"yield\" cannot be used here") catch unreachable;
+                            },
+                            .allow_expr => {
+                                if (AsyncPrefixExpression.find(raw) != .is_yield) {
+                                    p.log.addRangeError(p.source, name_range, "The keyword \"yield\" cannot be escaped") catch unreachable;
+                                } else {
+                                    if (level.gte(.assign)) {
+                                        p.log.addRangeError(p.source, name_range, "Cannot use a \"yield\" here without parentheses") catch unreachable;
+                                    }
+                                    const value = p.parseExpr(.prefix);
+
+                                    if (p.fn_or_arrow_data_parse.arrow_arg_errors) |*args| {
+                                        args.invalid_expr_yield = name_range;
+                                    }
+
+                                    if (p.lexer.token == T.t_asterisk_asterisk) {
+                                        p.lexer.unexpected();
+                                    }
+
+                                    return p.e(E.Yield{ .value = value }, loc);
                                 }
-
-                                if (p.fn_or_arrow_data_parse.arrow_arg_errors) |*err| {
-                                    err.invalid_expr_yield = name_range;
+                            },
+                            .allow_ident => {
+                                // Try to gracefully recover if "yield" is used in the wrong place
+                                if (!p.lexer.has_newline_before) {
+                                    switch (p.lexer.token) {
+                                        .t_null, .t_identifier, .t_false, .t_true, .t_numeric_literal, .t_big_integer_literal, .t_string_literal => {
+                                            p.log.addRangeError(p.source, name_range, "Cannot use \"yield\" outside a generator function") catch unreachable;
+                                        },
+                                        else => {},
+                                    }
                                 }
-
-                                return p.parseYieldExpr(loc);
-                            }
-                        } else if (!p.lexer.has_newline_before) {
-                            // Try to gracefully recover if "yield" is used in the wrong place
-
-                            switch (p.lexer.token) {
-                                .t_null, .t_identifier, .t_false, .t_true, .t_numeric_literal, .t_big_integer_literal, .t_string_literal => {
-                                    p.log.addRangeError(p.source, name_range, "Cannot use \"yield\" outside a generator function") catch unreachable;
-                                },
-                                else => {},
-                            }
+                            },
                         }
-                    }
-
-                    // Handle the start of an arrow expression
-                    if (p.lexer.token == .t_equals_greater_than) {
-                        const ref = p.storeNameInRef(name) catch unreachable;
-                        var args = p.allocator.alloc(Arg, 1) catch unreachable;
-                        args[0] = Arg{ .binding = p.b(B.Identifier{
-                            .ref = ref,
-                        }, loc) };
-
-                        _ = p.pushScopeForParsePass(.function_args, loc) catch unreachable;
-                        defer p.popScope();
-                        return p.e(p.parseArrowBody(args, p.m(FnOrArrowDataParse{})) catch unreachable, loc);
-                    }
-
-                    const ref = p.storeNameInRef(name) catch unreachable;
-
-                    return p.e(E.Identifier{
-                        .ref = ref,
-                    }, loc);
+                    },
+                    .none => {},
                 }
+
+                // Handle the start of an arrow expression
+                if (p.lexer.token == .t_equals_greater_than) {
+                    const ref = p.storeNameInRef(name) catch unreachable;
+                    var args = p.allocator.alloc(Arg, 1) catch unreachable;
+                    args[0] = Arg{ .binding = p.b(B.Identifier{
+                        .ref = ref,
+                    }, loc) };
+
+                    _ = p.pushScopeForParsePass(.function_args, loc) catch unreachable;
+                    defer p.popScope();
+                    return p.e(p.parseArrowBody(args, p.m(FnOrArrowDataParse{})) catch unreachable, loc);
+                }
+
+                const ref = p.storeNameInRef(name) catch unreachable;
+
+                return p.e(E.Identifier{
+                    .ref = ref,
+                }, loc);
             },
             .t_string_literal, .t_no_substitution_template_literal => {
                 return p.parseStringLiteral();
@@ -5784,7 +6031,7 @@ const P = struct {
         return p._parsePrefix(level, errors orelse &DeferredErrors.None, flags);
     }
 
-    pub fn appendPart(p: *P, parts: List(js_ast.Part), stmts: []Stmt) !void {
+    pub fn appendPart(p: *P, parts: *List(js_ast.Part), stmts: []Stmt) !void {
         p.symbol_uses = SymbolUseMap.init(p.allocator);
         p.declared_symbols.deinit();
         p.import_records_for_current_part.deinit();
@@ -5803,7 +6050,10 @@ const P = struct {
             //     const link = p.symbols.items[local.ref.inner_index].link;
             // }
         }
-        // TODO: here
+        // // TODO: here
+        try parts.append(js_ast.Part{
+            .stmts = stmts,
+        });
     }
 
     pub fn visitStmtsAndPrependTempRefs(p: *P, stmts: *List(Stmt), opts: *PrependTempRefsOpts) !void {
@@ -5821,7 +6071,7 @@ const P = struct {
             if (p.fn_only_data_visit.this_capture_ref) |ref| {
                 try p.temp_refs_to_declare.append(TempRef{
                     .ref = ref,
-                    .value = p.e(E.This{}, opts.fn_body_loc orelse std.debug.panic("Internal error: Expected opts.fn_body_loc to exist", .{})),
+                    .value = p.e(E.This{}, opts.fn_body_loc orelse p.panic("Internal error: Expected opts.fn_body_loc to exist", .{})),
                 });
             }
         }
@@ -5836,6 +6086,14 @@ const P = struct {
 
     pub fn visitExpr(p: *P, expr: Expr) Expr {
         return p.visitExprInOut(expr, ExprIn{});
+    }
+
+    pub fn visitFunc(p: *P, func: *G.Fn, open_parens_loc: logger.Loc) void {}
+
+    pub fn maybeKeepExprSymbolName(p: *P, expr: Expr, original_name: string, was_anonymous_named_expr: bool) Expr {
+        notimpl();
+
+        // return expr;
     }
 
     pub fn valueForThis(p: *P, loc: logger.Loc) ?Expr {
@@ -5885,6 +6143,7 @@ const P = struct {
                 // 	return js_ast.Expr{Loc: expr.Loc, Data: &js_ast.EIdentifier{Ref: p.captureThis()}}, exprOut{}
                 // }
             },
+
             .e_import_meta => |exp| {},
             .e_spread => |exp| {
                 return p.visitExpr(exp.value);
@@ -5892,7 +6151,9 @@ const P = struct {
             .e_identifier => |e_| {},
             .e_private_identifier => |e_| {},
             .e_jsx_element => |e_| {},
+
             .e_template => |e_| {},
+
             .e_binary => |e_| {},
             .e_index => |e_| {},
             .e_unary => |e_| {},
@@ -6015,59 +6276,529 @@ const P = struct {
                 switch (data.value) {
                     .expr => |*expr| {
                         const was_anonymous_named_expr = expr.isAnonymousNamed();
-                        // data.value.expr = p.m(p.visitExpr(expr.*));
+                        data.value.expr = p.visitExpr(expr.*);
 
                         // // Optionally preserve the name
-                        // data.value.expr = p.maybeKeepExprSymbolName(expr, "default", was_anonymous_named_expr);
+                        data.value.expr = p.maybeKeepExprSymbolName(expr.*, "default", was_anonymous_named_expr);
 
-                        // // Discard type-only export default statements
-                        // if (p.options.ts) {
-                        //     switch (expr.data) {
-                        //         .e_identifier => |ident| {
-                        //             const symbol = p.symbols.items[ident.ref.inner_index];
-                        //             if (symbol.kind == .unbound) {
-                        //                 if (p.local_type_names.get(symbol.original_name)) |local_type| {
-                        //                     if (local_type.value) {
-                        //                         return;
-                        //                     }
-                        //                 }
-                        //             }
-                        //         },
-                        //         else => {},
-                        //     }
-                        // }
+                        // Discard type-only export default statements
+                        if (p.options.ts) {
+                            switch (expr.data) {
+                                .e_identifier => |ident| {
+                                    const symbol = p.symbols.items[ident.ref.inner_index];
+                                    if (symbol.kind == .unbound) {
+                                        if (p.local_type_names.get(symbol.original_name)) |local_type| {
+                                            if (local_type) {
+                                                return;
+                                            }
+                                        }
+                                    }
+                                },
+                                else => {},
+                            }
+                        }
                     },
 
-                    .stmt => |st| {},
+                    .stmt => |s2| {
+                        switch (s2.data) {
+                            .s_function => |func| {
+                                var name: string = undefined;
+                                if (func.func.name) |func_loc| {
+                                    name = p.symbols.items[func_loc.ref.?.inner_index].original_name;
+                                } else {
+                                    func.func.name = data.default_name;
+                                    name = "default";
+                                }
+
+                                p.visitFunc(&func.func, func.func.open_parens_loc);
+                                stmts.append(stmt.*) catch unreachable;
+
+                                if (func.func.name) |name_ref| {
+                                    // TODO-REACT-REFRESH-SPOT
+                                    stmts.append(p.keepStmtSymbolName(name_ref.loc, name_ref.ref.?, name)) catch unreachable;
+                                }
+                            },
+                            .s_class => |class| {
+                                var shadow_ref = p.visitClass(s2.loc, &class.class);
+                            },
+                            else => {},
+                        }
+                    },
                 }
             },
-            .s_export_equals => |data| {},
-            .s_break => |data| {},
-            .s_continue => |data| {},
-            .s_label => |data| {},
-            .s_local => |data| {},
-            .s_expr => |data| {},
-            .s_throw => |data| {},
-            .s_return => |data| {},
-            .s_block => |data| {},
-            .s_with => |data| {},
-            .s_while => |data| {},
-            .s_do_while => |data| {},
-            .s_if => |data| {},
-            .s_for => |data| {},
-            .s_for_in => |data| {},
-            .s_for_of => |data| {},
-            .s_try => |data| {},
-            .s_switch => |data| {},
-            .s_function => |data| {},
-            .s_class => |data| {},
-            .s_enum => |data| {},
-            .s_namespace => |data| {},
-            else => {},
+            .s_export_equals => |data| {
+                // "module.exports = value"
+                stmts.append(
+                    Expr.assignStmt(
+                        p.e(
+                            E.Dot{
+                                .target = p.e(
+                                    E.Identifier{
+                                        .ref = p.module_ref,
+                                    },
+                                    stmt.loc,
+                                ),
+                                .name = "exports",
+                                .name_loc = stmt.loc,
+                            },
+                            stmt.loc,
+                        ),
+                        p.visitExpr(data.value),
+                        p.allocator,
+                    ),
+                ) catch unreachable;
+                p.recordUsage(&p.module_ref);
+            },
+            .s_break => |data| {
+                if (data.label) |*label| {
+                    const name = p.loadNameFromRef(label.ref orelse p.panic("Expected label to have a ref", .{}));
+                    const res = p.findLabelSymbol(label.loc, name);
+
+                    label.ref = res.ref;
+                } else if (p.fn_or_arrow_data_visit.is_inside_loop and !p.fn_or_arrow_data_visit.is_inside_switch) {
+                    const r = js_lexer.rangeOfIdentifier(&p.source, stmt.loc);
+                    p.log.addRangeError(p.source, r, "Cannot use \"break\" here") catch unreachable;
+                }
+            },
+            .s_continue => |data| {
+                if (data.label) |*label| {
+                    const name = p.loadNameFromRef(label.ref orelse p.panic("Expected continue label to have a ref", .{}));
+                    const res = p.findLabelSymbol(label.loc, name);
+                    label.ref = res.ref;
+                    if (res.found and !res.is_loop) {
+                        const r = js_lexer.rangeOfIdentifier(&p.source, stmt.loc);
+                        p.log.addRangeErrorFmt(p.source, r, p.allocator, "Cannot \"continue\" to label {s}", .{name}) catch unreachable;
+                    }
+                } else if (!p.fn_or_arrow_data_visit.is_inside_loop) {
+                    const r = js_lexer.rangeOfIdentifier(&p.source, stmt.loc);
+                    p.log.addRangeError(p.source, r, "Cannot use \"continue\" here") catch unreachable;
+                }
+            },
+            .s_label => |data| {
+                p.pushScopeForVisitPass(.label, stmt.loc) catch unreachable;
+                const name = p.loadNameFromRef(data.name.ref orelse unreachable);
+                const ref = p.newSymbol(.label, name) catch unreachable;
+                data.name.ref = ref;
+                p.current_scope.label_ref = ref;
+                switch (data.stmt.data) {
+                    .s_for, .s_for_in, .s_for_of, .s_while, .s_do_while => {
+                        p.current_scope.label_stmt_is_loop = true;
+                    },
+                    else => {},
+                }
+
+                data.stmt = p.visitSingleStmt(data.stmt, StmtsKind.none);
+                p.popScope();
+            },
+            .s_local => |data| {
+                for (data.decls) |*d| {
+                    p.visitBinding(d.binding, null);
+
+                    if (d.value != null) {
+                        var val = d.value orelse unreachable;
+                        const was_anonymous_named_expr = p.isAnonymousNamedExpr(val);
+
+                        val = p.visitExpr(val);
+                        // go version of defer would cause this to reset the variable
+                        // zig version of defer causes this to set it to the last value of val, at the end of the scope.
+                        defer d.value = val;
+
+                        // Optionally preserve the name
+                        switch (d.binding.data) {
+                            .b_identifier => |id| {
+                                val = p.maybeKeepExprSymbolName(
+                                    val,
+                                    p.symbols.items[id.ref.inner_index].original_name,
+                                    was_anonymous_named_expr,
+                                );
+                            },
+                            else => {},
+                        }
+                    }
+                }
+
+                // Handle being exported inside a namespace
+                if (data.is_export and p.enclosing_namespace_arg_ref != null) {
+                    for (data.decls) |*d| {
+                        if (d.value) |val| {
+                            p.recordUsage(&(p.enclosing_namespace_arg_ref orelse unreachable));
+                            // TODO: is it necessary to lowerAssign? why does esbuild do it _most_ of the time?
+                            stmts.append(p.s(S.SExpr{
+                                .value = Expr.assign(Binding.toExpr(&d.binding, p.to_expr_wrapper_namespace), val, p.allocator),
+                            }, stmt.loc)) catch unreachable;
+                        }
+                    }
+
+                    return;
+                }
+
+                // TODO: do we need to relocate vars? I don't think so.
+                if (data.kind == .k_var) {}
+            },
+            .s_expr => |data| {
+                p.stmt_expr_value = data.value.data;
+                data.value = p.visitExpr(data.value);
+
+                // TODO:
+                // if (p.options.mangle_syntax) {
+
+                // }
+            },
+            .s_throw => |data| {
+                data.value = p.visitExpr(data.value);
+            },
+            .s_return => |data| {
+                if (p.fn_or_arrow_data_visit.is_outside_fn_or_arrow) {
+                    const where = where: {
+                        if (p.es6_export_keyword.len > 0) {
+                            break :where p.es6_export_keyword;
+                        } else if (p.top_level_await_keyword.len > 0) {
+                            break :where p.top_level_await_keyword;
+                        } else {
+                            break :where logger.Range.None;
+                        }
+                    };
+
+                    if (where.len > 0) {
+                        p.log.addRangeError(p.source, where, "Top-level return cannot be used inside an ECMAScript module") catch unreachable;
+                    }
+                }
+
+                if (data.value) |val| {
+                    data.value = p.visitExpr(val);
+
+                    // "return undefined;" can safely just always be "return;"
+                    if (@as(Expr.Tag, data.value.?.data) == .e_undefined) {
+                        // Returning undefined is implicit
+                        data.value = null;
+                    }
+                }
+            },
+            .s_block => |data| {
+                {
+                    p.pushScopeForVisitPass(.block, stmt.loc) catch unreachable;
+                    defer p.popScope();
+
+                    // Pass the "is loop body" status on to the direct children of a block used
+                    // as a loop body. This is used to enable optimizations specific to the
+                    // topmost scope in a loop body block.
+                    const kind = if (std.meta.eql(p.loop_body, stmt.data)) StmtsKind.loop_body else StmtsKind.none;
+                    var _stmts = List(Stmt).init(p.allocator);
+                    p.visitStmts(&_stmts, kind) catch unreachable;
+                    data.stmts = _stmts.toOwnedSlice();
+                }
+
+                // trim empty statements
+                if (data.stmts.len == 0) {
+                    stmts.append(p.s(S.Empty{}, stmt.loc)) catch unreachable;
+                    return;
+                } else if (data.stmts.len == 1 and !statementCaresAboutScope(data.stmts[0])) {
+                    // Unwrap blocks containing a single statement
+                    stmts.append(data.stmts[0]) catch unreachable;
+                    return;
+                }
+            },
+            .s_with => |data| {
+                notimpl();
+            },
+            .s_while => |data| {
+                data.test_ = p.visitExpr(data.test_);
+                data.body = p.visitLoopBody(data.body);
+
+                // TODO: simplify boolean expression
+            },
+            .s_do_while => |data| {
+                data.test_ = p.visitExpr(data.test_);
+                data.body = p.visitLoopBody(data.body);
+
+                // TODO: simplify boolean expression
+            },
+            .s_if => |data| {
+                data.test_ = p.visitExpr(data.test_);
+
+                // TODO: Fold constants
+
+            },
+            .s_for => |data| {
+                {
+                    p.pushScopeForVisitPass(.block, stmt.loc) catch unreachable;
+                    defer p.popScope();
+                    if (data.init) |initst| {
+                        _ = p.visitForLoopInit(initst, false);
+                    }
+
+                    if (data.test_) |test_| {
+                        data.test_ = p.visitExpr(test_);
+
+                        // TODO: boolean with side effects
+                    }
+
+                    if (data.update) |update| {
+                        data.update = p.visitExpr(update);
+                    }
+
+                    data.body = p.visitLoopBody(data.body);
+                }
+                // TODO: Potentially relocate "var" declarations to the top level
+
+            },
+            .s_for_in => |data| {
+                {
+                    p.pushScopeForVisitPass(.block, stmt.loc) catch unreachable;
+                    defer p.popScope();
+                    _ = p.visitForLoopInit(data.init, true);
+                    data.value = p.visitExpr(data.value);
+                    data.body = p.visitLoopBody(data.body);
+
+                    // TODO: do we need to this?
+                    // // Check for a variable initializer
+                    // if local, ok := s.Init.Data.(*js_ast.SLocal); ok && local.Kind == js_ast.LocalVar && len(local.Decls) == 1 {
+                    // 	decl := &local.Decls[0]
+                    // 	if id, ok := decl.Binding.Data.(*js_ast.BIdentifier); ok && decl.Value != nil {
+                    // 		p.markStrictModeFeature(forInVarInit, p.source.RangeOfOperatorBefore(decl.Value.Loc, "="), "")
+
+                    // 		// Lower for-in variable initializers in case the output is used in strict mode
+                    // 		stmts = append(stmts, js_ast.Stmt{Loc: stmt.Loc, Data: &js_ast.SExpr{Value: js_ast.Assign(
+                    // 			js_ast.Expr{Loc: decl.Binding.Loc, Data: &js_ast.EIdentifier{Ref: id.Ref}},
+                    // 			*decl.Value,
+                    // 		)}})
+                    // 		decl.Value = nil
+                    // 	}
+                    // }
+                }
+            },
+            .s_for_of => |data| {
+                p.pushScopeForVisitPass(.block, stmt.loc) catch unreachable;
+                defer p.popScope();
+                _ = p.visitForLoopInit(data.init, true);
+                data.value = p.visitExpr(data.value);
+                data.body = p.visitLoopBody(data.body);
+
+                // TODO: do we need to do this?
+                //         	// Potentially relocate "var" declarations to the top level
+                // if init, ok := s.Init.Data.(*js_ast.SLocal); ok && init.Kind == js_ast.LocalVar {
+                // 	if replacement, ok := p.maybeRelocateVarsToTopLevel(init.Decls, relocateVarsForInOrForOf); ok {
+                // 		s.Init = replacement
+                // 	}
+                // }
+
+                // p.lowerObjectRestInForLoopInit(s.Init, &s.Body)
+            },
+            .s_try => |data| {
+                notimpl();
+            },
+            .s_switch => |data| {
+                notimpl();
+            },
+            .s_function => |data| {
+                notimpl();
+            },
+            .s_class => |data| {
+                notimpl();
+            },
+            .s_enum => |data| {
+                notimpl();
+            },
+            .s_namespace => |data| {
+                notimpl();
+            },
+            else => {
+                notimpl();
+            },
         }
 
         // if we get this far, it stays
         try stmts.append(stmt.*);
+    }
+
+    pub fn visitForLoopInit(p: *P, stmt: Stmt, is_in_or_of: bool) Stmt {
+        switch (stmt.data) {
+            .s_expr => |st| {
+                const assign_target = if (is_in_or_of) js_ast.AssignTarget.replace else js_ast.AssignTarget.none;
+                p.stmt_expr_value = st.value.data;
+                st.value = p.visitExprInOut(st.value, ExprIn{ .assign_target = assign_target });
+            },
+            .s_local => |st| {
+                for (st.decls) |*dec| {
+                    p.visitBinding(dec.binding, null);
+                    if (dec.value) |val| {
+                        dec.value = p.visitExpr(val);
+                    }
+                }
+                //         		s.Decls = p.lowerObjectRestInDecls(s.Decls)
+                // s.Kind = p.selectLocalKind(s.Kind)
+            },
+            else => {
+                p.panic("Unexpected stmt in visitForLoopInit: {s}", .{stmt});
+            },
+        }
+
+        return stmt;
+    }
+
+    // pub fn maybeRelocateVarsToTopLevel(p: *P, decls: []G.Decl, mode: )
+
+    pub fn wrapIdentifierNamespace(
+        p: *P,
+        loc: logger.Loc,
+        ref: Ref,
+    ) Expr {
+        p.recordUsage(&(p.enclosing_namespace_arg_ref orelse unreachable));
+
+        return p.e(E.Dot{
+            .target = p.e(E.Identifier{ .ref = p.enclosing_namespace_arg_ref orelse unreachable }, loc),
+            .name = p.symbols.items[ref.inner_index].original_name,
+            .name_loc = loc,
+        }, loc);
+    }
+
+    pub fn wrapIdentifierHoisting(
+        p: *P,
+        loc: logger.Loc,
+        ref: Ref,
+    ) Expr {
+        p.relocated_top_level_vars.append(LocRef{ .loc = loc, .ref = ref }) catch unreachable;
+        var _ref = ref;
+        p.recordUsage(&_ref);
+        return p.e(E.Identifier{ .ref = _ref }, loc);
+    }
+
+    pub fn isAnonymousNamedExpr(p: *P, expr: ExprNodeIndex) bool {
+        notimpl();
+    }
+
+    pub fn visitBinding(p: *P, binding: BindingNodeIndex, duplicate_arg_check: ?StringBoolMap) void {
+        notimpl();
+    }
+
+    pub fn visitLoopBody(p: *P, stmt: StmtNodeIndex) StmtNodeIndex {
+        const old_is_inside_loop = p.fn_or_arrow_data_visit.is_inside_loop;
+        p.fn_or_arrow_data_visit.is_inside_loop = true;
+        defer p.fn_or_arrow_data_visit.is_inside_loop = old_is_inside_loop;
+        p.loop_body = stmt.data;
+        return p.visitSingleStmt(stmt, .loop_body);
+    }
+
+    pub fn visitSingleStmt(p: *P, stmt: Stmt, kind: StmtsKind) Stmt {
+        const has_if_scope = has_if: {
+            switch (stmt.data) {
+                .s_function => |func| {
+                    break :has_if func.func.flags.has_if_scope;
+                },
+                else => {
+                    break :has_if false;
+                },
+            }
+        };
+
+        // Introduce a fake block scope for function declarations inside if statements
+        if (has_if_scope) {
+            p.pushScopeForVisitPass(.block, stmt.loc) catch unreachable;
+        }
+
+        var stmts = List(Stmt).initCapacity(p.allocator, 1) catch unreachable;
+        stmts.append(stmt) catch unreachable;
+        p.visitStmts(&stmts, kind) catch unreachable;
+
+        if (has_if_scope) {
+            p.popScope();
+        }
+
+        return p.stmtsToSingleStmt(stmt.loc, stmts.toOwnedSlice());
+    }
+
+    // One statement could potentially expand to several statements
+    pub fn stmtsToSingleStmt(p: *P, loc: logger.Loc, stmts: []Stmt) Stmt {
+        if (stmts.len == 0) {
+            return p.s(S.Empty{}, loc);
+        }
+
+        if (stmts.len == 1) {
+            switch (stmts[0].data) {
+                .s_local => |local| {
+                    // "let" and "const" must be put in a block when in a single-statement context
+
+                    if (local.kind == .k_var) {
+                        return stmts[0];
+                    }
+                },
+                else => {
+                    return stmts[0];
+                },
+            }
+        }
+
+        return p.s(S.Block{ .stmts = stmts }, loc);
+    }
+
+    pub fn findLabelSymbol(p: *P, loc: logger.Loc, name: string) FindLabelSymbolResult {
+        var res = FindLabelSymbolResult{ .ref = undefined, .is_loop = false };
+
+        var _scope: ?*Scope = p.current_scope;
+
+        while (_scope) |scope| : (_scope = scope.parent) {
+            var label_ref = scope.label_ref orelse continue;
+
+            if (!scope.kindStopsHoisting() or (scope.kind != .label) or !strings.eql(name, p.symbols.items[label_ref.inner_index].original_name)) {
+                continue;
+            }
+
+            // Track how many times we've referenced this symbol
+            p.recordUsage(&label_ref);
+            res.ref = label_ref;
+            res.is_loop = scope.label_stmt_is_loop;
+            res.found = true;
+            break;
+        }
+
+        const r = js_lexer.rangeOfIdentifier(&p.source, loc);
+        p.log.addRangeErrorFmt(p.source, r, p.allocator, "There is no containing label named {s}", .{name}) catch unreachable;
+
+        // Allocate an "unbound" symbol
+        var ref = p.newSymbol(.unbound, name) catch unreachable;
+
+        // Track how many times we've referenced this symbol
+        p.recordUsage(&ref);
+
+        return res;
+    }
+
+    pub fn visitClass(p: *P, loc: logger.Loc, class: *G.Class) Ref {
+        notimpl();
+    }
+
+    fn keepStmtSymbolName(p: *P, loc: logger.Loc, ref: Ref, name: string) Stmt {
+        var exprs = p.allocator.alloc(Expr, 2) catch unreachable;
+        exprs[0] = p.e(E.Identifier{
+            .ref = ref,
+        }, loc);
+        exprs[1] = p.e(E.String{ .value = strings.toUTF16Alloc(name, p.allocator) catch unreachable }, loc);
+        return p.s(S.SExpr{
+            // I believe that this is a spot we can do $RefreshReg$(name)
+            .value = p.callRuntime(loc, "__name", exprs),
+
+            // Make sure tree shaking removes this if the function is never used
+            .does_not_affect_tree_shaking = true,
+        }, loc);
+    }
+
+    pub fn callRuntime(p: *P, loc: logger.Loc, name: string, args: []Expr) Expr {
+        var ref: Ref = undefined;
+        if (!p.runtime_imports.contains(name)) {
+            ref = p.newSymbol(.other, name) catch unreachable;
+            p.module_scope.generated.append(ref) catch unreachable;
+            p.runtime_imports.put(name, ref) catch unreachable;
+        } else {
+            ref = p.runtime_imports.get(name) orelse unreachable;
+        }
+
+        p.recordUsage(&ref);
+        return p.e(E.Call{
+            .target = p.e(E.Identifier{
+                .ref = ref,
+            }, loc),
+            .args = args,
+        }, loc);
     }
 
     fn visitStmts(p: *P, stmts: *List(Stmt), kind: StmtsKind) !void {
@@ -6178,8 +6909,7 @@ const P = struct {
 
             if (p.options.ts and p.lexer.token == .t_equals and !p.forbid_suffix_after_as_loc.eql(p.lexer.loc())) {
                 p.lexer.next();
-                var expr = p.parseExpr(.comma);
-                item = item.assign(&expr, p.allocator);
+                item = Expr.assign(item, p.parseExpr(.comma), p.allocator);
             }
 
             items_list.append(item) catch unreachable;
@@ -6274,9 +7004,14 @@ const P = struct {
         parser.log = log;
         parser.allocator = allocator;
         parser.options = opts;
+        parser.to_expr_wrapper_namespace = Binding2ExprWrapper.Namespace.init(parser);
+        parser.to_expr_wrapper_hoisted = Binding2ExprWrapper.Hoisted.init(parser);
         parser.source = source;
+
         parser.lexer = lexer;
         parser.data = js_ast.AstData.init(allocator);
+
+        _ = try parser.pushScopeForParsePass(.entry, locModuleScope);
 
         return parser;
     }
@@ -6309,11 +7044,48 @@ const DeferredArrowArgErrors = struct {
     invalid_expr_yield: logger.Range = logger.Range.None,
 };
 
-test "js_parser.init" {
-    try alloc.setup(std.heap.page_allocator);
+const SymbolList = [][]Symbol;
 
-    const entryPointName = "/bacon/hello.js";
-    const code = "for (let i = 0; i < 100; i++) { console.log(\"hi\");\n}";
-    var parser = try Parser.init(try options.TransformOptions.initUncached(alloc.dynamic, entryPointName, code), alloc.dynamic);
-    const res = try parser.parse();
+fn expectPrintedJS(contents: string, expected: string) !void {
+    if (alloc.dynamic_manager == null) {
+        try alloc.setup(std.heap.page_allocator);
+    }
+
+    debugl("INIT TEST");
+
+    const opts = try options.TransformOptions.initUncached(alloc.dynamic, "file.js", contents);
+    var log = logger.Log.init(alloc.dynamic);
+    var source = logger.Source.initFile(opts.entry_point, alloc.dynamic);
+    var ast: js_ast.Ast = undefined;
+
+    debugl("INIT PARSER");
+
+    var parser = try Parser.init(opts, &log, &source, alloc.dynamic);
+    debugl("RUN PARSER");
+
+    var res = try parser.parse();
+    ast = res.ast;
+    var symbols: SymbolList = &([_][]Symbol{ast.symbols});
+    var symbol_map = js_ast.Symbol.Map.initList(symbols);
+
+    if (log.msgs.items.len > 0) {
+        debugl("PRINT LOG ERRORS");
+        var fixedBuffer = [_]u8{0} ** 4096;
+        var stream = std.io.fixedBufferStream(&fixedBuffer);
+
+        try log.print(stream.writer());
+        std.debug.print("{s}", .{fixedBuffer});
+    }
+    var linker = @import("linker.zig").Linker{};
+    debugl("START AST PRINT");
+    const result = js_printer.printAst(alloc.dynamic, ast, symbol_map, true, js_printer.Options{ .to_module_ref = res.ast.module_ref orelse Ref{ .inner_index = 0 } }, &linker) catch unreachable;
+
+    std.testing.expectEqualStrings(contents, result.js);
+}
+
+test "expectPrint" {
+    try expectPrintedJS(
+        "const bacon = true; function hello() { return 100; }; hello();",
+        "const bacon = true; function hello() { return 100; }; hello();",
+    );
 }

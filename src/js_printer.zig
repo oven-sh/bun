@@ -302,6 +302,8 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
             p.print("}");
         }
         pub fn printDecls(p: *Printer, keyword: string, decls: []G.Decl, flags: ExprFlag) void {
+            debug("<printDecls>\n   {s}", .{decls});
+            defer debug("</printDecls>", .{});
             p.print(keyword);
             p.printSpace();
 
@@ -330,6 +332,8 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
         pub fn addSourceMapping(p: *Printer, loc: logger.Loc) void {}
 
         pub fn printSymbol(p: *Printer, ref: Ref) void {
+            debug("<printSymbol>\n   {s}", .{ref});
+            defer debugl("</printSymbol>");
             const name = p.renamer.nameForSymbol(ref);
 
             p.printIdentifier(name);
@@ -781,6 +785,8 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
         pub fn printExpr(p: *Printer, expr: Expr, level: Level, _flags: ExprFlag) void {
             p.addSourceMapping(expr.loc);
             var flags = _flags;
+            debugl("<printExpr>");
+            defer debugl("</printExpr>");
 
             switch (expr.data) {
                 .e_missing => |e| {},
@@ -1106,6 +1112,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                 .e_function => |e| {
                     const n = p.js.lenI();
                     var wrap = p.stmt_start == n or p.export_default_start == n;
+
                     if (wrap) {
                         p.print("(");
                     }
@@ -1123,6 +1130,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     if (e.func.name) |sym| {
                         p.printSymbol(sym.ref orelse std.debug.panic("internal error: expected E.Function's name symbol to have a ref\n{s}", .{e.func}));
                     }
+
                     p.printFunc(e.func);
                     if (wrap) {
                         p.print(")");
@@ -1592,6 +1600,8 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
         }
 
         pub fn printProperty(p: *Printer, item: G.Property) void {
+            debugl("<printProperty>");
+            defer debugl("</printProperty>");
             if (item.kind == .spread) {
                 p.print("...");
                 p.printExpr(item.value.?, .comma, ExprFlag.None());
@@ -1748,6 +1758,8 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
         }
 
         pub fn printBinding(p: *Printer, binding: Binding) void {
+            debug("<printBinding>\n   {s}", .{binding});
+            defer debugl("</printBinding>");
             p.addSourceMapping(binding.loc);
 
             switch (binding.data) {
@@ -1903,6 +1915,8 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
         }
 
         pub fn printStmt(p: *Printer, stmt: Stmt) !void {
+            debug("<printStmt>: {s}\n", .{stmt});
+            defer debug("</printStmt>: {s}\n", .{stmt});
             p.comptime_flush();
 
             p.addSourceMapping(stmt.loc);
@@ -2682,9 +2696,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                 .js = js,
                 .writer = js.writer(),
                 .linker = linker,
-                .renamer = rename.Renamer{
-                    .symbols = symbols,
-                },
+                .renamer = rename.Renamer.init(symbols),
             };
         }
     };

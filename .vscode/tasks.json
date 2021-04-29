@@ -3,9 +3,8 @@
   "tasks": [
     {
       "label": "build",
-      "type": "shell",
+      "type": "process",
       "command": "zig build",
-
       "group": {
         "kind": "build",
         "isDefault": true
@@ -24,9 +23,9 @@
     },
     {
       "label": "test",
-      "type": "shell",
+      "type": "process",
       "command": "zig",
-      "args": ["test", "${file}", "-femit-bin=zig-cache/bin/test"],
+      "args": ["test", "${file}"],
 
       "group": {
         "kind": "test",

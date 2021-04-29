@@ -93,6 +93,73 @@ pub const Binding = struct {
     loc: logger.Loc,
     data: B,
 
+    pub fn ToExpr(comptime expr_type: type, comptime func_type: anytype) type {
+        const ExprType = expr_type;
+        return struct {
+            context: *ExprType,
+            allocator: *std.mem.Allocator,
+            pub const Context = @This();
+
+            pub fn wrapIdentifier(ctx: *const Context, loc: logger.Loc, ref: Ref) Expr {
+                return func_type(ctx.context, loc, ref);
+            }
+
+            pub fn init(context: *ExprType) Context {
+                return Context{ .context = context, .allocator = context.allocator };
+            }
+        };
+    }
+
+    pub fn toExpr(binding: *const Binding, wrapper: anytype) Expr {
+        var loc = binding.loc;
+
+        switch (binding.data) {
+            .b_missing => {
+                return Expr.alloc(wrapper.allocator, E.Missing{}, loc);
+            },
+
+            .b_identifier => |b| {
+                return wrapper.wrapIdentifier(loc, b.ref);
+            },
+            .b_array => |b| {
+                var exprs = wrapper.allocator.alloc(Expr, b.items.len) catch unreachable;
+                var i: usize = 0;
+                while (i < exprs.len) : (i += 1) {
+                    const item = b.items[i];
+                    exprs[i] = convert: {
+                        const expr = toExpr(&item.binding, wrapper);
+                        if (b.has_spread and i == exprs.len - 1) {
+                            break :convert Expr.alloc(wrapper.allocator, E.Spread{ .value = expr }, expr.loc);
+                        } else if (item.default_value) |default| {
+                            break :convert Expr.assign(expr, default, wrapper.allocator);
+                        } else {
+                            break :convert expr;
+                        }
+                    };
+                }
+
+                return Expr.alloc(wrapper.allocator, E.Array{ .items = exprs, .is_single_line = b.is_single_line }, loc);
+            },
+            .b_object => |b| {
+                var properties = wrapper.allocator.alloc(G.Property, b.properties.len) catch unreachable;
+                var i: usize = 0;
+                while (i < properties.len) : (i += 1) {
+                    const item = b.properties[i];
+                    properties[i] = G.Property{
+                        .flags = item.flags,
+                        .kind = if (item.flags.is_spread) G.Property.Kind.spread else G.Property.Kind.normal,
+                        .value = toExpr(&item.value, wrapper),
+                        .initializer = item.default_value,
+                    };
+                }
+                return Expr.alloc(wrapper.allocator, E.Object{ .properties = properties, .is_single_line = b.is_single_line }, loc);
+            },
+            else => {
+                std.debug.panic("Interanl error", .{});
+            },
+        }
+    }
+
     pub const Tag = packed enum {
         b_identifier,
         b_array,
@@ -511,7 +578,7 @@ pub const Symbol = struct {
         // single inner array, so you can join the maps together by just make a
         // single outer array containing all of the inner arrays. See the comment on
         // "Ref" for more detail.
-        symbols_for_source: [][]Symbol = undefined,
+        symbols_for_source: [][]Symbol,
 
         pub fn get(self: *Map, ref: Ref) ?Symbol {
             return self.symbols_for_source[ref.source_index][ref.inner_index];
@@ -520,6 +587,10 @@ pub const Symbol = struct {
         pub fn init(sourceCount: usize, allocator: *std.mem.Allocator) !Map {
             var symbols_for_source: [][]Symbol = try allocator.alloc([]Symbol, sourceCount);
             return Map{ .symbols_for_source = symbols_for_source };
+        }
+
+        pub fn initList(list: [][]Symbol) Map {
+            return Map{ .symbols_for_source = list };
         }
 
         pub fn follow(symbols: *Map, ref: Ref) Ref {
@@ -1974,12 +2045,11 @@ pub const Expr = struct {
         }
     };
 
-    pub fn assign(a: *Expr, b: *Expr, allocator: *std.mem.Allocator) Expr {
-        std.debug.assert(a != b);
+    pub fn assign(a: Expr, b: Expr, allocator: *std.mem.Allocator) Expr {
         return alloc(allocator, E.Binary{
             .op = .bin_assign,
-            .left = a.*,
-            .right = b.*,
+            .left = a,
+            .right = b,
         }, a.loc);
     }
     pub fn at(expr: *Expr, t: anytype, allocator: *std.mem.allocator) callconv(.Inline) Expr {
@@ -2061,15 +2131,13 @@ pub const Expr = struct {
         return null;
     }
 
-    pub fn assignStmt(a: *Expr, b: *Expr, allocator: *std.mem.Allocator) Stmt {
+    pub fn assignStmt(a: Expr, b: Expr, allocator: *std.mem.Allocator) Stmt {
         return Stmt.alloc(
             allocator,
             S.SExpr{
-                .op = .assign,
-                .left = a,
-                .right = b,
+                .value = Expr.assign(a, b, allocator),
             },
-            loc,
+            a.loc,
         );
     }
 
@@ -2883,7 +2951,9 @@ pub const Scope = struct {
     }
 };
 
-pub fn printmem(comptime format: string, args: anytype) void {}
+pub fn printmem(comptime format: string, args: anytype) void {
+    // std.debug.print(format, args);
+}
 
 test "Binding.init" {
     var binding = Binding.alloc(
@@ -3073,3 +3143,4 @@ test "Expr.init" {
 // Stmt               | 192
 // STry               | 384
 // -- ESBuild bit sizes
+

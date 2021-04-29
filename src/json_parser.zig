@@ -36,9 +36,9 @@ const Level = js_ast.Op.Level;
 const Op = js_ast.Op;
 const Scope = js_ast.Scope;
 const locModuleScope = logger.Loc.Empty;
+const Lexer = js_lexer.Lexer;
 
 fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
-    const Lexer = if (opts.allow_comments) js_lexer.TSConfigJSONLexer else js_lexer.JSONLexer;
     return struct {
         lexer: Lexer,
         source: *logger.Source,
@@ -46,12 +46,21 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
         allocator: *std.mem.Allocator,
 
         pub fn init(allocator: *std.mem.Allocator, source: *logger.Source, log: *logger.Log) !Parser {
-            return Parser{
-                .lexer = try Lexer.init(log, source, allocator),
-                .allocator = allocator,
-                .log = log,
-                .source = source,
-            };
+            if (opts.allow_comments) {
+                return Parser{
+                    .lexer = try Lexer.initTSConfig(log, source, allocator),
+                    .allocator = allocator,
+                    .log = log,
+                    .source = source,
+                };
+            } else {
+                return Parser{
+                    .lexer = try Lexer.initJSON(log, source, allocator),
+                    .allocator = allocator,
+                    .log = log,
+                    .source = source,
+                };
+            }
         }
 
         const Parser = @This();
@@ -217,6 +226,7 @@ const duplicateKeyJson = "{ \"name\": \"valid\", \"name\": \"invalid\" }";
 
 const js_printer = @import("js_printer.zig");
 const renamer = @import("renamer.zig");
+const SymbolList = [][]Symbol;
 
 fn expectPrintedJSON(_contents: string, expected: string) void {
     if (alloc.dynamic_manager == null) {
@@ -240,7 +250,8 @@ fn expectPrintedJSON(_contents: string, expected: string) void {
         .stmts = &([_]Stmt{stmt}),
     };
     const tree = js_ast.Ast.initTest(&([_]js_ast.Part{part}));
-    var symbol_map = Symbol.Map{};
+    var symbols: SymbolList = &([_][]Symbol{tree.symbols});
+    var symbol_map = js_ast.Symbol.Map.initList(symbols);
     if (log.msgs.items.len > 0) {
         std.debug.panic("--FAIL--\nExpr {s}\nLog: {s}\n--FAIL--", .{ expr, log.msgs.items[0].data.text });
     }

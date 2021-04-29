@@ -24,6 +24,7 @@ const Globals = struct {
     pub const InfinityData = js_ast.Expr.Data{ .e_number = Globals.InfinityPtr };
 };
 
+const defines_path = fs.Path.init("/tmp/internal/defines.json");
 pub const RawDefines = std.StringHashMap(string);
 pub const UserDefines = std.StringHashMap(DefineData);
 
@@ -90,7 +91,7 @@ pub const DefineData = struct {
                 continue;
             }
             var _log = log;
-            var source = logger.Source{ .contents = entry.value, .path = fs.Path.init("/internal/defines.json"), .identifier_name = "" };
+            var source = logger.Source{ .contents = entry.value, .path = defines_path, .identifier_name = "" };
             var expr = try json_parser.ParseJSON(&source, _log, allocator);
             var data: js_ast.Expr.Data = undefined;
             switch (expr.data) {
@@ -160,7 +161,7 @@ pub const Define = struct {
             if (global.len == 1) {
 
                 // TODO: when https://github.com/ziglang/zig/pull/8596 is merged, switch to putAssumeCapacityNoClobber
-                try define.identifiers.put(global[0], value_define);
+                define.identifiers.putAssumeCapacity(global[0], value_define);
             } else {
                 const key = global[global.len - 1];
                 // TODO: move this to comptime
@@ -250,7 +251,7 @@ pub const Define = struct {
                         try define.dots.put(tail, list.toOwnedSlice());
                     }
                 } else {
-                    // IS_BROWSER
+                    // e.g. IS_BROWSER
                     try define.identifiers.put(user_define.key, user_define.value);
                 }
             }
@@ -265,23 +266,30 @@ test "UserDefines" {
     try alloc.setup(std.heap.page_allocator);
     var orig = RawDefines.init(alloc.dynamic);
     try orig.put("process.env.NODE_ENV", "\"development\"");
+    try orig.put("globalThis", "window");
     var log = logger.Log.init(alloc.dynamic);
     var data = try DefineData.from_input(orig, &log, alloc.dynamic);
 
     expect(data.contains("process.env.NODE_ENV"));
+    expect(data.contains("globalThis"));
+    const globalThis = data.get("globalThis");
     const val = data.get("process.env.NODE_ENV");
     expect(val != null);
     expect(strings.utf16EqlString(val.?.value.e_string.value, "development"));
+    std.testing.expectEqualStrings(globalThis.?.original_name.?, "window");
 }
 
+// 396,000ns was upper end of last time this was checked how long it took
+// => 0.396ms
 test "Defines" {
     try alloc.setup(std.heap.page_allocator);
+    const start = std.time.nanoTimestamp();
     var orig = RawDefines.init(alloc.dynamic);
     try orig.put("process.env.NODE_ENV", "\"development\"");
     var log = logger.Log.init(alloc.dynamic);
     var data = try DefineData.from_input(orig, &log, alloc.dynamic);
-
     var defines = try Define.init(alloc.dynamic, data);
+    std.debug.print("Time: {d}", .{std.time.nanoTimestamp() - start});
     const node_env_dots = defines.dots.get("NODE_ENV");
     expect(node_env_dots != null);
     expect(node_env_dots.?.len > 0);

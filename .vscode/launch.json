@@ -2,22 +2,19 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Test",
-      "type": "lldb",
+      "name": "(lldb) Launch",
+      "type": "cppdbg",
       "request": "launch",
-      "stdio": null,
-      "stopOnEntry": false,
-      "program": "/usr/local/bin/zig",
+      "program": "/Users/jarredsumner/Code/esdev/src/zig-cache/o/b57013855157d9a38baa6327511eaf3e/test",
       "cwd": "${workspaceFolder}",
-      "args": ["test", "${file}"],
-      "presentation": {
-        "hidden": false,
-        "group": "",
-        "order": 1
-      },
-      "env": {
-        "TERM": "xterm"
-      }
+      "args": ["/Users/jarredsumner/Builds/zig/build/bin/zig"],
+      "stopAtEntry": false,
+      "environment": [],
+      "miDebuggerPath": "/usr/local/bin/lldb-mi",
+      "MIMode": "lldb",
+      "targetArchitecture": "x64",
+
+      "externalConsole": false
     },
 
     {
@@ -25,11 +22,12 @@
       "type": "cppdbg",
       "request": "launch",
       "program": "${workspaceFolder}/zig-cache/bin/esdev",
-      "args": [],
+      "args": ["/Users/jarredsumner/Code/devserverless/build.js"],
       "stopAtEntry": false,
       "cwd": "${workspaceFolder}",
       "environment": [],
       "externalConsole": false,
+      // "preLaunchTask": "build",
       "MIMode": "lldb",
       "internalConsoleOptions": "openOnSessionStart",
       "logging": {

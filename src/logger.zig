@@ -53,6 +53,7 @@ pub const Location = struct {
     length: usize = 0, // in bytes
     line_text: ?string = null,
     suggestion: ?string = null,
+    offset: usize = 0,
 
     pub fn init(file: []u8, namespace: []u8, line: i32, column: i32, length: u32, line_text: ?[]u8, suggestion: ?[]u8) Location {
         return Location{
@@ -63,6 +64,7 @@ pub const Location = struct {
             .length = length,
             .line_text = line_text,
             .suggestion = suggestion,
+            .offset = length,
         };
     }
 
@@ -76,6 +78,7 @@ pub const Location = struct {
                 .column = usize2Loc(data.column_count).start,
                 .length = source.contents.len,
                 .line_text = source.contents[data.line_start..data.line_end],
+                .offset = @intCast(usize, std.math.max(r.loc.start, 0)),
             };
         } else {
             return null;
@@ -104,11 +107,27 @@ pub const Msg = struct {
     data: Data,
     notes: ?[]Data = null,
     pub fn doFormat(msg: *const Msg, to: anytype, formatterFunc: @TypeOf(std.fmt.format)) !void {
-        try formatterFunc(to, "\n\n{s}: {s}\n{s}\n{s}:{}:{}", .{ msg.kind.string(), msg.data.text, msg.data.location.?.line_text, msg.data.location.?.file, msg.data.location.?.line, msg.data.location.?.column });
+        try formatterFunc(to, "\n\n{s}: {s}\n{s}\n{s}:{}:{} {d}", .{
+            msg.kind.string(),
+            msg.data.text,
+            msg.data.location.?.line_text,
+            msg.data.location.?.file,
+            msg.data.location.?.line,
+            msg.data.location.?.column,
+            msg.data.location.?.offset,
+        });
     }
 
     pub fn formatNoWriter(msg: *const Msg, comptime formatterFunc: @TypeOf(std.debug.panic)) void {
-        formatterFunc("\n\n{s}: {s}\n{s}\n{s}:{}:{}", .{ msg.kind.string(), msg.data.text, msg.data.location.?.line_text, msg.data.location.?.file, msg.data.location.?.line, msg.data.location.?.column });
+        formatterFunc("\n\n{s}: {s}\n{s}\n{s}:{}:{} ({d})", .{
+            msg.kind.string(),
+            msg.data.text,
+            msg.data.location.?.line_text,
+            msg.data.location.?.file,
+            msg.data.location.?.line,
+            msg.data.location.?.column,
+            msg.data.location.?.offset,
+        });
     }
 };
 
@@ -270,7 +289,12 @@ pub const Source = struct {
     // symbol for an "export default" statement will be called "util_default".
     identifier_name: string,
 
-    pub const ErrorPosition = struct { line_start: usize, line_end: usize, column_count: usize, line_count: usize };
+    pub const ErrorPosition = struct {
+        line_start: usize,
+        line_end: usize,
+        column_count: usize,
+        line_count: usize,
+    };
 
     pub fn initFile(file: fs.File, allocator: *std.mem.Allocator) Source {
         var name = file.path.name;

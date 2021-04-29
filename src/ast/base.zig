@@ -27,7 +27,7 @@ pub const Ref = packed struct {
     inner_index: Int = 0,
 
     // 2 bits of padding for whatever is the parent
-    pub const Int = u31;
+    pub const Int = u30;
     pub const None = Ref{ .inner_index = std.math.maxInt(Ref.Int) };
     pub fn isNull(self: *const Ref) bool {
         return self.source_index == std.math.maxInt(Ref.Int) and self.inner_index == std.math.maxInt(Ref.Int);
@@ -55,3 +55,11 @@ pub const RequireOrImportMeta = struct {
     exports_ref: Ref = Ref.None,
     is_wrapper_async: bool = false,
 };
+pub fn debug(comptime fmt: []const u8, args: anytype) callconv(.Inline) void {
+    // std.debug.print(fmt, args);
+}
+pub fn debugl(
+    comptime fmt: []const u8,
+) callconv(.Inline) void {
+    // std.debug.print("{s}\n", .{fmt});
+}

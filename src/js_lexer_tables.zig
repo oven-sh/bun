@@ -231,6 +231,13 @@ pub const PropertyModifierKeyword = enum {
     });
 };
 
+pub const TypeScriptAccessibilityModifier = std.ComptimeStringMap(u1, .{
+    .{ "public", 1 },
+    .{ "private", 1 },
+    .{ "protected", 1 },
+    .{ "readonly", 1 },
+});
+
 pub const TokenEnumType = std.EnumArray(T, []u8);
 
 pub const tokenToString = comptime {
@@ -532,6 +539,7 @@ pub var jsxEntity: JSXEntityMap = undefined;
 
 pub fn initJSXEntityMap() !void {
     jsxEntity = JSXEntityMap.init(alloc.dynamic);
+    // return jsxEntity;
     jsxEntity.ensureCapacity(255) catch unreachable;
 
     jsxEntity.putAssumeCapacity("quot", @as(CodePoint, 0x0022));
@@ -793,14 +801,14 @@ test "tokenToString" {
     expectString(tokenToString.get(T.t_end_of_file), "end of file");
 }
 
-test "jsxEntity" {
-    try alloc.setup(std.heap.page_allocator);
+// test "jsxEntity" {
+//     try alloc.setup(std.heap.page_allocator);
 
-    initJSXEntityMap() catch |err| {
-        @panic(@errorName(err));
-    };
+//     initJSXEntityMap() catch |err| {
+//         @panic(@errorName(err));
+//     };
 
-    if (jsxEntity.get("sim")) |v| {
-        expect(v == 0x223C);
-    }
-}
+//     if (jsxEntity.get("sim")) |v| {
+//         expect(v == 0x223C);
+//     }
+// }

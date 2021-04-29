@@ -237,3 +237,38 @@ pub fn containsNonBmpCodePointUTF16(_text: JavascriptString) bool {
 
     return false;
 }
+
+/// Super simple "perfect hash" algorithm
+/// Only really useful for switching on strings
+// TODO: can we auto detect and promote the underlying type?
+pub fn ExactSizeMatcher(comptime max_bytes: usize) type {
+    const T = std.meta.Int(
+        .unsigned,
+        max_bytes * 8,
+    );
+
+    return struct {
+        pub fn match(str: anytype) T {
+            return hash(str) orelse std.math.maxInt(T);
+        }
+
+        pub fn case(comptime str: []const u8) T {
+            return hash(str) orelse std.math.maxInt(T);
+        }
+
+        fn hash(str: anytype) ?T {
+            // if (str.len > max_bytes) return null;
+            var tmp = [_]u8{0} ** max_bytes;
+            std.mem.copy(u8, &tmp, str);
+            return std.mem.readIntNative(T, &tmp);
+        }
+    };
+}
+
+const eight = ExactSizeMatcher(8);
+
+test "ExactSizeMatcher" {
+    const word = "yield";
+    expect(eight.match(word) == eight.case("yield"));
+    expect(eight.match(word) != eight.case("yields"));
+}

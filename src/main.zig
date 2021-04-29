@@ -39,6 +39,7 @@ pub fn main() anyerror!void {
                 .value = js_ast.StmtOrExpr{ .expr = expr },
                 .default_name = js_ast.LocRef{ .loc = logger.Loc{}, .ref = Ref{} },
             }, logger.Loc{ .start = 0 });
+
             var part = js_ast.Part{
                 .stmts = &([_]js_ast.Stmt{stmt}),
             };
@@ -56,10 +57,11 @@ pub fn main() anyerror!void {
     }
 
     var _linker = linker.Linker{};
+    var symbols: [][]js_ast.Symbol = &([_][]js_ast.Symbol{ast.symbols});
     const printed = try js_printer.printAst(
         alloc.dynamic,
         ast,
-        js_ast.Symbol.Map{},
+        js_ast.Symbol.Map.initList(symbols),
         false,
         js_printer.Options{ .to_module_ref = js_ast.Ref{ .inner_index = 0 } },
         &_linker,

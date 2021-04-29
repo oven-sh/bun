@@ -89,6 +89,7 @@ pub fn eqlUtf16(comptime self: string, other: JavascriptString) bool {
     return std.mem.eql(u16, std.unicode.utf8ToUtf16LeStringLiteral(self), other);
 }
 
+// Check utf16 string equals utf8 string without allocating extra memory
 pub fn utf16EqlString(text: []u16, str: string) bool {
     if (text.len > str.len) {
         // Strings can't be equal if UTF-16 encoding is longer than UTF-8 encoding

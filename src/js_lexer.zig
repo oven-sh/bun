@@ -68,6 +68,8 @@ pub const Lexer = struct {
 
     fn nextCodepointSlice(it: *@This()) callconv(.Inline) ?[]const u8 {
         if (it.current >= it.source.contents.len) {
+            // without this line, strings cut off one before the last characte
+            it.end = it.current;
             return null;
         }
 

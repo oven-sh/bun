@@ -21,6 +21,8 @@ pub const PropertyModifierKeyword = tables.PropertyModifierKeyword;
 pub const TypescriptStmtKeyword = tables.TypescriptStmtKeyword;
 pub const TypeScriptAccessibilityModifier = tables.TypeScriptAccessibilityModifier;
 
+pub var emptyJavaScriptString = ([_]u16{0});
+
 pub const JSONOptions = struct {
     allow_comments: bool = false,
     allow_trailing_commas: bool = false,
@@ -906,12 +908,13 @@ pub const Lexer = struct {
     }
 
     pub fn unexpected(lexer: *@This()) void {
-        var found: string = undefined;
-        if (lexer.start == lexer.source.contents.len) {
-            found = "end of file";
-        } else {
-            found = lexer.raw();
-        }
+        const found = finder: {
+            if (lexer.start == lexer.source.contents.len) {
+                break :finder "end of file";
+            } else {
+                break :finder lexer.raw();
+            }
+        };
 
         lexer.addRangeError(lexer.range(), "Unexpected {s}", .{found}, true);
     }
@@ -925,10 +928,14 @@ pub const Lexer = struct {
     }
 
     pub fn expectedString(self: *@This(), text: string) void {
-        var found = self.raw();
-        if (self.source.contents.len == self.start) {
-            found = "end of file";
-        }
+        const found = finder: {
+            if (self.source.contents.len != self.start) {
+                break :finder self.raw();
+            } else {
+                break :finder "end of file";
+            }
+        };
+
         self.addRangeError(self.range(), "Expected {s} but found {s}", .{ text, found }, true);
     }
 
@@ -969,7 +976,7 @@ pub const Lexer = struct {
     }
 
     pub fn initGlobalName(log: *logger.Log, source: *logger.Source, allocator: *std.mem.Allocator) !@This() {
-        var empty_string_literal: JavascriptString = undefined;
+        var empty_string_literal: JavascriptString = emptyJavaScriptString;
         var lex = @This(){
             .log = log,
             .source = source.*,
@@ -986,7 +993,7 @@ pub const Lexer = struct {
     }
 
     pub fn initTSConfig(log: *logger.Log, source: *logger.Source, allocator: *std.mem.Allocator) !@This() {
-        var empty_string_literal: JavascriptString = undefined;
+        var empty_string_literal: JavascriptString = emptyJavaScriptString;
         var lex = @This(){
             .log = log,
             .source = source.*,
@@ -1006,7 +1013,7 @@ pub const Lexer = struct {
     }
 
     pub fn initJSON(log: *logger.Log, source: *logger.Source, allocator: *std.mem.Allocator) !@This() {
-        var empty_string_literal: JavascriptString = undefined;
+        var empty_string_literal: JavascriptString = &emptyJavaScriptString;
         var lex = @This(){
             .log = log,
             .source = source.*,
@@ -1026,7 +1033,7 @@ pub const Lexer = struct {
     }
 
     pub fn init(log: *logger.Log, source: *logger.Source, allocator: *std.mem.Allocator) !@This() {
-        var empty_string_literal: JavascriptString = undefined;
+        var empty_string_literal: JavascriptString = &emptyJavaScriptString;
         var lex = @This(){
             .log = log,
             .source = source.*,

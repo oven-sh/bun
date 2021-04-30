@@ -13,6 +13,7 @@ usingnamespace @import("defines.zig");
 
 pub fn main() anyerror!void {
     try alloc.setup(std.heap.page_allocator);
+
     const args = try std.process.argsAlloc(alloc.dynamic);
     const stdout = std.io.getStdOut();
     const stderr = std.io.getStdErr();
@@ -73,9 +74,19 @@ pub fn main() anyerror!void {
         ast,
         js_ast.Symbol.Map.initList(symbols),
         false,
-        js_printer.Options{ .to_module_ref = js_ast.Ref{ .inner_index = 0 } },
+        js_printer.Options{ .to_module_ref = ast.module_ref orelse js_ast.Ref{ .inner_index = 0 } },
         &_linker,
     );
+
+    if (std.builtin.mode == std.builtin.Mode.Debug) {
+        std.debug.print("\n--AST DEBUG--:\n", .{});
+        std.debug.print("Lines: {d}\n", .{ast.approximate_line_count});
+        std.debug.print("Parts: {d}\n{s}\n", .{ ast.parts.len, ast.parts });
+        std.debug.print("Symbols: {d}\n{s}\n", .{ ast.symbols.len, ast.symbols });
+        std.debug.print("Imports: {d}\n{s}\n", .{ ast.named_exports.count(), ast.named_imports });
+        std.debug.print("Exports: {d}\n{s}\n", .{ ast.named_imports.count(), ast.named_exports });
+        std.debug.print("\n--AST DEBUG--:\n", .{});
+    }
 
     _ = try stdout.write(printed.js);
 }

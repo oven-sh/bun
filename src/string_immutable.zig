@@ -239,6 +239,55 @@ pub fn containsNonBmpCodePointUTF16(_text: JavascriptString) bool {
     return false;
 }
 
+pub fn join(slices: []const string, delimiter: string, allocator: *std.mem.Allocator) !string {
+    return try std.mem.join(allocator, delimiter, slices);
+}
+
+pub fn cmpStringsAsc(ctx: void, a: string, b: string) bool {
+    return std.mem.order(u8, a, b) == .lt;
+}
+
+pub fn cmpStringsDesc(ctx: void, a: string, b: string) bool {
+    return std.mem.order(u8, a, b) == .gt;
+}
+
+const sort_asc = std.sort.asc(u8);
+const sort_desc = std.sort.desc(u8);
+
+pub fn sortAsc(in: []string) void {
+    std.sort.sort([]const u8, in, {}, cmpStringsAsc);
+}
+
+pub fn sortDesc(in: []string) void {
+    std.sort.sort([]const u8, in, {}, cmpStringsDesc);
+}
+
+test "join" {
+    var string_list = &[_]string{ "abc", "def", "123", "hello" };
+    const list = try join(string_list, "-", std.heap.page_allocator);
+    std.testing.expectEqualStrings("abc-def-123-hello", list);
+}
+
+test "sortAsc" {
+    var string_list = [_]string{ "abc", "def", "123", "hello" };
+    var sorted_string_list = [_]string{ "123", "abc", "def", "hello" };
+    var sorted_join = try join(&sorted_string_list, "-", std.heap.page_allocator);
+    sortAsc(&string_list);
+    var string_join = try join(&string_list, "-", std.heap.page_allocator);
+
+    std.testing.expectEqualStrings(sorted_join, string_join);
+}
+
+test "sortDesc" {
+    var string_list = [_]string{ "abc", "def", "123", "hello" };
+    var sorted_string_list = [_]string{ "hello", "def", "abc", "123" };
+    var sorted_join = try join(&sorted_string_list, "-", std.heap.page_allocator);
+    sortDesc(&string_list);
+    var string_join = try join(&string_list, "-", std.heap.page_allocator);
+
+    std.testing.expectEqualStrings(sorted_join, string_join);
+}
+
 /// Super simple "perfect hash" algorithm
 /// Only really useful for switching on strings
 // TODO: can we auto detect and promote the underlying type?

@@ -2713,8 +2713,8 @@ pub const Ast = struct {
     // is conveniently fully parallelized.
     named_imports: std.AutoHashMap(Ref, NamedImport) = undefined,
     named_exports: std.StringHashMap(NamedExport) = undefined,
-    top_level_symbol_to_parts: std.AutoHashMap(Ref, []u32) = undefined,
-    export_star_import_records: std.ArrayList(u32) = undefined,
+    top_level_symbol_to_parts: std.AutoHashMap(Ref, std.ArrayList(u32)) = undefined,
+    export_star_import_records: []u32 = &([_]u32{}),
 
     pub fn initTest(parts: []Part) Ast {
         return Ast{
@@ -2855,20 +2855,20 @@ pub const Part = struct {
     scopes: []*Scope = &([_]*Scope{}),
 
     // Each is an index into the file-level import record list
-    import_record_indices: std.ArrayList(u32) = undefined,
+    import_record_indices: []u32 = &([_]u32{}),
 
     // All symbols that are declared in this part. Note that a given symbol may
     // have multiple declarations, and so may end up being declared in multiple
     // parts (e.g. multiple "var" declarations with the same name). Also note
     // that this list isn't deduplicated and may contain duplicates.
-    declared_symbols: std.ArrayList(DeclaredSymbol) = undefined,
+    declared_symbols: []DeclaredSymbol = &([_]DeclaredSymbol{}),
 
     // An estimate of the number of uses of all symbols used within this part.
-    symbol_uses: std.AutoHashMap(Ref, Symbol.Use) = undefined,
+    symbol_uses: SymbolUseMap = undefined,
 
     // The indices of the other parts in this file that are needed if this part
     // is needed.
-    dependencies: std.ArrayList(Dependency) = undefined,
+    dependencies: []Dependency = &([_]Dependency{}),
 
     // If true, this part can be removed if none of the declared symbols are
     // used. If the file containing this part is imported, then all parts that
@@ -2883,6 +2883,7 @@ pub const Part = struct {
     // This is true if this file has been marked as live by the tree shaking
     // algorithm.
     is_live: bool = false,
+    pub const SymbolUseMap = std.AutoHashMap(Ref, Symbol.Use);
 };
 
 pub const Result = struct {
@@ -2897,7 +2898,7 @@ pub const StmtOrExpr = union(enum) {
 
 pub const NamedImport = struct {
     // Parts within this file that use this import
-    local_parts_with_uses: ?[]u32,
+    local_parts_with_uses: []u32 = &([_]u32{}),
 
     alias: ?string,
     alias_loc: ?logger.Loc,

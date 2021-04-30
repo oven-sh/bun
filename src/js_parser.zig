@@ -6532,12 +6532,12 @@ pub const P = struct {
         return p.visitExprInOut(expr, ExprIn{});
     }
 
-    pub fn visitFunc(p: *P, func: *G.Fn, open_parens_loc: logger.Loc) void {}
+    pub fn visitFunc(p: *P, func: *G.Fn, open_parens_loc: logger.Loc) void {
+        notimpl();
+    }
 
     pub fn maybeKeepExprSymbolName(p: *P, expr: Expr, original_name: string, was_anonymous_named_expr: bool) Expr {
-        notimpl();
-
-        // return expr;
+        return if (was_anonymous_named_expr) p.keepExprSymbolName(expr, original_name) else expr;
     }
 
     pub fn valueForThis(p: *P, loc: logger.Loc) ?Expr {
@@ -7459,6 +7459,40 @@ pub const P = struct {
     };
 
     pub fn visitArgs(p: *P, args: []G.Arg, opts: VisitArgsOpts) void {
+        const strict_loc = fnBodyContainsUseStrict(opts.body);
+        const has_simple_args = isSimpleParameterList(args, opts.has_rest_arg);
+        var duplicate_args_check: ?StringBoolMap = null;
+        // Section 15.2.1 Static Semantics: Early Errors: "It is a Syntax Error if
+        // FunctionBodyContainsUseStrict of FunctionBody is true and
+        // IsSimpleParameterList of FormalParameters is false."
+        if (strict_loc != null and !has_simple_args) {
+            p.log.addRangeError(p.source, p.source.rangeOfString(strict_loc.?), "Cannot use a \"use strict\" directive in a function with a non-simple parameter list") catch unreachable;
+        }
+
+        // Section 15.1.1 Static Semantics: Early Errors: "Multiple occurrences of
+        // the same BindingIdentifier in a FormalParameterList is only allowed for
+        // functions which have simple parameter lists and which are not defined in
+        // strict mode code."
+        if (opts.is_unique_formal_parameters or strict_loc != null or !has_simple_args or p.isStrictMode()) {
+            duplicate_args_check = StringBoolMap.init(p.allocator);
+        }
+
+        var i: usize = 0;
+        var duplicate_args_check_ptr: ?*StringBoolMap = if (duplicate_args_check != null) &duplicate_args_check.? else null;
+
+        while (i < args.len) : (i += 1) {
+            if (args[i].ts_decorators) |decs| {
+                args[i].ts_decorators = p.visitTSDecorators(decs);
+            }
+
+            p.visitBinding(args[i].binding, duplicate_args_check_ptr);
+            if (args[i].default) |default| {
+                args[i].default = p.visitExpr(default);
+            }
+        }
+    }
+
+    pub fn visitTSDecorators(p: *P, decs: ExprNodeList) ExprNodeList {
         notimpl();
     }
 
@@ -7473,6 +7507,38 @@ pub const P = struct {
         // Make sure tree shaking removes this if the function is never used
         value.data.e_call.can_be_unwrapped_if_unused = true;
         return value;
+    }
+
+    pub fn fnBodyContainsUseStrict(body: []Stmt) ?logger.Loc {
+        for (body) |stmt| {
+            switch (stmt.data) {
+                .s_comment => {
+                    continue;
+                },
+                .s_directive => |dir| {
+                    if (strings.utf16EqlString(dir.value, "use strict")) {
+                        return stmt.loc;
+                    }
+                },
+                else => {},
+            }
+        }
+
+        return null;
+    }
+
+    pub fn isSimpleParameterList(args: []G.Arg, has_rest_arg: bool) bool {
+        if (has_rest_arg) {
+            return false;
+        }
+
+        for (args) |arg| {
+            if (@as(Binding.Tag, arg.binding.data) != .b_identifier or arg.default != null) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     pub fn classCanBeRemovedIfUnused(p: *P, class: *G.Class) bool {
@@ -7897,6 +7963,7 @@ pub const P = struct {
                             },
                             .s_class => |class| {
                                 var shadow_ref = p.visitClass(s2.loc, &class.class);
+                                stmts.appendSlice(p.lowerClass(js_ast.StmtOrExpr{ .stmt = stmt.* }, shadow_ref)) catch unreachable;
                             },
                             else => {},
                         }

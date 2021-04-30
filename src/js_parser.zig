@@ -49,6 +49,145 @@ pub fn locAfterOp(e: E.Binary) logger.Loc {
     }
 }
 
+pub const ImportScanner = struct {
+    stmts: []Stmt = &([_]Stmt{}),
+    kept_import_equals: bool = false,
+    removed_import_equals: bool = false,
+    pub fn scan(p: *P, _stmts: []Stmt) ImportScanner {
+        var scanner = ImportScanner{};
+        var stmts = StmtList.fromOwnedSlice(p.allocator, _stmts);
+
+        var stmts_end: usize = 0;
+
+        for (stmts.items) |stmt| {
+            switch (stmt.data) {
+                .s_import => |st| {
+                    const record = p.import_records[st.import_record_index];
+
+                    // The official TypeScript compiler always removes unused imported
+                    // symbols. However, we deliberately deviate from the official
+                    // TypeScript compiler's behavior doing this in a specific scenario:
+                    // we are not bundling, symbol renaming is off, and the tsconfig.json
+                    // "importsNotUsedAsValues" setting is present and is not set to
+                    // "remove".
+                    //
+                    // This exists to support the use case of compiling partial modules for
+                    // compile-to-JavaScript languages such as Svelte. These languages try
+                    // to reference imports in ways that are impossible for esbuild to know
+                    // about when esbuild is only given a partial module to compile. Here
+                    // is an example of some Svelte code that might use esbuild to convert
+                    // TypeScript to JavaScript:
+                    //
+                    //   <script lang="ts">
+                    //     import Counter from './Counter.svelte';
+                    //     export let name: string = 'world';
+                    //   </script>
+                    //   <main>
+                    //     <h1>Hello {name}!</h1>
+                    //     <Counter />
+                    //   </main>
+                    //
+                    // Tools that use esbuild to compile TypeScript code inside a Svelte
+                    // file like this only give esbuild the contents of the <script> tag.
+                    // These tools work around this missing import problem when using the
+                    // official TypeScript compiler by hacking the TypeScript AST to
+                    // remove the "unused import" flags. This isn't possible in esbuild
+                    // because esbuild deliberately does not expose an AST manipulation
+                    // API for performance reasons.
+                    //
+                    // We deviate from the TypeScript compiler's behavior in this specific
+                    // case because doing so is useful for these compile-to-JavaScript
+                    // languages and is benign in other cases. The rationale is as follows:
+                    //
+                    //   * If "importsNotUsedAsValues" is absent or set to "remove", then
+                    //     we don't know if these imports are values or types. It's not
+                    //     safe to keep them because if they are types, the missing imports
+                    //     will cause run-time failures because there will be no matching
+                    //     exports. It's only safe keep imports if "importsNotUsedAsValues"
+                    //     is set to "preserve" or "error" because then we can assume that
+                    //     none of the imports are types (since the TypeScript compiler
+                    //     would generate an error in that case).
+                    //
+                    //   * If we're bundling, then we know we aren't being used to compile
+                    //     a partial module. The parser is seeing the entire code for the
+                    //     module so it's safe to remove unused imports. And also we don't
+                    //     want the linker to generate errors about missing imports if the
+                    //     imported file is also in the bundle.
+                    //
+                    //   * If identifier minification is enabled, then using esbuild as a
+                    //     partial-module transform library wouldn't work anyway because
+                    //     the names wouldn't match. And that means we're minifying so the
+                    //     user is expecting the output to be as small as possible. So we
+                    //     should omit unused imports.
+                    //
+                    const keep_unused_imports = !p.options.preserve_unused_imports_ts;
+
+                    // TypeScript always trims unused imports. This is important for
+                    // correctness since some imports might be fake (only in the type
+                    // system and used for type-only imports).
+                    if (!keep_unused_imports) {
+                        var found_imports = false;
+                        var is_unused_in_typescript = false;
+
+                        if (st.default_name) |default_name| {
+                            found_imports = true;
+                            var symbol = p.symbols.items[default_name.ref.inner_index];
+
+                            // TypeScript has a separate definition of unused
+                            if (p.options.ts and p.ts_use_counts.items[default_name.ref.inner_index] != 0) {
+                                is_unused_in_typescript = false;
+                            }
+
+                            // Remove the symbol if it's never used outside a dead code region
+                            if (symbol.use_count_estimate == 0) {
+                                st.default_name = null;
+                            }
+                        }
+
+                        // Remove the star import if it's unused
+                        if (st.star_name_loc) |star_name| {
+                            found_imports = true;
+                            const symbol = p.symbols.items[st.namespace_ref.inner_index];
+
+                            // TypeScript has a separate definition of unused
+                            if (p.options.ts and p.ts_use_counts.items[st.namespace_ref.inner_index] != 0) {
+                                is_unused_in_typescript = false;
+                            }
+
+                            // Remove the symbol if it's never used outside a dead code region
+                            if (symbol.use_count_estimate == 0) {
+                                // Make sure we don't remove this if it was used for a property
+                                // access while bundling
+                                var has_any = false;
+
+                                if (p.import_items_for_namespace.get(st.namespace_ref)) |entry| {
+                                    if (entry.size() > 0) {
+                                        has_any = true;
+                                    }
+                                }
+
+                                if (!has_any) {
+                                    st.star_name_loc = null;
+                                }
+                            }
+                        }
+                    }
+                },
+                .s_function => |st| {},
+                .s_class => |st| {},
+                .s_local => |st| {},
+                .s_export_default => |st| {},
+                .s_export_clause => |st| {},
+                .s_export_star => |st| {},
+                .s_export_from => |st| {},
+                else => {},
+            }
+        }
+
+        return scanner;
+    }
+};
+
 pub const SideEffects = enum {
     could_have_side_effects,
     no_side_effects,
@@ -6478,8 +6617,11 @@ pub const P = struct {
     pub fn appendPart(p: *P, parts: *List(js_ast.Part), stmts: []Stmt) !void {
         p.symbol_uses = SymbolUseMap.init(p.allocator);
         p.declared_symbols.deinit();
+        p.declared_symbols = @TypeOf(p.declared_symbols).init(p.allocator);
         p.import_records_for_current_part.deinit();
+        p.import_records_for_current_part = @TypeOf(p.import_records_for_current_part).init(p.allocator);
         p.scopes_for_current_part.deinit();
+        p.scopes_for_current_part = @TypeOf(p.scopes_for_current_part).init(p.allocator);
         var opts = PrependTempRefsOpts{};
         var partStmts = List(Stmt).fromOwnedSlice(p.allocator, stmts);
         try p.visitStmtsAndPrependTempRefs(&partStmts, &opts);
@@ -6487,6 +6629,40 @@ pub const P = struct {
         // Insert any relocated variable statements now
         if (p.relocated_top_level_vars.items.len > 0) {
             var already_declared = RefBoolMap.init(p.allocator);
+            for (p.relocated_top_level_vars.items) |*local| {
+                // Follow links because "var" declarations may be merged due to hoisting
+                while (local.ref != null) {
+                    const link = p.symbols.items[local.ref.?.inner_index].link orelse break;
+                    if (link.isNull()) {
+                        break;
+                    }
+                    local.ref = link;
+                }
+                const ref = local.ref orelse continue;
+                if (!already_declared.contains(ref)) {
+                    try already_declared.put(ref, true);
+
+                    const decls = try p.allocator.alloc(G.Decl, 1);
+                    decls[0] = Decl{
+                        .binding = p.b(B.Identifier{ .ref = ref }, local.loc),
+                    };
+                    try partStmts.append(p.s(S.Local{ .decls = decls }, local.loc));
+                }
+            }
+            p.relocated_top_level_vars.deinit();
+            p.relocated_top_level_vars = @TypeOf(p.relocated_top_level_vars).init(p.allocator);
+
+            if (partStmts.items.len > 0) {
+                const _stmts = partStmts.toOwnedSlice();
+                var part = js_ast.Part{
+                    .stmts = _stmts,
+                    .declared_symbols = p.declared_symbols,
+                    .import_record_indices = p.import_records_for_current_part,
+                    .scopes = p.scopes_for_current_part.toOwnedSlice(),
+                    .can_be_removed_if_unused = p.stmtsCanBeRemovedIfUnused(_stmts),
+                };
+                try parts.append(part);
+            }
 
             // Follow links because "var" declarations may be merged due to hoisting
 
@@ -6494,10 +6670,114 @@ pub const P = struct {
             //     const link = p.symbols.items[local.ref.inner_index].link;
             // }
         }
-        // // TODO: here
-        try parts.append(js_ast.Part{
-            .stmts = stmts,
-        });
+    }
+
+    pub fn bindingCanBeRemovedIfUnused(p: *P, binding: Binding) bool {
+        switch (binding.data) {
+            .b_array => |bi| {
+                for (bi.items) |item| {
+                    if (!p.bindingCanBeRemovedIfUnused(item.binding)) {
+                        return false;
+                    }
+
+                    if (item.default_value) |default| {
+                        if (!p.exprCanBeRemovedIfUnused(default)) {
+                            return false;
+                        }
+                    }
+                }
+            },
+            .b_object => |bi| {
+                for (bi.properties) |property| {
+                    if (!property.flags.is_spread and !p.exprCanBeRemovedIfUnused(property.key)) {
+                        return false;
+                    }
+
+                    if (!p.bindingCanBeRemovedIfUnused(property.value)) {
+                        return false;
+                    }
+
+                    if (property.default_value) |default| {
+                        if (!p.exprCanBeRemovedIfUnused(default)) {
+                            return false;
+                        }
+                    }
+                }
+            },
+            else => {},
+        }
+
+        return true;
+    }
+
+    pub fn stmtsCanBeRemovedIfUnused(p: *P, stmts: []Stmt) bool {
+        for (stmts) |stmt| {
+            switch (stmt.data) {
+                // These never have side effects
+                .s_function, .s_empty => {},
+
+                // Let these be removed if they are unused. Note that we also need to
+                // check if the imported file is marked as "sideEffects: false" before we
+                // can remove a SImport statement. Otherwise the import must be kept for
+                // its side effects.
+                .s_import => |st| {},
+                .s_class => |st| {
+                    if (!p.classCanBeRemovedIfUnused(&st.class)) {
+                        return false;
+                    }
+                },
+                .s_expr => |st| {
+                    if (st.does_not_affect_tree_shaking) {} else if (!p.exprCanBeRemovedIfUnused(st.value)) {
+                        return false;
+                    }
+                },
+                .s_local => |st| {
+                    for (st.decls) |decl| {
+                        if (!p.bindingCanBeRemovedIfUnused(decl.binding)) {
+                            return false;
+                        }
+
+                        if (decl.value) |decl_value| {
+                            if (!p.exprCanBeRemovedIfUnused(decl_value)) {
+                                return false;
+                            }
+                        }
+                    }
+                },
+
+                // Exports are tracked separately, so this isn't necessary
+                .s_export_clause, .s_export_from => {},
+
+                .s_export_default => |st| {
+                    switch (st.value) {
+                        .stmt => |s2| {
+                            switch (s2.data) {
+                                // These never have side effects
+                                .s_function => {},
+                                .s_class => |class| {
+                                    if (!p.classCanBeRemovedIfUnused(&class.class)) {
+                                        return false;
+                                    }
+                                },
+                                else => {
+                                    std.debug.panic("Unexpected type in export default: {s}", .{s2});
+                                },
+                            }
+                        },
+                        .expr => |exp| {
+                            if (!p.exprCanBeRemovedIfUnused(exp)) {
+                                return false;
+                            }
+                        },
+                    }
+                },
+                else => {
+                    return false;
+                },
+            }
+        }
+
+        return true;
     }
 
     pub fn visitStmtsAndPrependTempRefs(p: *P, stmts: *List(Stmt), opts: *PrependTempRefsOpts) !void {
@@ -6533,7 +6813,37 @@ pub const P = struct {
     }
 
     pub fn visitFunc(p: *P, func: *G.Fn, open_parens_loc: logger.Loc) void {
-        notimpl();
+        const old_fn_or_arrow_data = p.fn_or_arrow_data_visit;
+        defer p.fn_or_arrow_data_visit = old_fn_or_arrow_data;
+        const old_fn_only_data = p.fn_only_data_visit;
+        defer p.fn_only_data_visit = old_fn_only_data;
+        p.fn_or_arrow_data_visit = FnOrArrowDataVisit{ .is_async = func.flags.is_async };
+        p.fn_only_data_visit = FnOnlyDataVisit{ .is_this_nested = true, .arguments_ref = func.arguments_ref };
+
+        if (func.name) |name| {
+            p.recordDeclaredSymbol(name.ref.?) catch unreachable;
+            const symbol_name = p.symbols.items[name.ref.?.inner_index].original_name;
+            if (isEvalOrArguments(symbol_name)) {
+                p.markStrictModeFeature(.eval_or_arguments, js_lexer.rangeOfIdentifier(&p.source, name.loc), symbol_name) catch unreachable;
+            }
+        }
+
+        p.pushScopeForVisitPass(.function_args, open_parens_loc) catch unreachable;
+        p.visitArgs(
+            func.args,
+            VisitArgsOpts{
+                .has_rest_arg = func.flags.has_rest_arg,
+                .body = func.body.?.stmts,
+                .is_unique_formal_parameters = true,
+            },
+        );
+        defer p.popScope();
+        const body = func.body orelse p.panic("Expected visitFunc to have body {s}", .{func});
+        p.pushScopeForVisitPass(.function_body, body.loc) catch unreachable;
+        var stmts = List(Stmt).fromOwnedSlice(p.allocator, body.stmts);
+        var temp_opts = PrependTempRefsOpts{ .kind = StmtsKind.fn_body, .fn_body_loc = body.loc };
+        p.visitStmtsAndPrependTempRefs(&stmts, &temp_opts) catch unreachable;
+        func.body.?.stmts = stmts.toOwnedSlice();
     }
 
     pub fn maybeKeepExprSymbolName(p: *P, expr: Expr, original_name: string, was_anonymous_named_expr: bool) Expr {
@@ -7443,7 +7753,8 @@ pub const P = struct {
                 }
             },
             .e_class => |e_| {
-                notimpl();
+                // This might be wrong.
+                _ = p.visitClass(expr.loc, e_);
             },
             else => {},
         }
@@ -7493,7 +7804,12 @@ pub const P = struct {
     }
 
     pub fn visitTSDecorators(p: *P, decs: ExprNodeList) ExprNodeList {
-        notimpl();
+        var i: usize = 0;
+        while (i < decs.len) : (i += 1) {
+            decs[i] = p.visitExpr(decs[i]);
+        }
+
+        return decs;
     }
 
     pub fn keepExprSymbolName(p: *P, _value: Expr, name: string) Expr {
@@ -8160,8 +8476,15 @@ pub const P = struct {
             .s_if => |data| {
                 data.test_ = p.visitExpr(data.test_);
 
-                // TODO: Fold constants
-
+                const effects = SideEffects.toBoolean(data.test_.data);
+                if (effects.ok and !effects.value) {
+                    const old = p.is_control_flow_dead;
+                    defer p.is_control_flow_dead = old;
+                    p.is_control_flow_dead = true;
+                    data.yes = p.visitSingleStmt(data.yes, StmtsKind.none);
+                } else {
+                    data.yes = p.visitSingleStmt(data.yes, StmtsKind.none);
+                }
             },
             .s_for => |data| {
                 {
@@ -8811,8 +9134,113 @@ pub const P = struct {
         return res;
     }
 
-    pub fn visitClass(p: *P, loc: logger.Loc, class: *G.Class) Ref {
-        notimpl();
+    pub fn visitClass(p: *P, name_scope_loc: logger.Loc, class: *G.Class) Ref {
+        class.ts_decorators = p.visitTSDecorators(class.ts_decorators);
+
+        if (class.class_name) |name| {
+            p.recordDeclaredSymbol(name.ref.?) catch unreachable;
+        }
+
+        p.pushScopeForVisitPass(.class_name, name_scope_loc) catch unreachable;
+        const old_enclosing_class_keyword = p.enclosing_class_keyword;
+        p.enclosing_class_keyword = class.class_keyword;
+        p.current_scope.recursiveSetStrictMode(.implicit_strict_mode_class);
+        var class_name_ref: Ref = if (class.class_name != null) class.class_name.?.ref.? else p.newSymbol(.other, "this") catch unreachable;
+
+        var shadow_ref = Ref.None;
+
+        if (!class_name_ref.eql(Ref.None)) {
+            // are not allowed to assign to this symbol (it throws a TypeError).
+            const name = p.symbols.items[class_name_ref.inner_index].original_name;
+            var identifier = p.allocator.alloc(u8, name.len + 1) catch unreachable;
+            std.mem.copy(u8, identifier[1 .. identifier.len - 1], name);
+            identifier[0] = '_';
+            shadow_ref = p.newSymbol(Symbol.Kind.cconst, identifier) catch unreachable;
+            p.recordDeclaredSymbol(shadow_ref) catch unreachable;
+            if (class.class_name) |class_name| {
+                p.current_scope.members.put(identifier, Scope.Member{ .loc = class_name.loc, .ref = shadow_ref }) catch unreachable;
+            }
+        }
+
+        if (class.extends) |extends| {
+            class.extends = p.visitExpr(extends);
+        }
+
+        p.pushScopeForVisitPass(.class_body, class.body_loc) catch unreachable;
+        defer p.popScope();
+
+        var i: usize = 0;
+        while (i < class.properties.len) : (i += 1) {
+            var property = &class.properties[i];
+            property.ts_decorators = p.visitTSDecorators(property.ts_decorators);
+            const is_private = if (property.key != null) @as(Expr.Tag, property.key.?.data) == .e_private_identifier else false;
+
+            // Special-case EPrivateIdentifier to allow it here
+
+            if (is_private) {
+                p.recordDeclaredSymbol(property.key.?.data.e_private_identifier.ref) catch unreachable;
+            } else if (property.key) |key| {
+                class.properties[i].key = p.visitExpr(key);
+            }
+
+            // Make it an error to use "arguments" in a class body
+            p.current_scope.forbid_arguments = true;
+            defer p.current_scope.forbid_arguments = false;
+
+            // The value of "this" is shadowed inside property values
+            const old_is_this_captured = p.fn_only_data_visit.is_this_nested;
+            const old_this = p.fn_only_data_visit.this_class_static_ref;
+            p.fn_only_data_visit.is_this_nested = true;
+            p.fn_only_data_visit.this_class_static_ref = null;
+            defer p.fn_only_data_visit.is_this_nested = old_is_this_captured;
+            defer p.fn_only_data_visit.this_class_static_ref = old_this;
+
+            // We need to explicitly assign the name to the property initializer if it
+            // will be transformed such that it is no longer an inline initializer.
+            var name_to_keep: ?string = null;
+            if (is_private) {} else if (!property.flags.is_method and !property.flags.is_computed) {
+                if (property.key) |key| {
+                    if (@as(Expr.Tag, key.data) == .e_string) {
+                        name_to_keep = p.lexer.utf16ToString(key.data.e_string.value);
+                    }
+                }
+            }
+
+            if (property.value) |val| {
+                if (name_to_keep) |name| {
+                    const was_anon = p.isAnonymousNamedExpr(val);
+                    property.value = p.maybeKeepExprSymbolName(p.visitExpr(val), name, was_anon);
+                } else {
+                    property.value = p.visitExpr(val);
+                }
+            }
+
+            if (property.initializer) |val| {
+                // if (property.flags.is_static and )
+                if (name_to_keep) |name| {
+                    const was_anon = p.isAnonymousNamedExpr(val);
+                    property.initializer = p.maybeKeepExprSymbolName(p.visitExpr(val), name, was_anon);
+                } else {
+                    property.initializer = p.visitExpr(val);
+                }
+            }
+        }
+
+        if (!shadow_ref.eql(Ref.None)) {
+            if (p.symbols.items[shadow_ref.inner_index].use_count_estimate == 0) {
+                // Don't generate a shadowing name if one isn't needed
+                shadow_ref = Ref.None;
+            } else if (class.class_name) |class_name| {
+                // If there was originally no class name but something inside needed one
+                // (e.g. there was a static property initializer that referenced "this"),
+                // store our generated name so the class expression ends up with a name.
+                class.class_name = LocRef{ .loc = name_scope_loc, .ref = class_name_ref };
+                p.current_scope.generated.append(class_name_ref) catch unreachable;
+                p.recordDeclaredSymbol(class_name_ref) catch unreachable;
+            }
+        }
+
+        return shadow_ref;
     }
 
     fn keepStmtSymbolName(p: *P, loc: logger.Loc, ref: Ref, name: string) Stmt {
@@ -9035,6 +9463,36 @@ pub const P = struct {
         }
     }
 
+    pub fn toAST(p: *P, _parts: []js_ast.Part) js_ast.Ast {
+        var parts = std.ArrayList(js_ast.Part).fromOwnedSlice(p.allocator, _parts);
+        // Insert an import statement for any runtime imports we generated
+        if (p.runtime_imports.len > 0 and !p.options.omit_runtime_for_tests) {}
+
+        // Handle import paths after the whole file has been visited because we need
+        // symbol usage counts to be able to remove unused type-only imports in
+        // TypeScript code.
+        outer: {
+            var kept_import_equals = false;
+            var removed_import_equals = false;
+
+            var parts_end: usize = 0;
+            // Potentially remove some statements, then filter out parts to remove any
+            // with no statements
+            for (parts.items) |part| {
+                _ = p.import_records_for_current_part.toOwnedSlice()();
+                _ = p.declared_symbols.toOwnedSlice();
+
+                var result = ImportScanner.scan(p, part.stmts);
+                kept_import_equals = kept_import_equals or result.kept_import_equals;
+                removed_import_equals = removed_import_equals or result.removed_import_equals;
+                part.import_record_indices = p.import_records_for_current_part.toOwnedSlice();
+                part.declared_symbols = p.declared_symbols.toOwnedSlice();
+            }
+
+            break :outer;
+        }
+    }
+
     pub fn init(allocator: *std.mem.Allocator, log: *logger.Log, source: logger.Source, define: *Define, lexer: js_lexer.Lexer, opts: Parser.Options) !*P {
         var parser = try allocator.create(P);
         parser.allocated_names = @TypeOf(parser.allocated_names).init(allocator);
@@ -9130,6 +9588,7 @@ fn expectPrintedJS(contents: string, expected: string) !void {
         std.debug.print("{s}", .{fixedBuffer});
     }
     var linker = @import("linker.zig").Linker{};
+
     debugl("START AST PRINT");
     const result = js_printer.printAst(alloc.dynamic, ast, symbol_map, true, js_printer.Options{ .to_module_ref = res.ast.module_ref orelse Ref{ .inner_index = 0 } }, &linker) catch unreachable;
 

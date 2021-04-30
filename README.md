@@ -113,6 +113,26 @@ To simplify the parser, esdev doesn't support lowering features to non-current b
 
 #### Implementation Notes
 
+##### Deviations from other bundlers
+
+Unused imports are removed by default, unless they're an import without an identifier. This is similar to what the TypeScript compiler does, but TypeScript only does it for TypeScript. This is on by default, but you can turn it off.
+
+For example in this code snippet, `forEach` in unused:
+
+```ts
+import { forEach, map } from "lodash-es";
+
+const foo = map(["bar", "baz"], (item) => {});
+```
+
+So it's never included.
+
+```ts
+import { map } from "lodash-es";
+
+const foo = map(["bar", "baz"], (item) => {});
+```
+
 ##### HMR & Fast Refresh implementation
 
 This section only applies when Hot Module Reloading is enabled. When it's off, none of this part runs. React Fast Refresh depends on Hot Module Reloading.
@@ -142,40 +162,4 @@ Either approach works.
 
 ###### How it's implemented in esdev
 
-At build time, esdev replaces all import URLs with import manifests that wrap the real module.
-
-In the simple case, that looks like this:
-
-```ts
-import { Button as _Button } from "http://localhost:3000/src/components/button.KXk23UX3.js";
-
-export let Button = _Button;
-
-import.meta.onUpdate(import.meta.url, (exports) => {
-  if ("Button" in exports) {
-    Button = exports["Button"];
-  }
-});
-```
-
-Then, lets say you updated `button.tsx` from this:
-
-```tsx
-export const Button = ({ children }) => (
-  <div className="Button">{children}</div>
-);
-```
-
-To this:
-
-```tsx
-export const Button = ({ children }) => (
-  <div className="Button">
-    <div className="Button-label">{children}</div>
-  </div>
-);
-```
-
-This triggers the HMR client in esdev to:
-
-1. import `/src/components/button.js` once again
+TODO: doc

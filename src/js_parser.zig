@@ -608,7 +608,7 @@ const ImportNamespaceCallOrConstruct = struct {
 };
 
 const ThenCatchChain = struct {
-    next_target: js_ast.E,
+    next_target: js_ast.Expr.Data,
     has_multiple_args: bool = false,
     has_catch: bool = false,
 };
@@ -1121,7 +1121,7 @@ pub const P = struct {
 
     // This helps recognize the "await import()" pattern. When this is present,
     // warnings about non-string import paths will be omitted inside try blocks.
-    await_target: ?js_ast.E = null,
+    await_target: ?js_ast.Expr.Data = null,
 
     to_expr_wrapper_namespace: Binding2ExprWrapper.Namespace,
     to_expr_wrapper_hoisted: Binding2ExprWrapper.Hoisted,
@@ -7178,34 +7178,269 @@ pub const P = struct {
                         }
                     }
                 }
+
+                // Track ".then().catch()" chains
+                if (is_call_target and p.then_catch_chain.next_target.e_dot == e_) {
+                    if (strings.eql(e_.name, "catch")) {
+                        p.then_catch_chain = ThenCatchChain{
+                            .next_target = e_.target.data,
+                            .has_catch = true,
+                        };
+                    } else if (strings.eql(e_.name, "then")) {
+                        p.then_catch_chain = ThenCatchChain{
+                            .next_target = e_.target.data,
+                            .has_catch = p.then_catch_chain.has_catch or p.then_catch_chain.has_multiple_args,
+                        };
+                    }
+                }
+
+                e_.target = p.visitExpr(e_.target);
+                if (e_.optional_chain == null) {
+                    if (p.maybeRewritePropertyAccess(
+                        expr.loc,
+                        in.assign_target,
+                        is_delete_target,
+                        e_.target,
+                        e_.name,
+                        e_.name_loc,
+                        is_call_target,
+                    )) |_expr| {
+                        return _expr;
+                    }
+                }
             },
-            .e_if => |e_| {},
+            .e_if => |e_| {
+                const is_call_target = e_ == p.call_target.e_if;
+
+                e_.test_ = p.visitExpr(e_.test_);
+
+                const side_effects = SideEffects.toBoolean(e_.test_.data);
+
+                if (side_effects.ok) {
+                    // Mark the control flow as dead if the branch is never taken
+                    if (side_effects.value) {
+                        // "true ? live : dead"
+                        e_.yes = p.visitExpr(e_.yes);
+                        const old = p.is_control_flow_dead;
+                        p.is_control_flow_dead = true;
+                        e_.no = p.visitExpr(e_.no);
+                        p.is_control_flow_dead = old;
+                    } else {
+                        // "false ? dead : live"
+                        const old = p.is_control_flow_dead;
+                        p.is_control_flow_dead = true;
+                        e_.yes = p.visitExpr(e_.yes);
+                        p.is_control_flow_dead = old;
+                        e_.no = p.visitExpr(e_.no);
+                    }
+                } else {
+                    e_.yes = p.visitExpr(e_.yes);
+                    e_.no = p.visitExpr(e_.no);
+                }
+            },
             .e_await => |e_| {
-                notimpl();
+                p.await_target = e_.value.data;
+                e_.value = p.visitExpr(e_.value);
             },
             .e_yield => |e_| {
-                notimpl();
+                if (e_.value) |val| {
+                    e_.value = p.visitExpr(val);
+                }
             },
             .e_array => |e_| {
-                notimpl();
+                if (in.assign_target != .none) {
+                    if (e_.comma_after_spread) |spread| {
+                        p.log.addRangeError(p.source, logger.Range{ .loc = spread, .len = 1 }, "Unexpected \",\" after rest pattern") catch unreachable;
+                    }
+                }
+
+                var has_spread = false;
+                var i: usize = 0;
+                while (i < e_.items.len) : (i += 1) {
+                    var item = e_.items[i];
+                    const data = item.data;
+                    switch (data) {
+                        .e_missing => {},
+                        .e_spread => |spread| {
+                            spread.value = p.visitExprInOut(spread.value, ExprIn{ .assign_target = in.assign_target });
+                        },
+                        .e_binary => |e2| {
+                            if (in.assign_target != .none and e2.op == .bin_assign) {
+                                const was_anonymous_named_expr = p.isAnonymousNamedExpr(e2.right);
+                                e2.left = p.visitExprInOut(e2.left, ExprIn{ .assign_target = .replace });
+                                e2.right = p.visitExpr(e2.right);
+
+                                if (@as(Expr.Tag, e2.left.data) == .e_identifier) {
+                                    e2.right = p.maybeKeepExprSymbolName(
+                                        e2.right,
+                                        p.symbols.items[e2.left.data.e_identifier.ref.inner_index].original_name,
+                                        was_anonymous_named_expr,
+                                    );
+                                }
+                            } else {
+                                item = p.visitExprInOut(item, ExprIn{ .assign_target = in.assign_target });
+                            }
+                        },
+                        else => {
+                            item = p.visitExprInOut(item, ExprIn{ .assign_target = in.assign_target });
+                        },
+                    }
+                    e_.items[i] = item;
+                }
             },
             .e_object => |e_| {
-                notimpl();
+                if (in.assign_target != .none) {
+                    p.maybeCommaSpreadError(e_.comma_after_spread);
+                    var has_spread = false;
+                    var has_proto = false;
+
+                    var i: usize = 0;
+                    while (i < e_.properties.len) : (i += 1) {
+                        var property = e_.properties[i];
+
+                        if (property.kind != .spread) {
+                            const key = p.visitExpr(property.key orelse std.debug.panic("Expected property key", .{}));
+                            e_.properties[i].key = key;
+
+                            // Forbid duplicate "__proto__" properties according to the specification
+                            if (!property.flags.is_computed and !property.flags.was_shorthand and !property.flags.is_method and in.assign_target == .none and key.data.isStringValue() and strings.utf16EqlString(
+                                key.data.e_string.value,
+                                "__proto__",
+                            )) {
+                                if (has_proto) {
+                                    const r = js_lexer.rangeOfIdentifier(&p.source, key.loc);
+                                    p.log.addRangeError(p.source, r, "Cannot specify the \"__proto__\" property more than once per object") catch unreachable;
+                                }
+                                has_proto = true;
+                            }
+                        } else {
+                            has_spread = true;
+                        }
+
+                        // Extract the initializer for expressions like "({ a: b = c } = d)"
+                        if (in.assign_target != .none and property.initializer != null and property.value != null) {
+                            switch (property.value.?.data) {
+                                .e_binary => |bin| {
+                                    if (bin.op == .bin_assign) {
+                                        property.initializer = bin.right;
+                                        property.value = bin.left;
+                                    }
+                                },
+                                else => {},
+                            }
+                        }
+
+                        if (property.value != null) {
+                            property.value = p.visitExprInOut(property.value.?, ExprIn{ .assign_target = in.assign_target });
+                        }
+
+                        if (property.initializer != null) {
+                            const was_anonymous_named_expr = p.isAnonymousNamedExpr(property.initializer orelse unreachable);
+                            property.initializer = p.visitExprInOut(property.initializer.?, ExprIn{ .assign_target = in.assign_target });
+
+                            if (property.value) |val| {
+                                if (@as(Expr.Tag, val.data) == .e_identifier) {
+                                    property.initializer = p.maybeKeepExprSymbolName(
+                                        property.initializer orelse unreachable,
+                                        p.symbols.items[val.data.e_identifier.ref.inner_index].original_name,
+                                        was_anonymous_named_expr,
+                                    );
+                                }
+                            }
+                        }
+
+                        // TODO: can we avoid htis copy
+                        e_.properties[i] = property;
+                    }
+                }
             },
             .e_import => |e_| {
-                notimpl();
+                const is_await_target = if (p.await_target != null) p.await_target.?.e_import == e_ else false;
+                const is_then_catch_target = e_ == p.then_catch_chain.next_target.e_import and p.then_catch_chain.has_catch;
+                e_.expr = p.visitExpr(e_.expr);
+
+                // TODO: maybeTransposeIfExprChain
             },
             .e_call => |e_| {
-                notimpl();
+                p.call_target = e_.target.data;
+
+                p.then_catch_chain = ThenCatchChain{
+                    .next_target = e_.target.data,
+                    .has_multiple_args = e_.args.len >= 2,
+                    .has_catch = p.then_catch_chain.next_target.e_call == e_ and p.then_catch_chain.has_catch,
+                };
+
+                // Prepare to recognize "require.resolve()" calls
+                // const could_be_require_resolve = (e_.args.len == 1 and @as(
+                //     Expr.Tag,
+                //     e_.target.data,
+                // ) == .e_dot and e_.target.data.e_dot.optional_chain == null and strings.eql(
+                //     e_.target.dat.e_dot.name,
+                //     "resolve",
+                // ));
+
+                e_.target = p.visitExprInOut(e_.target, ExprIn{
+                    .has_chain_parent = (e_.optional_chain orelse js_ast.OptionalChain.start) == .ccontinue,
+                });
+                // TODO: wan about import namespace call
+                var has_spread = false;
+                var i: usize = 0;
+                while (i < e_.args.len) : (i += 1) {
+                    e_.args[i] = p.visitExpr(e_.args[i]);
+                    has_spread = has_spread or @as(Expr.Tag, e_.args[i].data) == .e_spread;
+                }
+
+                // TODO: maybeTransposeIfExprChain
+
+                return expr;
             },
             .e_new => |e_| {
-                notimpl();
+                e_.target = p.visitExpr(e_.target);
+                // p.warnA
+
+                var i: usize = 0;
+                while (i < e_.args.len) : (i += 1) {
+                    e_.args[i] = p.visitExpr(e_.args[i]);
+                }
             },
             .e_arrow => |e_| {
-                notimpl();
+                const old_fn_or_arrow_data = p.fn_or_arrow_data_visit;
+                p.fn_or_arrow_data_visit = FnOrArrowDataVisit{
+                    .is_arrow = true,
+                    .is_async = e_.is_async,
+                };
+                defer p.fn_or_arrow_data_visit = old_fn_or_arrow_data;
+
+                // Mark if we're inside an async arrow function. This value should be true
+                // even if we're inside multiple arrow functions and the closest inclosing
+                // arrow function isn't async, as long as at least one enclosing arrow
+                // function within the current enclosing function is async.
+                const old_inside_async_arrow_fn = p.fn_only_data_visit.is_inside_async_arrow_fn;
+                p.fn_only_data_visit.is_inside_async_arrow_fn = e_.is_async or p.fn_only_data_visit.is_inside_async_arrow_fn;
+                defer p.fn_only_data_visit.is_inside_async_arrow_fn = old_inside_async_arrow_fn;
+
+                p.pushScopeForVisitPass(.function_args, expr.loc) catch unreachable;
+                defer p.popScope();
+
+                p.visitArgs(e_.args, VisitArgsOpts{
+                    .has_rest_arg = e_.has_rest_arg,
+                    .body = e_.body.stmts,
+                    .is_unique_formal_parameters = true,
+                });
+
+                p.pushScopeForVisitPass(.function_body, e_.body.loc) catch unreachable;
+                defer p.popScope();
+
+                var stmts_list = List(Stmt).fromOwnedSlice(p.allocator, e_.body.stmts);
+                var temp_opts = PrependTempRefsOpts{ .kind = StmtsKind.fn_body };
+                p.visitStmtsAndPrependTempRefs(&stmts_list, &temp_opts) catch unreachable;
+                e_.body.stmts = stmts_list.toOwnedSlice();
             },
             .e_function => |e_| {
-                notimpl();
+                p.visitFunc(&e_.func, expr.loc);
+                if (e_.func.name) |name| {
+                    return p.keepExprSymbolName(expr, p.symbols.items[name.ref.?.inner_index].original_name);
+                }
             },
             .e_class => |e_| {
                 notimpl();
@@ -7213,6 +7448,31 @@ pub const P = struct {
             else => {},
         }
         return expr;
+    }
+
+    const VisitArgsOpts = struct {
+        body: []Stmt = &([_]Stmt{}),
+        has_rest_arg: bool = false,
+
+        // This is true if the function is an arrow function or a method
+        is_unique_formal_parameters: bool = false,
+    };
+
+    pub fn visitArgs(p: *P, args: []G.Arg, opts: VisitArgsOpts) void {
+        notimpl();
+    }
+
+    pub fn keepExprSymbolName(p: *P, _value: Expr, name: string) Expr {
+        var exprs = p.allocator.alloc(Expr, 2) catch unreachable;
+        exprs[0] = _value;
+        exprs[1] = p.e(E.String{
+            .value = p.lexer.stringToUTF16(name),
+        }, _value.loc);
+        var value = p.callRuntime(_value.loc, "__name", exprs);
+
+        // Make sure tree shaking removes this if the function is never used
+        value.data.e_call.can_be_unwrapped_if_unused = true;
+        return value;
     }
 
     pub fn classCanBeRemovedIfUnused(p: *P, class: *G.Class) bool {
@@ -8694,14 +8954,18 @@ pub const P = struct {
             // whether this is an arrow function, and only pick an arrow function if
             // there were no conversion errors.
             if (p.lexer.token == .t_equals_greater_than or (invalidLog.items.len == 0 and (p.trySkipTypeScriptTypeParametersThenOpenParenWithBacktracking() or opts.force_arrow_fn))) {
-                if (comma_after_spread.start > 0) {
-                    p.log.addRangeError(p.source, logger.Range{ .loc = comma_after_spread, .len = 1 }, "Unexpected \",\" after rest pattern") catch unreachable;
-                }
+                p.maybeCommaSpreadError(comma_after_spread);
                 p.logArrowArgErrors(&arrowArgErrors);
             }
         }
 
         return p.e(E.Missing{}, loc);
+    }
+
+    pub fn maybeCommaSpreadError(p: *P, _comma_after_spread: ?logger.Loc) void {
+        if (_comma_after_spread) |comma_after_spread| {
+            p.log.addRangeError(p.source, logger.Range{ .loc = comma_after_spread, .len = 1 }, "Unexpected \",\" after rest pattern") catch unreachable;
+        }
     }
 
     pub fn init(allocator: *std.mem.Allocator, log: *logger.Log, source: logger.Source, define: *Define, lexer: js_lexer.Lexer, opts: Parser.Options) !*P {

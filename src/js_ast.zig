@@ -2244,10 +2244,8 @@ pub const Expr = struct {
 
             return false;
         }
-
-        pub fn isStringValue(self: *Expr) bool {
-            // TODO:
-            return false;
+        pub fn isStringValue(self: Data) callconv(.Inline) bool {
+            return @as(Expr.Tag, self) == .e_string;
         }
     };
 };

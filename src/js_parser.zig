@@ -53,16 +53,16 @@ pub const ImportScanner = struct {
     stmts: []Stmt = &([_]Stmt{}),
     kept_import_equals: bool = false,
     removed_import_equals: bool = false,
-    pub fn scan(p: *P, _stmts: []Stmt) ImportScanner {
+    pub fn scan(p: *P, stmts: []Stmt) !ImportScanner {
         var scanner = ImportScanner{};
-        var stmts = StmtList.fromOwnedSlice(p.allocator, _stmts);
-
         var stmts_end: usize = 0;
 
-        for (stmts.items) |stmt| {
+        for (stmts) |_stmt| {
+            // zls needs the hint, it seems.
+            const stmt: Stmt = _stmt;
             switch (stmt.data) {
                 .s_import => |st| {
-                    const record = p.import_records[st.import_record_index];
+                    var record: ImportRecord = p.import_records.items[st.import_record_index];
 
                     // The official TypeScript compiler always removes unused imported
                     // symbols. However, we deliberately deviate from the official
@@ -120,7 +120,7 @@ pub const ImportScanner = struct {
                     //     user is expecting the output to be as small as possible. So we
                     //     should omit unused imports.
                     //
-                    const keep_unused_imports = !p.options.preserve_unused_imports_ts;
+                    const keep_unused_imports = !p.options.trim_unused_imports;
 
                     // TypeScript always trims unused imports. This is important for
                     // correctness since some imports might be fake (only in the type
@@ -131,10 +131,10 @@ pub const ImportScanner = struct {
 
                         if (st.default_name) |default_name| {
                             found_imports = true;
-                            var symbol = p.symbols.items[default_name.ref.inner_index];
+                            var symbol = p.symbols.items[default_name.ref.?.inner_index];
 
                             // TypeScript has a separate definition of unused
-                            if (p.options.ts and p.ts_use_counts.items[default_name.ref.inner_index] != 0) {
+                            if (p.options.ts and p.ts_use_counts.items[default_name.ref.?.inner_index] != 0) {
                                 is_unused_in_typescript = false;
                             }
 
@@ -161,7 +161,7 @@ pub const ImportScanner = struct {
                                 var has_any = false;
 
                                 if (p.import_items_for_namespace.get(st.namespace_ref)) |entry| {
-                                    if (entry.size() > 0) {
+                                    if (entry.count() > 0) {
                                         has_any = true;
                                     }
                                 }
@@ -171,19 +171,320 @@ pub const ImportScanner = struct {
                                 }
                             }
                         }
+
+                        // Remove items if they are unused
+                        if (st.items.len > 0) {
+                            found_imports = false;
+                            var items_end: usize = 0;
+                            var i: usize = 0;
+                            while (i < st.items.len) : (i += 1) {
+                                const item = st.items[i];
+                                const ref = item.name.ref.?;
+                                const symbol: Symbol = p.symbols.items[ref.inner_index];
+
+                                // TypeScript has a separate definition of unused
+                                if (p.options.ts and p.ts_use_counts.items[ref.inner_index] != 0) {
+                                    is_unused_in_typescript = false;
+                                }
+
+                                // Remove the symbol if it's never used outside a dead code region
+                                if (symbol.use_count_estimate != 0) {
+                                    st.items[items_end] = item;
+                                    items_end += 1;
+                                }
+                            }
+
+                            // Filter the array by taking a slice
+                            if (items_end == 0 and st.items.len > 0) {
+                                p.allocator.free(st.items);
+                                // zero out the slice
+                                st.items = &([_]js_ast.ClauseItem{});
+                            } else if (items_end < st.items.len) {
+                                var list = List(js_ast.ClauseItem).fromOwnedSlice(p.allocator, st.items);
+                                list.shrinkAndFree(items_end);
+                                st.items = list.toOwnedSlice();
+                            }
+                        }
+
+                        // -- Original Comment --
+                        // Omit this statement if we're parsing TypeScript and all imports are
+                        // unused. Note that this is distinct from the case where there were
+                        // no imports at all (e.g. "import 'foo'"). In that case we want to keep
+                        // the statement because the user is clearly trying to import the module
+                        // for side effects.
+                        //
+                        // This culling is important for correctness when parsing TypeScript
+                        // because a) the TypeScript compiler does ths and we want to match it
+                        // and b) this may be a fake module that only exists in the type system
+                        // and doesn't actually exist in reality.
+                        //
+                        // We do not want to do this culling in JavaScript though because the
+                        // module may have side effects even if all imports are unused.
+                        // -- Original Comment --
+
+                        // jarred: I think, in this project, we want this behavior, even in JavaScript.
+                        // I think this would be a big performance improvement.
+                        // The less you import, the less code you transpile.
+                        // Side-effect imports are nearly always done through identifier-less imports
+                        // e.g. `import 'fancy-stylesheet-thing/style.css';`
+                        // This is a breaking change though. We can make it an option with some guardrail
+                        // so maybe if it errors, it shows a suggestion "retry without trimming unused imports"
+                        if (found_imports and !p.options.preserve_unused_imports_ts) {
+                            // Ignore import records with a pre-filled source index. These are
+                            // for injected files and we definitely do not want to trim these.
+                            if (!Ref.isSourceIndexNull(record.source_index)) {
+                                record.is_unused = true;
+                                continue;
+                            }
+                        }
+                    }
+
+                    if (p.options.trim_unused_imports) {
+                        if (st.star_name_loc != null) {
+                            // -- Original Comment --
+                            // If we're bundling a star import and the namespace is only ever
+                            // used for property accesses, then convert each unique property to
+                            // a clause item in the import statement and remove the star import.
+                            // That will cause the bundler to bundle them more efficiently when
+                            // both this module and the imported module are in the same group.
+                            //
+                            // Before:
+                            //
+                            //   import * as ns from 'foo'
+                            //   console.log(ns.a, ns.b)
+                            //
+                            // After:
+                            //
+                            //   import {a, b} from 'foo'
+                            //   console.log(a, b)
+                            //
+                            // This is not done if the namespace itself is used, because in that
+                            // case the code for the namespace will have to be generated. This is
+                            // determined by the symbol count because the parser only counts the
+                            // star import as used if it was used for something other than a
+                            // property access:
+                            //
+                            //   import * as ns from 'foo'
+                            //   console.log(ns, ns.a, ns.b)
+                            //
+                            // -- Original Comment --
+
+                            // jarred: we don't use the same grouping mechanism as esbuild
+                            // but, we do this anyway.
+                            // The reasons why are:
+                            // * It makes static analysis for other tools simpler.
+                            // * I imagine browsers may someday do some optimizations
+                            // when it's "easier" to know only certain modules are used
+                            // For example, if you're importing a component from a design system
+                            // it's really stupid to import all 1,000 components from that design system
+                            // when you just want <Button />
+                            const namespace_ref = st.namespace_ref;
+                            const convert_star_to_clause = p.symbols.items[namespace_ref.inner_index].use_count_estimate == 0;
+
+                            if (convert_star_to_clause and !keep_unused_imports) {
+                                st.star_name_loc = null;
+                            }
+
+                            // "importItemsForNamespace" has property accesses off the namespace
+                            if (p.import_items_for_namespace.get(namespace_ref)) |import_items| {
+                                var count = import_items.count();
+                                if (count > 0) {
+                                    // Sort keys for determinism
+                                    var sorted: []string = try p.allocator.alloc(string, count);
+                                    var iter = import_items.iterator();
+                                    var i: usize = 0;
+                                    while (iter.next()) |item| {
+                                        sorted[i] = item.key;
+                                        i += 1;
+                                    }
+                                    strings.sortAsc(sorted);
+
+                                    if (convert_star_to_clause) {
+                                        // Create an import clause for these items. Named imports will be
+                                        // automatically created later on since there is now a clause.
+                                        var items = try p.allocator.alloc(js_ast.ClauseItem, count);
+                                        try p.declared_symbols.ensureUnusedCapacity(count);
+                                        i = 0;
+                                        for (sorted) |alias| {
+                                            const name: LocRef = import_items.get(alias) orelse unreachable;
+                                            const original_name = p.symbols.items[name.ref.?.inner_index].original_name;
+                                            items[i] = js_ast.ClauseItem{
+                                                .alias = alias,
+                                                .alias_loc = name.loc,
+                                                .name = name,
+                                                .original_name = original_name,
+                                            };
+                                            p.declared_symbols.appendAssumeCapacity(js_ast.DeclaredSymbol{
+                                                .ref = name.ref.?,
+                                                .is_top_level = true,
+                                            });
+
+                                            i += 1;
+                                        }
+
+                                        if (st.items.len > 0) {
+                                            p.panic("The syntax \"import {{x}}, * as y from 'path'\" isn't valid", .{});
+                                        }
+
+                                        st.items = items;
+                                    } else {
+                                        // If we aren't converting this star import to a clause, still
+                                        // create named imports for these property accesses. This will
+                                        // cause missing imports to generate useful warnings.
+                                        //
+                                        // It will also improve bundling efficiency for internal imports
+                                        // by still converting property accesses off the namespace into
+                                        // bare identifiers even if the namespace is still needed.
+
+                                        for (sorted) |alias| {
+                                            const name: LocRef = import_items.get(alias) orelse unreachable;
+
+                                            try p.named_imports.put(name.ref.?, js_ast.NamedImport{
+                                                .alias = alias,
+                                                .alias_loc = name.loc,
+                                                .namespace_ref = st.namespace_ref,
+                                                .import_record_index = st.import_record_index,
+                                            });
+
+                                            // Make sure the printer prints this as a property access
+                                            var symbol: Symbol = p.symbols.items[name.ref.?.inner_index];
+                                            symbol.namespace_alias = G.NamespaceAlias{ .namespace_ref = st.namespace_ref, .alias = alias };
+                                            p.symbols.items[name.ref.?.inner_index] = symbol;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    try p.import_records_for_current_part.append(st.import_record_index);
+
+                    if (st.star_name_loc != null) {
+                        record.contains_import_star = true;
+                    }
+
+                    if (st.default_name != null) {
+                        record.contains_default_alias = true;
+                    } else {
+                        for (st.items) |item| {
+                            if (strings.eql(item.alias, "default")) {
+                                record.contains_default_alias = true;
+                                break;
+                            }
+                        }
                     }
                 },
-                .s_function => |st| {},
-                .s_class => |st| {},
-                .s_local => |st| {},
-                .s_export_default => |st| {},
-                .s_export_clause => |st| {},
-                .s_export_star => |st| {},
-                .s_export_from => |st| {},
+                .s_function => |st| {
+                    if (st.func.flags.is_export) {
+                        if (st.func.name) |name| {
+                            try p.recordExport(name.loc, p.symbols.items[name.ref.?.inner_index].original_name, name.ref.?);
+                        } else {
+                            try p.log.addRangeError(p.source, logger.Range{ .loc = st.func.open_parens_loc, .len = 2 }, "Exported functions must have a name");
+                        }
+                    }
+                },
+                .s_class => |st| {
+                    if (st.is_export) {
+                        if (st.class.class_name) |name| {
+                            try p.recordExport(name.loc, p.symbols.items[name.ref.?.inner_index].original_name, name.ref.?);
+                        } else {
+                            try p.log.addRangeError(p.source, logger.Range{ .loc = st.class.body_loc, .len = 0 }, "Exported classes must have a name");
+                        }
+                    }
+                },
+                .s_local => |st| {
+                    if (st.is_export) {
+                        for (st.decls) |decl| {
+                            p.recordExportedBinding(decl.binding);
+                        }
+                    }
+
+                    // Remove unused import-equals statements, since those likely
+                    // correspond to types instead of values
+                    if (st.was_ts_import_equals and !st.is_export and st.decls.len > 0) {
+                        var decl = st.decls[0];
+
+                        // Skip to the underlying reference
+                        var value = decl.value;
+                        if (decl.value) |val| {
+                            while (true) {
+                                if (@as(Expr.Tag, val.data) == .e_dot) {
+                                    value = val.data.e_dot.target;
+                                } else {
+                                    break;
+                                }
+                            }
+                        }
+
+                        // Is this an identifier reference and not a require() call?
+                        if (value) |val| {
+                            if (@as(Expr.Tag, val.data) == .e_identifier) {
+                                // Is this import statement unused?
+                                if (@as(Binding.Tag, decl.binding.data) == .b_identifier and p.symbols.items[decl.binding.data.b_identifier.ref.inner_index].use_count_estimate == 0) {
+                                    p.ignoreUsage(val.data.e_identifier.ref);
+
+                                    scanner.removed_import_equals = true;
+                                    continue;
+                                } else {
+                                    scanner.kept_import_equals = true;
+                                }
+                            }
+                        }
+                    }
+                },
+                .s_export_default => |st| {
+                    try p.recordExport(st.default_name.loc, "default", st.default_name.ref.?);
+                },
+                .s_export_clause => |st| {
+                    for (st.items) |item| {
+                        try p.recordExport(item.alias_loc, item.alias, item.name.ref.?);
+                    }
+                },
+                .s_export_star => |st| {
+                    try p.import_records_for_current_part.append(st.import_record_index);
+
+                    if (st.alias) |alias| {
+                        // "export * as ns from 'path'"
+                        try p.named_imports.put(st.namespace_ref, js_ast.NamedImport{
+                            .alias = null,
+                            .alias_is_star = true,
+                            .alias_loc = alias.loc,
+                            .namespace_ref = Ref.None,
+                            .import_record_index = st.import_record_index,
+                            .is_exported = true,
+                        });
+                        try p.recordExport(alias.loc, alias.original_name, st.namespace_ref);
+                    } else {
+                        // "export * from 'path'"
+                        try p.export_star_import_records.append(st.import_record_index);
+                    }
+                },
+                .s_export_from => |st| {
+                    try p.import_records_for_current_part.append(st.import_record_index);
+
+                    for (st.items) |item| {
+                        const ref = item.name.ref orelse p.panic("Expected export from item to have a name {s}", .{st});
+                        // Note that the imported alias is not item.Alias, which is the
+                        // exported alias. This is somewhat confusing because each
+                        // SExportFrom statement is basically SImport + SExportClause in one.
+                        try p.named_imports.put(ref, js_ast.NamedImport{
+                            .alias_is_star = false,
+                            .alias = item.original_name,
+                            .alias_loc = item.name.loc,
+                            .namespace_ref = st.namespace_ref,
+                            .import_record_index = st.import_record_index,
+                            .is_exported = true,
+                        });
+                        try p.recordExport(item.name.loc, item.alias, ref);
+                    }
+                },
                 else => {},
             }
-        }
 
+            stmts[stmts_end] = stmt;
+            stmts_end += 1;
+        }
+        scanner.stmts = stmts[0..stmts_end];
         return scanner;
     }
 };
@@ -968,6 +1269,7 @@ pub const Parser = struct {
         use_define_for_class_fields: bool = false,
         suppress_warnings_about_weird_code: bool = true,
         moduleType: ModuleType = ModuleType.esm,
+        trim_unused_imports: bool = true,
     };
 
     pub fn parse(self: *Parser) !js_ast.Result {
@@ -983,7 +1285,7 @@ pub const Parser = struct {
             debugl("<p.parseStmtsUpTo>");
             const stmts = try p.parseStmtsUpTo(js_lexer.T.t_end_of_file, &opts);
             debugl("</p.parseStmtsUpTo>");
-            // try p.prepareForVisitPass();
+            try p.prepareForVisitPass();
 
             // ESM is always strict mode. I don't think we need this.
             // // Strip off a leading "use strict" directive when not bundling
@@ -1013,11 +1315,7 @@ pub const Parser = struct {
             // Pop the module scope to apply the "ContainsDirectEval" rules
             // p.popScope();
             debugl("<result.Ast>");
-            result.ast = js_ast.Ast{
-                .parts = parts.toOwnedSlice(),
-                .symbols = p.symbols.toOwnedSlice(),
-                // .module_scope = p.module_scope.*,
-            };
+            result.ast = try p.toAST(parts.toOwnedSlice());
             result.ok = true;
             debugl("</result.Ast>");
 
@@ -1400,6 +1698,49 @@ pub const P = struct {
             .declare_loc = declare_loc,
             .is_inside_with_scope = is_inside_with_scope,
         };
+    }
+
+    pub fn recordExportedBinding(p: *P, binding: Binding) void {
+        switch (binding.data) {
+            .b_missing => {},
+            .b_identifier => |ident| {
+                p.recordExport(binding.loc, p.symbols.items[ident.ref.inner_index].original_name, ident.ref) catch unreachable;
+            },
+            .b_array => |array| {
+                for (array.items) |prop| {
+                    p.recordExportedBinding(prop.binding);
+                }
+            },
+            .b_object => |obj| {
+                for (obj.properties) |prop| {
+                    p.recordExportedBinding(prop.value);
+                }
+            },
+            else => {
+                p.panic("Unexpected binding export type {s}", .{binding});
+            },
+        }
+    }
+
+    pub fn recordExport(p: *P, loc: logger.Loc, alias: string, ref: Ref) !void {
+        if (p.named_exports.get(alias)) |name| {
+            // Duplicate exports are an error
+            var notes = try p.allocator.alloc(logger.Data, 1);
+            notes[0] = logger.Data{
+                .text = try std.fmt.allocPrint(p.allocator, "\"{s}\" was originally exported here", .{alias}),
+                .location = logger.Location.init_or_nil(p.source, js_lexer.rangeOfIdentifier(&p.source, name.alias_loc)),
+            };
+            try p.log.addRangeErrorFmtWithNotes(
+                p.source,
+                js_lexer.rangeOfIdentifier(&p.source, loc),
+                p.allocator,
+                notes,
+                "Multiple exports with the same name {s}",
+                .{alias},
+            );
+        } else {
+            try p.named_exports.put(alias, js_ast.NamedExport{ .alias_loc = loc, .ref = ref });
+        }
     }
 
     pub fn recordUsage(p: *P, ref: *const js_ast.Ref) void {
@@ -2160,11 +2501,10 @@ pub const P = struct {
     }
 
     pub fn newSymbol(p: *P, kind: Symbol.Kind, identifier: string) !js_ast.Ref {
-        var ref = js_ast.Ref{
+        const ref = js_ast.Ref{
             .source_index = @intCast(Ref.Int, p.source.index),
             .inner_index = @intCast(Ref.Int, p.symbols.items.len),
         };
-
         try p.symbols.append(Symbol{
             .kind = kind,
             .original_name = identifier,
@@ -2611,7 +2951,7 @@ pub const P = struct {
 
                     return p.parseStmt(opts);
                 }
-                notimpl();
+                // notimpl();
             },
             .t_class => {
                 if (opts.lexical_decl != .allow_all) {
@@ -6652,23 +6992,24 @@ pub const P = struct {
             p.relocated_top_level_vars.deinit();
             p.relocated_top_level_vars = @TypeOf(p.relocated_top_level_vars).init(p.allocator);
 
-            if (partStmts.items.len > 0) {
-                const _stmts = partStmts.toOwnedSlice();
-                var part = js_ast.Part{
-                    .stmts = _stmts,
-                    .declared_symbols = p.declared_symbols,
-                    .import_record_indices = p.import_records_for_current_part,
-                    .scopes = p.scopes_for_current_part.toOwnedSlice(),
-                    .can_be_removed_if_unused = p.stmtsCanBeRemovedIfUnused(_stmts),
-                };
-                try parts.append(part);
-            }
-
             // Follow links because "var" declarations may be merged due to hoisting
 
             // while (true) {
             //     const link = p.symbols.items[local.ref.inner_index].link;
             // }
+        }
+
+        if (partStmts.items.len > 0) {
+            const _stmts = partStmts.toOwnedSlice();
+            var part = js_ast.Part{
+                .stmts = _stmts,
+                .symbol_uses = p.symbol_uses,
+                .declared_symbols = p.declared_symbols.toOwnedSlice(),
+                .import_record_indices = p.import_records_for_current_part.toOwnedSlice(),
+                .scopes = p.scopes_for_current_part.toOwnedSlice(),
+                .can_be_removed_if_unused = p.stmtsCanBeRemovedIfUnused(_stmts),
+            };
+            try parts.append(part);
         }
     }
 
@@ -9463,34 +9804,147 @@ pub const P = struct {
         }
     }
 
-    pub fn toAST(p: *P, _parts: []js_ast.Part) js_ast.Ast {
-        var parts = std.ArrayList(js_ast.Part).fromOwnedSlice(p.allocator, _parts);
+    pub fn toAST(p: *P, _parts: []js_ast.Part) !js_ast.Ast {
+        var parts = _parts;
         // Insert an import statement for any runtime imports we generated
-        if (p.runtime_imports.len > 0 and !p.options.omit_runtime_for_tests) {}
+        if (p.runtime_imports.count() > 0 and !p.options.omit_runtime_for_tests) {}
 
+        var parts_end: usize = 0;
         // Handle import paths after the whole file has been visited because we need
         // symbol usage counts to be able to remove unused type-only imports in
         // TypeScript code.
-        outer: {
+        while (true) {
             var kept_import_equals = false;
             var removed_import_equals = false;
 
-            var parts_end: usize = 0;
+            var i: usize = 0;
             // Potentially remove some statements, then filter out parts to remove any
             // with no statements
-            for (parts.items) |part| {
-                _ = p.import_records_for_current_part.toOwnedSlice()();
+            while (i < parts.len) : (i += 1) {
+                var part = parts[i];
+                _ = p.import_records_for_current_part.toOwnedSlice();
                 _ = p.declared_symbols.toOwnedSlice();
 
-                var result = ImportScanner.scan(p, part.stmts);
+                var result = try ImportScanner.scan(p, part.stmts);
                 kept_import_equals = kept_import_equals or result.kept_import_equals;
                 removed_import_equals = removed_import_equals or result.removed_import_equals;
                 part.import_record_indices = p.import_records_for_current_part.toOwnedSlice();
                 part.declared_symbols = p.declared_symbols.toOwnedSlice();
+                part.stmts = result.stmts;
+                if (part.stmts.len > 0) {
+                    if (p.module_scope.contains_direct_eval and part.declared_symbols.len > 0) {
+                        // If this file contains a direct call to "eval()", all parts that
+                        // declare top-level symbols must be kept since the eval'd code may
+                        // reference those symbols.
+                        part.can_be_removed_if_unused = false;
+                    }
+                    parts[parts_end] = part;
+                    parts_end += 1;
+                }
             }
 
-            break :outer;
+            // We need to iterate multiple times if an import-equals statement was
+            // removed and there are more import-equals statements that may be removed
+            if (!kept_import_equals or !removed_import_equals) {
+                break;
+            }
         }
+
+        parts = parts[0..parts_end];
+        // Analyze cross-part dependencies for tree shaking and code splitting
+
+        {
+            // Map locals to parts
+            p.top_level_symbol_to_parts = @TypeOf(p.top_level_symbol_to_parts).init(p.allocator);
+            var i: usize = 0;
+            while (i < parts.len) : (i += 1) {
+                const part = parts[i];
+                for (part.declared_symbols) |declared| {
+                    if (declared.is_top_level) {
+                        if (p.top_level_symbol_to_parts.contains(declared.ref)) {
+                            try p.top_level_symbol_to_parts.get(declared.ref).?.append(@intCast(u32, i));
+                        } else {
+                            var list = try List(u32).initCapacity(p.allocator, 1);
+                            list.appendAssumeCapacity(@intCast(u32, i));
+                            try p.top_level_symbol_to_parts.put(declared.ref, list);
+                        }
+                    }
+                }
+            }
+
+            // Each part tracks the other parts it depends on within this file
+            var local_dependencies = std.AutoHashMap(u32, u32).init(p.allocator);
+
+            i = 0;
+            while (i < parts.len) : (i += 1) {
+                const part = parts[i];
+                var iter = part.symbol_uses.iterator();
+                var dependencies = List(js_ast.Dependency).init(p.allocator);
+                while (iter.next()) |entry| {
+                    const ref = entry.key;
+
+                    if (p.top_level_symbol_to_parts.get(ref)) |tlstp| {
+                        for (tlstp.items) |other_part_index| {
+                            if (!local_dependencies.contains(other_part_index) or other_part_index != i) {
+                                try local_dependencies.put(other_part_index, @intCast(u32, i));
+                                try dependencies.append(js_ast.Dependency{
+                                    .source_index = p.source.index,
+                                    .part_index = other_part_index,
+                                });
+                            }
+                        }
+                    }
+
+                    // Also map from imports to parts that use them
+                    // TODO: will appending to this list like this be a perf issue?
+                    if (p.named_imports.getEntry(ref)) |named_import_entry| {
+                        const named_import = named_import_entry.value;
+                        var buf = try p.allocator.alloc(u32, named_import.local_parts_with_uses.len + 1);
+                        if (named_import.local_parts_with_uses.len > 0) {
+                            std.mem.copy(u32, buf, named_import.local_parts_with_uses);
+                        }
+                        buf[buf.len - 1] = @intCast(u32, i);
+                        named_import_entry.value.local_parts_with_uses = buf;
+                    }
+                }
+            }
+        }
+
+        var exports_kind = js_ast.ExportsKind.none;
+        const uses_exports_ref = p.symbols.items[p.exports_ref.inner_index].use_count_estimate > 0;
+        const uses_module_ref = p.symbols.items[p.module_ref.inner_index].use_count_estimate > 0;
+
+        if (p.es6_export_keyword.len > 0 or p.top_level_await_keyword.len > 0) {
+            exports_kind = .esm;
+        } else if (uses_exports_ref or uses_module_ref or p.has_top_level_return) {
+            exports_kind = .cjs;
+        } else {
+            exports_kind = .esm;
+        }
+
+        var wrapper_name = try p.allocator.alloc(u8, "require_".len + p.source.identifier_name.len);
+        std.mem.copy(u8, wrapper_name[0.."require_".len], "require_");
+        std.mem.copy(u8, wrapper_name["require_".len..wrapper_name.len], p.source.identifier_name);
+
+        var wrapper = try p.newSymbol(.other, wrapper_name);
+
+        return js_ast.Ast{
+            .parts = parts,
+            .module_scope = p.module_scope.*,
+            .symbols = p.symbols.toOwnedSlice(),
+            .exports_ref = p.exports_ref,
+            .wrapper_ref = wrapper,
+            .import_records = p.import_records.toOwnedSlice(),
+            .export_star_import_records = p.export_star_import_records.toOwnedSlice(),
+            .top_level_symbol_to_parts = p.top_level_symbol_to_parts,
+            .approximate_line_count = p.lexer.approximate_newline_count + 1,
+            .exports_kind = exports_kind,
+            .named_imports = p.named_imports,
+            .named_exports = p.named_exports,
+            .import_keyword = p.es6_import_keyword,
+            .export_keyword = p.es6_export_keyword,
+            // .top_Level_await_keyword = p.top_level_await_keyword,
+        };
     }
 
     pub fn init(allocator: *std.mem.Allocator, log: *logger.Log, source: logger.Source, define: *Define, lexer: js_lexer.Lexer, opts: Parser.Options) !*P {
@@ -9507,6 +9961,7 @@ pub const P = struct {
         parser.export_star_import_records = @TypeOf(parser.export_star_import_records).init(allocator);
         parser.import_items_for_namespace = @TypeOf(parser.import_items_for_namespace).init(allocator);
         parser.named_imports = @TypeOf(parser.named_imports).init(allocator);
+        parser.named_exports = @TypeOf(parser.named_exports).init(allocator);
         parser.top_level_symbol_to_parts = @TypeOf(parser.top_level_symbol_to_parts).init(allocator);
         parser.import_namespace_cc_map = @TypeOf(parser.import_namespace_cc_map).init(allocator);
         parser.scopes_in_order = @TypeOf(parser.scopes_in_order).init(allocator);
@@ -9514,6 +9969,7 @@ pub const P = struct {
         parser.relocated_top_level_vars = @TypeOf(parser.relocated_top_level_vars).init(allocator);
         parser.log = log;
         parser.allocator = allocator;
+        parser.runtime_imports = StringRefMap.init(allocator);
         parser.options = opts;
         parser.to_expr_wrapper_namespace = Binding2ExprWrapper.Namespace.init(parser);
         parser.to_expr_wrapper_hoisted = Binding2ExprWrapper.Hoisted.init(parser);

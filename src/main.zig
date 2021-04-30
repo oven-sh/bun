@@ -9,6 +9,7 @@ const js_printer = @import("js_printer.zig");
 const js_ast = @import("js_ast.zig");
 const linker = @import("linker.zig");
 usingnamespace @import("ast/base.zig");
+usingnamespace @import("defines.zig");
 
 pub fn main() anyerror!void {
     try alloc.setup(std.heap.page_allocator);
@@ -31,6 +32,15 @@ pub fn main() anyerror!void {
     var log = logger.Log.init(alloc.dynamic);
     var source = logger.Source.initFile(opts.entry_point, alloc.dynamic);
     var ast: js_ast.Ast = undefined;
+    var raw_defines = RawDefines.init(alloc.static);
+    try raw_defines.put("process.env.NODE_ENV", "\"development\"");
+
+    var user_defines = try DefineData.from_input(raw_defines, &log, alloc.static);
+
+    var define = try Define.init(
+        alloc.static,
+        user_defines,
+    );
 
     switch (opts.loader) {
         .json => {
@@ -47,7 +57,7 @@ pub fn main() anyerror!void {
             ast = js_ast.Ast.initTest(&([_]js_ast.Part{part}));
         },
         .jsx, .tsx, .ts, .js => {
-            var parser = try js_parser.Parser.init(opts, &log, &source, alloc.dynamic);
+            var parser = try js_parser.Parser.init(opts, &log, &source, define, alloc.dynamic);
             var res = try parser.parse();
             ast = res.ast;
         },

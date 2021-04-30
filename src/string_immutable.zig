@@ -181,7 +181,7 @@ pub fn toUTF16Buf(in: string, out: []u16) usize {
         }
     }
 
-    return utf8Iterator.i;
+    return i;
 }
 
 pub fn toUTF16Alloc(in: string, allocator: *std.mem.Allocator) !JavascriptString {

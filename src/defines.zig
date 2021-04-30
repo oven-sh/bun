@@ -30,6 +30,7 @@ pub const UserDefines = std.StringHashMap(DefineData);
 
 pub const DefineData = struct {
     value: js_ast.Expr.Data,
+    valueless: bool = false,
     original_name: ?string = null,
 
     // True if accessing this value is known to not have any side effects. For
@@ -45,6 +46,10 @@ pub const DefineData = struct {
     // All the globals have the same behavior.
     // So we can create just one struct for it.
     pub const GlobalDefineData = DefineData{};
+
+    pub fn isUndefined(self: *const DefineData) bool {
+        return self.valueless;
+    }
 
     pub fn merge(a: DefineData, b: DefineData) DefineData {
         return DefineData{
@@ -142,7 +147,7 @@ pub const Define = struct {
     dots: std.StringHashMap([]DotDefine),
     allocator: *std.mem.Allocator,
 
-    pub fn init(allocator: *std.mem.Allocator, user_defines: UserDefines) !*@This() {
+    pub fn init(allocator: *std.mem.Allocator, _user_defines: ?UserDefines) !*@This() {
         var define = try allocator.create(Define);
         define.allocator = allocator;
         define.identifiers = std.StringHashMap(IdentifierDefine).init(allocator);
@@ -155,7 +160,7 @@ pub const Define = struct {
         var ident_define = IdentifierDefine{
             .value = val,
         };
-        var value_define = DefineData{ .value = val };
+        var value_define = DefineData{ .value = val, .valueless = true };
         // Step 1. Load the globals into the hash tables
         for (GlobalDefinesKey) |global| {
             if (global.len == 1) {
@@ -204,7 +209,7 @@ pub const Define = struct {
 
         // Step 3. Load user data into hash tables
         // At this stage, user data has already been validated.
-        if (user_defines.count() > 0) {
+        if (_user_defines) |user_defines| {
             var iter = user_defines.iterator();
             while (iter.next()) |user_define| {
                 // If it has a dot, then it's a DotDefine.

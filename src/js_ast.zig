@@ -608,11 +608,11 @@ pub const Symbol = struct {
     };
 
     pub fn isKindPrivate(kind: Symbol.Kind) bool {
-        return kind >= Symbol.Kind.private_field and kind <= Symbol.Kind.private_static_get_set_pair;
+        return @enumToInt(kind) >= @enumToInt(Symbol.Kind.private_field) and @enumToInt(kind) <= @enumToInt(Symbol.Kind.private_static_get_set_pair);
     }
 
     pub fn isKindHoisted(kind: Symbol.Kind) bool {
-        return kind == Symbol.Kind.hoisted or kind == Symbol.Kind.hoisted_function;
+        return @enumToInt(kind) == @enumToInt(Symbol.Kind.hoisted) or @enumToInt(kind) == @enumToInt(Symbol.Kind.hoisted_function);
     }
 
     pub fn isHoisted(self: *Symbol) bool {
@@ -1221,6 +1221,14 @@ pub const Expr = struct {
     data: Data,
 
     pub const EFlags = enum { none, ts_decorator };
+
+    pub fn extractNumericValues(left: Expr.Data, right: Expr.Data) ?[2]f64 {
+        if (!(@as(Expr.Tag, left) == .e_number and @as(Expr.Tag, right) == .e_number)) {
+            return null;
+        }
+
+        return [2]f64{ left.e_number.value, right.e_number.value };
+    }
 
     pub fn isAnonymousNamed(e: *Expr) bool {
         switch (e.data) {
@@ -2045,6 +2053,38 @@ pub const Expr = struct {
         }
     };
 
+    pub fn isBoolean(a: Expr) bool {
+        switch (a.data) {
+            .e_boolean => {
+                return true;
+            },
+
+            .e_if => |ex| {
+                return isBoolean(ex.yes) and isBoolean(ex.no);
+            },
+            .e_unary => |ex| {
+                return ex.op == .un_not or ex.op == .un_delete;
+            },
+            .e_binary => |ex| {
+                switch (ex.op) {
+                    .bin_strict_eq, .bin_strict_ne, .bin_loose_eq, .bin_loose_ne, .bin_lt, .bin_gt, .bin_le, .bin_ge, .bin_instanceof, .bin_in => {
+                        return true;
+                    },
+                    .bin_logical_or => {
+                        return isBoolean(ex.left) and isBoolean(ex.right);
+                    },
+                    .bin_logical_and => {
+                        return isBoolean(ex.left) and isBoolean(ex.right);
+                    },
+                    else => {},
+                }
+            },
+            else => {},
+        }
+
+        return false;
+    }
+
     pub fn assign(a: Expr, b: Expr, allocator: *std.mem.Allocator) Expr {
         return alloc(allocator, E.Binary{
             .op = .bin_assign,
@@ -2052,16 +2092,16 @@ pub const Expr = struct {
             .right = b,
         }, a.loc);
     }
-    pub fn at(expr: *Expr, t: anytype, allocator: *std.mem.allocator) callconv(.Inline) Expr {
-        return alloc(allocator, t, loc);
+    pub fn at(expr: *Expr, t: anytype, allocator: *std.mem.Allocator) callconv(.Inline) Expr {
+        return alloc(allocator, t, expr.loc);
     }
 
     // Wraps the provided expression in the "!" prefix operator. The expression
     // will potentially be simplified to avoid generating unnecessary extra "!"
     // operators. For example, calling this with "!!x" will return "!x" instead
     // of returning "!!!x".
-    pub fn not(expr: Expr, allocator: *std.mem.Allocator) Expr {
-        return maybeSimplifyNot(&expr, allocator) orelse expr;
+    pub fn not(expr: *Expr, allocator: *std.mem.Allocator) Expr {
+        return maybeSimplifyNot(expr, allocator) orelse expr.*;
     }
 
     // The given "expr" argument should be the operand of a "!" prefix operator
@@ -2086,16 +2126,16 @@ pub const Expr = struct {
             .e_function,
             .e_arrow,
             .e_reg_exp,
-            => |b| {
+            => {
                 return expr.at(E.Boolean{ .value = false }, allocator);
             },
             // "!!!a" => "!a"
             .e_unary => |un| {
-                if (un.op == Op.Code.un_not and isBooleanValue(un.value)) {
-                    return un.value.*;
+                if (un.op == Op.Code.un_not and isBoolean(un.value)) {
+                    return un.value;
                 }
             },
-            .e_binary => |*ex| {
+            .e_binary => |ex| {
                 // TODO: evaluate whether or not it is safe to do this mutation since it's modifying in-place.
                 // Make sure that these transformations are all safe for special values.
                 // For example, "!(a < b)" is not the same as "a >= b" if a and/or b are
@@ -2105,20 +2145,20 @@ pub const Expr = struct {
                         ex.op = .bin_loose_ne;
                         return expr.*;
                     },
-                    Op.Code.bin_op_loose_ne => {
+                    Op.Code.bin_loose_ne => {
                         ex.op = .bin_loose_eq;
                         return expr.*;
                     },
-                    Op.Code.bin_op_strict_eq => {
+                    Op.Code.bin_strict_eq => {
                         ex.op = .bin_strict_ne;
                         return expr.*;
                     },
-                    Op.Code.bin_op_strict_ne => {
+                    Op.Code.bin_strict_ne => {
                         ex.op = .bin_strict_eq;
                         return expr.*;
                     },
-                    Op.Code.bin_op_comma => {
-                        ex.right = ex.right.not();
+                    Op.Code.bin_comma => {
+                        ex.right = ex.right.not(allocator);
                         return expr.*;
                     },
                     else => {},

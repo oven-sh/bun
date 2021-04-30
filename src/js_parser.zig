@@ -13,6 +13,7 @@ const fs = @import("fs.zig");
 usingnamespace @import("strings.zig");
 usingnamespace @import("ast/base.zig");
 usingnamespace js_ast.G;
+usingnamespace @import("defines.zig");
 
 const ImportKind = importRecord.ImportKind;
 const BindingNodeIndex = js_ast.BindingNodeIndex;
@@ -38,6 +39,387 @@ const Level = js_ast.Op.Level;
 const Op = js_ast.Op;
 const Scope = js_ast.Scope;
 const locModuleScope = logger.Loc.Empty;
+
+pub fn locAfterOp(e: E.Binary) logger.Loc {
+    if (e.left.loc.start < e.right.loc.start) {
+        return e.right.loc;
+    } else {
+        // handle the case when we have transposed the operands
+        return e.left.loc;
+    }
+}
+
+pub const SideEffects = enum {
+    could_have_side_effects,
+    no_side_effects,
+
+    pub const Result = struct {
+        side_effects: SideEffects,
+        ok: bool = false,
+        value: bool = false,
+    };
+
+    pub fn toNumber(data: Expr.Data) ?f64 {
+        switch (data) {
+            .e_null => |e| {
+                return 0;
+            },
+            .e_undefined => |e| {
+                return std.math.nan_f64;
+            },
+            .e_boolean => |e| {
+                return if (e.value) 1.0 else 0.0;
+            },
+            .e_number => |e| {
+                return e.value;
+            },
+            else => {},
+        }
+
+        return null;
+    }
+
+    pub fn isPrimitiveToReorder(data: Expr.Data) bool {
+        switch (data) {
+            .e_null, .e_undefined, .e_string, .e_boolean, .e_number, .e_big_int => {
+                return true;
+            },
+            else => {
+                return false;
+            },
+        }
+    }
+
+    pub const Equality = struct { equal: bool = false, ok: bool = false };
+
+    // Returns "equal, ok". If "ok" is false, then nothing is known about the two
+    // values. If "ok" is true, the equality or inequality of the two values is
+    // stored in "equal".
+    pub fn eql(left: Expr.Data, right: Expr.Data) Equality {
+        var equality = Equality{};
+        switch (left) {
+            .e_null => |l| {
+                equality.equal = @as(Expr.Tag, right) == Expr.Tag.e_null;
+                equality.ok = equality.equal;
+            },
+            .e_undefined => |l| {
+                equality.equal = @as(Expr.Tag, right) == Expr.Tag.e_undefined;
+                equality.ok = equality.equal;
+            },
+            .e_boolean => |l| {
+                equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_boolean;
+                equality.equal = l.value == right.e_boolean.value;
+            },
+            .e_number => |l| {
+                equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_number;
+                equality.equal = l.value == right.e_number.value;
+            },
+            .e_big_int => |l| {
+                equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_big_int;
+                equality.equal = strings.eql(l.value, right.e_big_int.value);
+            },
+            .e_string => |l| {
+                equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_string;
+                equality.equal = std.mem.eql(u16, l.value, right.e_string.value);
+            },
+            else => {},
+        }
+
+        return equality;
+    }
+
+    // Returns true if this expression is known to result in a primitive value (i.e.
+    // null, undefined, boolean, number, bigint, or string), even if the expression
+    // cannot be removed due to side effects.
+    pub fn isPrimitiveWithSideEffects(data: Expr.Data) bool {
+        switch (data) {
+            .e_null, .e_undefined, .e_boolean, .e_number, .e_big_int, .e_string => {
+                return true;
+            },
+            .e_unary => |e| {
+                switch (e.op) {
+                    // number or bigint
+                    .un_pos,
+                    .un_neg,
+                    .un_cpl,
+                    .un_pre_dec,
+                    .un_pre_inc,
+                    .un_post_dec,
+                    .un_post_inc,
+                    // boolean
+                    .un_not,
+                    .un_delete,
+                    // undefined
+                    .un_void,
+                    // string
+                    .un_typeof,
+                    => {
+                        return true;
+                    },
+                    else => {},
+                }
+            },
+            .e_binary => |e| {
+                switch (e.op) {
+                    // boolean
+                    .bin_lt,
+                    .bin_le,
+                    .bin_gt,
+                    .bin_ge,
+                    .bin_in,
+                    .bin_instanceof,
+                    .bin_loose_eq,
+                    .bin_loose_ne,
+                    .bin_strict_eq,
+                    .bin_strict_ne,
+                    // string, number, or bigint
+                    .bin_add,
+                    .bin_add_assign,
+                    // number or bigint
+                    .bin_sub,
+                    .bin_mul,
+                    .bin_div,
+                    .bin_rem,
+                    .bin_pow,
+                    .bin_sub_assign,
+                    .bin_mul_assign,
+                    .bin_div_assign,
+                    .bin_rem_assign,
+                    .bin_pow_assign,
+                    .bin_shl,
+                    .bin_shr,
+                    .bin_u_shr,
+                    .bin_shl_assign,
+                    .bin_shr_assign,
+                    .bin_u_shr_assign,
+                    .bin_bitwise_or,
+                    .bin_bitwise_and,
+                    .bin_bitwise_xor,
+                    .bin_bitwise_or_assign,
+                    .bin_bitwise_and_assign,
+                    .bin_bitwise_xor_assign,
+                    => {
+                        return true;
+                    },
+
+                    // These always return one of the arguments unmodified
+                    .bin_logical_and, .bin_logical_or, .bin_nullish_coalescing, .bin_logical_and_assign, .bin_logical_or_assign, .bin_nullish_coalescing_assign => {
+                        return isPrimitiveWithSideEffects(e.left.data) and isPrimitiveWithSideEffects(e.right.data);
+                    },
+                    .bin_comma => {
+                        return isPrimitiveWithSideEffects(e.right.data);
+                    },
+                }
+            },
+            .e_if => {
+                return isPrimitiveWithSideEffects(e.yes.data) and isPrimitiveWithSideEffects(e.no.data);
+            },
+            else => {},
+        }
+        return false;
+    }
+
+    // Returns true if the result of the "typeof" operator on this expression is
+    // statically determined and this expression has no side effects (i.e. can be
+    // removed without consequence).
+    pub fn toTypeof(data: Expr.Data) ?string {
+        switch (data) {
+            .e_null => {
+                return "object";
+            },
+            .e_undefined => {
+                return "undefined";
+            },
+            .e_boolean => {
+                return "boolean";
+            },
+            .e_number => {
+                return "number";
+            },
+            .e_big_int => {
+                return "bigint";
+            },
+            .e_string => {
+                return "string";
+            },
+            .e_function, .e_arrow => {
+                return "function";
+            },
+            else => {},
+        }
+
+        return null;
+    }
+
+    pub fn toNullOrUndefined(exp: Expr.Data) Result {
+        switch (exp) {
+            // Never null or undefined
+            .e_boolean, .e_number, .e_string, .e_reg_exp, .e_function, .e_arrow, .e_big_int => {
+                return Result{ .value = false, .side_effects = SideEffects.no_side_effects, .ok = true };
+            },
+
+            .e_object, .e_array, .e_class => {
+                return Result{ .value = false, .side_effects = .could_have_side_effects, .ok = true };
+            },
+
+            // always anull or undefined
+            .e_null, .e_undefined => {
+                return Result{ .value = true, .side_effects = .could_have_side_effects, .ok = true };
+            },
+
+            .e_unary => |e| {
+                switch (e.op) {
+                    // Always number or bigint
+                    .un_pos, .un_neg, .un_cpl, .un_pre_dec, .un_pre_inc, .un_post_dec, .un_post_inc => {
+                        return Result{ .ok = true, .value = false, .side_effects = SideEffects.could_have_side_effects };
+                    },
+                    // Always undefined
+                    .un_not, .un_typeof, .un_delete => {
+                        return Result{ .value = true, .side_effects = .could_have_side_effects, .ok = true };
+                    },
+
+                    .un_void => {
+                        return Result{ .value = true, .side_effects = .could_have_side_effects, .ok = true };
+                    },
+
+                    else => {},
+                }
+            },
+
+            .e_binary => |e| {
+                switch (e.op) {
+                    // always string or number or bigint
+                    .bin_add,
+                    .bin_add_assign,
+                    // always number or bigint
+                    .bin_sub,
+                    .bin_mul,
+                    .bin_div,
+                    .bin_rem,
+                    .bin_pow,
+                    .bin_sub_assign,
+                    .bin_mul_assign,
+                    .bin_div_assign,
+                    .bin_rem_assign,
+                    .bin_pow_assign,
+                    .bin_shl,
+                    .bin_shr,
+                    .bin_u_shr,
+                    .bin_shl_assign,
+                    .bin_shr_assign,
+                    .bin_u_shr_assign,
+                    .bin_bitwise_or,
+                    .bin_bitwise_and,
+                    .bin_bitwise_xor,
+                    .bin_bitwise_or_assign,
+                    .bin_bitwise_and_assign,
+                    .bin_bitwise_xor_assign,
+                    // always boolean
+                    .bin_lt,
+                    .bin_le,
+                    .bin_gt,
+                    .bin_ge,
+                    .bin_in,
+                    .bin_instanceof,
+                    .bin_loose_eq,
+                    .bin_loose_ne,
+                    .bin_strict_eq,
+                    .bin_strict_ne,
+                    => {
+                        return Result{ .ok = true, .value = false, .side_effects = SideEffects.could_have_side_effects };
+                    },
+
+                    .bin_comma => {
+                        const res = toNullOrUndefined(e.right.data);
+                        if (res.ok) {
+                            return Result{ .ok = true, .value = res.value, .side_effects = SideEffects.could_have_side_effects };
+                        }
+                    },
+                    else => {},
+                }
+            },
+            else => {},
+        }
+
+        return Result{ .ok = false, .value = false, .side_effects = SideEffects.could_have_side_effects };
+    }
+
+    pub fn toBoolean(exp: Expr.Data) Result {
+        switch (exp) {
+            .e_null, .e_undefined => {
+                return Result{ .ok = true, .value = false, .side_effects = .no_side_effects };
+            },
+            .e_boolean => |e| {
+                return Result{ .ok = true, .value = e.value, .side_effects = .no_side_effects };
+            },
+            .e_number => |e| {
+                return Result{ .ok = true, .value = e.value != 0.0 and !std.math.isNan(e.value), .side_effects = .no_side_effects };
+            },
+            .e_big_int => |e| {
+                return Result{ .ok = true, .value = !strings.eql(e.value, "0"), .side_effects = .no_side_effects };
+            },
+            .e_string => |e| {
+                return Result{ .ok = true, .value = e.value.len > 0, .side_effects = .no_side_effects };
+            },
+            .e_function, .e_arrow, .e_reg_exp => {
+                return Result{ .ok = true, .value = true, .side_effects = .no_side_effects };
+            },
+            .e_object, .e_array, .e_class => {
+                return Result{ .ok = true, .value = true, .side_effects = .could_have_side_effects };
+            },
+            .e_unary => |e_| {
+                switch (e_.op) {
+                    .un_void => {
+                        return Result{ .ok = true, .value = false, .side_effects = .could_have_side_effects };
+                    },
+                    .un_typeof => {
+                        // Never an empty string
+
+                        return Result{ .ok = true, .value = true, .side_effects = .could_have_side_effects };
+                    },
+                    .un_not => {
+                        var result = toBoolean(e_.value.data);
+                        if (result.ok) {
+                            result.value = !result.value;
+                            return result;
+                        }
+                    },
+                    else => {},
+                }
+            },
+            .e_binary => |e_| {
+                switch (e_.op) {
+                    .bin_logical_or => {
+                        // "anything || truthy" is truthy
+                        const result = toBoolean(e_.right.data);
+                        if (result.value and result.ok) {
+                            return Result{ .ok = true, .value = true, .side_effects = .could_have_side_effects };
+                        }
+                    },
+                    .bin_logical_and => {
+                        // "anything && falsy" is falsy
+                        const result = toBoolean(e_.right.data);
+                        if (!result.value and result.ok) {
+                            return Result{ .ok = true, .value = false, .side_effects = .could_have_side_effects };
+                        }
+                    },
+                    .bin_comma => {
+                        // "anything, truthy/falsy" is truthy/falsy
+                        var result = toBoolean(e_.right.data);
+                        if (result.ok) {
+                            result.side_effects = .could_have_side_effects;
+                            return result;
+                        }
+                    },
+                    else => {},
+                }
+            },
+            else => {},
+        }
+
+        return Result{ .ok = false, .value = false, .side_effects = SideEffects.could_have_side_effects };
+    }
+};
 
 const ExprOrLetStmt = struct {
     stmt_or_expr: js_ast.StmtOrExpr,
@@ -75,6 +457,12 @@ const AsyncPrefixExpression = enum {
             },
         }
     }
+};
+
+const IdentifierOpts = struct {
+    assign_target: js_ast.AssignTarget = js_ast.AssignTarget.none,
+    is_delete_target: bool = false,
+    was_originally_identifier: bool = false,
 };
 
 fn statementCaresAboutScope(stmt: Stmt) bool {
@@ -269,7 +657,6 @@ const EnumValueType = enum {
     string,
     numeric,
 };
-pub const Result = js_ast.Result;
 
 const ParenExprOpts = struct {
     async_range: logger.Range = logger.Range.None,
@@ -425,6 +812,7 @@ pub const Parser = struct {
     lexer: js_lexer.Lexer,
     log: *logger.Log,
     source: logger.Source,
+    define: *Define,
     allocator: *std.mem.Allocator,
     p: ?*P,
 
@@ -443,12 +831,12 @@ pub const Parser = struct {
         moduleType: ModuleType = ModuleType.esm,
     };
 
-    pub fn parse(self: *Parser) !Result {
+    pub fn parse(self: *Parser) !js_ast.Result {
         if (self.p == null) {
-            self.p = try P.init(self.allocator, self.log, self.source, self.lexer, self.options);
+            self.p = try P.init(self.allocator, self.log, self.source, self.define, self.lexer, self.options);
         }
 
-        var result: Result = undefined;
+        var result: js_ast.Result = undefined;
 
         if (self.p) |p| {
             // Parse the file in the first pass, but do not bind symbols
@@ -501,7 +889,7 @@ pub const Parser = struct {
         return result;
     }
 
-    pub fn init(transform: options.TransformOptions, log: *logger.Log, source: *logger.Source, allocator: *std.mem.Allocator) !Parser {
+    pub fn init(transform: options.TransformOptions, log: *logger.Log, source: *logger.Source, define: *Define, allocator: *std.mem.Allocator) !Parser {
         const lexer = try js_lexer.Lexer.init(log, source, allocator);
         return Parser{
             .options = Options{
@@ -514,6 +902,7 @@ pub const Parser = struct {
             },
             .allocator = allocator,
             .lexer = lexer,
+            .define = define,
             .source = source.*,
             .log = log,
             .p = null,
@@ -562,6 +951,7 @@ pub const P = struct {
     allocator: *std.mem.Allocator,
     options: Parser.Options,
     log: *logger.Log,
+    define: *Define,
     source: logger.Source,
     lexer: js_lexer.Lexer,
     allow_in: bool = false,
@@ -873,7 +1263,7 @@ pub const P = struct {
         };
     }
 
-    pub fn recordUsage(p: *P, ref: *js_ast.Ref) void {
+    pub fn recordUsage(p: *P, ref: *const js_ast.Ref) void {
         // The use count stored in the symbol is used for generating symbol names
         // during minification. These counts shouldn't include references inside dead
         // code regions since those will be culled.
@@ -1007,6 +1397,52 @@ pub const P = struct {
         }
 
         return .forbidden;
+    }
+
+    pub fn handleIdentifier(p: *P, loc: logger.Loc, ident: *E.Identifier, _original_name: ?string, opts: IdentifierOpts) Expr {
+        const ref = ident.ref;
+
+        if ((opts.assign_target != .none or opts.is_delete_target) and p.symbols.items[ref.inner_index].kind == .import) {
+            // Create an error for assigning to an import namespace
+            const r = js_lexer.rangeOfIdentifier(&p.source, loc);
+            p.log.addRangeErrorFmt(p.source, r, p.allocator, "Cannot assign to import \"{s}\"", .{
+                p.symbols.items[ref.inner_index].original_name,
+            }) catch unreachable;
+        }
+
+        // Substitute an EImportIdentifier now if this is an import item
+        if (p.is_import_item.contains(ref)) {
+            return p.e(
+                E.ImportIdentifier{ .ref = ref, .was_originally_identifier = opts.was_originally_identifier },
+                loc,
+            );
+        }
+
+        // Substitute a namespace export reference now if appropriate
+        if (p.options.ts) {
+            if (p.is_exported_inside_namespace.get(ref)) |ns_ref| {
+                const name = p.symbols.items[ref.inner_index].original_name;
+
+                // If this is a known enum value, inline the value of the enum
+                if (p.known_enum_values.get(ns_ref)) |enum_values| {
+                    if (enum_values.get(name)) |number| {
+                        return p.e(E.Number{ .value = number }, loc);
+                    }
+                }
+
+                // Otherwise, create a property access on the namespace
+                p.recordUsage(&ns_ref);
+
+                return p.e(E.Dot{ .target = p.e(E.Identifier{ .ref = ns_ref }, loc), .name = name, .name_loc = loc }, loc);
+            }
+        }
+
+        if (_original_name) |original_name| {
+            const result = p.findSymbol(loc, original_name) catch unreachable;
+            ident.ref = result.ref;
+        }
+
+        return p.e(ident, loc);
     }
 
     pub fn prepareForVisitPass(p: *P) !void {
@@ -5964,6 +6400,10 @@ pub const P = struct {
         return p.e(E.Missing{}, logger.Loc.Empty);
     }
 
+    pub fn jsxStringsToMemberExpression(p: *P, loc: logger.Loc, fragment: string) Expr {
+        notimpl();
+    }
+
     // Note: The caller has already parsed the "import" keyword
     pub fn parseImportExpr(p: *P, loc: logger.Loc, level: Level) Expr {
         // Parse an "import.meta" expression
@@ -6148,34 +6588,907 @@ pub const P = struct {
                 // }
             },
 
-            .e_import_meta => |exp| {},
-            .e_spread => |exp| {
-                return p.visitExpr(exp.value);
+            .e_import_meta => |exp| {
+                const is_delete_target = exp == p.delete_target.e_import_meta;
+
+                if (p.define.dots.get("meta")) |meta| {
+                    for (meta) |define| {
+                        if (p.isDotDefineMatch(expr, define.parts)) {
+                            // Substitute user-specified defines
+                            return p.valueForDefine(expr.loc, in.assign_target, is_delete_target, &define.data);
+                        }
+                    }
+                }
+
+                if (!p.import_meta_ref.isNull()) {
+                    p.recordUsage(&p.import_meta_ref);
+                    return p.e(E.Identifier{ .ref = p.import_meta_ref }, expr.loc);
+                }
             },
-            .e_identifier => |e_| {},
-            .e_private_identifier => |e_| {},
-            .e_jsx_element => |e_| {},
+            .e_spread => |exp| {
+                exp.value = p.visitExpr(exp.value);
+            },
+            .e_identifier => |e_| {
+                const is_delete_target = e_ == p.delete_target.e_identifier;
 
-            .e_template => |e_| {},
+                const name = p.loadNameFromRef(e_.ref);
+                if (p.isStrictMode() and js_lexer.StrictModeReservedWords.has(name)) {
+                    p.markStrictModeFeature(.reserved_word, js_lexer.rangeOfIdentifier(&p.source, expr.loc), name) catch unreachable;
+                }
 
-            .e_binary => |e_| {},
-            .e_index => |e_| {},
-            .e_unary => |e_| {},
-            .e_dot => |e_| {},
+                const result = p.findSymbol(expr.loc, name) catch unreachable;
+
+                e_.must_keep_due_to_with_stmt = result.is_inside_with_scope;
+                e_.ref = result.ref;
+
+                // Handle assigning to a constant
+                if (in.assign_target != .none and p.symbols.items[result.ref.inner_index].kind == .cconst) {
+                    const r = js_lexer.rangeOfIdentifier(&p.source, expr.loc);
+                    p.log.addRangeErrorFmt(p.source, r, p.allocator, "Cannot assign to {s} because it is a constant", .{name}) catch unreachable;
+                }
+
+                var original_name: ?string = null;
+
+                // Substitute user-specified defines for unbound symbols
+                if (p.symbols.items[e_.ref.inner_index].kind == .unbound and !result.is_inside_with_scope and e_ != p.delete_target.e_identifier) {
+                    if (p.define.identifiers.get(name)) |def| {
+                        if (!def.isUndefined()) {
+                            const newvalue = p.valueForDefine(expr.loc, in.assign_target, is_delete_target, &def);
+
+                            // Don't substitute an identifier for a non-identifier if this is an
+                            // assignment target, since it'll cause a syntax error
+                            if (@as(Expr.Tag, newvalue.data) == .e_identifier or in.assign_target == .none) {
+                                return newvalue;
+                            }
+
+                            original_name = def.original_name;
+                        }
+
+                        // Copy the side effect flags over in case this expression is unused
+                        if (def.can_be_removed_if_unused) {
+                            e_.can_be_removed_if_unused = true;
+                        }
+                        if (def.call_can_be_unwrapped_if_unused and !p.options.ignore_dce_annotations) {
+                            e_.call_can_be_unwrapped_if_unused = true;
+                        }
+                    }
+                }
+
+                return p.handleIdentifier(expr.loc, e_, original_name, IdentifierOpts{
+                    .assign_target = in.assign_target,
+                    .is_delete_target = is_delete_target,
+                    .was_originally_identifier = true,
+                });
+            },
+            .e_private_identifier => |e_| {
+                p.panic("Unexpected private identifier. This is an internal error - not your fault.", .{});
+            },
+            .e_jsx_element => |e_| {
+                const tag = tagger: {
+                    if (e_.tag) |_tag| {
+                        break :tagger p.visitExpr(_tag);
+                    } else {
+                        break :tagger p.jsxStringsToMemberExpression(expr.loc, p.options.jsx.fragment);
+                    }
+                };
+
+                // Visit properties
+                var i: usize = 0;
+                while (i < e_.properties.len) : (i += 1) {
+                    const property = e_.properties[i];
+                    if (property.kind != .spread) {
+                        e_.properties[i].key = p.visitExpr(e_.properties[i].key.?);
+                    }
+
+                    if (property.value != null) {
+                        e_.properties[i].value = p.visitExpr(e_.properties[i].value.?);
+                    }
+
+                    if (property.initializer != null) {
+                        e_.properties[i].initializer = p.visitExpr(e_.properties[i].initializer.?);
+                    }
+                }
+
+                // Arguments to createElement()
+                const args = p.allocator.alloc(Expr, 1 + e_.children.len) catch unreachable;
+                i = 1;
+                if (e_.properties.len > 0) {
+                    args[0] = p.e(E.Object{ .properties = e_.properties }, expr.loc);
+                } else {
+                    args[0] = p.e(E.Null{}, expr.loc);
+                }
+
+                for (e_.children) |child| {
+                    args[i] = p.visitExpr(child);
+                    i += 1;
+                }
+
+                // Call createElement()
+                return p.e(E.Call{
+                    .target = p.jsxStringsToMemberExpression(expr.loc, p.options.jsx.factory),
+                    .args = args,
+                    // Enable tree shaking
+                    .can_be_unwrapped_if_unused = !p.options.ignore_dce_annotations,
+                }, expr.loc);
+            },
+
+            .e_template => |e_| {
+                if (e_.tag) |tag| {
+                    e_.tag = p.visitExpr(tag);
+                }
+
+                var i: usize = 0;
+                while (i < e_.parts.len) : (i += 1) {
+                    e_.parts[i].value = p.visitExpr(e_.parts[i].value);
+                }
+            },
+
+            .e_binary => |e_| {
+                switch (e_.left.data) {
+                    // Special-case private identifiers
+                    .e_private_identifier => |private| {
+                        if (e_.op == .bin_in) {
+                            const name = p.loadNameFromRef(private.ref);
+                            const result = p.findSymbol(e_.left.loc, name) catch unreachable;
+                            private.ref = result.ref;
+
+                            // Unlike regular identifiers, there are no unbound private identifiers
+                            const symbol: Symbol = p.symbols.items[result.ref.inner_index];
+                            if (!Symbol.isKindPrivate(symbol.kind)) {
+                                const r = logger.Range{ .loc = e_.left.loc, .len = @intCast(i32, name.len) };
+                                p.log.addRangeErrorFmt(p.source, r, p.allocator, "Private name \"{s}\" must be declared in an enclosing class", .{name}) catch unreachable;
+                            }
+
+                            e_.right = p.visitExpr(e_.right);
+                            // privateSymbolNeedsToBeLowered
+                            return expr;
+                        }
+                    },
+                    else => {},
+                }
+
+                const is_call_target = e_ == p.call_target.e_binary;
+                const is_stmt_expr = e_ == p.stmt_expr_value.e_binary;
+                const was_anonymous_named_expr = p.isAnonymousNamedExpr(e_.right);
+
+                e_.left = p.visitExprInOut(e_.left, ExprIn{
+                    .assign_target = e_.op.binaryAssignTarget(),
+                });
+
+                // Mark the control flow as dead if the branch is never taken
+                switch (e_.op) {
+                    .bin_logical_or => {
+                        const side_effects = SideEffects.toBoolean(e_.left.data);
+                        if (side_effects.ok and side_effects.value) {
+                            // "true || dead"
+                            const old = p.is_control_flow_dead;
+                            p.is_control_flow_dead = true;
+                            e_.right = p.visitExpr(e_.right);
+                            p.is_control_flow_dead = old;
+                        } else {
+                            e_.right = p.visitExpr(e_.right);
+                        }
+                    },
+                    .bin_logical_and => {
+                        const side_effects = SideEffects.toBoolean(e_.left.data);
+                        if (side_effects.ok and side_effects.value) {
+                            // "false && dead"
+                            const old = p.is_control_flow_dead;
+                            p.is_control_flow_dead = true;
+                            e_.right = p.visitExpr(e_.right);
+                            p.is_control_flow_dead = old;
+                        } else {
+                            e_.right = p.visitExpr(e_.right);
+                        }
+                    },
+                    .bin_nullish_coalescing => {
+                        const side_effects = SideEffects.toNullOrUndefined(e_.left.data);
+                        if (side_effects.ok and side_effects.value) {
+                            // "false && dead"
+                            const old = p.is_control_flow_dead;
+                            p.is_control_flow_dead = true;
+                            e_.right = p.visitExpr(e_.right);
+                            p.is_control_flow_dead = old;
+                        } else {
+                            e_.right = p.visitExpr(e_.right);
+                        }
+                    },
+                    else => {
+                        e_.right = p.visitExpr(e_.right);
+                    },
+                }
+
+                // Always put constants on the right for equality comparisons to help
+                // reduce the number of cases we have to check during pattern matching. We
+                // can only reorder expressions that do not have any side effects.
+                switch (e_.op) {
+                    .bin_loose_eq, .bin_loose_ne, .bin_strict_eq, .bin_strict_ne => {
+                        if (SideEffects.isPrimitiveToReorder(e_.left.data) and !SideEffects.isPrimitiveToReorder(e_.right.data)) {
+                            const _left = e_.left;
+                            const _right = e_.right;
+                            e_.left = _right;
+                            e_.right = _left;
+                        }
+                    },
+                    else => {},
+                }
+
+                switch (e_.op) {
+                    .bin_comma => {
+                        // notimpl();
+                    },
+                    .bin_loose_eq => {
+                        const equality = SideEffects.eql(e_.left.data, e_.right.data);
+                        if (equality.ok) {
+                            return p.e(
+                                E.Boolean{ .value = equality.equal },
+                                expr.loc,
+                            );
+                        }
+
+                        // const after_op_loc = locAfterOp(e_.);
+                        // TODO: warn about equality check
+                        // TODO: warn about typeof string
+
+                    },
+                    .bin_strict_eq => {
+                        const equality = SideEffects.eql(e_.left.data, e_.right.data);
+                        if (equality.ok) {
+                            return p.e(E.Boolean{ .value = equality.ok }, expr.loc);
+                        }
+
+                        // const after_op_loc = locAfterOp(e_.);
+                        // TODO: warn about equality check
+                        // TODO: warn about typeof string
+                    },
+                    .bin_loose_ne => {
+                        const equality = SideEffects.eql(e_.left.data, e_.right.data);
+                        if (equality.ok) {
+                            return p.e(E.Boolean{ .value = !equality.ok }, expr.loc);
+                        }
+                        // const after_op_loc = locAfterOp(e_.);
+                        // TODO: warn about equality check
+                        // TODO: warn about typeof string
+
+                        // "x != void 0" => "x != null"
+                        if (@as(Expr.Tag, e_.right.data) == .e_undefined) {
+                            e_.right = p.e(E.Null{}, e_.right.loc);
+                        }
+                    },
+                    .bin_strict_ne => {
+                        const equality = SideEffects.eql(e_.left.data, e_.right.data);
+                        if (equality.ok) {
+                            return p.e(E.Boolean{ .value = !equality.ok }, expr.loc);
+                        }
+                    },
+                    .bin_nullish_coalescing => {
+                        const nullorUndefined = SideEffects.toNullOrUndefined(e_.left.data);
+                        if (!nullorUndefined.value) {
+                            return e_.left;
+                        } else if (nullorUndefined.side_effects == .no_side_effects) {
+                            // TODO:
+                            // "(null ?? fn)()" => "fn()"
+                            // "(null ?? this.fn)" => "this.fn"
+                            // "(null ?? this.fn)()" => "(0, this.fn)()"
+
+                        }
+                    },
+                    .bin_logical_or => {
+                        const side_effects = SideEffects.toBoolean(e_.left.data);
+                        if (side_effects.ok and side_effects.value) {
+                            return e_.left;
+                        } else if (side_effects.ok) {
+                            // TODO:
+                            // "(0 || fn)()" => "fn()"
+                            // "(0 || this.fn)" => "this.fn"
+                            // "(0 || this.fn)()" => "(0, this.fn)()"
+                        }
+                    },
+                    .bin_logical_and => {
+                        const side_effects = SideEffects.toBoolean(e_.left.data);
+                        if (side_effects.ok) {
+                            return e_.left;
+                        }
+
+                        // TODO:
+                        // "(1 && fn)()" => "fn()"
+                        // "(1 && this.fn)" => "this.fn"
+                        // "(1 && this.fn)()" => "(0, this.fn)()"
+                    },
+                    .bin_add => {
+                        if (p.should_fold_numeric_constants) {
+                            if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                                return p.e(E.Number{ .value = vals[0] + vals[1] }, expr.loc);
+                            }
+                        }
+
+                        // TODO: fold string addition
+                    },
+                    .bin_sub => {
+                        if (p.should_fold_numeric_constants) {
+                            if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                                return p.e(E.Number{ .value = vals[0] - vals[1] }, expr.loc);
+                            }
+                        }
+                    },
+                    .bin_mul => {
+                        if (p.should_fold_numeric_constants) {
+                            if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                                return p.e(E.Number{ .value = vals[0] * vals[1] }, expr.loc);
+                            }
+                        }
+                    },
+                    .bin_div => {
+                        if (p.should_fold_numeric_constants) {
+                            if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                                return p.e(E.Number{ .value = vals[0] / vals[1] }, expr.loc);
+                            }
+                        }
+                    },
+                    .bin_rem => {
+                        if (p.should_fold_numeric_constants) {
+                            if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                                // is this correct?
+                                return p.e(E.Number{ .value = std.math.mod(f64, vals[0], vals[1]) catch 0.0 }, expr.loc);
+                            }
+                        }
+                    },
+                    .bin_pow => {
+                        if (p.should_fold_numeric_constants) {
+                            if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                                return p.e(E.Number{ .value = std.math.pow(f64, vals[0], vals[1]) }, expr.loc);
+                            }
+                        }
+                    },
+                    .bin_shl => {
+                        // TODO:
+                        // if (p.should_fold_numeric_constants) {
+                        //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                        //         return p.e(E.Number{ .value = ((@floatToInt(i32, vals[0]) << @floatToInt(u32, vals[1])) & 31) }, expr.loc);
+                        //     }
+                        // }
+                    },
+                    .bin_shr => {
+                        // TODO:
+                        // if (p.should_fold_numeric_constants) {
+                        //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                        //         return p.e(E.Number{ .value = ((@floatToInt(i32, vals[0]) >> @floatToInt(u32, vals[1])) & 31) }, expr.loc);
+                        //     }
+                        // }
+                    },
+                    .bin_u_shr => {
+                        // TODO:
+                        // if (p.should_fold_numeric_constants) {
+                        //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                        //         return p.e(E.Number{ .value = ((@floatToInt(i32, vals[0]) >> @floatToInt(u32, vals[1])) & 31) }, expr.loc);
+                        //     }
+                        // }
+                    },
+                    .bin_bitwise_and => {
+                        // TODO:
+                        // if (p.should_fold_numeric_constants) {
+                        //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                        //         return p.e(E.Number{ .value = ((@floatToInt(i32, vals[0]) >> @floatToInt(u32, vals[1])) & 31) }, expr.loc);
+                        //     }
+                        // }
+                    },
+                    .bin_bitwise_or => {
+                        // TODO:
+                        // if (p.should_fold_numeric_constants) {
+                        //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                        //         return p.e(E.Number{ .value = ((@floatToInt(i32, vals[0]) >> @floatToInt(u32, vals[1])) & 31) }, expr.loc);
+                        //     }
+                        // }
+                    },
+                    .bin_bitwise_xor => {
+                        // TODO:
+                        // if (p.should_fold_numeric_constants) {
+                        //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                        //         return p.e(E.Number{ .value = ((@floatToInt(i32, vals[0]) >> @floatToInt(u32, vals[1])) & 31) }, expr.loc);
+                        //     }
+                        // }
+                    },
+                    // ---------------------------------------------------------------------------------------------------
+                    // ---------------------------------------------------------------------------------------------------
+                    // ---------------------------------------------------------------------------------------------------
+                    // ---------------------------------------------------------------------------------------------------
+                    .bin_assign => {
+
+                        // Optionally preserve the name
+                        if (@as(Expr.Tag, e_.left.data) == .e_identifier) {
+                            e_.right = p.maybeKeepExprSymbolName(e_.right, p.symbols.items[e_.left.data.e_identifier.ref.inner_index].original_name, was_anonymous_named_expr);
+                        }
+                    },
+                    .bin_add_assign => {
+                        // notimpl();
+                    },
+                    .bin_sub_assign => {
+                        // notimpl();
+                    },
+                    .bin_mul_assign => {
+                        // notimpl();
+                    },
+                    .bin_div_assign => {
+                        // notimpl();
+                    },
+                    .bin_rem_assign => {
+                        // notimpl();
+                    },
+                    .bin_pow_assign => {
+                        // notimpl();
+                    },
+                    .bin_shl_assign => {
+                        // notimpl();
+                    },
+                    .bin_shr_assign => {
+                        // notimpl();
+                    },
+                    .bin_u_shr_assign => {
+                        // notimpl();
+                    },
+                    .bin_bitwise_or_assign => {
+                        // notimpl();
+                    },
+                    .bin_bitwise_and_assign => {
+                        // notimpl();
+                    },
+                    .bin_bitwise_xor_assign => {
+                        // notimpl();
+                    },
+                    .bin_nullish_coalescing_assign => {
+                        // notimpl();
+                    },
+                    .bin_logical_and_assign => {
+                        // notimpl();
+                    },
+                    .bin_logical_or_assign => {
+                        // notimpl();
+                    },
+                    else => {},
+                }
+            },
+            .e_index => |e_| {
+                const is_call_target = e_ == p.call_target.e_index;
+                const is_delete_target = e_ == p.delete_target.e_index;
+
+                const target = p.visitExprInOut(e_.target, ExprIn{
+                    // this is awkward due to a zig compiler bug
+                    .has_chain_parent = (e_.optional_chain orelse js_ast.OptionalChain.start) == js_ast.OptionalChain.ccontinue,
+                });
+                e_.target = target;
+
+                if (e_.optional_chain == null and @as(Expr.Tag, e_.index.data) == .e_string) {
+                    if (p.maybeRewritePropertyAccess(
+                        expr.loc,
+                        in.assign_target,
+                        is_delete_target,
+                        e_.target,
+                        p.lexer.utf16ToString(e_.index.data.e_string.value),
+                        e_.index.loc,
+                        is_call_target,
+                    )) |val| {
+                        return val;
+                    }
+                }
+
+                // Create an error for assigning to an import namespace when bundling. Even
+                // though this is a run-time error, we make it a compile-time error when
+                // bundling because scope hoisting means these will no longer be run-time
+                // errors.
+                if ((in.assign_target != .none or is_delete_target) and @as(Expr.Tag, e_.target.data) == .e_identifier) {
+                    const r = js_lexer.rangeOfIdentifier(&p.source, e_.target.loc);
+                    p.log.addRangeErrorFmt(
+                        p.source,
+                        r,
+                        p.allocator,
+                        "Cannot assign to property on import \"{s}\"",
+                        .{p.symbols.items[e_.target.data.e_identifier.ref.inner_index].original_name},
+                    ) catch unreachable;
+                }
+
+                return p.e(e_, expr.loc);
+            },
+            .e_unary => |e_| {
+                switch (e_.op) {
+                    .un_typeof => {
+                        e_.value = p.visitExprInOut(e_.value, ExprIn{ .assign_target = e_.op.unaryAssignTarget() });
+
+                        if (SideEffects.toTypeof(e_.value.data)) |typeof| {
+                            return p.e(E.String{ .value = p.lexer.stringToUTF16(typeof) }, expr.loc);
+                        }
+                    },
+                    .un_delete => {
+                        e_.value = p.visitExprInOut(e_.value, ExprIn{ .has_chain_parent = true });
+                    },
+                    else => {
+                        e_.value = p.visitExprInOut(e_.value, ExprIn{ .assign_target = e_.op.unaryAssignTarget() });
+
+                        // Post-process the unary expression
+
+                        switch (e_.op) {
+                            .un_not => {
+                                const side_effects = SideEffects.toBoolean(e_.value.data);
+                                if (side_effects.ok) {
+                                    return p.e(E.Boolean{ .value = !side_effects.value }, expr.loc);
+                                }
+
+                                // maybe won't do this idk
+                                if (Expr.maybeSimplifyNot(&e_.value, p.allocator)) |exp| {
+                                    return exp;
+                                }
+                            },
+                            .un_void => {
+                                if (p.exprCanBeRemovedIfUnused(e_.value)) {
+                                    return p.e(E.Undefined{}, e_.value.loc);
+                                }
+                            },
+                            .un_pos => {
+                                if (SideEffects.toNumber(e_.value.data)) |num| {
+                                    return p.e(E.Number{ .value = num }, expr.loc);
+                                }
+                            },
+                            .un_neg => {
+                                if (SideEffects.toNumber(e_.value.data)) |num| {
+                                    return p.e(E.Number{ .value = -num }, expr.loc);
+                                }
+                            },
+
+                            ////////////////////////////////////////////////////////////////////////////////
+
+                            .un_pre_dec => {
+                                // TODO: private fields
+                            },
+                            .un_pre_inc => {
+                                // TODO: private fields
+                            },
+                            .un_post_dec => {
+                                // TODO: private fields
+                            },
+                            .un_post_inc => {
+                                // TODO: private fields
+                            },
+                            else => {},
+                        }
+                    },
+                }
+            },
+            .e_dot => |e_| {
+                const is_delete_target = e_ == p.delete_target.e_dot;
+                const is_call_target = e_ == p.call_target.e_dot;
+
+                if (p.define.dots.get(e_.name)) |parts| {
+                    for (parts) |define| {
+                        if (p.isDotDefineMatch(expr, define.parts)) {
+                            // Substitute user-specified defines
+                            if (!define.data.isUndefined()) {
+                                // TODO: check this doesn't crash due to the pointer no longer being allocated
+                                return p.valueForDefine(expr.loc, in.assign_target, is_delete_target, &define.data);
+                            }
+
+                            // Copy the side effect flags over in case this expression is unused
+                            if (define.data.can_be_removed_if_unused) {
+                                e_.can_be_removed_if_unused = true;
+                            }
+
+                            if (define.data.call_can_be_unwrapped_if_unused and !p.options.ignore_dce_annotations) {
+                                e_.call_can_be_unwrapped_if_unused = true;
+                            }
+
+                            break;
+                        }
+                    }
+                }
+            },
             .e_if => |e_| {},
-            .e_await => |e_| {},
-            .e_yield => |e_| {},
-            .e_array => |e_| {},
-            .e_object => |e_| {},
-            .e_import => |e_| {},
-            .e_call => |e_| {},
-            .e_new => |e_| {},
-            .e_arrow => |e_| {},
-            .e_function => |e_| {},
-            .e_class => |e_| {},
+            .e_await => |e_| {
+                notimpl();
+            },
+            .e_yield => |e_| {
+                notimpl();
+            },
+            .e_array => |e_| {
+                notimpl();
+            },
+            .e_object => |e_| {
+                notimpl();
+            },
+            .e_import => |e_| {
+                notimpl();
+            },
+            .e_call => |e_| {
+                notimpl();
+            },
+            .e_new => |e_| {
+                notimpl();
+            },
+            .e_arrow => |e_| {
+                notimpl();
+            },
+            .e_function => |e_| {
+                notimpl();
+            },
+            .e_class => |e_| {
+                notimpl();
+            },
             else => {},
         }
         return expr;
+    }
+
+    pub fn classCanBeRemovedIfUnused(p: *P, class: *G.Class) bool {
+        if (class.extends) |extends| {
+            if (!p.exprCanBeRemovedIfUnused(extends)) {
+                return false;
+            }
+        }
+
+        for (class.properties) |property| {
+            if (!p.exprCanBeRemovedIfUnused(property.key orelse unreachable)) {
+                return false;
+            }
+
+            if (property.value) |val| {
+                if (!p.exprCanBeRemovedIfUnused(val)) {
+                    return false;
+                }
+            }
+
+            if (property.initializer) |val| {
+                if (!p.exprCanBeRemovedIfUnused(val)) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    // TODO:
+    // When React Fast Refresh is enabled, anything that's a JSX component should not be removable
+    // This is to improve the reliability of fast refresh between page loads.
+    pub fn exprCanBeRemovedIfUnused(p: *P, expr: Expr) bool {
+        switch (expr.data) {
+            .e_null,
+            .e_undefined,
+            .e_missing,
+            .e_boolean,
+            .e_number,
+            .e_big_int,
+            .e_string,
+            .e_this,
+            .e_reg_exp,
+            .e_function,
+            .e_arrow,
+            .e_import_meta,
+            => {
+                return true;
+            },
+
+            .e_dot => |ex| {
+                return ex.can_be_removed_if_unused;
+            },
+            .e_class => |ex| {
+                return p.classCanBeRemovedIfUnused(ex);
+            },
+            .e_identifier => |ex| {
+                if (ex.must_keep_due_to_with_stmt) {
+                    return false;
+                }
+
+                // Unbound identifiers cannot be removed because they can have side effects.
+                // One possible side effect is throwing a ReferenceError if they don't exist.
+                // Another one is a getter with side effects on the global object:
+                //
+                //   Object.defineProperty(globalThis, 'x', {
+                //     get() {
+                //       sideEffect();
+                //     },
+                //   });
+                //
+                // Be very careful about this possibility. It's tempting to treat all
+                // identifier expressions as not having side effects but that's wrong. We
+                // must make sure they have been declared by the code we are currently
+                // compiling before we can tell that they have no side effects.
+                //
+                // Note that we currently ignore ReferenceErrors due to TDZ access. This is
+                // incorrect but proper TDZ analysis is very complicated and would have to
+                // be very conservative, which would inhibit a lot of optimizations of code
+                // inside closures. This may need to be revisited if it proves problematic.
+                if (ex.can_be_removed_if_unused or p.symbols.items[ex.ref.inner_index].kind != .unbound) {
+                    return true;
+                }
+            },
+            .e_import_identifier => |ex| {
+                // References to an ES6 import item are always side-effect free in an
+                // ECMAScript environment.
+                //
+                // They could technically have side effects if the imported module is a
+                // CommonJS module and the import item was translated to a property access
+                // (which esbuild's bundler does) and the property has a getter with side
+                // effects.
+                //
+                // But this is very unlikely and respecting this edge case would mean
+                // disabling tree shaking of all code that references an export from a
+                // CommonJS module. It would also likely violate the expectations of some
+                // developers because the code *looks* like it should be able to be tree
+                // shaken.
+                //
+                // So we deliberately ignore this edge case and always treat import item
+                // references as being side-effect free.
+                return true;
+            },
+            .e_if => |ex| {
+                return p.exprCanBeRemovedIfUnused(ex.test_) and p.exprCanBeRemovedIfUnused(ex.yes) and p.exprCanBeRemovedIfUnused(ex.no);
+            },
+            .e_array => |ex| {
+                for (ex.items) |item| {
+                    if (!p.exprCanBeRemovedIfUnused(item)) {
+                        return false;
+                    }
+                }
+
+                return true;
+            },
+            .e_object => |ex| {
+                for (ex.properties) |property| {
+
+                    // The key must still be evaluated if it's computed or a spread
+                    if (property.kind == .spread or property.flags.is_computed) {
+                        return false;
+                    }
+
+                    if (property.value) |val| {
+                        if (!p.exprCanBeRemovedIfUnused(val)) {
+                            return false;
+                        }
+                    }
+                }
+                return true;
+            },
+            .e_call => |ex| {
+                // A call that has been marked "__PURE__" can be removed if all arguments
+                // can be removed. The annotation causes us to ignore the target.
+                if (ex.can_be_unwrapped_if_unused) {
+                    for (ex.args) |arg| {
+                        if (!p.exprCanBeRemovedIfUnused(arg)) {
+                            return false;
+                        }
+                    }
+                }
+
+                return true;
+            },
+            .e_new => |ex| {
+                // A call that has been marked "__PURE__" can be removed if all arguments
+                // can be removed. The annotation causes us to ignore the target.
+                if (ex.can_be_unwrapped_if_unused) {
+                    for (ex.args) |arg| {
+                        if (!p.exprCanBeRemovedIfUnused(arg)) {
+                            return false;
+                        }
+                    }
+                }
+
+                return true;
+            },
+            .e_unary => |ex| {
+                switch (ex.op) {
+                    .un_typeof, .un_void, .un_not => {
+                        return p.exprCanBeRemovedIfUnused(ex.value);
+                    },
+                    else => {},
+                }
+            },
+            .e_binary => |ex| {
+                switch (ex.op) {
+                    .bin_strict_eq, .bin_strict_ne, .bin_comma, .bin_logical_or, .bin_logical_and, .bin_nullish_coalescing => {
+                        return p.exprCanBeRemovedIfUnused(ex.left) and p.exprCanBeRemovedIfUnused(ex.right);
+                    },
+                    else => {},
+                }
+            },
+            else => {},
+        }
+
+        return false;
+    }
+
+    // EDot nodes represent a property access. This function may return an
+    // expression to replace the property access with. It assumes that the
+    // target of the EDot expression has already been visited.
+    pub fn maybeRewritePropertyAccess(
+        p: *P,
+        loc: logger.Loc,
+        assign_target: js_ast.AssignTarget,
+        is_delete_target: bool,
+        target: js_ast.Expr,
+        name: string,
+        name_loc: logger.Loc,
+        is_call_target: bool,
+    ) ?Expr {
+        if (@as(Expr.Tag, target.data) == .e_identifier) {
+            const id = target.data.e_identifier;
+
+            // Rewrite property accesses on explicit namespace imports as an identifier.
+            // This lets us replace them easily in the printer to rebind them to
+            // something else without paying the cost of a whole-tree traversal during
+            // module linking just to rewrite these EDot expressions.
+            if (p.import_items_for_namespace.get(id.ref)) |*import_items| {
+                var item: LocRef = undefined;
+
+                if (!import_items.contains(name)) {
+                    item = LocRef{ .loc = name_loc, .ref = p.newSymbol(.import, name) catch unreachable };
+                    p.module_scope.generated.append(item.ref orelse unreachable) catch unreachable;
+
+                    import_items.put(name, item) catch unreachable;
+                    p.is_import_item.put(item.ref orelse unreachable, true) catch unreachable;
+
+                    var symbol = p.symbols.items[item.ref.?.inner_index];
+                    // Mark this as generated in case it's missing. We don't want to
+                    // generate errors for missing import items that are automatically
+                    // generated.
+                    symbol.import_item_status = .generated;
+                } else {
+                    item = import_items.get(name) orelse unreachable;
+                }
+
+                // Undo the usage count for the namespace itself. This is used later
+                // to detect whether the namespace symbol has ever been "captured"
+                // or whether it has just been used to read properties off of.
+                //
+                // The benefit of doing this is that if both this module and the
+                // imported module end up in the same module group and the namespace
+                // symbol has never been captured, then we don't need to generate
+                // any code for the namespace at all.
+                p.ignoreUsage(id.ref);
+
+                // Track how many times we've referenced this symbol
+                p.recordUsage(&item.ref.?);
+                var ident = p.allocator.create(E.Identifier) catch unreachable;
+                ident.ref = item.ref.?;
+
+                return p.handleIdentifier(name_loc, ident, name, IdentifierOpts{
+                    .assign_target = assign_target,
+                    .is_delete_target = is_delete_target,
+                    // If this expression is used as the target of a call expression, make
+                    // sure the value of "this" is preserved.
+                    .was_originally_identifier = false,
+                });
+            }
+
+            if (is_call_target and id.ref.eql(p.module_ref) and strings.eql(name, "require")) {
+                p.ignoreUsage(p.module_ref);
+                p.recordUsage(&p.require_ref);
+                return p.e(E.Identifier{ .ref = p.require_ref }, name_loc);
+            }
+
+            // If this is a known enum value, inline the value of the enum
+            if (p.options.ts) {
+                if (p.known_enum_values.get(id.ref)) |enum_value_map| {
+                    if (enum_value_map.get(name)) |enum_value| {
+                        return p.e(E.Number{ .value = enum_value }, loc);
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
+    pub fn ignoreUsage(p: *P, ref: Ref) void {
+        if (!p.is_control_flow_dead) {
+            p.symbols.items[ref.inner_index].use_count_estimate = std.math.max(p.symbols.items[ref.inner_index].use_count_estimate - 1, 0);
+            var use = p.symbol_uses.get(ref) orelse p.panic("Expected symbol_uses to exist {s}\n{s}", .{ ref, p.symbol_uses });
+            use.count_estimate = std.math.max(use.count_estimate - 1, 0);
+            if (use.count_estimate == 0) {
+                _ = p.symbol_uses.remove(ref);
+            } else {
+                p.symbol_uses.putAssumeCapacity(ref, use);
+            }
+        }
+
+        // Don't roll back the "tsUseCounts" increment. This must be counted even if
+        // the value is ignored because that's what the TypeScript compiler does.
     }
 
     pub fn visitAndAppendStmt(p: *P, stmts: *List(Stmt), stmt: *Stmt) !void {
@@ -6926,7 +8239,80 @@ pub const P = struct {
     }
 
     pub fn isAnonymousNamedExpr(p: *P, expr: ExprNodeIndex) bool {
-        notimpl();
+        switch (expr.data) {
+            .e_arrow => {
+                return true;
+            },
+            .e_function => |func| {
+                return func.func.name == null;
+            },
+            .e_class => |class| {
+                return class.class_name == null;
+            },
+            else => {
+                return false;
+            },
+        }
+    }
+
+    pub fn valueForDefine(p: *P, loc: logger.Loc, assign_target: js_ast.AssignTarget, is_delete_target: bool, define_data: *const DefineData) Expr {
+        switch (define_data.value) {
+            .e_identifier => |ident| {
+                return p.handleIdentifier(
+                    loc,
+                    ident,
+                    define_data.original_name.?,
+                    IdentifierOpts{
+                        .assign_target = assign_target,
+                        .is_delete_target = is_delete_target,
+                        .was_originally_identifier = true,
+                    },
+                );
+            },
+            else => {},
+        }
+
+        return Expr{
+            .data = define_data.value,
+            .loc = loc,
+        };
+    }
+
+    pub fn isDotDefineMatch(p: *P, expr: Expr, parts: []const string) bool {
+        switch (expr.data) {
+            .e_dot => |ex| {
+                if (parts.len > 1) {
+                    // Intermediates must be dot expressions
+                    const last = parts.len - 1;
+                    return strings.eql(parts[last], ex.name) and ex.optional_chain == null and p.isDotDefineMatch(ex.target, parts[0..last]);
+                }
+            },
+            .e_import_meta => |ex| {
+                return parts.len == 2 and strings.eql(parts[0], "import") and strings.eql(parts[1], "meta");
+            },
+            .e_identifier => |ex| {
+                // The last expression must be an identifier
+                if (parts.len == 1) {
+                    const name = p.loadNameFromRef(ex.ref);
+                    if (!strings.eql(name, parts[0])) {
+                        return false;
+                    }
+
+                    const result = p.findSymbol(expr.loc, name) catch return false;
+
+                    // We must not be in a "with" statement scope
+                    if (result.is_inside_with_scope) {
+                        return false;
+                    }
+
+                    // The last symbol must be unbound
+                    return p.symbols.items[result.ref.inner_index].kind == .unbound;
+                }
+            },
+            else => {},
+        }
+
+        return false;
     }
 
     pub fn visitBinding(p: *P, binding: BindingNodeIndex, duplicate_arg_check: ?*StringBoolMap) void {
@@ -7318,9 +8704,10 @@ pub const P = struct {
         return p.e(E.Missing{}, loc);
     }
 
-    pub fn init(allocator: *std.mem.Allocator, log: *logger.Log, source: logger.Source, lexer: js_lexer.Lexer, opts: Parser.Options) !*P {
+    pub fn init(allocator: *std.mem.Allocator, log: *logger.Log, source: logger.Source, define: *Define, lexer: js_lexer.Lexer, opts: Parser.Options) !*P {
         var parser = try allocator.create(P);
         parser.allocated_names = @TypeOf(parser.allocated_names).init(allocator);
+        parser.define = define;
         parser.scopes_for_current_part = @TypeOf(parser.scopes_for_current_part).init(allocator);
         parser.symbols = @TypeOf(parser.symbols).init(allocator);
         parser.ts_use_counts = @TypeOf(parser.ts_use_counts).init(allocator);
@@ -7393,9 +8780,9 @@ fn expectPrintedJS(contents: string, expected: string) !void {
     var source = logger.Source.initFile(opts.entry_point, alloc.dynamic);
     var ast: js_ast.Ast = undefined;
 
+    var define = try Define.init(alloc.dynamic, null);
     debugl("INIT PARSER");
-
-    var parser = try Parser.init(opts, &log, &source, alloc.dynamic);
+    var parser = try Parser.init(opts, &log, &source, define, alloc.dynamic);
     debugl("RUN PARSER");
 
     var res = try parser.parse();

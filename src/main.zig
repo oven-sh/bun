@@ -10,9 +10,24 @@ const js_ast = @import("js_ast.zig");
 const linker = @import("linker.zig");
 usingnamespace @import("ast/base.zig");
 usingnamespace @import("defines.zig");
+const panicky = @import("panic_handler.zig");
+
+const MainPanicHandler = panicky.NewPanicHandler(panicky.default_panic);
+
+pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace) noreturn {
+    if (MainPanicHandler.Singleton) |singleton| {
+        MainPanicHandler.handle_panic(msg, error_return_trace);
+    } else {
+        panicky.default_panic(msg, error_return_trace);
+    }
+}
 
 pub fn main() anyerror!void {
     try alloc.setup(std.heap.page_allocator);
+    var log = logger.Log.init(alloc.dynamic);
+    var panicker = MainPanicHandler.init(&log);
+    panicker.skip_next_panic = true;
+    MainPanicHandler.Singleton = &panicker;
 
     const args = try std.process.argsAlloc(alloc.dynamic);
     const stdout = std.io.getStdOut();
@@ -30,7 +45,7 @@ pub fn main() anyerror!void {
     const code = try file.readToEndAlloc(alloc.dynamic, stat.size);
 
     const opts = try options.TransformOptions.initUncached(alloc.dynamic, entryPointName, code);
-    var log = logger.Log.init(alloc.dynamic);
+
     var source = logger.Source.initFile(opts.entry_point, alloc.dynamic);
     var ast: js_ast.Ast = undefined;
     var raw_defines = RawDefines.init(alloc.static);
@@ -79,13 +94,10 @@ pub fn main() anyerror!void {
     );
 
     if (std.builtin.mode == std.builtin.Mode.Debug) {
-        std.debug.print("\n--AST DEBUG--:\n", .{});
-        std.debug.print("Lines: {d}\n", .{ast.approximate_line_count});
-        std.debug.print("Parts: {d}\n{s}\n", .{ ast.parts.len, ast.parts });
-        std.debug.print("Symbols: {d}\n{s}\n", .{ ast.symbols.len, ast.symbols });
-        std.debug.print("Imports: {d}\n{s}\n", .{ ast.named_exports.count(), ast.named_imports });
-        std.debug.print("Exports: {d}\n{s}\n", .{ ast.named_imports.count(), ast.named_exports });
-        std.debug.print("\n--AST DEBUG--:\n", .{});
+        var fixed_buffer = [_]u8{0} ** 512000;
+        var buf_stream = std.io.fixedBufferStream(&fixed_buffer);
+
+        try ast.toJSON(alloc.dynamic, stderr.writer());
     }
 
     _ = try stdout.write(printed.js);

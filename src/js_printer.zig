@@ -1941,6 +1941,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     }
                     const name = s.func.name orelse std.debug.panic("Internal error: expected func to have a name ref\n{s}", .{s});
                     const nameRef = name.ref orelse std.debug.panic("Internal error: expected func to have a name\n{s}", .{s});
+                    p.printSpace();
                     p.printSymbol(nameRef);
                     p.printFunc(s.func);
                     p.printNewline();
@@ -1951,7 +1952,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     if (s.is_export) {
                         p.print("export ");
                     }
-                    p.print("class");
+                    p.print("class ");
                     p.printSymbol(s.class.class_name.?.ref.?);
                     p.printClass(s.class);
                     p.printNewline();

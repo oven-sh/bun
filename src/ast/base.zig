@@ -44,6 +44,10 @@ pub const Ref = packed struct {
     pub fn eql(ref: Ref, b: Ref) bool {
         return ref.inner_index == b.inner_index and ref.source_index == b.source_index;
     }
+
+    pub fn jsonStringify(self: *const Ref, options: anytype, writer: anytype) !void {
+        return try std.json.stringify([2]u32{ self.source_index, self.inner_index }, options, writer);
+    }
 };
 
 // This is kind of the wrong place, but it's shared between files

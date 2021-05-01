@@ -93,6 +93,17 @@ pub const Binding = struct {
     loc: logger.Loc,
     data: B,
 
+    const Serializable = struct {
+        @"type": Tag,
+        object: string,
+        value: B,
+        loc: logger.Loc,
+    };
+
+    pub fn jsonStringify(self: *const @This(), options: anytype, writer: anytype) !void {
+        return try std.json.stringify(Serializable{ .@"type" = std.meta.activeTag(self.data), .object = "binding", .value = self.data, .loc = self.loc }, options, writer);
+    }
+
     pub fn ToExpr(comptime expr_type: type, comptime func_type: anytype) type {
         const ExprType = expr_type;
         return struct {
@@ -801,12 +812,25 @@ pub const E = struct {
         children: ExprNodeList,
     };
 
-    pub const Missing = struct {};
+    pub const Missing = struct {
+        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
+            return try std.json.stringify(null, opts, o);
+        }
+    };
 
-    pub const Number = struct { value: f64 };
+    pub const Number = struct {
+        value: f64,
+        pub fn jsonStringify(self: *const Number, opts: anytype, o: anytype) !void {
+            return try std.json.stringify(self.value, opts, o);
+        }
+    };
 
     pub const BigInt = struct {
         value: string,
+
+        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
+            return try std.json.stringify(self.value, opts, o);
+        }
     };
 
     pub const Object = struct {
@@ -825,6 +849,20 @@ pub const E = struct {
 
         pub fn string(s: *String, allocator: *std.mem.Allocator) !string {
             return try std.unicode.utf16leToUtf8Alloc(allocator, s.value);
+        }
+
+        pub fn jsonStringify(s: *const String, options: anytype, writer: anytype) !void {
+            var buf = [_]u8{0} ** 4096;
+            var i: usize = 0;
+            for (s.value) |char| {
+                buf[i] = @intCast(u8, char);
+                i += 1;
+                if (i >= 4096) {
+                    break;
+                }
+            }
+
+            return try std.json.stringify(buf[0..i], options, writer);
         }
     };
 
@@ -846,11 +884,17 @@ pub const E = struct {
 
     pub const RegExp = struct {
         value: string,
+
+        pub fn jsonStringify(self: *const RegExp, opts: anytype, o: anytype) !void {
+            return try std.json.stringify(self.value, opts, o);
+        }
     };
 
     pub const Class = G.Class;
 
-    pub const Await = struct { value: ExprNodeIndex };
+    pub const Await = struct {
+        value: ExprNodeIndex,
+    };
 
     pub const Yield = struct {
         value: ?ExprNodeIndex = null,
@@ -890,6 +934,17 @@ pub const E = struct {
 pub const Stmt = struct {
     loc: logger.Loc,
     data: Data,
+
+    const Serializable = struct {
+        @"type": Tag,
+        object: string,
+        value: Data,
+        loc: logger.Loc,
+    };
+
+    pub fn jsonStringify(self: *const Stmt, options: anytype, writer: anytype) !void {
+        return try std.json.stringify(Serializable{ .@"type" = std.meta.activeTag(self.data), .object = "stmt", .value = self.data, .loc = self.loc }, options, writer);
+    }
 
     pub fn isTypeScript(self: *Stmt) bool {
         return @as(Stmt.Tag, self.data) == .s_type_script;
@@ -1222,6 +1277,54 @@ pub const Expr = struct {
     data: Data,
 
     pub const EFlags = enum { none, ts_decorator };
+
+    const Serializable = struct {
+        @"type": Tag,
+        object: string,
+        value: Data,
+        loc: logger.Loc,
+    };
+
+    pub fn isMissing(a: *const Expr) bool {
+        return std.meta.activeTag(a.data) == Expr.Tag.e_missing;
+    }
+
+    pub fn joinWithComma(a: Expr, b: Expr, allocator: *std.mem.Allocator) Expr {
+        if (a.isMissing()) {
+            return b;
+        }
+
+        if (b.isMissing()) {
+            return a;
+        }
+
+        return Expr.alloc(allocator, E.Binary{ .op = .bin_comma, .left = a, .right = b }, a.loc);
+    }
+
+    pub fn joinAllWithComma(all: []Expr, allocator: *std.mem.Allocator) Expr {
+        std.debug.assert(all.len > 0);
+        switch (all.len) {
+            1 => {
+                return all[0];
+            },
+            2 => {
+                return Expr.joinWithComma(all[0], all[1], allocator);
+            },
+            else => {
+                var expr = Expr.joinWithComma(all[0], all[1], allocator);
+                var _all = all[2 .. all.len - 1];
+                for (_all) |right| {
+                    expr = Expr.joinWithComma(expr, right, allocator);
+                }
+
+                return expr;
+            },
+        }
+    }
+
+    pub fn jsonStringify(self: *const @This(), options: anytype, writer: anytype) !void {
+        return try std.json.stringify(Serializable{ .@"type" = std.meta.activeTag(self.data), .object = "expr", .value = self.data, .loc = self.loc }, options, writer);
+    }
 
     pub fn extractNumericValues(left: Expr.Data, right: Expr.Data) ?[2]f64 {
         if (!(@as(Expr.Tag, left) == .e_number and @as(Expr.Tag, right) == .e_number)) {
@@ -2598,6 +2701,10 @@ pub const Op = struct {
         };
     }
 
+    pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
+        return try std.json.stringify(self.text, opts, o);
+    }
+
     pub const TableType: std.EnumArray(Op.Code, Op);
     pub const Table = comptime {
         var table = std.EnumArray(Op.Code, Op).initUndefined();
@@ -2721,6 +2828,13 @@ pub const Ast = struct {
         return Ast{
             .parts = parts,
         };
+    }
+
+    pub fn toJSON(self: *Ast, allocator: *std.mem.Allocator, stream: anytype) !void {
+        const opts = std.json.StringifyOptions{ .whitespace = std.json.StringifyOptions.Whitespace{
+            .separator = true,
+        } };
+        try std.json.stringify(self.parts, opts, stream);
     }
 };
 
@@ -2885,6 +2999,9 @@ pub const Part = struct {
     // algorithm.
     is_live: bool = false,
     pub const SymbolUseMap = std.AutoHashMap(Ref, Symbol.Use);
+    pub fn jsonStringify(self: *const Part, options: std.json.StringifyOptions, writer: anytype) !void {
+        return std.json.stringify(self.stmts, options, writer);
+    }
 };
 
 pub const Result = struct {

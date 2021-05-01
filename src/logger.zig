@@ -43,6 +43,10 @@ pub const Loc = packed struct {
     pub fn eql(loc: *Loc, other: Loc) bool {
         return loc.start == other.start;
     }
+
+    pub fn jsonStringify(self: *const Loc, options: anytype, writer: anytype) !void {
+        return try std.json.stringify(self.start, options, writer);
+    }
 };
 
 pub const Location = struct {
@@ -141,6 +145,10 @@ pub const Range = packed struct {
     }
     pub fn endI(self: *const Range) usize {
         return std.math.lossyCast(usize, self.loc.start + self.len);
+    }
+
+    pub fn jsonStringify(self: *const Range, options: anytype, writer: anytype) !void {
+        return try std.json.stringify([2]i32{ self.loc.start, self.len + self.loc.start }, options, writer);
     }
 };
 

@@ -146,9 +146,9 @@ pub const ImportScanner = struct {
                     //     user is expecting the output to be as small as possible. So we
                     //     should omit unused imports.
                     //
-                    const keep_unused_imports = !p.options.trim_unused_imports;
+                    // const keep_unused_imports = !p.options.trim_unused_imports;
                     var did_remove_star_loc = false;
-                    // const keep_unused_imports = true;
+                    const keep_unused_imports = true;
 
                     // TypeScript always trims unused imports. This is important for
                     // correctness since some imports might be fake (only in the type
@@ -2319,6 +2319,8 @@ pub const P = struct {
         // }
     }
 
+    // This assumes the "function" token has already been parsed
+
     pub fn parseFnStmt(p: *P, loc: logger.Loc, opts: *ParseStatementOptions, asyncRange: ?logger.Range) !Stmt {
         const isGenerator = p.lexer.token == T.t_asterisk;
         const isAsync = asyncRange != null;
@@ -2352,9 +2354,11 @@ pub const P = struct {
             var nameLoc = p.lexer.loc();
             nameText = p.lexer.identifier;
             p.lexer.expect(T.t_identifier);
+            // Difference
+            const ref = try p.newSymbol(Symbol.Kind.other, nameText);
             name = js_ast.LocRef{
                 .loc = nameLoc,
-                .ref = null,
+                .ref = ref,
             };
         }
 
@@ -2397,10 +2401,7 @@ pub const P = struct {
             return p.s(S.TypeScript{}, loc);
         }
 
-        // Balance the fake block scope introduced above
-        if (hasIfScope) {
-            p.popScope();
-        }
+        p.popScope();
 
         // Only declare the function after we know if it had a body or not. Otherwise
         // TypeScript code such as this will double-declare the symbol:
@@ -2417,6 +2418,11 @@ pub const P = struct {
         func.flags.has_if_scope = hasIfScope;
 
         func.flags.is_export = opts.is_export;
+
+        // Balance the fake block scope introduced above
+        if (hasIfScope) {
+            p.popScope();
+        }
 
         return p.s(S.Function{
             .func = func,
@@ -2617,7 +2623,26 @@ pub const P = struct {
 
     // TODO:
     pub fn parseTypeScriptDecorators(p: *P) []ExprNodeIndex {
-        notimpl();
+        if (!p.options.ts) {
+            return &([_]ExprNodeIndex{});
+        }
+
+        var decorators = List(ExprNodeIndex).init(p.allocator);
+        while (p.lexer.token == T.t_at) {
+            p.lexer.next();
+
+            // Parse a new/call expression with "exprFlagTSDecorator" so we ignore
+            // EIndex expressions, since they may be part of a computed property:
+            //
+            //   class Foo {
+            //     @foo ['computed']() {}
+            //   }
+            //
+            // This matches the behavior of the TypeScript compiler.
+            decorators.append(p.parseExprWithFlags(.new, Expr.EFlags.ts_decorator)) catch unreachable;
+        }
+
+        return decorators.toOwnedSlice();
     }
 
     // TODO:
@@ -3457,6 +3482,7 @@ pub const P = struct {
                     update = p.parseExpr(.lowest);
                 }
 
+                p.lexer.expect(.t_close_paren);
                 var stmtOpts = ParseStatementOptions{};
                 const body = p.parseStmt(&stmtOpts) catch unreachable;
                 return p.s(
@@ -3516,13 +3542,18 @@ pub const P = struct {
                         p.lexer.expectContextualKeyword("from");
                     },
                     .t_open_brace => {
-                        // "import * as ns from 'path'"
+                        // "import {item1, item2} from 'path'"
                         if (!opts.is_module_scope and (!opts.is_namespace_scope or !opts.is_typescript_declare)) {
                             p.lexer.unexpected();
                             fail();
                         }
                         var importClause = try p.parseImportClause();
-                        stmt = S.Import{ .namespace_ref = undefined, .import_record_index = std.math.maxInt(u32), .items = importClause.items, .is_single_line = importClause.is_single_line };
+                        stmt = S.Import{
+                            .namespace_ref = undefined,
+                            .import_record_index = std.math.maxInt(u32),
+                            .items = importClause.items,
+                            .is_single_line = importClause.is_single_line,
+                        };
                         p.lexer.expectContextualKeyword("from");
                     },
                     .t_identifier => {
@@ -3733,7 +3764,9 @@ pub const P = struct {
                             p.lexer.expectOrInsertSemicolon();
                             return stmt;
                         },
-                        else => {},
+                        .expr => |_expr| {
+                            expr = _expr;
+                        },
                     }
                 }
 
@@ -4484,10 +4517,6 @@ pub const P = struct {
                 }, p.lexer.loc()));
             }
 
-            if (p.lexer.token == eend) {
-                break :run;
-            }
-
             var stmt = p.parseStmt(opts) catch break :run;
 
             // Skip TypeScript types entirely
@@ -4561,6 +4590,10 @@ pub const P = struct {
 
                     returnWithoutSemicolonStart = -1;
                 }
+            }
+
+            if (p.lexer.token == eend) {
+                break :run;
             }
         }
 
@@ -4813,12 +4846,12 @@ pub const P = struct {
 
     pub fn declareBinding(p: *P, kind: Symbol.Kind, binding: BindingNodeIndex, opts: *ParseStatementOptions) !void {
         switch (binding.data) {
+            .b_missing => {},
             .b_identifier => |bind| {
                 if (!opts.is_typescript_declare or (opts.is_namespace_scope and opts.is_export)) {
                     bind.ref = try p.declareSymbol(kind, binding.loc, p.loadNameFromRef(bind.ref));
                 }
             },
-            .b_missing => |*bind| {},
 
             .b_array => |bind| {
                 for (bind.items) |item| {
@@ -5175,7 +5208,7 @@ pub const P = struct {
                     }
                 }
 
-                p.lexer.expect(.t_close_brace);
+                p.lexer.expect(.t_close_bracket);
                 key = expr;
             },
             .t_asterisk => {
@@ -5231,7 +5264,7 @@ pub const P = struct {
                                     }
                                 },
                                 .p_async => {
-                                    if (!opts.is_async and strings.eql(raw, name)) {
+                                    if (!opts.is_async and strings.eql(raw, name) and !p.lexer.has_newline_before) {
                                         opts.is_async = true;
                                         opts.async_range = name_range;
 
@@ -5240,7 +5273,7 @@ pub const P = struct {
                                     }
                                 },
                                 .p_static => {
-                                    if (!opts.is_static and !opts.is_async and !opts.is_class and strings.eql(raw, name)) {
+                                    if (!opts.is_static and !opts.is_async and opts.is_class and strings.eql(raw, name)) {
                                         opts.is_static = true;
                                         return p.parseProperty(kind, opts, null);
                                     }
@@ -5429,11 +5462,11 @@ pub const P = struct {
                 },
                 .set => {
                     if (func.args.len != 1) {
-                        var r = js_lexer.rangeOfIdentifier(&p.source, func.args[0].binding.loc);
+                        var r = js_lexer.rangeOfIdentifier(&p.source, if (func.args.len > 0) func.args[0].binding.loc else loc);
                         if (func.args.len > 1) {
                             r = js_lexer.rangeOfIdentifier(&p.source, func.args[1].binding.loc);
                         }
-                        p.log.addRangeErrorFmt(p.source, r, p.allocator, "Setter {s} must have exactly 1 argument", .{p.keyNameForError(key)}) catch unreachable;
+                        p.log.addRangeErrorFmt(p.source, r, p.allocator, "Setter {s} must have exactly 1 argument (there are {d})", .{ p.keyNameForError(key), func.args.len }) catch unreachable;
                     }
                 },
                 else => {},
@@ -5516,17 +5549,17 @@ pub const P = struct {
         if (p.lexer.token == .t_extends) {
             p.lexer.next();
             extends = p.parseExpr(.new);
-        }
 
-        // TypeScript's type argument parser inside expressions backtracks if the
-        // first token after the end of the type parameter list is "{", so the
-        // parsed expression above will have backtracked if there are any type
-        // arguments. This means we have to re-parse for any type arguments here.
-        // This seems kind of wasteful to me but it's what the official compiler
-        // does and it probably doesn't have that high of a performance overhead
-        // because "extends" clauses aren't that frequent, so it should be ok.
-        if (p.options.ts) {
-            p.skipTypeScriptTypeArguments(false); // isInsideJSXElement
+            // TypeScript's type argument parser inside expressions backtracks if the
+            // first token after the end of the type parameter list is "{", so the
+            // parsed expression above will have backtracked if there are any type
+            // arguments. This means we have to re-parse for any type arguments here.
+            // This seems kind of wasteful to me but it's what the official compiler
+            // does and it probably doesn't have that high of a performance overhead
+            // because "extends" clauses aren't that frequent, so it should be ok.
+            if (p.options.ts) {
+                p.skipTypeScriptTypeArguments(false); // isInsideJSXElement
+            }
         }
 
         if (p.options.ts and p.lexer.isContextualKeyword("implements")) {
@@ -5555,8 +5588,7 @@ pub const P = struct {
         const scopeIndex = p.pushScopeForParsePass(.class_body, body_loc) catch unreachable;
 
         var opts = PropertyOpts{ .is_class = true, .allow_ts_decorators = class_opts.allow_ts_decorators, .class_has_extends = extends != null };
-
-        while (p.lexer.token != .t_close_brace) {
+        while (p.lexer.token != T.t_close_brace) {
             if (p.lexer.token == .t_semicolon) {
                 p.lexer.next();
                 continue;
@@ -5596,6 +5628,8 @@ pub const P = struct {
 
         p.allow_in = old_allow_in;
         p.allow_private_identifiers = old_allow_private_identifiers;
+
+        p.lexer.expect(.t_close_brace);
 
         return G.Class{
             .class_name = name,
@@ -6474,6 +6508,7 @@ pub const P = struct {
     pub fn _parsePrefix(p: *P, level: Level, errors: *DeferredErrors, flags: Expr.EFlags) Expr {
         const loc = p.lexer.loc();
         const l = @enumToInt(level);
+        std.debug.print("Parse Prefix {s}:{s} @{s} ", .{ p.lexer.token, p.lexer.raw(), @tagName(level) });
 
         switch (p.lexer.token) {
             .t_super => {
@@ -6499,7 +6534,7 @@ pub const P = struct {
                 p.lexer.next();
 
                 // Arrow functions aren't allowed in the middle of expressions
-                if (l > @enumToInt(Level.assign)) {
+                if (level.gt(.assign)) {
                     const oldAllowIn = p.allow_in;
                     p.allow_in = true;
 
@@ -6885,7 +6920,7 @@ pub const P = struct {
                 const old_allow_in = p.allow_in;
                 p.allow_in = true;
 
-                while (p.lexer.token != .t_close_brace and p.lexer.token != .t_end_of_file) {
+                while (p.lexer.token != .t_close_brace) {
                     if (p.lexer.token == .t_dot_dot_dot) {
                         p.lexer.next();
                         properties.append(G.Property{ .kind = .spread, .value = p.parseExpr(.comma) }) catch unreachable;
@@ -7312,6 +7347,7 @@ pub const P = struct {
         }
 
         p.pushScopeForVisitPass(.function_args, open_parens_loc) catch unreachable;
+        defer p.popScope();
         p.visitArgs(
             func.args,
             VisitArgsOpts{
@@ -7320,13 +7356,17 @@ pub const P = struct {
                 .is_unique_formal_parameters = true,
             },
         );
-        defer p.popScope();
-        const body = func.body orelse p.panic("Expected visitFunc to have body {s}", .{func});
+
+        var body = func.body orelse p.panic("Expected visitFunc to have body {s}", .{func});
         p.pushScopeForVisitPass(.function_body, body.loc) catch unreachable;
+        defer p.popScope();
         var stmts = List(Stmt).fromOwnedSlice(p.allocator, body.stmts);
         var temp_opts = PrependTempRefsOpts{ .kind = StmtsKind.fn_body, .fn_body_loc = body.loc };
         p.visitStmtsAndPrependTempRefs(&stmts, &temp_opts) catch unreachable;
-        func.body.?.stmts = stmts.toOwnedSlice();
+
+        body.stmts = stmts.toOwnedSlice();
+
+        func.body = body;
     }
 
     pub fn maybeKeepExprSymbolName(p: *P, expr: Expr, original_name: string, was_anonymous_named_expr: bool) Expr {
@@ -7382,7 +7422,7 @@ pub const P = struct {
             },
 
             .e_import_meta => |exp| {
-                const is_delete_target = exp == p.delete_target.e_import_meta;
+                const is_delete_target = std.meta.activeTag(p.delete_target) == .e_import_meta and exp == p.delete_target.e_import_meta;
 
                 if (p.define.dots.get("meta")) |meta| {
                     for (meta) |define| {
@@ -7540,8 +7580,8 @@ pub const P = struct {
                     else => {},
                 }
 
-                const is_call_target = e_ == p.call_target.e_binary;
-                const is_stmt_expr = e_ == p.stmt_expr_value.e_binary;
+                const is_call_target = @as(Expr.Tag, p.call_target) == .e_binary and e_ == p.call_target.e_binary;
+                const is_stmt_expr = @as(Expr.Tag, p.stmt_expr_value) == .e_binary and e_ == p.stmt_expr_value.e_binary;
                 const was_anonymous_named_expr = p.isAnonymousNamedExpr(e_.right);
 
                 e_.left = p.visitExprInOut(e_.left, ExprIn{
@@ -7841,8 +7881,8 @@ pub const P = struct {
                 }
             },
             .e_index => |e_| {
-                const is_call_target = e_ == p.call_target.e_index;
-                const is_delete_target = e_ == p.delete_target.e_index;
+                const is_call_target = std.meta.activeTag(p.call_target) == .e_index and e_ == p.call_target.e_index;
+                const is_delete_target = std.meta.activeTag(p.delete_target) == .e_index and e_ == p.delete_target.e_index;
 
                 const target = p.visitExprInOut(e_.target, ExprIn{
                     // this is awkward due to a zig compiler bug
@@ -8003,7 +8043,7 @@ pub const P = struct {
                 }
             },
             .e_if => |e_| {
-                const is_call_target = e_ == p.call_target.e_if;
+                const is_call_target = (p.call_target) == .e_if and e_ == p.call_target.e_if;
 
                 e_.test_ = p.visitExpr(e_.test_);
 
@@ -9331,7 +9371,18 @@ pub const P = struct {
     }
 
     pub fn lowerClass(p: *P, stmtorexpr: js_ast.StmtOrExpr, ref: Ref) []Stmt {
-        notimpl();
+        switch (stmtorexpr) {
+            .stmt => |stmt| {
+                var stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
+                stmts[0] = stmt;
+                return stmts;
+            },
+            .expr => |expr| {
+                var stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
+                stmts[0] = p.s(S.SExpr{ .value = expr }, expr.loc);
+                return stmts;
+            },
+        }
     }
 
     pub fn visitForLoopInit(p: *P, stmt: Stmt, is_in_or_of: bool) Stmt {
@@ -9651,7 +9702,7 @@ pub const P = struct {
             // are not allowed to assign to this symbol (it throws a TypeError).
             const name = p.symbols.items[class_name_ref.inner_index].original_name;
             var identifier = p.allocator.alloc(u8, name.len + 1) catch unreachable;
-            std.mem.copy(u8, identifier[1 .. identifier.len - 1], name);
+            std.mem.copy(u8, identifier[1..identifier.len], name);
             identifier[0] = '_';
             shadow_ref = p.newSymbol(Symbol.Kind.cconst, identifier) catch unreachable;
             p.recordDeclaredSymbol(shadow_ref) catch unreachable;
@@ -9844,7 +9895,7 @@ pub const P = struct {
         // values that introduce new scopes and declare new symbols. If this is an
         // arrow function, then those new scopes will need to be parented under the
         // scope of the arrow function itself.
-        const scopeIndex = p.pushScopeForParsePass(.function_args, loc);
+        const scopeIndex = try p.pushScopeForParsePass(.function_args, loc);
 
         // Allow "in" inside parentheses
         var oldAllowIn = p.allow_in;
@@ -9952,7 +10003,67 @@ pub const P = struct {
             }
         }
 
-        return p.e(E.Missing{}, loc);
+        // If we get here, it's not an arrow function so undo the pushing of the
+        // scope we did earlier. This needs to flatten any child scopes into the
+        // parent scope as if the scope was never pushed in the first place.
+        p.popAndFlattenScope(scopeIndex);
+
+        // If this isn't an arrow function, then types aren't allowed
+        if (type_colon_range.len > 0) {
+            try p.log.addRangeError(p.source, type_colon_range, "Unexpected \":\"");
+            p.panic("", .{});
+        }
+
+        // Are these arguments for a call to a function named "async"?
+        if (opts.is_async) {
+            p.logExprErrors(&errors);
+            const async_expr = p.e(E.Identifier{ .ref = try p.storeNameInRef("async") }, loc);
+            return p.e(E.Call{ .target = async_expr, .args = items }, loc);
+        }
+
+        // Is this a chain of expressions and comma operators?
+
+        if (items.len > 0) {
+            p.logExprErrors(&errors);
+            if (spread_range.len > 0) {
+                try p.log.addRangeError(p.source, type_colon_range, "Unexpected \"...\"");
+                p.panic("", .{});
+            }
+
+            var value = Expr.joinAllWithComma(items, p.allocator);
+            p.markExprAsParenthesized(&value);
+            return value;
+        }
+
+        // Indicate that we expected an arrow function
+        p.lexer.expected(.t_equals_greater_than);
+        p.panic("", .{});
+    }
+
+    pub fn popAndFlattenScope(p: *P, scope_index: usize) void {
+        // Move up to the parent scope
+        var to_flatten = p.current_scope;
+        var parent = to_flatten.parent.?;
+        p.current_scope = parent;
+        var scopes_in_order = p.scopes_in_order.toOwnedSlice();
+        // Erase this scope from the order. This will shift over the indices of all
+        // the scopes that were created after us. However, we shouldn't have to
+        // worry about other code with outstanding scope indices for these scopes.
+        // These scopes were all created in between this scope's push and pop
+        // operations, so they should all be child scopes and should all be popped
+        // by the time we get here.
+        std.mem.copy(ScopeOrder, scopes_in_order[scope_index..scopes_in_order.len], scopes_in_order[scope_index + 1 .. scopes_in_order.len]);
+        p.scopes_in_order = @TypeOf(p.scopes_in_order).fromOwnedSlice(p.allocator, scopes_in_order);
+
+        // Remove the last child from the parent scope
+        const last = parent.children.items.len - 1;
+        assert(parent.children.items[last] == to_flatten);
+        _ = parent.children.popOrNull();
+
+        for (to_flatten.children.items) |item| {
+            item.parent = parent;
+            parent.children.append(item) catch unreachable;
+        }
     }
 
     pub fn maybeCommaSpreadError(p: *P, _comma_after_spread: ?logger.Loc) void {

@@ -36,6 +36,18 @@ pub const ImportRecord = struct {
 
     source_index: Ref.Int = std.math.maxInt(Ref.Int),
 
+    // True for the following cases:
+    //
+    //   try { require('x') } catch { handle }
+    //   try { await import('x') } catch { handle }
+    //   try { require.resolve('x') } catch { handle }
+    //   import('x').catch(handle)
+    //   import('x').then(_, handle)
+    //
+    // In these cases we shouldn't generate an error if the path could not be
+    // resolved.
+    handles_import_errors: bool = false,
+
     // Sometimes the parser creates an import record and decides it isn't needed.
     // For example, TypeScript code may have import statements that later turn
     // out to be type-only imports after analyzing the whole file.

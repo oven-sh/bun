@@ -882,7 +882,8 @@ pub const E = struct {
         // because esbuild is not Webpack. But we do preserve them since doing so is
         // harmless, easy to maintain, and useful to people. See the Webpack docs for
         // more info: https://webpack.js.org/api/module-methods/#magic-comments.
-        leading_interior_comments: []G.Comment,
+        // TODO:
+        leading_interior_comments: []G.Comment = &([_]G.Comment{}),
     };
 };
 

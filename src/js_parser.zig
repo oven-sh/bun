@@ -40,6 +40,32 @@ const Op = js_ast.Op;
 const Scope = js_ast.Scope;
 const locModuleScope = logger.Loc.Empty;
 
+pub fn ExpressionTransposer(comptime ctx: type, visitor: fn (ptr: *ctx, arg: Expr, state: anytype) Expr) type {
+    return struct {
+        context: *Context,
+
+        pub fn init(c: *Context) @This() {
+            return @This(){
+                .context = c,
+            };
+        }
+
+        pub fn maybeTransposeIf(self: *@This(), arg: Expr, state: anytype) Expr {
+            switch (arg.data) {
+                .e_if => |ex| {
+                    ex.yes = self.maybeTransposeIf(ex.yes, state);
+                    ex.no = self.maybeTransposeIf(ex.no, state);
+                    return arg;
+                },
+                else => {
+                    return visitor(self.context, arg, state);
+                },
+            }
+        }
+        pub const Context = ctx;
+    };
+}
+
 pub fn locAfterOp(e: E.Binary) logger.Loc {
     if (e.left.loc.start < e.right.loc.start) {
         return e.right.loc;
@@ -121,6 +147,8 @@ pub const ImportScanner = struct {
                     //     should omit unused imports.
                     //
                     const keep_unused_imports = !p.options.trim_unused_imports;
+                    var did_remove_star_loc = false;
+                    // const keep_unused_imports = true;
 
                     // TypeScript always trims unused imports. This is important for
                     // correctness since some imports might be fake (only in the type
@@ -168,6 +196,7 @@ pub const ImportScanner = struct {
 
                                 if (!has_any) {
                                     st.star_name_loc = null;
+                                    did_remove_star_loc = true;
                                 }
                             }
                         }
@@ -194,12 +223,7 @@ pub const ImportScanner = struct {
                                 }
                             }
 
-                            // Filter the array by taking a slice
-                            if (items_end == 0 and st.items.len > 0) {
-                                p.allocator.free(st.items);
-                                // zero out the slice
-                                st.items = &([_]js_ast.ClauseItem{});
-                            } else if (items_end < st.items.len) {
+                            if (items_end < st.items.len - 1) {
                                 var list = List(js_ast.ClauseItem).fromOwnedSlice(p.allocator, st.items);
                                 list.shrinkAndFree(items_end);
                                 st.items = list.toOwnedSlice();
@@ -240,7 +264,7 @@ pub const ImportScanner = struct {
                     }
 
                     if (p.options.trim_unused_imports) {
-                        if (st.star_name_loc != null) {
+                        if (st.star_name_loc != null or did_remove_star_loc) {
                             // -- Original Comment --
                             // If we're bundling a star import and the namespace is only ever
                             // used for property accesses, then convert each unique property to
@@ -1295,27 +1319,93 @@ pub const Parser = struct {
             // We don't need to worry about "use strict" directives because this only
             // happens when bundling, in which case we are flatting the module scopes of
             // all modules together anyway so such directives are meaningless.
-            if (!p.import_meta_ref.isNull()) {
-                // heap so it lives beyond this function call
-                var decls = try p.allocator.alloc(G.Decl, 1);
-                decls[0] = Decl{ .binding = p.b(B.Identifier{
-                    .ref = p.import_meta_ref,
-                }, logger.Loc.Empty), .value = p.e(E.Object{}, logger.Loc.Empty) };
-                var importMetaStatement = p.s(S.Local{
-                    .kind = .k_const,
-                    .decls = decls,
-                }, logger.Loc.Empty);
-            }
+            // if (!p.import_meta_ref.isSourceIndexNull()) {
+            //     // heap so it lives beyond this function call
+            //     var decls = try p.allocator.alloc(G.Decl, 1);
+            //     decls[0] = Decl{ .binding = p.b(B.Identifier{
+            //         .ref = p.import_meta_ref,
+            //     }, logger.Loc.Empty), .value = p.e(E.Object{}, logger.Loc.Empty) };
+            //     var importMetaStatement = p.s(S.Local{
+            //         .kind = .k_const,
+            //         .decls = decls,
+            //     }, logger.Loc.Empty);
+            // }
 
             debugl("<p.appendPart>");
-            var parts = try List(js_ast.Part).initCapacity(p.allocator, 1);
+            var before = List(js_ast.Part).init(p.allocator);
+            var after = List(js_ast.Part).init(p.allocator);
+            var parts = List(js_ast.Part).init(p.allocator);
             try p.appendPart(&parts, stmts);
+            // for (stmts) |stmt| {
+            //     var _stmts = ([_]Stmt{stmt});
+
+            //     switch (stmt.data) {
+            //         // Split up top-level multi-declaration variable statements
+
+            //         .s_local => |local| {
+            //             for (local.decls) |decl| {
+            //                 var decls = try p.allocator.alloc(Decl, 1);
+            //                 var clone = S.Local{
+            //                     .kind = local.kind,
+            //                     .decls = decls,
+            //                     .is_export = local.is_export,
+            //                     .was_ts_import_equals = local.was_ts_import_equals,
+            //                 };
+            //                 _stmts[0] = p.s(clone, stmt.loc);
+
+            //                 try p.appendPart(&parts, &_stmts);
+            //             }
+            //         },
+            //         // Move imports (and import-like exports) to the top of the file to
+            //         // ensure that if they are converted to a require() call, the effects
+            //         // will take place before any other statements are evaluated.
+            //         .s_import, .s_export_from, .s_export_star => {
+            //             try p.appendPart(&before, &_stmts);
+            //         },
+
+            //         .s_export_equals => {
+            //             try p.appendPart(&after, &_stmts);
+            //         },
+            //         else => {
+            //             try p.appendPart(&parts, &_stmts);
+            //         },
+            //     }
+            // }
+            // p.popScope();
+            var parts_slice: []js_ast.Part = undefined;
+
+            if (before.items.len > 0 or after.items.len > 0) {
+                const before_len = before.items.len;
+                const after_len = after.items.len;
+                const parts_len = parts.items.len;
+                var _parts = try p.allocator.alloc(
+                    js_ast.Part,
+                    before_len +
+                        after_len +
+                        parts_len,
+                );
+                if (before_len > 0) {
+                    std.mem.copy(js_ast.Part, _parts, before.toOwnedSlice());
+                }
+                if (parts_len > 0) {
+                    std.mem.copy(js_ast.Part, _parts[before_len .. before_len + parts_len], parts.toOwnedSlice());
+                }
+
+                if (after_len > 0) {
+                    std.mem.copy(js_ast.Part, _parts[before_len + parts_len .. _parts.len], after.toOwnedSlice());
+                }
+                parts_slice = _parts;
+            } else {
+                after.deinit();
+                before.deinit();
+                parts_slice = parts.toOwnedSlice();
+            }
             debugl("</p.appendPart>");
 
             // Pop the module scope to apply the "ContainsDirectEval" rules
             // p.popScope();
             debugl("<result.Ast>");
-            result.ast = try p.toAST(parts.toOwnedSlice());
+            result.ast = try p.toAST(parts_slice);
             result.ok = true;
             debugl("</result.Ast>");
 
@@ -1595,6 +1685,58 @@ pub const P = struct {
     //     Expression , AssignmentExpression
     //
     after_arrow_body_loc: logger.Loc = logger.Loc.Empty,
+    import_transposer: ImportTransposer,
+    require_transposer: RequireTransposer,
+    require_resolve_transposer: RequireResolveTransposer,
+
+    const TransposeState = struct {
+        is_await_target: bool = false,
+        is_then_catch_target: bool = false,
+        loc: logger.Loc,
+    };
+
+    pub fn transposeImport(p: *P, arg: Expr, state: anytype) Expr {
+        // The argument must be a string
+        if (@as(Expr.Tag, arg.data) == .e_string) {
+            // Ignore calls to import() if the control flow is provably dead here.
+            // We don't want to spend time scanning the required files if they will
+            // never be used.
+            if (p.is_control_flow_dead) {
+                return p.e(E.Null{}, arg.loc);
+            }
+            const str = arg.data.e_string;
+
+            const import_record_index = p.addImportRecord(.dynamic, arg.loc, p.lexer.utf16ToString(str.value));
+            p.import_records.items[import_record_index].handles_import_errors = (state.is_await_target and p.fn_or_arrow_data_visit.try_body_count != 0) or state.is_then_catch_target;
+            p.import_records_for_current_part.append(import_record_index) catch unreachable;
+            return p.e(E.Import{
+                .expr = arg,
+                .import_record_index = @intCast(Ref.Int, import_record_index),
+                // .leading_interior_comments = arg.data.e_string.
+            }, state.loc);
+        }
+
+        // Use a debug log so people can see this if they want to
+        const r = js_lexer.rangeOfIdentifier(&p.source, state.loc);
+        p.log.addRangeDebug(p.source, r, "This \"import\" expression will not be bundled because the argument is not a string literal") catch unreachable;
+
+        return p.e(E.Import{
+            .expr = arg,
+            .import_record_index = Ref.None.source_index,
+        }, state.loc);
+    }
+
+    pub fn transposeRequireResolve(p: *P, arg: Expr, transpose_state: anytype) Expr {
+        return arg;
+    }
+
+    pub fn transposeRequire(p: *P, arg: Expr, transpose_state: anytype) Expr {
+        return arg;
+    }
+
+    const ImportTransposer = ExpressionTransposer(P, P.transposeImport);
+    const RequireTransposer = ExpressionTransposer(P, P.transposeRequire);
+    const RequireResolveTransposer = ExpressionTransposer(P, P.transposeRequireResolve);
 
     const Binding2ExprWrapper = struct {
         pub const Namespace = Binding.ToExpr(P, P.wrapIdentifierNamespace);
@@ -3462,9 +3604,9 @@ pub const P = struct {
                                     p.lexer.unexpected();
                                 },
                             }
-
-                            p.lexer.expectContextualKeyword("from");
                         }
+
+                        p.lexer.expectContextualKeyword("from");
                     },
                     else => {
                         p.lexer.unexpected();
@@ -7260,7 +7402,7 @@ pub const P = struct {
                 exp.value = p.visitExpr(exp.value);
             },
             .e_identifier => |e_| {
-                const is_delete_target = e_ == p.delete_target.e_identifier;
+                const is_delete_target = @as(Expr.Tag, p.delete_target) == .e_identifier and e_ == p.delete_target.e_identifier;
 
                 const name = p.loadNameFromRef(e_.ref);
                 if (p.isStrictMode() and js_lexer.StrictModeReservedWords.has(name)) {
@@ -7281,7 +7423,7 @@ pub const P = struct {
                 var original_name: ?string = null;
 
                 // Substitute user-specified defines for unbound symbols
-                if (p.symbols.items[e_.ref.inner_index].kind == .unbound and !result.is_inside_with_scope and e_ != p.delete_target.e_identifier) {
+                if (p.symbols.items[e_.ref.inner_index].kind == .unbound and !result.is_inside_with_scope and !is_delete_target) {
                     if (p.define.identifiers.get(name)) |def| {
                         if (!def.isUndefined()) {
                             const newvalue = p.valueForDefine(expr.loc, in.assign_target, is_delete_target, &def);
@@ -7804,8 +7946,8 @@ pub const P = struct {
                 }
             },
             .e_dot => |e_| {
-                const is_delete_target = e_ == p.delete_target.e_dot;
-                const is_call_target = e_ == p.call_target.e_dot;
+                const is_delete_target = @as(Expr.Tag, p.delete_target) == .e_dot and e_ == p.delete_target.e_dot;
+                const is_call_target = @as(Expr.Tag, p.call_target) == .e_dot and e_ == p.call_target.e_dot;
 
                 if (p.define.dots.get(e_.name)) |parts| {
                     for (parts) |define| {
@@ -7831,7 +7973,7 @@ pub const P = struct {
                 }
 
                 // Track ".then().catch()" chains
-                if (is_call_target and p.then_catch_chain.next_target.e_dot == e_) {
+                if (is_call_target and @as(Expr.Tag, p.then_catch_chain.next_target) == .e_dot and p.then_catch_chain.next_target.e_dot == e_) {
                     if (strings.eql(e_.name, "catch")) {
                         p.then_catch_chain = ThenCatchChain{
                             .next_target = e_.target.data,
@@ -8006,9 +8148,14 @@ pub const P = struct {
                 }
             },
             .e_import => |e_| {
-                const is_await_target = if (p.await_target != null) p.await_target.?.e_import == e_ else false;
-                const is_then_catch_target = e_ == p.then_catch_chain.next_target.e_import and p.then_catch_chain.has_catch;
+                const state = TransposeState{
+                    .is_await_target = if (p.await_target != null) p.await_target.?.e_import == e_ else false,
+                    .is_then_catch_target = e_ == p.then_catch_chain.next_target.e_import and p.then_catch_chain.has_catch,
+                    .loc = e_.expr.loc,
+                };
+
                 e_.expr = p.visitExpr(e_.expr);
+                return p.import_transposer.maybeTransposeIf(e_.expr, state);
 
                 // TODO: maybeTransposeIfExprChain
             },
@@ -8018,7 +8165,7 @@ pub const P = struct {
                 p.then_catch_chain = ThenCatchChain{
                     .next_target = e_.target.data,
                     .has_multiple_args = e_.args.len >= 2,
-                    .has_catch = p.then_catch_chain.next_target.e_call == e_ and p.then_catch_chain.has_catch,
+                    .has_catch = @as(Expr.Tag, p.then_catch_chain.next_target) == .e_call and p.then_catch_chain.next_target.e_call == e_ and p.then_catch_chain.has_catch,
                 };
 
                 // Prepare to recognize "require.resolve()" calls
@@ -8041,7 +8188,17 @@ pub const P = struct {
                     has_spread = has_spread or @as(Expr.Tag, e_.args[i].data) == .e_spread;
                 }
 
-                // TODO: maybeTransposeIfExprChain
+                if (e_.optional_chain == null and @as(Expr.Tag, e_.target.data) == .e_identifier and e_.target.data.e_identifier.ref.eql(p.require_ref)) {
+                    // Heuristic: omit warnings inside try/catch blocks because presumably
+                    // the try/catch statement is there to handle the potential run-time
+                    // error from the unbundled require() call failing.
+                    if (e_.args.len == 1) {
+                        return p.require_transposer.maybeTransposeIf(e_.args[0], null);
+                    } else {
+                        const r = js_lexer.rangeOfIdentifier(&p.source, e_.target.loc);
+                        p.log.addRangeDebug(p.source, r, "This call to \"require\" will not be bundled because it has multiple arguments") catch unreachable;
+                    }
+                }
 
                 return expr;
             },
@@ -9968,13 +10125,16 @@ pub const P = struct {
         parser.temp_refs_to_declare = @TypeOf(parser.temp_refs_to_declare).init(allocator);
         parser.relocated_top_level_vars = @TypeOf(parser.relocated_top_level_vars).init(allocator);
         parser.log = log;
+        parser.is_import_item = @TypeOf(parser.is_import_item).init(allocator);
         parser.allocator = allocator;
         parser.runtime_imports = StringRefMap.init(allocator);
         parser.options = opts;
         parser.to_expr_wrapper_namespace = Binding2ExprWrapper.Namespace.init(parser);
         parser.to_expr_wrapper_hoisted = Binding2ExprWrapper.Hoisted.init(parser);
         parser.source = source;
-
+        parser.import_transposer = @TypeOf(parser.import_transposer).init(parser);
+        parser.require_transposer = @TypeOf(parser.require_transposer).init(parser);
+        parser.require_resolve_transposer = @TypeOf(parser.require_resolve_transposer).init(parser);
         parser.lexer = lexer;
         parser.data = js_ast.AstData.init(allocator);
 

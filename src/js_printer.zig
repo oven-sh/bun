@@ -354,14 +354,15 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                 p.print("(");
             }
 
-            var i: usize = 0;
-            while (i < args.len) : (i += 1) {
-                if (i != 0) {}
+            for (args) |arg, i| {
+                if (i != 0) {
+                    p.print(",");
+                    p.printSpace();
+                }
 
                 if (has_rest_arg and i + 1 == args.len) {
                     p.print("...");
                 }
-                const arg = args[i];
 
                 p.printBinding(arg.binding);
                 if (arg.default) |default| {
@@ -1695,7 +1696,11 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         if (item.value) |val| {
                             switch (val.data) {
                                 .e_identifier => |e| {
-                                    if (strings.utf16EqlString(key.value, p.renamer.nameForSymbol(e.ref))) {
+                                    // TODO: is needing to check item.flags.was_shorthand a bug?
+                                    // esbuild doesn't have to do that...
+                                    // maybe it's a symptom of some other underlying issue
+                                    // or maybe, it's because i'm not lowering the same way that esbuild does.
+                                    if (item.flags.was_shorthand or strings.utf16EqlString(key.value, p.renamer.nameForSymbol(e.ref))) {
                                         if (item.initializer) |initial| {
                                             p.printInitializer(initial);
                                         }

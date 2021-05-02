@@ -1568,7 +1568,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     }
                 },
                 else => {
-                    std.debug.panic("Unexpected expression of type {s}", .{expr.data});
+                    // std.debug.panic("Unexpected expression of type {s}", .{std.meta.activeTag(expr.data});
                 },
             }
         }
@@ -1630,13 +1630,15 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                 switch (val.data) {
                     .e_function => |func| {
                         if (item.flags.is_method) {
-                            p.printSpaceBeforeIdentifier();
-                            p.print("set");
-                            p.printSpace();
-                        }
+                            if (func.func.flags.is_async) {
+                                p.printSpaceBeforeIdentifier();
+                                p.print("async");
+                                p.printSpace();
+                            }
 
-                        if (func.func.flags.is_generator) {
-                            p.print("*");
+                            if (func.func.flags.is_generator) {
+                                p.print("*");
+                            }
                         }
                     },
                     else => {},

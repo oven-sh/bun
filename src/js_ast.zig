@@ -592,6 +592,10 @@ pub const Symbol = struct {
         symbols_for_source: [][]Symbol,
 
         pub fn get(self: *Map, ref: Ref) ?Symbol {
+            if (Ref.isSourceIndexNull(ref.source_index)) {
+                return null;
+            }
+
             return self.symbols_for_source[ref.source_index][ref.inner_index];
         }
 

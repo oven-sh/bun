@@ -26,7 +26,6 @@ pub fn main() anyerror!void {
     try alloc.setup(std.heap.page_allocator);
     var log = logger.Log.init(alloc.dynamic);
     var panicker = MainPanicHandler.init(&log);
-    panicker.skip_next_panic = true;
     MainPanicHandler.Singleton = &panicker;
 
     const args = try std.process.argsAlloc(alloc.dynamic);

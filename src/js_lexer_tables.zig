@@ -537,6 +537,7 @@ pub const JSXEntityMap = std.StringHashMap(CodePoint);
 
 pub var jsxEntity: JSXEntityMap = undefined;
 
+// There's probably a way to move this to comptime
 pub fn initJSXEntityMap() !void {
     jsxEntity = JSXEntityMap.init(alloc.dynamic);
     // return jsxEntity;

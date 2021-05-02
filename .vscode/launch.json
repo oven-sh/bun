@@ -1,6 +1,15 @@
 {
   "version": "0.2.0",
   "configurations": [
-    
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Launch",
+      "program": "${workspaceFolder}/zig-cache/bin/test",
+      "preLaunchTask": "test",
+      "args": ["/usr/local/bin/zig"],
+      "cwd": "${workspaceFolder}",
+      "console": "internalConsole"
+    }
   ]
 }

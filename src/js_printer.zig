@@ -383,7 +383,11 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
             p.printBlock(func.body.?.loc, func.body.?.stmts);
         }
         pub fn printClass(p: *Printer, class: G.Class) void {
-            if (class.extends) |extends| {}
+            if (class.extends) |extends| {
+                p.print(" extends");
+                p.printSpace();
+                p.printExpr(extends, Level.new.sub(1), ExprFlag.None());
+            }
 
             p.printSpace();
 
@@ -1086,6 +1090,11 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         p.print("async");
                         p.printSpace();
                     }
+
+                    p.printFnArgs(e.args, e.has_rest_arg, true);
+                    p.printSpace();
+                    p.print("=>");
+                    p.printSpace();
 
                     var wasPrinted = false;
                     if (e.body.stmts.len == 1 and e.prefer_expr) {

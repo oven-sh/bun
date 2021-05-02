@@ -17,10 +17,20 @@ pub fn build(b: *std.build.Builder) void {
     } else {
         exe = b.addExecutable("esdev", "src/main.zig");
     }
+    var cwd_buf = [_]u8{0} ** 4096;
+    var cwd = std.os.getcwd(&cwd_buf) catch unreachable;
 
+    var walker = std.fs.walkPath(std.heap.page_allocator, cwd) catch unreachable;
+    if (std.builtin.is_test) {
+        while (walker.next() catch unreachable) |entry| {
+            if (std.mem.endsWith(u8, entry.basename, "_test.zig")) {
+                std.debug.print("[test] Added {s}", .{entry.basename});
+                _ = b.addTest(entry.path);
+            }
+        }
+    }
     exe.setTarget(target);
     exe.setBuildMode(mode);
-
     exe.addLibPath("/usr/local/lib");
     exe.install();
 

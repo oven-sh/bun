@@ -25,7 +25,7 @@
       "label": "test",
       "type": "process",
       "command": "zig",
-      "args": ["test", "${file}"],
+      "args": ["test", "${file}", "--main-pkg-path", "${workspaceFolder}"],
 
       "group": {
         "kind": "test",
@@ -33,7 +33,9 @@
       },
       "presentation": {
         "showReuseMessage": false,
-        "clear": true
+        "clear": true,
+        "panel": "new",
+        "reveal": "always"
       }
     }
   ]

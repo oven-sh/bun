@@ -231,7 +231,7 @@ pub const Define = struct {
                     // "NODE_ENV"
                     if (define.dots.getEntry(tail)) |entry| {
                         for (entry.value) |*part| {
-                            // ["process", "env"] == ["process", "env"]
+                            // ["process", "env"] === ["process", "env"] (if that actually worked)
                             if (arePartsEqual(part.parts, parts)) {
                                 part.data = part.data.merge(user_define.value);
                                 didFind = true;

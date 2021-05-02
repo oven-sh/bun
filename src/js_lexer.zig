@@ -29,6 +29,7 @@ pub const JSONOptions = struct {
 };
 
 pub const Lexer = struct {
+
     // pub const Error = error{
     //     UnexpectedToken,
     //     EndOfFile,

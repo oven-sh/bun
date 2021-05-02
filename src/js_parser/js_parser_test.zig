@@ -381,19 +381,6 @@ test "expectPrint" {
     var t_ = Tester.t(std.heap.page_allocator);
     var t = &t_;
 
-    try expectPrinted(t, "(-x) ** 2", "(-x) ** 2;\n", @src());
-    try expectPrinted(t, "(+x) ** 2", "(+x) ** 2;\n", @src());
-    try expectPrinted(t, "(~x) ** 2", "(~x) ** 2;\n", @src());
-    try expectPrinted(t, "(!x) ** 2", "(!x) ** 2;\n", @src());
-    try expectPrinted(t, "(-1) ** 2", "(-1) ** 2;\n", @src());
-    try expectPrinted(t, "(+1) ** 2", "1 ** 2;\n", @src());
-    try expectPrinted(t, "(~1) ** 2", "(~1) ** 2;\n", @src());
-    try expectPrinted(t, "(!1) ** 2", "false ** 2;\n", @src());
-    try expectPrinted(t, "(void x) ** 2", "(void x) ** 2;\n", @src());
-    try expectPrinted(t, "(delete x) ** 2", "(delete x) ** 2;\n", @src());
-    try expectPrinted(t, "(typeof x) ** 2", "(typeof x) ** 2;\n", @src());
-    try expectPrinted(t, "undefined ** 2", "(void 0) ** 2;\n", @src());
-
     try expectPrinted(t, "class Foo { foo() {} }", "class Foo {\n  foo() {\n  }\n}\n", @src());
     try expectPrinted(t, "class Foo { *foo() {} }", "class Foo {\n  *foo() {\n  }\n}\n", @src());
     try expectPrinted(t, "class Foo { get foo() {} }", "class Foo {\n  get foo() {\n  }\n}\n", @src());
@@ -454,46 +441,142 @@ test "expectPrint" {
     try expectPrinted(t, "class Foo { static *['prototype']() {} }", "class Foo {\n  static *[\"prototype\"]() {\n  }\n}\n", @src());
     try expectPrinted(t, "class Foo { static async ['prototype']() {} }", "class Foo {\n  static async [\"prototype\"]() {\n  }\n}\n", @src());
     try expectPrinted(t, "class Foo { static async *['prototype']() {} }", "class Foo {\n  static async *[\"prototype\"]() {\n  }\n}\n", @src());
+
+    try expectPrinted(t, "class Foo extends Bar { constructor() { super() } }", "class Foo extends Bar {\n  constructor() {\n    super();\n  }\n}\n", @src());
+    try expectPrinted(t, "class Foo extends Bar { constructor() { () => super() } }", "class Foo extends Bar {\n  constructor() {\n    () => super();\n  }\n}\n", @src());
+    try expectPrinted(t, "class Foo extends Bar { constructor() { () => { super() } } }", "class Foo extends Bar {\n  constructor() {\n    () => {\n      super();\n    };\n  }\n}\n", @src());
+    try expectPrinted(t, "class Foo extends Bar { constructor(x = super()) {} }", "class Foo extends Bar {\n  constructor(x = super()) {\n  }\n}\n", @src());
+    try expectPrinted(t, "class Foo extends Bar { constructor(x = () => super()) {} }", "class Foo extends Bar {\n  constructor(x = () => super()) {\n  }\n}\n", @src());
+
+    try expectPrinted(t, "(x) => function() {}", "(x) => function() {\n};\n", @src());
+
+    try expectPrinted(t, "x => function() {}", "(x) => function() {\n};\n", @src());
+
+    try expectPrinted(t, "(x => function() {})", "(x) => function() {\n};\n", @src());
+
+    try expectPrinted(t, "(x = () => {}) => {}", "(x = () => {\n}) => {\n};\n", @src());
+    try expectPrinted(t, "async (x = () => {}) => {}", "async (x = () => {\n}) => {\n};\n", @src());
+
+    try expectPrinted(t, "(() => {}) ? a : b", "(() => {\n}) ? a : b;\n", @src());
+    try expectPrinted(t, "1 < (() => {})", "1 < (() => {\n});\n", @src());
+    try expectPrinted(t, "y = x => {}", "y = (x) => {\n};\n", @src());
+    try expectPrinted(t, "y = () => {}", "y = () => {\n};\n", @src());
+    try expectPrinted(t, "y = (x) => {}", "y = (x) => {\n};\n", @src());
+    try expectPrinted(t, "y = async x => {}", "y = async (x) => {\n};\n", @src());
+    try expectPrinted(t, "y = async () => {}", "y = async () => {\n};\n", @src());
+    try expectPrinted(t, "y = async (x) => {}", "y = async (x) => {\n};\n", @src());
+    try expectPrinted(t, "1 + function () {}", "1 + function() {\n};\n", @src());
+    try expectPrinted(t, "1 + async function () {}", "1 + async function() {\n};\n", @src());
+    try expectPrinted(t, "class Foo extends function () {} {}", "class Foo extends function() {\n} {\n}\n", @src());
+    try expectPrinted(t, "class Foo extends async function () {} {}", "class Foo extends async function() {\n} {\n}\n", @src());
+
+    try expectPrinted(t, "() => {}\n(0)", "() => {\n};\n0;\n", @src());
+    try expectPrinted(t, "x => {}\n(0)", "(x) => {\n};\n0;\n", @src());
+    try expectPrinted(t, "async () => {}\n(0)", "async () => {\n};\n0;\n", @src());
+    try expectPrinted(t, "async x => {}\n(0)", "async (x) => {\n};\n0;\n", @src());
+    try expectPrinted(t, "async (x) => {}\n(0)", "async (x) => {\n};\n0;\n", @src());
+
+    try expectPrinted(t, "() => {}\n,0", "() => {\n}, 0;\n", @src());
+    try expectPrinted(t, "x => {}\n,0", "(x) => {\n}, 0;\n", @src());
+    try expectPrinted(t, "async () => {}\n,0", "async () => {\n}, 0;\n", @src());
+    try expectPrinted(t, "async x => {}\n,0", "async (x) => {\n}, 0;\n", @src());
+    try expectPrinted(t, "async (x) => {}\n,0", "async (x) => {\n}, 0;\n", @src());
+
+    try expectPrinted(t, "(() => {})\n(0)", "(() => {\n})(0);\n", @src());
+    try expectPrinted(t, "(x => {})\n(0)", "((x) => {\n})(0);\n", @src());
+    try expectPrinted(t, "(async () => {})\n(0)", "(async () => {\n})(0);\n", @src());
+    try expectPrinted(t, "(async x => {})\n(0)", "(async (x) => {\n})(0);\n", @src());
+    try expectPrinted(t, "(async (x) => {})\n(0)", "(async (x) => {\n})(0);\n", @src());
+    try expectPrinted(t, "y = () => {}\n(0)", "y = () => {\n};\n0;\n", @src());
+    try expectPrinted(t, "y = x => {}\n(0)", "y = (x) => {\n};\n0;\n", @src());
+    try expectPrinted(t, "y = async () => {}\n(0)", "y = async () => {\n};\n0;\n", @src());
+    try expectPrinted(t, "y = async x => {}\n(0)", "y = async (x) => {\n};\n0;\n", @src());
+    try expectPrinted(t, "y = async (x) => {}\n(0)", "y = async (x) => {\n};\n0;\n", @src());
+
+    try expectPrinted(t, "y = () => {}\n,0", "y = () => {\n}, 0;\n", @src());
+    try expectPrinted(t, "y = x => {}\n,0", "y = (x) => {\n}, 0;\n", @src());
+    try expectPrinted(t, "y = async () => {}\n,0", "y = async () => {\n}, 0;\n", @src());
+    try expectPrinted(t, "y = async x => {}\n,0", "y = async (x) => {\n}, 0;\n", @src());
+    try expectPrinted(t, "y = async (x) => {}\n,0", "y = async (x) => {\n}, 0;\n", @src());
+
+    try expectPrinted(t, "y = (() => {})\n(0)", "y = (() => {\n})(0);\n", @src());
+    try expectPrinted(t, "y = (x => {})\n(0)", "y = ((x) => {\n})(0);\n", @src());
+    try expectPrinted(t, "y = (async () => {})\n(0)", "y = (async () => {\n})(0);\n", @src());
+    try expectPrinted(t, "y = (async x => {})\n(0)", "y = (async (x) => {\n})(0);\n", @src());
+    try expectPrinted(t, "y = (async (x) => {})\n(0)", "y = (async (x) => {\n})(0);\n", @src());
+    try expectPrinted(t, "(() => {}\n,0)", "() => {\n}, 0;\n", @src());
+    try expectPrinted(t, "(x => {}\n,0)", "(x) => {\n}, 0;\n", @src());
+    try expectPrinted(t, "(async () => {}\n,0)", "async () => {\n}, 0;\n", @src());
+    try expectPrinted(t, "(async x => {}\n,0)", "async (x) => {\n}, 0;\n", @src());
+    try expectPrinted(t, "(async (x) => {}\n,0)", "async (x) => {\n}, 0;\n", @src());
+
+    try expectPrinted(t, "((() => {})\n(0))", "(() => {\n})(0);\n", @src());
+    try expectPrinted(t, "((x => {})\n(0))", "((x) => {\n})(0);\n", @src());
+    try expectPrinted(t, "((async () => {})\n(0))", "(async () => {\n})(0);\n", @src());
+    try expectPrinted(t, "((async x => {})\n(0))", "(async (x) => {\n})(0);\n", @src());
+    try expectPrinted(t, "((async (x) => {})\n(0))", "(async (x) => {\n})(0);\n", @src());
+
+    try expectPrinted(t, "y = (() => {}\n,0)", "y = (() => {\n}, 0);\n", @src());
+    try expectPrinted(t, "y = (x => {}\n,0)", "y = ((x) => {\n}, 0);\n", @src());
+    try expectPrinted(t, "y = (async () => {}\n,0)", "y = (async () => {\n}, 0);\n", @src());
+    try expectPrinted(t, "y = (async x => {}\n,0)", "y = (async (x) => {\n}, 0);\n", @src());
+    try expectPrinted(t, "y = (async (x) => {}\n,0)", "y = (async (x) => {\n}, 0);\n", @src());
+
+    try expectPrinted(t, "y = ((() => {})\n(0))", "y = (() => {\n})(0);\n", @src());
+    try expectPrinted(t, "y = ((x => {})\n(0))", "y = ((x) => {\n})(0);\n", @src());
+    try expectPrinted(t, "y = ((async () => {})\n(0))", "y = (async () => {\n})(0);\n", @src());
+    try expectPrinted(t, "y = ((async x => {})\n(0))", "y = (async (x) => {\n})(0);\n", @src());
+    try expectPrinted(t, "y = ((async (x) => {})\n(0))", "y = (async (x) => {\n})(0);\n", @src());
+
+    try expectPrinted(t, "(-x) ** 2", "(-x) ** 2;\n", @src());
+    try expectPrinted(t, "(+x) ** 2", "(+x) ** 2;\n", @src());
+    try expectPrinted(t, "(~x) ** 2", "(~x) ** 2;\n", @src());
+    try expectPrinted(t, "(!x) ** 2", "(!x) ** 2;\n", @src());
+    try expectPrinted(t, "(-1) ** 2", "(-1) ** 2;\n", @src());
+    try expectPrinted(t, "(+1) ** 2", "1 ** 2;\n", @src());
+    try expectPrinted(t, "(~1) ** 2", "(~1) ** 2;\n", @src());
+    try expectPrinted(t, "(!1) ** 2", "false ** 2;\n", @src());
+    try expectPrinted(t, "(void x) ** 2", "(void x) ** 2;\n", @src());
+    try expectPrinted(t, "(delete x) ** 2", "(delete x) ** 2;\n", @src());
+    try expectPrinted(t, "(typeof x) ** 2", "(typeof x) ** 2;\n", @src());
+    try expectPrinted(t, "undefined ** 2", "(void 0) ** 2;\n", @src());
+
     try expectPrinted(t, "({ prototype: 1 })", "({prototype: 1});\n", @src());
     try expectPrinted(t, "({ get prototype() {} })", "({get prototype() {\n}});\n", @src());
     try expectPrinted(t, "({ set prototype(x) {} })", "({set prototype(x) {\n}});\n", @src());
     try expectPrinted(t, "({ *prototype() {} })", "({*prototype() {\n}});\n", @src());
     try expectPrinted(t, "({ async prototype() {} })", "({async prototype() {\n}});\n", @src());
     try expectPrinted(t, "({ async* prototype() {} })", "({async *prototype() {\n}});\n", @src());
-    // try expectPrinted(t, "class Foo extends Bar { constructor() { super() } }", "class Foo extends Bar {\n  constructor() {\n    super();\n  }\n}\n", @src());
-    // try expectPrinted(t, "class Foo extends Bar { constructor() { () => super() } }", "class Foo extends Bar {\n  constructor() {\n    () => super();\n  }\n}\n", @src());
-    // try expectPrinted(t, "class Foo extends Bar { constructor() { () => { super() } } }", "class Foo extends Bar {\n  constructor() {\n    () => {\n      super();\n    };\n  }\n}\n", @src());
-    // try expectPrinted(t, "class Foo extends Bar { constructor(x = super()) {} }", "class Foo extends Bar {\n  constructor(x = super()) {\n  }\n}\n", @src());
-    // try expectPrinted(t, "class Foo extends Bar { constructor(x = () => super()) {} }", "class Foo extends Bar {\n  constructor(x = () => super()) {\n  }\n}\n", @src());
-    // try expectPrinted(t, "({foo})", "({foo});\n", @src());
-    // try expectPrinted(t, "({foo:0})", "({foo: 0});\n", @src());
-    // try expectPrinted(t, "({1e9:0})", "({1e9: 0});\n", @src());
-    // try expectPrinted(t, "({1_2_3n:0})", "({123n: 0});\n", @src());
-    // try expectPrinted(t, "({0x1_2_3n:0})", "({0x123n: 0});\n", @src());
-    // try expectPrinted(t, "({foo() {}})", "({foo() {\n}});\n", @src());
-    // try expectPrinted(t, "({*foo() {}})", "({*foo() {\n}});\n", @src());
-    // try expectPrinted(t, "({get foo() {}})", "({get foo() {\n}});\n", @src());
-    // try expectPrinted(t, "({set foo(x) {}})", "({set foo(x) {\n}});\n", @src());
 
-    // try expectPrinted(t, "({if:0})", "({if: 0});\n", @src());
-    // try expectPrinted(t, "({if() {}})", "({if() {\n}});\n", @src());
-    // try expectPrinted(t, "({*if() {}})", "({*if() {\n}});\n", @src());
-    // try expectPrinted(t, "({get if() {}})", "({get if() {\n}});\n", @src());
-    // try expectPrinted(t, "({set if(x) {}})", "({set if(x) {\n}});\n", @src());
+    try expectPrinted(t, "({foo})", "({foo});\n", @src());
+    try expectPrinted(t, "({foo:0})", "({foo: 0});\n", @src());
+    try expectPrinted(t, "({1e9:0})", "({1e9: 0});\n", @src());
+    try expectPrinted(t, "({1_2_3n:0})", "({123n: 0});\n", @src());
+    try expectPrinted(t, "({0x1_2_3n:0})", "({0x123n: 0});\n", @src());
+    try expectPrinted(t, "({foo() {}})", "({foo() {\n}});\n", @src());
+    try expectPrinted(t, "({*foo() {}})", "({*foo() {\n}});\n", @src());
+    try expectPrinted(t, "({get foo() {}})", "({get foo() {\n}});\n", @src());
+    try expectPrinted(t, "({set foo(x) {}})", "({set foo(x) {\n}});\n", @src());
 
-    // try expectPrinted(t, "await x", "await x;\n", @src());
-    // try expectPrinted(t, "await +x", "await +x;\n", @src());
-    // try expectPrinted(t, "await -x", "await -x;\n", @src());
-    // try expectPrinted(t, "await ~x", "await ~x;\n", @src());
-    // try expectPrinted(t, "await !x", "await !x;\n", @src());
-    // try expectPrinted(t, "await --x", "await --x;\n", @src());
-    // try expectPrinted(t, "await ++x", "await ++x;\n", @src());
-    // try expectPrinted(t, "await x--", "await x--;\n", @src());
-    // try expectPrinted(t, "await x++", "await x++;\n", @src());
-    // try expectPrinted(t, "await void x", "await void x;\n", @src());
-    // try expectPrinted(t, "await typeof x", "await typeof x;\n", @src());
-    // try expectPrinted(t, "await (x * y)", "await (x * y);\n", @src());
-    // try expectPrinted(t, "await (x ** y)", "await (x ** y);\n", @src());
+    try expectPrinted(t, "({if:0})", "({if: 0});\n", @src());
+    try expectPrinted(t, "({if() {}})", "({if() {\n}});\n", @src());
+    try expectPrinted(t, "({*if() {}})", "({*if() {\n}});\n", @src());
+    try expectPrinted(t, "({get if() {}})", "({get if() {\n}});\n", @src());
+    try expectPrinted(t, "({set if(x) {}})", "({set if(x) {\n}});\n", @src());
+
+    try expectPrinted(t, "await x", "await x;\n", @src());
+    try expectPrinted(t, "await +x", "await +x;\n", @src());
+    try expectPrinted(t, "await -x", "await -x;\n", @src());
+    try expectPrinted(t, "await ~x", "await ~x;\n", @src());
+    try expectPrinted(t, "await !x", "await !x;\n", @src());
+    try expectPrinted(t, "await --x", "await --x;\n", @src());
+    try expectPrinted(t, "await ++x", "await ++x;\n", @src());
+    try expectPrinted(t, "await x--", "await x--;\n", @src());
+    try expectPrinted(t, "await x++", "await x++;\n", @src());
+    try expectPrinted(t, "await void x", "await void x;\n", @src());
+    try expectPrinted(t, "await typeof x", "await typeof x;\n", @src());
+    try expectPrinted(t, "await (x * y)", "await (x * y);\n", @src());
+    try expectPrinted(t, "await (x ** y)", "await (x ** y);\n", @src());
 
     t.report(@src());
 }

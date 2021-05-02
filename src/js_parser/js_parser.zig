@@ -1430,6 +1430,11 @@ const ParseStatementOptions = struct {
     is_export: bool = false,
     is_name_optional: bool = false, // For "export default" pseudo-statements,
     is_typescript_declare: bool = false,
+
+    pub fn hasNoDecorators(self: *ParseStatementOptions) bool {
+        const decs = self.ts_decorators orelse return false;
+        return decs.values.len > 0;
+    }
 };
 
 // P is for Parser!
@@ -2163,18 +2168,15 @@ pub const P = struct {
 
                 // p.markSyntaxFeature(Destructing)
                 var items = List(js_ast.ArrayBinding).init(p.allocator);
-                for (items.items) |item| {
-                    var is_spread = true;
-                    switch (item.default_value.?.data) {
-                        .e_identifier => {},
-                        else => {
-                            // nested rest binding
-                            // p.markSyntaxFeature(compat.NestedRestBinding, p.source.RangeOfOperatorAfter(item.Loc, "["))
-                        },
-                    }
+                var is_spread = true;
+                for (ex.items) |_, i| {
+                    var item = ex.items[i];
                     var _expr = expr;
+                    if (@as(Expr.Tag, item.data) == .e_spread) {
+                        is_spread = true;
+                        item = item.data.e_spread.value;
+                    }
                     const res = p.convertExprToBindingAndInitializer(&_expr, invalid_loc, is_spread);
-                    assert(res.binding != null);
                     items.append(js_ast.ArrayBinding{ .binding = res.binding orelse unreachable, .default_value = res.override_expr }) catch unreachable;
                 }
 
@@ -3729,11 +3731,10 @@ pub const P = struct {
                         },
                     }
                 }
-
                 if (is_identifier) {
                     switch (expr.data) {
                         .e_identifier => |ident| {
-                            if (p.lexer.token == .t_colon and opts.ts_decorators == null) {
+                            if (p.lexer.token == .t_colon and opts.hasNoDecorators()) {
                                 _ = try p.pushScopeForParsePass(.label, loc);
                                 defer p.popScope();
 
@@ -3872,7 +3873,7 @@ pub const P = struct {
                         }
                     }
                 }
-
+                std.debug.print("\n\nmVALUE {s}:{s}\n", .{ expr, name });
                 p.lexer.expectOrInsertSemicolon();
                 return p.s(S.SExpr{ .value = expr }, loc);
             },
@@ -4025,8 +4026,8 @@ pub const P = struct {
     pub fn parseExprOrLetStmt(p: *P, opts: *ParseStatementOptions) !ExprOrLetStmt {
         var let_range = p.lexer.range();
         var raw = p.lexer.raw();
-
         if (p.lexer.token != .t_identifier or !strings.eql(raw, "let")) {
+            std.debug.print("HI", .{});
             return ExprOrLetStmt{ .stmt_or_expr = js_ast.StmtOrExpr{ .expr = p.parseExpr(.lowest) } };
         }
 
@@ -4057,7 +4058,7 @@ pub const P = struct {
 
         const ref = p.storeNameInRef(raw) catch unreachable;
         const expr = p.e(E.Identifier{ .ref = ref }, let_range.loc);
-        return ExprOrLetStmt{ .stmt_or_expr = js_ast.StmtOrExpr{ .expr = p.parseExpr(.lowest) } };
+        return ExprOrLetStmt{ .stmt_or_expr = js_ast.StmtOrExpr{ .expr = p.parseSuffix(expr, .lowest, null, Expr.EFlags.none) } };
     }
 
     pub fn requireInitializers(p: *P, decls: []G.Decl) !void {
@@ -4783,7 +4784,9 @@ pub const P = struct {
             try p.declareBinding(Symbol.Kind.hoisted, arg.binding, &opts);
         }
 
+        // The ability to call "super()" is inherited by arrow functions
         data.allow_super_call = p.fn_or_arrow_data_parse.allow_super_call;
+
         if (p.lexer.token == .t_open_brace) {
             var body = try p.parseFnBody(data);
             p.after_arrow_body_loc = p.lexer.loc();
@@ -4794,10 +4797,11 @@ pub const P = struct {
         defer p.popScope();
 
         var old_fn_or_arrow_data = p.fn_or_arrow_data_parse;
-        p.fn_or_arrow_data_parse = data.*;
 
+        p.fn_or_arrow_data_parse = data.*;
         var expr = p.parseExpr(Level.comma);
         p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
+
         var stmts = try p.allocator.alloc(Stmt, 1);
         stmts[0] = p.s(S.Return{ .value = expr }, arrow_loc);
 
@@ -4901,7 +4905,8 @@ pub const P = struct {
                 // "async => {}"
                 .t_equals_greater_than => {
                     if (level.lte(.assign)) {
-                        const arg = G.Arg{ .binding = p.b(
+                        var args = try p.allocator.alloc(G.Arg, 1);
+                        args[0] = G.Arg{ .binding = p.b(
                             B.Identifier{
                                 .ref = try p.storeNameInRef("async"),
                             },
@@ -4909,7 +4914,8 @@ pub const P = struct {
                         ) };
                         _ = p.pushScopeForParsePass(.function_args, async_range.loc) catch unreachable;
                         defer p.popScope();
-                        var arrow_body = try p.parseArrowBodySingleArg(arg, FnOrArrowDataParse{});
+                        var data = FnOrArrowDataParse{};
+                        var arrow_body = try p.parseArrowBody(args, &data);
                         return p.e(arrow_body, async_range.loc);
                     }
                 },
@@ -4918,17 +4924,22 @@ pub const P = struct {
                     if (level.lte(.assign)) {
                         // p.markLoweredSyntaxFeature();
                         const ref = try p.storeNameInRef(p.lexer.identifier);
-                        var arg = G.Arg{ .binding = p.b(B.Identifier{
-                            .ref = ref,
-                        }, p.lexer.loc()) };
+                        var args = try p.allocator.alloc(G.Arg, 1);
+                        args[0] = G.Arg{ .binding = p.b(
+                            B.Identifier{
+                                .ref = ref,
+                            },
+                            async_range.loc,
+                        ) };
                         p.lexer.next();
 
                         _ = try p.pushScopeForParsePass(.function_args, async_range.loc);
                         defer p.popScope();
 
-                        var arrowBody = try p.parseArrowBodySingleArg(arg, FnOrArrowDataParse{
+                        var data = FnOrArrowDataParse{
                             .allow_await = .allow_expr,
-                        });
+                        };
+                        var arrowBody = try p.parseArrowBody(args, &data);
                         arrowBody.is_async = true;
                         return p.e(arrowBody, async_range.loc);
                     }
@@ -4938,7 +4949,7 @@ pub const P = struct {
                 // "async () => {}"
                 .t_open_paren => {
                     p.lexer.next();
-                    return p.parseParenExpr(async_range.loc, ParenExprOpts{ .is_async = true, .async_range = async_range });
+                    return p.parseParenExpr(async_range.loc, level, ParenExprOpts{ .is_async = true, .async_range = async_range });
                 },
 
                 // "async<T>()"
@@ -4946,7 +4957,7 @@ pub const P = struct {
                 .t_less_than => {
                     if (p.options.ts and p.trySkipTypeScriptTypeParametersThenOpenParenWithBacktracking()) {
                         p.lexer.next();
-                        return p.parseParenExpr(async_range.loc, ParenExprOpts{ .is_async = true, .async_range = async_range });
+                        return p.parseParenExpr(async_range.loc, level, ParenExprOpts{ .is_async = true, .async_range = async_range });
                     }
                 },
 
@@ -5736,7 +5747,7 @@ pub const P = struct {
             // treat "c.d" as OptionalChainContinue in "a?.b + c.d".
             var old_optional_chain = optional_chain;
             optional_chain = null;
-
+            std.debug.print("\nTOKEN {s}", .{p.lexer.token});
             switch (p.lexer.token) {
                 .t_dot => {
                     p.lexer.next();
@@ -6507,7 +6518,7 @@ pub const P = struct {
                     return value;
                 }
 
-                return p.parseParenExpr(loc, ParenExprOpts{}) catch unreachable;
+                return p.parseParenExpr(loc, level, ParenExprOpts{}) catch unreachable;
             },
             .t_false => {
                 p.lexer.next();
@@ -6529,12 +6540,13 @@ pub const P = struct {
                 const name = p.lexer.identifier;
                 const name_range = p.lexer.range();
                 const raw = p.lexer.raw();
+
                 p.lexer.next();
 
                 // Handle async and await expressions
                 switch (AsyncPrefixExpression.find(name)) {
                     .is_async => {
-                        if (AsyncPrefixExpression.find(raw) != .is_async) {
+                        if ((raw.ptr == name.ptr and raw.len == name.len) or AsyncPrefixExpression.find(raw) == .is_async) {
                             return p.parseAsyncPrefixExpr(name_range, level) catch unreachable;
                         }
                     },
@@ -6610,7 +6622,7 @@ pub const P = struct {
                 }
 
                 // Handle the start of an arrow expression
-                if (p.lexer.token == .t_equals_greater_than) {
+                if (p.lexer.token == .t_equals_greater_than and level.lte(.assign)) {
                     const ref = p.storeNameInRef(name) catch unreachable;
                     var args = p.allocator.alloc(Arg, 1) catch unreachable;
                     args[0] = Arg{ .binding = p.b(B.Identifier{
@@ -6619,6 +6631,7 @@ pub const P = struct {
 
                     _ = p.pushScopeForParsePass(.function_args, loc) catch unreachable;
                     defer p.popScope();
+                    std.debug.print("HANDLE START ", .{});
                     return p.e(p.parseArrowBody(args, p.m(FnOrArrowDataParse{})) catch unreachable, loc);
                 }
 
@@ -6990,7 +7003,7 @@ pub const P = struct {
                     if (is_ts_arrow_fn) {
                         p.skipTypescriptTypeParameters();
                         p.lexer.expect(.t_open_paren);
-                        return p.parseParenExpr(loc, ParenExprOpts{ .force_arrow_fn = true }) catch unreachable;
+                        return p.parseParenExpr(loc, level, ParenExprOpts{ .force_arrow_fn = true }) catch unreachable;
                     }
                 }
 
@@ -9842,13 +9855,13 @@ pub const P = struct {
     }
 
     // This assumes that the open parenthesis has already been parsed by the caller
-    pub fn parseParenExpr(p: *P, loc: logger.Loc, opts: ParenExprOpts) !Expr {
-        var items_list = try List(Expr).initCapacity(p.allocator, 1);
+    pub fn parseParenExpr(p: *P, loc: logger.Loc, level: Level, opts: ParenExprOpts) !Expr {
+        var items_list = List(Expr).init(p.allocator);
         var errors = DeferredErrors{};
         var arrowArgErrors = DeferredArrowArgErrors{};
         var spread_range = logger.Range{};
         var type_colon_range = logger.Range{};
-        var comma_after_spread = logger.Loc{};
+        var comma_after_spread: ?logger.Loc = null;
 
         // Push a scope assuming this is an arrow function. It may not be, in which
         // case we'll need to roll this change back. This has to be done ahead of
@@ -9894,6 +9907,7 @@ pub const P = struct {
                 p.skipTypescriptType(.lowest);
             }
 
+            // There may be a "=" after the type (but not after an "as" cast)
             if (p.options.ts and p.lexer.token == .t_equals and !p.forbid_suffix_after_as_loc.eql(p.lexer.loc())) {
                 p.lexer.next();
                 item = Expr.assign(item, p.parseExpr(.comma), p.allocator);
@@ -9926,6 +9940,11 @@ pub const P = struct {
 
         // Are these arguments to an arrow function?
         if (p.lexer.token == .t_equals_greater_than or opts.force_arrow_fn or (p.options.ts and p.lexer.token == .t_colon)) {
+            // Arrow functions are not allowed inside certain expressions
+            if (level.gt(.assign)) {
+                p.lexer.unexpected();
+            }
+
             var invalidLog = List(logger.Loc).init(p.allocator);
             var args = List(G.Arg).init(p.allocator);
 
@@ -9934,22 +9953,21 @@ pub const P = struct {
             }
 
             // First, try converting the expressions to bindings
-            for (items) |*_item| {
-                var item = _item;
+            var i: usize = 0;
+            while (i < items.len) : (i += 1) {
                 var is_spread = false;
-                switch (item.data) {
+                switch (items[i].data) {
                     .e_spread => |v| {
                         is_spread = true;
-                        item = &v.value;
+                        items[i] = v.value;
                     },
                     else => {},
                 }
 
-                const tuple = p.convertExprToBindingAndInitializer(item, &invalidLog, is_spread);
-                assert(tuple.binding != null);
+                const tuple = p.convertExprToBindingAndInitializer(&items[i], &invalidLog, is_spread);
                 // double allocations
                 args.append(G.Arg{
-                    .binding = tuple.binding orelse unreachable,
+                    .binding = tuple.binding orelse p.b(B.Missing{}, items[i].loc),
                     .default = tuple.expr,
                 }) catch unreachable;
             }
@@ -9959,9 +9977,25 @@ pub const P = struct {
             // attempt to convert the expressions to bindings first before deciding
             // whether this is an arrow function, and only pick an arrow function if
             // there were no conversion errors.
-            if (p.lexer.token == .t_equals_greater_than or (invalidLog.items.len == 0 and (p.trySkipTypeScriptTypeParametersThenOpenParenWithBacktracking() or opts.force_arrow_fn))) {
+            if (p.lexer.token == .t_equals_greater_than or (invalidLog.items.len == 0 and p.trySkipTypeScriptTypeParametersThenOpenParenWithBacktracking()) or opts.force_arrow_fn) {
                 p.maybeCommaSpreadError(comma_after_spread);
                 p.logArrowArgErrors(&arrowArgErrors);
+
+                // Now that we've decided we're an arrow function, report binding pattern
+                // conversion errors
+                if (invalidLog.items.len > 0) {
+                    for (invalidLog.items) |_loc| {
+                        try p.log.addError(p.source, _loc, "Invalid binding pattern");
+                    }
+                }
+                var arrow_data = FnOrArrowDataParse{
+                    .allow_await = if (opts.is_async) AwaitOrYield.allow_expr else AwaitOrYield.allow_ident,
+                };
+                var arrow = try p.parseArrowBody(args.items, &arrow_data);
+                arrow.is_async = opts.is_async;
+                arrow.has_rest_arg = spread_range.len > 0;
+                p.popScope();
+                return p.e(arrow, loc);
             }
         }
 
@@ -9984,7 +10018,6 @@ pub const P = struct {
         }
 
         // Is this a chain of expressions and comma operators?
-
         if (items.len > 0) {
             p.logExprErrors(&errors);
             if (spread_range.len > 0) {
@@ -10029,9 +10062,10 @@ pub const P = struct {
     }
 
     pub fn maybeCommaSpreadError(p: *P, _comma_after_spread: ?logger.Loc) void {
-        if (_comma_after_spread) |comma_after_spread| {
-            p.log.addRangeError(p.source, logger.Range{ .loc = comma_after_spread, .len = 1 }, "Unexpected \",\" after rest pattern") catch unreachable;
-        }
+        const comma_after_spread = _comma_after_spread orelse return;
+        if (comma_after_spread.start == -1) return;
+
+        p.log.addRangeError(p.source, logger.Range{ .loc = comma_after_spread, .len = 1 }, "Unexpected \",\" after rest pattern") catch unreachable;
     }
 
     pub fn toAST(p: *P, _parts: []js_ast.Part) !js_ast.Ast {

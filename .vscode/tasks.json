@@ -23,9 +23,17 @@
     },
     {
       "label": "test",
-      "type": "process",
+      "type": "shell",
       "command": "zig",
-      "args": ["test", "${file}", "--main-pkg-path", "${workspaceFolder}"],
+      "args": [
+        "test",
+        "${file}",
+        "--main-pkg-path",
+        "${workspaceFolder}",
+        "-femit-bin=${workspaceFolder}/zig-cache/bin/test",
+        ";",
+        "true"
+      ],
 
       "group": {
         "kind": "test",

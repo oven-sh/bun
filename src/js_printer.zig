@@ -257,6 +257,18 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                 p.print(" ");
             }
         }
+
+        pub fn maybePrintSpace(
+            p: *Printer,
+        ) void {
+            const n = p.js.len();
+            switch (p.js.list.items[n - 1]) {
+                ' ', '\n' => {},
+                else => {
+                    p.print(" ");
+                },
+            }
+        }
         pub fn printDotThenPrefix(p: *Printer) Level {
             p.print(".then(() => ");
             return .comma;
@@ -1157,6 +1169,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.print("class");
                     if (e.class_name) |name| {
                         p.printSymbol(name.ref orelse std.debug.panic("internal error: expected E.Class's name symbol to have a ref\n{s}", .{e}));
+                        p.maybePrintSpace();
                     }
                     p.printClass(e.*);
                     if (wrap) {
@@ -1648,11 +1661,14 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                             if (func.func.flags.is_async) {
                                 p.printSpaceBeforeIdentifier();
                                 p.print("async");
-                                p.printSpace();
                             }
 
                             if (func.func.flags.is_generator) {
                                 p.print("*");
+                            }
+
+                            if (func.func.flags.is_generator and func.func.flags.is_async) {
+                                p.printSpace();
                             }
                         }
                     },

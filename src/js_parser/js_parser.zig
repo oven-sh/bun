@@ -1437,6 +1437,11 @@ const ParseStatementOptions = struct {
     }
 };
 
+var e_missing_data = E.Missing{};
+var s_missing = S.Empty{};
+var nullExprData = Expr.Data{ .e_missing = &e_missing_data };
+var nullStmtData = Stmt.Data{ .s_empty = &s_missing };
+
 // P is for Parser!
 // public only because of Binding.ToExpr
 pub const P = struct {
@@ -1452,10 +1457,10 @@ pub const P = struct {
     latest_return_had_semicolon: bool = false,
     has_import_meta: bool = false,
     has_es_module_syntax: bool = false,
-    top_level_await_keyword: logger.Range,
-    fn_or_arrow_data_parse: FnOrArrowDataParse,
-    fn_or_arrow_data_visit: FnOrArrowDataVisit,
-    fn_only_data_visit: FnOnlyDataVisit,
+    top_level_await_keyword: logger.Range = logger.Range.None,
+    fn_or_arrow_data_parse: FnOrArrowDataParse = FnOrArrowDataParse{},
+    fn_or_arrow_data_visit: FnOrArrowDataVisit = FnOrArrowDataVisit{},
+    fn_only_data_visit: FnOnlyDataVisit = FnOnlyDataVisit{},
     allocated_names: List(string),
     latest_arrow_arg_loc: logger.Loc = logger.Loc.Empty,
     forbid_suffix_after_as_loc: logger.Loc = logger.Loc.Empty,
@@ -1471,23 +1476,20 @@ pub const P = struct {
 
     data: js_ast.AstData,
 
-    injected_define_symbols: []js_ast.Ref,
+    injected_define_symbols: List(Ref),
     symbol_uses: SymbolUseMap,
     declared_symbols: List(js_ast.DeclaredSymbol),
     runtime_imports: StringRefMap,
-    duplicate_case_checker: void,
-    non_bmp_identifiers: StringBoolMap,
-    legacy_octal_literals: void,
+    // duplicate_case_checker: void,
+    // non_bmp_identifiers: StringBoolMap,
+    // legacy_octal_literals: void,
     // legacy_octal_literals:      map[js_ast.E]logger.Range,
 
-    // For strict mode handling
-    hoistedRefForSloppyModeBlockFn: void,
-
     // For lowering private methods
-    weak_map_ref: ?js_ast.Ref,
-    weak_set_ref: ?js_ast.Ref,
-    private_getters: RefRefMap,
-    private_setters: RefRefMap,
+    // weak_map_ref: ?js_ast.Ref,
+    // weak_set_ref: ?js_ast.Ref,
+    // private_getters: RefRefMap,
+    // private_setters: RefRefMap,
 
     // These are for TypeScript
     should_fold_numeric_constants: bool = false,
@@ -1751,7 +1753,7 @@ pub const P = struct {
     }
 
     pub fn findSymbol(p: *P, loc: logger.Loc, name: string) !FindSymbolResult {
-        var ref: Ref = undefined;
+        var ref: Ref = Ref{};
         var declare_loc: logger.Loc = undefined;
         var is_inside_with_scope = false;
         var did_forbid_argumen = false;
@@ -1856,7 +1858,7 @@ pub const P = struct {
         // code regions since those will be culled.
         if (!p.is_control_flow_dead) {
             p.symbols.items[ref.inner_index].use_count_estimate += 1;
-            var use = p.symbol_uses.get(ref.*) orelse unreachable;
+            var use = p.symbol_uses.get(ref.*) orelse Symbol.Use{};
             use.count_estimate += 1;
             p.symbol_uses.put(ref.*, use) catch unreachable;
         }
@@ -2283,15 +2285,15 @@ pub const P = struct {
     // This assumes the "function" token has already been parsed
 
     pub fn parseFnStmt(p: *P, loc: logger.Loc, opts: *ParseStatementOptions, asyncRange: ?logger.Range) !Stmt {
-        const isGenerator = p.lexer.token == T.t_asterisk;
-        const isAsync = asyncRange != null;
+        const is_generator = p.lexer.token == T.t_asterisk;
+        const is_async = asyncRange != null;
 
-        //     if isGenerator {
-        //     p.markSyntaxFeature(compat.Generator, p.lexer.Range())
-        //     p.lexer.Next()
-        // } else if isAsync {
-        //     p.markLoweredSyntaxFeature(compat.AsyncAwait, asyncRange, compat.Generator)
-        // }
+        if (is_generator) {
+            // p.markSyntaxFeature(compat.Generator, p.lexer.Range())
+            p.lexer.next();
+        } else if (is_async) {
+            // p.markLoweredSyntaxFeature(compat.AsyncAwait, asyncRange, compat.Generator)
+        }
 
         switch (opts.lexical_decl) {
             .forbid => {
@@ -2300,7 +2302,7 @@ pub const P = struct {
 
             // Allow certain function statements in certain single-statement contexts
             .allow_fn_inside_if, .allow_fn_inside_label => {
-                if (opts.is_typescript_declare or isGenerator or isAsync) {
+                if (opts.is_typescript_declare or is_generator or is_async) {
                     try p.forbidLexicalDecl(loc);
                 }
             },
@@ -2338,8 +2340,8 @@ pub const P = struct {
         var scopeIndex = try p.pushScopeForParsePass(js_ast.Scope.Kind.function_args, p.lexer.loc());
         var func = p.parseFn(name, FnOrArrowDataParse{
             .async_range = asyncRange,
-            .allow_await = if (isAsync) AwaitOrYield.allow_expr else AwaitOrYield.allow_ident,
-            .allow_yield = if (isGenerator) AwaitOrYield.allow_expr else AwaitOrYield.allow_ident,
+            .allow_await = if (is_async) AwaitOrYield.allow_expr else AwaitOrYield.allow_ident,
+            .allow_yield = if (is_generator) AwaitOrYield.allow_expr else AwaitOrYield.allow_ident,
             .is_typescript_declare = opts.is_typescript_declare,
 
             // Only allow omitting the body if we're parsing TypeScript
@@ -2371,7 +2373,7 @@ pub const P = struct {
         //     function foo(): void {}
         //
         if (name) |*name_| {
-            const kind = if (isGenerator or isAsync) Symbol.Kind.generator_or_async_function else Symbol.Kind.hoisted_function;
+            const kind = if (is_generator or is_async) Symbol.Kind.generator_or_async_function else Symbol.Kind.hoisted_function;
             name_.ref = try p.declareSymbol(kind, name_.loc, nameText);
         }
         func.name = name;
@@ -2861,7 +2863,8 @@ pub const P = struct {
 
                             defaultName = try createDefaultName(p, loc);
 
-                            var expr = p.parseSuffix(try p.parseAsyncPrefixExpr(async_range, Level.comma), Level.comma, null, Expr.EFlags.none);
+                            const prefix_expr = try p.parseAsyncPrefixExpr(async_range, Level.comma);
+                            var expr = p.parseSuffix(prefix_expr, Level.comma, null, Expr.EFlags.none);
                             p.lexer.expectOrInsertSemicolon();
                             // this is probably a panic
                             var value = js_ast.StmtOrExpr{ .expr = expr };
@@ -6576,7 +6579,7 @@ pub const P = struct {
                                     return p.e(E.Await{ .value = value }, loc);
                                 }
                             },
-                            .allow_ident => {},
+                            else => {},
                         }
                     },
 
@@ -6605,7 +6608,10 @@ pub const P = struct {
                                     return p.e(E.Yield{ .value = value }, loc);
                                 }
                             },
-                            .allow_ident => {
+                            // .allow_ident => {
+
+                            // },
+                            else => {
                                 // Try to gracefully recover if "yield" is used in the wrong place
                                 if (!p.lexer.has_newline_before) {
                                     switch (p.lexer.token) {
@@ -7314,10 +7320,12 @@ pub const P = struct {
         p.fn_only_data_visit = FnOnlyDataVisit{ .is_this_nested = true, .arguments_ref = func.arguments_ref };
 
         if (func.name) |name| {
-            p.recordDeclaredSymbol(name.ref.?) catch unreachable;
-            const symbol_name = p.symbols.items[name.ref.?.inner_index].original_name;
-            if (isEvalOrArguments(symbol_name)) {
-                p.markStrictModeFeature(.eval_or_arguments, js_lexer.rangeOfIdentifier(&p.source, name.loc), symbol_name) catch unreachable;
+            if (name.ref) |name_ref| {
+                p.recordDeclaredSymbol(name_ref) catch unreachable;
+                const symbol_name = p.symbols.items[name_ref.inner_index].original_name;
+                if (isEvalOrArguments(symbol_name)) {
+                    p.markStrictModeFeature(.eval_or_arguments, js_lexer.rangeOfIdentifier(&p.source, name.loc), symbol_name) catch unreachable;
+                }
             }
         }
 
@@ -8743,7 +8751,9 @@ pub const P = struct {
                 }
             },
             .s_export_default => |data| {
-                try p.recordDeclaredSymbol(data.default_name.ref orelse unreachable);
+                if (data.default_name.ref) |ref| {
+                    try p.recordDeclaredSymbol(ref);
+                }
 
                 switch (data.value) {
                     .expr => |*expr| {
@@ -8785,9 +8795,8 @@ pub const P = struct {
                                 p.visitFunc(&func.func, func.func.open_parens_loc);
                                 stmts.append(stmt.*) catch unreachable;
 
-                                if (func.func.name) |name_ref| {
-                                    // TODO-REACT-REFRESH-SPOT
-                                    stmts.append(p.keepStmtSymbolName(name_ref.loc, name_ref.ref.?, name)) catch unreachable;
+                                if (func.func.name != null and func.func.name.?.ref != null) {
+                                    stmts.append(p.keepStmtSymbolName(func.func.name.?.loc, func.func.name.?.ref.?, name)) catch unreachable;
                                 }
                             },
                             .s_class => |class| {
@@ -10212,42 +10221,56 @@ pub const P = struct {
     }
 
     pub fn init(allocator: *std.mem.Allocator, log: *logger.Log, source: logger.Source, define: *Define, lexer: js_lexer.Lexer, opts: Parser.Options) !*P {
-        var parser = try allocator.create(P);
-        parser.allocated_names = @TypeOf(parser.allocated_names).init(allocator);
-        parser.define = define;
-        parser.scopes_for_current_part = @TypeOf(parser.scopes_for_current_part).init(allocator);
-        parser.symbols = @TypeOf(parser.symbols).init(allocator);
-        parser.ts_use_counts = @TypeOf(parser.ts_use_counts).init(allocator);
-        parser.declared_symbols = @TypeOf(parser.declared_symbols).init(allocator);
-        parser.known_enum_values = @TypeOf(parser.known_enum_values).init(allocator);
-        parser.import_records = @TypeOf(parser.import_records).init(allocator);
-        parser.import_records_for_current_part = @TypeOf(parser.import_records_for_current_part).init(allocator);
-        parser.export_star_import_records = @TypeOf(parser.export_star_import_records).init(allocator);
-        parser.import_items_for_namespace = @TypeOf(parser.import_items_for_namespace).init(allocator);
-        parser.named_imports = @TypeOf(parser.named_imports).init(allocator);
-        parser.named_exports = @TypeOf(parser.named_exports).init(allocator);
-        parser.top_level_symbol_to_parts = @TypeOf(parser.top_level_symbol_to_parts).init(allocator);
-        parser.import_namespace_cc_map = @TypeOf(parser.import_namespace_cc_map).init(allocator);
-        parser.scopes_in_order = @TypeOf(parser.scopes_in_order).init(allocator);
-        parser.temp_refs_to_declare = @TypeOf(parser.temp_refs_to_declare).init(allocator);
-        parser.relocated_top_level_vars = @TypeOf(parser.relocated_top_level_vars).init(allocator);
-        parser.log = log;
-        parser.is_import_item = @TypeOf(parser.is_import_item).init(allocator);
-        parser.allocator = allocator;
-        parser.runtime_imports = StringRefMap.init(allocator);
-        parser.options = opts;
-        parser.to_expr_wrapper_namespace = Binding2ExprWrapper.Namespace.init(parser);
-        parser.to_expr_wrapper_hoisted = Binding2ExprWrapper.Hoisted.init(parser);
-        parser.source = source;
-        parser.import_transposer = @TypeOf(parser.import_transposer).init(parser);
-        parser.require_transposer = @TypeOf(parser.require_transposer).init(parser);
-        parser.require_resolve_transposer = @TypeOf(parser.require_resolve_transposer).init(parser);
-        parser.lexer = lexer;
-        parser.data = js_ast.AstData.init(allocator);
+        var _parser = try allocator.create(P);
+        var parser = P{
+            .symbol_uses = SymbolUseMap.init(allocator),
+            .call_target = nullExprData,
+            .delete_target = nullExprData,
+            .stmt_expr_value = nullExprData,
+            .loop_body = nullStmtData,
+            .injected_define_symbols = @TypeOf(_parser.injected_define_symbols).init(allocator),
+            .emitted_namespace_vars = @TypeOf(_parser.emitted_namespace_vars).init(allocator),
+            .is_exported_inside_namespace = @TypeOf(_parser.is_exported_inside_namespace).init(allocator),
+            .known_enum_values = @TypeOf(_parser.known_enum_values).init(allocator),
+            .local_type_names = @TypeOf(_parser.local_type_names).init(allocator),
+            .allocated_names = @TypeOf(_parser.allocated_names).init(allocator),
+            .define = define,
+            .scopes_for_current_part = @TypeOf(_parser.scopes_for_current_part).init(allocator),
+            .symbols = @TypeOf(_parser.symbols).init(allocator),
+            .ts_use_counts = @TypeOf(_parser.ts_use_counts).init(allocator),
+            .declared_symbols = @TypeOf(_parser.declared_symbols).init(allocator),
+            .import_records = @TypeOf(_parser.import_records).init(allocator),
+            .import_records_for_current_part = @TypeOf(_parser.import_records_for_current_part).init(allocator),
+            .export_star_import_records = @TypeOf(_parser.export_star_import_records).init(allocator),
+            .import_items_for_namespace = @TypeOf(_parser.import_items_for_namespace).init(allocator),
+            .named_imports = @TypeOf(_parser.named_imports).init(allocator),
+            .named_exports = @TypeOf(_parser.named_exports).init(allocator),
+            .top_level_symbol_to_parts = @TypeOf(_parser.top_level_symbol_to_parts).init(allocator),
+            .import_namespace_cc_map = @TypeOf(_parser.import_namespace_cc_map).init(allocator),
+            .scopes_in_order = @TypeOf(_parser.scopes_in_order).init(allocator),
+            .temp_refs_to_declare = @TypeOf(_parser.temp_refs_to_declare).init(allocator),
+            .relocated_top_level_vars = @TypeOf(_parser.relocated_top_level_vars).init(allocator),
+            .log = log,
+            .is_import_item = @TypeOf(_parser.is_import_item).init(allocator),
+            .allocator = allocator,
+            .runtime_imports = StringRefMap.init(allocator),
+            .options = opts,
+            .then_catch_chain = ThenCatchChain{ .next_target = nullExprData },
+            .to_expr_wrapper_namespace = Binding2ExprWrapper.Namespace.init(_parser),
+            .to_expr_wrapper_hoisted = Binding2ExprWrapper.Hoisted.init(_parser),
+            .source = source,
+            .import_transposer = @TypeOf(_parser.import_transposer).init(_parser),
+            .require_transposer = @TypeOf(_parser.require_transposer).init(_parser),
+            .require_resolve_transposer = @TypeOf(_parser.require_resolve_transposer).init(_parser),
+            .lexer = lexer,
+            .data = js_ast.AstData.init(allocator),
+        };
 
-        _ = try parser.pushScopeForParsePass(.entry, locModuleScope);
+        _parser.* = parser;
 
-        return parser;
+        _ = try _parser.pushScopeForParsePass(.entry, locModuleScope);
+
+        return _parser;
     }
 };
 

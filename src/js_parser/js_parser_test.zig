@@ -448,6 +448,74 @@ test "expectPrint" {
     try expectPrinted(t, "class Foo extends Bar { constructor(x = super()) {} }", "class Foo extends Bar {\n  constructor(x = super()) {\n  }\n}\n", @src());
     try expectPrinted(t, "class Foo extends Bar { constructor(x = () => super()) {} }", "class Foo extends Bar {\n  constructor(x = () => super()) {\n  }\n}\n", @src());
 
+    try expectPrinted(t, "class Foo { a }", "class Foo {\n  a;\n}\n", @src());
+    try expectPrinted(t, "class Foo { a = 1 }", "class Foo {\n  a = 1;\n}\n", @src());
+    try expectPrinted(t, "class Foo { static a }", "class Foo {\n  static a;\n}\n", @src());
+    try expectPrinted(t, "class Foo { static a = 1 }", "class Foo {\n  static a = 1;\n}\n", @src());
+    try expectPrinted(t, "class Foo { static a = 1; b }", "class Foo {\n  static a = 1;\n  b;\n}\n", @src());
+    try expectPrinted(t, "class Foo { static [a] }", "class Foo {\n  static [a];\n}\n", @src());
+    try expectPrinted(t, "class Foo { static [a] = 1 }", "class Foo {\n  static [a] = 1;\n}\n", @src());
+    try expectPrinted(t, "class Foo { static [a] = 1; [b] }", "class Foo {\n  static [a] = 1;\n  [b];\n}\n", @src());
+
+    try expectPrinted(t, "class Foo { prototype }", "class Foo {\n  prototype;\n}\n", @src());
+    try expectPrinted(t, "class Foo { 'prototype' }", "class Foo {\n  prototype;\n}\n", @src());
+    try expectPrinted(t, "class Foo { prototype = 1 }", "class Foo {\n  prototype = 1;\n}\n", @src());
+    try expectPrinted(t, "class Foo { 'prototype' = 1 }", "class Foo {\n  prototype = 1;\n}\n", @src());
+    try expectPrinted(t, "function* foo() { -(yield 100) }", "function* foo() {\n  -(yield 100);\n}\n", @src());
+
+    try expectPrinted(t, "function *foo() { (x = yield y) }", "function* foo() {\n  x = yield y;\n}\n", @src());
+    try expectPrinted(t, "yield\n100", "yield;\n100;\n", @src());
+    try expectPrinted(t, "let x = {yield}", "let x = {yield};\n", @src());
+    try expectPrinted(t, "function foo() { ({yield} = x) }", "function foo() {\n  ({yield} = x);\n}\n", @src());
+    try expectPrinted(t, "({ *yield() {} })", "({*yield() {\n}});\n", @src());
+    try expectPrinted(t, "(class { *yield() {} })", "(class {\n  *yield() {\n  }\n});\n", @src());
+    try expectPrinted(t, "class Foo { *yield() {} }", "class Foo {\n  *yield() {\n  }\n}\n", @src());
+    try expectPrinted(t, "function* yield() {}", "function* yield() {\n}\n", @src());
+    try expectPrinted(t, "({ async *yield() {} })", "({async *yield() {\n}});\n", @src());
+    try expectPrinted(t, "(class { async *yield() {} })", "(class {\n  async *yield() {\n  }\n});\n", @src());
+    try expectPrinted(t, "class Foo { async *yield() {} }", "class Foo {\n  async *yield() {\n  }\n}\n", @src());
+    try expectPrinted(t, "async function* yield() {}", "async function* yield() {\n}\n", @src());
+    try expectPrinted(t, "-async function foo() { await 0 }", "-async function foo() {\n  await 0;\n};\n", @src());
+    try expectPrinted(t, "-async function() { await 0 }", "-async function() {\n  await 0;\n};\n", @src());
+    try expectPrinted(t, "1 - async function foo() { await 0 }", "1 - async function foo() {\n  await 0;\n};\n", @src());
+    try expectPrinted(t, "1 - async function() { await 0 }", "1 - async function() {\n  await 0;\n};\n", @src());
+    try expectPrinted(t, "(async function foo() { await 0 })", "(async function foo() {\n  await 0;\n});\n", @src());
+    try expectPrinted(t, "(async function() { await 0 })", "(async function() {\n  await 0;\n});\n", @src());
+    try expectPrinted(t, "(x, async function foo() { await 0 })", "x, async function foo() {\n  await 0;\n};\n", @src());
+    try expectPrinted(t, "(x, async function() { await 0 })", "x, async function() {\n  await 0;\n};\n", @src());
+    try expectPrinted(t, "new async function() { await 0 }", "new async function() {\n  await 0;\n}();\n", @src());
+    try expectPrinted(t, "new async function() { await 0 }.x", "new async function() {\n  await 0;\n}.x();\n", @src());
+
+    try expectPrinted(t, "function foo() { await }", "function foo() {\n  await;\n}\n", @src());
+    try expectPrinted(t, "async function foo() { await 0 }", "async function foo() {\n  await 0;\n}\n", @src());
+
+    try expectPrinted(t, "(async x => y), z", "async (x) => y, z;\n", @src());
+    try expectPrinted(t, "(async x => y, z)", "async (x) => y, z;\n", @src());
+    try expectPrinted(t, "(async x => (y, z))", "async (x) => (y, z);\n", @src());
+    try expectPrinted(t, "(async (x) => y), z", "async (x) => y, z;\n", @src());
+    try expectPrinted(t, "(async (x) => y, z)", "async (x) => y, z;\n", @src());
+    try expectPrinted(t, "(async (x) => (y, z))", "async (x) => (y, z);\n", @src());
+    try expectPrinted(t, "async x => y, z", "async (x) => y, z;\n", @src());
+    try expectPrinted(t, "async x => (y, z)", "async (x) => (y, z);\n", @src());
+    try expectPrinted(t, "async (x) => y, z", "async (x) => y, z;\n", @src());
+    try expectPrinted(t, "async (x) => (y, z)", "async (x) => (y, z);\n", @src());
+    try expectPrinted(t, "export default async x => (y, z)", "export default async (x) => (y, z);\n", @src());
+    try expectPrinted(t, "export default async (x) => (y, z)", "export default async (x) => (y, z);\n", @src());
+
+    try expectPrinted(t, "(class { async \n foo() {} })", "(class {\n  async;\n  foo() {\n  }\n});\n", @src());
+    try expectPrinted(t, "(class { async \n *foo() {} })", "(class {\n  async;\n  *foo() {\n  }\n});\n", @src());
+    try expectPrinted(t, "async function foo(){for await(x of y);}", "async function foo() {\n  for await (x of y)\n    ;\n}\n", @src());
+    try expectPrinted(t, "async function foo(){for await(let x of y);}", "async function foo() {\n  for await (let x of y)\n    ;\n}\n", @src());
+
+    // Await as a declaration
+    try expectPrinted(t, "({ async await() {} })", "({async await() {\n}});\n", @src());
+    try expectPrinted(t, "(class { async await() {} })", "(class {\n  async await() {\n  }\n});\n", @src());
+    try expectPrinted(t, "class Foo { async await() {} }", "class Foo {\n  async await() {\n  }\n}\n", @src());
+
+    try expectPrinted(t, "({ async *await() {} })", "({async *await() {\n}});\n", @src());
+    try expectPrinted(t, "(class { async *await() {} })", "(class {\n  async *await() {\n  }\n});\n", @src());
+    try expectPrinted(t, "class Foo { async *await() {} }", "class Foo {\n  async *await() {\n  }\n}\n", @src());
+
     try expectPrinted(t, "(x) => function() {}", "(x) => function() {\n};\n", @src());
 
     try expectPrinted(t, "x => function() {}", "(x) => function() {\n};\n", @src());
@@ -564,19 +632,40 @@ test "expectPrint" {
     try expectPrinted(t, "({get if() {}})", "({get if() {\n}});\n", @src());
     try expectPrinted(t, "({set if(x) {}})", "({set if(x) {\n}});\n", @src());
 
-    try expectPrinted(t, "await x", "await x;\n", @src());
-    try expectPrinted(t, "await +x", "await +x;\n", @src());
-    try expectPrinted(t, "await -x", "await -x;\n", @src());
-    try expectPrinted(t, "await ~x", "await ~x;\n", @src());
-    try expectPrinted(t, "await !x", "await !x;\n", @src());
-    try expectPrinted(t, "await --x", "await --x;\n", @src());
-    try expectPrinted(t, "await ++x", "await ++x;\n", @src());
-    try expectPrinted(t, "await x--", "await x--;\n", @src());
-    try expectPrinted(t, "await x++", "await x++;\n", @src());
-    try expectPrinted(t, "await void x", "await void x;\n", @src());
-    try expectPrinted(t, "await typeof x", "await typeof x;\n", @src());
-    try expectPrinted(t, "await (x * y)", "await (x * y);\n", @src());
-    try expectPrinted(t, "await (x ** y)", "await (x ** y);\n", @src());
+    try expectPrinted(t, "async function foo() { await x; }", "await x;\n", @src());
+    try expectPrinted(t, "async function foo() { await +x; }", "await +x;\n", @src());
+    try expectPrinted(t, "async function foo() { await -x; }", "await -x;\n", @src());
+    try expectPrinted(t, "async function foo() { await ~x; }", "await ~x;\n", @src());
+    try expectPrinted(t, "async function foo() { await !x; }", "await !x;\n", @src());
+    try expectPrinted(t, "async function foo() { await --x; }", "await --x;\n", @src());
+    try expectPrinted(t, "async function foo() { await ++x; }", "await ++x;\n", @src());
+    try expectPrinted(t, "async function foo() { await x--; }", "await x--;\n", @src());
+    try expectPrinted(t, "async function foo() { await x++; }", "await x++;\n", @src());
+    try expectPrinted(t, "async function foo() { await void x; }", "await void x;\n", @src());
+    try expectPrinted(t, "async function foo() { await typeof x; }", "await typeof x;\n", @src());
+    try expectPrinted(t, "async function foo() { await (x * y); }", "await (x * y);\n", @src());
+    try expectPrinted(t, "async function foo() { await (x ** y); }", "await (x ** y);\n", @src());
 
+    try expectPrinted(t, "export default (1, 2)", "export default (1, 2);\n", @src());
+    try expectPrinted(t, "export default async", "export default async;\n", @src());
+    try expectPrinted(t, "export default async()", "export default async();\n", @src());
+    try expectPrinted(t, "export default async + 1", "export default async + 1;\n", @src());
+    try expectPrinted(t, "export default async => {}", "export default (async) => {\n};\n", @src());
+    try expectPrinted(t, "export default async x => {}", "export default async (x) => {\n};\n", @src());
+    try expectPrinted(t, "export default async () => {}", "export default async () => {\n};\n", @src());
+
+    // This is a corner case in the ES6 grammar. The "export default" statement
+    // normally takes an expression except for the function and class keywords
+    // which behave sort of like their respective declarations instead.
+    try expectPrinted(t, "export default function() {} - after", "export default function() {\n}\n-after;\n", @src());
+    try expectPrinted(t, "export default function*() {} - after", "export default function* () {\n}\n-after;\n", @src());
+    try expectPrinted(t, "export default function foo() {} - after", "export default function foo() {\n}\n-after;\n", @src());
+    try expectPrinted(t, "export default function* foo() {} - after", "export default function* foo() {\n}\n-after;\n", @src());
+    try expectPrinted(t, "export default async function() {} - after", "export default async function() {\n}\n-after;\n", @src());
+    try expectPrinted(t, "export default async function*() {} - after", "export default async function* () {\n}\n-after;\n", @src());
+    try expectPrinted(t, "export default async function foo() {} - after", "export default async function foo() {\n}\n-after;\n", @src());
+    try expectPrinted(t, "export default async function* foo() {} - after", "export default async function* foo() {\n}\n-after;\n", @src());
+    try expectPrinted(t, "export default class {} - after", "export default class {\n}\n-after;\n", @src());
+    try expectPrinted(t, "export default class Foo {} - after", "export default class Foo {\n}\n-after;\n", @src());
     t.report(@src());
 }

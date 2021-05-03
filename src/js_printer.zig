@@ -1492,6 +1492,11 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         }
                     }
 
+                    if (wrap) {
+                        p.print("(");
+                        flags.forbid_in = true;
+                    }
+
                     var left_level = entry.level.sub(1);
                     var right_level = left_level;
 

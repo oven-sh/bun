@@ -25,6 +25,7 @@ pub const NodeIndexNone = 4294967293;
 pub const Ref = packed struct {
     source_index: Int = std.math.maxInt(Ref.Int),
     inner_index: Int = 0,
+    is_source_contents_slice: bool = false,
 
     // 2 bits of padding for whatever is the parent
     pub const Int = u30;

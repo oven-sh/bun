@@ -29,8 +29,17 @@ pub const defaultLoaders = std.ComptimeStringMap(Loader, .{
 
 pub const JSX = struct {
     parse: bool = true,
-    factory: string = "React.createElement",
-    fragment: string = "jsx",
+    factory: string = "createElement",
+    fragment: string = "Fragment",
+    jsx: string = "jsxDEV",
+    runtime: Runtime = Runtime.automatic,
+    development: bool = true,
+
+    /// Set on a per file basis like this:
+    /// /** @jsxImportSource @emotion/core */
+    import_source: string = "react",
+
+    pub const Runtime = enum { classic, automatic };
 };
 
 const TypeScript = struct {
@@ -44,7 +53,8 @@ pub const TransformOptions = struct {
     loader: Loader = Loader.tsx,
     resolve_dir: string = "/",
     jsx_factory: string = "React.createElement",
-    jsx_fragment: string = "jsx",
+    jsx_fragment: string = "Fragment",
+    jsx_import_source: string = "react",
     ts: bool = true,
     react_fast_refresh: bool = false,
     inject: ?[]string = null,

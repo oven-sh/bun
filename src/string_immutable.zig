@@ -6,7 +6,11 @@ const JavascriptString = @import("ast/base.zig").JavascriptString;
 usingnamespace @import("string_types.zig");
 
 pub fn containsChar(self: string, char: u8) bool {
-    return std.mem(char) != null;
+    return indexOfChar(self, char) != null;
+}
+
+pub fn contains(self: string, str: string) bool {
+    return std.mem.indexOf(u8, self, str) != null;
 }
 
 pub fn indexOfChar(self: string, char: u8) ?usize {

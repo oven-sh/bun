@@ -1120,6 +1120,7 @@ pub const Lexer = struct {
     }
 
     pub fn init(log: *logger.Log, source: *logger.Source, allocator: *std.mem.Allocator) !LexerType {
+        try tables.initJSXEntityMap();
         var empty_string_literal: JavascriptString = &emptyJavaScriptString;
         var lex = LexerType{
             .log = log,
@@ -1475,9 +1476,8 @@ pub const Lexer = struct {
         while (i < text.len) {
             const width = try std.unicode.utf8ByteSequenceLength(text[i]);
             const i_0 = i;
-            i += width;
             var buf = [4]u8{ 0, 0, 0, 0 };
-            std.mem.copy(u8, &buf, text[i_0..width]);
+            std.mem.copy(u8, &buf, text[i_0 .. i_0 + width]);
             var c = std.mem.readIntNative(i32, &buf);
 
             switch (c) {
@@ -1493,7 +1493,7 @@ pub const Lexer = struct {
                     }
 
                     // Reset for the next line
-                    first_non_whitespace = 0;
+                    first_non_whitespace = null;
                 },
                 '\t', ' ' => {},
                 else => {
@@ -1533,7 +1533,7 @@ pub const Lexer = struct {
             width = try std.unicode.utf8ByteSequenceLength(text[i]);
             i_0 = i;
             i += width;
-            std.mem.copy(u8, buf_ptr, text[i_0..width]);
+            std.mem.copy(u8, buf_ptr, text[i_0..i]);
             c = std.mem.readIntNative(i32, buf_ptr);
 
             if (c == '&') {

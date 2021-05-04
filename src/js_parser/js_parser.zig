@@ -1305,13 +1305,43 @@ pub const Parser = struct {
                 const jsx_factory_symbol: Symbol = p.symbols.items[p.jsx_factory_ref.inner_index];
 
                 if (jsx_symbol.use_count_estimate > 0 or jsx_fragment_symbol.use_count_estimate > 0 or jsx_factory_symbol.use_count_estimate > 0) {
-                    var jsx_imports = [_]string{ p.options.jsx.jsx, p.options.jsx.fragment, p.options.jsx.factory };
+                    var jsx_imports = [_]string{ "", "", "" };
                     var symbols = StringRefMap.init(p.allocator);
                     defer symbols.deinit();
-                    try symbols.put(p.options.jsx.jsx, p.jsx_runtime_ref);
-                    try symbols.put(p.options.jsx.fragment, p.jsx_fragment_ref);
-                    try symbols.put(p.options.jsx.factory, p.jsx_factory_ref);
-                    try p.generateImportStmt(p.options.jsx.import_source, &jsx_imports, &parts, symbols);
+                    var i: usize = 0;
+                    var additional_stmt: ?Stmt = null;
+                    if (jsx_factory_symbol.use_count_estimate > 0) {
+                        jsx_imports[i] = p.options.jsx.factory;
+                        try symbols.put(p.options.jsx.factory, p.jsx_factory_ref);
+                        i += 1;
+                    }
+
+                    if (jsx_symbol.use_count_estimate > 0) {
+                        jsx_imports[i] = p.options.jsx.jsx;
+                        i += 1;
+                        try symbols.put(p.options.jsx.jsx, p.jsx_runtime_ref);
+                        // While we are here, add the __jsxFilename declaration
+                    }
+
+                    if (p.options.jsx.development) {
+                        const jsx_filename_symbol = p.symbols.items[p.jsx_filename_ref.inner_index];
+                        if (jsx_filename_symbol.use_count_estimate > 0) {
+                            var decls = try p.allocator.alloc(G.Decl, 1);
+                            var filename_str = try strings.toUTF16Alloc(p.source.path.pretty, p.allocator);
+                            decls[0] = G.Decl{ .binding = p.b(B.Identifier{ .ref = p.jsx_filename_ref }, logger.Loc{}), .value = p.e(E.String{ .value = filename_str }, logger.Loc{}) };
+                            additional_stmt = p.s(S.Local{ .kind = .k_var, .decls = decls }, logger.Loc{});
+                            try symbols.put(Prefill.Runtime.JSXFilename, p.jsx_filename_ref);
+                        }
+                    }
+
+                    if (jsx_fragment_symbol.use_count_estimate > 0) {
+                        jsx_imports[i] = p.options.jsx.fragment;
+
+                        try symbols.put(p.options.jsx.fragment, p.jsx_fragment_ref);
+                        i += 1;
+                    }
+
+                    try p.generateImportStmt(p.options.jsx.import_source, jsx_imports[0..i], &before, symbols, additional_stmt);
                 }
             }
 
@@ -1480,7 +1510,7 @@ pub const Prefill = struct {
         pub var ColumnNumber = Expr.Data{ .e_string = &Prefill.String.ColumnNumber };
     };
     pub const Runtime = struct {
-        pub var JSXFilename = "JSX_fIlEnAmE";
+        pub var JSXFilename = "__jsxFilename";
         pub var JSXDevelopmentImportName = "jsxDEV";
         pub var JSXImportName = "jsx";
     };
@@ -1572,6 +1602,8 @@ pub const P = struct {
     jsx_runtime_ref: js_ast.Ref = Ref.None,
     jsx_factory_ref: js_ast.Ref = Ref.None,
     jsx_fragment_ref: js_ast.Ref = Ref.None,
+
+    jsx_source_list_ref: js_ast.Ref = Ref.None,
 
     // Imports (both ES6 and CommonJS) are tracked at the top level
     import_records: List(ImportRecord),
@@ -2093,19 +2125,19 @@ pub const P = struct {
         return p.e(ident, loc);
     }
 
-    pub fn generateImportStmt(p: *P, import_path: string, imports: []string, parts: *List(js_ast.Part), symbols: StringRefMap) !void {
-        const import_record_i = p.addImportRecord(.stmt, logger.Loc.Empty, import_path);
+    pub fn generateImportStmt(p: *P, import_path: string, imports: []string, parts: *List(js_ast.Part), symbols: StringRefMap, additional_stmt: ?Stmt) !void {
+        const import_record_i = p.addImportRecordByRange(.stmt, logger.Range.None, import_path);
         var import_record = p.import_records.items[import_record_i];
         var import_path_identifier = try import_record.path.name.nonUniqueNameString(p.allocator);
         var namespace_identifier = try p.allocator.alloc(u8, import_path_identifier.len + "import_".len);
         var clause_items = try p.allocator.alloc(js_ast.ClauseItem, imports.len);
-        var stmts = try p.allocator.alloc(Stmt, 1);
+        var stmts = try p.allocator.alloc(Stmt, 1 + if (additional_stmt != null) @as(usize, 1) else @as(usize, 0));
         var declared_symbols = try p.allocator.alloc(js_ast.DeclaredSymbol, imports.len);
         std.mem.copy(u8, namespace_identifier[0.."import_".len], "import_");
         std.mem.copy(
             u8,
-            namespace_identifier["import_".len..import_path_identifier.len],
-            import_path_identifier,
+            namespace_identifier["import_".len..namespace_identifier.len],
+            import_path_identifier[0..import_path_identifier.len],
         );
 
         const namespace_ref = try p.newSymbol(.other, namespace_identifier);
@@ -2129,13 +2161,21 @@ pub const P = struct {
             .items = clause_items,
             .import_record_index = import_record_i,
         }, logger.Loc{});
+        if (additional_stmt) |add| {
+            stmts[1] = add;
+        }
 
         var import_records = try p.allocator.alloc(@TypeOf(import_record_i), 1);
         import_records[0] = import_record_i;
 
         // Append a single import to the end of the file (ES6 imports are hoisted
         // so we don't need to worry about where the import statement goes)
-        parts.append(js_ast.Part{ .stmts = stmts, .declared_symbols = declared_symbols, .import_record_indices = import_records }) catch unreachable;
+        parts.append(js_ast.Part{
+            .stmts = stmts,
+            .declared_symbols = declared_symbols,
+            .import_record_indices = import_records,
+            .symbol_uses = SymbolUseMap.init(p.allocator),
+        }) catch unreachable;
     }
 
     pub fn prepareForVisitPass(p: *P) !void {
@@ -5136,10 +5176,14 @@ pub const P = struct {
     }
 
     pub fn addImportRecord(p: *P, kind: ImportKind, loc: logger.Loc, name: string) u32 {
+        return p.addImportRecordByRange(kind, p.source.rangeOfString(loc), name);
+    }
+
+    pub fn addImportRecordByRange(p: *P, kind: ImportKind, range: logger.Range, name: string) u32 {
         var index = p.import_records.items.len;
         const record = ImportRecord{
             .kind = kind,
-            .range = p.source.rangeOfString(loc),
+            .range = range,
             .path = fs.Path.init(name),
         };
         p.import_records.append(record) catch unreachable;
@@ -7497,7 +7541,13 @@ pub const P = struct {
                         p.lexer.expected(.t_greater_than);
                     }
 
-                    return p.e(E.JSXElement{ .tag = end_tag.data.asExpr(), .children = children.toOwnedSlice() }, loc);
+                    return p.e(E.JSXElement{
+                        .tag = end_tag.data.asExpr(),
+                        .children = children.toOwnedSlice(),
+                        .properties = properties,
+                        .key = key_prop,
+                        .flags = flags,
+                    }, loc);
                 },
                 else => {
                     p.lexer.unexpected();
@@ -8849,7 +8899,7 @@ pub const P = struct {
         exprs[1] = p.e(E.String{
             .value = p.lexer.stringToUTF16(name),
         }, _value.loc);
-        var value = p.callRuntime(_value.loc, "__name", exprs);
+        var value = p.callRuntime(_value.loc, "ℹ", exprs);
 
         // Make sure tree shaking removes this if the function is never used
         value.data.e_call.can_be_unwrapped_if_unused = true;

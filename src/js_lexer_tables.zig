@@ -536,9 +536,15 @@ pub const TypescriptStmtKeyword = enum {
 pub const JSXEntityMap = std.StringHashMap(CodePoint);
 
 pub var jsxEntity: JSXEntityMap = undefined;
+var has_loaded_jsx_map = false;
 
 // There's probably a way to move this to comptime
 pub fn initJSXEntityMap() !void {
+    if (has_loaded_jsx_map) {
+        return;
+    }
+
+    has_loaded_jsx_map = true;
     jsxEntity = JSXEntityMap.init(alloc.dynamic);
     // return jsxEntity;
     jsxEntity.ensureCapacity(255) catch unreachable;

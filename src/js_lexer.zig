@@ -43,7 +43,7 @@ pub const Lexer = struct {
     log: *logger.Log,
     json_options: ?JSONOptions = null,
     for_global_name: bool = false,
-    source: logger.Source,
+    source: *logger.Source,
     current: usize = 0,
     start: usize = 0,
     end: usize = 0,
@@ -1103,7 +1103,7 @@ pub const Lexer = struct {
         var empty_string_literal: JavascriptString = &emptyJavaScriptString;
         var lex = LexerType{
             .log = log,
-            .source = source.*,
+            .source = source,
             .string_literal = empty_string_literal,
             .prev_error_loc = logger.Loc.Empty,
             .allocator = allocator,
@@ -1124,7 +1124,7 @@ pub const Lexer = struct {
         var empty_string_literal: JavascriptString = &emptyJavaScriptString;
         var lex = LexerType{
             .log = log,
-            .source = source.*,
+            .source = source,
             .string_literal = empty_string_literal,
             .prev_error_loc = logger.Loc.Empty,
             .allocator = allocator,

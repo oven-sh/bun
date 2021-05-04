@@ -216,7 +216,7 @@ pub fn ParseJSON(source: *logger.Source, log: *logger.Log, allocator: *std.mem.A
     return parser.parseExpr();
 }
 
-pub fn ParseTSConfig(log: logger.Loc, source: logger.Source, allocator: *std.mem.Allocator) !Expr {
+pub fn ParseTSConfig(log: logger.Loc, source: *logger.Source, allocator: *std.mem.Allocator) !Expr {
     var parser = try TSConfigParser.init(allocator, log, source);
 
     return parser.parseExpr();

@@ -4,3 +4,4 @@ zig-cache
 
 *.o
 *.a
+profile.json

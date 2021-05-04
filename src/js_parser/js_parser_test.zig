@@ -380,6 +380,7 @@ const PRINT_AST = false;
 test "expectPrint" {
     var t_ = Tester.t(std.heap.page_allocator);
     var t = &t_;
+    try expectPrinted(t, @embedFile("../test/fixtures/simple.jsx"), @embedFile("../test/fixtures/simple.jsx"), @src());
     try expectPrinted(t, "if (true) { console.log(<div>true</div>); }", "if (true) { console.log(\"hi\"); }", @src());
     // try expectPrinted(t, "if (true) { console.log(\"hi\"); }", "if (true) { console.log(\"hi\"); }", @src());
 

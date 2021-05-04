@@ -82,12 +82,9 @@ pub const MutableString = struct {
             try self.list.replaceRange(self.allocator, 0, std.mem.len(str[0..]), str[0..]);
         }
     }
-    pub fn growBy(self: *MutableString, amount: usize) callconv(.Inline) !void {
-        try self.ensureCapacity(self.list.capacity + amount);
-    }
 
-    pub fn ensureCapacity(self: *MutableString, amount: usize) callconv(.Inline) !void {
-        try self.list.ensureCapacity(self.allocator, amount);
+    pub fn growBy(self: *MutableString, amount: usize) callconv(.Inline) !void {
+        try self.list.ensureUnusedCapacity(self.allocator, amount);
     }
 
     pub fn deinit(self: *MutableString) !void {

@@ -9367,7 +9367,7 @@ pub const P = struct {
                             .s_function => |func| {
                                 var name: string = undefined;
                                 if (func.func.name) |func_loc| {
-                                    name = p.symbols.items[func_loc.ref.?.inner_index].original_name;
+                                    name = p.loadNameFromRef(func_loc.ref.?);
                                 } else {
                                     func.func.name = data.default_name;
                                     name = "default";
@@ -9736,7 +9736,7 @@ pub const P = struct {
                     // i wonder if this will crash
                     stmts.appendAssumeCapacity(Expr.assignStmt(p.e(E.Dot{
                         .target = p.e(E.Identifier{ .ref = enclosing_namespace_arg_ref }, stmt.loc),
-                        .name = p.symbols.items[data.func.name.?.ref.?.inner_index].original_name,
+                        .name = p.loadNameFromRef(data.func.name.?.ref.?),
                         .name_loc = data.func.name.?.loc,
                     }, stmt.loc), p.e(E.Identifier{ .ref = data.func.name.?.ref.? }, data.func.name.?.loc), p.allocator));
                 } else {

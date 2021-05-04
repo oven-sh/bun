@@ -167,7 +167,7 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
 
                         const entry = duplicates.getOrPut(key_text) catch unreachable;
                         if (entry.found_existing) {
-                            p.log.addRangeWarningFmt(p.source.*, key_range, p.allocator, "Duplicate key \"{s}\" in object literal", .{key_text}) catch unreachable;
+                            p.log.addRangeWarningFmt(p.source, key_range, p.allocator, "Duplicate key \"{s}\" in object literal", .{key_text}) catch unreachable;
                         }
 
                         p.lexer.expect(.t_colon);
@@ -197,7 +197,7 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
 
             if (p.lexer.token == closer) {
                 if (!opts.allow_trailing_commas) {
-                    p.log.addRangeError(p.source.*, comma_range, "JSON does not support trailing commas") catch unreachable;
+                    p.log.addRangeError(p.source, comma_range, "JSON does not support trailing commas") catch unreachable;
                 }
                 return false;
             }

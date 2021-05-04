@@ -1252,6 +1252,7 @@ pub const Parser = struct {
         preserve_unused_imports_ts: bool = false,
         use_define_for_class_fields: bool = false,
         suppress_warnings_about_weird_code: bool = true,
+
         moduleType: ModuleType = ModuleType.esm,
         trim_unused_imports: bool = true,
     };
@@ -1296,6 +1297,24 @@ pub const Parser = struct {
             var after = List(js_ast.Part).init(p.allocator);
             var parts = List(js_ast.Part).init(p.allocator);
             try p.appendPart(&parts, stmts);
+
+            // Auto-import JSX
+            if (p.options.jsx.parse) {
+                const jsx_symbol: Symbol = p.symbols.items[p.jsx_runtime_ref.inner_index];
+                const jsx_fragment_symbol: Symbol = p.symbols.items[p.jsx_fragment_ref.inner_index];
+                const jsx_factory_symbol: Symbol = p.symbols.items[p.jsx_factory_ref.inner_index];
+
+                if (jsx_symbol.use_count_estimate > 0 or jsx_fragment_symbol.use_count_estimate > 0 or jsx_factory_symbol.use_count_estimate > 0) {
+                    var jsx_imports = [_]string{ p.options.jsx.jsx, p.options.jsx.fragment, p.options.jsx.factory };
+                    var symbols = StringRefMap.init(p.allocator);
+                    defer symbols.deinit();
+                    try symbols.put(p.options.jsx.jsx, p.jsx_runtime_ref);
+                    try symbols.put(p.options.jsx.fragment, p.jsx_fragment_ref);
+                    try symbols.put(p.options.jsx.factory, p.jsx_factory_ref);
+                    try p.generateImportStmt(p.options.jsx.import_source, &jsx_imports, &parts, symbols);
+                }
+            }
+
             // for (stmts) |stmt| {
             //     var _stmts = ([_]Stmt{stmt});
 
@@ -1385,6 +1404,7 @@ pub const Parser = struct {
                     .parse = transform.loader == .tsx or transform.loader == .jsx,
                     .factory = transform.jsx_factory,
                     .fragment = transform.jsx_fragment,
+                    .import_source = transform.jsx_import_source,
                 },
             },
             .allocator = allocator,
@@ -1441,6 +1461,39 @@ var e_missing_data = E.Missing{};
 var s_missing = S.Empty{};
 var nullExprData = Expr.Data{ .e_missing = &e_missing_data };
 var nullStmtData = Stmt.Data{ .s_empty = &s_missing };
+pub const Prefill = struct {
+    pub const StringLiteral = struct {
+        pub var Key = [3]u16{ 'k', 'e', 'y' };
+        pub var Children = [_]u16{ 'c', 'h', 'i', 'l', 'd', 'r', 'e', 'n' };
+        pub var Filename = [_]u16{ 'f', 'i', 'l', 'e', 'n', 'a', 'm', 'e' };
+        pub var LineNumber = [_]u16{ 'l', 'i', 'n', 'e', 'N', 'u', 'm', 'b', 'e', 'r' };
+        pub var ColumnNumber = [_]u16{ 'c', 'o', 'l', 'u', 'm', 'n', 'N', 'u', 'm', 'b', 'e', 'r' };
+    };
+    pub const String = struct {
+        pub var Filename = E.String{ .value = &Prefill.StringLiteral.Filename };
+        pub var LineNumber = E.String{ .value = &Prefill.StringLiteral.LineNumber };
+        pub var ColumnNumber = E.String{ .value = &Prefill.StringLiteral.ColumnNumber };
+    };
+    pub const Data = struct {
+        pub var Filename = Expr.Data{ .e_string = &Prefill.String.Filename };
+        pub var LineNumber = Expr.Data{ .e_string = &Prefill.String.LineNumber };
+        pub var ColumnNumber = Expr.Data{ .e_string = &Prefill.String.ColumnNumber };
+    };
+    pub const Runtime = struct {
+        pub var JSXFilename = "JSX_fIlEnAmE";
+        pub var JSXDevelopmentImportName = "jsxDEV";
+        pub var JSXImportName = "jsx";
+    };
+};
+
+var keyString = E.String{ .value = &Prefill.StringLiteral.Key };
+var keyExprData = Expr.Data{ .e_string = &keyString };
+var jsxChildrenKeyString = E.String{ .value = &Prefill.StringLiteral.Children };
+var jsxChildrenKeyData = Expr.Data{ .e_string = &jsxChildrenKeyString };
+var nullExprValueData = E.Null{};
+var falseExprValueData = E.Boolean{ .value = false };
+var nullValueExpr = Expr.Data{ .e_null = &nullExprValueData };
+var falseValueExpr = Expr.Data{ .e_boolean = &falseExprValueData };
 
 // P is for Parser!
 // public only because of Binding.ToExpr
@@ -1474,6 +1527,7 @@ pub const P = struct {
     import_meta_ref: js_ast.Ref = js_ast.Ref.None,
     promise_ref: ?js_ast.Ref = null,
 
+    has_classic_runtime_warned: bool = false,
     data: js_ast.AstData,
 
     injected_define_symbols: List(Ref),
@@ -1513,6 +1567,11 @@ pub const P = struct {
     // This variable is "ns2" not "ns1". It is only used during the second
     // "visit" pass.
     enclosing_namespace_arg_ref: ?js_ast.Ref = null,
+
+    jsx_filename_ref: js_ast.Ref = Ref.None,
+    jsx_runtime_ref: js_ast.Ref = Ref.None,
+    jsx_factory_ref: js_ast.Ref = Ref.None,
+    jsx_fragment_ref: js_ast.Ref = Ref.None,
 
     // Imports (both ES6 and CommonJS) are tracked at the top level
     import_records: List(ImportRecord),
@@ -2034,11 +2093,65 @@ pub const P = struct {
         return p.e(ident, loc);
     }
 
+    pub fn generateImportStmt(p: *P, import_path: string, imports: []string, parts: *List(js_ast.Part), symbols: StringRefMap) !void {
+        const import_record_i = p.addImportRecord(.stmt, logger.Loc.Empty, import_path);
+        var import_record = p.import_records.items[import_record_i];
+        var import_path_identifier = try import_record.path.name.nonUniqueNameString(p.allocator);
+        var namespace_identifier = try p.allocator.alloc(u8, import_path_identifier.len + "import_".len);
+        var clause_items = try p.allocator.alloc(js_ast.ClauseItem, imports.len);
+        var stmts = try p.allocator.alloc(Stmt, 1);
+        var declared_symbols = try p.allocator.alloc(js_ast.DeclaredSymbol, imports.len);
+        std.mem.copy(u8, namespace_identifier[0.."import_".len], "import_");
+        std.mem.copy(
+            u8,
+            namespace_identifier["import_".len..import_path_identifier.len],
+            import_path_identifier,
+        );
+
+        const namespace_ref = try p.newSymbol(.other, namespace_identifier);
+        try p.module_scope.generated.append(namespace_ref);
+
+        for (imports) |alias, i| {
+            const ref = symbols.get(alias) orelse unreachable;
+            clause_items[i] = js_ast.ClauseItem{ .alias = imports[i], .original_name = imports[i], .alias_loc = logger.Loc{}, .name = LocRef{ .ref = ref, .loc = logger.Loc{} } };
+            declared_symbols[i] = js_ast.DeclaredSymbol{ .ref = ref, .is_top_level = true };
+            try p.is_import_item.put(ref, true);
+            try p.named_imports.put(ref, js_ast.NamedImport{
+                .alias = alias,
+                .alias_loc = logger.Loc{},
+                .namespace_ref = namespace_ref,
+                .import_record_index = import_record_i,
+            });
+        }
+
+        stmts[0] = p.s(S.Import{
+            .namespace_ref = namespace_ref,
+            .items = clause_items,
+            .import_record_index = import_record_i,
+        }, logger.Loc{});
+
+        var import_records = try p.allocator.alloc(@TypeOf(import_record_i), 1);
+        import_records[0] = import_record_i;
+
+        // Append a single import to the end of the file (ES6 imports are hoisted
+        // so we don't need to worry about where the import statement goes)
+        parts.append(js_ast.Part{ .stmts = stmts, .declared_symbols = declared_symbols, .import_record_indices = import_records }) catch unreachable;
+    }
+
     pub fn prepareForVisitPass(p: *P) !void {
         try p.pushScopeForVisitPass(js_ast.Scope.Kind.entry, locModuleScope);
         p.fn_or_arrow_data_visit.is_outside_fn_or_arrow = true;
         p.module_scope = p.current_scope;
         p.has_es_module_syntax = p.es6_import_keyword.len > 0 or p.es6_export_keyword.len > 0 or p.top_level_await_keyword.len > 0;
+        if (p.options.jsx.parse) {
+            if (p.options.jsx.development) {
+                p.jsx_filename_ref = p.newSymbol(.other, Prefill.Runtime.JSXFilename) catch unreachable;
+            }
+            const jsx_importname = p.options.jsx.jsx;
+            p.jsx_fragment_ref = p.newSymbol(.other, p.options.jsx.fragment) catch unreachable;
+            p.jsx_runtime_ref = p.newSymbol(.other, jsx_importname) catch unreachable;
+            p.jsx_factory_ref = p.newSymbol(.other, p.options.jsx.factory) catch unreachable;
+        }
 
         // ECMAScript modules are always interpreted as strict mode. This has to be
         // done before "hoistSymbols" because strict mode can alter hoisting (!).
@@ -2879,28 +2992,28 @@ pub const P = struct {
                             };
                             var stmt = p.parseStmt(&_opts) catch unreachable;
 
-                            var default_name: js_ast.LocRef = undefined;
+                            const default_name: js_ast.LocRef = default_name_getter: {
+                                switch (stmt.data) {
+                                    // This was just a type annotation
+                                    .s_type_script => {
+                                        return stmt;
+                                    },
 
-                            switch (stmt.data) {
-                                // This was just a type annotation
-                                .s_type_script => {
-                                    return stmt;
-                                },
+                                    .s_function => |func_container| {
+                                        if (func_container.func.name) |name| {
+                                            break :default_name_getter LocRef{ .loc = defaultLoc, .ref = name.ref };
+                                        } else {}
+                                    },
+                                    .s_class => |class| {
+                                        if (class.class.class_name) |name| {
+                                            break :default_name_getter LocRef{ .loc = defaultLoc, .ref = name.ref };
+                                        } else {}
+                                    },
+                                    else => {},
+                                }
 
-                                .s_function => |func_container| {
-                                    if (func_container.func.name) |name| {
-                                        default_name = LocRef{ .loc = defaultLoc, .ref = name.ref };
-                                    } else {}
-                                },
-                                .s_class => |class| {
-                                    if (class.class.class_name) |name| {
-                                        default_name = LocRef{ .loc = defaultLoc, .ref = name.ref };
-                                    } else {}
-                                },
-                                else => {
-                                    p.panic("Internal error: unexpected stmt {s}", .{stmt});
-                                },
-                            }
+                                break :default_name_getter createDefaultName(p, defaultLoc) catch unreachable;
+                            };
 
                             return p.s(
                                 S.ExportDefault{ .default_name = default_name, .value = js_ast.StmtOrExpr{ .stmt = stmt } },
@@ -2923,27 +3036,28 @@ pub const P = struct {
                                     const stmt: Stmt = p.parseClassStmt(loc, &stmtOpts);
 
                                     // Use the statement name if present, since it's a better name
-                                    var default_name: LocRef = undefined;
-                                    switch (stmt.data) {
-                                        .s_class => |class| {
-                                            var ref: Ref = undefined;
-                                            var picked = false;
-                                            if (class.class.class_name) |loc_ref| {
-                                                if (loc_ref.ref) |_ref| {
-                                                    ref = _ref;
-                                                    picked = true;
-                                                }
-                                            }
+                                    const default_name: js_ast.LocRef = default_name_getter: {
+                                        switch (stmt.data) {
+                                            // This was just a type annotation
+                                            .s_type_script => {
+                                                return stmt;
+                                            },
 
-                                            if (!picked) {
-                                                ref = (createDefaultName(p, defaultLoc) catch unreachable).ref orelse unreachable;
-                                            }
-                                            default_name = LocRef{ .loc = defaultLoc, .ref = ref };
-                                        },
-                                        else => {
-                                            default_name = createDefaultName(p, defaultLoc) catch unreachable;
-                                        },
-                                    }
+                                            .s_function => |func_container| {
+                                                if (func_container.func.name) |_name| {
+                                                    break :default_name_getter LocRef{ .loc = defaultLoc, .ref = _name.ref };
+                                                } else {}
+                                            },
+                                            .s_class => |class| {
+                                                if (class.class.class_name) |_name| {
+                                                    break :default_name_getter LocRef{ .loc = defaultLoc, .ref = _name.ref };
+                                                } else {}
+                                            },
+                                            else => {},
+                                        }
+
+                                        break :default_name_getter createDefaultName(p, defaultLoc) catch unreachable;
+                                    };
 
                                     return p.s(S.ExportDefault{ .default_name = default_name, .value = js_ast.StmtOrExpr{ .stmt = stmt } }, loc);
                                 },
@@ -3876,7 +3990,7 @@ pub const P = struct {
                         }
                     }
                 }
-                std.debug.print("\n\nmVALUE {s}:{s}\n", .{ expr, name });
+                // std.debug.print("\n\nmVALUE {s}:{s}\n", .{ expr, name });
                 p.lexer.expectOrInsertSemicolon();
                 return p.s(S.SExpr{ .value = expr }, loc);
             },
@@ -4030,7 +4144,7 @@ pub const P = struct {
         var let_range = p.lexer.range();
         var raw = p.lexer.raw();
         if (p.lexer.token != .t_identifier or !strings.eql(raw, "let")) {
-            std.debug.print("HI", .{});
+            // std.debug.print("HI", .{});
             return ExprOrLetStmt{ .stmt_or_expr = js_ast.StmtOrExpr{ .expr = p.parseExpr(.lowest) } };
         }
 
@@ -4888,8 +5002,12 @@ pub const P = struct {
     }
 
     pub fn loadNameFromRef(p: *P, ref: js_ast.Ref) string {
-        assert(ref.inner_index < p.allocated_names.items.len);
-        return p.allocated_names.items[ref.inner_index];
+        if (ref.source_index == std.math.maxInt(Ref.Int)) {
+            assert(ref.inner_index < p.allocated_names.items.len);
+            return p.allocated_names.items[ref.inner_index];
+        } else {
+            return p.symbols.items[ref.inner_index].original_name;
+        }
     }
 
     // This parses an expression. This assumes we've already parsed the "async"
@@ -5682,6 +5800,7 @@ pub const P = struct {
         // Allow "in" inside call arguments
         const old_allow_in = p.allow_in;
         p.allow_in = true;
+        defer p.allow_in = old_allow_in;
 
         var args = List(Expr).init(p.allocator);
         p.lexer.expect(.t_open_paren);
@@ -5705,7 +5824,6 @@ pub const P = struct {
         }
 
         p.lexer.expect(.t_close_paren);
-        p.allow_in = old_allow_in;
         return args.toOwnedSlice();
     }
 
@@ -5750,7 +5868,6 @@ pub const P = struct {
             // treat "c.d" as OptionalChainContinue in "a?.b + c.d".
             var old_optional_chain = optional_chain;
             optional_chain = null;
-            std.debug.print("\nTOKEN {s}", .{p.lexer.token});
             switch (p.lexer.token) {
                 .t_dot => {
                     p.lexer.next();
@@ -6484,7 +6601,7 @@ pub const P = struct {
     pub fn _parsePrefix(p: *P, level: Level, errors: *DeferredErrors, flags: Expr.EFlags) Expr {
         const loc = p.lexer.loc();
         const l = @enumToInt(level);
-        std.debug.print("Parse Prefix {s}:{s} @{s} ", .{ p.lexer.token, p.lexer.raw(), @tagName(level) });
+        // std.debug.print("Parse Prefix {s}:{s} @{s} ", .{ p.lexer.token, p.lexer.raw(), @tagName(level) });
 
         switch (p.lexer.token) {
             .t_super => {
@@ -6637,7 +6754,7 @@ pub const P = struct {
 
                     _ = p.pushScopeForParsePass(.function_args, loc) catch unreachable;
                     defer p.popScope();
-                    std.debug.print("HANDLE START ", .{});
+                    // std.debug.print("HANDLE START ", .{});
                     return p.e(p.parseArrowBody(args, p.m(FnOrArrowDataParse{})) catch unreachable, loc);
                 }
 
@@ -7014,11 +7131,33 @@ pub const P = struct {
                 }
 
                 if (p.options.jsx.parse) {
-                    notimpl();
+                    // Use NextInsideJSXElement() instead of Next() so we parse "<<" as "<"
+                    p.lexer.nextInsideJSXElement() catch unreachable;
+                    const element = p.parseJSXElement(loc) catch unreachable;
+
+                    // The call to parseJSXElement() above doesn't consume the last
+                    // TGreaterThan because the caller knows what Next() function to call.
+                    // Use Next() instead of NextInsideJSXElement() here since the next
+                    // token is an expression.
+                    p.lexer.next();
+                    return element;
                 }
 
                 if (p.options.ts) {
-                    notimpl();
+                    // This is either an old-style type cast or a generic lambda function
+
+                    // "<T>(x)"
+                    // "<T>(x) => {}"
+                    if (p.trySkipTypeScriptTypeParametersThenOpenParenWithBacktracking()) {
+                        p.lexer.expect(.t_open_paren);
+                        return p.parseParenExpr(loc, level, ParenExprOpts{}) catch unreachable;
+                    }
+
+                    // "<T>x"
+                    p.lexer.next();
+                    p.skipTypescriptType(.lowest);
+                    p.lexer.expectGreaterThan(false) catch unreachable;
+                    return p.parsePrefix(level, errors, flags);
                 }
 
                 p.lexer.unexpected();
@@ -7037,8 +7176,13 @@ pub const P = struct {
         return p.e(E.Missing{}, logger.Loc.Empty);
     }
 
-    pub fn jsxStringsToMemberExpression(p: *P, loc: logger.Loc, fragment: string) Expr {
-        notimpl();
+    // esbuild's version of this function is much more complicated.
+    // I'm not sure why defines is strictly relevant for this case
+    // and I imagine all the allocations cause some performance
+    // guessing it's concurrency-related
+    pub fn jsxStringsToMemberExpression(p: *P, loc: logger.Loc, ref: Ref) Expr {
+        p.recordUsage(&ref);
+        return p.e(E.Identifier{ .ref = ref }, loc);
     }
 
     // Note: The caller has already parsed the "import" keyword
@@ -7077,11 +7221,290 @@ pub const P = struct {
         return p.e(E.Import{ .expr = value, .leading_interior_comments = comments, .import_record_index = 0 }, loc);
     }
 
-    pub fn parseJSXElement(loc: logger.Loc) Expr {
-        // Parse the tag
-        //var startRange, startText, startTag := p.parseJSXTag();÷
-        notimpl();
-        return p.e(E.Missing{}, logger.Loc.Empty);
+    const JSXTag = struct {
+        pub const TagType = enum { fragment, tag };
+        pub const Data = union(TagType) {
+            fragment: u1,
+            tag: Expr,
+
+            pub fn asExpr(d: *const Data) ?ExprNodeIndex {
+                switch (d.*) {
+                    .tag => |tag| {
+                        return tag;
+                    },
+                    else => {
+                        return null;
+                    },
+                }
+            }
+        };
+        data: Data,
+        range: logger.Range,
+        name: string = "",
+
+        pub fn parse(p: *P) !JSXTag {
+            const loc = p.lexer.loc();
+
+            // A missing tag is a fragment
+            if (p.lexer.token == .t_greater_than) {
+                return JSXTag{
+                    .range = logger.Range{ .loc = loc, .len = 0 },
+                    .data = Data{ .fragment = 1 },
+                };
+            }
+
+            // The tag is an identifier
+            var name = p.lexer.identifier;
+            var tag_range = p.lexer.range();
+            try p.lexer.expectInsideJSXElement(.t_identifier);
+
+            // Certain identifiers are strings
+            // <div
+            // <button
+            // <Hello-:Button
+            if (strings.contains(name, "-:") or (p.lexer.token != .t_dot and name[0] >= 'a' and name[0] <= 'z')) {
+                return JSXTag{
+                    .data = Data{ .tag = p.e(E.String{ .value = try strings.toUTF16Alloc(name, p.allocator) }, loc) },
+                    .range = tag_range,
+                };
+            }
+
+            // Otherwise, this is an identifier
+            // <Button>
+            var tag = p.e(E.Identifier{ .ref = try p.storeNameInRef(name) }, loc);
+
+            // Parse a member expression chain
+            // <Button.Red>
+            while (p.lexer.token == .t_dot) {
+                try p.lexer.nextInsideJSXElement();
+                const member_range = p.lexer.range();
+                const member = p.lexer.identifier;
+                try p.lexer.expectInsideJSXElement(.t_identifier);
+
+                if (strings.indexOfChar(member, '-')) |index| {
+                    try p.log.addError(p.source, logger.Loc{ .start = member_range.loc.start + @intCast(i32, index) }, "Unexpected \"-\"");
+                    p.panic("", .{});
+                }
+
+                var _name = try p.allocator.alloc(u8, name.len + 1 + member.len);
+                std.mem.copy(u8, _name, name);
+                _name[name.len] = '.';
+                std.mem.copy(u8, _name[name.len + 1 .. _name.len], member);
+                name = _name;
+                tag_range.len = member_range.loc.start + member_range.len - tag_range.loc.start;
+                tag = p.e(E.Dot{ .target = tag, .name = member, .name_loc = member_range.loc }, loc);
+            }
+
+            return JSXTag{ .data = Data{ .tag = tag }, .range = tag_range, .name = name };
+        }
+    };
+
+    pub fn parseJSXPropValueIdentifier(p: *P, previous_string_with_backslash_loc: *logger.Loc) !Expr {
+        // Use NextInsideJSXElement() not Next() so we can parse a JSX-style string literal
+        try p.lexer.nextInsideJSXElement();
+        if (p.lexer.token == .t_string_literal) {
+            previous_string_with_backslash_loc.start = std.math.max(p.lexer.loc().start, p.lexer.previous_backslash_quote_in_jsx.loc.start);
+            const value = p.e(E.String{ .value = p.lexer.string_literal }, previous_string_with_backslash_loc.*);
+            try p.lexer.nextInsideJSXElement();
+            return value;
+        } else {
+            // Use Expect() not ExpectInsideJSXElement() so we can parse expression tokens
+            p.lexer.expect(.t_open_brace);
+            const value = p.parseExpr(.lowest);
+            try p.lexer.expectInsideJSXElement(.t_close_brace);
+            return value;
+        }
+    }
+
+    pub fn parseJSXElement(p: *P, loc: logger.Loc) !Expr {
+        var tag = try JSXTag.parse(p);
+
+        // The tag may have TypeScript type arguments: "<Foo<T>/>"
+        if (p.options.ts) {
+            // Pass a flag to the type argument skipper because we need to call
+            p.skipTypeScriptTypeArguments(true);
+        }
+
+        var previous_string_with_backslash_loc = logger.Loc{};
+        var properties: []G.Property = &([_]G.Property{});
+        var key_prop: ?ExprNodeIndex = null;
+        var flags = Flags.JSXElement{};
+        var start_tag: ?ExprNodeIndex = null;
+
+        // Fragments don't have props
+        // Fragments of the form "React.Fragment" are not parsed as fragments.
+        if (@as(JSXTag.TagType, tag.data) == .tag) {
+            start_tag = tag.data.tag;
+            var spread_loc: logger.Loc = undefined;
+            var props = List(G.Property).init(p.allocator);
+            var key_prop_i: i32 = -1;
+            var spread_prop_i: i32 = -1;
+            var i: i32 = 0;
+            parse_attributes: while (true) {
+                switch (p.lexer.token) {
+                    .t_identifier => {
+                        defer i += 1;
+                        // Parse the prop name
+                        var key_range = p.lexer.range();
+                        const prop_name_literal = p.lexer.identifier;
+                        const special_prop = E.JSXElement.SpecialProp.Map.get(prop_name_literal) orelse E.JSXElement.SpecialProp.any;
+                        try p.lexer.nextInsideJSXElement();
+
+                        if (special_prop == .key) {
+
+                            // <ListItem key>
+                            if (p.lexer.token != .t_equals) {
+                                // Unlike Babel, we're going to just warn here and move on.
+                                try p.log.addWarning(p.source, key_range.loc, "\"key\" prop ignored. Must be a string, number or symbol.");
+                                continue;
+                            }
+
+                            key_prop_i = i;
+                            key_prop = try p.parseJSXPropValueIdentifier(&previous_string_with_backslash_loc);
+                            continue;
+                        }
+
+                        var prop_name = p.e(E.String{ .value = p.lexer.stringToUTF16(prop_name_literal) }, key_range.loc);
+
+                        // Parse the value
+                        var value: Expr = undefined;
+                        if (p.lexer.token != .t_equals) {
+
+                            // Implicitly true value
+                            // <button selected>
+                            value = p.e(E.Boolean{ .value = true }, logger.Loc{ .start = key_range.loc.start + key_range.len });
+                        } else {
+                            value = try p.parseJSXPropValueIdentifier(&previous_string_with_backslash_loc);
+                        }
+
+                        try props.append(G.Property{ .key = prop_name, .value = value });
+                    },
+                    .t_open_brace => {
+                        defer i += 1;
+                        // Use Next() not ExpectInsideJSXElement() so we can parse "..."
+                        p.lexer.next();
+                        p.lexer.expect(.t_dot_dot_dot);
+                        spread_prop_i = i;
+                        spread_loc = p.lexer.loc();
+                        try props.append(G.Property{ .value = p.parseExpr(.comma), .kind = .spread });
+                        try p.lexer.nextInsideJSXElement();
+                    },
+                    else => {
+                        break :parse_attributes;
+                    },
+                }
+            }
+
+            flags.is_key_before_rest = key_prop_i > -1 and spread_prop_i > key_prop_i;
+            if (flags.is_key_before_rest and p.options.jsx.runtime == .automatic and !p.has_classic_runtime_warned) {
+                try p.log.addWarning(p.source, spread_loc, "\"key\" prop before a {...spread} is deprecated in JSX. Falling back to classic runtime.");
+                p.has_classic_runtime_warned = true;
+            }
+            properties = props.toOwnedSlice();
+        }
+
+        // People sometimes try to use the output of "JSON.stringify()" as a JSX
+        // attribute when automatically-generating JSX code. Doing so is incorrect
+        // because JSX strings work like XML instead of like JS (since JSX is XML-in-
+        // JS). Specifically, using a backslash before a quote does not cause it to
+        // be escaped:
+        //
+        //   JSX ends the "content" attribute here and sets "content" to 'some so-called \\'
+        //                                          v
+        //         <Button content="some so-called \"button text\"" />
+        //                                                      ^
+        //       There is no "=" after the JSX attribute "text", so we expect a ">"
+        //
+        // This code special-cases this error to provide a less obscure error message.
+        if (p.lexer.token == .t_syntax_error and strings.eql(p.lexer.raw(), "\\") and previous_string_with_backslash_loc.start > 0) {
+            const r = p.lexer.range();
+            // Not dealing with this right now.
+            try p.log.addRangeError(p.source, r, "Invalid JSX escape - use XML entity codes quotes or pass a JavaScript string instead");
+            p.panic("", .{});
+        }
+
+        // A slash here is a self-closing element
+        if (p.lexer.token == .t_slash) {
+            // Use NextInsideJSXElement() not Next() so we can parse ">>" as ">"
+            try p.lexer.nextInsideJSXElement();
+            if (p.lexer.token != .t_greater_than) {
+                p.lexer.expected(.t_greater_than);
+            }
+
+            return p.e(E.JSXElement{
+                .tag = start_tag,
+                .properties = properties,
+                .key = key_prop,
+                .flags = flags,
+            }, loc);
+        }
+
+        // Use ExpectJSXElementChild() so we parse child strings
+        try p.lexer.expectJSXElementChild(.t_greater_than);
+        var children = List(Expr).init(p.allocator);
+
+        while (true) {
+            switch (p.lexer.token) {
+                .t_string_literal => {
+                    try children.append(p.e(E.String{ .value = p.lexer.string_literal }, loc));
+                    try p.lexer.nextJSXElementChild();
+                },
+                .t_open_brace => {
+                    // Use Next() instead of NextJSXElementChild() here since the next token is an expression
+                    p.lexer.next();
+
+                    // The "..." here is ignored (it's used to signal an array type in TypeScript)
+                    if (p.lexer.token == .t_dot_dot_dot and p.options.ts) {
+                        p.lexer.next();
+                    }
+
+                    // The expression is optional, and may be absent
+                    if (p.lexer.token != .t_close_brace) {
+                        try children.append(p.parseExpr(.lowest));
+                    }
+
+                    // Use ExpectJSXElementChild() so we parse child strings
+                    try p.lexer.expectJSXElementChild(.t_close_brace);
+                },
+                .t_less_than => {
+                    const less_than_loc = p.lexer.loc();
+                    try p.lexer.nextInsideJSXElement();
+
+                    if (p.lexer.token != .t_slash) {
+                        // This is a child element
+                        children.append(p.parseJSXElement(less_than_loc) catch unreachable) catch unreachable;
+
+                        // The call to parseJSXElement() above doesn't consume the last
+                        // TGreaterThan because the caller knows what Next() function to call.
+                        // Use NextJSXElementChild() here since the next token is an element
+                        // child.
+                        try p.lexer.nextJSXElementChild();
+                        continue;
+                    }
+
+                    // This is the closing element
+                    try p.lexer.nextInsideJSXElement();
+                    const end_tag = try JSXTag.parse(p);
+                    if (!strings.eql(end_tag.name, tag.name)) {
+                        try p.log.addRangeErrorFmt(p.source, end_tag.range, p.allocator, "Expected closing tag </{s}> to match opening tag <{s}>", .{
+                            tag.name,
+                            end_tag.name,
+                        });
+                        p.panic("", .{});
+                    }
+
+                    if (p.lexer.token != .t_greater_than) {
+                        p.lexer.expected(.t_greater_than);
+                    }
+
+                    return p.e(E.JSXElement{ .tag = end_tag.data.asExpr(), .children = children.toOwnedSlice() }, loc);
+                },
+                else => {
+                    p.lexer.unexpected();
+                    p.panic("", .{});
+                },
+            }
+        }
     }
 
     pub fn willNeedBindingPattern(p: *P) bool {
@@ -7484,14 +7907,11 @@ pub const P = struct {
                     if (e_.tag) |_tag| {
                         break :tagger p.visitExpr(_tag);
                     } else {
-                        break :tagger p.jsxStringsToMemberExpression(expr.loc, p.options.jsx.fragment);
+                        break :tagger p.jsxStringsToMemberExpression(expr.loc, p.jsx_fragment_ref);
                     }
                 };
 
-                // Visit properties
-                var i: usize = 0;
-                while (i < e_.properties.len) : (i += 1) {
-                    const property = e_.properties[i];
+                for (e_.properties) |property, i| {
                     if (property.kind != .spread) {
                         e_.properties[i].key = p.visitExpr(e_.properties[i].key.?);
                     }
@@ -7505,27 +7925,117 @@ pub const P = struct {
                     }
                 }
 
-                // Arguments to createElement()
-                const args = p.allocator.alloc(Expr, 1 + e_.children.len) catch unreachable;
-                i = 1;
-                if (e_.properties.len > 0) {
-                    args[0] = p.e(E.Object{ .properties = e_.properties }, expr.loc);
-                } else {
-                    args[0] = p.e(E.Null{}, expr.loc);
-                }
+                const runtime = if (p.options.jsx.runtime == .automatic and !e_.flags.is_key_before_rest) options.JSX.Runtime.automatic else options.JSX.Runtime.classic;
 
-                for (e_.children) |child| {
-                    args[i] = p.visitExpr(child);
-                    i += 1;
-                }
+                // TODO: maybe we should split these into two different AST Nodes
+                // That would reduce the amount of allocations a little
+                switch (runtime) {
+                    .classic => {
+                        // Arguments to createElement()
+                        const args = p.allocator.alloc(Expr, 1 + e_.children.len) catch unreachable;
+                        var i: usize = 1;
+                        if (e_.properties.len > 0) {
+                            if (e_.key) |key| {
+                                var props = List(G.Property).fromOwnedSlice(p.allocator, e_.properties);
+                                props.append(G.Property{ .key = Expr{ .loc = key.loc, .data = keyExprData }, .value = key }) catch unreachable;
+                                args[0] = p.e(E.Object{ .properties = props.toOwnedSlice() }, expr.loc);
+                            } else {
+                                args[0] = p.e(E.Object{ .properties = e_.properties }, expr.loc);
+                            }
+                        } else {
+                            args[0] = p.e(E.Null{}, expr.loc);
+                        }
 
-                // Call createElement()
-                return p.e(E.Call{
-                    .target = p.jsxStringsToMemberExpression(expr.loc, p.options.jsx.factory),
-                    .args = args,
-                    // Enable tree shaking
-                    .can_be_unwrapped_if_unused = !p.options.ignore_dce_annotations,
-                }, expr.loc);
+                        for (e_.children) |child| {
+                            args[i] = p.visitExpr(child);
+                            i += 1;
+                        }
+
+                        // Call createElement()
+                        return p.e(E.Call{
+                            .target = p.jsxStringsToMemberExpression(expr.loc, p.jsx_runtime_ref),
+                            .args = args,
+                            // Enable tree shaking
+                            .can_be_unwrapped_if_unused = !p.options.ignore_dce_annotations,
+                        }, expr.loc);
+                    },
+                    .automatic => {
+                        // Assuming jsx development for now.
+                        // React.jsxDEV(type, arguments, key, isStaticChildren, source, self)
+                        // React.jsx(type, arguments, key)
+
+                        const args = p.allocator.alloc(Expr, if (p.options.jsx.development) @as(usize, 6) else @as(usize, 4)) catch unreachable;
+                        args[0] = tag;
+                        var props = List(G.Property).fromOwnedSlice(p.allocator, e_.properties);
+                        // arguments needs to be like
+                        // {
+                        //    ...props,
+                        //    children: []
+                        // }
+                        for (e_.children) |child, i| {
+                            e_.children[i] = p.visitExpr(child);
+                        }
+                        const children_key = Expr{ .data = jsxChildrenKeyData, .loc = expr.loc };
+
+                        if (e_.children.len == 1) {
+                            props.append(G.Property{
+                                .key = children_key,
+                                .value = e_.children[0],
+                            }) catch unreachable;
+                        } else {
+                            props.append(G.Property{
+                                .key = children_key,
+                                .value = p.e(E.Array{
+                                    .items = e_.children,
+                                    .is_single_line = e_.children.len < 2,
+                                }, expr.loc),
+                            }) catch unreachable;
+                        }
+
+                        args[1] = p.e(E.Object{
+                            .properties = props.toOwnedSlice(),
+                        }, expr.loc);
+                        if (e_.key) |key| {
+                            args[2] = key;
+                        } else {
+                            args[2] = Expr{ .loc = expr.loc, .data = nullValueExpr };
+                        }
+
+                        if (p.options.jsx.development) {
+                            args[3] = Expr{ .loc = expr.loc, .data = falseValueExpr };
+                            // placeholder src prop for now
+                            var source = p.allocator.alloc(G.Property, 3) catch unreachable;
+                            p.recordUsage(&p.jsx_filename_ref);
+                            source[0] = G.Property{
+                                .key = Expr{ .loc = expr.loc, .data = Prefill.Data.Filename },
+                                .value = p.e(E.Identifier{ .ref = p.jsx_filename_ref }, expr.loc),
+                            };
+
+                            source[1] = G.Property{
+                                .key = Expr{ .loc = expr.loc, .data = Prefill.Data.LineNumber },
+                                .value = p.e(E.Number{ .value = @intToFloat(f64, expr.loc.start) }, expr.loc),
+                            };
+
+                            source[2] = G.Property{
+                                .key = Expr{ .loc = expr.loc, .data = Prefill.Data.ColumnNumber },
+                                .value = p.e(E.Number{ .value = @intToFloat(f64, expr.loc.start) }, expr.loc),
+                            };
+
+                            args[4] = p.e(E.Object{
+                                .properties = source,
+                            }, expr.loc);
+                            args[5] = p.e(E.This{}, expr.loc);
+                        }
+
+                        return p.e(E.Call{
+                            .target = p.jsxStringsToMemberExpressionAutomatic(expr.loc),
+                            .args = args,
+                            // Enable tree shaking
+                            .can_be_unwrapped_if_unused = !p.options.ignore_dce_annotations,
+                            .was_jsx_element = true,
+                        }, expr.loc);
+                    },
+                }
             },
 
             .e_template => |e_| {
@@ -8026,7 +8536,7 @@ pub const P = struct {
                 }
             },
             .e_if => |e_| {
-                const is_call_target = (p.call_target) == .e_if and e_ == p.call_target.e_if;
+                const is_call_target = @as(Expr.Data, p.call_target) == .e_if and e_ == p.call_target.e_if;
 
                 e_.test_ = p.visitExpr(e_.test_);
 
@@ -8556,6 +9066,10 @@ pub const P = struct {
         return false;
     }
 
+    pub fn jsxStringsToMemberExpressionAutomatic(p: *P, loc: logger.Loc) Expr {
+        return p.jsxStringsToMemberExpression(loc, p.jsx_runtime_ref);
+    }
+
     // EDot nodes represent a property access. This function may return an
     // expression to replace the property access with. It assumes that the
     // target of the EDot expression has already been visited.
@@ -8965,7 +9479,7 @@ pub const P = struct {
                     // as a loop body. This is used to enable optimizations specific to the
                     // topmost scope in a loop body block.
                     const kind = if (std.meta.eql(p.loop_body, stmt.data)) StmtsKind.loop_body else StmtsKind.none;
-                    var _stmts = List(Stmt).init(p.allocator);
+                    var _stmts = List(Stmt).fromOwnedSlice(p.allocator, data.stmts);
                     p.visitStmts(&_stmts, kind) catch unreachable;
                     data.stmts = _stmts.toOwnedSlice();
                 }
@@ -9006,6 +9520,22 @@ pub const P = struct {
                     data.yes = p.visitSingleStmt(data.yes, StmtsKind.none);
                 } else {
                     data.yes = p.visitSingleStmt(data.yes, StmtsKind.none);
+                }
+
+                // The "else" clause is optional
+                if (data.no) |no| {
+                    if (effects.ok and !effects.value) {
+                        const old = p.is_control_flow_dead;
+                        p.is_control_flow_dead = true;
+                        defer p.is_control_flow_dead = old;
+                        data.no = p.visitSingleStmt(no, .none);
+                    } else {
+                        data.no = p.visitSingleStmt(no, .none);
+                    }
+
+                    if (data.no != null and @as(Stmt.Tag, data.no.?.data) == .s_empty) {
+                        data.no = null;
+                    }
                 }
             },
             .s_for => |data| {
@@ -9087,6 +9617,9 @@ pub const P = struct {
                 if (data.catch_) |*catch_| {
                     p.pushScopeForVisitPass(.block, catch_.loc) catch unreachable;
                     defer p.popScope();
+                    if (catch_.binding != null and @as(Binding.Tag, catch_.binding.?.data) != .b_missing) {
+                        p.visitBinding(catch_.binding.?, null);
+                    }
                     var _stmts = List(Stmt).fromOwnedSlice(p.allocator, data.body);
                     p.visitStmts(&_stmts, StmtsKind.none) catch unreachable;
                     catch_.body = _stmts.toOwnedSlice();
@@ -9816,31 +10349,56 @@ pub const P = struct {
         var old_is_control_flow_dead = p.is_control_flow_dead;
 
         // visit all statements first
-        var visited = try List(Stmt).initCapacity(p.allocator, stmts.items.len);
+        var visited = List(Stmt).init(p.allocator);
         var before = List(Stmt).init(p.allocator);
         var after = List(Stmt).init(p.allocator);
+        defer before.deinit();
+        defer visited.deinit();
+        defer after.deinit();
+
         for (stmts.items) |*stmt| {
-            switch (stmt.data) {
-                .s_export_equals => {
-                    // TypeScript "export = value;" becomes "module.exports = value;". This
-                    // must happen at the end after everything is parsed because TypeScript
-                    // moves this statement to the end when it generates code.
-                    try p.visitAndAppendStmt(&after, stmt);
-                    continue;
-                },
-                .s_function => |data| {
-                    // Manually hoist block-level function declarations to preserve semantics.
-                    // This is only done for function declarations that are not generators
-                    // or async functions, since this is a backwards-compatibility hack from
-                    // Annex B of the JavaScript standard.
-                    if (!p.current_scope.kindStopsHoisting() and p.symbols.items[data.func.name.?.ref.?.inner_index].kind == .hoisted_function) {
-                        try p.visitAndAppendStmt(&before, stmt);
-                        continue;
-                    }
-                },
-                else => {},
-            }
-            try p.visitAndAppendStmt(&visited, stmt);
+            const list = list_getter: {
+                switch (stmt.data) {
+                    .s_export_equals => {
+                        // TypeScript "export = value;" becomes "module.exports = value;". This
+                        // must happen at the end after everything is parsed because TypeScript
+                        // moves this statement to the end when it generates code.
+                        break :list_getter &after;
+                    },
+                    .s_function => |data| {
+                        // Manually hoist block-level function declarations to preserve semantics.
+                        // This is only done for function declarations that are not generators
+                        // or async functions, since this is a backwards-compatibility hack from
+                        // Annex B of the JavaScript standard.
+                        if (!p.current_scope.kindStopsHoisting() and p.symbols.items[data.func.name.?.ref.?.inner_index].kind == .hoisted_function) {
+                            break :list_getter &before;
+                        }
+                    },
+                    else => {},
+                }
+                break :list_getter &visited;
+            };
+
+            try p.visitAndAppendStmt(list, stmt);
+        }
+
+        p.is_control_flow_dead = old_is_control_flow_dead;
+        try stmts.resize(visited.items.len + before.items.len + after.items.len);
+        var i: usize = 0;
+
+        for (before.items) |item| {
+            stmts.items[i] = item;
+            i += 1;
+        }
+
+        for (visited.items) |item| {
+            stmts.items[i] = item;
+            i += 1;
+        }
+
+        for (after.items) |item| {
+            stmts.items[i] = item;
+            i += 1;
         }
     }
 

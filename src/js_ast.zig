@@ -1,5 +1,6 @@
 const std = @import("std");
 const logger = @import("logger.zig");
+const JSXRuntime = @import("options.zig").JSX.Runtime;
 
 usingnamespace @import("strings.zig");
 usingnamespace @import("ast/base.zig");
@@ -60,6 +61,9 @@ pub const AssignTarget = enum {
 pub const LocRef = struct { loc: logger.Loc, ref: ?Ref };
 
 pub const Flags = struct {
+    pub const JSXElement = packed struct {
+        is_key_before_rest: bool = false,
+    };
 
     // Instead of 5 bytes for booleans, we can store it in 5 bits
     // It will still round up to 1 byte. But that's 4 bytes less!
@@ -704,6 +708,9 @@ pub const E = struct {
         // if they have side effects.
         can_be_unwrapped_if_unused: bool = false,
 
+        // Used when printing to generate the source prop on the fly
+        was_jsx_element: bool = false,
+
         pub fn hasSameFlagsAs(a: *Call, b: *Call) bool {
             return (a.optional_chain == b.optional_chain and
                 a.is_direct_eval == b.is_direct_eval and
@@ -810,10 +817,56 @@ pub const E = struct {
         ref: Ref,
     };
 
+    /// In development mode, the new JSX transform has a few special props
+    /// - `React.jsxDEV(type, arguments, key, isStaticChildren, source, self)`
+    /// - `arguments`:
+    ///      ```{ ...props, children: children, }```
+    /// - `source`: https://github.com/babel/babel/blob/ef87648f3f05ccc393f89dea7d4c7c57abf398ce/packages/babel-plugin-transform-react-jsx-source/src/index.js#L24-L48
+    ///      ```{
+    ///         fileName: string | null,
+    ///         columnNumber: number | null,
+    ///         lineNumber: number | null,
+    ///      }```
+    /// - `children`:
+    ///     - multiple children? the function is React.jsxsDEV, "jsxs" instead of "jsx"
+    ///     - one child? the function is React.jsxDEV,
+    ///     - no children? the function is React.jsxDEV and children is an empty array.
+    /// `isStaticChildren`: https://github.com/facebook/react/blob/4ca62cac45c288878d2532e5056981d177f9fdac/packages/react/src/jsx/ReactJSXElementValidator.js#L369-L384 
+    ///     This flag means children is an array of JSX Elements literals.
+    ///     The documentation on this is sparse, but it appears that
+    ///     React just calls Object.freeze on the children array.
+    ///     Object.freeze, historically, is quite a bit slower[0] than just not doing that.
+    ///     Given that...I am choosing to always pass "false" to this.
+    ///     This also skips extra state that we'd need to track.
+    ///     If React Fast Refresh ends up using this later, then we can revisit this decision.
+    ///  [0]: https://github.com/automerge/automerge/issues/177
     pub const JSXElement = struct {
+        /// null represents a fragment
         tag: ?ExprNodeIndex = null,
-        properties: []G.Property,
-        children: ExprNodeList,
+
+        /// props
+        properties: []G.Property = &([_]G.Property{}),
+
+        /// element children
+        children: ExprNodeList = &([_]ExprNodeIndex{}),
+
+        /// key is the key prop like <ListItem key="foo">
+        key: ?ExprNodeIndex = null,
+
+        flags: Flags.JSXElement = Flags.JSXElement{},
+
+        pub const SpecialProp = enum {
+            __self, // old react transform used this as a prop
+            __source,
+            key,
+            any,
+
+            pub const Map = std.ComptimeStringMap(SpecialProp, .{
+                .{ "__self", .__self },
+                .{ "__source", .__source },
+                .{ "key", .key },
+            });
+        };
     };
 
     pub const Missing = struct {

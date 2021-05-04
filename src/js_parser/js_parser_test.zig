@@ -381,6 +381,12 @@ test "expectPrint" {
     var t_ = Tester.t(std.heap.page_allocator);
     var t = &t_;
 
+    try expectPrinted(t, "if (true) { console.log(\"hi\"); }", "if (true) { console.log(\"hi\"); }", @src());
+
+    try expectPrinted(t, "try { console.log(\"hi\"); }\ncatch(er) { console.log('noooo'); }", "class Foo {\n  foo() {\n  }\n}\n", @src());
+
+    try expectPrinted(t, "try { console.log(\"hi\"); }\ncatch(er) { console.log('noooo'); }", "class Foo {\n  foo() {\n  }\n}\n", @src());
+
     try expectPrinted(t, "class Foo { foo() {} }", "class Foo {\n  foo() {\n  }\n}\n", @src());
     try expectPrinted(t, "class Foo { *foo() {} }", "class Foo {\n  *foo() {\n  }\n}\n", @src());
     try expectPrinted(t, "class Foo { get foo() {} }", "class Foo {\n  get foo() {\n  }\n}\n", @src());

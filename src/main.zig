@@ -92,12 +92,12 @@ pub fn main() anyerror!void {
         &_linker,
     );
 
-    if (std.builtin.mode == std.builtin.Mode.Debug) {
-        var fixed_buffer = [_]u8{0} ** 512000;
-        var buf_stream = std.io.fixedBufferStream(&fixed_buffer);
+    // if (std.builtin.mode == std.builtin.Mode.Debug) {
+    //     var fixed_buffer = [_]u8{0} ** 512000;
+    //     var buf_stream = std.io.fixedBufferStream(&fixed_buffer);
 
-        try ast.toJSON(alloc.dynamic, stderr.writer());
-    }
+    //     try ast.toJSON(alloc.dynamic, stderr.writer());
+    // }
 
     _ = try stdout.write(printed.js);
 }

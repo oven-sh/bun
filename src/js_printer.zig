@@ -2033,9 +2033,11 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                                 },
                                 .s_class => |class| {
                                     p.printSpaceBeforeIdentifier();
-                                    p.print("class");
                                     if (class.class.class_name) |name| {
+                                        p.print("class ");
                                         p.printSymbol(name.ref orelse std.debug.panic("Internal error: Expected class to have a name ref\n{s}", .{class}));
+                                    } else {
+                                        p.print("class");
                                     }
                                     p.printClass(class.class);
                                     p.printNewline();

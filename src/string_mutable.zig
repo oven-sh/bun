@@ -112,6 +112,10 @@ pub const MutableString = struct {
         return self.list.toOwnedSlice(self.allocator);
     }
 
+    pub fn toOwnedSliceLeaky(self: *MutableString) string {
+        return self.list.items;
+    }
+
     pub fn toOwnedSliceLength(self: *MutableString, length: usize) string {
         self.list.shrinkAndFree(self.allocator, length);
         return self.list.toOwnedSlice(self.allocator);

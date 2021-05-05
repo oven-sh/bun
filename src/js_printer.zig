@@ -650,7 +650,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
             switch (value.data) {
                 .e_identifier => |ident| {
                     const symbol = p.symbols.get(p.symbols.follow(ident.ref)) orelse return false;
-                    return symbol.kind == .unbound and strings.eql(symbol.original_name, "eval");
+                    return symbol.kind == .unbound and strings.eqlComptime(symbol.original_name, "eval");
                 },
                 else => {
                     return false;
@@ -1265,14 +1265,14 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     // If this was originally a template literal, print it as one as long as we're not minifying
                     if (e.prefer_template) {
                         p.print("`");
-                        p.printQuotedUTF16(e.value, '`');
+                        p.printString(e.*, '`');
                         p.print("`");
                         return;
                     }
 
                     const c = p.bestQuoteCharForString(e.value, true);
                     p.print(c);
-                    p.printQuotedUTF16(e.value, c);
+                    p.printString(e.*, c);
                     p.print(c);
                 },
                 .e_template => |e| {
@@ -1367,7 +1367,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                 },
                 .e_identifier => |e| {
                     const name = p.renamer.nameForSymbol(e.ref);
-                    const wrap = p.js.lenI() == p.for_of_init_start and strings.eql(name, "let");
+                    const wrap = p.js.lenI() == p.for_of_init_start and strings.eqlComptime(name, "let");
 
                     if (wrap) {
                         p.print("(");
@@ -1625,6 +1625,15 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
             p: *Printer,
         ) callconv(.Inline) void {
             p.print(")");
+        }
+
+        pub fn printString(p: *Printer, str: E.String, c: u8) void {
+            if (!str.isUTF8()) {
+                p.printQuotedUTF16(str.value, c);
+            } else {
+                // its already quoted for us!
+                p.print(str.utf8);
+            }
         }
 
         pub fn printProperty(p: *Printer, item: G.Property) void {
@@ -2727,7 +2736,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
         }
 
         pub fn init(allocator: *std.mem.Allocator, tree: Ast, symbols: Symbol.Map, opts: Options, linker: *Linker) !Printer {
-            var js = try MutableString.init(allocator, 1024);
+            var js = try MutableString.init(allocator, 0);
             return Printer{
                 .allocator = allocator,
                 .import_records = tree.import_records,
@@ -2781,7 +2790,7 @@ pub fn printAst(allocator: *std.mem.Allocator, tree: Ast, symbols: js_ast.Symbol
         }
 
         return PrintResult{
-            .js = printer.js.toOwnedSlice(),
+            .js = printer.js.toOwnedSliceLeaky(),
         };
     } else {
         var printer = try UnicodePrinter.init(
@@ -2798,7 +2807,7 @@ pub fn printAst(allocator: *std.mem.Allocator, tree: Ast, symbols: js_ast.Symbol
         }
 
         return PrintResult{
-            .js = printer.js.toOwnedSlice(),
+            .js = printer.js.toOwnedSliceLeaky(),
         };
     }
 }

@@ -900,9 +900,56 @@ pub const E = struct {
     pub const Spread = struct { value: ExprNodeIndex };
 
     pub const String = struct {
-        value: JavascriptString,
+        value: JavascriptString = &([_]u16{}),
+        utf8: string = &([_]u8{}),
         legacy_octal_loc: ?logger.Loc = null,
         prefer_template: bool = false,
+
+        pub fn isUTF8(s: *const String) bool {
+            return s.utf8.len > 0;
+        }
+
+        pub fn eql(s: *const String, comptime _t: type, other: anytype) bool {
+            if (s.isUTF8()) {
+                switch (_t) {
+                    @This() => {
+                        if (other.isUTF8()) {
+                            return strings.eql(s.utf8, other.utf8);
+                        } else {
+                            return strings.utf16EqlString(other.value, s.utf8);
+                        }
+                    },
+                    string => {
+                        return strings.eql(s.utf8, other);
+                    },
+                    JavascriptString => {
+                        return strings.utf16EqlString(other, s.utf8);
+                    },
+                    else => {
+                        @compileError("Invalid type");
+                    },
+                }
+            } else {
+                switch (_t) {
+                    @This() => {
+                        if (other.isUTF8()) {
+                            return strings.utf16EqlString(s.value, other.utf8);
+                        } else {
+                            return std.mem.eql(u16, other.value, s.value);
+                        }
+                    },
+                    string => {
+                        return strings.utf16EqlString(other.utf8, s.value);
+                    },
+                    JavascriptString => {
+                        return std.mem.eql(u16, other.value, s.value);
+                    },
+                    else => {
+                        @compileError("Invalid type");
+                    },
+                }
+            }
+        }
 
         pub fn string(s: *String, allocator: *std.mem.Allocator) !string {
             return try std.unicode.utf16leToUtf8Alloc(allocator, s.value);
@@ -2721,27 +2768,27 @@ pub const Op = struct {
         new,
         call,
         member,
-        pub fn lt(self: Level, b: Level) callconv(.Inline) bool {
+        pub fn lt(self: Level, b: Level) bool {
             return @enumToInt(self) < @enumToInt(b);
         }
-        pub fn gt(self: Level, b: Level) callconv(.Inline) bool {
+        pub fn gt(self: Level, b: Level) bool {
             return @enumToInt(self) > @enumToInt(b);
         }
-        pub fn gte(self: Level, b: Level) callconv(.Inline) bool {
+        pub fn gte(self: Level, b: Level) bool {
             return @enumToInt(self) >= @enumToInt(b);
         }
-        pub fn lte(self: Level, b: Level) callconv(.Inline) bool {
+        pub fn lte(self: Level, b: Level) bool {
             return @enumToInt(self) <= @enumToInt(b);
         }
-        pub fn eql(self: Level, b: Level) callconv(.Inline) bool {
+        pub fn eql(self: Level, b: Level) bool {
             return @enumToInt(self) == @enumToInt(b);
         }
 
-        pub fn sub(self: Level, comptime i: anytype) callconv(.Inline) Level {
+        pub fn sub(self: Level, i: anytype) Level {
             return @intToEnum(Level, @enumToInt(self) - i);
         }
 
-        pub fn add(self: Level, comptime i: anytype) callconv(.Inline) Level {
+        pub fn add(self: Level, i: anytype) Level {
             return @intToEnum(Level, @enumToInt(self) + i);
         }
     };

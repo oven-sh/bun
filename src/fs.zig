@@ -94,7 +94,7 @@ pub const PathName = struct {
     // through the renaming logic that all other symbols go through to avoid name
     // collisions.
     pub fn nonUniqueNameString(self: *PathName, allocator: *std.mem.Allocator) !string {
-        if (strings.eql("index", self.base)) {
+        if (strings.eqlComptime(self.base, "index")) {
             if (self.dir.len > 0) {
                 return MutableString.ensureValidIdentifier(PathName.init(self.dir).dir, allocator);
             }

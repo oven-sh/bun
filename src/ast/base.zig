@@ -29,7 +29,10 @@ pub const Ref = packed struct {
 
     // 2 bits of padding for whatever is the parent
     pub const Int = u30;
-    pub const None = Ref{ .inner_index = std.math.maxInt(Ref.Int) };
+    pub const None = Ref{
+        .inner_index = std.math.maxInt(Ref.Int),
+        .source_index = std.math.maxInt(Ref.Int),
+    };
     pub fn isNull(self: *const Ref) bool {
         return self.source_index == std.math.maxInt(Ref.Int) and self.inner_index == std.math.maxInt(Ref.Int);
     }

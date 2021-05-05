@@ -59,7 +59,7 @@ pub const Lexer = struct {
     comments_to_preserve_before: std.ArrayList(js_ast.G.Comment),
     all_original_comments: ?[]js_ast.G.Comment = null,
     code_point: CodePoint = -1,
-    string_literal: JavascriptString,
+
     identifier: []const u8 = "",
     jsx_factory_pragma_comment: ?js_ast.Span = null,
     jsx_fragment_pragma_comment: ?js_ast.Span = null,
@@ -68,6 +68,13 @@ pub const Lexer = struct {
     rescan_close_brace_as_template_token: bool = false,
     prev_error_loc: logger.Loc = logger.Loc.Empty,
     allocator: *std.mem.Allocator,
+
+    /// In JavaScript, strings are stored as UTF-16, but nearly every string is ascii.
+    /// This means, usually, we can skip UTF8 -> UTF16 conversions.
+    string_literal_buffer: std.ArrayList(u16),
+    string_literal_slice: string = "",
+    string_literal: JavascriptString,
+    string_literal_is_ascii: bool = false,
 
     pub fn loc(self: *LexerType) logger.Loc {
         return logger.usize2Loc(self.start);
@@ -170,6 +177,14 @@ pub const Lexer = struct {
         return @enumToInt(lexer.token) >= @enumToInt(T.t_identifier);
     }
 
+    pub fn stringLiteralUTF16(lexer: *LexerType) JavascriptString {
+        if (lexer.string_literal_is_ascii) {
+            return lexer.stringToUTF16(lexer.string_literal_slice);
+        } else {
+            return lexer.allocator.dupe(u16, lexer.string_literal) catch unreachable;
+        }
+    }
+
     fn parseStringLiteral(lexer: *LexerType) void {
         var quote: CodePoint = lexer.code_point;
         var needs_slow_path = false;
@@ -253,16 +268,18 @@ pub const Lexer = struct {
             lexer.step();
         }
 
-        const text = lexer.source.contents[lexer.start + 1 .. lexer.end - suffixLen];
+        // Reset string literal
+        lexer.string_literal = &([_]u16{});
+        lexer.string_literal_slice = lexer.source.contents[lexer.start + 1 .. lexer.end - suffixLen];
+        lexer.string_literal_is_ascii = !needs_slow_path;
+        lexer.string_literal_buffer.shrinkRetainingCapacity(0);
+        lexer.string_literal.len = lexer.string_literal_slice.len;
         if (needs_slow_path) {
-            lexer.string_literal = lexer.stringToUTF16(text);
-        } else {
-            lexer.string_literal = lexer.allocator.alloc(u16, text.len) catch unreachable;
-            var i: usize = 0;
-            for (text) |byte| {
-                lexer.string_literal[i] = byte;
-                i += 1;
-            }
+            lexer.string_literal_buffer.ensureTotalCapacity(lexer.string_literal_slice.len) catch unreachable;
+            var slice = lexer.string_literal_buffer.allocatedSlice();
+            lexer.string_literal_buffer.items = slice[0..strings.toUTF16Buf(lexer.string_literal_slice, slice)];
+            lexer.string_literal = lexer.string_literal_buffer.items;
+            lexer.string_literal_slice = &[_]u8{};
         }
 
         if (quote == '\'' and lexer.json_options != null) {
@@ -851,7 +868,7 @@ pub const Lexer = struct {
                         },
                         // Handle legacy HTML-style comments
                         '!' => {
-                            if (std.mem.eql(u8, lexer.peek("--".len), "--")) {
+                            if (strings.eqlComptime(lexer.peek("--".len), "--")) {
                                 lexer.addUnsupportedSyntaxError("Legacy HTML comments not implemented yet!");
                                 return;
                             }
@@ -1011,7 +1028,7 @@ pub const Lexer = struct {
     }
 
     pub fn isContextualKeyword(self: *LexerType, comptime keyword: string) bool {
-        return self.token == .t_identifier and strings.eql(self.raw(), keyword);
+        return self.token == .t_identifier and strings.eqlComptime(self.raw(), keyword);
     }
 
     pub fn expectedString(self: *LexerType, text: string) void {
@@ -1067,7 +1084,9 @@ pub const Lexer = struct {
         var lex = LexerType{
             .log = log,
             .source = source.*,
+            .string_literal_is_ascii = true,
             .string_literal = empty_string_literal,
+            .string_literal_buffer = std.ArrayList(u16).init(allocator),
             .prev_error_loc = logger.Loc.Empty,
             .allocator = allocator,
             .comments_to_preserve_before = std.ArrayList(js_ast.G.Comment).init(allocator),
@@ -1085,7 +1104,9 @@ pub const Lexer = struct {
             .log = log,
             .source = source.*,
             .string_literal = empty_string_literal,
+            .string_literal_buffer = std.ArrayList(u16).init(allocator),
             .prev_error_loc = logger.Loc.Empty,
+            .string_literal_is_ascii = true,
             .allocator = allocator,
             .comments_to_preserve_before = std.ArrayList(js_ast.G.Comment).init(allocator),
             .json_options = JSONOptions{
@@ -1103,6 +1124,7 @@ pub const Lexer = struct {
         var empty_string_literal: JavascriptString = &emptyJavaScriptString;
         var lex = LexerType{
             .log = log,
+            .string_literal_buffer = std.ArrayList(u16).init(allocator),
             .source = source,
             .string_literal = empty_string_literal,
             .prev_error_loc = logger.Loc.Empty,
@@ -1126,6 +1148,7 @@ pub const Lexer = struct {
             .log = log,
             .source = source,
             .string_literal = empty_string_literal,
+            .string_literal_buffer = std.ArrayList(u16).init(allocator),
             .prev_error_loc = logger.Loc.Empty,
             .allocator = allocator,
             .comments_to_preserve_before = std.ArrayList(js_ast.G.Comment).init(allocator),
@@ -1173,7 +1196,6 @@ pub const Lexer = struct {
         for (str) |char, i| {
             buf[i] = char;
         }
-
         return buf;
     }
 
@@ -1377,16 +1399,15 @@ pub const Lexer = struct {
         }
 
         lexer.token = .t_string_literal;
-        const text = lexer.source.contents[lexer.start + 1 .. lexer.end - 1];
-
+        lexer.string_literal_slice = lexer.source.contents[lexer.start + 1 .. lexer.end - 1];
+        lexer.string_literal.len = lexer.string_literal_slice.len;
+        lexer.string_literal_is_ascii = !needs_decode;
+        lexer.string_literal_buffer.shrinkRetainingCapacity(0);
         if (needs_decode) {
-            var out = std.ArrayList(u16).init(lexer.allocator);
-            // slow path
-            try lexer.decodeJSXEntities(text, &out);
-            lexer.string_literal = out.toOwnedSlice();
-        } else {
-            // fast path
-            lexer.string_literal = lexer.stringToUTF16(text);
+            lexer.string_literal_buffer.ensureTotalCapacity(lexer.string_literal_slice.len) catch unreachable;
+            try lexer.decodeJSXEntities(lexer.string_literal_slice, &lexer.string_literal_buffer);
+            lexer.string_literal = lexer.string_literal_buffer.items;
+            lexer.string_literal_slice = &([_]u8{0});
         }
     }
 
@@ -1444,18 +1465,18 @@ pub const Lexer = struct {
                     }
 
                     lexer.token = .t_string_literal;
-                    const text = lexer.source.contents[original_start..lexer.end];
-
+                    lexer.string_literal_slice = lexer.source.contents[original_start..lexer.end];
+                    lexer.string_literal_is_ascii = !needs_fixing;
                     if (needs_fixing) {
                         // slow path
-                        lexer.string_literal = try fixWhitespaceAndDecodeJSXEntities(lexer, text);
+                        lexer.string_literal = try fixWhitespaceAndDecodeJSXEntities(lexer, lexer.string_literal_slice);
 
                         if (lexer.string_literal.len == 0) {
                             lexer.has_newline_before = true;
                             continue;
                         }
                     } else {
-                        lexer.string_literal = lexer.stringToUTF16(text);
+                        lexer.string_literal = &([_]u16{});
                     }
                 },
             }

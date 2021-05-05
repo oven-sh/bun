@@ -229,10 +229,6 @@ const renamer = @import("renamer.zig");
 const SymbolList = [][]Symbol;
 
 fn expectPrintedJSON(_contents: string, expected: string) void {
-    if (alloc.dynamic_manager == null) {
-        alloc.setup(std.heap.page_allocator) catch unreachable;
-    }
-
     var contents = alloc.dynamic.alloc(u8, _contents.len + 1) catch unreachable;
     std.mem.copy(u8, contents, _contents);
     contents[contents.len - 1] = ';';

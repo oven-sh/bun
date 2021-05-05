@@ -351,7 +351,7 @@ pub const ImportScanner = struct {
                         record.contains_default_alias = true;
                     } else {
                         for (st.items) |item| {
-                            if (strings.eql(item.alias, "default")) {
+                            if (strings.eqlComptime(item.alias, "default")) {
                                 record.contains_default_alias = true;
                                 break;
                             }
@@ -519,7 +519,7 @@ pub const SideEffects = enum {
     // Returns "equal, ok". If "ok" is false, then nothing is known about the two
     // values. If "ok" is true, the equality or inequality of the two values is
     // stored in "equal".
-    pub fn eql(left: Expr.Data, right: Expr.Data) Equality {
+    pub fn eql(left: Expr.Data, right: Expr.Data, p: *P) Equality {
         var equality = Equality{};
         switch (left) {
             .e_null => |l| {
@@ -544,7 +544,8 @@ pub const SideEffects = enum {
             },
             .e_string => |l| {
                 equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_string;
-                equality.equal = std.mem.eql(u16, l.value, right.e_string.value);
+                const r = right.e_string;
+                equality.equal = r.eql(E.String, l);
             },
             else => {},
         }
@@ -780,7 +781,7 @@ pub const SideEffects = enum {
                 return Result{ .ok = true, .value = e.value != 0.0 and !std.math.isNan(e.value), .side_effects = .no_side_effects };
             },
             .e_big_int => |e| {
-                return Result{ .ok = true, .value = !strings.eql(e.value, "0"), .side_effects = .no_side_effects };
+                return Result{ .ok = true, .value = !strings.eqlComptime(e.value, "0"), .side_effects = .no_side_effects };
             },
             .e_string => |e| {
                 return Result{ .ok = true, .value = e.value.len > 0, .side_effects = .no_side_effects };
@@ -1499,15 +1500,30 @@ pub const Prefill = struct {
         pub var LineNumber = [_]u16{ 'l', 'i', 'n', 'e', 'N', 'u', 'm', 'b', 'e', 'r' };
         pub var ColumnNumber = [_]u16{ 'c', 'o', 'l', 'u', 'm', 'n', 'N', 'u', 'm', 'b', 'e', 'r' };
     };
+    pub const Value = struct {
+        pub var EThis = E.This{};
+    };
     pub const String = struct {
+        pub var Key = E.String{ .value = &Prefill.StringLiteral.Key };
+        pub var Children = E.String{ .value = &Prefill.StringLiteral.Children };
         pub var Filename = E.String{ .value = &Prefill.StringLiteral.Filename };
         pub var LineNumber = E.String{ .value = &Prefill.StringLiteral.LineNumber };
         pub var ColumnNumber = E.String{ .value = &Prefill.StringLiteral.ColumnNumber };
     };
     pub const Data = struct {
+        pub var BMissing = B{ .b_missing = &BMissing_ };
+        pub var BMissing_ = B.Missing{};
+
+        pub var EMissing = Expr.Data{ .e_missing = &EMissing_ };
+        pub var EMissing_ = E.Missing{};
+
+        pub var SEmpty = Stmt.Data{ .s_empty = &SEmpty_ };
+        pub var SEmpty_ = S.Empty{};
+
         pub var Filename = Expr.Data{ .e_string = &Prefill.String.Filename };
         pub var LineNumber = Expr.Data{ .e_string = &Prefill.String.LineNumber };
         pub var ColumnNumber = Expr.Data{ .e_string = &Prefill.String.ColumnNumber };
+        pub var This = Expr.Data{ .e_this = &Prefill.Value.EThis };
     };
     pub const Runtime = struct {
         pub var JSXFilename = "__jsxFilename";
@@ -1516,10 +1532,8 @@ pub const Prefill = struct {
     };
 };
 
-var keyString = E.String{ .value = &Prefill.StringLiteral.Key };
-var keyExprData = Expr.Data{ .e_string = &keyString };
-var jsxChildrenKeyString = E.String{ .value = &Prefill.StringLiteral.Children };
-var jsxChildrenKeyData = Expr.Data{ .e_string = &jsxChildrenKeyString };
+var keyExprData = Expr.Data{ .e_string = &Prefill.String.Key };
+var jsxChildrenKeyData = Expr.Data{ .e_string = &Prefill.String.Children };
 var nullExprValueData = E.Null{};
 var falseExprValueData = E.Boolean{ .value = false };
 var nullValueExpr = Expr.Data{ .e_null = &nullExprValueData };
@@ -1747,6 +1761,9 @@ pub const P = struct {
     require_transposer: RequireTransposer,
     require_resolve_transposer: RequireResolveTransposer,
 
+    // This is a general place to put lots of Expr objects
+    expr_list: List(Expr),
+
     const TransposeState = struct {
         is_await_target: bool = false,
         is_then_catch_target: bool = false,
@@ -1775,7 +1792,7 @@ pub const P = struct {
         }
 
         // Use a debug log so people can see this if they want to
-        const r = js_lexer.rangeOfIdentifier(&p.source, state.loc);
+        const r = js_lexer.rangeOfIdentifier(p.source, state.loc);
         p.log.addRangeDebug(p.source, r, "This \"import\" expression will not be bundled because the argument is not a string literal") catch unreachable;
 
         return p.e(E.Import{
@@ -1859,7 +1876,7 @@ pub const P = struct {
 
             // Forbid referencing "arguments" inside class bodies
             if (scope.forbid_arguments and strings.eql(name, "arguments") and !did_forbid_argumen) {
-                const r = js_lexer.rangeOfIdentifier(&p.source, loc);
+                const r = js_lexer.rangeOfIdentifier(p.source, loc);
                 p.log.addRangeErrorFmt(p.source, r, p.allocator, "Cannot access \"{s}\" here", .{name}) catch unreachable;
                 did_forbid_argumen = true;
             }
@@ -1892,7 +1909,7 @@ pub const P = struct {
         }
 
         // Track how many times we've referenced this symbol
-        p.recordUsage(&ref);
+        p.recordUsage(ref);
         return FindSymbolResult{
             .ref = ref,
             .declare_loc = declare_loc,
@@ -1928,11 +1945,11 @@ pub const P = struct {
             var notes = try p.allocator.alloc(logger.Data, 1);
             notes[0] = logger.Data{
                 .text = try std.fmt.allocPrint(p.allocator, "\"{s}\" was originally exported here", .{alias}),
-                .location = logger.Location.init_or_nil(p.source, js_lexer.rangeOfIdentifier(&p.source, name.alias_loc)),
+                .location = logger.Location.init_or_nil(p.source, js_lexer.rangeOfIdentifier(p.source, name.alias_loc)),
             };
             try p.log.addRangeErrorFmtWithNotes(
                 p.source,
-                js_lexer.rangeOfIdentifier(&p.source, loc),
+                js_lexer.rangeOfIdentifier(p.source, loc),
                 p.allocator,
                 notes,
                 "Multiple exports with the same name {s}",
@@ -1943,15 +1960,15 @@ pub const P = struct {
         }
     }
 
-    pub fn recordUsage(p: *P, ref: *const js_ast.Ref) void {
+    pub fn recordUsage(p: *P, ref: js_ast.Ref) void {
         // The use count stored in the symbol is used for generating symbol names
         // during minification. These counts shouldn't include references inside dead
         // code regions since those will be culled.
         if (!p.is_control_flow_dead) {
             p.symbols.items[ref.inner_index].use_count_estimate += 1;
-            var use = p.symbol_uses.get(ref.*) orelse Symbol.Use{};
+            var use = p.symbol_uses.get(ref) orelse Symbol.Use{};
             use.count_estimate += 1;
-            p.symbol_uses.put(ref.*, use) catch unreachable;
+            p.symbol_uses.put(ref, use) catch unreachable;
         }
 
         // The correctness of TypeScript-to-JavaScript conversion relies on accurate
@@ -2084,7 +2101,7 @@ pub const P = struct {
 
         if ((opts.assign_target != .none or opts.is_delete_target) and p.symbols.items[ref.inner_index].kind == .import) {
             // Create an error for assigning to an import namespace
-            const r = js_lexer.rangeOfIdentifier(&p.source, loc);
+            const r = js_lexer.rangeOfIdentifier(p.source, loc);
             p.log.addRangeErrorFmt(p.source, r, p.allocator, "Cannot assign to import \"{s}\"", .{
                 p.symbols.items[ref.inner_index].original_name,
             }) catch unreachable;
@@ -2111,7 +2128,7 @@ pub const P = struct {
                 }
 
                 // Otherwise, create a property access on the namespace
-                p.recordUsage(&ns_ref);
+                p.recordUsage(ns_ref);
 
                 return p.e(E.Dot{ .target = p.e(E.Identifier{ .ref = ns_ref }, loc), .name = name, .name_loc = loc }, loc);
             }
@@ -2222,23 +2239,12 @@ pub const P = struct {
         }
     }
 
-    pub fn unshiftScopeOrder(self: *P) !ScopeOrder {
-        if (self.scopes_in_order.items.len == 0) {
-            var scope = try js_ast.Scope.initPtr(self.allocator);
-            return ScopeOrder{
-                .scope = scope,
-                .loc = logger.Loc.Empty,
-            };
-        } else {
-            return self.scopes_in_order.orderedRemove(0);
-        }
-    }
-
-    pub fn pushScopeForVisitPass(p: *P, kind: js_ast.Scope.Kind, loc: logger.Loc) !void {
-        var order = try p.unshiftScopeOrder();
+    pub fn pushScopeForVisitPass(p: *P, comptime kind: js_ast.Scope.Kind, loc: logger.Loc) !void {
+        const order = p.scopes_in_order.items[0];
+        p.scopes_in_order.items = p.scopes_in_order.items[1..p.scopes_in_order.items.len];
 
         // Sanity-check that the scopes generated by the first and second passes match
-        if (!order.loc.eql(loc) or order.scope.kind != kind) {
+        if (order.loc.start != loc.start or order.scope.kind != kind) {
             p.panic("Expected scope ({s}, {d}) in {s}, found scope ({s}, {d})", .{ kind, loc.start, p.source.path.pretty, order.scope.kind, order.loc.start });
         }
 
@@ -2247,7 +2253,7 @@ pub const P = struct {
         try p.scopes_for_current_part.append(order.scope);
     }
 
-    pub fn pushScopeForParsePass(p: *P, kind: js_ast.Scope.Kind, loc: logger.Loc) !usize {
+    pub fn pushScopeForParsePass(p: *P, comptime kind: js_ast.Scope.Kind, loc: logger.Loc) !usize {
         debugl("<pushScopeForParsePass>");
         defer debugl("</pushScopeForParsePass>");
         var scope = try Scope.initPtr(p.allocator);
@@ -2267,7 +2273,7 @@ pub const P = struct {
 
         // Enforce that scope locations are strictly increasing to help catch bugs
         // where the pushed scopes are mistmatched between the first and second passes
-        if (p.scopes_in_order.items.len > 0) {
+        if (std.builtin.mode != std.builtin.Mode.ReleaseFast and p.scopes_in_order.items.len > 0) {
             const prev_start = p.scopes_in_order.items[p.scopes_in_order.items.len - 1].loc.start;
             if (prev_start >= loc.start) {
                 p.panic("Scope location {d} must be greater than {d}", .{ loc.start, prev_start });
@@ -2278,9 +2284,7 @@ pub const P = struct {
         // errors if a statement in the function body tries to re-declare any of the
         // arguments.
         if (kind == js_ast.Scope.Kind.function_body) {
-            if (parent.kind != js_ast.Scope.Kind.function_args) {
-                p.panic("Internal error", .{});
-            }
+            assert(parent.kind != js_ast.Scope.Kind.function_args);
 
             var iter = scope.parent.?.members.iterator();
             while (iter.next()) |entry| {
@@ -2307,7 +2311,7 @@ pub const P = struct {
     pub fn convertExprToBinding(p: *P, expr: ExprNodeIndex, invalid_loc: *LocList) ?Binding {
         switch (expr.data) {
             .e_missing => {
-                return p.b(B.Missing{}, expr.loc);
+                return null;
             },
             .e_identifier => |ex| {
                 return p.b(B.Identifier{ .ref = ex.ref }, expr.loc);
@@ -3066,7 +3070,7 @@ pub const P = struct {
                         var expr = p.parseExpr(.comma);
 
                         // Handle the default export of an abstract class in TypeScript
-                        if (p.options.ts and is_identifier and (p.lexer.token == .t_class or opts.ts_decorators != null) and strings.eql(name, "abstract")) {
+                        if (p.options.ts and is_identifier and (p.lexer.token == .t_class or opts.ts_decorators != null) and strings.eqlComptime(name, "abstract")) {
                             switch (expr.data) {
                                 .e_identifier => |ident| {
                                     var stmtOpts = ParseStatementOptions{
@@ -3318,19 +3322,15 @@ pub const P = struct {
 
                 p.lexer.expect(.t_open_paren);
                 const test_ = p.parseExpr(.lowest);
-                const body_loc = p.lexer.loc();
                 p.lexer.expect(.t_close_paren);
 
                 var stmtOpts = ParseStatementOptions{};
-
-                // Push a scope so we make sure to prevent any bare identifiers referenced
-                // within the body from being renamed. Renaming them might change the
-                // semantics of the code.
-                _ = try p.pushScopeForParsePass(.with, body_loc);
                 const body = p.parseStmt(&stmtOpts) catch unreachable;
-                p.popScope();
 
-                return p.s(S.With{ .body = body, .value = test_, .body_loc = body_loc }, loc);
+                return p.s(S.While{
+                    .body = body,
+                    .test_ = test_,
+                }, loc);
             },
             .t_with => {
                 p.lexer.next();
@@ -3692,10 +3692,10 @@ pub const P = struct {
 
                         if (p.options.ts) {
                             // Skip over type-only imports
-                            if (strings.eql(default_name, "type")) {
+                            if (strings.eqlComptime(default_name, "type")) {
                                 switch (p.lexer.token) {
                                     .t_identifier => {
-                                        if (!strings.eql(p.lexer.identifier, "from")) {
+                                        if (!strings.eqlComptime(p.lexer.identifier, "from")) {
                                             // "import type foo from 'bar';"
                                             p.lexer.next();
                                             p.lexer.expectContextualKeyword("from");
@@ -3867,7 +3867,7 @@ pub const P = struct {
                 var emiss = E.Missing{};
                 // Parse either an async function, an async expression, or a normal expression
                 var expr: Expr = Expr{ .loc = loc, .data = Expr.Data{ .e_missing = &emiss } };
-                if (is_identifier and strings.eql(p.lexer.raw(), "async")) {
+                if (is_identifier and strings.eqlComptime(p.lexer.raw(), "async")) {
                     var async_range = p.lexer.range();
                     p.lexer.next();
                     if (p.lexer.token == .t_function and !p.lexer.has_newline_before) {
@@ -4081,7 +4081,9 @@ pub const P = struct {
 
         // The alias may now be a string (see https://github.com/tc39/ecma262/pull/2154)
         if (p.lexer.token == .t_string_literal) {
-            if (p.lexer.utf16ToStringWithValidation(p.lexer.string_literal)) |alias| {
+            if (p.lexer.string_literal_is_ascii) {
+                return p.lexer.string_literal_slice;
+            } else if (p.lexer.utf16ToStringWithValidation(p.lexer.string_literal)) |alias| {
                 return alias;
             } else |err| {
                 const r = p.source.rangeOfString(loc);
@@ -4129,7 +4131,7 @@ pub const P = struct {
 
             // Reject forbidden names
             if (isEvalOrArguments(original_name)) {
-                const r = js_lexer.rangeOfIdentifier(&p.source, name.loc);
+                const r = js_lexer.rangeOfIdentifier(p.source, name.loc);
                 try p.log.addRangeErrorFmt(p.source, r, p.allocator, "Cannot use \"{s}\" as an identifier here", .{original_name});
             }
 
@@ -4223,7 +4225,7 @@ pub const P = struct {
             if (decl.value == null) {
                 switch (decl.binding.data) {
                     .b_identifier => |ident| {
-                        const r = js_lexer.rangeOfIdentifier(&p.source, decl.binding.loc);
+                        const r = js_lexer.rangeOfIdentifier(p.source, decl.binding.loc);
                         try p.log.addRangeErrorFmt(p.source, r, p.allocator, "The constant \"{s}\" must be initialized", .{p.symbols.items[ident.ref.inner_index].original_name});
                         // return;/
                     },
@@ -4241,7 +4243,7 @@ pub const P = struct {
         switch (p.lexer.token) {
             .t_identifier => {
                 const name = p.lexer.identifier;
-                if ((p.fn_or_arrow_data_parse.allow_await != .allow_ident and strings.eql(name, "await")) or (p.fn_or_arrow_data_parse.allow_yield != .allow_ident and strings.eql(name, "yield"))) {
+                if ((p.fn_or_arrow_data_parse.allow_await != .allow_ident and strings.eqlComptime(name, "await")) or (p.fn_or_arrow_data_parse.allow_yield != .allow_ident and strings.eqlComptime(name, "yield"))) {
                     // TODO: add fmt to addRangeError
                     p.log.addRangeError(p.source, p.lexer.range(), "Cannot use \"yield\" or \"await\" here.") catch unreachable;
                 }
@@ -4262,10 +4264,7 @@ pub const P = struct {
                 while (p.lexer.token != .t_close_bracket) {
                     if (p.lexer.token == .t_comma) {
                         items.append(js_ast.ArrayBinding{
-                            .binding = p.b(
-                                B.Missing{},
-                                p.lexer.loc(),
-                            ),
+                            .binding = Binding{ .data = Prefill.Data.BMissing, .loc = p.lexer.loc() },
                         }) catch unreachable;
                     } else {
                         if (p.lexer.token == .t_dot_dot_dot) {
@@ -4370,7 +4369,7 @@ pub const P = struct {
         }
 
         p.lexer.expect(.t_identifier);
-        return p.b(B.Missing{}, loc);
+        return Binding{ .loc = loc, .data = Prefill.Data.BMissing };
     }
 
     pub fn parsePropertyBinding(p: *P) B.Property {
@@ -4386,7 +4385,7 @@ pub const P = struct {
                 p.lexer.expect(.t_identifier);
                 return B.Property{
                     // This "key" diverges from esbuild, but is due to Go always having a zero value.
-                    .key = p.e(E.Missing{}, logger.Loc.Empty),
+                    .key = Expr{ .data = Prefill.Data.EMissing, .loc = logger.Loc{} },
 
                     .flags = Flags.Property{ .is_spread = true },
                     .value = value,
@@ -4425,12 +4424,13 @@ pub const P = struct {
 
                 p.lexer.next();
 
+                const ref = p.storeNameInRef(name) catch unreachable;
+
                 key = p.e(E.String{
-                    .value = p.lexer.stringToUTF16(name),
+                    .utf8 = p.lexer.string_literal_slice,
                 }, loc);
 
                 if (p.lexer.token != .t_colon and p.lexer.token != .t_open_paren) {
-                    const ref = p.storeNameInRef(name) catch unreachable;
                     const value = p.b(B.Identifier{ .ref = ref }, loc);
                     var default_value: ?Expr = null;
                     if (p.lexer.token == .t_equals) {
@@ -4467,7 +4467,7 @@ pub const P = struct {
     }
 
     pub fn parseAndDeclareDecls(p: *P, kind: Symbol.Kind, opts: *ParseStatementOptions) []G.Decl {
-        var decls = List(G.Decl).initCapacity(p.allocator, 1) catch unreachable;
+        var decls = List(G.Decl).init(p.allocator);
 
         while (true) {
             // Forbid "let let" and "const let" but not "var let"
@@ -4510,7 +4510,7 @@ pub const P = struct {
             p.lexer.next();
         }
 
-        return decls.toOwnedSlice();
+        return decls.items;
     }
 
     pub fn parseTypescriptEnumStmt(p: *P, loc: logger.Loc, opts: *ParseStatementOptions) Stmt {
@@ -4548,7 +4548,7 @@ pub const P = struct {
                 if (!p.lexer.isIdentifierOrKeyword()) {
                     p.lexer.expect(.t_identifier);
                 }
-                if (first_keyword_item_loc.start == 0) {
+                if (first_keyword_item_loc.start < 0) {
                     first_keyword_item_loc = p.lexer.loc();
                 }
             }
@@ -4592,8 +4592,8 @@ pub const P = struct {
 
         // Throw an error here if we found a keyword earlier and this isn't an
         // "export from" statement after all
-        if (first_keyword_item_loc.start != 0 and !p.lexer.isContextualKeyword("from")) {
-            const r = js_lexer.rangeOfIdentifier(&p.source, first_keyword_item_loc);
+        if (first_keyword_item_loc.start > -1 and !p.lexer.isContextualKeyword("from")) {
+            const r = js_lexer.rangeOfIdentifier(p.source, first_keyword_item_loc);
             p.lexer.addRangeError(r, "Expected identifier but found \"{s}\"", .{p.source.textForRange(r)}, true);
         }
 
@@ -4606,7 +4606,7 @@ pub const P = struct {
     pub fn parsePath(p: *P) ParsedPath {
         var path = ParsedPath{
             .loc = p.lexer.loc(),
-            .text = p.lexer.utf16ToString(p.lexer.string_literal),
+            .text = p.lexer.string_literal_slice,
         };
 
         if (p.lexer.token == .t_no_substitution_template_literal) {
@@ -4671,7 +4671,7 @@ pub const P = struct {
                                         // Track "use strict" directives
                                         p.current_scope.strict_mode = .explicit_strict_mode;
                                     } else if (strings.eqlUtf16("use asm", str.value)) {
-                                        stmt.data = Stmt.Data{ .s_empty = p.m(S.Empty{}) };
+                                        stmt.data = Prefill.Data.SEmpty;
                                     }
                                 }
                             },
@@ -4796,7 +4796,7 @@ pub const P = struct {
 
         // Forbid declaring a symbol with a reserved word in strict mode
         if (p.isStrictMode() and js_lexer.StrictModeReservedWords.has(name)) {
-            try p.markStrictModeFeature(.reserved_word, js_lexer.rangeOfIdentifier(&p.source, loc), name);
+            try p.markStrictModeFeature(.reserved_word, js_lexer.rangeOfIdentifier(p.source, loc), name);
         }
 
         // Allocate a new symbol
@@ -4808,7 +4808,7 @@ pub const P = struct {
 
             switch (p.canMergeSymbols(scope, symbol.kind, kind)) {
                 .forbidden => {
-                    const r = js_lexer.rangeOfIdentifier(&p.source, loc);
+                    const r = js_lexer.rangeOfIdentifier(p.source, loc);
                     var notes: []logger.Data = undefined;
                     notes = &([_]logger.Data{logger.rangeData(p.source, r, try std.fmt.allocPrint(p.allocator, "{s} has already been declared", .{name}))});
                     try p.log.addRangeErrorWithNotes(p.source, r, try std.fmt.allocPrint(p.allocator, "{s} was originally declared here", .{name}), notes);
@@ -4845,13 +4845,13 @@ pub const P = struct {
             if (func.flags.is_async and strings.eql(original_name, "await")) {
                 p.log.addRangeError(
                     p.source,
-                    js_lexer.rangeOfIdentifier(&p.source, name.loc),
+                    js_lexer.rangeOfIdentifier(p.source, name.loc),
                     "An async function cannot be named \"await\"",
                 ) catch unreachable;
             } else if (kind == .expr and func.flags.is_generator and strings.eql(original_name, "yield")) {
                 p.log.addRangeError(
                     p.source,
-                    js_lexer.rangeOfIdentifier(&p.source, name.loc),
+                    js_lexer.rangeOfIdentifier(p.source, name.loc),
                     "An generator function expression cannot be named \"yield\"",
                 ) catch unreachable;
             }
@@ -5027,10 +5027,12 @@ pub const P = struct {
         return self.mm(@TypeOf(kind), kind);
     }
 
-    // Doing this the fast way is too complicated for now.
     pub fn storeNameInRef(p: *P, name: string) !js_ast.Ref {
-        // allocated_names is lazily allocated
-        if (p.allocated_names.capacity > 0) {
+        if (@ptrToInt(p.source.contents.ptr) <= @ptrToInt(name.ptr) and (@ptrToInt(name.ptr) + name.len) <= (@ptrToInt(p.source.contents.ptr) + p.source.contents.len)) {
+            const start = @intCast(Ref.Int, @ptrToInt(name.ptr) - @ptrToInt(p.source.contents.ptr));
+            const end = @intCast(Ref.Int, name.len);
+            return js_ast.Ref{ .source_index = start, .inner_index = end, .is_source_contents_slice = true };
+        } else if (p.allocated_names.capacity > 0) {
             const inner_index = @intCast(Ref.Int, p.allocated_names.items.len);
             try p.allocated_names.append(name);
             return js_ast.Ref{ .source_index = std.math.maxInt(Ref.Int), .inner_index = inner_index };
@@ -5042,7 +5044,9 @@ pub const P = struct {
     }
 
     pub fn loadNameFromRef(p: *P, ref: js_ast.Ref) string {
-        if (ref.source_index == std.math.maxInt(Ref.Int)) {
+        if (ref.is_source_contents_slice) {
+            return p.source.contents[ref.source_index .. ref.source_index + ref.inner_index];
+        } else if (ref.source_index == std.math.maxInt(Ref.Int)) {
             assert(ref.inner_index < p.allocated_names.items.len);
             return p.allocated_names.items[ref.inner_index];
         } else {
@@ -5387,20 +5391,20 @@ pub const P = struct {
                         if (js_lexer.PropertyModifierKeyword.List.get(name)) |keyword| {
                             switch (keyword) {
                                 .p_get => {
-                                    if (!opts.is_async and strings.eql(raw, name)) {
+                                    if (!opts.is_async and (js_lexer.PropertyModifierKeyword.List.get(raw) orelse .p_static) == .p_get) {
                                         // p.markSyntaxFeautre(ObjectAccessors, name_range)
                                         return p.parseProperty(.get, opts, null);
                                     }
                                 },
 
                                 .p_set => {
-                                    if (!opts.is_async and strings.eql(raw, name)) {
+                                    if (!opts.is_async and (js_lexer.PropertyModifierKeyword.List.get(raw) orelse .p_static) == .p_set) {
                                         // p.markSyntaxFeautre(ObjectAccessors, name_range)
                                         return p.parseProperty(.set, opts, null);
                                     }
                                 },
                                 .p_async => {
-                                    if (!opts.is_async and strings.eql(raw, name) and !p.lexer.has_newline_before) {
+                                    if (!opts.is_async and (js_lexer.PropertyModifierKeyword.List.get(raw) orelse .p_static) == .p_async and !p.lexer.has_newline_before) {
                                         opts.is_async = true;
                                         opts.async_range = name_range;
 
@@ -5409,14 +5413,14 @@ pub const P = struct {
                                     }
                                 },
                                 .p_static => {
-                                    if (!opts.is_static and !opts.is_async and opts.is_class and strings.eql(raw, name)) {
+                                    if (!opts.is_static and !opts.is_async and opts.is_class and (js_lexer.PropertyModifierKeyword.List.get(raw) orelse .p_get) == .p_static) {
                                         opts.is_static = true;
                                         return p.parseProperty(kind, opts, null);
                                     }
                                 },
                                 .p_private, .p_protected, .p_public, .p_readonly, .p_abstract, .p_declare, .p_override => {
                                     // Skip over TypeScript keywords
-                                    if (opts.is_class and p.options.ts and strings.eql(raw, name)) {
+                                    if (opts.is_class and p.options.ts and (js_lexer.PropertyModifierKeyword.List.get(raw) orelse .p_static) == keyword) {
                                         return p.parseProperty(kind, opts, null);
                                     }
                                 },
@@ -5431,7 +5435,7 @@ pub const P = struct {
 
                 // Parse a shorthand property
                 if (!opts.is_class and kind == .normal and p.lexer.token != .t_colon and p.lexer.token != .t_open_paren and p.lexer.token != .t_less_than and !opts.is_generator and !js_lexer.Keywords.has(name)) {
-                    if ((p.fn_or_arrow_data_parse.allow_await != .allow_ident and strings.eql(name, "await")) or (p.fn_or_arrow_data_parse.allow_yield != .allow_ident and strings.eql(name, "yield"))) {
+                    if ((p.fn_or_arrow_data_parse.allow_await != .allow_ident and strings.eqlComptime(name, "await")) or (p.fn_or_arrow_data_parse.allow_yield != .allow_ident and strings.eqlComptime(name, "yield"))) {
                         // TODO: add fmt to addRangeError
                         p.log.addRangeError(p.source, name_range, "Cannot use \"yield\" or \"await\" here.") catch unreachable;
                     }
@@ -5502,7 +5506,7 @@ pub const P = struct {
             switch (key.data) {
                 .e_private_identifier => |private| {
                     const name = p.loadNameFromRef(private.ref);
-                    if (strings.eql(name, "#constructor")) {
+                    if (strings.eqlComptime(name, "#constructor")) {
                         p.log.addRangeError(p.source, key_range, "Invalid field name \"#constructor\"") catch unreachable;
                     }
 
@@ -5592,15 +5596,15 @@ pub const P = struct {
             switch (kind) {
                 .get => {
                     if (func.args.len > 0) {
-                        const r = js_lexer.rangeOfIdentifier(&p.source, func.args[0].binding.loc);
+                        const r = js_lexer.rangeOfIdentifier(p.source, func.args[0].binding.loc);
                         p.log.addRangeErrorFmt(p.source, r, p.allocator, "Getter {s} must have zero arguments", .{p.keyNameForError(key)}) catch unreachable;
                     }
                 },
                 .set => {
                     if (func.args.len != 1) {
-                        var r = js_lexer.rangeOfIdentifier(&p.source, if (func.args.len > 0) func.args[0].binding.loc else loc);
+                        var r = js_lexer.rangeOfIdentifier(p.source, if (func.args.len > 0) func.args[0].binding.loc else loc);
                         if (func.args.len > 1) {
-                            r = js_lexer.rangeOfIdentifier(&p.source, func.args[1].binding.loc);
+                            r = js_lexer.rangeOfIdentifier(p.source, func.args[1].binding.loc);
                         }
                         p.log.addRangeErrorFmt(p.source, r, p.allocator, "Setter {s} must have exactly 1 argument (there are {d})", .{ p.keyNameForError(key), func.args.len }) catch unreachable;
                     }
@@ -5641,7 +5645,7 @@ pub const P = struct {
                     }
 
                     const name = p.loadNameFromRef(private.ref);
-                    if (strings.eql(name, "#constructor")) {
+                    if (strings.eqlComptime(name, "#constructor")) {
                         p.log.addRangeError(p.source, key_range, "Invalid method name \"#constructor\"") catch unreachable;
                     }
                     private.ref = p.declareSymbol(declare, key.loc, name) catch unreachable;
@@ -5795,7 +5799,7 @@ pub const P = struct {
             var value = p.parseExpr(.lowest);
             var tail_loc = p.lexer.loc();
             p.lexer.rescanCloseBraceAsTemplateToken();
-            var tail = p.lexer.string_literal;
+            var tail = p.allocator.dupe(u16, p.lexer.string_literal) catch unreachable;
             var tail_raw: string = "";
 
             if (include_raw) {
@@ -5830,14 +5834,23 @@ pub const P = struct {
         if (p.lexer.legacy_octal_loc.start > loc.start) {
             legacy_octal_loc = p.lexer.legacy_octal_loc;
         }
-
-        const expr = p.e(E.String{
-            .value = p.lexer.string_literal,
-            .legacy_octal_loc = legacy_octal_loc,
-            .prefer_template = p.lexer.token == .t_no_substitution_template_literal,
-        }, loc);
-        p.lexer.next();
-        return expr;
+        if (p.lexer.string_literal_is_ascii) {
+            const expr = p.e(E.String{
+                .utf8 = p.lexer.string_literal_slice,
+                .legacy_octal_loc = legacy_octal_loc,
+                .prefer_template = p.lexer.token == .t_no_substitution_template_literal,
+            }, loc);
+            p.lexer.next();
+            return expr;
+        } else {
+            const expr = p.e(E.String{
+                .value = p.allocator.dupe(u16, p.lexer.string_literal) catch unreachable,
+                .legacy_octal_loc = legacy_octal_loc,
+                .prefer_template = p.lexer.token == .t_no_substitution_template_literal,
+            }, loc);
+            p.lexer.next();
+            return expr;
+        }
     }
 
     pub fn parseCallArgs(p: *P) []Expr {
@@ -6064,7 +6077,7 @@ pub const P = struct {
                         p.log.addRangeError(p.source, p.lexer.range(), "Template literals cannot have an optional chain as a tag") catch unreachable;
                     }
                     // p.markSyntaxFeature(compat.TemplateLiteral, p.lexer.Range());
-                    const head = p.lexer.string_literal;
+                    const head = p.lexer.stringLiteralUTF16();
                     const head_raw = p.lexer.rawTemplateContents();
                     p.lexer.next();
                     left = p.e(E.Template{
@@ -6079,7 +6092,7 @@ pub const P = struct {
                         p.log.addRangeError(p.source, p.lexer.range(), "Template literals cannot have an optional chain as a tag") catch unreachable;
                     }
                     // p.markSyntaxFeature(compat.TemplateLiteral, p.lexer.Range());
-                    const head = p.lexer.string_literal;
+                    const head = p.lexer.stringLiteralUTF16();
                     const head_raw = p.lexer.rawTemplateContents();
                     const partsGroup = p.parseTemplateParts(true);
                     p.lexer.next();
@@ -6240,7 +6253,7 @@ pub const P = struct {
                     }
 
                     p.lexer.next();
-                    left = p.e(E.Binary{ .op = .bin_sub_assign, .left = left, .right = p.parseExpr(Op.Level.assign.sub(1)) }, left.loc);
+                    left = p.e(E.Binary{ .op = .bin_sub_assign, .left = left, .right = p.parseExpr(Op.Level.sub(Op.Level.assign, 1)) }, left.loc);
                 },
                 .t_asterisk => {
                     if (level.gte(.multiply)) {
@@ -6698,7 +6711,7 @@ pub const P = struct {
             },
             .t_this => {
                 p.lexer.next();
-                return p.e(E.This{}, loc);
+                return Expr{ .data = Prefill.Data.This, .loc = loc };
             },
             .t_identifier => {
                 const name = p.lexer.identifier;
@@ -6997,7 +7010,7 @@ pub const P = struct {
                 while (p.lexer.token != .t_close_bracket) {
                     switch (p.lexer.token) {
                         .t_comma => {
-                            items.append(p.e(E.Missing{}, p.lexer.loc())) catch unreachable;
+                            items.append(Expr{ .data = Prefill.Data.EMissing, .loc = p.lexer.loc() }) catch unreachable;
                         },
                         .t_dot_dot_dot => {
                             // this might be wrong.
@@ -7205,7 +7218,7 @@ pub const P = struct {
                 }
 
                 p.lexer.unexpected();
-                return p.e(E.Missing{}, logger.Loc.Empty);
+                return Expr{ .data = Prefill.Data.EMissing, .loc = logger.Loc.Empty };
             },
             .t_import => {
                 p.lexer.next();
@@ -7213,11 +7226,11 @@ pub const P = struct {
             },
             else => {
                 p.lexer.unexpected();
-                return p.e(E.Missing{}, logger.Loc.Empty);
+                return Expr{ .data = Prefill.Data.EMissing, .loc = logger.Loc.Empty };
             },
         }
 
-        return p.e(E.Missing{}, logger.Loc.Empty);
+        return Expr{ .data = Prefill.Data.EMissing, .loc = logger.Loc.Empty };
     }
 
     // esbuild's version of this function is much more complicated.
@@ -7225,7 +7238,7 @@ pub const P = struct {
     // and I imagine all the allocations cause some performance
     // guessing it's concurrency-related
     pub fn jsxStringsToMemberExpression(p: *P, loc: logger.Loc, ref: Ref) Expr {
-        p.recordUsage(&ref);
+        p.recordUsage(ref);
         return p.e(E.Identifier{ .ref = ref }, loc);
     }
 
@@ -7233,7 +7246,7 @@ pub const P = struct {
     pub fn parseImportExpr(p: *P, loc: logger.Loc, level: Level) Expr {
         // Parse an "import.meta" expression
         if (p.lexer.token == .t_dot) {
-            p.es6_import_keyword = js_lexer.rangeOfIdentifier(&p.source, loc);
+            p.es6_import_keyword = js_lexer.rangeOfIdentifier(p.source, loc);
             p.lexer.next();
             if (p.lexer.isContextualKeyword("meta")) {
                 const r = p.lexer.range();
@@ -7246,7 +7259,7 @@ pub const P = struct {
         }
 
         if (level.gt(.call)) {
-            const r = js_lexer.rangeOfIdentifier(&p.source, loc);
+            const r = js_lexer.rangeOfIdentifier(p.source, loc);
             p.log.addRangeError(p.source, r, "Cannot use an \"import\" expression here without parentheses") catch unreachable;
         }
         // allow "in" inside call arguments;
@@ -7308,7 +7321,9 @@ pub const P = struct {
             // <Hello-:Button
             if (strings.contains(name, "-:") or (p.lexer.token != .t_dot and name[0] >= 'a' and name[0] <= 'z')) {
                 return JSXTag{
-                    .data = Data{ .tag = p.e(E.String{ .value = try strings.toUTF16Alloc(name, p.allocator) }, loc) },
+                    .data = Data{ .tag = p.e(E.String{
+                        .utf8 = name,
+                    }, loc) },
                     .range = tag_range,
                 };
             }
@@ -7348,9 +7363,17 @@ pub const P = struct {
         try p.lexer.nextInsideJSXElement();
         if (p.lexer.token == .t_string_literal) {
             previous_string_with_backslash_loc.start = std.math.max(p.lexer.loc().start, p.lexer.previous_backslash_quote_in_jsx.loc.start);
-            const value = p.e(E.String{ .value = p.lexer.string_literal }, previous_string_with_backslash_loc.*);
-            try p.lexer.nextInsideJSXElement();
-            return value;
+            if (p.lexer.string_literal_is_ascii) {
+                const expr = p.e(E.String{
+                    .utf8 = p.lexer.string_literal_slice,
+                }, previous_string_with_backslash_loc.*);
+                try p.lexer.nextInsideJSXElement();
+                return expr;
+            } else {
+                const expr = p.e(E.String{ .value = try p.allocator.dupe(u16, p.lexer.string_literal) }, previous_string_with_backslash_loc.*);
+                try p.lexer.nextInsideJSXElement();
+                return expr;
+            }
         } else {
             // Use Expect() not ExpectInsideJSXElement() so we can parse expression tokens
             p.lexer.expect(.t_open_brace);
@@ -7460,7 +7483,7 @@ pub const P = struct {
         //       There is no "=" after the JSX attribute "text", so we expect a ">"
         //
         // This code special-cases this error to provide a less obscure error message.
-        if (p.lexer.token == .t_syntax_error and strings.eql(p.lexer.raw(), "\\") and previous_string_with_backslash_loc.start > 0) {
+        if (p.lexer.token == .t_syntax_error and strings.eqlComptime(p.lexer.raw(), "\\") and previous_string_with_backslash_loc.start > 0) {
             const r = p.lexer.range();
             // Not dealing with this right now.
             try p.log.addRangeError(p.source, r, "Invalid JSX escape - use XML entity codes quotes or pass a JavaScript string instead");
@@ -7490,7 +7513,14 @@ pub const P = struct {
         while (true) {
             switch (p.lexer.token) {
                 .t_string_literal => {
-                    try children.append(p.e(E.String{ .value = p.lexer.string_literal }, loc));
+                    if (p.lexer.string_literal_is_ascii) {
+                        try children.append(p.e(E.String{
+                            .utf8 = p.lexer.string_literal_slice,
+                        }, loc));
+                    } else {
+                        try children.append(p.e(E.String{ .value = try p.allocator.dupe(u16, p.lexer.string_literal) }, loc));
+                    }
+
                     try p.lexer.nextJSXElementChild();
                 },
                 .t_open_brace => {
@@ -7797,7 +7827,7 @@ pub const P = struct {
                 p.recordDeclaredSymbol(name_ref) catch unreachable;
                 const symbol_name = p.symbols.items[name_ref.inner_index].original_name;
                 if (isEvalOrArguments(symbol_name)) {
-                    p.markStrictModeFeature(.eval_or_arguments, js_lexer.rangeOfIdentifier(&p.source, name.loc), symbol_name) catch unreachable;
+                    p.markStrictModeFeature(.eval_or_arguments, js_lexer.rangeOfIdentifier(p.source, name.loc), symbol_name) catch unreachable;
                 }
             }
         }
@@ -7831,9 +7861,9 @@ pub const P = struct {
 
     pub fn valueForThis(p: *P, loc: logger.Loc) ?Expr {
         // Substitute "this" if we're inside a static class property initializer
-        if (p.fn_only_data_visit.this_class_static_ref) |*ref| {
+        if (p.fn_only_data_visit.this_class_static_ref) |ref| {
             p.recordUsage(ref);
-            return p.e(E.Identifier{ .ref = ref.* }, loc);
+            return p.e(E.Identifier{ .ref = ref }, loc);
         }
 
         // oroigianlly was !=- modepassthrough
@@ -7847,7 +7877,7 @@ pub const P = struct {
                 // In a CommonJS module, "this" is supposed to be the same as "exports".
                 // Instead of doing this at runtime using "fn.call(module.exports)", we
                 // do it at compile time using expression substitution here.
-                p.recordUsage(&p.exports_ref);
+                p.recordUsage(p.exports_ref);
                 return p.e(E.Identifier{ .ref = p.exports_ref }, loc);
             }
         }
@@ -7890,7 +7920,7 @@ pub const P = struct {
                 }
 
                 if (!p.import_meta_ref.isNull()) {
-                    p.recordUsage(&p.import_meta_ref);
+                    p.recordUsage(p.import_meta_ref);
                     return p.e(E.Identifier{ .ref = p.import_meta_ref }, expr.loc);
                 }
             },
@@ -7902,7 +7932,7 @@ pub const P = struct {
 
                 const name = p.loadNameFromRef(e_.ref);
                 if (p.isStrictMode() and js_lexer.StrictModeReservedWords.has(name)) {
-                    p.markStrictModeFeature(.reserved_word, js_lexer.rangeOfIdentifier(&p.source, expr.loc), name) catch unreachable;
+                    p.markStrictModeFeature(.reserved_word, js_lexer.rangeOfIdentifier(p.source, expr.loc), name) catch unreachable;
                 }
 
                 const result = p.findSymbol(expr.loc, name) catch unreachable;
@@ -7912,7 +7942,7 @@ pub const P = struct {
 
                 // Handle assigning to a constant
                 if (in.assign_target != .none and p.symbols.items[result.ref.inner_index].kind == .cconst) {
-                    const r = js_lexer.rangeOfIdentifier(&p.source, expr.loc);
+                    const r = js_lexer.rangeOfIdentifier(p.source, expr.loc);
                     p.log.addRangeErrorFmt(p.source, r, p.allocator, "Cannot assign to {s} because it is a constant", .{name}) catch unreachable;
                 }
 
@@ -8055,7 +8085,7 @@ pub const P = struct {
                             args[3] = Expr{ .loc = expr.loc, .data = falseValueExpr };
                             // placeholder src prop for now
                             var source = p.allocator.alloc(G.Property, 3) catch unreachable;
-                            p.recordUsage(&p.jsx_filename_ref);
+                            p.recordUsage(p.jsx_filename_ref);
                             source[0] = G.Property{
                                 .key = Expr{ .loc = expr.loc, .data = Prefill.Data.Filename },
                                 .value = p.e(E.Identifier{ .ref = p.jsx_filename_ref }, expr.loc),
@@ -8074,7 +8104,7 @@ pub const P = struct {
                             args[4] = p.e(E.Object{
                                 .properties = source,
                             }, expr.loc);
-                            args[5] = p.e(E.This{}, expr.loc);
+                            args[5] = Expr{ .data = Prefill.Data.This, .loc = expr.loc };
                         }
 
                         return p.e(E.Call{
@@ -8194,7 +8224,7 @@ pub const P = struct {
                         // notimpl();
                     },
                     .bin_loose_eq => {
-                        const equality = SideEffects.eql(e_.left.data, e_.right.data);
+                        const equality = SideEffects.eql(e_.left.data, e_.right.data, p);
                         if (equality.ok) {
                             return p.e(
                                 E.Boolean{ .value = equality.equal },
@@ -8208,7 +8238,7 @@ pub const P = struct {
 
                     },
                     .bin_strict_eq => {
-                        const equality = SideEffects.eql(e_.left.data, e_.right.data);
+                        const equality = SideEffects.eql(e_.left.data, e_.right.data, p);
                         if (equality.ok) {
                             return p.e(E.Boolean{ .value = equality.ok }, expr.loc);
                         }
@@ -8218,7 +8248,7 @@ pub const P = struct {
                         // TODO: warn about typeof string
                     },
                     .bin_loose_ne => {
-                        const equality = SideEffects.eql(e_.left.data, e_.right.data);
+                        const equality = SideEffects.eql(e_.left.data, e_.right.data, p);
                         if (equality.ok) {
                             return p.e(E.Boolean{ .value = !equality.ok }, expr.loc);
                         }
@@ -8232,7 +8262,7 @@ pub const P = struct {
                         }
                     },
                     .bin_strict_ne => {
-                        const equality = SideEffects.eql(e_.left.data, e_.right.data);
+                        const equality = SideEffects.eql(e_.left.data, e_.right.data, p);
                         if (equality.ok) {
                             return p.e(E.Boolean{ .value = !equality.ok }, expr.loc);
                         }
@@ -8439,7 +8469,7 @@ pub const P = struct {
                         in.assign_target,
                         is_delete_target,
                         e_.target,
-                        p.lexer.utf16ToString(e_.index.data.e_string.value),
+                        if (e_.index.data.e_string.isUTF8()) p.lexer.utf16ToString(e_.index.data.e_string.value) else e_.index.data.e_string.utf8,
                         e_.index.loc,
                         is_call_target,
                     )) |val| {
@@ -8452,7 +8482,7 @@ pub const P = struct {
                 // bundling because scope hoisting means these will no longer be run-time
                 // errors.
                 if ((in.assign_target != .none or is_delete_target) and @as(Expr.Tag, e_.target.data) == .e_identifier) {
-                    const r = js_lexer.rangeOfIdentifier(&p.source, e_.target.loc);
+                    const r = js_lexer.rangeOfIdentifier(p.source, e_.target.loc);
                     p.log.addRangeErrorFmt(
                         p.source,
                         r,
@@ -8557,12 +8587,12 @@ pub const P = struct {
 
                 // Track ".then().catch()" chains
                 if (is_call_target and @as(Expr.Tag, p.then_catch_chain.next_target) == .e_dot and p.then_catch_chain.next_target.e_dot == e_) {
-                    if (strings.eql(e_.name, "catch")) {
+                    if (strings.eqlComptime(e_.name, "catch")) {
                         p.then_catch_chain = ThenCatchChain{
                             .next_target = e_.target.data,
                             .has_catch = true,
                         };
-                    } else if (strings.eql(e_.name, "then")) {
+                    } else if (strings.eqlComptime(e_.name, "then")) {
                         p.then_catch_chain = ThenCatchChain{
                             .next_target = e_.target.data,
                             .has_catch = p.then_catch_chain.has_catch or p.then_catch_chain.has_multiple_args,
@@ -8679,12 +8709,13 @@ pub const P = struct {
                             e_.properties[i].key = key;
 
                             // Forbid duplicate "__proto__" properties according to the specification
-                            if (!property.flags.is_computed and !property.flags.was_shorthand and !property.flags.is_method and in.assign_target == .none and key.data.isStringValue() and strings.utf16EqlString(
-                                key.data.e_string.value,
+                            if (!property.flags.is_computed and !property.flags.was_shorthand and !property.flags.is_method and in.assign_target == .none and key.data.isStringValue() and strings.eqlComptime(
+                                // __proto__ is utf8, assume it lives in refs
+                                key.data.e_string.utf8,
                                 "__proto__",
                             )) {
                                 if (has_proto) {
-                                    const r = js_lexer.rangeOfIdentifier(&p.source, key.loc);
+                                    const r = js_lexer.rangeOfIdentifier(p.source, key.loc);
                                     p.log.addRangeError(p.source, r, "Cannot specify the \"__proto__\" property more than once per object") catch unreachable;
                                 }
                                 has_proto = true;
@@ -8778,7 +8809,7 @@ pub const P = struct {
                     if (e_.args.len == 1) {
                         return p.require_transposer.maybeTransposeIf(e_.args[0], null);
                     } else {
-                        const r = js_lexer.rangeOfIdentifier(&p.source, e_.target.loc);
+                        const r = js_lexer.rangeOfIdentifier(p.source, e_.target.loc);
                         p.log.addRangeDebug(p.source, r, "This call to \"require\" will not be bundled because it has multiple arguments") catch unreachable;
                     }
                 }
@@ -8894,13 +8925,14 @@ pub const P = struct {
     }
 
     pub fn keepExprSymbolName(p: *P, _value: Expr, name: string) Expr {
-        var exprs = p.allocator.alloc(Expr, 2) catch unreachable;
-        exprs[0] = _value;
-        exprs[1] = p.e(E.String{
-            .value = p.lexer.stringToUTF16(name),
-        }, _value.loc);
-        var value = p.callRuntime(_value.loc, "ℹ", exprs);
+        var start = p.expr_list.items.len;
+        p.expr_list.ensureUnusedCapacity(2) catch unreachable;
+        p.expr_list.appendAssumeCapacity(_value);
+        p.expr_list.appendAssumeCapacity(p.e(E.String{
+            .utf8 = name,
+        }, _value.loc));
 
+        var value = p.callRuntime(_value.loc, "ℹ", p.expr_list.items[start..p.expr_list.items.len]);
         // Make sure tree shaking removes this if the function is never used
         value.data.e_call.can_be_unwrapped_if_unused = true;
         return value;
@@ -9170,7 +9202,7 @@ pub const P = struct {
                 p.ignoreUsage(id.ref);
 
                 // Track how many times we've referenced this symbol
-                p.recordUsage(&item.ref.?);
+                p.recordUsage(item.ref.?);
                 var ident = p.allocator.create(E.Identifier) catch unreachable;
                 ident.ref = item.ref.?;
 
@@ -9183,9 +9215,9 @@ pub const P = struct {
                 });
             }
 
-            if (is_call_target and id.ref.eql(p.module_ref) and strings.eql(name, "require")) {
+            if (is_call_target and id.ref.eql(p.module_ref) and strings.eqlComptime(name, "require")) {
                 p.ignoreUsage(p.module_ref);
-                p.recordUsage(&p.require_ref);
+                p.recordUsage(p.require_ref);
                 return p.e(E.Identifier{ .ref = p.require_ref }, name_loc);
             }
 
@@ -9259,7 +9291,7 @@ pub const P = struct {
                         // those likely correspond to type-only exports. But report exports of
                         // non-local symbols as errors in JavaScript.
                         if (!p.options.ts) {
-                            const r = js_lexer.rangeOfIdentifier(&p.source, item.name.loc);
+                            const r = js_lexer.rangeOfIdentifier(p.source, item.name.loc);
                             try p.log.addRangeErrorFmt(p.source, r, p.allocator, "\"{s}\" is not declared in this file", .{name});
                             continue;
                         }
@@ -9305,7 +9337,7 @@ pub const P = struct {
                     // jarred: For now, just always do this transform.
                     // because Safari doesn't support it and I've seen cases where this breaks
                     // TODO: backport unsupportedJSFeatures map
-                    p.recordUsage(&data.namespace_ref);
+                    p.recordUsage(data.namespace_ref);
                     try stmts.ensureCapacity(stmts.items.len + 2);
                     stmts.appendAssumeCapacity(p.s(S.Import{ .namespace_ref = data.namespace_ref, .star_name_loc = alias.loc, .import_record_index = data.import_record_index }, stmt.loc));
 
@@ -9393,7 +9425,7 @@ pub const P = struct {
                         p.allocator,
                     ),
                 ) catch unreachable;
-                p.recordUsage(&p.module_ref);
+                p.recordUsage(p.module_ref);
             },
             .s_break => |data| {
                 if (data.label) |*label| {
@@ -9402,7 +9434,7 @@ pub const P = struct {
 
                     label.ref = res.ref;
                 } else if (p.fn_or_arrow_data_visit.is_inside_loop and !p.fn_or_arrow_data_visit.is_inside_switch) {
-                    const r = js_lexer.rangeOfIdentifier(&p.source, stmt.loc);
+                    const r = js_lexer.rangeOfIdentifier(p.source, stmt.loc);
                     p.log.addRangeError(p.source, r, "Cannot use \"break\" here") catch unreachable;
                 }
             },
@@ -9412,11 +9444,11 @@ pub const P = struct {
                     const res = p.findLabelSymbol(label.loc, name);
                     label.ref = res.ref;
                     if (res.found and !res.is_loop) {
-                        const r = js_lexer.rangeOfIdentifier(&p.source, stmt.loc);
+                        const r = js_lexer.rangeOfIdentifier(p.source, stmt.loc);
                         p.log.addRangeErrorFmt(p.source, r, p.allocator, "Cannot \"continue\" to label {s}", .{name}) catch unreachable;
                     }
                 } else if (!p.fn_or_arrow_data_visit.is_inside_loop) {
-                    const r = js_lexer.rangeOfIdentifier(&p.source, stmt.loc);
+                    const r = js_lexer.rangeOfIdentifier(p.source, stmt.loc);
                     p.log.addRangeError(p.source, r, "Cannot use \"continue\" here") catch unreachable;
                 }
             },
@@ -9447,7 +9479,7 @@ pub const P = struct {
                         val = p.visitExpr(val);
                         // go version of defer would cause this to reset the variable
                         // zig version of defer causes this to set it to the last value of val, at the end of the scope.
-                        defer d.value = val;
+                        d.value = val;
 
                         // Optionally preserve the name
                         switch (d.binding.data) {
@@ -9467,7 +9499,7 @@ pub const P = struct {
                 if (data.is_export and p.enclosing_namespace_arg_ref != null) {
                     for (data.decls) |*d| {
                         if (d.value) |val| {
-                            p.recordUsage(&(p.enclosing_namespace_arg_ref orelse unreachable));
+                            p.recordUsage((p.enclosing_namespace_arg_ref orelse unreachable));
                             // TODO: is it necessary to lowerAssign? why does esbuild do it _most_ of the time?
                             stmts.append(p.s(S.SExpr{
                                 .value = Expr.assign(Binding.toExpr(&d.binding, p.to_expr_wrapper_namespace), val, p.allocator),
@@ -9536,7 +9568,7 @@ pub const P = struct {
 
                 // trim empty statements
                 if (data.stmts.len == 0) {
-                    stmts.append(p.s(S.Empty{}, stmt.loc)) catch unreachable;
+                    stmts.append(Stmt{ .data = Prefill.Data.SEmpty, .loc = stmt.loc }) catch unreachable;
                     return;
                 } else if (data.stmts.len == 1 and !statementCaresAboutScope(data.stmts[0])) {
                     // Unwrap blocks containing a single statement
@@ -9833,7 +9865,7 @@ pub const P = struct {
                         ),
                     }, enum_value.loc), enum_value.value orelse unreachable, p.allocator);
 
-                    p.recordUsage(&data.arg);
+                    p.recordUsage(data.arg);
 
                     // String-valued enums do not form a two-way map
                     if (enum_value_type == .string) {
@@ -9849,7 +9881,7 @@ pub const P = struct {
                         }, enum_value.loc), p.e(E.String{ .value = enum_value.name }, enum_value.loc), p.allocator)) catch unreachable;
                     }
                 }
-                p.recordUsage(&data.arg);
+                p.recordUsage(data.arg);
 
                 var value_stmts = List(Stmt).initCapacity(p.allocator, value_exprs.items.len) catch unreachable;
                 // Generate statements from expressions
@@ -9984,7 +10016,7 @@ pub const P = struct {
         loc: logger.Loc,
         ref: Ref,
     ) Expr {
-        p.recordUsage(&(p.enclosing_namespace_arg_ref orelse unreachable));
+        p.recordUsage((p.enclosing_namespace_arg_ref orelse unreachable));
 
         return p.e(E.Dot{
             .target = p.e(E.Identifier{ .ref = p.enclosing_namespace_arg_ref orelse unreachable }, loc),
@@ -10000,7 +10032,7 @@ pub const P = struct {
     ) Expr {
         p.relocated_top_level_vars.append(LocRef{ .loc = loc, .ref = ref }) catch unreachable;
         var _ref = ref;
-        p.recordUsage(&_ref);
+        p.recordUsage(_ref);
         return p.e(E.Identifier{ .ref = _ref }, loc);
     }
 
@@ -10054,7 +10086,7 @@ pub const P = struct {
                 }
             },
             .e_import_meta => |ex| {
-                return parts.len == 2 and strings.eql(parts[0], "import") and strings.eql(parts[1], "meta");
+                return parts.len == 2 and strings.eqlComptime(parts[0], "import") and strings.eqlComptime(parts[1], "meta");
             },
             .e_identifier => |ex| {
                 // The last expression must be an identifier
@@ -10088,7 +10120,7 @@ pub const P = struct {
                 p.recordDeclaredSymbol(bind.ref) catch unreachable;
                 const name = p.symbols.items[bind.ref.inner_index].original_name;
                 if (isEvalOrArguments(name)) {
-                    p.markStrictModeFeature(.eval_or_arguments, js_lexer.rangeOfIdentifier(&p.source, binding.loc), name) catch unreachable;
+                    p.markStrictModeFeature(.eval_or_arguments, js_lexer.rangeOfIdentifier(p.source, binding.loc), name) catch unreachable;
                 }
 
                 if (duplicate_arg_check) |dup| {
@@ -10096,7 +10128,7 @@ pub const P = struct {
                     if (res.found_existing) {
                         p.log.addRangeErrorFmt(
                             p.source,
-                            js_lexer.rangeOfIdentifier(&p.source, binding.loc),
+                            js_lexer.rangeOfIdentifier(p.source, binding.loc),
                             p.allocator,
                             "\"{s}\" cannot be bound multiple times in the same parameter list",
                             .{name},
@@ -10197,7 +10229,7 @@ pub const P = struct {
     // One statement could potentially expand to several statements
     pub fn stmtsToSingleStmt(p: *P, loc: logger.Loc, stmts: []Stmt) Stmt {
         if (stmts.len == 0) {
-            return p.s(S.Empty{}, loc);
+            return Stmt{ .data = Prefill.Data.SEmpty, .loc = loc };
         }
 
         if (stmts.len == 1) {
@@ -10231,21 +10263,21 @@ pub const P = struct {
             }
 
             // Track how many times we've referenced this symbol
-            p.recordUsage(&label_ref);
+            p.recordUsage(label_ref);
             res.ref = label_ref;
             res.is_loop = scope.label_stmt_is_loop;
             res.found = true;
             break;
         }
 
-        const r = js_lexer.rangeOfIdentifier(&p.source, loc);
+        const r = js_lexer.rangeOfIdentifier(p.source, loc);
         p.log.addRangeErrorFmt(p.source, r, p.allocator, "There is no containing label named {s}", .{name}) catch unreachable;
 
         // Allocate an "unbound" symbol
         var ref = p.newSymbol(.unbound, name) catch unreachable;
 
         // Track how many times we've referenced this symbol
-        p.recordUsage(&ref);
+        p.recordUsage(ref);
 
         return res;
     }
@@ -10317,7 +10349,12 @@ pub const P = struct {
             if (is_private) {} else if (!property.flags.is_method and !property.flags.is_computed) {
                 if (property.key) |key| {
                     if (@as(Expr.Tag, key.data) == .e_string) {
-                        name_to_keep = p.lexer.utf16ToString(key.data.e_string.value);
+                        const str = key.data.e_string;
+                        if (str.isUTF8()) {
+                            name_to_keep = p.lexer.utf16ToString(key.data.e_string.value);
+                        } else {
+                            name_to_keep = str.utf8;
+                        }
                     }
                 }
             }
@@ -10360,21 +10397,22 @@ pub const P = struct {
     }
 
     fn keepStmtSymbolName(p: *P, loc: logger.Loc, ref: Ref, name: string) Stmt {
-        var exprs = p.allocator.alloc(Expr, 2) catch unreachable;
-        exprs[0] = p.e(E.Identifier{
+        p.expr_list.ensureUnusedCapacity(2) catch unreachable;
+        const start = p.expr_list.items.len;
+        p.expr_list.appendAssumeCapacity(p.e(E.Identifier{
             .ref = ref,
-        }, loc);
-        exprs[1] = p.e(E.String{ .value = strings.toUTF16Alloc(name, p.allocator) catch unreachable }, loc);
+        }, loc));
+        p.expr_list.appendAssumeCapacity(p.e(E.String{ .utf8 = name }, loc));
         return p.s(S.SExpr{
             // I believe that this is a spot we can do $RefreshReg$(name)
-            .value = p.callRuntime(loc, "__name", exprs),
+            .value = p.callRuntime(loc, "__name", p.expr_list.items[start..p.expr_list.items.len]),
 
             // Make sure tree shaking removes this if the function is never used
             .does_not_affect_tree_shaking = true,
         }, loc);
     }
 
-    pub fn callRuntime(p: *P, loc: logger.Loc, name: string, args: []Expr) Expr {
+    pub fn callRuntime(p: *P, loc: logger.Loc, comptime name: string, args: []Expr) Expr {
         var ref: Ref = undefined;
         if (!p.runtime_imports.contains(name)) {
             ref = p.newSymbol(.other, name) catch unreachable;
@@ -10384,7 +10422,7 @@ pub const P = struct {
             ref = p.runtime_imports.get(name) orelse unreachable;
         }
 
-        p.recordUsage(&ref);
+        p.recordUsage(ref);
         return p.e(E.Call{
             .target = p.e(E.Identifier{
                 .ref = ref,
@@ -10584,7 +10622,7 @@ pub const P = struct {
                 const tuple = p.convertExprToBindingAndInitializer(&items[i], &invalidLog, is_spread);
                 // double allocations
                 args.append(G.Arg{
-                    .binding = tuple.binding orelse p.b(B.Missing{}, items[i].loc),
+                    .binding = tuple.binding orelse Binding{ .data = Prefill.Data.BMissing, .loc = items[i].loc },
                     .default = tuple.expr,
                 }) catch unreachable;
             }
@@ -10657,15 +10695,16 @@ pub const P = struct {
         var to_flatten = p.current_scope;
         var parent = to_flatten.parent.?;
         p.current_scope = parent;
-        var scopes_in_order = p.scopes_in_order.toOwnedSlice();
+        var scopes_in_order_end = p.scopes_in_order.capacity;
+        var _scopes_in_order = p.scopes_in_order.allocatedSlice();
+        var scopes_in_order = _scopes_in_order[0..scopes_in_order_end];
         // Erase this scope from the order. This will shift over the indices of all
         // the scopes that were created after us. However, we shouldn't have to
         // worry about other code with outstanding scope indices for these scopes.
         // These scopes were all created in between this scope's push and pop
         // operations, so they should all be child scopes and should all be popped
         // by the time we get here.
-        std.mem.copy(ScopeOrder, scopes_in_order[scope_index..scopes_in_order.len], scopes_in_order[scope_index + 1 .. scopes_in_order.len]);
-        p.scopes_in_order = @TypeOf(p.scopes_in_order).fromOwnedSlice(p.allocator, scopes_in_order);
+        std.mem.copyBackwards(ScopeOrder, scopes_in_order[scope_index..scopes_in_order.len], scopes_in_order[scope_index + 1 .. scopes_in_order.len]);
 
         // Remove the last child from the parent scope
         const last = parent.children.items.len - 1;
@@ -10828,13 +10867,14 @@ pub const P = struct {
         };
     }
 
-    pub fn init(allocator: *std.mem.Allocator, log: *logger.Log, source: logger.Source, define: *Define, lexer: js_lexer.Lexer, opts: Parser.Options) !*P {
+    pub fn init(allocator: *std.mem.Allocator, log: *logger.Log, source: *logger.Source, define: *Define, lexer: js_lexer.Lexer, opts: Parser.Options) !*P {
         var _parser = try allocator.create(P);
         var parser = P{
             .symbol_uses = SymbolUseMap.init(allocator),
             .call_target = nullExprData,
             .delete_target = nullExprData,
             .stmt_expr_value = nullExprData,
+            .expr_list = List(Expr).init(allocator),
             .loop_body = nullStmtData,
             .injected_define_symbols = @TypeOf(_parser.injected_define_symbols).init(allocator),
             .emitted_namespace_vars = @TypeOf(_parser.emitted_namespace_vars).init(allocator),
@@ -10855,7 +10895,7 @@ pub const P = struct {
             .named_exports = @TypeOf(_parser.named_exports).init(allocator),
             .top_level_symbol_to_parts = @TypeOf(_parser.top_level_symbol_to_parts).init(allocator),
             .import_namespace_cc_map = @TypeOf(_parser.import_namespace_cc_map).init(allocator),
-            .scopes_in_order = @TypeOf(_parser.scopes_in_order).init(allocator),
+            .scopes_in_order = std.ArrayList(ScopeOrder).init(allocator),
             .temp_refs_to_declare = @TypeOf(_parser.temp_refs_to_declare).init(allocator),
             .relocated_top_level_vars = @TypeOf(_parser.relocated_top_level_vars).init(allocator),
             .log = log,

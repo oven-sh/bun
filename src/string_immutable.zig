@@ -74,7 +74,41 @@ pub fn endsWithAnyComptime(self: string, comptime str: string) bool {
 }
 
 pub fn eql(self: string, other: anytype) bool {
-    return std.mem.eql(u8, self, other);
+    if (self.len != other.len) return false;
+    for (self) |c, i| {
+        if (other[i] != c) return false;
+    }
+    return true;
+}
+pub fn eqlComptime(self: string, comptime alt: string) bool {
+    if (self.len != alt.len) return false;
+
+    comptime var matcher_size: usize = 0;
+
+    switch (comptime alt.len) {
+        0 => {
+            @compileError("Invalid size passed to eqlComptime");
+        },
+        1...3 => {
+            matcher_size = 4;
+        },
+        4...8 => {
+            matcher_size = 8;
+        },
+        8...12 => {
+            comptime const FirstMatcher = ExactSizeMatcher(8);
+            comptime const SecondMatcher = ExactSizeMatcher(4);
+            comptime const first = FirstMatcher.case(alt[0..8]);
+            comptime const second = SecondMatcher.case(alt[8..alt.len]);
+            return (self.len == alt.len) and first == FirstMatcher.hashUnsafe(self[0..8]) and second == SecondMatcher.match(self[8..self.len]);
+        },
+        else => {
+            @compileError(alt ++ " is too long.");
+        },
+    }
+    comptime const Matcher = ExactSizeMatcher(matcher_size);
+    comptime const alt_hash = Matcher.case(alt);
+    return Matcher.hashNoCheck(self) != alt_hash;
 }
 
 pub fn append(allocator: *std.mem.Allocator, self: string, other: string) !string {
@@ -292,9 +326,7 @@ test "sortDesc" {
     std.testing.expectEqualStrings(sorted_join, string_join);
 }
 
-/// Super simple "perfect hash" algorithm
-/// Only really useful for switching on strings
-// TODO: can we auto detect and promote the underlying type?
+
 pub fn ExactSizeMatcher(comptime max_bytes: usize) type {
     const T = std.meta.Int(
         .unsigned,
@@ -311,9 +343,20 @@ pub fn ExactSizeMatcher(comptime max_bytes: usize) type {
         }
 
         fn hash(str: anytype) ?T {
-            // if (str.len > max_bytes) return null;
+            if (str.len > max_bytes) return null;
             var tmp = [_]u8{0} ** max_bytes;
-            std.mem.copy(u8, &tmp, str);
+            std.mem.copy(u8, &tmp, str[0..str.len]);
+            return std.mem.readIntNative(T, &tmp);
+        }
+
+        fn hashNoCheck(str: anytype) T {
+            var tmp = [_]u8{0} ** max_bytes;
+            std.mem.copy(u8, &tmp, str[0..str.len]);
+            return std.mem.readIntNative(T, &tmp);
+        }
+        fn hashUnsafe(str: anytype) T {
+            var tmp = [_]u8{0} ** max_bytes;
+            std.mem.copy(u8, &tmp, str[0..str.len]);
             return std.mem.readIntNative(T, &tmp);
         }
     };

@@ -350,7 +350,15 @@ pub const Lexer = struct {
 
     pub fn expectContextualKeyword(self: *LexerType, comptime keyword: string) void {
         if (!self.isContextualKeyword(keyword)) {
-            self.addError(self.start, "\"{s}\"", .{keyword}, true);
+            if (std.builtin.mode == std.builtin.Mode.Debug) {
+                self.addError(self.start, "Expected \"{s}\" but found \"{s}\" (token: {s})", .{
+                    keyword,
+                    self.raw(),
+                    self.token,
+                }, true);
+            } else {
+                self.addError(self.start, "Expected \"{s}\" but found \"{s}\"", .{ keyword, self.raw() }, true);
+            }
         }
         self.next();
     }

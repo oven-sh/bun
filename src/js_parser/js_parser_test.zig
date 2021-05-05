@@ -331,7 +331,7 @@ pub const Tester = struct {
 };
 
 fn expectPrinted(t: *Tester, contents: string, expected: string, src: anytype) !void {
-    if (alloc.dynamic_manager == null) {
+    if (alloc.needs_setup) {
         try alloc.setup(std.heap.page_allocator);
     }
 
@@ -380,8 +380,8 @@ const PRINT_AST = false;
 test "expectPrint" {
     var t_ = Tester.t(std.heap.page_allocator);
     var t = &t_;
+    try expectPrinted(t, @embedFile("../test/fixtures/function-scope-bug.jsx"), @embedFile("../test/fixtures/function-scope-bug.jsx"), @src());
     try expectPrinted(t, @embedFile("../test/fixtures/simple.jsx"), @embedFile("../test/fixtures/simple.jsx"), @src());
-    try expectPrinted(t, "if (true) { console.log(<div>true</div>); }", "if (true) { console.log(\"hi\"); }", @src());
     // try expectPrinted(t, "if (true) { console.log(\"hi\"); }", "if (true) { console.log(\"hi\"); }", @src());
 
     // try expectPrinted(t, "try { console.log(\"hi\"); }\ncatch(er) { console.log('noooo'); }", "class Foo {\n  foo() {\n  }\n}\n", @src());

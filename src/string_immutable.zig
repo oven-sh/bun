@@ -81,18 +81,16 @@ pub fn eql(self: string, other: anytype) bool {
     return true;
 }
 pub fn eqlComptime(self: string, comptime alt: string) bool {
-    if (self.len != alt.len) return false;
-
     comptime var matcher_size: usize = 0;
 
     switch (comptime alt.len) {
         0 => {
             @compileError("Invalid size passed to eqlComptime");
         },
-        1...3 => {
+        1...4 => {
             matcher_size = 4;
         },
-        4...8 => {
+        5...8 => {
             matcher_size = 8;
         },
         8...12 => {
@@ -108,7 +106,7 @@ pub fn eqlComptime(self: string, comptime alt: string) bool {
     }
     comptime const Matcher = ExactSizeMatcher(matcher_size);
     comptime const alt_hash = Matcher.case(alt);
-    return Matcher.hashNoCheck(self) != alt_hash;
+    return Matcher.match(self) == alt_hash;
 }
 
 pub fn append(allocator: *std.mem.Allocator, self: string, other: string) !string {
@@ -326,7 +324,6 @@ test "sortDesc" {
     std.testing.expectEqualStrings(sorted_join, string_join);
 }
 
-
 pub fn ExactSizeMatcher(comptime max_bytes: usize) type {
     const T = std.meta.Int(
         .unsigned,
@@ -364,8 +361,15 @@ pub fn ExactSizeMatcher(comptime max_bytes: usize) type {
 
 const eight = ExactSizeMatcher(8);
 
-test "ExactSizeMatcher" {
+test "ExactSizeMatcher 5 letter" {
     const word = "yield";
     expect(eight.match(word) == eight.case("yield"));
     expect(eight.match(word) != eight.case("yields"));
+}
+
+test "ExactSizeMatcher 4 letter" {
+    const Four = ExactSizeMatcher(4);
+    const word = "from";
+    expect(Four.match(word) == Four.case("from"));
+    expect(Four.match(word) != Four.case("fro"));
 }

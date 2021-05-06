@@ -253,7 +253,7 @@ fn expectPrintedJSON(_contents: string, expected: string) void {
     }
     var linker = @import("linker.zig").Linker{};
 
-    const result = js_printer.printAst(alloc.dynamic, tree, symbol_map, true, js_printer.Options{ .to_module_ref = Ref{ .inner_index = 0 } }, &linker) catch unreachable;
+    const result = js_printer.printAst(alloc.dynamic, tree, symbol_map, &source, true, js_printer.Options{ .to_module_ref = Ref{ .inner_index = 0 } }, &linker) catch unreachable;
 
     var js = result.js;
 

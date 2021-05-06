@@ -2735,7 +2735,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
             }
         }
 
-        pub fn init(allocator: *std.mem.Allocator, tree: Ast, symbols: Symbol.Map, opts: Options, linker: *Linker) !Printer {
+        pub fn init(allocator: *std.mem.Allocator, tree: Ast, source: *logger.Source, symbols: Symbol.Map, opts: Options, linker: *Linker) !Printer {
             var js = try MutableString.init(allocator, 0);
             return Printer{
                 .allocator = allocator,
@@ -2745,7 +2745,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                 .js = js,
                 .writer = js.writer(),
                 .linker = linker,
-                .renamer = rename.Renamer.init(symbols),
+                .renamer = rename.Renamer.init(symbols, source),
             };
         }
     };
@@ -2774,12 +2774,14 @@ pub fn quoteIdentifier(js: *MutableString, identifier: string) !void {
 const UnicodePrinter = NewPrinter(false);
 const AsciiPrinter = NewPrinter(true);
 
-pub fn printAst(allocator: *std.mem.Allocator, tree: Ast, symbols: js_ast.Symbol.Map, ascii_only: bool, opts: Options, linker: *Linker) !PrintResult {
+pub fn printAst(allocator: *std.mem.Allocator, tree: Ast, symbols: js_ast.Symbol.Map, source: *logger.Source, ascii_only: bool, opts: Options, linker: *Linker) !PrintResult {
     if (ascii_only) {
         var printer = try AsciiPrinter.init(
             allocator,
             tree,
+            source,
             symbols,
+
             opts,
             linker,
         );
@@ -2796,6 +2798,7 @@ pub fn printAst(allocator: *std.mem.Allocator, tree: Ast, symbols: js_ast.Symbol
         var printer = try UnicodePrinter.init(
             allocator,
             tree,
+            source,
             symbols,
             opts,
             linker,

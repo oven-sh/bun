@@ -1,18 +1,27 @@
 const js_ast = @import("js_ast.zig");
 usingnamespace @import("strings.zig");
 const std = @import("std");
+const logger = @import("logger.zig");
 
 pub const Renamer = struct {
     symbols: js_ast.Symbol.Map,
-    pub fn init(symbols: js_ast.Symbol.Map) Renamer {
-        return Renamer{ .symbols = symbols };
+    source: *logger.Source,
+
+    pub fn init(symbols: js_ast.Symbol.Map, source: *logger.Source) Renamer {
+        return Renamer{ .symbols = symbols, .source = source };
     }
 
     pub fn nameForSymbol(renamer: *Renamer, ref: js_ast.Ref) string {
-        const resolved = renamer.symbols.follow(ref);
-        const symbol = renamer.symbols.get(resolved) orelse std.debug.panic("Internal error: symbol not found for ref: {s}", .{resolved});
+        if (ref.is_source_contents_slice) {
+            return renamer.source.contents[ref.source_index .. ref.source_index + ref.inner_index];
+        }
 
-        return symbol.original_name;
+        const resolved = renamer.symbols.follow(ref);
+        if (renamer.symbols.get(resolved)) |symbol| {
+            return symbol.original_name;
+        } else {
+            std.debug.panic("Invalid symbol {s}", .{ref});
+        }
     }
 };
 

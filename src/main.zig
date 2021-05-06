@@ -87,6 +87,7 @@ pub fn main() anyerror!void {
         alloc.dynamic,
         ast,
         js_ast.Symbol.Map.initList(symbols),
+        &source,
         false,
         js_printer.Options{ .to_module_ref = ast.module_ref orelse js_ast.Ref{ .inner_index = 0 } },
         &_linker,

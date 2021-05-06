@@ -72,7 +72,7 @@ pub const Location = struct {
         };
     }
 
-    pub fn init_or_nil(_source: ?*Source, r: Range) ?Location {
+    pub fn init_or_nil(_source: ?*const Source, r: Range) ?Location {
         if (_source) |source| {
             var data = source.initErrorPosition(r.loc);
             return Location{
@@ -382,21 +382,23 @@ pub const Source = struct {
 
     pub fn initErrorPosition(self: *const Source, _offset: Loc) ErrorPosition {
         var prev_code_point: u21 = 0;
-        var offset: usize = if (_offset.start < 0) 0 else @intCast(usize, _offset.start);
+        var offset: usize = std.math.min(if (_offset.start < 0) 0 else @intCast(usize, _offset.start), self.contents.len - 1);
 
         const contents = self.contents;
 
         var iter = unicode.Utf8Iterator{
             .bytes = self.contents[0..offset],
-            .i = std.math.min(offset, self.contents.len),
+            .i = 0,
         };
 
         var line_start: usize = 0;
-        var line_count: usize = 0;
+        var line_count: usize = 1;
+        var column_number: usize = 1;
 
         while (iter.nextCodepoint()) |code_point| {
             switch (code_point) {
                 '\n' => {
+                    column_number = 1;
                     line_start = iter.i + 1;
                     if (prev_code_point != '\r') {
                         line_count += 1;
@@ -404,6 +406,7 @@ pub const Source = struct {
                 },
 
                 '\r' => {
+                    column_number = 0;
                     line_start = iter.i + 1;
                     line_count += 1;
                 },
@@ -411,8 +414,11 @@ pub const Source = struct {
                 0x2028, 0x2029 => {
                     line_start = iter.i + 3; // These take three bytes to encode in UTF-8
                     line_count += 1;
+                    column_number = 1;
                 },
-                else => {},
+                else => {
+                    column_number += 1;
+                },
             }
 
             prev_code_point = code_point;
@@ -420,7 +426,7 @@ pub const Source = struct {
 
         iter = unicode.Utf8Iterator{
             .bytes = self.contents[offset..],
-            .i = std.math.min(offset, self.contents.len),
+            .i = 0,
         };
 
         // Scan to the end of the line (or end of file if this is the last line)
@@ -436,15 +442,15 @@ pub const Source = struct {
             }
         }
         return ErrorPosition{
-            .line_start = line_start,
+            .line_start = if (line_start > 0) line_start - 1 else line_start,
             .line_end = line_end,
             .line_count = line_count,
-            .column_count = offset - line_start,
+            .column_count = column_number,
         };
     }
 };
 
-pub fn rangeData(source: ?*Source, r: Range, text: string) Data {
+pub fn rangeData(source: ?*const Source, r: Range, text: string) Data {
     return Data{ .text = text, .location = Location.init_or_nil(source, r) };
 }
 
@@ -453,16 +459,45 @@ test "print msg" {
     var log = Log{ .msgs = msgs };
     defer log.msgs.deinit();
     var filename = "test.js".*;
-    var syntax = "for(i = 0;)".*;
+    var syntax = "for (i".*;
     var err = "invalid syntax".*;
     var namespace = "file".*;
 
     try log.addMsg(Msg{
         .kind = .err,
-        .data = Data{ .location = Location.init_file(&filename, 1, 3, 0, &syntax, ""), .text = &err },
+        .data = Data{
+            .location = Location.init_file(&filename, 1, 3, 0, &syntax, ""),
+            .text = &err,
+        },
     });
 
     const stdout = std.io.getStdOut().writer();
 
     // try log.print(stdout);
+}
+
+test "ErrorPosition" {
+    const source = Source{ .contents = @embedFile("./test/fixtures/simple.jsx"), .path = fs.Path.init("/src/test/fixtures/simple.jsx"), .identifier_name = "simple" };
+    const error_position = source.initErrorPosition(Loc{ .start = 979 });
+
+    std.testing.expectEqual(973, error_position.line_start);
+    std.testing.expectEqual(1016, error_position.line_end);
+
+    var msgs = ArrayList(Msg).init(std.testing.allocator);
+    var log = Log{ .msgs = msgs };
+    defer log.msgs.deinit();
+    var filename = "test.js".*;
+    var syntax = "for (i".*;
+    var err = "invalid syntax".*;
+    var namespace = "file".*;
+
+    try log.addMsg(Msg{
+        .kind = .err,
+        .data = rangeData(&source, Range{ .loc = Loc{
+            .start = 979,
+        }, .len = 15 }, "Oh no"),
+    });
+
+    const stdout = std.io.getStdOut().writer();
+    try log.print(stdout);
 }

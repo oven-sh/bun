@@ -5,3 +5,12 @@ zig-cache
 *.o
 *.a
 profile.json
+
+/package.json
+node_modules
+.swcrc
+yarn.lock
+dist
+*.log
+*.out.js
+/package-lock.json

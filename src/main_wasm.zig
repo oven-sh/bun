@@ -16,6 +16,7 @@ const fs = @import("fs.zig");
 const Schema = @import("api/schema.zig").Api;
 const builtin = std.builtin;
 const MainPanicHandler = panicky.NewPanicHandler(panicky.default_panic);
+const zee = @import("zee_alloc.zig");
 
 pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace) noreturn {
     if (MainPanicHandler.Singleton) |singleton| {
@@ -135,25 +136,45 @@ pub const Api = struct {
     }
 };
 
+pub extern fn console_log(ptr: usize, len: usize) void;
+pub extern fn console_error(ptr: usize, len: usize) void;
+pub extern fn console_warn(ptr: usize, len: usize) void;
+pub extern fn console_info(ptr: usize, len: usize) void;
+
+const Gpa = std.heap.GeneralPurposeAllocator(.{});
+var gpa = Gpa{};
 pub const Exports = struct {
-    fn init() callconv(.C) u8 {
+    fn init(amount_to_grow: usize) callconv(.C) i32 {
+        const res = @wasmMemoryGrow(0, amount_to_grow);
         if (alloc.needs_setup) {
-            var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-            var allocator = &arena.allocator;
-            alloc.setup(allocator) catch return 0;
+            alloc.setup(&gpa.allocator) catch return -1;
+            _ = MainPanicHandler.init(&api.?.log);
+            var out_buffer = alloc.static.alloc(u8, 2048) catch return -1;
+            var err_buffer = alloc.static.alloc(u8, 2048) catch return -1;
+            var output = alloc.static.create(Output.Source) catch return -1;
+            var stream = std.io.fixedBufferStream(out_buffer);
+            var err_stream = std.io.fixedBufferStream(err_buffer);
+            output.* = Output.Source.init(
+                stream,
+                err_stream,
+            );
+            output.out_buffer = out_buffer;
+            output.err_buffer = err_buffer;
+            Output.Source.set(output);
         }
 
-        var _api = alloc.static.create(Api) catch return 0;
-
+        var _api = alloc.static.create(Api) catch return -1;
         _api.* = Api{ .files = std.ArrayList(string).init(alloc.dynamic), .log = logger.Log.init(alloc.dynamic) };
         api = _api;
-
-        return 1;
+        // Output.print("Initialized.", .{});
+        return res;
     }
 
     fn transform(abi: Uint8Array.Abi) callconv(.C) Uint8Array.Abi {
+        Output.print("Received {d}", .{abi});
         const req: Schema.Transform = Uint8Array.decode(abi, Schema.Transform) catch return Uint8Array.empty();
-        alloc.dynamic.free(Uint8Array.toSlice(abi));
+        Output.print("Req {s}", .{req});
+        // alloc.dynamic.free(Uint8Array.toSlice(abi));
         const resp = api.?.transform(req) catch return Uint8Array.empty();
         return Uint8Array.encode(Schema.TransformResponse, resp) catch return Uint8Array.empty();
     }
@@ -208,3 +229,5 @@ comptime {
 }
 
 var api: ?*Api = null;
+
+pub fn main() anyerror!void {}

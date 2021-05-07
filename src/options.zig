@@ -3,7 +3,7 @@ const log = @import("logger.zig");
 const fs = @import("fs.zig");
 const alloc = @import("alloc.zig");
 
-usingnamespace @import("strings.zig");
+usingnamespace @import("global.zig");
 
 const assert = std.debug.assert;
 

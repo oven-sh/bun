@@ -1,4 +1,4 @@
-usingnamespace @import("strings.zig");
+usingnamespace @import("global.zig");
 
 // If something is in this list, then a direct identifier expression or property
 // access chain matching this will be assumed to have no side effects and will

@@ -6,7 +6,7 @@ const build_options = @import("build_options");
 const js_ast = @import("js_ast.zig");
 
 usingnamespace @import("ast/base.zig");
-usingnamespace @import("strings.zig");
+usingnamespace @import("global.zig");
 
 const unicode = std.unicode;
 
@@ -21,7 +21,7 @@ pub const TypescriptStmtKeyword = tables.TypescriptStmtKeyword;
 pub const TypeScriptAccessibilityModifier = tables.TypeScriptAccessibilityModifier;
 
 fn notimpl() noreturn {
-    std.debug.panic("not implemented yet!", .{});
+    Global.panic("not implemented yet!", .{});
 }
 
 pub var emptyJavaScriptString = ([_]u16{0});
@@ -111,7 +111,7 @@ pub const Lexer = struct {
         self.log.addErrorFmt(self.source, __loc, self.allocator, format, args) catch unreachable;
         self.prev_error_loc = __loc;
         var msg = self.log.msgs.items[self.log.msgs.items.len - 1];
-        msg.formatNoWriter(std.debug.panic);
+        msg.formatNoWriter(Global.panic);
     }
 
     pub fn addRangeError(self: *LexerType, r: logger.Range, comptime format: []const u8, args: anytype, panic: bool) void {
@@ -129,7 +129,7 @@ pub const Lexer = struct {
             const writer = stream.writer();
             self.log.print(writer) catch unreachable;
 
-            std.debug.panic("{s}", .{fixedBuffer[0..stream.pos]});
+            Global.panic("{s}", .{fixedBuffer[0..stream.pos]});
         }
     }
 
@@ -137,7 +137,7 @@ pub const Lexer = struct {
         if (@import("builtin").is_test) {
             self.did_panic = true;
         } else {
-            std.debug.panic("{s}", .{content});
+            Global.panic("{s}", .{content});
         }
     }
 
@@ -341,9 +341,9 @@ pub const Lexer = struct {
             self.log.print(stderr) catch unreachable;
         } else {
             if (self.token == T.t_identifier or self.token == T.t_string_literal) {
-                std.debug.print(" {s} ", .{self.raw()});
+                Output.print(" {s} ", .{self.raw()});
             } else {
-                std.debug.print(" <{s}> ", .{tokenToString.get(self.token)});
+                Output.print(" <{s}> ", .{tokenToString.get(self.token)});
             }
         }
     }
@@ -2168,9 +2168,9 @@ fn test_lexer(contents: []const u8) Lexer {
 
 fn expectStr(lexer: *Lexer, expected: string, actual: string) void {
     if (lexer.log.errors > 0 or lexer.log.warnings > 0) {
-        std.debug.panic("{s}", .{lexer.log.msgs.items});
+        Global.panic("{s}", .{lexer.log.msgs.items});
         // const msg: logger.Msg = lexer.log.msgs.items[0];
-        // msg.formatNoWriter(std.debug.panic);
+        // msg.formatNoWriter(Global.panic);
     }
     std.testing.expectEqual(lexer.log.errors, 0);
     std.testing.expectEqual(lexer.log.warnings, 0);

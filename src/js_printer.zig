@@ -8,7 +8,7 @@ const alloc = @import("alloc.zig");
 const rename = @import("renamer.zig");
 
 const fs = @import("fs.zig");
-usingnamespace @import("strings.zig");
+usingnamespace @import("global.zig");
 usingnamespace @import("ast/base.zig");
 usingnamespace js_ast.G;
 
@@ -43,7 +43,7 @@ const assert = std.debug.assert;
 const Linker = @import("linker.zig").Linker;
 
 fn notimpl() void {
-    std.debug.panic("Not implemented yet!", .{});
+    Global.panic("Not implemented yet!", .{});
 }
 
 pub const SourceMapChunk = struct {
@@ -83,7 +83,7 @@ pub const Options = struct {
     }
 };
 
-pub const PrintResult = struct { js: string, source_map: ?SourceMapChunk = null };
+pub const PrintResult = struct { js: []u8, source_map: ?SourceMapChunk = null };
 
 // Zig represents booleans in packed structs as 1 bit, with no padding
 // This is effectively a bit field
@@ -677,7 +677,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
 
                     // First, we will assert to make detecting this case a little clearer for us in development.
                     if (std.builtin.mode == std.builtin.Mode.Debug) {
-                        std.debug.panic("Internal error: {s} is an external require, which should never happen.", .{record});
+                        Global.panic("Internal error: {s} is an external require, which should never happen.", .{record});
                     }
 
                     p.printSpaceBeforeIdentifier();
@@ -1150,7 +1150,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     }
 
                     if (e.func.name) |sym| {
-                        p.printSymbol(sym.ref orelse std.debug.panic("internal error: expected E.Function's name symbol to have a ref\n{s}", .{e.func}));
+                        p.printSymbol(sym.ref orelse Global.panic("internal error: expected E.Function's name symbol to have a ref\n{s}", .{e.func}));
                     }
 
                     p.printFunc(e.func);
@@ -1168,7 +1168,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.printSpaceBeforeIdentifier();
                     p.print("class");
                     if (e.class_name) |name| {
-                        p.printSymbol(name.ref orelse std.debug.panic("internal error: expected E.Class's name symbol to have a ref\n{s}", .{e}));
+                        p.printSymbol(name.ref orelse Global.panic("internal error: expected E.Class's name symbol to have a ref\n{s}", .{e}));
                         p.maybePrintSpace();
                     }
                     p.printClass(e.*);
@@ -1596,7 +1596,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     }
                 },
                 else => {
-                    // std.debug.panic("Unexpected expression of type {s}", .{std.meta.activeTag(expr.data});
+                    // Global.panic("Unexpected expression of type {s}", .{std.meta.activeTag(expr.data});
                 },
             }
         }
@@ -1946,7 +1946,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.print("}");
                 },
                 else => {
-                    std.debug.panic("Unexpected binding of type {s}", .{binding});
+                    Global.panic("Unexpected binding of type {s}", .{binding});
                 },
             }
         }
@@ -1985,8 +1985,8 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         p.print("*");
                         p.printSpace();
                     }
-                    const name = s.func.name orelse std.debug.panic("Internal error: expected func to have a name ref\n{s}", .{s});
-                    const nameRef = name.ref orelse std.debug.panic("Internal error: expected func to have a name\n{s}", .{s});
+                    const name = s.func.name orelse Global.panic("Internal error: expected func to have a name ref\n{s}", .{s});
+                    const nameRef = name.ref orelse Global.panic("Internal error: expected func to have a name\n{s}", .{s});
                     p.printSpace();
                     p.printSymbol(nameRef);
                     p.printFunc(s.func);
@@ -2035,7 +2035,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                                         p.printSpace();
                                     }
                                     if (func.func.name) |name| {
-                                        p.printSymbol(name.ref orelse std.debug.panic("Internal error: Expected func to have a name ref\n{s}", .{func}));
+                                        p.printSymbol(name.ref orelse Global.panic("Internal error: Expected func to have a name ref\n{s}", .{func}));
                                     }
                                     p.printFunc(func.func);
                                     p.printNewline();
@@ -2044,7 +2044,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                                     p.printSpaceBeforeIdentifier();
                                     if (class.class.class_name) |name| {
                                         p.print("class ");
-                                        p.printSymbol(name.ref orelse std.debug.panic("Internal error: Expected class to have a name ref\n{s}", .{class}));
+                                        p.printSymbol(name.ref orelse Global.panic("Internal error: Expected class to have a name ref\n{s}", .{class}));
                                     } else {
                                         p.print("class");
                                     }
@@ -2052,7 +2052,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                                     p.printNewline();
                                 },
                                 else => {
-                                    std.debug.panic("Internal error: unexpected export default stmt data {s}", .{s});
+                                    Global.panic("Internal error: unexpected export default stmt data {s}", .{s});
                                 },
                             }
                         },
@@ -2268,7 +2268,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                 },
                 .s_label => |s| {
                     p.printIndent();
-                    p.printSymbol(s.name.ref orelse std.debug.panic("Internal error: expected label to have a name {s}", .{s}));
+                    p.printSymbol(s.name.ref orelse Global.panic("Internal error: expected label to have a name {s}", .{s}));
                     p.print(":");
                     p.printBody(s.stmt);
                 },
@@ -2526,7 +2526,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.printSemicolonAfterStatement();
                 },
                 else => {
-                    std.debug.panic("Unexpected statement of type {s}", .{@TypeOf(stmt)});
+                    Global.panic("Unexpected statement of type {s}", .{@TypeOf(stmt)});
                 },
             }
         }
@@ -2554,7 +2554,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     }
                 },
                 else => {
-                    std.debug.panic("Internal error: Unexpected stmt in for loop {s}", .{initSt});
+                    Global.panic("Internal error: Unexpected stmt in for loop {s}", .{initSt});
                 },
             }
         }
@@ -2705,7 +2705,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         temp = [_]u8{ '\\', 'u', hex_chars[c >> 12], hex_chars[(c >> 8) & 15], hex_chars[(c >> 4) & 15], hex_chars[c & 15] };
                         p.print(&temp);
                     } else {
-                        std.debug.panic("Not implemented yet: unicode escapes in ascii only", .{});
+                        Global.panic("Not implemented yet: unicode escapes in ascii only", .{});
                     }
                     continue;
                 }

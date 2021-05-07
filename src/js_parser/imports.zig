@@ -9,7 +9,7 @@ pub const js_printer = @import("../js_printer.zig");
 pub const renamer = @import("../renamer.zig");
 pub const fs = @import("../fs.zig");
 
-pub usingnamespace @import("../strings.zig");
+pub usingnamespace @import("../global.zig");
 pub usingnamespace @import("../ast/base.zig");
 pub usingnamespace js_ast.G;
 pub usingnamespace @import("../defines.zig");

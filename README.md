@@ -67,7 +67,7 @@ If bundler means "turn my development code into something a browser can run",
 
 | Feature                              | esbuild | esdev |
 | ------------------------------------ | ------- | ----- |
-| JSX (transform)                      | ✅      | ⌛    |
+| JSX (transform)                      | ✅      | ✅    |
 | TypeScript (transform)               | ✅      | ⌛    |
 | React Fast Refresh                   | ❌      | ⌛    |
 | Hot Module Reloading                 | ❌      | ⌛    |
@@ -133,7 +133,7 @@ import { map } from "lodash-es";
 const foo = map(["bar", "baz"], (item) => {});
 ```
 
-If 
+If
 
 ##### HMR & Fast Refresh implementation
 

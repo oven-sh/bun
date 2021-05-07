@@ -1,0 +1,107 @@
+package Api;
+
+smol Loader {
+    jsx = 1;
+    js = 2;
+    ts = 3;
+    tsx = 4;
+    css = 5;
+    file = 6;
+    json = 7;
+}
+
+
+smol JSXRuntime {
+  automatic = 1;
+  classic = 2;
+}
+
+struct JSX {
+  string factory;
+  JSXRuntime runtime;
+  string fragment;
+  bool production;
+
+  // Probably react
+  string import_source;
+
+  bool react_fast_refresh;
+
+  string[] loader_keys;
+  Loader[] loader_values;
+}
+
+
+struct TransformOptions {
+  JSX jsx;
+  bool ts;
+
+  string base_path;
+  string[] define_keys;
+  string[] define_values;
+}
+
+struct FileHandle {
+  string path;
+  uint size;
+  uint fd; 
+}
+
+message Transform {
+  FileHandle handle = 1;
+  string path = 2;
+  string contents = 3;
+
+  Loader loader = 4;
+  TransformOptions options = 5;
+}
+
+enum TransformResponseStatus {
+  success = 1;
+  fail = 2;
+}
+
+struct OutputFile {
+  byte[] data;
+  string path;
+}
+
+struct TransformResponse {
+  TransformResponseStatus status;
+  OutputFile[] files;
+  Message[] errors;
+}
+
+enum MessageKind {
+  err = 1;
+  warn  =2;
+  note = 3;
+  debug = 4;
+}
+
+struct Location {
+  string file;
+  string namespace;
+  int32 line;
+  int32 column;
+  string line_text;
+  string suggestion;
+  uint offset;
+}
+
+message MessageData {
+  string text = 1;
+   Location location = 2;
+}
+
+struct Message {
+  MessageKind kind;
+  MessageData data;
+  MessageData[] notes;
+}
+
+struct Log {
+  uint32 warnings;
+  uint32 errors;
+  Message[] msgs;
+}

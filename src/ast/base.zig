@@ -64,10 +64,10 @@ pub const RequireOrImportMeta = struct {
     is_wrapper_async: bool = false,
 };
 pub fn debug(comptime fmt: []const u8, args: anytype) callconv(.Inline) void {
-    // std.debug.print(fmt, args);
+    // Output.print(fmt, args);
 }
 pub fn debugl(
     comptime fmt: []const u8,
 ) callconv(.Inline) void {
-    // std.debug.print("{s}\n", .{fmt});
+    // Output.print("{s}\n", .{fmt});
 }

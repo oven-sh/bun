@@ -12,10 +12,17 @@ pub fn build(b: *std.build.Builder) void {
     const mode = b.standardReleaseOptions();
 
     var exe: *std.build.LibExeObjStep = undefined;
-    if (target.getCpuArch().isWasm()) {
-        exe = b.addExecutable("esdev", "src/main_wasm.zig");
+    if (target.getOsTag() == .wasi) {
+        exe = b.addExecutable("esdev", "src/main_wasi.zig");
+    } else if (target.getCpuArch().isWasm()) {
+        var lib = b.addSharedLibrary("esdev", "src/main_wasm.zig", b.version(1, 0, 0));
+        lib.setTarget(target);
+        lib.setBuildMode(mode);
+        lib.install();
+        return;
     } else {
         exe = b.addExecutable("esdev", "src/main.zig");
+        exe.linkLibC();
     }
     var cwd_buf = [_]u8{0} ** 4096;
     var cwd = std.os.getcwd(&cwd_buf) catch unreachable;
@@ -24,14 +31,14 @@ pub fn build(b: *std.build.Builder) void {
     if (std.builtin.is_test) {
         while (walker.next() catch unreachable) |entry| {
             if (std.mem.endsWith(u8, entry.basename, "_test.zig")) {
-                std.debug.print("[test] Added {s}", .{entry.basename});
+                Output.print("[test] Added {s}", .{entry.basename});
                 _ = b.addTest(entry.path);
             }
         }
     }
     exe.setTarget(target);
     exe.setBuildMode(mode);
-    exe.linkLibC();
+
     exe.addLibPath("/usr/local/lib");
     exe.install();
 

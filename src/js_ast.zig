@@ -2,7 +2,7 @@ const std = @import("std");
 const logger = @import("logger.zig");
 const JSXRuntime = @import("options.zig").JSX.Runtime;
 
-usingnamespace @import("strings.zig");
+usingnamespace @import("global.zig");
 usingnamespace @import("ast/base.zig");
 
 const ImportRecord = @import("import_record.zig").ImportRecord;
@@ -170,7 +170,7 @@ pub const Binding = struct {
                 return Expr.alloc(wrapper.allocator, E.Object{ .properties = properties, .is_single_line = b.is_single_line }, loc);
             },
             else => {
-                std.debug.panic("Interanl error", .{});
+                Global.panic("Interanl error", .{});
             },
         }
     }
@@ -3213,7 +3213,7 @@ pub const Scope = struct {
 };
 
 pub fn printmem(comptime format: string, args: anytype) void {
-    // std.debug.print(format, args);
+    // Output.print(format, args);
 }
 
 test "Binding.init" {

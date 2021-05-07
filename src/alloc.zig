@@ -9,8 +9,8 @@ pub var dynamic: *std.mem.Allocator = undefined;
 
 pub fn setup(root: *std.mem.Allocator) !void {
     needs_setup = false;
-    static = std.heap.c_allocator;
-    dynamic = std.heap.c_allocator;
+    static = root;
+    dynamic = root;
     // static = @ptrCast(*std.mem.Allocator, &stat.allocator);
 }
 

@@ -203,7 +203,7 @@ fn expectPrinted(t: *Tester, contents: string, expected: string, src: anytype) !
         var stream = std.io.fixedBufferStream(&fixedBuffer);
 
         try log.print(stream.writer());
-        std.debug.print("{s}", .{fixedBuffer});
+        Output.print("{s}", .{fixedBuffer});
     }
     var linker = Linker{};
     debugl("START AST PRINT");

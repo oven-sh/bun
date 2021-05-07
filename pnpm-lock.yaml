@@ -1,0 +1,111 @@
+lockfileVersion: 5.3
+
+specifiers:
+  '@babel/preset-react': ^7.13.13
+  esbuild-wasm: ^0.11.19
+
+dependencies:
+  '@babel/preset-react': 7.13.13
+  esbuild-wasm: 0.11.19
+
+packages:
+
+  /@babel/helper-annotate-as-pure/7.12.13:
+    resolution: {integrity: sha512-7YXfX5wQ5aYM/BOlbSccHDbuXXFPxeoUmfWtz8le2yTkTZc+BxsiEnENFoi2SlmA8ewDkG2LgIMIVzzn2h8kfw==}
+    dependencies:
+      '@babel/types': 7.14.1
+    dev: false
+
+  /@babel/helper-module-imports/7.13.12:
+    resolution: {integrity: sha512-4cVvR2/1B693IuOvSI20xqqa/+bl7lqAMR59R4iu39R9aOX8/JoYY1sFaNvUMyMBGnHdwvJgUrzNLoUZxXypxA==}
+    dependencies:
+      '@babel/types': 7.14.1
+    dev: false
+
+  /@babel/helper-plugin-utils/7.13.0:
+    resolution: {integrity: sha512-ZPafIPSwzUlAoWT8DKs1W2VyF2gOWthGd5NGFMsBcMMol+ZhK+EQY/e6V96poa6PA/Bh+C9plWN0hXO1uB8AfQ==}
+    dev: false
+
+  /@babel/helper-validator-identifier/7.14.0:
+    resolution: {integrity: sha512-V3ts7zMSu5lfiwWDVWzRDGIN+lnCEUdaXgtVHJgLb1rGaA6jMrtB9EmE7L18foXJIE8Un/A/h6NJfGQp/e1J4A==}
+    dev: false
+
+  /@babel/helper-validator-option/7.12.17:
+    resolution: {integrity: sha512-TopkMDmLzq8ngChwRlyjR6raKD6gMSae4JdYDB8bByKreQgG0RBTuKe9LRxW3wFtUnjxOPRKBDwEH6Mg5KeDfw==}
+    dev: false
+
+  /@babel/plugin-syntax-jsx/7.12.13:
+    resolution: {integrity: sha512-d4HM23Q1K7oq/SLNmG6mRt85l2csmQ0cHRaxRXjKW0YFdEXqlZ5kzFQKH5Uc3rDJECgu+yCRgPkG04Mm98R/1g==}
+    peerDependencies:
+      '@babel/core': ^7.0.0-0
+    dependencies:
+      '@babel/helper-plugin-utils': 7.13.0
+    dev: false
+
+  /@babel/plugin-transform-react-display-name/7.12.13:
+    resolution: {integrity: sha512-MprESJzI9O5VnJZrL7gg1MpdqmiFcUv41Jc7SahxYsNP2kDkFqClxxTZq+1Qv4AFCamm+GXMRDQINNn+qrxmiA==}
+    peerDependencies:
+      '@babel/core': ^7.0.0-0
+    dependencies:
+      '@babel/helper-plugin-utils': 7.13.0
+    dev: false
+
+  /@babel/plugin-transform-react-jsx-development/7.12.17:
+    resolution: {integrity: sha512-BPjYV86SVuOaudFhsJR1zjgxxOhJDt6JHNoD48DxWEIxUCAMjV1ys6DYw4SDYZh0b1QsS2vfIA9t/ZsQGsDOUQ==}
+    peerDependencies:
+      '@babel/core': ^7.0.0-0
+    dependencies:
+      '@babel/plugin-transform-react-jsx': 7.13.12
+    dev: false
+
+  /@babel/plugin-transform-react-jsx/7.13.12:
+    resolution: {integrity: sha512-jcEI2UqIcpCqB5U5DRxIl0tQEProI2gcu+g8VTIqxLO5Iidojb4d77q+fwGseCvd8af/lJ9masp4QWzBXFE2xA==}
+    peerDependencies:
+      '@babel/core': ^7.0.0-0
+    dependencies:
+      '@babel/helper-annotate-as-pure': 7.12.13
+      '@babel/helper-module-imports': 7.13.12
+      '@babel/helper-plugin-utils': 7.13.0
+      '@babel/plugin-syntax-jsx': 7.12.13
+      '@babel/types': 7.14.1
+    dev: false
+
+  /@babel/plugin-transform-react-pure-annotations/7.12.1:
+    resolution: {integrity: sha512-RqeaHiwZtphSIUZ5I85PEH19LOSzxfuEazoY7/pWASCAIBuATQzpSVD+eT6MebeeZT2F4eSL0u4vw6n4Nm0Mjg==}
+    peerDependencies:
+      '@babel/core': ^7.0.0-0
+    dependencies:
+      '@babel/helper-annotate-as-pure': 7.12.13
+      '@babel/helper-plugin-utils': 7.13.0
+    dev: false
+
+  /@babel/preset-react/7.13.13:
+    resolution: {integrity: sha512-gx+tDLIE06sRjKJkVtpZ/t3mzCDOnPG+ggHZG9lffUbX8+wC739x20YQc9V35Do6ZAxaUc/HhVHIiOzz5MvDmA==}
+    peerDependencies:
+      '@babel/core': ^7.0.0-0
+    dependencies:
+      '@babel/helper-plugin-utils': 7.13.0
+      '@babel/helper-validator-option': 7.12.17
+      '@babel/plugin-transform-react-display-name': 7.12.13
+      '@babel/plugin-transform-react-jsx': 7.13.12
+      '@babel/plugin-transform-react-jsx-development': 7.12.17
+      '@babel/plugin-transform-react-pure-annotations': 7.12.1
+    dev: false
+
+  /@babel/types/7.14.1:
+    resolution: {integrity: sha512-S13Qe85fzLs3gYRUnrpyeIrBJIMYv33qSTg1qoBwiG6nPKwUWAD9odSzWhEedpwOIzSEI6gbdQIWEMiCI42iBA==}
+    dependencies:
+      '@babel/helper-validator-identifier': 7.14.0
+      to-fast-properties: 2.0.0
+    dev: false
+
+  /esbuild-wasm/0.11.19:
+    resolution: {integrity: sha512-d4s3fcIBG9CL/h5kKfXHpkztyMhs71anqdszND1Zfr4na1bhMGAb+VyEMBbt2/0ft5HtcsOYBqXsjNPNWTC29w==}
+    engines: {node: '>=8'}
+    hasBin: true
+    dev: false
+
+  /to-fast-properties/2.0.0:
+    resolution: {integrity: sha1-3F5pjL0HkmW8c+A3doGk5Og/YW4=}
+    engines: {node: '>=4'}
+    dev: false

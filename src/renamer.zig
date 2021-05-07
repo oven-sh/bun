@@ -1,5 +1,5 @@
 const js_ast = @import("js_ast.zig");
-usingnamespace @import("strings.zig");
+usingnamespace @import("global.zig");
 const std = @import("std");
 const logger = @import("logger.zig");
 
@@ -20,7 +20,7 @@ pub const Renamer = struct {
         if (renamer.symbols.get(resolved)) |symbol| {
             return symbol.original_name;
         } else {
-            std.debug.panic("Invalid symbol {s}", .{ref});
+            Global.panic("Invalid symbol {s}", .{ref});
         }
     }
 };

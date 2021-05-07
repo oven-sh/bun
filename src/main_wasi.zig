@@ -10,8 +10,8 @@ const js_ast = @import("js_ast.zig");
 const linker = @import("linker.zig");
 usingnamespace @import("ast/base.zig");
 usingnamespace @import("defines.zig");
-usingnamespace @import("global.zig");
 const panicky = @import("panic_handler.zig");
+const fs = @import("fs.zig");
 
 const MainPanicHandler = panicky.NewPanicHandler(panicky.default_panic);
 
@@ -22,17 +22,11 @@ pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace) nore
         panicky.default_panic(msg, error_return_trace);
     }
 }
-
+// const Alloc = zee.ZeeAllocDefaults.wasm_allocator
 pub fn main() anyerror!void {
-    // The memory allocator makes a massive difference.
-    // std.heap.raw_c_allocator and std.heap.c_allocator perform similarly.
-    // std.heap.GeneralPurposeAllocator makes this about 3x _slower_ than esbuild.
-    // var root_alloc = std.heap.ArenaAllocator.init(std.heap.raw_c_allocator);
-    // var root_alloc_ = &root_alloc.allocator;
-    try alloc.setup(std.heap.c_allocator);
-    Output.source.Stream = std.io.getStdOut();
-    Output.source.writer = Output.source.Stream.?.writer();
-    Output.source.errorWriter = std.io.getStdErr().writer();
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    var allocator = &arena.allocator;
+    try alloc.setup(allocator);
     var log = logger.Log.init(alloc.dynamic);
     var panicker = MainPanicHandler.init(&log);
     MainPanicHandler.Singleton = &panicker;
@@ -46,16 +40,17 @@ pub fn main() anyerror!void {
         return;
     }
 
-    const absolutePath = try std.fs.path.resolve(alloc.dynamic, args);
-    const entryPointName = std.fs.path.basename(absolutePath);
-    const file = try std.fs.openFileAbsolute(absolutePath, std.fs.File.OpenFlags{ .read = true });
-    const stat = try file.stat();
-    const code = try file.readToEndAlloc(alloc.dynamic, stat.size);
+    const absolutePath = args[args.len - 1];
+    const pathname = fs.PathName.init(absolutePath);
+    const entryPointName = try alloc.dynamic.alloc(u8, pathname.base.len + pathname.ext.len);
+    std.mem.copy(u8, entryPointName, pathname.base);
+    std.mem.copy(u8, entryPointName[pathname.base.len..entryPointName.len], pathname.ext);
+    const code = try std.io.getStdIn().readToEndAlloc(alloc.dynamic, std.math.maxInt(usize));
 
     const opts = try options.TransformOptions.initUncached(alloc.dynamic, entryPointName, code);
-
     var source = logger.Source.initFile(opts.entry_point, alloc.dynamic);
     var ast: js_ast.Ast = undefined;
+
     var raw_defines = RawDefines.init(alloc.static);
     try raw_defines.put("process.env.NODE_ENV", "\"development\"");
 

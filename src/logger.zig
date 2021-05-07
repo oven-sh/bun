@@ -1,6 +1,6 @@
 const std = @import("std");
 
-usingnamespace @import("strings.zig");
+usingnamespace @import("global.zig");
 
 const fs = @import("fs.zig");
 const unicode = std.unicode;
@@ -122,7 +122,7 @@ pub const Msg = struct {
         });
     }
 
-    pub fn formatNoWriter(msg: *const Msg, comptime formatterFunc: @TypeOf(std.debug.panic)) void {
+    pub fn formatNoWriter(msg: *const Msg, comptime formatterFunc: @TypeOf(Global.panic)) void {
         formatterFunc("\n\n{s}: {s}\n{s}\n{s}:{}:{} ({d})", .{
             msg.kind.string(),
             msg.data.text,
@@ -486,10 +486,6 @@ test "ErrorPosition" {
     var msgs = ArrayList(Msg).init(std.testing.allocator);
     var log = Log{ .msgs = msgs };
     defer log.msgs.deinit();
-    var filename = "test.js".*;
-    var syntax = "for (i".*;
-    var err = "invalid syntax".*;
-    var namespace = "file".*;
 
     try log.addMsg(Msg{
         .kind = .err,

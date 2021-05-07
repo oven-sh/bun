@@ -80,6 +80,8 @@ pub fn eql(self: string, other: anytype) bool {
     }
     return true;
 }
+// I have not actually verified that this makes it faster
+// It's probably like 0.0001ms faster
 pub fn eqlComptime(self: string, comptime alt: string) bool {
     comptime var matcher_size: usize = 0;
 
@@ -346,11 +348,6 @@ pub fn ExactSizeMatcher(comptime max_bytes: usize) type {
             return std.mem.readIntNative(T, &tmp);
         }
 
-        fn hashNoCheck(str: anytype) T {
-            var tmp = [_]u8{0} ** max_bytes;
-            std.mem.copy(u8, &tmp, str[0..str.len]);
-            return std.mem.readIntNative(T, &tmp);
-        }
         fn hashUnsafe(str: anytype) T {
             var tmp = [_]u8{0} ** max_bytes;
             std.mem.copy(u8, &tmp, str[0..str.len]);

@@ -7,7 +7,7 @@ const options = @import("options.zig");
 const alloc = @import("alloc.zig");
 
 const fs = @import("fs.zig");
-usingnamespace @import("strings.zig");
+usingnamespace @import("global.zig");
 usingnamespace @import("ast/base.zig");
 usingnamespace js_ast.G;
 
@@ -249,7 +249,7 @@ fn expectPrintedJSON(_contents: string, expected: string) void {
     var symbols: SymbolList = &([_][]Symbol{tree.symbols});
     var symbol_map = js_ast.Symbol.Map.initList(symbols);
     if (log.msgs.items.len > 0) {
-        std.debug.panic("--FAIL--\nExpr {s}\nLog: {s}\n--FAIL--", .{ expr, log.msgs.items[0].data.text });
+        Global.panic("--FAIL--\nExpr {s}\nLog: {s}\n--FAIL--", .{ expr, log.msgs.items[0].data.text });
     }
     var linker = @import("linker.zig").Linker{};
 

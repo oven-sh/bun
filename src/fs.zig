@@ -1,6 +1,6 @@
 const std = @import("std");
 
-usingnamespace @import("strings.zig");
+usingnamespace @import("global.zig");
 
 const alloc = @import("alloc.zig");
 const expect = std.testing.expect;

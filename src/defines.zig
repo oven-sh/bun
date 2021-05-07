@@ -5,7 +5,7 @@ const logger = @import("logger.zig");
 const js_lexer = @import("js_lexer.zig");
 const json_parser = @import("json_parser.zig");
 const fs = @import("fs.zig");
-usingnamespace @import("strings.zig");
+usingnamespace @import("global.zig");
 usingnamespace @import("ast/base.zig");
 
 const GlobalDefinesKey = @import("./defines-table.zig").GlobalDefinesKey;
@@ -294,7 +294,7 @@ test "Defines" {
     var log = logger.Log.init(alloc.dynamic);
     var data = try DefineData.from_input(orig, &log, alloc.dynamic);
     var defines = try Define.init(alloc.dynamic, data);
-    std.debug.print("Time: {d}", .{std.time.nanoTimestamp() - start});
+    Output.print("Time: {d}", .{std.time.nanoTimestamp() - start});
     const node_env_dots = defines.dots.get("NODE_ENV");
     expect(node_env_dots != null);
     expect(node_env_dots.?.len > 0);

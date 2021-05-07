@@ -30,16 +30,16 @@ pub fn main() anyerror!void {
     // var root_alloc = std.heap.ArenaAllocator.init(std.heap.raw_c_allocator);
     // var root_alloc_ = &root_alloc.allocator;
     try alloc.setup(std.heap.c_allocator);
-    Output.source.Stream = std.io.getStdOut();
-    Output.source.writer = Output.source.Stream.?.writer();
-    Output.source.errorWriter = std.io.getStdErr().writer();
+    var stdout: std.fs.File = std.io.getStdOut();
+    var stderr: std.fs.File = std.io.getStdErr();
+    var output_source = Output.Source.init(stdout, stderr);
+    Output.Source.set(&output_source);
+
     var log = logger.Log.init(alloc.dynamic);
     var panicker = MainPanicHandler.init(&log);
     MainPanicHandler.Singleton = &panicker;
 
     const args = try std.process.argsAlloc(alloc.dynamic);
-    const stdout = std.io.getStdOut();
-    const stderr = std.io.getStdErr();
 
     if (args.len < 1) {
         const len = stderr.write("Pass a file");

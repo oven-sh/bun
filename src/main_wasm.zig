@@ -59,7 +59,8 @@ pub const Uint8Array = packed struct {
     pub fn decode(self: Abi, comptime SchemaType: type) !SchemaType {
         var buf = Uint8Array.toSlice(self);
         var stream = std.io.fixedBufferStream(buf);
-        return try SchemaType.decode(alloc.dynamic, stream.reader());
+        const res = try SchemaType.decode(alloc.dynamic, stream.reader());
+        return res;
     }
 };
 
@@ -74,13 +75,13 @@ pub const Api = struct {
     defines: ?*Define = null,
 
     pub fn transform(self: *Api, request: Schema.Transform) !Schema.TransformResponse {
-        const opts = try options.TransformOptions.initUncached(alloc.dynamic, request.path.?, request.contents.?);
+        const opts = try options.TransformOptions.initUncached(alloc.dynamic, request.path.?, request.contents);
         var source = logger.Source.initFile(opts.entry_point, alloc.dynamic);
 
         var ast: js_ast.Ast = undefined;
         if (self.defines == null) {
             var raw_defines = RawDefines.init(alloc.static);
-            try raw_defines.put("process.env.NODE_ENV", "\"development\"");
+            raw_defines.put("process.env.NODE_ENV", "\"development\"") catch unreachable;
 
             var user_defines = try DefineData.from_input(raw_defines, &self.log, alloc.static);
             self.defines = try Define.init(
@@ -124,6 +125,7 @@ pub const Api = struct {
             js_printer.Options{ .to_module_ref = ast.module_ref orelse js_ast.Ref{ .inner_index = 0 } },
             &_linker,
         );
+        // Output.print("Parts count: {d}", .{ast.parts.len});
         var output_files = try alloc.dynamic.alloc(Schema.OutputFile, 1);
         var _data = printed.js[0..printed.js.len];
         var _path = constStrToU8(source.path.text);
@@ -144,50 +146,72 @@ pub extern fn console_error(abi: Uint8Array.Abi) void;
 pub extern fn console_warn(abi: Uint8Array.Abi) void;
 pub extern fn console_info(abi: Uint8Array.Abi) void;
 
+const ZeeAlloc = zee.ZeeAlloc(.{});
+var arena: std.heap.ArenaAllocator = undefined;
 pub const Exports = struct {
     fn init() callconv(.C) i32 {
-        // const res = @wasmMemoryGrow(0, amount_to_grow);
+        // const Gpa = std.heap.GeneralPurposeAllocator(.{});
+        // var gpa = Gpa{};
+        // var allocator = &gpa.allocator;
+        // alloc.setup(allocator) catch return -1;
+        var out_buffer = std.heap.page_allocator.alloc(u8, 2048) catch return -1;
+        var err_buffer = std.heap.page_allocator.alloc(u8, 2048) catch return -1;
+        var output = std.heap.page_allocator.create(Output.Source) catch return -1;
+        var stream = std.io.fixedBufferStream(out_buffer);
+        var err_stream = std.io.fixedBufferStream(err_buffer);
+        output.* = Output.Source.init(
+            stream,
+            err_stream,
+        );
+        output.out_buffer = out_buffer;
+        output.err_buffer = err_buffer;
+        Output.Source.set(output);
+
+        var _api = std.heap.page_allocator.create(Api) catch return -1;
+        _api.* = Api{ .files = std.ArrayList(string).init(std.heap.page_allocator), .log = logger.Log.init(std.heap.page_allocator) };
+        api = _api;
+
+        _ = MainPanicHandler.init(&api.?.log);
+
+        // This will need more thought.
+        var raw_defines = RawDefines.init(std.heap.page_allocator);
+        raw_defines.put("process.env.NODE_ENV", "\"development\"") catch return -1;
+        var user_defines = DefineData.from_input(raw_defines, &_api.log, std.heap.page_allocator) catch return -1;
+        _api.defines = Define.init(
+            std.heap.page_allocator,
+            user_defines,
+        ) catch return -1;
+
         if (alloc.needs_setup) {
-            alloc.setup(zee.ZeeAllocDefaults.wasm_allocator) catch return -1;
-            // const Gpa = std.heap.GeneralPurposeAllocator(.{});
-            // var gpa = Gpa{};
-            // var allocator = &gpa.allocator;
-            // alloc.setup(allocator) catch return -1;
-            var out_buffer = alloc.static.alloc(u8, 2048) catch return -1;
-            var err_buffer = alloc.static.alloc(u8, 2048) catch return -1;
-            var output = alloc.static.create(Output.Source) catch return -1;
-            var stream = std.io.fixedBufferStream(out_buffer);
-            var err_stream = std.io.fixedBufferStream(err_buffer);
-            output.* = Output.Source.init(
-                stream,
-                err_stream,
-            );
-            output.out_buffer = out_buffer;
-            output.err_buffer = err_buffer;
-            Output.Source.set(output);
+            arena = std.heap.ArenaAllocator.init(ZeeAlloc.wasm_allocator);
+            alloc.setup(&arena.allocator) catch return -1;
         }
 
-        var _api = alloc.static.create(Api) catch return -1;
-        _api.* = Api{ .files = std.ArrayList(string).init(alloc.dynamic), .log = logger.Log.init(alloc.dynamic) };
-        api = _api;
+        _ = @wasmMemoryGrow(0, 300);
+
         Output.printErrorable("Initialized.", .{}) catch |err| {
             var name = alloc.static.alloc(u8, @errorName(err).len) catch unreachable;
             std.mem.copy(u8, name, @errorName(err));
             console_error(Uint8Array.fromSlice(name));
         };
 
-        _ = MainPanicHandler.init(&api.?.log);
-
         return 1;
     }
 
     fn transform(abi: Uint8Array.Abi) callconv(.C) Uint8Array.Abi {
-        Output.print("Received {d}", .{abi});
+        // Output.print("Received {d}", .{abi});
         const req: Schema.Transform = Uint8Array.decode(abi, Schema.Transform) catch return Uint8Array.empty();
-        Output.print("Req {s}", .{req});
+        // Output.print("Req {s}", .{req});
         // alloc.dynamic.free(Uint8Array.toSlice(abi));
         const resp = api.?.transform(req) catch return Uint8Array.empty();
         return Uint8Array.encode(Schema.TransformResponse, resp) catch return Uint8Array.empty();
+    }
+
+    // Reset
+    fn cycle() callconv(.C) void {
+        arena.deinit();
+        arena = std.heap.ArenaAllocator.init(ZeeAlloc.wasm_allocator);
+        alloc.setup(&arena.allocator) catch return;
     }
 
     fn malloc(size: usize) callconv(.C) ?*c_void {
@@ -238,6 +262,7 @@ comptime {
     @export(Exports.malloc, .{ .name = "malloc", .linkage = .Strong });
     @export(Exports.calloc, .{ .name = "calloc", .linkage = .Strong });
     @export(Exports.realloc, .{ .name = "realloc", .linkage = .Strong });
+    @export(Exports.cycle, .{ .name = "cycle", .linkage = .Strong });
     @export(Exports.free, .{ .name = "free", .linkage = .Strong });
 }
 

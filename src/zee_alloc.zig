@@ -28,7 +28,7 @@ pub fn ZeeAlloc(comptime conf: Config) type {
 
         /// The definitive™ way of using `ZeeAlloc`
         pub const wasm_allocator = &_wasm.allocator;
-        var _wasm = init(&wasm_page_allocator);
+        pub var _wasm = init(&wasm_page_allocator);
 
         jumbo: ?*Slab = null,
         slabs: [total_slabs]?*Slab = [_]?*Slab{null} ** total_slabs,
@@ -157,7 +157,7 @@ pub fn ZeeAlloc(comptime conf: Config) type {
             return .{ .backing_allocator = allocator };
         }
 
-        pub fn deinit(self: *Self) void {
+        pub fn freeAll(self: *Self) void {
             {
                 var iter = self.jumbo;
                 while (iter) |node| {
@@ -174,6 +174,10 @@ pub fn ZeeAlloc(comptime conf: Config) type {
                     self.backing_allocator.destroy(node);
                 }
             }
+        }
+
+        pub fn deinit(self: *Self) void {
+            self.freeAll();
             self.* = undefined;
         }
 
@@ -285,7 +289,7 @@ pub fn ZeeAlloc(comptime conf: Config) type {
     };
 }
 
-var wasm_page_allocator = init: {
+pub var wasm_page_allocator = init: {
     if (!std.builtin.target.isWasm()) {
         @compileError("wasm allocator is only available for wasm32 arch");
     }

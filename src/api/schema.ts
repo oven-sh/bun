@@ -101,7 +101,7 @@ type uint32 = number;
   export interface Transform {
     handle?: FileHandle;
     path?: string;
-    contents?: string;
+    contents?: Uint8Array;
     loader?: Loader;
     options?: TransformOptions;
   }

@@ -50,7 +50,7 @@ struct FileHandle {
 message Transform {
   FileHandle handle = 1;
   string path = 2;
-  string contents = 3;
+  byte[] contents = 3;
 
   Loader loader = 4;
   TransformOptions options = 5;

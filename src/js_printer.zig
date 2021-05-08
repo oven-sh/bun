@@ -2005,6 +2005,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.print("export default");
+
                     p.printSpace();
 
                     switch (s.value) {
@@ -2026,7 +2027,10 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                                     if (func.func.flags.is_generator) {
                                         p.print("*");
                                         p.printSpace();
+                                    } else {
+                                        p.maybePrintSpace();
                                     }
+
                                     if (func.func.name) |name| {
                                         p.printSymbol(name.ref orelse Global.panic("Internal error: Expected func to have a name ref\n{s}", .{func}));
                                     }
@@ -2729,6 +2733,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
         }
 
         pub fn init(allocator: *std.mem.Allocator, tree: Ast, source: *logger.Source, symbols: Symbol.Map, opts: Options, linker: *Linker) !Printer {
+            // Heuristic: most lines of JavaScript are short.
             var js = try MutableString.init(allocator, 0);
             return Printer{
                 .allocator = allocator,

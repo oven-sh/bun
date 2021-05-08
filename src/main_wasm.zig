@@ -71,20 +71,23 @@ pub const Api = struct {
     options: *Schema.TransformOptions = &default_options,
     files: std.ArrayList(string),
     log: logger.Log,
+    defines: ?*Define = null,
 
     pub fn transform(self: *Api, request: Schema.Transform) !Schema.TransformResponse {
         const opts = try options.TransformOptions.initUncached(alloc.dynamic, request.path.?, request.contents.?);
         var source = logger.Source.initFile(opts.entry_point, alloc.dynamic);
 
         var ast: js_ast.Ast = undefined;
-        var raw_defines = RawDefines.init(alloc.static);
-        try raw_defines.put("process.env.NODE_ENV", "\"development\"");
+        if (self.defines == null) {
+            var raw_defines = RawDefines.init(alloc.static);
+            try raw_defines.put("process.env.NODE_ENV", "\"development\"");
 
-        var user_defines = try DefineData.from_input(raw_defines, &self.log, alloc.static);
-        var define = try Define.init(
-            alloc.static,
-            user_defines,
-        );
+            var user_defines = try DefineData.from_input(raw_defines, &self.log, alloc.static);
+            self.defines = try Define.init(
+                alloc.static,
+                user_defines,
+            );
+        }
 
         switch (opts.loader) {
             .json => {
@@ -101,7 +104,7 @@ pub const Api = struct {
                 ast = js_ast.Ast.initTest(&([_]js_ast.Part{part}));
             },
             .jsx, .tsx, .ts, .js => {
-                var parser = try js_parser.Parser.init(opts, &self.log, &source, define, alloc.dynamic);
+                var parser = try js_parser.Parser.init(opts, &self.log, &source, self.defines.?, alloc.dynamic);
                 var res = try parser.parse();
                 ast = res.ast;
             },
@@ -136,19 +139,20 @@ pub const Api = struct {
     }
 };
 
-pub extern fn console_log(ptr: usize, len: usize) void;
-pub extern fn console_error(ptr: usize, len: usize) void;
-pub extern fn console_warn(ptr: usize, len: usize) void;
-pub extern fn console_info(ptr: usize, len: usize) void;
+pub extern fn console_log(abi: Uint8Array.Abi) void;
+pub extern fn console_error(abi: Uint8Array.Abi) void;
+pub extern fn console_warn(abi: Uint8Array.Abi) void;
+pub extern fn console_info(abi: Uint8Array.Abi) void;
 
-const Gpa = std.heap.GeneralPurposeAllocator(.{});
-var gpa = Gpa{};
 pub const Exports = struct {
-    fn init(amount_to_grow: usize) callconv(.C) i32 {
-        const res = @wasmMemoryGrow(0, amount_to_grow);
+    fn init() callconv(.C) i32 {
+        // const res = @wasmMemoryGrow(0, amount_to_grow);
         if (alloc.needs_setup) {
-            alloc.setup(&gpa.allocator) catch return -1;
-            _ = MainPanicHandler.init(&api.?.log);
+            alloc.setup(zee.ZeeAllocDefaults.wasm_allocator) catch return -1;
+            // const Gpa = std.heap.GeneralPurposeAllocator(.{});
+            // var gpa = Gpa{};
+            // var allocator = &gpa.allocator;
+            // alloc.setup(allocator) catch return -1;
             var out_buffer = alloc.static.alloc(u8, 2048) catch return -1;
             var err_buffer = alloc.static.alloc(u8, 2048) catch return -1;
             var output = alloc.static.create(Output.Source) catch return -1;
@@ -166,8 +170,15 @@ pub const Exports = struct {
         var _api = alloc.static.create(Api) catch return -1;
         _api.* = Api{ .files = std.ArrayList(string).init(alloc.dynamic), .log = logger.Log.init(alloc.dynamic) };
         api = _api;
-        // Output.print("Initialized.", .{});
-        return res;
+        Output.printErrorable("Initialized.", .{}) catch |err| {
+            var name = alloc.static.alloc(u8, @errorName(err).len) catch unreachable;
+            std.mem.copy(u8, name, @errorName(err));
+            console_error(Uint8Array.fromSlice(name));
+        };
+
+        _ = MainPanicHandler.init(&api.?.log);
+
+        return 1;
     }
 
     fn transform(abi: Uint8Array.Abi) callconv(.C) Uint8Array.Abi {
@@ -219,6 +230,8 @@ pub const Exports = struct {
     }
 };
 
+var api: ?*Api = null;
+
 comptime {
     @export(Exports.init, .{ .name = "init", .linkage = .Strong });
     @export(Exports.transform, .{ .name = "transform", .linkage = .Strong });
@@ -228,6 +241,11 @@ comptime {
     @export(Exports.free, .{ .name = "free", .linkage = .Strong });
 }
 
-var api: ?*Api = null;
-
-pub fn main() anyerror!void {}
+pub fn main() anyerror!void {
+    std.mem.doNotOptimizeAway(Exports.init);
+    std.mem.doNotOptimizeAway(Exports.transform);
+    std.mem.doNotOptimizeAway(Exports.malloc);
+    std.mem.doNotOptimizeAway(Exports.calloc);
+    std.mem.doNotOptimizeAway(Exports.realloc);
+    std.mem.doNotOptimizeAway(Exports.free);
+}

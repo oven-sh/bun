@@ -2,7 +2,7 @@ import * as Schema from "../../schema";
 import { ByteBuffer } from "peechy";
 
 export interface WebAssemblyModule {
-  init(starting_memory: number): number;
+  init(): number;
   transform(a: number): number;
   malloc(a: number): number;
   calloc(a: number): number;
@@ -15,6 +15,10 @@ const wasm_imports_sym: symbol | string =
     ? "wasm_imports"
     : Symbol("wasm_imports");
 
+const ptr_converter = new ArrayBuffer(8);
+const ptr_float = new Float64Array(ptr_converter);
+const slice = new Uint32Array(ptr_converter);
+
 export class ESDev {
   static has_initialized = false;
   static wasm_source: WebAssembly.WebAssemblyInstantiatedSource = null;
@@ -22,49 +26,142 @@ export class ESDev {
     return ESDev.wasm_source.instance.exports as any;
   }
   static get memory() {
-    return ESDev.wasm_exports.memory as WebAssembly.Memory;
+    return ESDev[wasm_imports_sym].memory as WebAssembly.Memory;
   }
+
   static memory_array: Uint8Array;
 
   static _decoder: TextDecoder;
 
-  static _wasmPtrLenToString(ptr: number, len: number) {
-    if (!ESDev._decoder) {
-      ESDev._decoder = new TextDecoder();
+  static _wasmPtrToSlice(offset: number) {
+    if (ESDev.memory_array.buffer !== ESDev.memory.buffer) {
+      ESDev.memory_array = new Uint8Array(ESDev.memory.buffer);
     }
-    const region = ESDev.memory_array.subarray(ptr, ptr + len + 1);
+    ptr_float[0] = offset;
+    return ESDev.memory_array.subarray(slice[0], slice[0] + slice[1]);
+  }
+
+  static _wasmPtrLenToString(slice: number) {
+    if (!ESDev._decoder) {
+      ESDev._decoder = new TextDecoder("utf8");
+    }
+
+    const region = this._wasmPtrToSlice(slice);
+
     return ESDev._decoder.decode(region);
   }
 
   // We don't want people to be calling these manually
   static [wasm_imports_sym] = {
-    console_log(ptr: number, len: number) {
-      console.log(ESDev._wasmPtrLenToString(ptr, len));
+    console_log(slice: number) {
+      console.log(ESDev._wasmPtrLenToString(slice));
     },
-    console_error(ptr: number, len: number) {
-      console.error(ESDev._wasmPtrLenToString(ptr, len));
+    console_error(slice: number) {
+      console.error(ESDev._wasmPtrLenToString(slice));
     },
-    console_warn(ptr: number, len: number) {
-      console.warn(ESDev._wasmPtrLenToString(ptr, len));
+    console_warn(slice: number) {
+      console.warn(ESDev._wasmPtrLenToString(slice));
     },
-    console_info(ptr: number, len: number) {
-      console.info(ESDev._wasmPtrLenToString(ptr, len));
+    console_info(slice: number) {
+      console.info(ESDev._wasmPtrLenToString(slice));
     },
+    memory: null,
+    // __indirect_function_table: new WebAssembly.Table({
+    //   initial: 0,
+    //   element: "anyfunc",
+    // }),
+    // __stack_pointer: new WebAssembly.Global({
+    //   mutable: true,
+    //   value: "i32",
+    // }),
+    // __multi3(one: number, two: number) {
+    //   return Math.imul(one | 0, two | 0);
+    // },
+    // fmod(one: number, two: number) {
+    //   return one % two;
+    // },
+    // memset(ptr: number, value: number, len: number) {
+    //   ESDev.memory_array.fill(value, ptr, ptr + len);
+    // },
+    // memcpy(ptr: number, value: number, len: number) {
+    //   ESDev.memory_array.copyWithin(ptr, value, value + len);
+    // },
+    // // These functions convert a to an unsigned long long, rounding toward zero. Negative values all become zero.
+    // __fixunsdfti(a: number) {
+    //   return Math.floor(a);
+    // },
+    // // These functions return the remainder of the unsigned division of a and b.
+    // __umodti3(a: number, b: number) {
+    //   return (a | 0) % (b | 0);
+    // },
+    // // These functions return the quotient of the unsigned division of a and b.
+    // __udivti3(a: number, b: number) {
+    //   return (a | 0) / (b | 0);
+    // },
+    // // These functions return the result of shifting a left by b bits.
+    // __ashlti3(a: number, b: number) {
+    //   return (a | 0) >> (b | 0);
+    // },
+    // /* Returns: convert a to a double, rounding toward even. */
+    // __floatuntidf(a: number) {
+    //   const mod = a % 2;
+    //   if (mod === 0) {
+    //     return Math.ceil(a);
+    //   } else if (mod === 1) {
+    //     return Math.floor(a);
+    //   }
+    // },
   };
 
   static async init(url) {
+    if (ESDev.has_initialized) {
+      return;
+    }
+
+    try {
+      ESDev[wasm_imports_sym].memory = new WebAssembly.Memory({
+        initial: 1500,
+        // shared: typeof SharedArrayBuffer !== "undefined",
+        maximum: typeof SharedArrayBuffer !== "undefined" ? 5000 : undefined,
+      });
+    } catch {
+      try {
+        ESDev[wasm_imports_sym].memory = new WebAssembly.Memory({
+          initial: 750,
+          // shared: typeof SharedArrayBuffer !== "undefined",
+          maximum: typeof SharedArrayBuffer !== "undefined" ? 5000 : undefined,
+        });
+      } catch {
+        try {
+          ESDev[wasm_imports_sym].memory = new WebAssembly.Memory({
+            initial: 375,
+            // shared: typeof SharedArrayBuffer !== "undefined",
+            maximum:
+              typeof SharedArrayBuffer !== "undefined" ? 5000 : undefined,
+          });
+        } catch {
+          ESDev[wasm_imports_sym].memory = new WebAssembly.Memory({
+            initial: 125,
+            // shared: typeof SharedArrayBuffer !== "undefined",
+            maximum:
+              typeof SharedArrayBuffer !== "undefined" ? 5000 : undefined,
+          });
+        }
+      }
+    }
+
     ESDev.wasm_source = await globalThis.WebAssembly.instantiateStreaming(
       fetch(url),
       { env: ESDev[wasm_imports_sym] }
     );
+    ESDev.memory_array = new Uint8Array(ESDev.memory.buffer);
 
-    const res = ESDev.wasm_exports.init(1500);
+    const res = ESDev.wasm_exports.init();
     if (res < 0) {
       throw `[ESDev] Failed to initialize WASM module: code ${res}`;
     } else {
       console.log("WASM loaded.");
     }
-    ESDev.memory_array = new Uint8Array(ESDev.memory.buffer);
 
     ESDev.has_initialized = true;
   }
@@ -72,6 +169,10 @@ export class ESDev {
   static transform(content: string, file_name: string) {
     if (!ESDev.has_initialized) {
       throw "Please run await ESDev.init(wasm_url) before using this.";
+    }
+
+    if (process.env.NODE_ENV === "development") {
+      console.time("[ESDev] Transform " + file_name);
     }
 
     const bb = new ByteBuffer(
@@ -89,11 +190,15 @@ export class ESDev {
     const data = bb.toUint8Array();
 
     const ptr = ESDev.wasm_exports.malloc(data.byteLength);
-    ESDev.memory_array.set(data, ptr);
-    debugger;
+    this._wasmPtrToSlice(ptr).set(data);
     const resp_ptr = ESDev.wasm_exports.transform(ptr);
-    var _bb = new ByteBuffer(ESDev.memory_array.subarray(resp_ptr));
+    var _bb = new ByteBuffer(this._wasmPtrToSlice(resp_ptr));
     const response = Schema.decodeTransformResponse(_bb);
+    ESDev.wasm_exports.free(resp_ptr);
+
+    if (process.env.NODE_ENV === "development") {
+      console.timeEnd("[ESDev] Transform " + file_name);
+    }
     ESDev.wasm_exports.free(resp_ptr);
     return response;
   }

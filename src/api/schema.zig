@@ -442,6 +442,7 @@ pub fn update(result: *OutputFile, allocator: *std.mem.Allocator, reader: anytyp
 
 pub fn encode(result: *const @This(), writer: anytype) anyerror!void {
 
+   try writer.writeIntNative(u32, @intCast(u32, result.data.len));
    try writer.writeAll(result.data);
 
     try writer.writeIntNative(u32, @intCast(u32, result.path.len));

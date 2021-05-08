@@ -480,8 +480,8 @@ test "ErrorPosition" {
     const source = Source{ .contents = @embedFile("./test/fixtures/simple.jsx"), .path = fs.Path.init("/src/test/fixtures/simple.jsx"), .identifier_name = "simple" };
     const error_position = source.initErrorPosition(Loc{ .start = 979 });
 
-    std.testing.expectEqual(973, error_position.line_start);
-    std.testing.expectEqual(1016, error_position.line_end);
+    std.testing.expectEqual(@as(usize, 973), @as(usize, error_position.line_start));
+    std.testing.expectEqual(@as(usize, 1016), @as(usize, error_position.line_end));
 
     var msgs = ArrayList(Msg).init(std.testing.allocator);
     var log = Log{ .msgs = msgs };

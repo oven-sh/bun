@@ -17,3 +17,4 @@ dist
 build
 *.wat
 zig-out
+pnpm-lock.yaml

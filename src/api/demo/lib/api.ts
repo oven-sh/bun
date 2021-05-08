@@ -176,7 +176,7 @@ export class ESDev {
     const resp_ptr = ESDev.wasm_exports.transform(ptr);
     var _bb = new ByteBuffer(this._wasmPtrToSlice(resp_ptr));
     const response = Schema.decodeTransformResponse(_bb);
-    ESDev.wasm_exports.cycle();
+    ESDev.wasm_exports.cycle(ptr, resp_ptr);
     return response;
   }
 }

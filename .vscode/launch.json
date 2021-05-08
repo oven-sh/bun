@@ -5,7 +5,7 @@
       "type": "lldb",
       "request": "launch",
       "name": "Launch",
-      "program": "${workspaceFolder}/zig-cache/bin/test",
+      "program": "${workspaceFolder}/zig-out/bin/test",
       "preLaunchTask": "test",
       "args": ["/usr/local/bin/zig"],
       "cwd": "${workspaceFolder}",

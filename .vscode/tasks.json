@@ -30,7 +30,7 @@
         "${file}",
         "--main-pkg-path",
         "${workspaceFolder}",
-        "-femit-bin=${workspaceFolder}/zig-cache/bin/test",
+        "-femit-bin=${workspaceFolder}/zig-out/bin/test",
         ";",
         "true"
       ],

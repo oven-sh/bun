@@ -2305,6 +2305,12 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.printSpace();
                     p.print("(");
 
+                    if (s.init) |init_| {
+                        p.printForLoopInit(init_);
+                    }
+
+                    p.print(";");
+
                     if (s.test_) |test_| {
                         p.printExpr(test_, .lowest, ExprFlag.None());
                     }

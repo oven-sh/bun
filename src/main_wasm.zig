@@ -147,7 +147,7 @@ pub extern fn console_warn(abi: Uint8Array.Abi) void;
 pub extern fn console_info(abi: Uint8Array.Abi) void;
 
 const ZeeAlloc = zee.ZeeAlloc(.{});
-var arena: std.heap.ArenaAllocator = undefined;
+var zee_instance: ZeeAlloc = undefined;
 pub const Exports = struct {
     fn init() callconv(.C) i32 {
         // const Gpa = std.heap.GeneralPurposeAllocator(.{});
@@ -183,11 +183,10 @@ pub const Exports = struct {
         ) catch return -1;
 
         if (alloc.needs_setup) {
-            arena = std.heap.ArenaAllocator.init(ZeeAlloc.wasm_allocator);
-            alloc.setup(&arena.allocator) catch return -1;
+            alloc.setup(ZeeAlloc.wasm_allocator) catch return -1;
         }
 
-        _ = @wasmMemoryGrow(0, 300);
+        _ = @wasmMemoryGrow(0, 600);
 
         Output.printErrorable("Initialized.", .{}) catch |err| {
             var name = alloc.static.alloc(u8, @errorName(err).len) catch unreachable;
@@ -204,14 +203,24 @@ pub const Exports = struct {
         // Output.print("Req {s}", .{req});
         // alloc.dynamic.free(Uint8Array.toSlice(abi));
         const resp = api.?.transform(req) catch return Uint8Array.empty();
-        return Uint8Array.encode(Schema.TransformResponse, resp) catch return Uint8Array.empty();
+        alloc.dynamic.free(req.contents);
+
+        if (req.path) |path| alloc.dynamic.free(path);
+
+        var res = Uint8Array.encode(Schema.TransformResponse, resp) catch return Uint8Array.empty();
+        // this is stupid.
+        for (resp.files) |file| {
+            alloc.dynamic.free(file.data);
+            alloc.dynamic.free(file.path);
+        }
+
+        return res;
     }
 
     // Reset
-    fn cycle() callconv(.C) void {
-        arena.deinit();
-        arena = std.heap.ArenaAllocator.init(ZeeAlloc.wasm_allocator);
-        alloc.setup(&arena.allocator) catch return;
+    fn cycle(req: Uint8Array.Abi, res: Uint8Array.Abi) callconv(.C) void {
+        alloc.dynamic.free(Uint8Array.toSlice(res));
+        alloc.dynamic.free(Uint8Array.toSlice(req));
     }
 
     fn malloc(size: usize) callconv(.C) ?*c_void {

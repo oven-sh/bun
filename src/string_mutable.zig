@@ -15,16 +15,11 @@ pub const MutableString = struct {
     }
 
     pub fn growIfNeeded(self: *MutableString, amount: usize) !void {
-        const new_capacity = self.list.items.len + amount;
-        if (self.list.capacity < new_capacity) {
-            try self.list.ensureCapacity(self.allocator, new_capacity);
-        }
+        try self.list.ensureUnusedCapacity(self.allocator, amount);
     }
 
     pub fn writeAll(self: *MutableString, bytes: string) !usize {
-        const new_capacity = self.list.items.len + bytes.len;
-        try self.list.ensureCapacity(self.allocator, new_capacity);
-        self.list.appendSliceAssumeCapacity(bytes);
+        try self.list.appendSlice(self.allocator, bytes);
         return self.list.items.len;
     }
 
@@ -47,26 +42,46 @@ pub const MutableString = struct {
             return "_";
         }
 
-        var mutable = try MutableString.init(allocator, 0);
+        var has_needed_gap = false;
+        var needs_gap = false;
+        var start_i: usize = 0;
 
-        var needsGap = false;
-        for (str) |c| {
-            if (std.ascii.isLower(c) or std.ascii.isUpper(c) or (mutable.len() > 0 and std.ascii.isAlNum(c))) {
-                if (needsGap) {
-                    try mutable.appendChar('_');
-                    needsGap = false;
+        // Common case: no gap necessary. No allocation necessary.
+        needs_gap = std.ascii.isAlNum(str[0]);
+        if (!needs_gap) {
+            // Are there any non-alphanumeric chars at all?
+            for (str[1..str.len]) |c, i| {
+                switch (c) {
+                    'a'...'z', 'A'...'Z', '0'...'9' => {},
+                    else => {
+                        needs_gap = true;
+                        start_i = i;
+                        break;
+                    },
                 }
-                try mutable.appendChar(c);
-            } else if (!needsGap) {
-                needsGap = true;
             }
         }
 
-        if (mutable.len() > 0) {
+        if (needs_gap) {
+            var mutable = try MutableString.initCopy(allocator, str[0..start_i]);
+
+            for (str[start_i..str.len]) |c, i| {
+                if (std.ascii.isLower(c) or std.ascii.isUpper(c) or (mutable.len() > 0 and std.ascii.isAlNum(c))) {
+                    if (needs_gap) {
+                        try mutable.appendChar('_');
+                        needs_gap = false;
+                        has_needed_gap = true;
+                    }
+                    try mutable.appendChar(c);
+                } else if (!needs_gap) {
+                    needs_gap = true;
+                }
+            }
+
             return mutable.list.toOwnedSlice(allocator);
-        } else {
-            return str;
         }
+
+        return str;
     }
 
     pub fn len(self: *MutableString) usize {

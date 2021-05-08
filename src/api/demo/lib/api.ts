@@ -1,5 +1,6 @@
 import * as Schema from "../../schema";
 import { ByteBuffer } from "peechy";
+import { transform as sucraseTransform } from "sucrase";
 
 export interface WebAssemblyModule {
   init(): number;
@@ -8,6 +9,7 @@ export interface WebAssemblyModule {
   calloc(a: number): number;
   realloc(a: number): number;
   free(a: number): number;
+  cycle(): void;
 }
 
 const wasm_imports_sym: symbol | string =
@@ -18,6 +20,8 @@ const wasm_imports_sym: symbol | string =
 const ptr_converter = new ArrayBuffer(8);
 const ptr_float = new Float64Array(ptr_converter);
 const slice = new Uint32Array(ptr_converter);
+
+var scratch: Uint8Array;
 
 export class ESDev {
   static has_initialized = false;
@@ -114,41 +118,18 @@ export class ESDev {
   };
 
   static async init(url) {
+    globalThis.sucraseTransform = sucraseTransform;
+    scratch = new Uint8Array(8096);
+
     if (ESDev.has_initialized) {
       return;
     }
 
-    try {
-      ESDev[wasm_imports_sym].memory = new WebAssembly.Memory({
-        initial: 1500,
-        // shared: typeof SharedArrayBuffer !== "undefined",
-        maximum: typeof SharedArrayBuffer !== "undefined" ? 5000 : undefined,
-      });
-    } catch {
-      try {
-        ESDev[wasm_imports_sym].memory = new WebAssembly.Memory({
-          initial: 750,
-          // shared: typeof SharedArrayBuffer !== "undefined",
-          maximum: typeof SharedArrayBuffer !== "undefined" ? 5000 : undefined,
-        });
-      } catch {
-        try {
-          ESDev[wasm_imports_sym].memory = new WebAssembly.Memory({
-            initial: 375,
-            // shared: typeof SharedArrayBuffer !== "undefined",
-            maximum:
-              typeof SharedArrayBuffer !== "undefined" ? 5000 : undefined,
-          });
-        } catch {
-          ESDev[wasm_imports_sym].memory = new WebAssembly.Memory({
-            initial: 125,
-            // shared: typeof SharedArrayBuffer !== "undefined",
-            maximum:
-              typeof SharedArrayBuffer !== "undefined" ? 5000 : undefined,
-          });
-        }
-      }
-    }
+    ESDev[wasm_imports_sym].memory = new WebAssembly.Memory({
+      initial: 18,
+      // shared: typeof SharedArrayBuffer !== "undefined",
+      maximum: typeof SharedArrayBuffer !== "undefined" ? 5000 : undefined,
+    });
 
     ESDev.wasm_source = await globalThis.WebAssembly.instantiateStreaming(
       fetch(url),
@@ -166,18 +147,16 @@ export class ESDev {
     ESDev.has_initialized = true;
   }
 
-  static transform(content: string, file_name: string) {
+  static transform(content: Uint8Array, file_name: string) {
     if (!ESDev.has_initialized) {
       throw "Please run await ESDev.init(wasm_url) before using this.";
     }
 
-    if (process.env.NODE_ENV === "development") {
-      console.time("[ESDev] Transform " + file_name);
-    }
+    // if (process.env.NODE_ENV === "development") {
+    //   console.time("[ESDev] Transform " + file_name);
+    // }
 
-    const bb = new ByteBuffer(
-      new Uint8Array(content.length + file_name.length)
-    );
+    const bb = new ByteBuffer(scratch);
     bb.length = 0;
 
     Schema.encodeTransform(
@@ -188,18 +167,16 @@ export class ESDev {
       bb
     );
     const data = bb.toUint8Array();
+    if (bb._data.buffer !== scratch.buffer) {
+      scratch = bb._data;
+    }
 
     const ptr = ESDev.wasm_exports.malloc(data.byteLength);
     this._wasmPtrToSlice(ptr).set(data);
     const resp_ptr = ESDev.wasm_exports.transform(ptr);
     var _bb = new ByteBuffer(this._wasmPtrToSlice(resp_ptr));
     const response = Schema.decodeTransformResponse(_bb);
-    ESDev.wasm_exports.free(resp_ptr);
-
-    if (process.env.NODE_ENV === "development") {
-      console.timeEnd("[ESDev] Transform " + file_name);
-    }
-    ESDev.wasm_exports.free(resp_ptr);
+    ESDev.wasm_exports.cycle();
     return response;
   }
 }

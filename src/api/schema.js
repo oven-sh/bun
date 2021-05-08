@@ -250,7 +250,7 @@ function decodeTransform(bb) {
       break;
 
     case 3:
-      result["contents"] = bb.readString();
+      result["contents"] = bb.readByteArray();
       break;
 
     case 4:
@@ -284,7 +284,7 @@ function encodeTransform(message, bb) {
   var value = message["contents"];
   if (value != null) {
     bb.writeByte(3);
-    bb.writeString(value);
+   bb.writeByteArray(value);
   }
 
   var value = message["loader"];

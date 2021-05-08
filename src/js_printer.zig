@@ -771,15 +771,8 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
         pub fn printQuotedUTF8(p: *Printer, str: string, allow_backtick: bool) void {
             const quote = p.bestQuoteCharForString(str, allow_backtick);
             p.print(quote);
-            // fast path: small strings get a stack allocation
-            if (str.len < 128) {
-                var buf = [128]u16{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
-                const bufEnd = strings.toUTF16Buf(str, &buf);
-                p.printQuotedUTF16(buf[0..bufEnd], quote);
-            } else {
-                // slow path: big strings get a heap allocation
-                p.printQuotedUTF16(strings.toUTF16Alloc(str, p.allocator) catch unreachable, quote);
-            }
+            // I don't think this will work...
+            p.print(str);
             p.print(quote);
         }
 

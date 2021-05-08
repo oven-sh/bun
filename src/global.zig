@@ -1,11 +1,13 @@
 const std = @import("std");
 pub usingnamespace @import("strings.zig");
 
+pub const isWasm = comptime std.Target.current.isWasm();
+
 pub const Output = struct {
     var source: *Source = undefined;
     pub const Source = struct {
         const StreamType = comptime {
-            if (std.builtin.target.isWasm()) {
+            if (isWasm) {
                 return std.io.FixedBufferStream([]u8);
             } else {
                 return std.fs.File;
@@ -28,22 +30,33 @@ pub const Output = struct {
         }
     };
 
-    pub fn print(comptime fmt: string, args: anytype) void {
-        if (comptime std.builtin.target.isWasm()) {
-            source.stream.pos = 0;
-            std.fmt.format(source.stream.writer(), fmt, args) catch unreachable;
+    pub fn printErrorable(comptime fmt: string, args: anytype) !void {
+        if (isWasm) {
+            try source.stream.seekTo(0);
+            try source.stream.writer().print(fmt, args);
             const root = @import("root");
-            // root.console_log(@ptrToInt(&source.out_buffer), source.stream.pos);
+            root.console_log(root.Uint8Array.fromSlice(source.out_buffer[0..source.stream.pos]));
+        } else {
+            std.fmt.format(source.stream.writer(), fmt, args) catch unreachable;
+        }
+    }
+
+    pub fn print(comptime fmt: string, args: anytype) void {
+        if (isWasm) {
+            source.stream.seekTo(0) catch return;
+            source.stream.writer().print(fmt, args) catch return;
+            const root = @import("root");
+            root.console_log(root.Uint8Array.fromSlice(source.out_buffer[0..source.stream.pos]));
         } else {
             std.fmt.format(source.stream.writer(), fmt, args) catch unreachable;
         }
     }
     pub fn printError(comptime fmt: string, args: anytype) void {
-        if (comptime std.builtin.target.isWasm()) {
-            source.error_stream.pos = 0;
-            std.fmt.format(source.error_stream.writer(), fmt, args) catch unreachable;
+        if (isWasm) {
+            source.error_stream.seekTo(0) catch return;
+            source.error_stream.writer().print(fmt, args) catch unreachable;
             const root = @import("root");
-            // root.console_error(@ptrToInt(&source.err_buffer), source.error_stream.pos);
+            root.console_error(root.Uint8Array.fromSlice(source.err_buffer[0..source.error_stream.pos]));
         } else {
             std.fmt.format(source.error_stream.writer(), fmt, args) catch unreachable;
         }
@@ -52,8 +65,8 @@ pub const Output = struct {
 
 pub const Global = struct {
     pub fn panic(comptime fmt: string, args: anytype) noreturn {
-        if (comptime std.builtin.target.isWasm()) {
-            Output.printError(fmt, args);
+        if (isWasm) {
+            Output.print(fmt, args);
             @panic(fmt);
         } else {
             std.debug.panic(fmt, args);

@@ -15,3 +15,5 @@ dist
 *.out.js
 /package-lock.json
 build
+*.wat
+zig-out

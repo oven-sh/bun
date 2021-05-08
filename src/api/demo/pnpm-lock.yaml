@@ -2,13 +2,13 @@ lockfileVersion: 5.3
 
 specifiers:
   next: 10.2.0
-  peechy: 0.4.0
+  peechy: 0.4.1
   react: 17.0.2
   react-dom: 17.0.2
 
 dependencies:
   next: 10.2.0_react-dom@17.0.2+react@17.0.2
-  peechy: 0.4.0
+  peechy: 0.4.1
   react: 17.0.2
   react-dom: 17.0.2_react@17.0.2
 
@@ -1327,8 +1327,8 @@ packages:
       sha.js: 2.4.11
     dev: false
 
-  /peechy/0.4.0:
-    resolution: {integrity: sha512-dIOZl4mEZGN91WYxrBv1/QOA/R6tNf10FFo4rrCSPfPGPz3gzsvkrXIT8K46XBBlZbSNYS4xUJZ6TZMrptcJIA==}
+  /peechy/0.4.1:
+    resolution: {integrity: sha512-IWelrwiGJRd3EmIvF0DcDQdJldy2QzPXY5fU42AAkqCQoMo+mX7lQIilMwLmPX3RjPfQY9Bv3pK9K8iSi2HlWA==}
     hasBin: true
     dependencies:
       change-case: 4.1.2

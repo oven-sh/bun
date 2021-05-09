@@ -16,7 +16,7 @@ const fs = @import("fs.zig");
 const Schema = @import("api/schema.zig").Api;
 const builtin = std.builtin;
 const MainPanicHandler = panicky.NewPanicHandler(panicky.default_panic);
-const zee = @import("zee_alloc.zig");
+// const zee = @import("zee_alloc.zig");
 
 pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace) noreturn {
     if (MainPanicHandler.Singleton) |singleton| {
@@ -146,17 +146,36 @@ pub extern fn console_error(abi: Uint8Array.Abi) void;
 pub extern fn console_warn(abi: Uint8Array.Abi) void;
 pub extern fn console_info(abi: Uint8Array.Abi) void;
 
-const ZeeAlloc = zee.ZeeAlloc(.{});
-var zee_instance: ZeeAlloc = undefined;
+// const ZeeAlloc = zee.ZeeAlloc(.{});
+// var zee_instance: ZeeAlloc = undefined;
+// const Gpa = std.heap.GeneralPurposeAllocator(.{});
+// var arena: std.heap.ArenaAllocator = undefined;
+// var gpa: Gpa = undefined;
+var hunk: alloc.Hunk = undefined;
+var hunk_high: alloc.HunkSide = undefined;
+var hunk_low: alloc.HunkSide = undefined;
+var perma_hunk: alloc.Hunk = undefined;
+var perma_hunk_high_alloc: *std.mem.Allocator = undefined;
+var perma_hunk_high: alloc.HunkSide = undefined;
+var perma_hunk_low_alloc: *std.mem.Allocator = undefined;
+var perma_hunk_low: alloc.HunkSide = undefined;
+var last_start_high: usize = 0;
+var last_start_low: usize = 0;
 pub const Exports = struct {
     fn init() callconv(.C) i32 {
-        // const Gpa = std.heap.GeneralPurposeAllocator(.{});
+        var perma_hunk_buf = std.heap.page_allocator.alloc(u8, 128000) catch return -1;
+        perma_hunk = alloc.Hunk.init(perma_hunk_buf);
+        perma_hunk_high = perma_hunk.high();
+        perma_hunk_low = perma_hunk.low();
+
+        perma_hunk_high_alloc = &perma_hunk_low.allocator;
+
         // var gpa = Gpa{};
         // var allocator = &gpa.allocator;
         // alloc.setup(allocator) catch return -1;
-        var out_buffer = std.heap.page_allocator.alloc(u8, 2048) catch return -1;
-        var err_buffer = std.heap.page_allocator.alloc(u8, 2048) catch return -1;
-        var output = std.heap.page_allocator.create(Output.Source) catch return -1;
+        var out_buffer = perma_hunk_low.allocator.alloc(u8, 4096) catch return -1;
+        var err_buffer = perma_hunk_low.allocator.alloc(u8, 4096) catch return -1;
+        var output = perma_hunk_low.allocator.create(Output.Source) catch return -1;
         var stream = std.io.fixedBufferStream(out_buffer);
         var err_stream = std.io.fixedBufferStream(err_buffer);
         output.* = Output.Source.init(
@@ -183,10 +202,14 @@ pub const Exports = struct {
         ) catch return -1;
 
         if (alloc.needs_setup) {
-            alloc.setup(ZeeAlloc.wasm_allocator) catch return -1;
+            var buf = std.heap.page_allocator.alloc(u8, 26843545) catch return -1;
+            hunk = alloc.Hunk.init(buf);
+            hunk_high = hunk.high();
+            hunk_low = hunk.low();
+            alloc.dynamic = &hunk_high.allocator;
+            alloc.static = &hunk_low.allocator;
+            alloc.needs_setup = false;
         }
-
-        _ = @wasmMemoryGrow(0, 600);
 
         Output.printErrorable("Initialized.", .{}) catch |err| {
             var name = alloc.static.alloc(u8, @errorName(err).len) catch unreachable;
@@ -203,63 +226,61 @@ pub const Exports = struct {
         // Output.print("Req {s}", .{req});
         // alloc.dynamic.free(Uint8Array.toSlice(abi));
         const resp = api.?.transform(req) catch return Uint8Array.empty();
-        alloc.dynamic.free(req.contents);
-
-        if (req.path) |path| alloc.dynamic.free(path);
 
         var res = Uint8Array.encode(Schema.TransformResponse, resp) catch return Uint8Array.empty();
-        // this is stupid.
-        for (resp.files) |file| {
-            alloc.dynamic.free(file.data);
-            alloc.dynamic.free(file.path);
-        }
 
         return res;
     }
 
     // Reset
-    fn cycle(req: Uint8Array.Abi, res: Uint8Array.Abi) callconv(.C) void {
-        alloc.dynamic.free(Uint8Array.toSlice(res));
-        alloc.dynamic.free(Uint8Array.toSlice(req));
+    fn cycleStart() callconv(.C) void {
+        last_start_high = hunk.getHighMark();
+        last_start_low = hunk.getLowMark();
     }
 
-    fn malloc(size: usize) callconv(.C) ?*c_void {
+    fn cycleEnd() callconv(.C) void {
+        if (last_start_high > 0) {
+            hunk.freeToHighMark(last_start_high);
+            last_start_high = 0;
+        }
+
+        if (last_start_low > 0) {
+            hunk.freeToLowMark(last_start_low);
+            last_start_low = 0;
+        }
+    }
+
+    fn malloc(size: usize) callconv(.C) Uint8Array.Abi {
         if (size == 0) {
-            return null;
+            return 0;
         }
-        //const result = alloc.dynamic.alloc(u8, size) catch return null;
-        const result = alloc.dynamic.allocFn(alloc.dynamic, size, 1, 1, 0) catch return null;
-        return result.ptr;
+        const result = alloc.dynamic.alloc(u8, size) catch unreachable;
+        return Uint8Array.fromSlice(result);
     }
-    fn calloc(num_elements: usize, element_size: usize) callconv(.C) ?*c_void {
-        const size = num_elements *% element_size;
-        const c_ptr = @call(.{ .modifier = .never_inline }, malloc, .{size});
-        if (c_ptr) |ptr| {
-            const p = @ptrCast([*]u8, ptr);
-            @memset(p, 0, size);
-        }
-        return c_ptr;
-    }
-    fn realloc(c_ptr: ?*c_void, new_size: usize) callconv(.C) ?*c_void {
-        if (new_size == 0) {
-            @call(.{ .modifier = .never_inline }, free, .{c_ptr});
-            return null;
-        } else if (c_ptr) |ptr| {
-            // Use a synthetic slice
-            const p = @ptrCast([*]u8, ptr);
-            const result = alloc.dynamic.realloc(p[0..1], new_size) catch return null;
-            return @ptrCast(*c_void, result.ptr);
-        } else {
-            return @call(.{ .modifier = .never_inline }, malloc, .{new_size});
-        }
-    }
-    fn free(c_ptr: ?*c_void) callconv(.C) void {
-        if (c_ptr) |ptr| {
-            // Use a synthetic slice. zee_alloc will free via corresponding metadata.
-            const p = @ptrCast([*]u8, ptr);
-            //alloc.dynamic.free(p[0..1]);
-            _ = alloc.dynamic.resizeFn(alloc.dynamic, p[0..1], 0, 0, 0, 0) catch unreachable;
-        }
+    // fn calloc(num_elements: usize, element_size: usize) callconv(.C) ?*c_void {
+    //     const size = num_elements *% element_size;
+    //     const c_ptr = @call(.{ .modifier = .never_inline }, malloc, .{size});
+    //     if (c_ptr) |ptr| {
+    //         const p = @ptrCast([*]u8, ptr);
+    //         @memset(p, 0, size);
+    //     }
+    //     return c_ptr;
+    // }
+    // fn realloc(c_ptr: ?*c_void, new_size: usize) callconv(.C) ?*c_void {
+    //     if (new_size == 0) {
+    //         // @call(.{ .modifier = .never_inline }, free, .{@intCast(Uint8Array.Abi, c_ptr.?)});
+    //         return null;
+    //     } else if (c_ptr) |ptr| {
+    //         // Use a synthetic slice
+    //         const p = @ptrCast([*]u8, ptr);
+    //         const result = alloc.dynamic.realloc(p[0..1], new_size) catch return null;
+    //         return @ptrCast(*c_void, result.ptr);
+    //     } else {
+    //         return @call(.{ .modifier = .never_inline }, malloc, .{new_size});
+    //     }
+    // }
+    fn free(abi: Uint8Array.Abi) callconv(.C) void {
+        alloc.dynamic.free(Uint8Array.toSlice(abi));
     }
 };
 
@@ -269,9 +290,10 @@ comptime {
     @export(Exports.init, .{ .name = "init", .linkage = .Strong });
     @export(Exports.transform, .{ .name = "transform", .linkage = .Strong });
     @export(Exports.malloc, .{ .name = "malloc", .linkage = .Strong });
-    @export(Exports.calloc, .{ .name = "calloc", .linkage = .Strong });
-    @export(Exports.realloc, .{ .name = "realloc", .linkage = .Strong });
-    @export(Exports.cycle, .{ .name = "cycle", .linkage = .Strong });
+    // @export(Exports.calloc, .{ .name = "calloc", .linkage = .Strong });
+    // @export(Exports.realloc, .{ .name = "realloc", .linkage = .Strong });
+    @export(Exports.cycleStart, .{ .name = "cycleStart", .linkage = .Strong });
+    @export(Exports.cycleEnd, .{ .name = "cycleEnd", .linkage = .Strong });
     @export(Exports.free, .{ .name = "free", .linkage = .Strong });
 }
 
@@ -279,7 +301,7 @@ pub fn main() anyerror!void {
     std.mem.doNotOptimizeAway(Exports.init);
     std.mem.doNotOptimizeAway(Exports.transform);
     std.mem.doNotOptimizeAway(Exports.malloc);
-    std.mem.doNotOptimizeAway(Exports.calloc);
-    std.mem.doNotOptimizeAway(Exports.realloc);
+    // std.mem.doNotOptimizeAway(Exports.calloc);
+    // std.mem.doNotOptimizeAway(Exports.realloc);
     std.mem.doNotOptimizeAway(Exports.free);
 }

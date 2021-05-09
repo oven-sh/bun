@@ -126,7 +126,7 @@ export class ESDev {
     }
 
     ESDev[wasm_imports_sym].memory = new WebAssembly.Memory({
-      initial: 18,
+      initial: 20,
       // shared: typeof SharedArrayBuffer !== "undefined",
       maximum: typeof SharedArrayBuffer !== "undefined" ? 5000 : undefined,
     });
@@ -170,13 +170,13 @@ export class ESDev {
     if (bb._data.buffer !== scratch.buffer) {
       scratch = bb._data;
     }
-
+    ESDev.wasm_exports.cycleStart();
     const ptr = ESDev.wasm_exports.malloc(data.byteLength);
     this._wasmPtrToSlice(ptr).set(data);
     const resp_ptr = ESDev.wasm_exports.transform(ptr);
     var _bb = new ByteBuffer(this._wasmPtrToSlice(resp_ptr));
     const response = Schema.decodeTransformResponse(_bb);
-    ESDev.wasm_exports.cycle(ptr, resp_ptr);
+    ESDev.wasm_exports.cycleEnd();
     return response;
   }
 }

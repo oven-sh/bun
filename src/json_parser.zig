@@ -72,46 +72,46 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
                 return Expr.alloc(p.allocator, t, loc);
             }
         }
-        pub fn parseExpr(p: *Parser) Expr {
+        pub fn parseExpr(p: *Parser) anyerror!Expr {
             const loc = p.lexer.loc();
 
             switch (p.lexer.token) {
                 .t_false => {
-                    p.lexer.next();
+                    try p.lexer.next();
                     return p.e(E.Boolean{
                         .value = false,
                     }, loc);
                 },
                 .t_true => {
-                    p.lexer.next();
+                    try p.lexer.next();
                     return p.e(E.Boolean{
                         .value = true,
                     }, loc);
                 },
                 .t_null => {
-                    p.lexer.next();
+                    try p.lexer.next();
                     return p.e(E.Null{}, loc);
                 },
                 .t_string_literal => {
                     const value = p.lexer.string_literal;
-                    p.lexer.next();
+                    try p.lexer.next();
                     return p.e(E.String{
                         .value = value,
                     }, loc);
                 },
                 .t_numeric_literal => {
                     const value = p.lexer.number;
-                    p.lexer.next();
+                    try p.lexer.next();
                     return p.e(E.Number{ .value = value }, loc);
                 },
                 .t_minus => {
-                    p.lexer.next();
+                    try p.lexer.next();
                     const value = p.lexer.number;
-                    p.lexer.expect(.t_numeric_literal);
+                    try p.lexer.expect(.t_numeric_literal);
                     return p.e(E.Number{ .value = -value }, loc);
                 },
                 .t_open_bracket => {
-                    p.lexer.next();
+                    try p.lexer.next();
                     var is_single_line = !p.lexer.has_newline_before;
                     var exprs = std.ArrayList(Expr).init(p.allocator);
 
@@ -121,7 +121,7 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
                                 is_single_line = false;
                             }
 
-                            if (!p.parseMaybeTrailingComma(.t_close_bracket)) {
+                            if (!try p.parseMaybeTrailingComma(.t_close_bracket)) {
                                 break;
                             }
 
@@ -130,17 +130,17 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
                             }
                         }
 
-                        exprs.append(p.parseExpr()) catch unreachable;
+                        exprs.append(try p.parseExpr()) catch unreachable;
                     }
 
                     if (p.lexer.has_newline_before) {
                         is_single_line = false;
                     }
-                    p.lexer.expect(.t_close_bracket);
+                    try p.lexer.expect(.t_close_bracket);
                     return p.e(E.Array{ .items = exprs.toOwnedSlice() }, loc);
                 },
                 .t_open_brace => {
-                    p.lexer.next();
+                    try p.lexer.next();
                     var is_single_line = !p.lexer.has_newline_before;
                     var properties = std.ArrayList(G.Property).init(p.allocator);
                     var duplicates = std.StringHashMap(u1).init(p.allocator);
@@ -150,7 +150,7 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
                             if (p.lexer.has_newline_before) {
                                 is_single_line = false;
                             }
-                            if (!p.parseMaybeTrailingComma(.t_close_brace)) {
+                            if (!try p.parseMaybeTrailingComma(.t_close_brace)) {
                                 break;
                             }
                             if (p.lexer.has_newline_before) {
@@ -161,7 +161,7 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
                         var key_string = p.lexer.string_literal;
                         var key_range = p.lexer.range();
                         var key = p.e(E.String{ .value = key_string }, key_range.loc);
-                        p.lexer.expect(.t_string_literal);
+                        try p.lexer.expect(.t_string_literal);
                         var key_text = p.lexer.utf16ToString(key_string);
                         // Warn about duplicate keys
 
@@ -170,30 +170,30 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
                             p.log.addRangeWarningFmt(p.source, key_range, p.allocator, "Duplicate key \"{s}\" in object literal", .{key_text}) catch unreachable;
                         }
 
-                        p.lexer.expect(.t_colon);
-                        var value = p.parseExpr();
+                        try p.lexer.expect(.t_colon);
+                        var value = try p.parseExpr();
                         properties.append(G.Property{ .key = key, .value = value }) catch unreachable;
                     }
 
                     if (p.lexer.has_newline_before) {
                         is_single_line = false;
                     }
-                    p.lexer.expect(.t_close_brace);
+                    try p.lexer.expect(.t_close_brace);
                     return p.e(E.Object{
                         .properties = properties.toOwnedSlice(),
                         .is_single_line = is_single_line,
                     }, loc);
                 },
                 else => {
-                    p.lexer.unexpected();
+                    try p.lexer.unexpected();
                     return p.e(E.Missing{}, loc);
                 },
             }
         }
 
-        pub fn parseMaybeTrailingComma(p: *Parser, closer: T) bool {
+        pub fn parseMaybeTrailingComma(p: *Parser, closer: T) !bool {
             const comma_range = p.lexer.range();
-            p.lexer.expect(.t_comma);
+            try p.lexer.expect(.t_comma);
 
             if (p.lexer.token == closer) {
                 if (!opts.allow_trailing_commas) {

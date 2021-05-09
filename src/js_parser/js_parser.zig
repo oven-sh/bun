@@ -1,5 +1,7 @@
 usingnamespace @import("imports.zig");
 
+const TemplatePartTuple = std.meta.Tuple(&[_]type{ []E.TemplatePart, logger.Loc });
+
 pub fn ExpressionTransposer(comptime ctx: type, visitor: fn (ptr: *ctx, arg: Expr, state: anytype) Expr) type {
     return struct {
         context: *Context,
@@ -2463,7 +2465,7 @@ pub const P = struct {
 
         if (is_generator) {
             // p.markSyntaxFeature(compat.Generator, p.lexer.Range())
-            p.lexer.next();
+            try p.lexer.next();
         } else if (is_async) {
             // p.markLoweredSyntaxFeature(compat.AsyncAwait, asyncRange, compat.Generator)
         }
@@ -2489,7 +2491,7 @@ pub const P = struct {
         if (!opts.is_name_optional or p.lexer.token == T.t_identifier) {
             var nameLoc = p.lexer.loc();
             nameText = p.lexer.identifier;
-            p.lexer.expect(T.t_identifier);
+            try p.lexer.expect(T.t_identifier);
             // Difference
             const ref = try p.newSymbol(Symbol.Kind.other, nameText);
             name = js_ast.LocRef{
@@ -2511,7 +2513,7 @@ pub const P = struct {
         }
 
         var scopeIndex = try p.pushScopeForParsePass(js_ast.Scope.Kind.function_args, p.lexer.loc());
-        var func = p.parseFn(name, FnOrArrowDataParse{
+        var func = try p.parseFn(name, FnOrArrowDataParse{
             .async_range = asyncRange,
             .allow_await = if (is_async) AwaitOrYield.allow_expr else AwaitOrYield.allow_ident,
             .allow_yield = if (is_generator) AwaitOrYield.allow_expr else AwaitOrYield.allow_ident,
@@ -2585,7 +2587,7 @@ pub const P = struct {
         _ = children.popOrNull();
     }
 
-    pub fn parseFn(p: *P, name: ?js_ast.LocRef, opts: FnOrArrowDataParse) G.Fn {
+    pub fn parseFn(p: *P, name: ?js_ast.LocRef, opts: FnOrArrowDataParse) anyerror!G.Fn {
         // if data.allowAwait and data.allowYield {
         // 	p.markSyntaxFeature(compat.AsyncGenerator, data.asyncRange)
         // }
@@ -2601,7 +2603,7 @@ pub const P = struct {
             .arguments_ref = null,
             .open_parens_loc = p.lexer.loc(),
         };
-        p.lexer.expect(T.t_open_paren);
+        try p.lexer.expect(T.t_open_paren);
 
         // Await and yield are not allowed in function arguments
         var old_fn_or_arrow_data = opts;
@@ -2614,34 +2616,34 @@ pub const P = struct {
         while (p.lexer.token != T.t_close_paren) {
             // Skip over "this" type annotations
             if (p.options.ts and p.lexer.token == T.t_this) {
-                p.lexer.next();
+                try p.lexer.next();
                 if (p.lexer.token == T.t_colon) {
-                    p.lexer.next();
+                    try p.lexer.next();
                     p.skipTypescriptType(js_ast.Op.Level.lowest);
                 }
                 if (p.lexer.token != T.t_comma) {
                     break;
                 }
 
-                p.lexer.next();
+                try p.lexer.next();
                 continue;
             }
 
             var ts_decorators: []ExprNodeIndex = undefined;
             if (opts.allow_ts_decorators) {
-                ts_decorators = p.parseTypeScriptDecorators();
+                ts_decorators = try p.parseTypeScriptDecorators();
             }
 
             if (!func.flags.has_rest_arg and p.lexer.token == T.t_dot_dot_dot) {
                 // p.markSyntaxFeature
-                p.lexer.next();
+                try p.lexer.next();
                 func.flags.has_rest_arg = true;
             }
 
             var is_typescript_ctor_field = false;
             var is_identifier = p.lexer.token == T.t_identifier;
             var text = p.lexer.identifier;
-            var arg = p.parseBinding();
+            var arg = try p.parseBinding();
 
             if (p.options.ts and is_identifier and opts.is_constructor) {
                 // Skip over TypeScript accessibility modifiers, which turn this argument
@@ -2658,12 +2660,12 @@ pub const P = struct {
 
                             // TypeScript requires an identifier binding
                             if (p.lexer.token != .t_identifier) {
-                                p.lexer.expect(.t_identifier);
+                                try p.lexer.expect(.t_identifier);
                             }
                             text = p.lexer.identifier;
 
                             // Re-parse the binding (the current binding is the TypeScript keyword)
-                            arg = p.parseBinding();
+                            arg = try p.parseBinding();
                         },
                         else => {
                             break;
@@ -2673,12 +2675,12 @@ pub const P = struct {
 
                 // "function foo(a?) {}"
                 if (p.lexer.token == .t_question) {
-                    p.lexer.next();
+                    try p.lexer.next();
                 }
 
                 // "function foo(a: any) {}"
                 if (p.lexer.token == .t_colon) {
-                    p.lexer.next();
+                    try p.lexer.next();
                     p.skipTypescriptType(.lowest);
                 }
             }
@@ -2689,8 +2691,8 @@ pub const P = struct {
             var default_value: ?ExprNodeIndex = null;
             if (!func.flags.has_rest_arg and p.lexer.token == .t_equals) {
                 // p.markSyntaxFeature
-                p.lexer.next();
-                default_value = p.parseExpr(.comma);
+                try p.lexer.next();
+                default_value = try p.parseExpr(.comma);
             }
 
             args.append(G.Arg{
@@ -2710,15 +2712,15 @@ pub const P = struct {
                 // JavaScript does not allow a comma after a rest argument
                 if (opts.is_typescript_declare) {
                     // TypeScript does allow a comma after a rest argument in a "declare" context
-                    p.lexer.next();
+                    try p.lexer.next();
                 } else {
-                    p.lexer.expect(.t_close_paren);
+                    try p.lexer.expect(.t_close_paren);
                 }
 
                 break;
             }
 
-            p.lexer.next();
+            try p.lexer.next();
         }
         func.args = args.toOwnedSlice();
 
@@ -2731,22 +2733,22 @@ pub const P = struct {
             p.symbols.items[func.arguments_ref.?.inner_index].must_not_be_renamed = true;
         }
 
-        p.lexer.expect(.t_close_paren);
+        try p.lexer.expect(.t_close_paren);
         p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
 
         // "function foo(): any {}"
         if (p.options.ts and p.lexer.token == .t_colon) {
-            p.lexer.next();
+            try p.lexer.next();
             p.skipTypescriptReturnType();
         }
 
         // "function foo(): any;"
         if (opts.allow_missing_body_for_type_script and p.lexer.token != .t_open_brace) {
-            p.lexer.expectOrInsertSemicolon();
+            try p.lexer.expectOrInsertSemicolon();
             return func;
         }
         var tempOpts = opts;
-        func.body = p.parseFnBody(&tempOpts) catch unreachable;
+        func.body = try p.parseFnBody(&tempOpts);
 
         return func;
     }
@@ -2759,14 +2761,14 @@ pub const P = struct {
     }
 
     // TODO:
-    pub fn parseTypeScriptDecorators(p: *P) []ExprNodeIndex {
+    pub fn parseTypeScriptDecorators(p: *P) ![]ExprNodeIndex {
         if (!p.options.ts) {
             return &([_]ExprNodeIndex{});
         }
 
         var decorators = List(ExprNodeIndex).init(p.allocator);
         while (p.lexer.token == T.t_at) {
-            p.lexer.next();
+            try p.lexer.next();
 
             // Parse a new/call expression with "exprFlagTSDecorator" so we ignore
             // EIndex expressions, since they may be part of a computed property:
@@ -2776,7 +2778,7 @@ pub const P = struct {
             //   }
             //
             // This matches the behavior of the TypeScript compiler.
-            decorators.append(p.parseExprWithFlags(.new, Expr.EFlags.ts_decorator)) catch unreachable;
+            try decorators.append(try p.parseExprWithFlags(.new, Expr.EFlags.ts_decorator));
         }
 
         return decorators.toOwnedSlice();
@@ -2784,6 +2786,47 @@ pub const P = struct {
 
     // TODO:
     pub fn skipTypescriptType(p: *P, level: js_ast.Op.Level) void {
+        notimpl();
+    }
+
+    pub const TypescriptIdentifier = enum {
+        pub const Map = std.ComptimeStringMap(Kind, .{
+            .{ "unique", .unique },
+            .{ "abstract", .abstract },
+            .{ "asserts", .asserts },
+            .{ "keyof", .prefix },
+            .{ "readonly", .prefix },
+            .{ "infer", .prefix },
+            .{ "any", .primitive },
+            .{ "never", .primitive },
+            .{ "unknown", .primitive },
+            .{ "undefined", .primitive },
+            .{ "object", .primitive },
+            .{ "number", .primitive },
+            .{ "string", .primitive },
+            .{ "boolean", .primitive },
+            .{ "bigint", .primitive },
+            .{ "symbol", .primitive },
+        });
+        pub const Kind = enum {
+            normal,
+            unique,
+            abstract,
+            asserts,
+            prefix,
+            primitive,
+        };
+    };
+
+    pub fn skipTypeScriptBinding(p: *P) !void {
+        switch (p.lexer.token) {
+            .t_identifier, .t_this => {},
+            .t_open_bracket => {},
+            .t_open_brace => {},
+        }
+    }
+
+    pub fn skipTypescriptTypeWithOptions(p: *P, level: js_ast.Op.Level) void {
         notimpl();
     }
 
@@ -2828,18 +2871,18 @@ pub const P = struct {
         }
 
         const name = LocRef{ .loc = p.lexer.loc(), .ref = try p.storeNameInRef(p.lexer.identifier) };
-        p.lexer.next();
+        try p.lexer.next();
         return name;
     }
 
-    pub fn parseClassStmt(p: *P, loc: logger.Loc, opts: *ParseStatementOptions) Stmt {
+    pub fn parseClassStmt(p: *P, loc: logger.Loc, opts: *ParseStatementOptions) !Stmt {
         var name: ?js_ast.LocRef = null;
         var class_keyword = p.lexer.range();
         if (p.lexer.token == .t_class) {
             //marksyntaxfeature
-            p.lexer.next();
+            try p.lexer.next();
         } else {
-            p.lexer.expected(.t_class);
+            try p.lexer.expected(.t_class);
         }
 
         var is_identifier = p.lexer.token == .t_identifier;
@@ -2849,10 +2892,10 @@ pub const P = struct {
             var name_loc = p.lexer.loc();
             var name_text = p.lexer.identifier;
             if (is_strict_modereserved_word) {
-                p.lexer.unexpected();
+                try p.lexer.unexpected();
             }
 
-            p.lexer.expect(.t_identifier);
+            try p.lexer.expect(.t_identifier);
             name = LocRef{ .loc = name_loc, .ref = null };
             if (!opts.is_typescript_declare) {
                 (name orelse unreachable).ref = p.declareSymbol(.class, name_loc, name_text) catch unreachable;
@@ -2872,7 +2915,7 @@ pub const P = struct {
         }
 
         var scope_index = p.pushScopeForParsePass(.class_name, loc) catch unreachable;
-        var class = p.parseClass(class_keyword, name, class_opts);
+        var class = try p.parseClass(class_keyword, name, class_opts);
 
         if (opts.is_typescript_declare) {
             p.popAndDiscardScope(scope_index);
@@ -2890,12 +2933,12 @@ pub const P = struct {
         }, loc);
     }
 
-    pub fn parseStmt(p: *P, opts: *ParseStatementOptions) !Stmt {
+    pub fn parseStmt(p: *P, opts: *ParseStatementOptions) anyerror!Stmt {
         var loc = p.lexer.loc();
 
         switch (p.lexer.token) {
             .t_semicolon => {
-                p.lexer.next();
+                try p.lexer.next();
                 return Stmt.empty();
             },
 
@@ -2904,9 +2947,9 @@ pub const P = struct {
                 if (opts.is_module_scope) {
                     p.es6_export_keyword = p.lexer.range();
                 } else if (!opts.is_namespace_scope) {
-                    p.lexer.unexpected();
+                    try p.lexer.unexpected();
                 }
-                p.lexer.next();
+                try p.lexer.next();
 
                 // TypeScript decorators only work on class declarations
                 // "@decorator export class Foo {}"
@@ -2916,7 +2959,7 @@ pub const P = struct {
                 // "@decorator export declare class Foo {}"
                 // "@decorator export declare abstract class Foo {}"
                 if (opts.ts_decorators != null and p.lexer.token != js_lexer.T.t_class and p.lexer.token != js_lexer.T.t_default and !p.lexer.isContextualKeyword("abstract") and !p.lexer.isContextualKeyword("declare")) {
-                    p.lexer.expected(js_lexer.T.t_class);
+                    try p.lexer.expected(js_lexer.T.t_class);
                 }
 
                 switch (p.lexer.token) {
@@ -2932,12 +2975,12 @@ pub const P = struct {
                             return p.parseStmt(opts);
                         }
 
-                        p.lexer.unexpected();
+                        try p.lexer.unexpected();
                     },
 
                     T.t_enum => {
                         if (!p.options.ts) {
-                            p.lexer.unexpected();
+                            try p.lexer.unexpected();
                         }
 
                         opts.is_export = true;
@@ -2952,22 +2995,22 @@ pub const P = struct {
 
                         if (opts.is_typescript_declare and p.lexer.isContextualKeyword("as")) {
                             // "export as namespace ns;"
-                            p.lexer.next();
-                            p.lexer.expectContextualKeyword("namespace");
-                            p.lexer.expect(T.t_identifier);
-                            p.lexer.expectOrInsertSemicolon();
+                            try p.lexer.next();
+                            try p.lexer.expectContextualKeyword("namespace");
+                            try p.lexer.expect(T.t_identifier);
+                            try p.lexer.expectOrInsertSemicolon();
 
                             return p.s(S.TypeScript{}, loc);
                         }
 
                         if (p.lexer.isContextualKeyword("async")) {
                             var asyncRange = p.lexer.range();
-                            p.lexer.next();
+                            try p.lexer.next();
                             if (p.lexer.has_newline_before) {
                                 try p.log.addRangeError(p.source, asyncRange, "Unexpected newline after \"async\"");
                             }
 
-                            p.lexer.expect(T.t_function);
+                            try p.lexer.expect(T.t_function);
                             opts.is_export = true;
                             return try p.parseFnStmt(loc, opts, asyncRange);
                         }
@@ -2988,32 +3031,32 @@ pub const P = struct {
                             // }
                         }
 
-                        p.lexer.unexpected();
+                        try p.lexer.unexpected();
                         lexerpanic();
                     },
 
                     T.t_default => {
                         if (!opts.is_module_scope and (!opts.is_namespace_scope or !opts.is_typescript_declare)) {
-                            p.lexer.unexpected();
+                            try p.lexer.unexpected();
                             lexerpanic();
                         }
 
                         var defaultLoc = p.lexer.loc();
-                        p.lexer.next();
+                        try p.lexer.next();
 
                         // TypeScript decorators only work on class declarations
                         // "@decorator export default class Foo {}"
                         // "@decorator export default abstract class Foo {}"
                         if (opts.ts_decorators != null and p.lexer.token != T.t_class and !p.lexer.isContextualKeyword("abstract")) {
-                            p.lexer.expected(T.t_class);
+                            try p.lexer.expected(T.t_class);
                         }
 
                         if (p.lexer.isContextualKeyword("async")) {
                             var async_range = p.lexer.range();
-                            p.lexer.next();
+                            try p.lexer.next();
                             var defaultName: js_ast.LocRef = undefined;
                             if (p.lexer.token == T.t_function and !p.lexer.has_newline_before) {
-                                p.lexer.next();
+                                try p.lexer.next();
                                 var stmtOpts = ParseStatementOptions{
                                     .is_name_optional = true,
                                     .lexical_decl = .allow_all,
@@ -3037,8 +3080,8 @@ pub const P = struct {
                             defaultName = try createDefaultName(p, loc);
 
                             const prefix_expr = try p.parseAsyncPrefixExpr(async_range, Level.comma);
-                            var expr = p.parseSuffix(prefix_expr, Level.comma, null, Expr.EFlags.none);
-                            p.lexer.expectOrInsertSemicolon();
+                            var expr = try p.parseSuffix(prefix_expr, Level.comma, null, Expr.EFlags.none);
+                            try p.lexer.expectOrInsertSemicolon();
                             // this is probably a panic
                             var value = js_ast.StmtOrExpr{ .expr = expr };
                             return p.s(S.ExportDefault{ .default_name = defaultName, .value = value }, loc);
@@ -3050,7 +3093,7 @@ pub const P = struct {
                                 .is_name_optional = true,
                                 .lexical_decl = .allow_all,
                             };
-                            var stmt = p.parseStmt(&_opts) catch unreachable;
+                            var stmt = try p.parseStmt(&_opts);
 
                             const default_name: js_ast.LocRef = default_name_getter: {
                                 switch (stmt.data) {
@@ -3083,7 +3126,7 @@ pub const P = struct {
 
                         const is_identifier = p.lexer.token == .t_identifier;
                         const name = p.lexer.identifier;
-                        var expr = p.parseExpr(.comma);
+                        var expr = try p.parseExpr(.comma);
 
                         // Handle the default export of an abstract class in TypeScript
                         if (p.options.ts and is_identifier and (p.lexer.token == .t_class or opts.ts_decorators != null) and strings.eqlComptime(name, "abstract")) {
@@ -3093,7 +3136,7 @@ pub const P = struct {
                                         .ts_decorators = opts.ts_decorators,
                                         .is_name_optional = true,
                                     };
-                                    const stmt: Stmt = p.parseClassStmt(loc, &stmtOpts);
+                                    const stmt: Stmt = try p.parseClassStmt(loc, &stmtOpts);
 
                                     // Use the statement name if present, since it's a better name
                                     const default_name: js_ast.LocRef = default_name_getter: {
@@ -3127,15 +3170,15 @@ pub const P = struct {
                             }
                         }
 
-                        p.lexer.expectOrInsertSemicolon();
+                        try p.lexer.expectOrInsertSemicolon();
                         return p.s(S.ExportDefault{ .default_name = createDefaultName(p, loc) catch unreachable, .value = js_ast.StmtOrExpr{ .expr = expr } }, loc);
                     },
                     T.t_asterisk => {
                         if (!opts.is_module_scope and !(opts.is_namespace_scope or !opts.is_typescript_declare)) {
-                            p.lexer.unexpected();
+                            try p.lexer.unexpected();
                         }
 
-                        p.lexer.next();
+                        try p.lexer.next();
                         var namespace_ref: js_ast.Ref = undefined;
                         var alias: ?js_ast.G.ExportStarAlias = null;
                         var path_loc: logger.Loc = undefined;
@@ -3147,18 +3190,18 @@ pub const P = struct {
                             namespace_ref = p.storeNameInRef(name) catch unreachable;
                             alias = G.ExportStarAlias{ .loc = p.lexer.loc(), .original_name = name };
                             if (!p.lexer.isIdentifierOrKeyword()) {
-                                p.lexer.expect(.t_identifier);
+                                try p.lexer.expect(.t_identifier);
                             }
                             p.checkForNonBMPCodePoint((alias orelse unreachable).loc, name);
-                            p.lexer.next();
-                            p.lexer.expectContextualKeyword("from");
-                            const parsedPath = p.parsePath();
+                            try p.lexer.next();
+                            try p.lexer.expectContextualKeyword("from");
+                            const parsedPath = try p.parsePath();
                             path_loc = parsedPath.loc;
                             path_text = parsedPath.text;
                         } else {
                             // "export * from 'path'"
-                            p.lexer.expectContextualKeyword("from");
-                            const parsedPath = p.parsePath();
+                            try p.lexer.expectContextualKeyword("from");
+                            const parsedPath = try p.parsePath();
                             path_loc = parsedPath.loc;
                             path_text = parsedPath.text;
                             var path_name = fs.PathName.init(strings.append(p.allocator, path_text, "_star") catch unreachable);
@@ -3166,7 +3209,7 @@ pub const P = struct {
                         }
 
                         var import_record_index = p.addImportRecord(ImportKind.stmt, path_loc, path_text);
-                        p.lexer.expectOrInsertSemicolon();
+                        try p.lexer.expectOrInsertSemicolon();
                         return p.s(S.ExportStar{
                             .namespace_ref = namespace_ref,
                             .alias = alias,
@@ -3175,20 +3218,20 @@ pub const P = struct {
                     },
                     T.t_open_brace => {
                         if (!opts.is_module_scope and !(opts.is_namespace_scope or !opts.is_typescript_declare)) {
-                            p.lexer.unexpected();
+                            try p.lexer.unexpected();
                         }
 
                         const export_clause = try p.parseExportClause();
                         if (p.lexer.isContextualKeyword("from")) {
-                            p.lexer.expectContextualKeyword("from");
-                            const parsedPath = p.parsePath();
+                            try p.lexer.expectContextualKeyword("from");
+                            const parsedPath = try p.parsePath();
                             const import_record_index = p.addImportRecord(.stmt, parsedPath.loc, parsedPath.text);
                             var path_name = fs.PathName.init(strings.append(p.allocator, "import_", parsedPath.text) catch unreachable);
                             const namespace_ref = p.storeNameInRef(path_name.nonUniqueNameString(p.allocator) catch unreachable) catch unreachable;
-                            p.lexer.expectOrInsertSemicolon();
+                            try p.lexer.expectOrInsertSemicolon();
                             return p.s(S.ExportFrom{ .items = export_clause.clauses, .is_single_line = export_clause.is_single_line, .namespace_ref = namespace_ref, .import_record_index = import_record_index }, loc);
                         }
-                        p.lexer.expectOrInsertSemicolon();
+                        try p.lexer.expectOrInsertSemicolon();
                         return p.s(S.ExportClause{ .items = export_clause.clauses, .is_single_line = export_clause.is_single_line }, loc);
                     },
                     T.t_equals => {
@@ -3196,28 +3239,28 @@ pub const P = struct {
 
                         p.es6_export_keyword = previousExportKeyword; // This wasn't an ESM export statement after all
                         if (p.options.ts) {
-                            p.lexer.next();
-                            var value = p.parseExpr(.lowest);
-                            p.lexer.expectOrInsertSemicolon();
+                            try p.lexer.next();
+                            var value = try p.parseExpr(.lowest);
+                            try p.lexer.expectOrInsertSemicolon();
                             return p.s(S.ExportEquals{ .value = value }, loc);
                         }
-                        p.lexer.unexpected();
+                        try p.lexer.unexpected();
                         return Stmt.empty();
                     },
                     else => {
-                        p.lexer.unexpected();
+                        try p.lexer.unexpected();
                         return Stmt.empty();
                     },
                 }
             },
 
             .t_function => {
-                p.lexer.next();
-                return p.parseFnStmt(loc, opts, null);
+                try p.lexer.next();
+                return try p.parseFnStmt(loc, opts, null);
             },
             .t_enum => {
                 if (!p.options.ts) {
-                    p.lexer.unexpected();
+                    try p.lexer.unexpected();
                 }
                 return p.parseTypescriptEnumStmt(loc, opts);
             },
@@ -3225,7 +3268,7 @@ pub const P = struct {
                 // Parse decorators before class statements, which are potentially exported
                 if (p.options.ts) {
                     const scope_index = p.scopes_in_order.items.len;
-                    const ts_decorators = p.parseTypeScriptDecorators();
+                    const ts_decorators = try p.parseTypeScriptDecorators();
 
                     // If this turns out to be a "declare class" statement, we need to undo the
                     // scopes that were potentially pushed while parsing the decorator arguments.
@@ -3252,7 +3295,7 @@ pub const P = struct {
                     // "@decorator export default class Foo {}"
                     // "@decorator export default abstract class Foo {}"
                     if (p.lexer.token != .t_class and p.lexer.token != .t_export and !p.lexer.isContextualKeyword("abstract") and !p.lexer.isContextualKeyword("declare")) {
-                        p.lexer.expected(.t_class);
+                        try p.lexer.expected(.t_class);
                     }
 
                     return p.parseStmt(opts);
@@ -3264,12 +3307,12 @@ pub const P = struct {
                     try p.forbidLexicalDecl(loc);
                 }
 
-                return p.parseClassStmt(loc, opts);
+                return try p.parseClassStmt(loc, opts);
             },
             .t_var => {
-                p.lexer.next();
-                const decls = p.parseAndDeclareDecls(.hoisted, opts);
-                p.lexer.expectOrInsertSemicolon();
+                try p.lexer.next();
+                const decls = try p.parseAndDeclareDecls(.hoisted, opts);
+                try p.lexer.expectOrInsertSemicolon();
                 return p.s(S.Local{ .kind = .k_var, .decls = decls, .is_export = opts.is_export }, loc);
             },
             .t_const => {
@@ -3278,14 +3321,14 @@ pub const P = struct {
                 }
                 // p.markSyntaxFeature(compat.Const, p.lexer.Range())
 
-                p.lexer.next();
+                try p.lexer.next();
 
                 if (p.options.ts and p.lexer.token == T.t_enum) {
                     return p.parseTypescriptEnumStmt(loc, opts);
                 }
 
-                const decls = p.parseAndDeclareDecls(.cconst, opts);
-                p.lexer.expectOrInsertSemicolon();
+                const decls = try p.parseAndDeclareDecls(.cconst, opts);
+                try p.lexer.expectOrInsertSemicolon();
 
                 if (!opts.is_typescript_declare) {
                     try p.requireInitializers(decls);
@@ -3294,21 +3337,21 @@ pub const P = struct {
                 return p.s(S.Local{ .kind = .k_const, .decls = decls, .is_export = opts.is_export }, loc);
             },
             .t_if => {
-                p.lexer.next();
-                p.lexer.expect(.t_open_paren);
-                const test_ = p.parseExpr(.lowest);
-                p.lexer.expect(.t_close_paren);
+                try p.lexer.next();
+                try p.lexer.expect(.t_open_paren);
+                const test_ = try p.parseExpr(.lowest);
+                try p.lexer.expect(.t_close_paren);
                 var stmtOpts = ParseStatementOptions{
                     .lexical_decl = .allow_fn_inside_if,
                 };
-                const yes = p.parseStmt(&stmtOpts) catch unreachable;
+                const yes = try p.parseStmt(&stmtOpts);
                 var no: ?Stmt = null;
                 if (p.lexer.token == .t_else) {
-                    p.lexer.next();
+                    try p.lexer.next();
                     stmtOpts = ParseStatementOptions{
                         .lexical_decl = .allow_fn_inside_if,
                     };
-                    no = p.parseStmt(&stmtOpts) catch unreachable;
+                    no = try p.parseStmt(&stmtOpts);
                 }
 
                 return p.s(S.If{
@@ -3318,30 +3361,30 @@ pub const P = struct {
                 }, loc);
             },
             .t_do => {
-                p.lexer.next();
+                try p.lexer.next();
                 var stmtOpts = ParseStatementOptions{};
-                const body = p.parseStmt(&stmtOpts) catch unreachable;
-                p.lexer.expect(.t_while);
-                p.lexer.expect(.t_open_paren);
-                const test_ = p.parseExpr(.lowest);
-                p.lexer.expect(.t_close_paren);
+                const body = try p.parseStmt(&stmtOpts);
+                try p.lexer.expect(.t_while);
+                try p.lexer.expect(.t_open_paren);
+                const test_ = try p.parseExpr(.lowest);
+                try p.lexer.expect(.t_close_paren);
 
                 // This is a weird corner case where automatic semicolon insertion applies
                 // even without a newline present
                 if (p.lexer.token == .t_semicolon) {
-                    p.lexer.next();
+                    try p.lexer.next();
                 }
                 return p.s(S.DoWhile{ .body = body, .test_ = test_ }, loc);
             },
             .t_while => {
-                p.lexer.next();
+                try p.lexer.next();
 
-                p.lexer.expect(.t_open_paren);
-                const test_ = p.parseExpr(.lowest);
-                p.lexer.expect(.t_close_paren);
+                try p.lexer.expect(.t_open_paren);
+                const test_ = try p.parseExpr(.lowest);
+                try p.lexer.expect(.t_close_paren);
 
                 var stmtOpts = ParseStatementOptions{};
-                const body = p.parseStmt(&stmtOpts) catch unreachable;
+                const body = try p.parseStmt(&stmtOpts);
 
                 return p.s(S.While{
                     .body = body,
@@ -3349,24 +3392,24 @@ pub const P = struct {
                 }, loc);
             },
             .t_with => {
-                p.lexer.next();
-                p.lexer.expect(.t_open_paren);
-                const test_ = p.parseExpr(.lowest);
+                try p.lexer.next();
+                try p.lexer.expect(.t_open_paren);
+                const test_ = try p.parseExpr(.lowest);
                 const body_loc = p.lexer.loc();
-                p.lexer.expect(.t_close_paren);
+                try p.lexer.expect(.t_close_paren);
             },
             .t_switch => {
-                p.lexer.next();
+                try p.lexer.next();
 
-                p.lexer.expect(.t_open_paren);
-                const test_ = p.parseExpr(.lowest);
-                p.lexer.expect(.t_close_paren);
+                try p.lexer.expect(.t_open_paren);
+                const test_ = try p.parseExpr(.lowest);
+                try p.lexer.expect(.t_close_paren);
 
                 const body_loc = p.lexer.loc();
                 _ = try p.pushScopeForParsePass(.block, body_loc);
                 defer p.popScope();
 
-                p.lexer.expect(.t_open_brace);
+                try p.lexer.expect(.t_open_brace);
                 var cases = List(js_ast.Case).init(p.allocator);
                 var foundDefault = false;
                 var stmtOpts = ParseStatementOptions{ .lexical_decl = .allow_all };
@@ -3381,12 +3424,12 @@ pub const P = struct {
                         }
 
                         foundDefault = true;
-                        p.lexer.next();
-                        p.lexer.expect(.t_colon);
+                        try p.lexer.next();
+                        try p.lexer.expect(.t_colon);
                     } else {
-                        p.lexer.expect(.t_case);
-                        value = p.parseExpr(.lowest);
-                        p.lexer.expect(.t_colon);
+                        try p.lexer.expect(.t_case);
+                        value = try p.parseExpr(.lowest);
+                        try p.lexer.expect(.t_colon);
                     }
 
                     caseBody: while (true) {
@@ -3396,24 +3439,24 @@ pub const P = struct {
                             },
                             else => {
                                 stmtOpts = ParseStatementOptions{ .lexical_decl = .allow_all };
-                                try body.append(p.parseStmt(&stmtOpts) catch unreachable);
+                                try body.append(try p.parseStmt(&stmtOpts));
                             },
                         }
                     }
                     try cases.append(js_ast.Case{ .value = value, .body = body.toOwnedSlice(), .loc = logger.Loc.Empty });
                 }
-                p.lexer.expect(.t_close_brace);
+                try p.lexer.expect(.t_close_brace);
                 return p.s(S.Switch{ .test_ = test_, .body_loc = body_loc, .cases = cases.toOwnedSlice() }, loc);
             },
             .t_try => {
-                p.lexer.next();
+                try p.lexer.next();
                 const body_loc = p.lexer.loc();
-                p.lexer.expect(.t_open_brace);
+                try p.lexer.expect(.t_open_brace);
                 _ = try p.pushScopeForParsePass(.block, loc);
                 var stmtOpts = ParseStatementOptions{};
-                const body = p.parseStmtsUpTo(.t_close_brace, &stmtOpts) catch unreachable;
+                const body = try p.parseStmtsUpTo(.t_close_brace, &stmtOpts);
                 p.popScope();
-                p.lexer.next();
+                try p.lexer.next();
 
                 var catch_: ?js_ast.Catch = null;
                 var finally: ?js_ast.Finally = null;
@@ -3421,22 +3464,22 @@ pub const P = struct {
                 if (p.lexer.token == .t_catch) {
                     const catch_loc = p.lexer.loc();
                     _ = try p.pushScopeForParsePass(.block, catch_loc);
-                    p.lexer.next();
+                    try p.lexer.next();
                     var binding: ?js_ast.Binding = null;
 
                     // The catch binding is optional, and can be omitted
                     // jarred: TIL!
                     if (p.lexer.token != .t_open_brace) {
-                        p.lexer.expect(.t_open_paren);
-                        const value = p.parseBinding();
+                        try p.lexer.expect(.t_open_paren);
+                        const value = try p.parseBinding();
 
                         // Skip over types
                         if (p.options.ts and p.lexer.token == .t_colon) {
-                            p.lexer.expect(.t_colon);
+                            try p.lexer.expect(.t_colon);
                             p.skipTypescriptType(.lowest);
                         }
 
-                        p.lexer.expect(.t_close_paren);
+                        try p.lexer.expect(.t_close_paren);
 
                         // Bare identifiers are a special case
                         var kind = Symbol.Kind.other;
@@ -3450,10 +3493,10 @@ pub const P = struct {
                         try p.declareBinding(kind, value, &stmtOpts);
                     }
 
-                    p.lexer.expect(.t_open_brace);
+                    try p.lexer.expect(.t_open_brace);
                     stmtOpts = ParseStatementOptions{};
-                    const stmts = p.parseStmtsUpTo(.t_close_brace, &stmtOpts) catch unreachable;
-                    p.lexer.next();
+                    const stmts = try p.parseStmtsUpTo(.t_close_brace, &stmtOpts);
+                    try p.lexer.next();
                     catch_ = js_ast.Catch{
                         .loc = catch_loc,
                         .binding = binding,
@@ -3465,11 +3508,11 @@ pub const P = struct {
                 if (p.lexer.token == .t_finally or catch_ == null) {
                     const finally_loc = p.lexer.loc();
                     _ = try p.pushScopeForParsePass(.block, finally_loc);
-                    p.lexer.expect(.t_finally);
-                    p.lexer.expect(.t_open_brace);
+                    try p.lexer.expect(.t_finally);
+                    try p.lexer.expect(.t_open_brace);
                     stmtOpts = ParseStatementOptions{};
-                    const stmts = p.parseStmtsUpTo(.t_close_brace, &stmtOpts) catch unreachable;
-                    p.lexer.next();
+                    const stmts = try p.parseStmtsUpTo(.t_close_brace, &stmtOpts);
+                    try p.lexer.next();
                     finally = js_ast.Finally{ .loc = finally_loc, .stmts = stmts };
                     p.popScope();
                 }
@@ -3483,7 +3526,7 @@ pub const P = struct {
                 _ = try p.pushScopeForParsePass(.block, loc);
                 defer p.popScope();
 
-                p.lexer.next();
+                try p.lexer.next();
 
                 // "for await (let x of y) {}"
                 var isForAwait = p.lexer.isContextualKeyword("await");
@@ -3500,10 +3543,10 @@ pub const P = struct {
                             // p.markSyntaxFeature(compat.TopLevelAwait, awaitRange)
                         }
                     }
-                    p.lexer.next();
+                    try p.lexer.next();
                 }
 
-                p.lexer.expect(.t_open_paren);
+                try p.lexer.expect(.t_open_paren);
 
                 var init_: ?Stmt = null;
                 var test_: ?Expr = null;
@@ -3524,16 +3567,16 @@ pub const P = struct {
                     // for (var )
                     .t_var => {
                         is_var = true;
-                        p.lexer.next();
+                        try p.lexer.next();
                         var stmtOpts = ParseStatementOptions{};
-                        decls = p.parseAndDeclareDecls(.hoisted, &stmtOpts);
+                        decls = try p.parseAndDeclareDecls(.hoisted, &stmtOpts);
                         init_ = p.s(S.Local{ .kind = .k_const, .decls = decls }, init_loc);
                     },
                     // for (const )
                     .t_const => {
-                        p.lexer.next();
+                        try p.lexer.next();
                         var stmtOpts = ParseStatementOptions{};
-                        decls = p.parseAndDeclareDecls(.cconst, &stmtOpts);
+                        decls = try p.parseAndDeclareDecls(.cconst, &stmtOpts);
                         init_ = p.s(S.Local{ .kind = .k_const, .decls = decls }, init_loc);
                     },
                     // for (;)
@@ -3568,29 +3611,29 @@ pub const P = struct {
 
                     if (isForAwait and !p.lexer.isContextualKeyword("of")) {
                         if (init_) |init_stmt| {
-                            p.lexer.expectedString("\"of\"");
+                            try p.lexer.expectedString("\"of\"");
                         } else {
-                            p.lexer.unexpected();
+                            try p.lexer.unexpected();
                         }
                     }
 
                     try p.forbidInitializers(decls, "of", false);
-                    p.lexer.next();
-                    const value = p.parseExpr(.comma);
-                    p.lexer.expect(.t_close_paren);
+                    try p.lexer.next();
+                    const value = try p.parseExpr(.comma);
+                    try p.lexer.expect(.t_close_paren);
                     var stmtOpts = ParseStatementOptions{};
-                    const body = p.parseStmt(&stmtOpts) catch unreachable;
+                    const body = try p.parseStmt(&stmtOpts);
                     return p.s(S.ForOf{ .is_await = isForAwait, .init = init_ orelse unreachable, .value = value, .body = body }, loc);
                 }
 
                 // Detect for-in loops
                 if (p.lexer.token == .t_in) {
                     try p.forbidInitializers(decls, "in", false);
-                    p.lexer.next();
-                    const value = p.parseExpr(.comma);
-                    p.lexer.expect(.t_close_paren);
+                    try p.lexer.next();
+                    const value = try p.parseExpr(.comma);
+                    try p.lexer.expect(.t_close_paren);
                     var stmtOpts = ParseStatementOptions{};
-                    const body = p.parseStmt(&stmtOpts) catch unreachable;
+                    const body = try p.parseStmt(&stmtOpts);
                     return p.s(S.ForIn{ .init = init_ orelse unreachable, .value = value, .body = body }, loc);
                 }
 
@@ -3606,20 +3649,20 @@ pub const P = struct {
                     }
                 }
 
-                p.lexer.expect(.t_semicolon);
+                try p.lexer.expect(.t_semicolon);
                 if (p.lexer.token != .t_semicolon) {
-                    test_ = p.parseExpr(.lowest);
+                    test_ = try p.parseExpr(.lowest);
                 }
 
-                p.lexer.expect(.t_semicolon);
+                try p.lexer.expect(.t_semicolon);
 
                 if (p.lexer.token != .t_close_paren) {
-                    update = p.parseExpr(.lowest);
+                    update = try p.parseExpr(.lowest);
                 }
 
-                p.lexer.expect(.t_close_paren);
+                try p.lexer.expect(.t_close_paren);
                 var stmtOpts = ParseStatementOptions{};
-                const body = p.parseStmt(&stmtOpts) catch unreachable;
+                const body = try p.parseStmt(&stmtOpts);
                 return p.s(
                     S.For{ .init = init_, .test_ = test_, .update = update, .body = body },
                     loc,
@@ -3628,7 +3671,7 @@ pub const P = struct {
             .t_import => {
                 const previous_import_keyword = p.es6_import_keyword;
                 p.es6_import_keyword = p.lexer.range();
-                p.lexer.next();
+                try p.lexer.next();
                 var stmt: S.Import = S.Import{
                     .namespace_ref = undefined,
                     .import_record_index = std.math.maxInt(u32),
@@ -3637,7 +3680,7 @@ pub const P = struct {
 
                 // "export import foo = bar"
                 if ((opts.is_export or (opts.is_namespace_scope and !opts.is_typescript_declare)) and p.lexer.token != .t_identifier) {
-                    p.lexer.expected(.t_identifier);
+                    try p.lexer.expected(.t_identifier);
                 }
 
                 switch (p.lexer.token) {
@@ -3645,8 +3688,8 @@ pub const P = struct {
                     // "import.meta"
                     .t_open_paren, .t_dot => {
                         p.es6_import_keyword = previous_import_keyword; // this wasn't an esm import statement after all
-                        const expr = p.parseSuffix(p.parseImportExpr(loc, .lowest), .lowest, null, Expr.EFlags.none);
-                        p.lexer.expectOrInsertSemicolon();
+                        const expr = try p.parseSuffix(try p.parseImportExpr(loc, .lowest), .lowest, null, Expr.EFlags.none);
+                        try p.lexer.expectOrInsertSemicolon();
                         return p.s(S.SExpr{
                             .value = expr,
                         }, loc);
@@ -3654,7 +3697,7 @@ pub const P = struct {
                     .t_string_literal, .t_no_substitution_template_literal => {
                         // "import 'path'"
                         if (!opts.is_module_scope and (!opts.is_namespace_scope or !opts.is_typescript_declare)) {
-                            p.lexer.unexpected();
+                            try p.lexer.unexpected();
                             fail();
                         }
                         was_originally_bare_import = true;
@@ -3662,24 +3705,24 @@ pub const P = struct {
                     .t_asterisk => {
                         // "import * as ns from 'path'"
                         if (!opts.is_module_scope and (!opts.is_namespace_scope or !opts.is_typescript_declare)) {
-                            p.lexer.unexpected();
+                            try p.lexer.unexpected();
                             fail();
                         }
 
-                        p.lexer.next();
-                        p.lexer.expectContextualKeyword("as");
+                        try p.lexer.next();
+                        try p.lexer.expectContextualKeyword("as");
                         stmt = S.Import{
                             .namespace_ref = try p.storeNameInRef(p.lexer.identifier),
                             .star_name_loc = p.lexer.loc(),
                             .import_record_index = std.math.maxInt(u32),
                         };
-                        p.lexer.expect(.t_identifier);
-                        p.lexer.expectContextualKeyword("from");
+                        try p.lexer.expect(.t_identifier);
+                        try p.lexer.expectContextualKeyword("from");
                     },
                     .t_open_brace => {
                         // "import {item1, item2} from 'path'"
                         if (!opts.is_module_scope and (!opts.is_namespace_scope or !opts.is_typescript_declare)) {
-                            p.lexer.unexpected();
+                            try p.lexer.unexpected();
                             fail();
                         }
                         var importClause = try p.parseImportClause();
@@ -3689,13 +3732,13 @@ pub const P = struct {
                             .items = importClause.items,
                             .is_single_line = importClause.is_single_line,
                         };
-                        p.lexer.expectContextualKeyword("from");
+                        try p.lexer.expectContextualKeyword("from");
                     },
                     .t_identifier => {
                         // "import defaultItem from 'path'"
                         // "import foo = bar"
                         if (!opts.is_module_scope and (!opts.is_namespace_scope)) {
-                            p.lexer.unexpected();
+                            try p.lexer.unexpected();
                             fail();
                         }
 
@@ -3704,7 +3747,7 @@ pub const P = struct {
                             .loc = p.lexer.loc(),
                             .ref = try p.storeNameInRef(default_name),
                         } };
-                        p.lexer.next();
+                        try p.lexer.next();
 
                         if (p.options.ts) {
                             // Skip over type-only imports
@@ -3713,30 +3756,30 @@ pub const P = struct {
                                     .t_identifier => {
                                         if (!strings.eqlComptime(p.lexer.identifier, "from")) {
                                             // "import type foo from 'bar';"
-                                            p.lexer.next();
-                                            p.lexer.expectContextualKeyword("from");
-                                            _ = p.parsePath();
-                                            p.lexer.expectOrInsertSemicolon();
+                                            try p.lexer.next();
+                                            try p.lexer.expectContextualKeyword("from");
+                                            _ = try p.parsePath();
+                                            try p.lexer.expectOrInsertSemicolon();
                                             return p.s(S.TypeScript{}, loc);
                                         }
                                     },
                                     .t_asterisk => {
                                         // "import type * as foo from 'bar';"
-                                        p.lexer.next();
-                                        p.lexer.expectContextualKeyword("as");
-                                        p.lexer.expect(.t_identifier);
-                                        p.lexer.expectContextualKeyword("from");
-                                        _ = p.parsePath();
-                                        p.lexer.expectOrInsertSemicolon();
+                                        try p.lexer.next();
+                                        try p.lexer.expectContextualKeyword("as");
+                                        try p.lexer.expect(.t_identifier);
+                                        try p.lexer.expectContextualKeyword("from");
+                                        _ = try p.parsePath();
+                                        try p.lexer.expectOrInsertSemicolon();
                                         return p.s(S.TypeScript{}, loc);
                                     },
 
                                     .t_open_brace => {
                                         // "import type {foo} from 'bar';"
                                         _ = try p.parseImportClause();
-                                        p.lexer.expectContextualKeyword("from");
-                                        _ = p.parsePath();
-                                        p.lexer.expectOrInsertSemicolon();
+                                        try p.lexer.expectContextualKeyword("from");
+                                        _ = try p.parsePath();
+                                        try p.lexer.expectOrInsertSemicolon();
                                         return p.s(S.TypeScript{}, loc);
                                     },
                                     else => {},
@@ -3749,16 +3792,16 @@ pub const P = struct {
                         }
 
                         if (p.lexer.token == .t_comma) {
-                            p.lexer.next();
+                            try p.lexer.next();
 
                             switch (p.lexer.token) {
                                 // "import defaultItem, * as ns from 'path'"
                                 .t_asterisk => {
-                                    p.lexer.next();
-                                    p.lexer.expectContextualKeyword("as");
+                                    try p.lexer.next();
+                                    try p.lexer.expectContextualKeyword("as");
                                     stmt.namespace_ref = try p.storeNameInRef(p.lexer.identifier);
                                     stmt.star_name_loc = p.lexer.loc();
-                                    p.lexer.expect(.t_identifier);
+                                    try p.lexer.expect(.t_identifier);
                                 },
                                 // "import defaultItem, {item1, item2} from 'path'"
                                 .t_open_brace => {
@@ -3767,23 +3810,23 @@ pub const P = struct {
                                     stmt.is_single_line = importClause.is_single_line;
                                 },
                                 else => {
-                                    p.lexer.unexpected();
+                                    try p.lexer.unexpected();
                                 },
                             }
                         }
 
-                        p.lexer.expectContextualKeyword("from");
+                        try p.lexer.expectContextualKeyword("from");
                     },
                     else => {
-                        p.lexer.unexpected();
+                        try p.lexer.unexpected();
                         fail();
                     },
                 }
 
-                const path = p.parsePath();
+                const path = try p.parsePath();
                 stmt.import_record_index = p.addImportRecord(.stmt, path.loc, path.text);
                 p.import_records.items[stmt.import_record_index].was_originally_bare_import = was_originally_bare_import;
-                p.lexer.expectOrInsertSemicolon();
+                try p.lexer.expectOrInsertSemicolon();
 
                 if (stmt.star_name_loc) |star| {
                     stmt.namespace_ref = try p.declareSymbol(.import, star, p.loadNameFromRef(stmt.namespace_ref));
@@ -3822,56 +3865,56 @@ pub const P = struct {
                 return p.s(stmt, loc);
             },
             .t_break => {
-                p.lexer.next();
+                try p.lexer.next();
                 const name = try p.parseLabelName();
-                p.lexer.expectOrInsertSemicolon();
+                try p.lexer.expectOrInsertSemicolon();
                 return p.s(S.Break{ .label = name }, loc);
             },
             .t_continue => {
-                p.lexer.next();
+                try p.lexer.next();
                 const name = try p.parseLabelName();
-                p.lexer.expectOrInsertSemicolon();
+                try p.lexer.expectOrInsertSemicolon();
                 return p.s(S.Continue{ .label = name }, loc);
             },
             .t_return => {
-                p.lexer.next();
+                try p.lexer.next();
                 var value: ?Expr = null;
                 if ((p.lexer.token != .t_semicolon and
                     !p.lexer.has_newline_before and
                     p.lexer.token != .t_close_brace and
                     p.lexer.token != .t_end_of_file))
                 {
-                    value = p.parseExpr(.lowest);
+                    value = try p.parseExpr(.lowest);
                 }
                 p.latest_return_had_semicolon = p.lexer.token == .t_semicolon;
-                p.lexer.expectOrInsertSemicolon();
+                try p.lexer.expectOrInsertSemicolon();
 
                 return p.s(S.Return{ .value = value }, loc);
             },
             .t_throw => {
-                p.lexer.next();
+                try p.lexer.next();
                 if (p.lexer.has_newline_before) {
                     try p.log.addError(p.source, logger.Loc{
                         .start = loc.start + 5,
                     }, "Unexpected newline after \"throw\"");
                     fail();
                 }
-                const expr = p.parseExpr(.lowest);
-                p.lexer.expectOrInsertSemicolon();
+                const expr = try p.parseExpr(.lowest);
+                try p.lexer.expectOrInsertSemicolon();
                 return p.s(S.Throw{ .value = expr }, loc);
             },
             .t_debugger => {
-                p.lexer.next();
-                p.lexer.expectOrInsertSemicolon();
+                try p.lexer.next();
+                try p.lexer.expectOrInsertSemicolon();
                 return p.s(S.Debugger{}, loc);
             },
             .t_open_brace => {
                 _ = try p.pushScopeForParsePass(.block, loc);
                 defer p.popScope();
-                p.lexer.next();
+                try p.lexer.next();
                 var stmtOpts = ParseStatementOptions{};
-                const stmts = p.parseStmtsUpTo(.t_close_brace, &stmtOpts) catch unreachable;
-                p.lexer.next();
+                const stmts = try p.parseStmtsUpTo(.t_close_brace, &stmtOpts);
+                try p.lexer.next();
                 return p.s(S.Block{
                     .stmts = stmts,
                 }, loc);
@@ -3885,18 +3928,18 @@ pub const P = struct {
                 var expr: Expr = Expr{ .loc = loc, .data = Expr.Data{ .e_missing = &emiss } };
                 if (is_identifier and strings.eqlComptime(p.lexer.raw(), "async")) {
                     var async_range = p.lexer.range();
-                    p.lexer.next();
+                    try p.lexer.next();
                     if (p.lexer.token == .t_function and !p.lexer.has_newline_before) {
-                        p.lexer.next();
+                        try p.lexer.next();
                         return try p.parseFnStmt(async_range.loc, opts, async_range);
                     }
 
-                    expr = p.parseSuffix(try p.parseAsyncPrefixExpr(async_range, .lowest), .lowest, null, Expr.EFlags.none);
+                    expr = try p.parseSuffix(try p.parseAsyncPrefixExpr(async_range, .lowest), .lowest, null, Expr.EFlags.none);
                 } else {
                     const exprOrLet = try p.parseExprOrLetStmt(opts);
                     switch (exprOrLet.stmt_or_expr) {
                         .stmt => |stmt| {
-                            p.lexer.expectOrInsertSemicolon();
+                            try p.lexer.expectOrInsertSemicolon();
                             return stmt;
                         },
                         .expr => |_expr| {
@@ -3912,7 +3955,7 @@ pub const P = struct {
                                 defer p.popScope();
 
                                 // Parse a labeled statement
-                                p.lexer.next();
+                                try p.lexer.next();
 
                                 const _name = LocRef{ .loc = expr.loc, .ref = ident.ref };
                                 var nestedOpts = ParseStatementOptions{};
@@ -3923,7 +3966,7 @@ pub const P = struct {
                                     },
                                     else => {},
                                 }
-                                var stmt = p.parseStmt(&nestedOpts) catch unreachable;
+                                var stmt = try p.parseStmt(&nestedOpts);
                                 return p.s(S.Label{ .name = _name, .stmt = stmt }, loc);
                             }
                         },
@@ -3961,15 +4004,15 @@ pub const P = struct {
                                 },
                                 .ts_stmt_abstract => {
                                     if (p.lexer.token == .t_class or opts.ts_decorators != null) {
-                                        return p.parseClassStmt(loc, opts);
+                                        return try p.parseClassStmt(loc, opts);
                                     }
                                 },
                                 .ts_stmt_global => {
                                     // "declare module 'fs' { global { namespace NodeJS {} } }"
                                     if (opts.is_namespace_scope and opts.is_typescript_declare and p.lexer.token == .t_open_brace) {
-                                        p.lexer.next();
-                                        _ = p.parseStmtsUpTo(.t_close_brace, opts) catch unreachable;
-                                        p.lexer.next();
+                                        try p.lexer.next();
+                                        _ = try p.parseStmtsUpTo(.t_close_brace, opts);
+                                        try p.lexer.next();
                                         return p.s(S.TypeScript{}, loc);
                                     }
                                 },
@@ -3980,20 +4023,20 @@ pub const P = struct {
                                     // "@decorator declare class Foo {}"
                                     // "@decorator declare abstract class Foo {}"
                                     if (opts.ts_decorators != null and p.lexer.token != .t_class and !p.lexer.isContextualKeyword("abstract")) {
-                                        p.lexer.expected(.t_class);
+                                        try p.lexer.expected(.t_class);
                                     }
 
                                     // "declare global { ... }"
                                     if (p.lexer.isContextualKeyword("global")) {
-                                        p.lexer.next();
-                                        p.lexer.expect(.t_open_brace);
-                                        _ = p.parseStmtsUpTo(.t_close_brace, opts) catch unreachable;
-                                        p.lexer.next();
+                                        try p.lexer.next();
+                                        try p.lexer.expect(.t_open_brace);
+                                        _ = try p.parseStmtsUpTo(.t_close_brace, opts);
+                                        try p.lexer.next();
                                         return p.s(S.TypeScript{}, loc);
                                     }
 
                                     // "declare const x: any"
-                                    const stmt = p.parseStmt(opts) catch unreachable;
+                                    const stmt = try p.parseStmt(opts);
                                     if (opts.ts_decorators) |decs| {
                                         p.discardScopesUpTo(decs.scope_index);
                                     }
@@ -4047,7 +4090,7 @@ pub const P = struct {
                     }
                 }
                 // Output.print("\n\nmVALUE {s}:{s}\n", .{ expr, name });
-                p.lexer.expectOrInsertSemicolon();
+                try p.lexer.expectOrInsertSemicolon();
                 return p.s(S.SExpr{ .value = expr }, loc);
             },
         }
@@ -4113,7 +4156,7 @@ pub const P = struct {
 
         // The alias may be a keyword
         if (!p.lexer.isIdentifierOrKeyword()) {
-            p.lexer.expect(.t_identifier);
+            try p.lexer.expect(.t_identifier);
         }
 
         const alias = p.lexer.identifier;
@@ -4125,7 +4168,7 @@ pub const P = struct {
         p: *P,
     ) !ImportClause {
         var items = List(js_ast.ClauseItem).init(p.allocator);
-        p.lexer.expect(.t_open_brace);
+        try p.lexer.expect(.t_open_brace);
         var is_single_line = !p.lexer.has_newline_before;
 
         while (p.lexer.token != .t_close_brace) {
@@ -4135,16 +4178,16 @@ pub const P = struct {
             const alias = try p.parseClauseAlias("import");
             var name = LocRef{ .loc = alias_loc, .ref = try p.storeNameInRef(alias) };
             var original_name = alias;
-            p.lexer.next();
+            try p.lexer.next();
 
             if (p.lexer.isContextualKeyword("as")) {
-                p.lexer.next();
+                try p.lexer.next();
                 original_name = p.lexer.identifier;
                 name = LocRef{ .loc = alias_loc, .ref = try p.storeNameInRef(original_name) };
-                p.lexer.expect(.t_identifier);
+                try p.lexer.expect(.t_identifier);
             } else if (!isIdentifier) {
                 // An import where the name is a keyword must have an alias
-                p.lexer.expectedString("\"as\"");
+                try p.lexer.expectedString("\"as\"");
             }
 
             // Reject forbidden names
@@ -4168,7 +4211,7 @@ pub const P = struct {
                 is_single_line = false;
             }
 
-            p.lexer.next();
+            try p.lexer.next();
 
             if (p.lexer.has_newline_before) {
                 is_single_line = false;
@@ -4179,7 +4222,7 @@ pub const P = struct {
             is_single_line = false;
         }
 
-        p.lexer.expect(.t_close_brace);
+        try p.lexer.expect(.t_close_brace);
         return ImportClause{ .items = items.toOwnedSlice(), .is_single_line = is_single_line };
     }
 
@@ -4205,10 +4248,10 @@ pub const P = struct {
         var raw = p.lexer.raw();
         if (p.lexer.token != .t_identifier or !strings.eql(raw, "let")) {
             // Output.print("HI", .{});
-            return ExprOrLetStmt{ .stmt_or_expr = js_ast.StmtOrExpr{ .expr = p.parseExpr(.lowest) } };
+            return ExprOrLetStmt{ .stmt_or_expr = js_ast.StmtOrExpr{ .expr = try p.parseExpr(.lowest) } };
         }
 
-        p.lexer.next();
+        try p.lexer.next();
 
         switch (p.lexer.token) {
             .t_identifier, .t_open_bracket, .t_open_brace => {
@@ -4217,7 +4260,7 @@ pub const P = struct {
                         try p.forbidLexicalDecl(let_range.loc);
                     }
 
-                    const decls = p.parseAndDeclareDecls(.other, opts);
+                    const decls = try p.parseAndDeclareDecls(.other, opts);
                     return ExprOrLetStmt{
                         .stmt_or_expr = js_ast.StmtOrExpr{
                             .stmt = p.s(S.Local{
@@ -4235,7 +4278,7 @@ pub const P = struct {
 
         const ref = p.storeNameInRef(raw) catch unreachable;
         const expr = p.e(E.Identifier{ .ref = ref }, let_range.loc);
-        return ExprOrLetStmt{ .stmt_or_expr = js_ast.StmtOrExpr{ .expr = p.parseSuffix(expr, .lowest, null, Expr.EFlags.none) } };
+        return ExprOrLetStmt{ .stmt_or_expr = js_ast.StmtOrExpr{ .expr = try p.parseSuffix(expr, .lowest, null, Expr.EFlags.none) } };
     }
 
     pub fn requireInitializers(p: *P, decls: []G.Decl) !void {
@@ -4255,7 +4298,7 @@ pub const P = struct {
         }
     }
 
-    pub fn parseBinding(p: *P) Binding {
+    pub fn parseBinding(p: *P) anyerror!Binding {
         var loc = p.lexer.loc();
 
         switch (p.lexer.token) {
@@ -4267,11 +4310,11 @@ pub const P = struct {
                 }
 
                 const ref = p.storeNameInRef(name) catch unreachable;
-                p.lexer.next();
+                try p.lexer.next();
                 return p.b(B.Identifier{ .ref = ref }, loc);
             },
             .t_open_bracket => {
-                p.lexer.next();
+                try p.lexer.next();
                 var is_single_line = !p.lexer.has_newline_before;
                 var items = List(js_ast.ArrayBinding).init(p.allocator);
                 var has_spread = false;
@@ -4286,7 +4329,7 @@ pub const P = struct {
                         }) catch unreachable;
                     } else {
                         if (p.lexer.token == .t_dot_dot_dot) {
-                            p.lexer.next();
+                            try p.lexer.next();
                             has_spread = true;
 
                             // This was a bug in the ES2015 spec that was fixed in ES2016
@@ -4296,12 +4339,12 @@ pub const P = struct {
                             }
                         }
 
-                        const binding = p.parseBinding();
+                        const binding = try p.parseBinding();
 
                         var default_value: ?Expr = null;
                         if (!has_spread and p.lexer.token == .t_equals) {
-                            p.lexer.next();
-                            default_value = p.parseExpr(.comma);
+                            try p.lexer.next();
+                            default_value = try p.parseExpr(.comma);
                         }
 
                         items.append(js_ast.ArrayBinding{ .binding = binding, .default_value = default_value }) catch unreachable;
@@ -4320,7 +4363,7 @@ pub const P = struct {
                     if (p.lexer.has_newline_before) {
                         is_single_line = false;
                     }
-                    p.lexer.next();
+                    try p.lexer.next();
 
                     if (p.lexer.has_newline_before) {
                         is_single_line = false;
@@ -4331,7 +4374,7 @@ pub const P = struct {
                 if (p.lexer.has_newline_before) {
                     is_single_line = false;
                 }
-                p.lexer.expect(.t_close_bracket);
+                try p.lexer.expect(.t_close_bracket);
                 return p.b(B.Array{
                     .items = items.toOwnedSlice(),
                     .has_spread = has_spread,
@@ -4340,7 +4383,7 @@ pub const P = struct {
             },
             .t_open_brace => {
                 // p.markSyntaxFeature(compat.Destructuring, p.lexer.Range())
-                p.lexer.next();
+                try p.lexer.next();
                 var is_single_line = false;
                 var properties = List(js_ast.B.Property).init(p.allocator);
 
@@ -4349,7 +4392,7 @@ pub const P = struct {
                 p.allow_in = true;
 
                 while (p.lexer.token != .t_close_brace) {
-                    var property = p.parsePropertyBinding();
+                    var property = try p.parsePropertyBinding();
                     properties.append(property) catch unreachable;
 
                     // Commas after spread elements are not allowed
@@ -4365,7 +4408,7 @@ pub const P = struct {
                     if (p.lexer.has_newline_before) {
                         is_single_line = false;
                     }
-                    p.lexer.next();
+                    try p.lexer.next();
                     if (p.lexer.has_newline_before) {
                         is_single_line = false;
                     }
@@ -4376,7 +4419,7 @@ pub const P = struct {
                 if (p.lexer.has_newline_before) {
                     is_single_line = false;
                 }
-                p.lexer.expect(.t_close_brace);
+                try p.lexer.expect(.t_close_brace);
 
                 return p.b(B.Object{
                     .properties = properties.toOwnedSlice(),
@@ -4386,21 +4429,21 @@ pub const P = struct {
             else => {},
         }
 
-        p.lexer.expect(.t_identifier);
+        try p.lexer.expect(.t_identifier);
         return Binding{ .loc = loc, .data = Prefill.Data.BMissing };
     }
 
-    pub fn parsePropertyBinding(p: *P) B.Property {
+    pub fn parsePropertyBinding(p: *P) anyerror!B.Property {
         var key: js_ast.Expr = undefined;
         var is_computed = false;
 
         switch (p.lexer.token) {
             .t_dot_dot_dot => {
-                p.lexer.next();
+                try p.lexer.next();
                 const value = p.b(B.Identifier{
                     .ref = p.storeNameInRef(p.lexer.identifier) catch unreachable,
                 }, p.lexer.loc());
-                p.lexer.expect(.t_identifier);
+                try p.lexer.expect(.t_identifier);
                 return B.Property{
                     // This "key" diverges from esbuild, but is due to Go always having a zero value.
                     .key = Expr{ .data = Prefill.Data.EMissing, .loc = logger.Loc{} },
@@ -4414,33 +4457,33 @@ pub const P = struct {
                     .value = p.lexer.number,
                 }, p.lexer.loc());
                 // check for legacy octal literal
-                p.lexer.next();
+                try p.lexer.next();
             },
             .t_string_literal => {
-                key = p.parseStringLiteral();
+                key = try p.parseStringLiteral();
             },
             .t_big_integer_literal => {
                 key = p.e(E.BigInt{
                     .value = p.lexer.identifier,
                 }, p.lexer.loc());
                 // p.markSyntaxFeature(compat.BigInt, p.lexer.Range())
-                p.lexer.next();
+                try p.lexer.next();
             },
             .t_open_bracket => {
                 is_computed = true;
-                p.lexer.next();
-                key = p.parseExpr(.comma);
-                p.lexer.expect(.t_close_bracket);
+                try p.lexer.next();
+                key = try p.parseExpr(.comma);
+                try p.lexer.expect(.t_close_bracket);
             },
             else => {
                 const name = p.lexer.identifier;
                 const loc = p.lexer.loc();
 
                 if (!p.lexer.isIdentifierOrKeyword()) {
-                    p.lexer.expect(.t_identifier);
+                    try p.lexer.expect(.t_identifier);
                 }
 
-                p.lexer.next();
+                try p.lexer.next();
 
                 const ref = p.storeNameInRef(name) catch unreachable;
 
@@ -4452,8 +4495,8 @@ pub const P = struct {
                     const value = p.b(B.Identifier{ .ref = ref }, loc);
                     var default_value: ?Expr = null;
                     if (p.lexer.token == .t_equals) {
-                        p.lexer.next();
-                        default_value = p.parseExpr(.comma);
+                        try p.lexer.next();
+                        default_value = try p.parseExpr(.comma);
                     }
 
                     return B.Property{
@@ -4465,13 +4508,13 @@ pub const P = struct {
             },
         }
 
-        p.lexer.expect(.t_colon);
-        const value = p.parseBinding();
+        try p.lexer.expect(.t_colon);
+        const value = try p.parseBinding();
 
         var default_value: ?Expr = null;
         if (p.lexer.token == .t_equals) {
-            p.lexer.next();
-            default_value = p.parseExpr(.comma);
+            try p.lexer.next();
+            default_value = try p.parseExpr(.comma);
         }
 
         return B.Property{
@@ -4484,7 +4527,7 @@ pub const P = struct {
         };
     }
 
-    pub fn parseAndDeclareDecls(p: *P, kind: Symbol.Kind, opts: *ParseStatementOptions) []G.Decl {
+    pub fn parseAndDeclareDecls(p: *P, kind: Symbol.Kind, opts: *ParseStatementOptions) anyerror![]G.Decl {
         var decls = List(G.Decl).init(p.allocator);
 
         while (true) {
@@ -4494,7 +4537,7 @@ pub const P = struct {
             }
 
             var value: ?js_ast.Expr = null;
-            var local = p.parseBinding();
+            var local = try p.parseBinding();
             p.declareBinding(kind, local, opts) catch unreachable;
 
             // Skip over types
@@ -4502,19 +4545,19 @@ pub const P = struct {
                 // "let foo!"
                 var is_definite_assignment_assertion = p.lexer.token == .t_exclamation;
                 if (is_definite_assignment_assertion) {
-                    p.lexer.next();
+                    try p.lexer.next();
                 }
 
                 // "let foo: number"
                 if (is_definite_assignment_assertion or p.lexer.token == .t_colon) {
-                    p.lexer.expect(.t_colon);
+                    try p.lexer.expect(.t_colon);
                     p.skipTypescriptType(.lowest);
                 }
             }
 
             if (p.lexer.token == .t_equals) {
-                p.lexer.next();
-                value = p.parseExpr(.comma);
+                try p.lexer.next();
+                value = try p.parseExpr(.comma);
             }
 
             decls.append(G.Decl{
@@ -4525,7 +4568,7 @@ pub const P = struct {
             if (p.lexer.token != .t_comma) {
                 break;
             }
-            p.lexer.next();
+            try p.lexer.next();
         }
 
         return decls.items;
@@ -4539,7 +4582,7 @@ pub const P = struct {
     pub fn parseExportClause(p: *P) !ExportClauseResult {
         var items = List(js_ast.ClauseItem).initCapacity(p.allocator, 1) catch unreachable;
         var first_keyword_item_loc = logger.Loc{};
-        p.lexer.expect(.t_open_brace);
+        try p.lexer.expect(.t_open_brace);
         var is_single_line = !p.lexer.has_newline_before;
 
         while (p.lexer.token != .t_close_brace) {
@@ -4564,7 +4607,7 @@ pub const P = struct {
             //
             if (p.lexer.token != .t_identifier) {
                 if (!p.lexer.isIdentifierOrKeyword()) {
-                    p.lexer.expect(.t_identifier);
+                    try p.lexer.expect(.t_identifier);
                 }
                 if (first_keyword_item_loc.start < 0) {
                     first_keyword_item_loc = p.lexer.loc();
@@ -4572,14 +4615,14 @@ pub const P = struct {
             }
 
             p.checkForNonBMPCodePoint(alias_loc, alias);
-            p.lexer.next();
+            try p.lexer.next();
 
             if (p.lexer.isContextualKeyword("as")) {
-                p.lexer.next();
+                try p.lexer.next();
                 alias = try p.parseClauseAlias("export");
                 alias_loc = p.lexer.loc();
 
-                p.lexer.next();
+                try p.lexer.next();
             }
 
             items.append(js_ast.ClauseItem{
@@ -4597,7 +4640,7 @@ pub const P = struct {
             if (p.lexer.has_newline_before) {
                 is_single_line = false;
             }
-            p.lexer.next();
+            try p.lexer.next();
             if (p.lexer.has_newline_before) {
                 is_single_line = false;
             }
@@ -4606,13 +4649,13 @@ pub const P = struct {
         if (p.lexer.has_newline_before) {
             is_single_line = false;
         }
-        p.lexer.expect(.t_close_brace);
+        try p.lexer.expect(.t_close_brace);
 
         // Throw an error here if we found a keyword earlier and this isn't an
         // "export from" statement after all
         if (first_keyword_item_loc.start > -1 and !p.lexer.isContextualKeyword("from")) {
             const r = js_lexer.rangeOfIdentifier(p.source, first_keyword_item_loc);
-            p.lexer.addRangeError(r, "Expected identifier but found \"{s}\"", .{p.source.textForRange(r)}, true);
+            try p.lexer.addRangeError(r, "Expected identifier but found \"{s}\"", .{p.source.textForRange(r)}, true);
         }
 
         return ExportClauseResult{
@@ -4621,16 +4664,16 @@ pub const P = struct {
         };
     }
 
-    pub fn parsePath(p: *P) ParsedPath {
+    pub fn parsePath(p: *P) !ParsedPath {
         var path = ParsedPath{
             .loc = p.lexer.loc(),
             .text = p.lexer.string_literal_slice,
         };
 
         if (p.lexer.token == .t_no_substitution_template_literal) {
-            p.lexer.next();
+            try p.lexer.next();
         } else {
-            p.lexer.expect(.t_string_literal);
+            try p.lexer.expect(.t_string_literal);
         }
 
         return path;
@@ -4657,7 +4700,7 @@ pub const P = struct {
                 break;
             }
 
-            var stmt = p.parseStmt(opts) catch break :run;
+            var stmt = try p.parseStmt(opts);
 
             // Skip TypeScript types entirely
             if (p.options.ts) {
@@ -4877,11 +4920,11 @@ pub const P = struct {
     }
 
     pub fn parseFnExpr(p: *P, loc: logger.Loc, is_async: bool, async_range: logger.Range) !Expr {
-        p.lexer.next();
+        try p.lexer.next();
         const is_generator = p.lexer.token == T.t_asterisk;
         if (is_generator) {
             // p.markSyntaxFeature()
-            p.lexer.next();
+            try p.lexer.next();
         } else if (is_async) {
             // p.markLoweredSyntaxFeature(compat.AsyncAwait, asyncRange, compat.Generator)
         }
@@ -4903,14 +4946,14 @@ pub const P = struct {
                 (name orelse unreachable).ref = try p.newSymbol(.hoisted_function, p.lexer.identifier);
             }
             debug("FUNC NAME {s}", .{p.lexer.identifier});
-            p.lexer.next();
+            try p.lexer.next();
         }
 
         if (p.options.ts) {
             p.skipTypescriptTypeParameters();
         }
 
-        var func = p.parseFn(name, FnOrArrowDataParse{
+        var func = try p.parseFn(name, FnOrArrowDataParse{
             .async_range = async_range,
             .allow_await = if (is_async) .allow_expr else .allow_ident,
             .allow_yield = if (is_generator) .allow_expr else .allow_ident,
@@ -4933,10 +4976,10 @@ pub const P = struct {
         _ = try p.pushScopeForParsePass(Scope.Kind.function_body, p.lexer.loc());
         defer p.popScope();
 
-        p.lexer.expect(.t_open_brace);
+        try p.lexer.expect(.t_open_brace);
         var opts = ParseStatementOptions{};
-        const stmts = p.parseStmtsUpTo(.t_close_brace, &opts) catch unreachable;
-        p.lexer.next();
+        const stmts = try p.parseStmtsUpTo(.t_close_brace, &opts);
+        try p.lexer.next();
 
         p.allow_in = oldAllowIn;
         p.fn_or_arrow_data_parse = oldFnOrArrowData;
@@ -4952,7 +4995,7 @@ pub const P = struct {
             fail();
         }
 
-        p.lexer.expect(T.t_equals_greater_than);
+        try p.lexer.expect(T.t_equals_greater_than);
 
         for (args) |arg| {
             var opts = ParseStatementOptions{};
@@ -4974,7 +5017,7 @@ pub const P = struct {
         var old_fn_or_arrow_data = p.fn_or_arrow_data_parse;
 
         p.fn_or_arrow_data_parse = data.*;
-        var expr = p.parseExpr(Level.comma);
+        var expr = try p.parseExpr(Level.comma);
         p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
 
         var stmts = try p.allocator.alloc(Stmt, 1);
@@ -5096,7 +5139,7 @@ pub const P = struct {
                             },
                             async_range.loc,
                         ) };
-                        p.lexer.next();
+                        try p.lexer.next();
 
                         _ = try p.pushScopeForParsePass(.function_args, async_range.loc);
                         defer p.popScope();
@@ -5113,7 +5156,7 @@ pub const P = struct {
                 // "async()"
                 // "async () => {}"
                 .t_open_paren => {
-                    p.lexer.next();
+                    try p.lexer.next();
                     return p.parseParenExpr(async_range.loc, level, ParenExprOpts{ .is_async = true, .async_range = async_range });
                 },
 
@@ -5121,7 +5164,7 @@ pub const P = struct {
                 // "async <T>() => {}"
                 .t_less_than => {
                     if (p.options.ts and p.trySkipTypeScriptTypeParametersThenOpenParenWithBacktracking()) {
-                        p.lexer.next();
+                        try p.lexer.next();
                         return p.parseParenExpr(async_range.loc, level, ParenExprOpts{ .is_async = true, .async_range = async_range });
                     }
                 },
@@ -5142,21 +5185,21 @@ pub const P = struct {
         notimpl();
     }
 
-    pub fn parseExprOrBindings(p: *P, level: Level, errors: ?*DeferredErrors) Expr {
-        return p.parseExprCommon(level, errors, Expr.EFlags.none);
+    pub fn parseExprOrBindings(p: *P, level: Level, errors: ?*DeferredErrors) anyerror!Expr {
+        return try p.parseExprCommon(level, errors, Expr.EFlags.none);
     }
 
-    pub fn parseExpr(p: *P, level: Level) Expr {
-        return p.parseExprCommon(level, null, Expr.EFlags.none);
+    pub fn parseExpr(p: *P, level: Level) anyerror!Expr {
+        return try p.parseExprCommon(level, null, Expr.EFlags.none);
     }
 
-    pub fn parseExprWithFlags(p: *P, level: Level, flags: Expr.EFlags) Expr {
-        return p.parseExprCommon(level, null, flags);
+    pub fn parseExprWithFlags(p: *P, level: Level, flags: Expr.EFlags) anyerror!Expr {
+        return try p.parseExprCommon(level, null, flags);
     }
 
-    pub fn parseExprCommon(p: *P, level: Level, errors: ?*DeferredErrors, flags: Expr.EFlags) Expr {
+    pub fn parseExprCommon(p: *P, level: Level, errors: ?*DeferredErrors, flags: Expr.EFlags) anyerror!Expr {
         const had_pure_comment_before = p.lexer.has_pure_comment_before and !p.options.ignore_dce_annotations;
-        var expr = p.parsePrefix(level, errors, flags);
+        var expr = try p.parsePrefix(level, errors, flags);
 
         // There is no formal spec for "__PURE__" comments but from reverse-
         // engineering, it looks like they apply to the next CallExpression or
@@ -5164,7 +5207,7 @@ pub const P = struct {
         // to the expression "a().b()".
 
         if (had_pure_comment_before and level.lt(.call)) {
-            expr = p.parseSuffix(expr, @intToEnum(Level, @enumToInt(Level.call) - 1), errors, flags);
+            expr = try p.parseSuffix(expr, @intToEnum(Level, @enumToInt(Level.call) - 1), errors, flags);
             switch (expr.data) {
                 .e_call => |ex| {
                     ex.can_be_unwrapped_if_unused = true;
@@ -5176,7 +5219,7 @@ pub const P = struct {
             }
         }
 
-        return p.parseSuffix(expr, level, errors, flags);
+        return try p.parseSuffix(expr, level, errors, flags);
     }
 
     pub fn addImportRecord(p: *P, kind: ImportKind, loc: logger.Loc, name: string) u32 {
@@ -5273,9 +5316,9 @@ pub const P = struct {
 
         if (isStar) {
             if (p.lexer.has_newline_before) {
-                p.lexer.unexpected();
+                try p.lexer.unexpected();
             }
-            p.lexer.next();
+            try p.lexer.next();
         }
 
         var value: ?ExprNodeIndex = null;
@@ -5283,7 +5326,7 @@ pub const P = struct {
             .t_close_brace, .t_close_paren, .t_colon, .t_comma, .t_semicolon => {},
             else => {
                 if (isStar or !p.lexer.has_newline_before) {
-                    value = p.parseExpr(.yield);
+                    value = try p.parseExpr(.yield);
                 }
             },
         }
@@ -5294,7 +5337,7 @@ pub const P = struct {
         }, loc);
     }
 
-    pub fn parseProperty(p: *P, kind: Property.Kind, opts: *PropertyOpts, errors: ?*DeferredErrors) ?G.Property {
+    pub fn parseProperty(p: *P, kind: Property.Kind, opts: *PropertyOpts, errors: ?*DeferredErrors) anyerror!?G.Property {
         var key: Expr = undefined;
         var key_range = p.lexer.range();
         var is_computed = false;
@@ -5305,41 +5348,41 @@ pub const P = struct {
                     .value = p.lexer.number,
                 }, p.lexer.loc());
                 // p.checkForLegacyOctalLiteral()
-                p.lexer.next();
+                try p.lexer.next();
             },
             .t_string_literal => {
-                key = p.parseStringLiteral();
+                key = try p.parseStringLiteral();
             },
             .t_big_integer_literal => {
                 key = p.e(E.BigInt{ .value = p.lexer.identifier }, p.lexer.loc());
                 // markSyntaxFeature
-                p.lexer.next();
+                try p.lexer.next();
             },
             .t_private_identifier => {
                 if (!opts.is_class or opts.ts_decorators.len > 0) {
-                    p.lexer.expected(.t_identifier);
+                    try p.lexer.expected(.t_identifier);
                 }
 
                 key = p.e(E.PrivateIdentifier{ .ref = p.storeNameInRef(p.lexer.identifier) catch unreachable }, p.lexer.loc());
-                p.lexer.next();
+                try p.lexer.next();
             },
             .t_open_bracket => {
                 is_computed = true;
                 // p.markSyntaxFeature(compat.objectExtensions, p.lexer.range())
-                p.lexer.next();
+                try p.lexer.next();
                 const wasIdentifier = p.lexer.token == .t_identifier;
-                const expr = p.parseExpr(.comma);
+                const expr = try p.parseExpr(.comma);
 
                 // Handle index signatures
                 if (p.options.ts and p.lexer.token == .t_colon and wasIdentifier and opts.is_class) {
                     switch (expr.data) {
                         .e_identifier => |ident| {
-                            p.lexer.next();
+                            try p.lexer.next();
                             p.skipTypescriptType(.lowest);
-                            p.lexer.expect(.t_close_bracket);
-                            p.lexer.expect(.t_colon);
+                            try p.lexer.expect(.t_close_bracket);
+                            try p.lexer.expect(.t_colon);
                             p.skipTypescriptType(.lowest);
-                            p.lexer.expectOrInsertSemicolon();
+                            try p.lexer.expectOrInsertSemicolon();
 
                             // Skip this property entirely
                             return null;
@@ -5348,17 +5391,17 @@ pub const P = struct {
                     }
                 }
 
-                p.lexer.expect(.t_close_bracket);
+                try p.lexer.expect(.t_close_bracket);
                 key = expr;
             },
             .t_asterisk => {
                 if (kind != .normal or opts.is_generator) {
-                    p.lexer.unexpected();
+                    try p.lexer.unexpected();
                 }
 
-                p.lexer.next();
+                try p.lexer.next();
                 opts.is_generator = true;
-                return p.parseProperty(.normal, opts, errors);
+                return try p.parseProperty(.normal, opts, errors);
             },
 
             else => {
@@ -5367,10 +5410,10 @@ pub const P = struct {
                 const name_range = p.lexer.range();
 
                 if (!p.lexer.isIdentifierOrKeyword()) {
-                    p.lexer.expect(.t_identifier);
+                    try p.lexer.expect(.t_identifier);
                 }
 
-                p.lexer.next();
+                try p.lexer.next();
 
                 // Support contextual keywords
                 if (kind == .normal and !opts.is_generator) {
@@ -5393,14 +5436,14 @@ pub const P = struct {
                                 .p_get => {
                                     if (!opts.is_async and (js_lexer.PropertyModifierKeyword.List.get(raw) orelse .p_static) == .p_get) {
                                         // p.markSyntaxFeautre(ObjectAccessors, name_range)
-                                        return p.parseProperty(.get, opts, null);
+                                        return try p.parseProperty(.get, opts, null);
                                     }
                                 },
 
                                 .p_set => {
                                     if (!opts.is_async and (js_lexer.PropertyModifierKeyword.List.get(raw) orelse .p_static) == .p_set) {
                                         // p.markSyntaxFeautre(ObjectAccessors, name_range)
-                                        return p.parseProperty(.set, opts, null);
+                                        return try p.parseProperty(.set, opts, null);
                                     }
                                 },
                                 .p_async => {
@@ -5409,19 +5452,19 @@ pub const P = struct {
                                         opts.async_range = name_range;
 
                                         // p.markSyntaxFeautre(ObjectAccessors, name_range)
-                                        return p.parseProperty(kind, opts, null);
+                                        return try p.parseProperty(kind, opts, null);
                                     }
                                 },
                                 .p_static => {
                                     if (!opts.is_static and !opts.is_async and opts.is_class and (js_lexer.PropertyModifierKeyword.List.get(raw) orelse .p_get) == .p_static) {
                                         opts.is_static = true;
-                                        return p.parseProperty(kind, opts, null);
+                                        return try p.parseProperty(kind, opts, null);
                                     }
                                 },
                                 .p_private, .p_protected, .p_public, .p_readonly, .p_abstract, .p_declare, .p_override => {
                                     // Skip over TypeScript keywords
                                     if (opts.is_class and p.options.ts and (js_lexer.PropertyModifierKeyword.List.get(raw) orelse .p_static) == keyword) {
-                                        return p.parseProperty(kind, opts, null);
+                                        return try p.parseProperty(kind, opts, null);
                                     }
                                 },
                             }
@@ -5447,8 +5490,8 @@ pub const P = struct {
                     var initializer: ?Expr = null;
                     if (errors != null and p.lexer.token == .t_equals) {
                         (errors orelse unreachable).invalid_expr_default_value = p.lexer.range();
-                        p.lexer.next();
-                        initializer = p.parseExpr(.comma);
+                        try p.lexer.next();
+                        initializer = try p.parseExpr(.comma);
                     }
 
                     return G.Property{
@@ -5466,7 +5509,7 @@ pub const P = struct {
             // "class X { foo?: number }"
             // "class X { foo!: number }"
             if (opts.is_class and (p.lexer.token == .t_question or p.lexer.token == .t_exclamation)) {
-                p.lexer.next();
+                try p.lexer.next();
             }
 
             // "class X { foo?<T>(): T }"
@@ -5493,13 +5536,13 @@ pub const P = struct {
 
             // Skip over types
             if (p.options.ts and p.lexer.token == .t_colon) {
-                p.lexer.next();
+                try p.lexer.next();
                 p.skipTypescriptType(.lowest);
             }
 
             if (p.lexer.token == .t_equals) {
-                p.lexer.next();
-                initializer = p.parseExpr(.comma);
+                try p.lexer.next();
+                initializer = try p.parseExpr(.comma);
             }
 
             // Special-case private identifiers
@@ -5521,7 +5564,7 @@ pub const P = struct {
                 else => {},
             }
 
-            p.lexer.expectOrInsertSemicolon();
+            try p.lexer.expectOrInsertSemicolon();
 
             return G.Property{
                 .ts_decorators = opts.ts_decorators,
@@ -5569,7 +5612,7 @@ pub const P = struct {
                 }
             }
 
-            var func = p.parseFn(null, FnOrArrowDataParse{
+            var func = try p.parseFn(null, FnOrArrowDataParse{
                 .async_range = opts.async_range,
                 .allow_await = if (opts.is_async) AwaitOrYield.allow_expr else AwaitOrYield.allow_ident,
                 .allow_yield = if (opts.is_generator) AwaitOrYield.allow_expr else AwaitOrYield.allow_ident,
@@ -5666,9 +5709,9 @@ pub const P = struct {
             };
         }
 
-        p.lexer.expect(.t_colon);
+        try p.lexer.expect(.t_colon);
 
-        const value = p.parseExprOrBindings(.comma, errors);
+        const value = try p.parseExprOrBindings(.comma, errors);
 
         return G.Property{
             .ts_decorators = &[_]Expr{},
@@ -5683,12 +5726,12 @@ pub const P = struct {
 
     // By the time we call this, the identifier and type parameters have already
     // been parsed. We need to start parsing from the "extends" clause.
-    pub fn parseClass(p: *P, class_keyword: logger.Range, name: ?js_ast.LocRef, class_opts: ParseClassOptions) G.Class {
+    pub fn parseClass(p: *P, class_keyword: logger.Range, name: ?js_ast.LocRef, class_opts: ParseClassOptions) !G.Class {
         var extends: ?Expr = null;
 
         if (p.lexer.token == .t_extends) {
-            p.lexer.next();
-            extends = p.parseExpr(.new);
+            try p.lexer.next();
+            extends = try p.parseExpr(.new);
 
             // TypeScript's type argument parser inside expressions backtracks if the
             // first token after the end of the type parameter list is "{", so the
@@ -5703,19 +5746,19 @@ pub const P = struct {
         }
 
         if (p.options.ts and p.lexer.isContextualKeyword("implements")) {
-            p.lexer.next();
+            try p.lexer.next();
 
             while (true) {
                 p.skipTypescriptType(.lowest);
                 if (p.lexer.token != .t_comma) {
                     break;
                 }
-                p.lexer.next();
+                try p.lexer.next();
             }
         }
 
         var body_loc = p.lexer.loc();
-        p.lexer.expect(T.t_open_brace);
+        try p.lexer.expect(T.t_open_brace);
         var properties = List(G.Property).init(p.allocator);
 
         // Allow "in" and private fields inside class bodies
@@ -5730,7 +5773,7 @@ pub const P = struct {
         var opts = PropertyOpts{ .is_class = true, .allow_ts_decorators = class_opts.allow_ts_decorators, .class_has_extends = extends != null };
         while (p.lexer.token != T.t_close_brace) {
             if (p.lexer.token == .t_semicolon) {
-                p.lexer.next();
+                try p.lexer.next();
                 continue;
             }
 
@@ -5739,13 +5782,13 @@ pub const P = struct {
             // Parse decorators for this property
             const first_decorator_loc = p.lexer.loc();
             if (opts.allow_ts_decorators) {
-                opts.ts_decorators = p.parseTypeScriptDecorators();
+                opts.ts_decorators = try p.parseTypeScriptDecorators();
             } else {
                 opts.ts_decorators = &[_]Expr{};
             }
 
             // This property may turn out to be a type in TypeScript, which should be ignored
-            if (p.parseProperty(.normal, &opts, null)) |property| {
+            if (try p.parseProperty(.normal, &opts, null)) |property| {
                 properties.append(property) catch unreachable;
 
                 // Forbid decorators on class constructors
@@ -5771,7 +5814,7 @@ pub const P = struct {
         p.allow_in = old_allow_in;
         p.allow_private_identifiers = old_allow_private_identifiers;
 
-        p.lexer.expect(.t_close_brace);
+        try p.lexer.expect(.t_close_brace);
 
         return G.Class{
             .class_name = name,
@@ -5787,7 +5830,7 @@ pub const P = struct {
         notimpl();
     }
 
-    pub fn parseTemplateParts(p: *P, include_raw: bool) std.meta.Tuple(&[_]type{ []E.TemplatePart, logger.Loc }) {
+    pub fn parseTemplateParts(p: *P, include_raw: bool) anyerror!TemplatePartTuple {
         var parts = List(E.TemplatePart).initCapacity(p.allocator, 1) catch unreachable;
         // Allow "in" inside template literals
         var oldAllowIn = p.allow_in;
@@ -5795,10 +5838,10 @@ pub const P = struct {
         var legacy_octal_loc = logger.Loc.Empty;
 
         parseTemplatePart: while (true) {
-            p.lexer.next();
-            var value = p.parseExpr(.lowest);
+            try p.lexer.next();
+            var value = try p.parseExpr(.lowest);
             var tail_loc = p.lexer.loc();
-            p.lexer.rescanCloseBraceAsTemplateToken();
+            try p.lexer.rescanCloseBraceAsTemplateToken();
 
             var tail = p.lexer.stringLiteralUTF16();
             var tail_raw: string = "";
@@ -5817,7 +5860,7 @@ pub const P = struct {
             }) catch unreachable;
 
             if (p.lexer.token == .t_template_tail) {
-                p.lexer.next();
+                try p.lexer.next();
                 break :parseTemplatePart;
             }
             std.debug.assert(p.lexer.token != .t_end_of_file);
@@ -5825,11 +5868,11 @@ pub const P = struct {
 
         p.allow_in = oldAllowIn;
 
-        return .{ .@"0" = parts.toOwnedSlice(), .@"1" = legacy_octal_loc };
+        return TemplatePartTuple{ .@"0" = parts.toOwnedSlice(), .@"1" = legacy_octal_loc };
     }
 
     // This assumes the caller has already checked for TStringLiteral or TNoSubstitutionTemplateLiteral
-    pub fn parseStringLiteral(p: *P) Expr {
+    pub fn parseStringLiteral(p: *P) anyerror!Expr {
         var legacy_octal_loc: logger.Loc = logger.Loc.Empty;
         var loc = p.lexer.loc();
         if (p.lexer.legacy_octal_loc.start > loc.start) {
@@ -5841,7 +5884,7 @@ pub const P = struct {
                 .legacy_octal_loc = legacy_octal_loc,
                 .prefer_template = p.lexer.token == .t_no_substitution_template_literal,
             }, loc);
-            p.lexer.next();
+            try p.lexer.next();
             return expr;
         } else {
             const expr = p.e(E.String{
@@ -5849,28 +5892,28 @@ pub const P = struct {
                 .legacy_octal_loc = legacy_octal_loc,
                 .prefer_template = p.lexer.token == .t_no_substitution_template_literal,
             }, loc);
-            p.lexer.next();
+            try p.lexer.next();
             return expr;
         }
     }
 
-    pub fn parseCallArgs(p: *P) []Expr {
+    pub fn parseCallArgs(p: *P) anyerror![]Expr {
         // Allow "in" inside call arguments
         const old_allow_in = p.allow_in;
         p.allow_in = true;
         defer p.allow_in = old_allow_in;
 
         var args = List(Expr).init(p.allocator);
-        p.lexer.expect(.t_open_paren);
+        try p.lexer.expect(.t_open_paren);
 
         while (p.lexer.token != .t_close_paren) {
             const loc = p.lexer.loc();
             const is_spread = p.lexer.token == .t_dot_dot_dot;
             if (is_spread) {
                 // p.mark_syntax_feature(compat.rest_argument, p.lexer.range());
-                p.lexer.next();
+                try p.lexer.next();
             }
-            var arg = p.parseExpr(.comma);
+            var arg = try p.parseExpr(.comma);
             if (is_spread) {
                 arg = p.e(E.Spread{ .value = arg }, loc);
             }
@@ -5878,17 +5921,17 @@ pub const P = struct {
             if (p.lexer.token != .t_comma) {
                 break;
             }
-            p.lexer.next();
+            try p.lexer.next();
         }
 
-        p.lexer.expect(.t_close_paren);
+        try p.lexer.expect(.t_close_paren);
         return args.toOwnedSlice();
     }
 
-    pub fn parseSuffix(p: *P, left: Expr, level: Level, errors: ?*DeferredErrors, flags: Expr.EFlags) Expr {
+    pub fn parseSuffix(p: *P, left: Expr, level: Level, errors: ?*DeferredErrors, flags: Expr.EFlags) anyerror!Expr {
         return _parseSuffix(p, left, level, errors orelse &DeferredErrors.None, flags);
     }
-    pub fn _parseSuffix(p: *P, _left: Expr, level: Level, errors: *DeferredErrors, flags: Expr.EFlags) Expr {
+    pub fn _parseSuffix(p: *P, _left: Expr, level: Level, errors: *DeferredErrors, flags: Expr.EFlags) anyerror!Expr {
         var expr: Expr = undefined;
         var left = _left;
         var loc = p.lexer.loc();
@@ -5903,11 +5946,11 @@ pub const P = struct {
                                 return left;
                             }
 
-                            p.lexer.next();
+                            try p.lexer.next();
                             left = p.e(E.Binary{
                                 .op = .bin_comma,
                                 .left = left,
-                                .right = p.parseExpr(.comma),
+                                .right = try p.parseExpr(.comma),
                             }, left.loc);
                         },
                         else => {
@@ -5928,20 +5971,20 @@ pub const P = struct {
             optional_chain = null;
             switch (p.lexer.token) {
                 .t_dot => {
-                    p.lexer.next();
+                    try p.lexer.next();
                     if (p.lexer.token == .t_private_identifier and p.allow_private_identifiers) {
                         // "a.#b"
                         // "a?.b.#c"
                         switch (left.data) {
                             .e_super => {
-                                p.lexer.expected(.t_identifier);
+                                try p.lexer.expected(.t_identifier);
                             },
                             else => {},
                         }
 
                         var name = p.lexer.identifier;
                         var name_loc = p.lexer.loc();
-                        p.lexer.next();
+                        try p.lexer.next();
                         const ref = p.storeNameInRef(name) catch unreachable;
                         left = p.e(E.Index{
                             .target = left,
@@ -5957,12 +6000,12 @@ pub const P = struct {
                         // "a.b"
                         // "a?.b.c"
                         if (!p.lexer.isIdentifierOrKeyword()) {
-                            p.lexer.expect(.t_identifier);
+                            try p.lexer.expect(.t_identifier);
                         }
 
                         var name = p.lexer.identifier;
                         var name_loc = p.lexer.loc();
-                        p.lexer.next();
+                        try p.lexer.next();
 
                         left = p.e(E.Dot{ .target = left, .name = name, .name_loc = name_loc, .optional_chain = old_optional_chain }, left.loc);
                     }
@@ -5970,7 +6013,7 @@ pub const P = struct {
                     optional_chain = old_optional_chain;
                 },
                 .t_question_dot => {
-                    p.lexer.next();
+                    try p.lexer.next();
                     var optional_start = js_ast.OptionalChain.start;
 
                     // TODO: Remove unnecessary optional chains
@@ -5983,17 +6026,17 @@ pub const P = struct {
                     switch (p.lexer.token) {
                         .t_open_bracket => {
                             // "a?.[b]"
-                            p.lexer.next();
+                            try p.lexer.next();
 
                             // allow "in" inside the brackets;
                             const old_allow_in = p.allow_in;
                             p.allow_in = true;
 
-                            const index = p.parseExpr(.lowest);
+                            const index = try p.parseExpr(.lowest);
 
                             p.allow_in = old_allow_in;
 
-                            p.lexer.expect(.t_close_bracket);
+                            try p.lexer.expect(.t_close_bracket);
                             left = p.e(
                                 E.Index{ .target = left, .index = index, .optional_chain = optional_start },
                                 left.loc,
@@ -6008,19 +6051,19 @@ pub const P = struct {
 
                             left = p.e(E.Call{
                                 .target = left,
-                                .args = p.parseCallArgs(),
+                                .args = try p.parseCallArgs(),
                                 .optional_chain = optional_start,
                             }, left.loc);
                         },
                         .t_less_than => {
                             // "a?.<T>()"
                             if (!p.options.ts) {
-                                p.lexer.expected(.t_identifier);
+                                try p.lexer.expected(.t_identifier);
                             }
 
                             p.skipTypeScriptTypeArguments(false);
                             if (p.lexer.token != .t_open_paren) {
-                                p.lexer.expected(.t_open_paren);
+                                try p.lexer.expected(.t_open_paren);
                             }
 
                             if (level.gte(.call)) {
@@ -6028,7 +6071,7 @@ pub const P = struct {
                             }
 
                             left = p.e(
-                                E.Call{ .target = left, .args = p.parseCallArgs(), .optional_chain = optional_start },
+                                E.Call{ .target = left, .args = try p.parseCallArgs(), .optional_chain = optional_start },
                                 left.loc,
                             );
                         },
@@ -6037,7 +6080,7 @@ pub const P = struct {
                                 // "a?.#b"
                                 const name = p.lexer.identifier;
                                 const name_loc = p.lexer.loc();
-                                p.lexer.next();
+                                try p.lexer.next();
                                 const ref = p.storeNameInRef(name) catch unreachable;
                                 left = p.e(E.Index{
                                     .target = left,
@@ -6052,11 +6095,11 @@ pub const P = struct {
                             } else {
                                 // "a?.b"
                                 if (!p.lexer.isIdentifierOrKeyword()) {
-                                    p.lexer.expect(.t_identifier);
+                                    try p.lexer.expect(.t_identifier);
                                 }
                                 const name = p.lexer.identifier;
                                 const name_loc = p.lexer.loc();
-                                p.lexer.next();
+                                try p.lexer.next();
 
                                 left = p.e(E.Dot{
                                     .target = left,
@@ -6080,7 +6123,7 @@ pub const P = struct {
                     // p.markSyntaxFeature(compat.TemplateLiteral, p.lexer.Range());
                     const head = p.lexer.stringLiteralUTF16();
                     const head_raw = p.lexer.rawTemplateContents();
-                    p.lexer.next();
+                    try p.lexer.next();
                     left = p.e(E.Template{
                         .tag = left,
                         .head = head,
@@ -6095,8 +6138,8 @@ pub const P = struct {
                     // p.markSyntaxFeature(compat.TemplateLiteral, p.lexer.Range());
                     const head = p.lexer.stringLiteralUTF16();
                     const head_raw = p.lexer.rawTemplateContents();
-                    const partsGroup = p.parseTemplateParts(true);
-                    p.lexer.next();
+                    const partsGroup = try p.parseTemplateParts(true);
+                    try p.lexer.next();
                     const tag = left;
                     left = p.e(E.Template{ .tag = tag, .head = head, .head_raw = head_raw, .parts = partsGroup.@"0" }, left.loc);
                 },
@@ -6113,17 +6156,17 @@ pub const P = struct {
                         return left;
                     }
 
-                    p.lexer.next();
+                    try p.lexer.next();
 
                     // Allow "in" inside the brackets
                     const old_allow_in = p.allow_in;
                     p.allow_in = true;
 
-                    const index = p.parseExpr(.lowest);
+                    const index = try p.parseExpr(.lowest);
 
                     p.allow_in = old_allow_in;
 
-                    p.lexer.expect(.t_close_bracket);
+                    try p.lexer.expect(.t_close_bracket);
 
                     left = p.e(E.Index{
                         .target = left,
@@ -6140,7 +6183,7 @@ pub const P = struct {
                     left = p.e(
                         E.Call{
                             .target = left,
-                            .args = p.parseCallArgs(),
+                            .args = try p.parseCallArgs(),
                             .optional_chain = old_optional_chain,
                         },
                         left.loc,
@@ -6151,7 +6194,7 @@ pub const P = struct {
                     if (level.gte(.conditional)) {
                         return left;
                     }
-                    p.lexer.next();
+                    try p.lexer.next();
 
                     // Stop now if we're parsing one of these:
                     // "(a?) => {}"
@@ -6161,7 +6204,7 @@ pub const P = struct {
                         p.lexer.token == .t_close_paren or p.lexer.token == .t_comma))
                     {
                         if (errors.isEmpty()) {
-                            p.lexer.unexpected();
+                            try p.lexer.unexpected();
                         }
                         errors.invalid_expr_after_question = p.lexer.range();
                         return left;
@@ -6171,11 +6214,11 @@ pub const P = struct {
                     const old_allow_in = p.allow_in;
                     p.allow_in = true;
 
-                    const yes = p.parseExpr(.comma);
+                    const yes = try p.parseExpr(.comma);
 
                     p.allow_in = old_allow_in;
-                    p.lexer.expect(.t_colon);
-                    const no = p.parseExpr(.comma);
+                    try p.lexer.expect(.t_colon);
+                    const no = try p.parseExpr(.comma);
 
                     left = p.e(E.If{
                         .test_ = left,
@@ -6190,14 +6233,14 @@ pub const P = struct {
                     }
 
                     if (!p.options.ts) {
-                        p.lexer.unexpected();
+                        try p.lexer.unexpected();
                     }
 
                     if (level.gte(.postfix)) {
                         return left;
                     }
 
-                    p.lexer.next();
+                    try p.lexer.next();
                     optional_chain = old_optional_chain;
                 },
                 .t_minus_minus => {
@@ -6205,7 +6248,7 @@ pub const P = struct {
                         return left;
                     }
 
-                    p.lexer.next();
+                    try p.lexer.next();
                     left = p.e(E.Unary{ .op = .un_post_dec, .value = left }, left.loc);
                 },
                 .t_plus_plus => {
@@ -6213,7 +6256,7 @@ pub const P = struct {
                         return left;
                     }
 
-                    p.lexer.next();
+                    try p.lexer.next();
                     left = p.e(E.Unary{ .op = .un_post_inc, .value = left }, left.loc);
                 },
                 .t_comma => {
@@ -6221,136 +6264,136 @@ pub const P = struct {
                         return left;
                     }
 
-                    p.lexer.next();
-                    left = p.e(E.Binary{ .op = .bin_comma, .left = left, .right = p.parseExpr(.comma) }, left.loc);
+                    try p.lexer.next();
+                    left = p.e(E.Binary{ .op = .bin_comma, .left = left, .right = try p.parseExpr(.comma) }, left.loc);
                 },
                 .t_plus => {
                     if (level.gte(.add)) {
                         return left;
                     }
 
-                    p.lexer.next();
-                    left = p.e(E.Binary{ .op = .bin_add, .left = left, .right = p.parseExpr(.add) }, left.loc);
+                    try p.lexer.next();
+                    left = p.e(E.Binary{ .op = .bin_add, .left = left, .right = try p.parseExpr(.add) }, left.loc);
                 },
                 .t_plus_equals => {
                     if (level.gte(.assign)) {
                         return left;
                     }
 
-                    p.lexer.next();
-                    left = p.e(E.Binary{ .op = .bin_add_assign, .left = left, .right = p.parseExpr(@intToEnum(Op.Level, @enumToInt(Op.Level.assign) - 1)) }, left.loc);
+                    try p.lexer.next();
+                    left = p.e(E.Binary{ .op = .bin_add_assign, .left = left, .right = try p.parseExpr(@intToEnum(Op.Level, @enumToInt(Op.Level.assign) - 1)) }, left.loc);
                 },
                 .t_minus => {
                     if (level.gte(.add)) {
                         return left;
                     }
 
-                    p.lexer.next();
-                    left = p.e(E.Binary{ .op = .bin_sub, .left = left, .right = p.parseExpr(.add) }, left.loc);
+                    try p.lexer.next();
+                    left = p.e(E.Binary{ .op = .bin_sub, .left = left, .right = try p.parseExpr(.add) }, left.loc);
                 },
                 .t_minus_equals => {
                     if (level.gte(.assign)) {
                         return left;
                     }
 
-                    p.lexer.next();
-                    left = p.e(E.Binary{ .op = .bin_sub_assign, .left = left, .right = p.parseExpr(Op.Level.sub(Op.Level.assign, 1)) }, left.loc);
+                    try p.lexer.next();
+                    left = p.e(E.Binary{ .op = .bin_sub_assign, .left = left, .right = try p.parseExpr(Op.Level.sub(Op.Level.assign, 1)) }, left.loc);
                 },
                 .t_asterisk => {
                     if (level.gte(.multiply)) {
                         return left;
                     }
 
-                    p.lexer.next();
-                    left = p.e(E.Binary{ .op = .bin_mul, .left = left, .right = p.parseExpr(.multiply) }, left.loc);
+                    try p.lexer.next();
+                    left = p.e(E.Binary{ .op = .bin_mul, .left = left, .right = try p.parseExpr(.multiply) }, left.loc);
                 },
                 .t_asterisk_asterisk => {
                     if (level.gte(.exponentiation)) {
                         return left;
                     }
 
-                    p.lexer.next();
-                    left = p.e(E.Binary{ .op = .bin_pow, .left = left, .right = p.parseExpr(Op.Level.exponentiation.sub(1)) }, left.loc);
+                    try p.lexer.next();
+                    left = p.e(E.Binary{ .op = .bin_pow, .left = left, .right = try p.parseExpr(Op.Level.exponentiation.sub(1)) }, left.loc);
                 },
                 .t_asterisk_asterisk_equals => {
                     if (level.gte(.assign)) {
                         return left;
                     }
 
-                    p.lexer.next();
-                    left = p.e(E.Binary{ .op = .bin_pow_assign, .left = left, .right = p.parseExpr(Op.Level.assign.sub(1)) }, left.loc);
+                    try p.lexer.next();
+                    left = p.e(E.Binary{ .op = .bin_pow_assign, .left = left, .right = try p.parseExpr(Op.Level.assign.sub(1)) }, left.loc);
                 },
                 .t_asterisk_equals => {
                     if (level.gte(.assign)) {
                         return left;
                     }
 
-                    p.lexer.next();
-                    left = p.e(E.Binary{ .op = .bin_mul_assign, .left = left, .right = p.parseExpr(Op.Level.assign.sub(1)) }, left.loc);
+                    try p.lexer.next();
+                    left = p.e(E.Binary{ .op = .bin_mul_assign, .left = left, .right = try p.parseExpr(Op.Level.assign.sub(1)) }, left.loc);
                 },
                 .t_percent => {
                     if (level.gte(.multiply)) {
                         return left;
                     }
 
-                    p.lexer.next();
-                    left = p.e(E.Binary{ .op = .bin_rem, .left = left, .right = p.parseExpr(Op.Level.multiply) }, left.loc);
+                    try p.lexer.next();
+                    left = p.e(E.Binary{ .op = .bin_rem, .left = left, .right = try p.parseExpr(Op.Level.multiply) }, left.loc);
                 },
                 .t_percent_equals => {
                     if (level.gte(.assign)) {
                         return left;
                     }
 
-                    p.lexer.next();
-                    left = p.e(E.Binary{ .op = .bin_rem_assign, .left = left, .right = p.parseExpr(Level.assign.sub(1)) }, left.loc);
+                    try p.lexer.next();
+                    left = p.e(E.Binary{ .op = .bin_rem_assign, .left = left, .right = try p.parseExpr(Level.assign.sub(1)) }, left.loc);
                 },
                 .t_slash => {
                     if (level.gte(.multiply)) {
                         return left;
                     }
 
-                    p.lexer.next();
-                    left = p.e(E.Binary{ .op = .bin_div, .left = left, .right = p.parseExpr(Level.multiply) }, left.loc);
+                    try p.lexer.next();
+                    left = p.e(E.Binary{ .op = .bin_div, .left = left, .right = try p.parseExpr(Level.multiply) }, left.loc);
                 },
                 .t_slash_equals => {
                     if (level.gte(.assign)) {
                         return left;
                     }
 
-                    p.lexer.next();
-                    left = p.e(E.Binary{ .op = .bin_div_assign, .left = left, .right = p.parseExpr(Level.assign.sub(1)) }, left.loc);
+                    try p.lexer.next();
+                    left = p.e(E.Binary{ .op = .bin_div_assign, .left = left, .right = try p.parseExpr(Level.assign.sub(1)) }, left.loc);
                 },
                 .t_equals_equals => {
                     if (level.gte(.equals)) {
                         return left;
                     }
 
-                    p.lexer.next();
-                    left = p.e(E.Binary{ .op = .bin_loose_eq, .left = left, .right = p.parseExpr(Level.equals) }, left.loc);
+                    try p.lexer.next();
+                    left = p.e(E.Binary{ .op = .bin_loose_eq, .left = left, .right = try p.parseExpr(Level.equals) }, left.loc);
                 },
                 .t_exclamation_equals => {
                     if (level.gte(.equals)) {
                         return left;
                     }
 
-                    p.lexer.next();
-                    left = p.e(E.Binary{ .op = .bin_loose_ne, .left = left, .right = p.parseExpr(Level.equals) }, left.loc);
+                    try p.lexer.next();
+                    left = p.e(E.Binary{ .op = .bin_loose_ne, .left = left, .right = try p.parseExpr(Level.equals) }, left.loc);
                 },
                 .t_equals_equals_equals => {
                     if (level.gte(.equals)) {
                         return left;
                     }
 
-                    p.lexer.next();
-                    left = p.e(E.Binary{ .op = .bin_strict_eq, .left = left, .right = p.parseExpr(Level.equals) }, left.loc);
+                    try p.lexer.next();
+                    left = p.e(E.Binary{ .op = .bin_strict_eq, .left = left, .right = try p.parseExpr(Level.equals) }, left.loc);
                 },
                 .t_exclamation_equals_equals => {
                     if (level.gte(.equals)) {
                         return left;
                     }
 
-                    p.lexer.next();
-                    left = p.e(E.Binary{ .op = .bin_strict_ne, .left = left, .right = p.parseExpr(Level.equals) }, left.loc);
+                    try p.lexer.next();
+                    left = p.e(E.Binary{ .op = .bin_strict_ne, .left = left, .right = try p.parseExpr(Level.equals) }, left.loc);
                 },
                 .t_less_than => {
                     // TypeScript allows type arguments to be specified with angle brackets
@@ -6364,89 +6407,89 @@ pub const P = struct {
                     if (level.gte(.compare)) {
                         return left;
                     }
-                    p.lexer.next();
-                    left = p.e(E.Binary{ .op = .bin_lt, .left = left, .right = p.parseExpr(.compare) }, left.loc);
+                    try p.lexer.next();
+                    left = p.e(E.Binary{ .op = .bin_lt, .left = left, .right = try p.parseExpr(.compare) }, left.loc);
                 },
                 .t_less_than_equals => {
                     if (level.gte(.compare)) {
                         return left;
                     }
-                    p.lexer.next();
-                    left = p.e(E.Binary{ .op = .bin_le, .left = left, .right = p.parseExpr(.compare) }, left.loc);
+                    try p.lexer.next();
+                    left = p.e(E.Binary{ .op = .bin_le, .left = left, .right = try p.parseExpr(.compare) }, left.loc);
                 },
                 .t_greater_than => {
                     if (level.gte(.compare)) {
                         return left;
                     }
-                    p.lexer.next();
-                    left = p.e(E.Binary{ .op = .bin_gt, .left = left, .right = p.parseExpr(.compare) }, left.loc);
+                    try p.lexer.next();
+                    left = p.e(E.Binary{ .op = .bin_gt, .left = left, .right = try p.parseExpr(.compare) }, left.loc);
                 },
                 .t_greater_than_equals => {
                     if (level.gte(.compare)) {
                         return left;
                     }
-                    p.lexer.next();
-                    left = p.e(E.Binary{ .op = .bin_ge, .left = left, .right = p.parseExpr(.compare) }, left.loc);
+                    try p.lexer.next();
+                    left = p.e(E.Binary{ .op = .bin_ge, .left = left, .right = try p.parseExpr(.compare) }, left.loc);
                 },
                 .t_less_than_less_than => {
                     if (level.gte(.shift)) {
                         return left;
                     }
-                    p.lexer.next();
-                    left = p.e(E.Binary{ .op = .bin_shl, .left = left, .right = p.parseExpr(.shift) }, left.loc);
+                    try p.lexer.next();
+                    left = p.e(E.Binary{ .op = .bin_shl, .left = left, .right = try p.parseExpr(.shift) }, left.loc);
                 },
                 .t_less_than_less_than_equals => {
                     if (level.gte(.assign)) {
                         return left;
                     }
 
-                    p.lexer.next();
-                    left = p.e(E.Binary{ .op = .bin_shl_assign, .left = left, .right = p.parseExpr(Level.assign.sub(1)) }, left.loc);
+                    try p.lexer.next();
+                    left = p.e(E.Binary{ .op = .bin_shl_assign, .left = left, .right = try p.parseExpr(Level.assign.sub(1)) }, left.loc);
                 },
                 .t_greater_than_greater_than => {
                     if (level.gte(.shift)) {
                         return left;
                     }
-                    p.lexer.next();
-                    left = p.e(E.Binary{ .op = .bin_shr, .left = left, .right = p.parseExpr(.shift) }, left.loc);
+                    try p.lexer.next();
+                    left = p.e(E.Binary{ .op = .bin_shr, .left = left, .right = try p.parseExpr(.shift) }, left.loc);
                 },
                 .t_greater_than_greater_than_equals => {
                     if (level.gte(.assign)) {
                         return left;
                     }
 
-                    p.lexer.next();
-                    left = p.e(E.Binary{ .op = .bin_shl_assign, .left = left, .right = p.parseExpr(Level.assign.sub(1)) }, left.loc);
+                    try p.lexer.next();
+                    left = p.e(E.Binary{ .op = .bin_shl_assign, .left = left, .right = try p.parseExpr(Level.assign.sub(1)) }, left.loc);
                 },
                 .t_greater_than_greater_than_greater_than => {
                     if (level.gte(.shift)) {
                         return left;
                     }
-                    p.lexer.next();
-                    left = p.e(E.Binary{ .op = .bin_u_shr, .left = left, .right = p.parseExpr(.shift) }, left.loc);
+                    try p.lexer.next();
+                    left = p.e(E.Binary{ .op = .bin_u_shr, .left = left, .right = try p.parseExpr(.shift) }, left.loc);
                 },
                 .t_greater_than_greater_than_greater_than_equals => {
                     if (level.gte(.assign)) {
                         return left;
                     }
 
-                    p.lexer.next();
-                    left = p.e(E.Binary{ .op = .bin_u_shr_assign, .left = left, .right = p.parseExpr(Level.assign.sub(1)) }, left.loc);
+                    try p.lexer.next();
+                    left = p.e(E.Binary{ .op = .bin_u_shr_assign, .left = left, .right = try p.parseExpr(Level.assign.sub(1)) }, left.loc);
                 },
                 .t_question_question => {
                     if (level.gte(.nullish_coalescing)) {
                         return left;
                     }
-                    p.lexer.next();
-                    left = p.e(E.Binary{ .op = .bin_nullish_coalescing, .left = left, .right = p.parseExpr(.nullish_coalescing) }, left.loc);
+                    try p.lexer.next();
+                    left = p.e(E.Binary{ .op = .bin_nullish_coalescing, .left = left, .right = try p.parseExpr(.nullish_coalescing) }, left.loc);
                 },
                 .t_question_question_equals => {
                     if (level.gte(.assign)) {
                         return left;
                     }
 
-                    p.lexer.next();
-                    left = p.e(E.Binary{ .op = .bin_nullish_coalescing_assign, .left = left, .right = p.parseExpr(Level.assign.sub(1)) }, left.loc);
+                    try p.lexer.next();
+                    left = p.e(E.Binary{ .op = .bin_nullish_coalescing_assign, .left = left, .right = try p.parseExpr(Level.assign.sub(1)) }, left.loc);
                 },
                 .t_bar_bar => {
                     if (level.gte(.logical_or)) {
@@ -6455,18 +6498,18 @@ pub const P = struct {
 
                     // Prevent "||" inside "??" from the right
                     if (level.eql(.nullish_coalescing)) {
-                        p.lexer.unexpected();
+                        try p.lexer.unexpected();
                     }
 
-                    p.lexer.next();
-                    const right = p.parseExpr(.logical_or);
+                    try p.lexer.next();
+                    const right = try p.parseExpr(.logical_or);
                     left = p.e(E.Binary{ .op = Op.Code.bin_logical_or, .left = left, .right = right }, left.loc);
 
                     if (level.lt(.nullish_coalescing)) {
-                        left = p.parseSuffix(left, Level.nullish_coalescing.add(1), null, flags);
+                        left = try p.parseSuffix(left, Level.nullish_coalescing.add(1), null, flags);
 
                         if (p.lexer.token == .t_question_question) {
-                            p.lexer.unexpected();
+                            try p.lexer.unexpected();
                         }
                     }
                 },
@@ -6475,8 +6518,8 @@ pub const P = struct {
                         return left;
                     }
 
-                    p.lexer.next();
-                    left = p.e(E.Binary{ .op = .bin_logical_or_assign, .left = left, .right = p.parseExpr(Level.assign.sub(1)) }, left.loc);
+                    try p.lexer.next();
+                    left = p.e(E.Binary{ .op = .bin_logical_or_assign, .left = left, .right = try p.parseExpr(Level.assign.sub(1)) }, left.loc);
                 },
                 .t_ampersand_ampersand => {
                     if (level.gte(.logical_and)) {
@@ -6485,18 +6528,18 @@ pub const P = struct {
 
                     // Prevent "&&" inside "??" from the right
                     if (level.eql(.nullish_coalescing)) {
-                        p.lexer.unexpected();
+                        try p.lexer.unexpected();
                     }
 
-                    p.lexer.next();
-                    left = p.e(E.Binary{ .op = .bin_logical_and, .left = left, .right = p.parseExpr(.logical_and) }, left.loc);
+                    try p.lexer.next();
+                    left = p.e(E.Binary{ .op = .bin_logical_and, .left = left, .right = try p.parseExpr(.logical_and) }, left.loc);
 
                     // Prevent "&&" inside "??" from the left
                     if (level.lt(.nullish_coalescing)) {
-                        left = p.parseSuffix(left, Level.nullish_coalescing.add(1), null, flags);
+                        left = try p.parseSuffix(left, Level.nullish_coalescing.add(1), null, flags);
 
                         if (p.lexer.token == .t_question_question) {
-                            p.lexer.unexpected();
+                            try p.lexer.unexpected();
                         }
                     }
                 },
@@ -6505,65 +6548,65 @@ pub const P = struct {
                         return left;
                     }
 
-                    p.lexer.next();
-                    left = p.e(E.Binary{ .op = .bin_logical_and_assign, .left = left, .right = p.parseExpr(Level.assign.sub(1)) }, left.loc);
+                    try p.lexer.next();
+                    left = p.e(E.Binary{ .op = .bin_logical_and_assign, .left = left, .right = try p.parseExpr(Level.assign.sub(1)) }, left.loc);
                 },
                 .t_bar => {
                     if (level.gte(.bitwise_or)) {
                         return left;
                     }
 
-                    p.lexer.next();
-                    left = p.e(E.Binary{ .op = .bin_bitwise_or, .left = left, .right = p.parseExpr(.bitwise_or) }, left.loc);
+                    try p.lexer.next();
+                    left = p.e(E.Binary{ .op = .bin_bitwise_or, .left = left, .right = try p.parseExpr(.bitwise_or) }, left.loc);
                 },
                 .t_bar_equals => {
                     if (level.gte(.assign)) {
                         return left;
                     }
 
-                    p.lexer.next();
-                    left = p.e(E.Binary{ .op = .bin_bitwise_or_assign, .left = left, .right = p.parseExpr(Level.assign.sub(1)) }, left.loc);
+                    try p.lexer.next();
+                    left = p.e(E.Binary{ .op = .bin_bitwise_or_assign, .left = left, .right = try p.parseExpr(Level.assign.sub(1)) }, left.loc);
                 },
                 .t_ampersand => {
                     if (level.gte(.bitwise_and)) {
                         return left;
                     }
 
-                    p.lexer.next();
-                    left = p.e(E.Binary{ .op = .bin_bitwise_and, .left = left, .right = p.parseExpr(.bitwise_and) }, left.loc);
+                    try p.lexer.next();
+                    left = p.e(E.Binary{ .op = .bin_bitwise_and, .left = left, .right = try p.parseExpr(.bitwise_and) }, left.loc);
                 },
                 .t_ampersand_equals => {
                     if (level.gte(.assign)) {
                         return left;
                     }
 
-                    p.lexer.next();
-                    left = p.e(E.Binary{ .op = .bin_shl_assign, .left = left, .right = p.parseExpr(Level.assign.sub(1)) }, left.loc);
+                    try p.lexer.next();
+                    left = p.e(E.Binary{ .op = .bin_shl_assign, .left = left, .right = try p.parseExpr(Level.assign.sub(1)) }, left.loc);
                 },
                 .t_caret => {
                     if (level.gte(.bitwise_xor)) {
                         return left;
                     }
 
-                    p.lexer.next();
-                    left = p.e(E.Binary{ .op = .bin_bitwise_xor, .left = left, .right = p.parseExpr(.bitwise_xor) }, left.loc);
+                    try p.lexer.next();
+                    left = p.e(E.Binary{ .op = .bin_bitwise_xor, .left = left, .right = try p.parseExpr(.bitwise_xor) }, left.loc);
                 },
                 .t_caret_equals => {
                     if (level.gte(.assign)) {
                         return left;
                     }
 
-                    p.lexer.next();
-                    left = p.e(E.Binary{ .op = .bin_bitwise_xor_assign, .left = left, .right = p.parseExpr(Level.assign.sub(1)) }, left.loc);
+                    try p.lexer.next();
+                    left = p.e(E.Binary{ .op = .bin_bitwise_xor_assign, .left = left, .right = try p.parseExpr(Level.assign.sub(1)) }, left.loc);
                 },
                 .t_equals => {
                     if (level.gte(.assign)) {
                         return left;
                     }
 
-                    p.lexer.next();
+                    try p.lexer.next();
 
-                    left = p.e(E.Binary{ .op = .bin_assign, .left = left, .right = p.parseExpr(Level.assign.sub(1)) }, left.loc);
+                    left = p.e(E.Binary{ .op = .bin_assign, .left = left, .right = try p.parseExpr(Level.assign.sub(1)) }, left.loc);
                 },
                 .t_in => {
                     if (level.gte(.compare) or !p.allow_in) {
@@ -6581,8 +6624,8 @@ pub const P = struct {
                         else => {},
                     }
 
-                    p.lexer.next();
-                    left = p.e(E.Binary{ .op = .bin_in, .left = left, .right = p.parseExpr(.compare) }, left.loc);
+                    try p.lexer.next();
+                    left = p.e(E.Binary{ .op = .bin_in, .left = left, .right = try p.parseExpr(.compare) }, left.loc);
                 },
                 .t_instanceof => {
                     if (level.gte(.compare)) {
@@ -6602,13 +6645,13 @@ pub const P = struct {
                             else => {},
                         }
                     }
-                    p.lexer.next();
-                    left = p.e(E.Binary{ .op = .bin_instanceof, .left = left, .right = p.parseExpr(.compare) }, left.loc);
+                    try p.lexer.next();
+                    left = p.e(E.Binary{ .op = .bin_instanceof, .left = left, .right = try p.parseExpr(.compare) }, left.loc);
                 },
                 else => {
                     // Handle the TypeScript "as" operator
                     if (p.options.ts and level.lt(.compare) and !p.lexer.has_newline_before and p.lexer.isContextualKeyword("as")) {
-                        p.lexer.next();
+                        try p.lexer.next();
                         p.skipTypescriptType(.lowest);
 
                         // These tokens are not allowed to follow a cast expression. This isn't
@@ -6656,7 +6699,7 @@ pub const P = struct {
         Global.panic("{s}", .{fixedBuffer});
     }
 
-    pub fn _parsePrefix(p: *P, level: Level, errors: *DeferredErrors, flags: Expr.EFlags) Expr {
+    pub fn _parsePrefix(p: *P, level: Level, errors: *DeferredErrors, flags: Expr.EFlags) anyerror!Expr {
         const loc = p.lexer.loc();
         const l = @enumToInt(level);
         // Output.print("Parse Prefix {s}:{s} @{s} ", .{ p.lexer.token, p.lexer.raw(), @tagName(level) });
@@ -6664,7 +6707,7 @@ pub const P = struct {
         switch (p.lexer.token) {
             .t_super => {
                 const superRange = p.lexer.range();
-                p.lexer.next();
+                try p.lexer.next();
 
                 switch (p.lexer.token) {
                     .t_open_paren => {
@@ -6682,16 +6725,16 @@ pub const P = struct {
                 return p.e(E.Super{}, loc);
             },
             .t_open_paren => {
-                p.lexer.next();
+                try p.lexer.next();
 
                 // Arrow functions aren't allowed in the middle of expressions
                 if (level.gt(.assign)) {
                     const oldAllowIn = p.allow_in;
                     p.allow_in = true;
 
-                    var value = p.parseExpr(Level.lowest);
+                    var value = try p.parseExpr(Level.lowest);
                     p.markExprAsParenthesized(&value);
-                    p.lexer.expect(.t_close_paren);
+                    try p.lexer.expect(.t_close_paren);
                     p.allow_in = oldAllowIn;
                     return value;
                 }
@@ -6699,19 +6742,19 @@ pub const P = struct {
                 return p.parseParenExpr(loc, level, ParenExprOpts{}) catch unreachable;
             },
             .t_false => {
-                p.lexer.next();
+                try p.lexer.next();
                 return p.e(E.Boolean{ .value = false }, loc);
             },
             .t_true => {
-                p.lexer.next();
+                try p.lexer.next();
                 return p.e(E.Boolean{ .value = true }, loc);
             },
             .t_null => {
-                p.lexer.next();
+                try p.lexer.next();
                 return p.e(E.Null{}, loc);
             },
             .t_this => {
-                p.lexer.next();
+                try p.lexer.next();
                 return Expr{ .data = Prefill.Data.This, .loc = loc };
             },
             .t_identifier => {
@@ -6719,7 +6762,7 @@ pub const P = struct {
                 const name_range = p.lexer.range();
                 const raw = p.lexer.raw();
 
-                p.lexer.next();
+                try p.lexer.next();
 
                 // Handle async and await expressions
                 switch (AsyncPrefixExpression.find(name)) {
@@ -6746,9 +6789,9 @@ pub const P = struct {
                                         args.invalid_expr_await = name_range;
                                     }
 
-                                    const value = p.parseExpr(.prefix);
+                                    const value = try p.parseExpr(.prefix);
                                     if (p.lexer.token == T.t_asterisk_asterisk) {
-                                        p.lexer.unexpected();
+                                        try p.lexer.unexpected();
                                     }
 
                                     return p.e(E.Await{ .value = value }, loc);
@@ -6770,14 +6813,14 @@ pub const P = struct {
                                     if (level.gte(.assign)) {
                                         p.log.addRangeError(p.source, name_range, "Cannot use a \"yield\" here without parentheses") catch unreachable;
                                     }
-                                    const value = p.parseExpr(.prefix);
+                                    const value = try p.parseExpr(.prefix);
 
                                     if (p.fn_or_arrow_data_parse.arrow_arg_errors) |*args| {
                                         args.invalid_expr_yield = name_range;
                                     }
 
                                     if (p.lexer.token == T.t_asterisk_asterisk) {
-                                        p.lexer.unexpected();
+                                        try p.lexer.unexpected();
                                     }
 
                                     return p.e(E.Yield{ .value = value }, loc);
@@ -6823,7 +6866,7 @@ pub const P = struct {
                 }, loc);
             },
             .t_string_literal, .t_no_substitution_template_literal => {
-                return p.parseStringLiteral();
+                return try p.parseStringLiteral();
             },
             .t_template_head => {
                 var legacy_octal_loc = logger.Loc.Empty;
@@ -6833,7 +6876,7 @@ pub const P = struct {
                     legacy_octal_loc = p.lexer.legacy_octal_loc;
                 }
 
-                var resp = p.parseTemplateParts(false);
+                var resp = try p.parseTemplateParts(false);
                 const parts: []E.TemplatePart = resp.@"0";
                 const tail_legacy_octal_loc: logger.Loc = resp.@"1";
                 if (tail_legacy_octal_loc.start > 0) {
@@ -6847,26 +6890,26 @@ pub const P = struct {
             .t_numeric_literal => {
                 const value = p.e(E.Number{ .value = p.lexer.number }, loc);
                 // p.checkForLegacyOctalLiteral()
-                p.lexer.next();
+                try p.lexer.next();
                 return value;
             },
             .t_big_integer_literal => {
                 const value = p.lexer.identifier;
                 // markSyntaxFeature bigInt
-                p.lexer.next();
+                try p.lexer.next();
                 return p.e(E.BigInt{ .value = value }, loc);
             },
             .t_slash, .t_slash_equals => {
-                p.lexer.scanRegExp();
+                try p.lexer.scanRegExp();
                 const value = p.lexer.raw();
-                p.lexer.next();
+                try p.lexer.next();
                 return p.e(E.RegExp{ .value = value }, loc);
             },
             .t_void => {
-                p.lexer.next();
-                const value = p.parseExpr(.prefix);
+                try p.lexer.next();
+                const value = try p.parseExpr(.prefix);
                 if (p.lexer.token == .t_asterisk_asterisk) {
-                    p.lexer.unexpected();
+                    try p.lexer.unexpected();
                 }
 
                 return p.e(E.Unary{
@@ -6875,19 +6918,19 @@ pub const P = struct {
                 }, loc);
             },
             .t_typeof => {
-                p.lexer.next();
-                const value = p.parseExpr(.prefix);
+                try p.lexer.next();
+                const value = try p.parseExpr(.prefix);
                 if (p.lexer.token == .t_asterisk_asterisk) {
-                    p.lexer.unexpected();
+                    try p.lexer.unexpected();
                 }
 
                 return p.e(E.Unary{ .op = .un_typeof, .value = value }, loc);
             },
             .t_delete => {
-                p.lexer.next();
-                const value = p.parseExpr(.prefix);
+                try p.lexer.next();
+                const value = try p.parseExpr(.prefix);
                 if (p.lexer.token == .t_asterisk_asterisk) {
-                    p.lexer.unexpected();
+                    try p.lexer.unexpected();
                 }
                 // TODO: add error deleting private identifier
                 // const private = value.data.e_private_identifier;
@@ -6899,56 +6942,56 @@ pub const P = struct {
                 return p.e(E.Unary{ .op = .un_delete, .value = value }, loc);
             },
             .t_plus => {
-                p.lexer.next();
-                const value = p.parseExpr(.prefix);
+                try p.lexer.next();
+                const value = try p.parseExpr(.prefix);
                 if (p.lexer.token == .t_asterisk_asterisk) {
-                    p.lexer.unexpected();
+                    try p.lexer.unexpected();
                 }
 
                 return p.e(E.Unary{ .op = .un_pos, .value = value }, loc);
             },
             .t_minus => {
-                p.lexer.next();
-                const value = p.parseExpr(.prefix);
+                try p.lexer.next();
+                const value = try p.parseExpr(.prefix);
                 if (p.lexer.token == .t_asterisk_asterisk) {
-                    p.lexer.unexpected();
+                    try p.lexer.unexpected();
                 }
 
                 return p.e(E.Unary{ .op = .un_neg, .value = value }, loc);
             },
             .t_tilde => {
-                p.lexer.next();
-                const value = p.parseExpr(.prefix);
+                try p.lexer.next();
+                const value = try p.parseExpr(.prefix);
                 if (p.lexer.token == .t_asterisk_asterisk) {
-                    p.lexer.unexpected();
+                    try p.lexer.unexpected();
                 }
 
                 return p.e(E.Unary{ .op = .un_cpl, .value = value }, loc);
             },
             .t_exclamation => {
-                p.lexer.next();
-                const value = p.parseExpr(.prefix);
+                try p.lexer.next();
+                const value = try p.parseExpr(.prefix);
                 if (p.lexer.token == .t_asterisk_asterisk) {
-                    p.lexer.unexpected();
+                    try p.lexer.unexpected();
                 }
 
                 return p.e(E.Unary{ .op = .un_not, .value = value }, loc);
             },
             .t_minus_minus => {
-                p.lexer.next();
-                return p.e(E.Unary{ .op = .un_pre_dec, .value = p.parseExpr(.prefix) }, loc);
+                try p.lexer.next();
+                return p.e(E.Unary{ .op = .un_pre_dec, .value = try p.parseExpr(.prefix) }, loc);
             },
             .t_plus_plus => {
-                p.lexer.next();
-                return p.e(E.Unary{ .op = .un_pre_inc, .value = p.parseExpr(.prefix) }, loc);
+                try p.lexer.next();
+                return p.e(E.Unary{ .op = .un_pre_inc, .value = try p.parseExpr(.prefix) }, loc);
             },
             .t_function => {
-                return p.parseFnExpr(loc, false, logger.Range.None) catch unreachable;
+                return try p.parseFnExpr(loc, false, logger.Range.None);
             },
             .t_class => {
                 const classKeyword = p.lexer.range();
                 // markSyntaxFEatuer class
-                p.lexer.next();
+                try p.lexer.next();
                 var name: ?js_ast.LocRef = null;
 
                 _ = p.pushScopeForParsePass(.class_name, loc) catch unreachable;
@@ -6956,7 +6999,7 @@ pub const P = struct {
                 // Parse an optional class name
                 if (p.lexer.token == .t_identifier and !js_lexer.StrictModeReservedWords.has(p.lexer.identifier)) {
                     name = js_ast.LocRef{ .loc = p.lexer.loc(), .ref = p.newSymbol(.other, p.lexer.identifier) catch unreachable };
-                    p.lexer.next();
+                    try p.lexer.next();
                 }
 
                 // Even anonymous classes can have TypeScript type parameters
@@ -6964,22 +7007,22 @@ pub const P = struct {
                     p.skipTypescriptTypeParameters();
                 }
 
-                const class = p.parseClass(classKeyword, name, ParseClassOptions{});
+                const class = try p.parseClass(classKeyword, name, ParseClassOptions{});
                 p.popScope();
                 return p.e(class, loc);
             },
             .t_new => {
-                p.lexer.next();
+                try p.lexer.next();
 
                 // Special-case the weird "new.target" expression here
 
-                const target = p.parseExprWithFlags(.member, flags);
+                const target = try p.parseExprWithFlags(.member, flags);
                 var args: []Expr = &([_]Expr{});
 
                 if (p.options.ts) {
                     // Skip over TypeScript non-null assertions
                     if (p.lexer.token == .t_exclamation and !p.lexer.has_newline_before) {
-                        p.lexer.next();
+                        try p.lexer.next();
                     }
 
                     // Skip over TypeScript type arguments here if there are any
@@ -6989,7 +7032,7 @@ pub const P = struct {
                 }
 
                 if (p.lexer.token == .t_open_paren) {
-                    args = p.parseCallArgs();
+                    args = try p.parseCallArgs();
                 }
 
                 return p.e(E.New{
@@ -6998,7 +7041,7 @@ pub const P = struct {
                 }, loc);
             },
             .t_open_bracket => {
-                p.lexer.next();
+                try p.lexer.next();
                 var is_single_line = !p.lexer.has_newline_before;
                 var items = List(Expr).init(p.allocator);
                 var self_errors = DeferredErrors{};
@@ -7018,14 +7061,14 @@ pub const P = struct {
                             errors.array_spread_feature = p.lexer.range();
 
                             const dots_loc = p.lexer.loc();
-                            p.lexer.next();
+                            try p.lexer.next();
                             items.append(
-                                p.parseExprOrBindings(.comma, &self_errors),
+                                try p.parseExprOrBindings(.comma, &self_errors),
                             ) catch unreachable;
                         },
                         else => {
                             items.append(
-                                p.parseExprOrBindings(.comma, &self_errors),
+                                try p.parseExprOrBindings(.comma, &self_errors),
                             ) catch unreachable;
                         },
                     }
@@ -7038,7 +7081,7 @@ pub const P = struct {
                         is_single_line = false;
                     }
 
-                    p.lexer.next();
+                    try p.lexer.next();
 
                     if (p.lexer.has_newline_before) {
                         is_single_line = false;
@@ -7049,7 +7092,7 @@ pub const P = struct {
                     is_single_line = false;
                 }
 
-                p.lexer.expect(.t_close_bracket);
+                try p.lexer.expect(.t_close_bracket);
                 p.allow_in = old_allow_in;
 
                 if (p.willNeedBindingPattern()) {} else if (errors.isEmpty()) {
@@ -7066,7 +7109,7 @@ pub const P = struct {
                 }, loc);
             },
             .t_open_brace => {
-                p.lexer.next();
+                try p.lexer.next();
                 var is_single_line = !p.lexer.has_newline_before;
                 var properties = List(G.Property).init(p.allocator);
                 var self_errors = DeferredErrors{};
@@ -7078,8 +7121,8 @@ pub const P = struct {
 
                 while (p.lexer.token != .t_close_brace) {
                     if (p.lexer.token == .t_dot_dot_dot) {
-                        p.lexer.next();
-                        properties.append(G.Property{ .kind = .spread, .value = p.parseExpr(.comma) }) catch unreachable;
+                        try p.lexer.next();
+                        properties.append(G.Property{ .kind = .spread, .value = try p.parseExpr(.comma) }) catch unreachable;
 
                         // Commas are not allowed here when destructuring
                         if (p.lexer.token == .t_comma) {
@@ -7088,7 +7131,7 @@ pub const P = struct {
                     } else {
                         // This property may turn out to be a type in TypeScript, which should be ignored
                         var propertyOpts = PropertyOpts{};
-                        if (p.parseProperty(.normal, &propertyOpts, &self_errors)) |prop| {
+                        if (try p.parseProperty(.normal, &propertyOpts, &self_errors)) |prop| {
                             properties.append(prop) catch unreachable;
                         }
                     }
@@ -7101,7 +7144,7 @@ pub const P = struct {
                         is_single_line = false;
                     }
 
-                    p.lexer.next();
+                    try p.lexer.next();
 
                     if (p.lexer.has_newline_before) {
                         is_single_line = false;
@@ -7112,7 +7155,7 @@ pub const P = struct {
                     is_single_line = false;
                 }
 
-                p.lexer.expect(.t_close_brace);
+                try p.lexer.expect(.t_close_brace);
                 p.allow_in = old_allow_in;
 
                 if (p.willNeedBindingPattern()) {} else if (errors.isEmpty()) {
@@ -7164,16 +7207,16 @@ pub const P = struct {
                 if (p.options.ts and p.options.jsx.parse) {
                     var oldLexer = p.lexer;
 
-                    p.lexer.next();
+                    try p.lexer.next();
                     // Look ahead to see if this should be an arrow function instead
                     var is_ts_arrow_fn = false;
 
                     if (p.lexer.token == .t_identifier) {
-                        p.lexer.next();
+                        try p.lexer.next();
                         if (p.lexer.token == .t_comma) {
                             is_ts_arrow_fn = true;
                         } else if (p.lexer.token == .t_extends) {
-                            p.lexer.next();
+                            try p.lexer.next();
                             is_ts_arrow_fn = p.lexer.token != .t_equals and p.lexer.token != .t_greater_than;
                         }
                     }
@@ -7183,21 +7226,21 @@ pub const P = struct {
 
                     if (is_ts_arrow_fn) {
                         p.skipTypescriptTypeParameters();
-                        p.lexer.expect(.t_open_paren);
+                        try p.lexer.expect(.t_open_paren);
                         return p.parseParenExpr(loc, level, ParenExprOpts{ .force_arrow_fn = true }) catch unreachable;
                     }
                 }
 
                 if (p.options.jsx.parse) {
                     // Use NextInsideJSXElement() instead of Next() so we parse "<<" as "<"
-                    p.lexer.nextInsideJSXElement() catch unreachable;
+                    try p.lexer.nextInsideJSXElement();
                     const element = p.parseJSXElement(loc) catch unreachable;
 
                     // The call to parseJSXElement() above doesn't consume the last
                     // TGreaterThan because the caller knows what Next() function to call.
                     // Use Next() instead of NextInsideJSXElement() here since the next
                     // token is an expression.
-                    p.lexer.next();
+                    try p.lexer.next();
                     return element;
                 }
 
@@ -7207,26 +7250,26 @@ pub const P = struct {
                     // "<T>(x)"
                     // "<T>(x) => {}"
                     if (p.trySkipTypeScriptTypeParametersThenOpenParenWithBacktracking()) {
-                        p.lexer.expect(.t_open_paren);
+                        try p.lexer.expect(.t_open_paren);
                         return p.parseParenExpr(loc, level, ParenExprOpts{}) catch unreachable;
                     }
 
                     // "<T>x"
-                    p.lexer.next();
+                    try p.lexer.next();
                     p.skipTypescriptType(.lowest);
-                    p.lexer.expectGreaterThan(false) catch unreachable;
+                    try p.lexer.expectGreaterThan(false);
                     return p.parsePrefix(level, errors, flags);
                 }
 
-                p.lexer.unexpected();
+                try p.lexer.unexpected();
                 return Expr{ .data = Prefill.Data.EMissing, .loc = logger.Loc.Empty };
             },
             .t_import => {
-                p.lexer.next();
+                try p.lexer.next();
                 return p.parseImportExpr(loc, level);
             },
             else => {
-                p.lexer.unexpected();
+                try p.lexer.unexpected();
                 return Expr{ .data = Prefill.Data.EMissing, .loc = logger.Loc.Empty };
             },
         }
@@ -7244,18 +7287,18 @@ pub const P = struct {
     }
 
     // Note: The caller has already parsed the "import" keyword
-    pub fn parseImportExpr(p: *P, loc: logger.Loc, level: Level) Expr {
+    pub fn parseImportExpr(p: *P, loc: logger.Loc, level: Level) anyerror!Expr {
         // Parse an "import.meta" expression
         if (p.lexer.token == .t_dot) {
             p.es6_import_keyword = js_lexer.rangeOfIdentifier(p.source, loc);
-            p.lexer.next();
+            try p.lexer.next();
             if (p.lexer.isContextualKeyword("meta")) {
                 const r = p.lexer.range();
-                p.lexer.next();
+                try p.lexer.next();
                 p.has_import_meta = true;
                 return p.e(E.ImportMeta{}, loc);
             } else {
-                p.lexer.expectedString("\"meta\"");
+                try p.lexer.expectedString("\"meta\"");
             }
         }
 
@@ -7268,12 +7311,12 @@ pub const P = struct {
         p.allow_in = true;
 
         p.lexer.preserve_all_comments_before = true;
-        p.lexer.expect(.t_open_paren);
+        try p.lexer.expect(.t_open_paren);
         const comments = p.lexer.comments_to_preserve_before.toOwnedSlice();
         p.lexer.preserve_all_comments_before = false;
 
-        const value = p.parseExpr(.comma);
-        p.lexer.expect(.t_close_paren);
+        const value = try p.parseExpr(.comma);
+        try p.lexer.expect(.t_close_paren);
 
         p.allow_in = old_allow_in;
         return p.e(E.Import{ .expr = value, .leading_interior_comments = comments, .import_record_index = 0 }, loc);
@@ -7377,8 +7420,8 @@ pub const P = struct {
             }
         } else {
             // Use Expect() not ExpectInsideJSXElement() so we can parse expression tokens
-            p.lexer.expect(.t_open_brace);
-            const value = p.parseExpr(.lowest);
+            try p.lexer.expect(.t_open_brace);
+            const value = try p.parseExpr(.lowest);
             try p.lexer.expectInsideJSXElement(.t_close_brace);
             return value;
         }
@@ -7450,11 +7493,11 @@ pub const P = struct {
                     .t_open_brace => {
                         defer i += 1;
                         // Use Next() not ExpectInsideJSXElement() so we can parse "..."
-                        p.lexer.next();
-                        p.lexer.expect(.t_dot_dot_dot);
+                        try p.lexer.next();
+                        try p.lexer.expect(.t_dot_dot_dot);
                         spread_prop_i = i;
                         spread_loc = p.lexer.loc();
-                        try props.append(G.Property{ .value = p.parseExpr(.comma), .kind = .spread });
+                        try props.append(G.Property{ .value = try p.parseExpr(.comma), .kind = .spread });
                         try p.lexer.nextInsideJSXElement();
                     },
                     else => {
@@ -7496,7 +7539,7 @@ pub const P = struct {
             // Use NextInsideJSXElement() not Next() so we can parse ">>" as ">"
             try p.lexer.nextInsideJSXElement();
             if (p.lexer.token != .t_greater_than) {
-                p.lexer.expected(.t_greater_than);
+                try p.lexer.expected(.t_greater_than);
             }
 
             return p.e(E.JSXElement{
@@ -7526,16 +7569,16 @@ pub const P = struct {
                 },
                 .t_open_brace => {
                     // Use Next() instead of NextJSXElementChild() here since the next token is an expression
-                    p.lexer.next();
+                    try p.lexer.next();
 
                     // The "..." here is ignored (it's used to signal an array type in TypeScript)
                     if (p.lexer.token == .t_dot_dot_dot and p.options.ts) {
-                        p.lexer.next();
+                        try p.lexer.next();
                     }
 
                     // The expression is optional, and may be absent
                     if (p.lexer.token != .t_close_brace) {
-                        try children.append(p.parseExpr(.lowest));
+                        try children.append(try p.parseExpr(.lowest));
                     }
 
                     // Use ExpectJSXElementChild() so we parse child strings
@@ -7569,7 +7612,7 @@ pub const P = struct {
                     }
 
                     if (p.lexer.token != .t_greater_than) {
-                        p.lexer.expected(.t_greater_than);
+                        try p.lexer.expected(.t_greater_than);
                     }
 
                     return p.e(E.JSXElement{
@@ -7581,7 +7624,7 @@ pub const P = struct {
                     }, loc);
                 },
                 else => {
-                    p.lexer.unexpected();
+                    try p.lexer.unexpected();
                     p.panic("", .{});
                 },
             }
@@ -7612,8 +7655,8 @@ pub const P = struct {
         notimpl();
         // return false;
     }
-    pub fn parsePrefix(p: *P, level: Level, errors: ?*DeferredErrors, flags: Expr.EFlags) Expr {
-        return p._parsePrefix(level, errors orelse &DeferredErrors.None, flags);
+    pub fn parsePrefix(p: *P, level: Level, errors: ?*DeferredErrors, flags: Expr.EFlags) anyerror!Expr {
+        return try p._parsePrefix(level, errors orelse &DeferredErrors.None, flags);
     }
 
     pub fn appendPart(p: *P, parts: *List(js_ast.Part), stmts: []Stmt) !void {
@@ -10547,13 +10590,13 @@ pub const P = struct {
             if (is_spread) {
                 spread_range = p.lexer.range();
                 // p.markSyntaxFeature()
-                p.lexer.next();
+                try p.lexer.next();
             }
 
             // We don't know yet whether these are arguments or expressions, so parse
             p.latest_arrow_arg_loc = p.lexer.loc();
 
-            var item = p.parseExprOrBindings(.comma, &errors);
+            var item = try p.parseExprOrBindings(.comma, &errors);
 
             if (is_spread) {
                 item = p.e(E.Spread{ .value = item }, loc);
@@ -10562,14 +10605,14 @@ pub const P = struct {
             // Skip over types
             if (p.options.ts and p.lexer.token == .t_colon) {
                 type_colon_range = p.lexer.range();
-                p.lexer.next();
+                try p.lexer.next();
                 p.skipTypescriptType(.lowest);
             }
 
             // There may be a "=" after the type (but not after an "as" cast)
             if (p.options.ts and p.lexer.token == .t_equals and !p.forbid_suffix_after_as_loc.eql(p.lexer.loc())) {
-                p.lexer.next();
-                item = Expr.assign(item, p.parseExpr(.comma), p.allocator);
+                try p.lexer.next();
+                item = Expr.assign(item, try p.parseExpr(.comma), p.allocator);
             }
 
             items_list.append(item) catch unreachable;
@@ -10584,12 +10627,12 @@ pub const P = struct {
             }
 
             // Eat the comma token
-            p.lexer.next();
+            try p.lexer.next();
         }
         var items = items_list.toOwnedSlice();
 
         // The parenthetical construct must end with a close parenthesis
-        p.lexer.expect(.t_close_paren);
+        try p.lexer.expect(.t_close_paren);
 
         // Restore "in" operator status before we parse the arrow function body
         p.allow_in = oldAllowIn;
@@ -10601,7 +10644,7 @@ pub const P = struct {
         if (p.lexer.token == .t_equals_greater_than or opts.force_arrow_fn or (p.options.ts and p.lexer.token == .t_colon)) {
             // Arrow functions are not allowed inside certain expressions
             if (level.gt(.assign)) {
-                p.lexer.unexpected();
+                try p.lexer.unexpected();
             }
 
             var invalidLog = List(logger.Loc).init(p.allocator);
@@ -10690,7 +10733,7 @@ pub const P = struct {
         }
 
         // Indicate that we expected an arrow function
-        p.lexer.expected(.t_equals_greater_than);
+        try p.lexer.expected(.t_equals_greater_than);
         p.panic("", .{});
     }
 

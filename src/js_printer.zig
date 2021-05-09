@@ -313,6 +313,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
             p.printIndent();
             p.print("}");
         }
+
         pub fn printDecls(p: *Printer, keyword: string, decls: []G.Decl, flags: ExprFlag) void {
             debug("<printDecls>\n   {s}", .{decls});
             defer debug("</printDecls>", .{});

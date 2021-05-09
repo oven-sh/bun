@@ -21,6 +21,7 @@ import LoginGate, { LOGIN_STATUSES } from "../components/LoginGate";
 import Divider from "../components/Divider";
 import { SPACING } from "../helpers/styles";
 
+// This is not saved in git 150x over because I don't want this repo to be huge.
 (function () {
   const FeaturedProfile = ({ profile }) => {
     return (

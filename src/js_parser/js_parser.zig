@@ -9353,12 +9353,12 @@ pub const P = struct {
                 }
 
                 switch (data.value) {
-                    .expr => |*expr| {
-                        const was_anonymous_named_expr = expr.isAnonymousNamed();
-                        data.value.expr = p.visitExpr(expr.*);
+                    .expr => |expr| {
+                        const was_anonymous_named_expr = p.isAnonymousNamedExpr(expr);
+                        data.value.expr = p.visitExpr(expr);
 
                         // // Optionally preserve the name
-                        data.value.expr = p.maybeKeepExprSymbolName(expr.*, "default", was_anonymous_named_expr);
+                        data.value.expr = p.maybeKeepExprSymbolName(expr, "default", was_anonymous_named_expr);
 
                         // Discard type-only export default statements
                         if (p.options.ts) {
@@ -9395,10 +9395,13 @@ pub const P = struct {
                                 if (func.func.name != null and func.func.name.?.ref != null) {
                                     stmts.append(p.keepStmtSymbolName(func.func.name.?.loc, func.func.name.?.ref.?, name)) catch unreachable;
                                 }
+                                // prevent doubling export default function name
+                                return;
                             },
                             .s_class => |class| {
                                 var shadow_ref = p.visitClass(s2.loc, &class.class);
                                 stmts.appendSlice(p.lowerClass(js_ast.StmtOrExpr{ .stmt = stmt.* }, shadow_ref)) catch unreachable;
+                                return;
                             },
                             else => {},
                         }

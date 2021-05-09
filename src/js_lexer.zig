@@ -34,6 +34,15 @@ pub const JSONOptions = struct {
 pub const Lexer = struct {
     const LexerType = @This();
 
+    pub const Error = error{
+        UTF8Fail,
+        OutOfMemory,
+        SyntaxError,
+        UnexpectedSyntax,
+        JSONStringsMustUseDoubleQuotes,
+        ParserError,
+    };
+
     // pub const Error = error{
     //     UnexpectedToken,
     //     EndOfFile,
@@ -80,26 +89,28 @@ pub const Lexer = struct {
         return logger.usize2Loc(self.start);
     }
 
-    fn nextCodepointSlice(it: *LexerType) callconv(.Inline) ?[]const u8 {
+    fn nextCodepointSlice(it: *LexerType) callconv(.Inline) !?[]const u8 {
         if (it.current >= it.source.contents.len) {
             // without this line, strings cut off one before the last characte
             it.end = it.current;
             return null;
         }
 
-        const cp_len = unicode.utf8ByteSequenceLength(it.source.contents[it.current]) catch unreachable;
+        const cp_len = unicode.utf8ByteSequenceLength(it.source.contents[it.current]) catch return Error.UTF8Fail;
         it.end = it.current;
         it.current += cp_len;
 
         return it.source.contents[it.current - cp_len .. it.current];
     }
 
-    pub fn syntaxError(self: *LexerType) void {
+    pub fn syntaxError(self: *LexerType) !void {
         self.addError(self.start, "Syntax Error!!", .{}, true);
+        return Error.SyntaxError;
     }
 
-    pub fn addDefaultError(self: *LexerType, msg: []const u8) void {
+    pub fn addDefaultError(self: *LexerType, msg: []const u8) !void {
         self.addError(self.start, "{s}", .{msg}, true);
+        return Error.SyntaxError;
     }
 
     pub fn addError(self: *LexerType, _loc: usize, comptime format: []const u8, args: anytype, panic: bool) void {
@@ -114,7 +125,7 @@ pub const Lexer = struct {
         msg.formatNoWriter(Global.panic);
     }
 
-    pub fn addRangeError(self: *LexerType, r: logger.Range, comptime format: []const u8, args: anytype, panic: bool) void {
+    pub fn addRangeError(self: *LexerType, r: logger.Range, comptime format: []const u8, args: anytype, panic: bool) !void {
         if (self.prev_error_loc.eql(r.loc)) {
             return;
         }
@@ -124,12 +135,7 @@ pub const Lexer = struct {
         self.prev_error_loc = r.loc;
 
         if (panic) {
-            var fixedBuffer = [_]u8{0} ** 8096;
-            var stream = std.io.fixedBufferStream(&fixedBuffer);
-            const writer = stream.writer();
-            self.log.print(writer) catch unreachable;
-
-            Global.panic("{s}", .{fixedBuffer[0..stream.pos]});
+            return Error.ParserError;
         }
     }
 
@@ -145,8 +151,8 @@ pub const Lexer = struct {
         return @intCast(CodePoint, a) == self.code_point;
     }
 
-    fn nextCodepoint(it: *LexerType) callconv(.Inline) CodePoint {
-        const slice = it.nextCodepointSlice() orelse return @as(CodePoint, -1);
+    fn nextCodepoint(it: *LexerType) callconv(.Inline) !CodePoint {
+        const slice = (try it.nextCodepointSlice()) orelse return @as(CodePoint, -1);
 
         switch (slice.len) {
             1 => return @as(CodePoint, slice[0]),
@@ -159,14 +165,14 @@ pub const Lexer = struct {
 
     /// Look ahead at the next n codepoints without advancing the iterator.
     /// If fewer than n codepoints are available, then return the remainder of the string.
-    fn peek(it: *LexerType, n: usize) []const u8 {
+    fn peek(it: *LexerType, n: usize) !string {
         const original_i = it.current;
         defer it.current = original_i;
 
         var end_ix = original_i;
         var found: usize = 0;
         while (found < n) : (found += 1) {
-            const next_codepoint = it.nextCodepointSlice() orelse return it.source.contents[original_i..];
+            const next_codepoint = (try it.nextCodepointSlice()) orelse return it.source.contents[original_i..];
             end_ix += next_codepoint.len;
         }
 
@@ -185,7 +191,7 @@ pub const Lexer = struct {
         }
     }
 
-    fn parseStringLiteral(lexer: *LexerType) void {
+    fn parseStringLiteral(lexer: *LexerType) !void {
         var quote: CodePoint = lexer.code_point;
         var needs_slow_path = false;
         var suffixLen: usize = 1;
@@ -197,19 +203,19 @@ pub const Lexer = struct {
         } else {
             lexer.token = T.t_no_substitution_template_literal;
         }
-        lexer.step();
+        try lexer.step();
 
         stringLiteral: while (true) {
             switch (lexer.code_point) {
                 '\\' => {
                     needs_slow_path = true;
-                    lexer.step();
+                    try lexer.step();
 
                     // Handle Windows CRLF
                     if (lexer.code_point == '\r' and lexer.json_options != null) {
-                        lexer.step();
+                        try lexer.step();
                         if (lexer.code_point == '\n') {
-                            lexer.step();
+                            try lexer.step();
                         }
                         continue :stringLiteral;
                     }
@@ -217,12 +223,12 @@ pub const Lexer = struct {
                 // This indicates the end of the file
 
                 -1 => {
-                    lexer.addDefaultError("Unterminated string literal");
+                    try lexer.addDefaultError("Unterminated string literal");
                 },
 
                 '\r' => {
                     if (quote != '`') {
-                        lexer.addDefaultError("Unterminated string literal");
+                        try lexer.addDefaultError("Unterminated string literal");
                     }
 
                     // Template literals require newline normalization
@@ -231,16 +237,16 @@ pub const Lexer = struct {
 
                 '\n' => {
                     if (quote != '`') {
-                        lexer.addDefaultError("Unterminated string literal");
+                        try lexer.addDefaultError("Unterminated string literal");
                     }
                 },
 
                 '$' => {
                     if (quote == '`') {
-                        lexer.step();
+                        try lexer.step();
                         if (lexer.code_point == '{') {
                             suffixLen = 2;
-                            lexer.step();
+                            try lexer.step();
                             if (lexer.rescan_close_brace_as_template_token) {
                                 lexer.token = T.t_template_middle;
                             } else {
@@ -254,18 +260,18 @@ pub const Lexer = struct {
 
                 else => {
                     if (quote == lexer.code_point) {
-                        lexer.step();
+                        try lexer.step();
                         break :stringLiteral;
                     }
                     // Non-ASCII strings need the slow path
                     if (lexer.code_point >= 0x80) {
                         needs_slow_path = true;
                     } else if (lexer.json_options != null and lexer.code_point < 0x20) {
-                        lexer.syntaxError();
+                        try lexer.syntaxError();
                     }
                 },
             }
-            lexer.step();
+            try lexer.step();
         }
 
         // Reset string literal
@@ -283,7 +289,7 @@ pub const Lexer = struct {
         }
 
         if (quote == '\'' and lexer.json_options != null) {
-            lexer.addRangeError(lexer.range(), "JSON strings must use double quotes", .{}, true);
+            try lexer.addRangeError(lexer.range(), "JSON strings must use double quotes", .{}, true);
         }
         // for (text)
         // // if (needs_slow_path) {
@@ -296,8 +302,8 @@ pub const Lexer = struct {
         // // }
     }
 
-    fn step(lexer: *LexerType) void {
-        lexer.code_point = lexer.nextCodepoint();
+    fn step(lexer: *LexerType) !void {
+        lexer.code_point = try lexer.nextCodepoint();
 
         // Track the approximate number of newlines in the file so we can preallocate
         // the line offset table in the printer for source maps. The line offset table
@@ -310,29 +316,29 @@ pub const Lexer = struct {
         }
     }
 
-    pub fn expect(self: *LexerType, comptime token: T) void {
+    pub fn expect(self: *LexerType, comptime token: T) !void {
         if (self.token != token) {
-            self.expected(token);
+            try self.expected(token);
         }
 
-        self.next();
+        try self.next();
     }
 
-    pub fn expectOrInsertSemicolon(lexer: *LexerType) void {
+    pub fn expectOrInsertSemicolon(lexer: *LexerType) !void {
         if (lexer.token == T.t_semicolon or (!lexer.has_newline_before and
             lexer.token != T.t_close_brace and lexer.token != T.t_end_of_file))
         {
-            lexer.expect(T.t_semicolon);
+            try lexer.expect(T.t_semicolon);
         }
     }
 
-    pub fn addUnsupportedSyntaxError(self: *LexerType, msg: []const u8) void {
+    pub fn addUnsupportedSyntaxError(self: *LexerType, msg: []const u8) !void {
         self.addError(self.end, "Unsupported syntax: {s}", .{msg}, true);
+        return Error.SyntaxError;
     }
 
-    pub fn scanIdentifierWithEscapes(self: *LexerType) void {
-        self.addUnsupportedSyntaxError("escape sequence");
-        return;
+    pub fn scanIdentifierWithEscapes(self: *LexerType) !void {
+        try self.addUnsupportedSyntaxError("escape sequence");
     }
 
     pub fn debugInfo(self: *LexerType) void {
@@ -348,7 +354,7 @@ pub const Lexer = struct {
         }
     }
 
-    pub fn expectContextualKeyword(self: *LexerType, comptime keyword: string) void {
+    pub fn expectContextualKeyword(self: *LexerType, comptime keyword: string) !void {
         if (!self.isContextualKeyword(keyword)) {
             if (std.builtin.mode == std.builtin.Mode.Debug) {
                 self.addError(self.start, "Expected \"{s}\" but found \"{s}\" (token: {s})", .{
@@ -359,45 +365,46 @@ pub const Lexer = struct {
             } else {
                 self.addError(self.start, "Expected \"{s}\" but found \"{s}\"", .{ keyword, self.raw() }, true);
             }
+            return Error.UnexpectedSyntax;
         }
-        self.next();
+        try self.next();
     }
 
-    pub fn maybeExpandEquals(lexer: *LexerType) void {
+    pub fn maybeExpandEquals(lexer: *LexerType) !void {
         switch (lexer.code_point) {
             '>' => {
                 // "=" + ">" = "=>"
                 lexer.token = .t_equals_greater_than;
-                lexer.step();
+                try lexer.step();
             },
             '=' => {
                 // "=" + "=" = "=="
                 lexer.token = .t_equals_equals;
-                lexer.step();
+                try lexer.step();
 
                 if (lexer.code_point == '=') {
                     // "=" + "==" = "==="
                     lexer.token = .t_equals_equals_equals;
-                    lexer.step();
+                    try lexer.step();
                 }
             },
             else => {},
         }
     }
 
-    pub fn expectLessThan(lexer: *LexerType, is_inside_jsx_element: bool) void {
+    pub fn expectLessThan(lexer: *LexerType, is_inside_jsx_element: bool) !void {
         switch (lexer.token) {
             .t_less_than => {
                 if (is_inside_jsx_element) {
-                    lexer.nextInsideJSXElement();
+                    try lexer.nextInsideJSXElement();
                 } else {
-                    lexer.next();
+                    try lexer.next();
                 }
             },
             .t_less_than_equals => {
                 lexer.token = .t_equals;
                 lexer.start += 1;
-                lexer.maybeExpandEquals();
+                try lexer.maybeExpandEquals();
             },
             .t_less_than_less_than => {
                 lexer.token = .t_less_than;
@@ -408,7 +415,7 @@ pub const Lexer = struct {
                 lexer.start += 1;
             },
             else => {
-                lexer.expected(.t_less_than);
+                try lexer.expected(.t_less_than);
             },
         }
     }
@@ -419,13 +426,13 @@ pub const Lexer = struct {
                 if (is_inside_jsx_element) {
                     try lexer.nextInsideJSXElement();
                 } else {
-                    lexer.next();
+                    try lexer.next();
                 }
             },
             .t_greater_than_equals => {
                 lexer.token = .t_equals;
                 lexer.start += 1;
-                lexer.maybeExpandEquals();
+                try lexer.maybeExpandEquals();
             },
             .t_greater_than_greater_than => {
                 lexer.token = .t_greater_than;
@@ -440,12 +447,12 @@ pub const Lexer = struct {
                 lexer.start += 1;
             },
             else => {
-                lexer.expected(.t_greater_than);
+                try lexer.expected(.t_greater_than);
             },
         }
     }
 
-    pub fn next(lexer: *LexerType) void {
+    pub fn next(lexer: *LexerType) !void {
         lexer.has_newline_before = lexer.end == 0;
 
         lex: while (true) {
@@ -459,23 +466,23 @@ pub const Lexer = struct {
 
                 '#' => {
                     if (lexer.start == 0 and lexer.source.contents[1] == '!') {
-                        lexer.addUnsupportedSyntaxError("#!hashbang is not supported yet.");
+                        try lexer.addUnsupportedSyntaxError("#!hashbang is not supported yet.");
                         return;
                     }
 
-                    lexer.step();
+                    try lexer.step();
                     if (!isIdentifierStart(lexer.code_point)) {
-                        lexer.syntaxError();
+                        try lexer.syntaxError();
                     }
-                    lexer.step();
+                    try lexer.step();
 
                     if (isIdentifierStart(lexer.code_point)) {
-                        lexer.step();
+                        try lexer.step();
                         while (isIdentifierContinue(lexer.code_point)) {
-                            lexer.step();
+                            try lexer.step();
                         }
                         if (lexer.code_point == '\\') {
-                            lexer.scanIdentifierWithEscapes();
+                            try lexer.scanIdentifierWithEscapes();
                             lexer.token = T.t_private_identifier;
                             // lexer.Identifier, lexer.Token = lexer.scanIdentifierWithEscapes(normalIdentifier);
                         } else {
@@ -486,67 +493,67 @@ pub const Lexer = struct {
                     }
                 },
                 '\r', '\n', 0x2028, 0x2029 => {
-                    lexer.step();
+                    try lexer.step();
                     lexer.has_newline_before = true;
                     continue;
                 },
                 '\t', ' ' => {
-                    lexer.step();
+                    try lexer.step();
                     continue;
                 },
                 '(' => {
-                    lexer.step();
+                    try lexer.step();
                     lexer.token = T.t_open_paren;
                 },
                 ')' => {
-                    lexer.step();
+                    try lexer.step();
                     lexer.token = T.t_close_paren;
                 },
                 '[' => {
-                    lexer.step();
+                    try lexer.step();
                     lexer.token = T.t_open_bracket;
                 },
                 ']' => {
-                    lexer.step();
+                    try lexer.step();
                     lexer.token = T.t_close_bracket;
                 },
                 '{' => {
-                    lexer.step();
+                    try lexer.step();
                     lexer.token = T.t_open_brace;
                 },
                 '}' => {
-                    lexer.step();
+                    try lexer.step();
                     lexer.token = T.t_close_brace;
                 },
                 ',' => {
-                    lexer.step();
+                    try lexer.step();
                     lexer.token = T.t_comma;
                 },
                 ':' => {
-                    lexer.step();
+                    try lexer.step();
                     lexer.token = T.t_colon;
                 },
                 ';' => {
-                    lexer.step();
+                    try lexer.step();
                     lexer.token = T.t_semicolon;
                 },
                 '@' => {
-                    lexer.step();
+                    try lexer.step();
                     lexer.token = T.t_at;
                 },
                 '~' => {
-                    lexer.step();
+                    try lexer.step();
                     lexer.token = T.t_tilde;
                 },
                 '?' => {
                     // '?' or '?.' or '??' or '??='
-                    lexer.step();
+                    try lexer.step();
                     switch (lexer.code_point) {
                         '?' => {
-                            lexer.step();
+                            try lexer.step();
                             switch (lexer.code_point) {
                                 '=' => {
-                                    lexer.step();
+                                    try lexer.step();
                                     lexer.token = T.t_question_question_equals;
                                 },
                                 else => {
@@ -564,7 +571,7 @@ pub const Lexer = struct {
                             if (current < contents.len) {
                                 const c = contents[current];
                                 if (c < '0' or c > '9') {
-                                    lexer.step();
+                                    try lexer.step();
                                     lexer.token = T.t_question_dot;
                                 }
                             }
@@ -576,10 +583,10 @@ pub const Lexer = struct {
                 },
                 '%' => {
                     // '%' or '%='
-                    lexer.step();
+                    try lexer.step();
                     switch (lexer.code_point) {
                         '=' => {
-                            lexer.step();
+                            try lexer.step();
                             lexer.token = T.t_percent_equals;
                         },
 
@@ -591,18 +598,18 @@ pub const Lexer = struct {
 
                 '&' => {
                     // '&' or '&=' or '&&' or '&&='
-                    lexer.step();
+                    try lexer.step();
                     switch (lexer.code_point) {
                         '=' => {
-                            lexer.step();
+                            try lexer.step();
                             lexer.token = T.t_ampersand_equals;
                         },
 
                         '&' => {
-                            lexer.step();
+                            try lexer.step();
                             switch (lexer.code_point) {
                                 '=' => {
-                                    lexer.step();
+                                    try lexer.step();
                                     lexer.token = T.t_ampersand_ampersand_equals;
                                 },
 
@@ -620,17 +627,17 @@ pub const Lexer = struct {
                 '|' => {
 
                     // '|' or '|=' or '||' or '||='
-                    lexer.step();
+                    try lexer.step();
                     switch (lexer.code_point) {
                         '=' => {
-                            lexer.step();
+                            try lexer.step();
                             lexer.token = T.t_bar_equals;
                         },
                         '|' => {
-                            lexer.step();
+                            try lexer.step();
                             switch (lexer.code_point) {
                                 '=' => {
-                                    lexer.step();
+                                    try lexer.step();
                                     lexer.token = T.t_bar_bar_equals;
                                 },
 
@@ -647,10 +654,10 @@ pub const Lexer = struct {
 
                 '^' => {
                     // '^' or '^='
-                    lexer.step();
+                    try lexer.step();
                     switch (lexer.code_point) {
                         '=' => {
-                            lexer.step();
+                            try lexer.step();
                             lexer.token = T.t_caret_equals;
                         },
 
@@ -662,15 +669,15 @@ pub const Lexer = struct {
 
                 '+' => {
                     // '+' or '+=' or '++'
-                    lexer.step();
+                    try lexer.step();
                     switch (lexer.code_point) {
                         '=' => {
-                            lexer.step();
+                            try lexer.step();
                             lexer.token = T.t_plus_equals;
                         },
 
                         '+' => {
-                            lexer.step();
+                            try lexer.step();
                             lexer.token = T.t_plus_plus;
                         },
 
@@ -682,18 +689,18 @@ pub const Lexer = struct {
 
                 '-' => {
                     // '+' or '+=' or '++'
-                    lexer.step();
+                    try lexer.step();
                     switch (lexer.code_point) {
                         '=' => {
-                            lexer.step();
+                            try lexer.step();
                             lexer.token = T.t_minus_equals;
                         },
 
                         '-' => {
-                            lexer.step();
+                            try lexer.step();
 
                             if (lexer.code_point == '>' and lexer.has_newline_before) {
-                                lexer.step();
+                                try lexer.step();
                                 lexer.log.addRangeWarning(lexer.source, lexer.range(), "Treating \"-->\" as the start of a legacy HTML single-line comment") catch unreachable;
 
                                 singleLineHTMLCloseComment: while (true) {
@@ -706,7 +713,7 @@ pub const Lexer = struct {
                                         },
                                         else => {},
                                     }
-                                    lexer.step();
+                                    try lexer.step();
                                 }
                                 continue;
                             }
@@ -723,17 +730,17 @@ pub const Lexer = struct {
                 '*' => {
                     // '*' or '*=' or '**' or '**='
 
-                    lexer.step();
+                    try lexer.step();
                     switch (lexer.code_point) {
                         '=' => {
-                            lexer.step();
+                            try lexer.step();
                             lexer.token = .t_asterisk_equals;
                         },
                         '*' => {
-                            lexer.step();
+                            try lexer.step();
                             switch (lexer.code_point) {
                                 '=' => {
-                                    lexer.step();
+                                    try lexer.step();
                                     lexer.token = .t_asterisk_asterisk_equals;
                                 },
                                 else => {
@@ -748,7 +755,7 @@ pub const Lexer = struct {
                 },
                 '/' => {
                     // '/' or '/=' or '//' or '/* ... */'
-                    lexer.step();
+                    try lexer.step();
 
                     if (lexer.for_global_name) {
                         lexer.token = .t_slash;
@@ -756,13 +763,13 @@ pub const Lexer = struct {
                     }
                     switch (lexer.code_point) {
                         '=' => {
-                            lexer.step();
+                            try lexer.step();
                             lexer.token = .t_slash_equals;
                         },
                         '/' => {
-                            lexer.step();
+                            try lexer.step();
                             singleLineComment: while (true) {
-                                lexer.step();
+                                try lexer.step();
                                 switch (lexer.code_point) {
                                     '\r', '\n', 0x2028, 0x2029 => {
                                         break :singleLineComment;
@@ -776,7 +783,7 @@ pub const Lexer = struct {
 
                             if (lexer.json_options) |json| {
                                 if (!json.allow_comments) {
-                                    lexer.addRangeError(lexer.range(), "JSON does not support comments", .{}, true);
+                                    try lexer.addRangeError(lexer.range(), "JSON does not support comments", .{}, true);
                                     return;
                                 }
                             }
@@ -784,19 +791,19 @@ pub const Lexer = struct {
                             continue;
                         },
                         '*' => {
-                            lexer.step();
+                            try lexer.step();
 
                             multiLineComment: while (true) {
                                 switch (lexer.code_point) {
                                     '*' => {
-                                        lexer.step();
+                                        try lexer.step();
                                         if (lexer.code_point == '/') {
-                                            lexer.step();
+                                            try lexer.step();
                                             break :multiLineComment;
                                         }
                                     },
                                     '\r', '\n', 0x2028, 0x2029 => {
-                                        lexer.step();
+                                        try lexer.step();
                                         lexer.has_newline_before = true;
                                     },
                                     -1 => {
@@ -804,13 +811,13 @@ pub const Lexer = struct {
                                         lexer.addError(lexer.start, "Expected \"*/\" to terminate multi-line comment", .{}, true);
                                     },
                                     else => {
-                                        lexer.step();
+                                        try lexer.step();
                                     },
                                 }
                             }
                             if (lexer.json_options) |json| {
                                 if (!json.allow_comments) {
-                                    lexer.addRangeError(lexer.range(), "JSON does not support comments", .{}, true);
+                                    try lexer.addRangeError(lexer.range(), "JSON does not support comments", .{}, true);
                                     return;
                                 }
                             }
@@ -825,18 +832,18 @@ pub const Lexer = struct {
 
                 '=' => {
                     // '=' or '=>' or '==' or '==='
-                    lexer.step();
+                    try lexer.step();
                     switch (lexer.code_point) {
                         '>' => {
-                            lexer.step();
+                            try lexer.step();
                             lexer.token = T.t_equals_greater_than;
                         },
 
                         '=' => {
-                            lexer.step();
+                            try lexer.step();
                             switch (lexer.code_point) {
                                 '=' => {
-                                    lexer.step();
+                                    try lexer.step();
                                     lexer.token = T.t_equals_equals_equals;
                                 },
 
@@ -854,18 +861,18 @@ pub const Lexer = struct {
 
                 '<' => {
                     // '<' or '<<' or '<=' or '<<=' or '<!--'
-                    lexer.step();
+                    try lexer.step();
                     switch (lexer.code_point) {
                         '=' => {
-                            lexer.step();
+                            try lexer.step();
                             lexer.token = T.t_less_than_equals;
                         },
 
                         '<' => {
-                            lexer.step();
+                            try lexer.step();
                             switch (lexer.code_point) {
                                 '=' => {
-                                    lexer.step();
+                                    try lexer.step();
                                     lexer.token = T.t_less_than_less_than_equals;
                                 },
 
@@ -876,8 +883,8 @@ pub const Lexer = struct {
                         },
                         // Handle legacy HTML-style comments
                         '!' => {
-                            if (strings.eqlComptime(lexer.peek("--".len), "--")) {
-                                lexer.addUnsupportedSyntaxError("Legacy HTML comments not implemented yet!");
+                            if (strings.eqlComptime(try lexer.peek("--".len), "--")) {
+                                try lexer.addUnsupportedSyntaxError("Legacy HTML comments not implemented yet!");
                                 return;
                             }
 
@@ -892,25 +899,25 @@ pub const Lexer = struct {
 
                 '>' => {
                     // '>' or '>>' or '>>>' or '>=' or '>>=' or '>>>='
-                    lexer.step();
+                    try lexer.step();
 
                     switch (lexer.code_point) {
                         '=' => {
-                            lexer.step();
+                            try lexer.step();
                             lexer.token = T.t_greater_than_equals;
                         },
                         '>' => {
-                            lexer.step();
+                            try lexer.step();
                             switch (lexer.code_point) {
                                 '=' => {
-                                    lexer.step();
+                                    try lexer.step();
                                     lexer.token = T.t_greater_than_greater_than_equals;
                                 },
                                 '>' => {
-                                    lexer.step();
+                                    try lexer.step();
                                     switch (lexer.code_point) {
                                         '=' => {
-                                            lexer.step();
+                                            try lexer.step();
                                             lexer.token = T.t_greater_than_greater_than_greater_than_equals;
                                         },
                                         else => {
@@ -931,13 +938,13 @@ pub const Lexer = struct {
 
                 '!' => {
                     // '!' or '!=' or '!=='
-                    lexer.step();
+                    try lexer.step();
                     switch (lexer.code_point) {
                         '=' => {
-                            lexer.step();
+                            try lexer.step();
                             switch (lexer.code_point) {
                                 '=' => {
-                                    lexer.step();
+                                    try lexer.step();
                                     lexer.token = T.t_exclamation_equals_equals;
                                 },
 
@@ -953,17 +960,17 @@ pub const Lexer = struct {
                 },
 
                 '\'', '"', '`' => {
-                    lexer.parseStringLiteral();
+                    try lexer.parseStringLiteral();
                 },
 
                 '_', '$', 'a'...'z', 'A'...'Z' => {
-                    lexer.step();
+                    try lexer.step();
                     while (isIdentifierContinue(lexer.code_point)) {
-                        lexer.step();
+                        try lexer.step();
                     }
 
                     if (lexer.code_point == '\\') {
-                        lexer.scanIdentifierWithEscapes();
+                        try lexer.scanIdentifierWithEscapes();
                     } else {
                         const contents = lexer.raw();
                         lexer.identifier = contents;
@@ -973,24 +980,24 @@ pub const Lexer = struct {
 
                 '\\' => {
                     // TODO: normal
-                    lexer.scanIdentifierWithEscapes();
+                    try lexer.scanIdentifierWithEscapes();
                 },
 
                 '.', '0'...'9' => {
-                    lexer.parseNumericLiteralOrDot();
+                    try lexer.parseNumericLiteralOrDot();
                 },
 
                 else => {
                     // Check for unusual whitespace characters
                     if (isWhitespace(lexer.code_point)) {
-                        lexer.step();
+                        try lexer.step();
                         continue;
                     }
 
                     if (isIdentifierStart(lexer.code_point)) {
-                        lexer.step();
+                        try lexer.step();
                         while (isIdentifierContinue(lexer.code_point)) {
-                            lexer.step();
+                            try lexer.step();
                         }
                         if (lexer.code_point == '\\') {
 
@@ -1011,15 +1018,15 @@ pub const Lexer = struct {
         }
     }
 
-    pub fn expected(self: *LexerType, token: T) void {
+    pub fn expected(self: *LexerType, token: T) !void {
         if (tokenToString.get(token).len > 0) {
-            self.expectedString(tokenToString.get(token));
+            try self.expectedString(tokenToString.get(token));
         } else {
-            self.unexpected();
+            try self.unexpected();
         }
     }
 
-    pub fn unexpected(lexer: *LexerType) void {
+    pub fn unexpected(lexer: *LexerType) !void {
         const found = finder: {
             if (lexer.start == lexer.source.contents.len) {
                 break :finder "end of file";
@@ -1028,7 +1035,7 @@ pub const Lexer = struct {
             }
         };
 
-        lexer.addRangeError(lexer.range(), "Unexpected {s}", .{found}, true);
+        try lexer.addRangeError(lexer.range(), "Unexpected {s}", .{found}, true);
     }
 
     pub fn raw(self: *LexerType) []const u8 {
@@ -1039,7 +1046,7 @@ pub const Lexer = struct {
         return self.token == .t_identifier and strings.eqlComptime(self.raw(), keyword);
     }
 
-    pub fn expectedString(self: *LexerType, text: string) void {
+    pub fn expectedString(self: *LexerType, text: string) !void {
         const found = finder: {
             if (self.source.contents.len != self.start) {
                 break :finder self.raw();
@@ -1048,7 +1055,7 @@ pub const Lexer = struct {
             }
         };
 
-        self.addRangeError(self.range(), "Expected {s} but found {s}", .{ text, found }, true);
+        try self.addRangeError(self.range(), "Expected {s} but found {s}", .{ text, found }, true);
     }
 
     pub fn scanCommentText(lexer: *LexerType) void {
@@ -1100,8 +1107,8 @@ pub const Lexer = struct {
             .comments_to_preserve_before = std.ArrayList(js_ast.G.Comment).init(allocator),
             .for_global_name = true,
         };
-        lex.step();
-        lex.next();
+        try lex.step();
+        try lex.next();
 
         return lex;
     }
@@ -1122,8 +1129,8 @@ pub const Lexer = struct {
                 .allow_trailing_commas = true,
             },
         };
-        lex.step();
-        lex.next();
+        try lex.step();
+        try lex.next();
 
         return lex;
     }
@@ -1143,8 +1150,8 @@ pub const Lexer = struct {
                 .allow_trailing_commas = false,
             },
         };
-        lex.step();
-        lex.next();
+        try lex.step();
+        try lex.next();
 
         return lex;
     }
@@ -1161,37 +1168,37 @@ pub const Lexer = struct {
             .allocator = allocator,
             .comments_to_preserve_before = std.ArrayList(js_ast.G.Comment).init(allocator),
         };
-        lex.step();
-        lex.next();
+        try lex.step();
+        try lex.next();
 
         return lex;
     }
 
-    pub fn scanRegExp(lexer: *LexerType) void {
+    pub fn scanRegExp(lexer: *LexerType) !void {
         while (true) {
             switch (lexer.code_point) {
                 '/' => {
-                    lexer.step();
+                    try lexer.step();
                     while (isIdentifierContinue(lexer.code_point)) {
                         switch (lexer.code_point) {
                             'g', 'i', 'm', 's', 'u', 'y' => {
-                                lexer.step();
+                                try lexer.step();
                             },
                             else => {
-                                lexer.syntaxError();
+                                try lexer.syntaxError();
                             },
                         }
                     }
                 },
                 '[' => {
-                    lexer.step();
+                    try lexer.step();
                     while (lexer.code_point != ']') {
-                        lexer.scanRegExpValidateAndStep();
+                        try lexer.scanRegExpValidateAndStep();
                     }
-                    lexer.step();
+                    try lexer.step();
                 },
                 else => {
-                    lexer.scanRegExpValidateAndStep();
+                    try lexer.scanRegExpValidateAndStep();
                 },
             }
         }
@@ -1229,47 +1236,47 @@ pub const Lexer = struct {
                     lexer.token = .t_end_of_file;
                 },
                 '\r', '\n', 0x2028, 0x2029 => {
-                    lexer.step();
+                    try lexer.step();
                     lexer.has_newline_before = true;
                     continue;
                 },
                 '\t', ' ' => {
-                    lexer.step();
+                    try lexer.step();
                     continue;
                 },
                 '.' => {
-                    lexer.step();
+                    try lexer.step();
                     lexer.token = .t_dot;
                 },
                 '=' => {
-                    lexer.step();
+                    try lexer.step();
                     lexer.token = .t_equals;
                 },
                 '{' => {
-                    lexer.step();
+                    try lexer.step();
                     lexer.token = .t_open_brace;
                 },
                 '}' => {
-                    lexer.step();
+                    try lexer.step();
                     lexer.token = .t_close_brace;
                 },
                 '<' => {
-                    lexer.step();
+                    try lexer.step();
                     lexer.token = .t_less_than;
                 },
                 '>' => {
-                    lexer.step();
+                    try lexer.step();
                     lexer.token = .t_greater_than;
                 },
                 '/' => {
                     // '/' or '//' or '/* ... */'
 
-                    lexer.step();
+                    try lexer.step();
                     switch (lexer.code_point) {
                         '/' => {
                             single_line_comment: {
                                 while (true) {
-                                    lexer.step();
+                                    try lexer.step();
                                     switch (lexer.code_point) {
                                         '\r', '\n', 0x2028, 0x2029 => {
                                             break :single_line_comment;
@@ -1284,20 +1291,20 @@ pub const Lexer = struct {
                             }
                         },
                         '*' => {
-                            lexer.step();
+                            try lexer.step();
                             const start_range = lexer.range();
                             multi_line_comment: {
                                 while (true) {
                                     switch (lexer.code_point) {
                                         '*' => {
-                                            lexer.step();
+                                            try lexer.step();
                                             if (lexer.code_point == '/') {
-                                                lexer.step();
+                                                try lexer.step();
                                                 break :multi_line_comment;
                                             }
                                         },
                                         '\r', '\n', 0x2028, 0x2029 => {
-                                            lexer.step();
+                                            try lexer.step();
                                             lexer.has_newline_before = true;
                                         },
                                         -1 => {
@@ -1305,7 +1312,7 @@ pub const Lexer = struct {
                                             lexer.addError(lexer.start, "Expected \"*/\" to terminate multi-line comment", .{}, true);
                                         },
                                         else => {
-                                            lexer.step();
+                                            try lexer.step();
                                         },
                                     }
                                 }
@@ -1318,23 +1325,23 @@ pub const Lexer = struct {
                     }
                 },
                 '\'' => {
-                    lexer.step();
+                    try lexer.step();
                     try lexer.parseJSXStringLiteral('\'');
                 },
                 '"' => {
-                    lexer.step();
+                    try lexer.step();
                     try lexer.parseJSXStringLiteral('"');
                 },
                 else => {
                     if (isWhitespace(lexer.code_point)) {
-                        lexer.step();
+                        try lexer.step();
                         continue;
                     }
 
                     if (isIdentifierStart(lexer.code_point)) {
-                        lexer.step();
+                        try lexer.step();
                         while (isIdentifierContinue(lexer.code_point) or lexer.code_point == '-') {
-                            lexer.step();
+                            try lexer.step();
                         }
 
                         // Parse JSX namespaces. These are not supported by React or TypeScript
@@ -1342,11 +1349,11 @@ pub const Lexer = struct {
                         // them. A namespaced name is just always turned into a string so you
                         // can't use this feature to reference JavaScript identifiers.
                         if (lexer.code_point == ':') {
-                            lexer.step();
+                            try lexer.step();
 
                             if (isIdentifierStart(lexer.code_point)) {
                                 while (isIdentifierStart(lexer.code_point) or lexer.code_point == '-') {
-                                    lexer.step();
+                                    try lexer.step();
                                 }
                             } else {
                                 lexer.addError(lexer.range().endI(), "Expected identifier after \"{s}\" in namespaced JSX name", .{lexer.raw()}, true);
@@ -1373,17 +1380,17 @@ pub const Lexer = struct {
         string_literal: while (true) {
             switch (lexer.code_point) {
                 -1 => {
-                    lexer.syntaxError();
+                    try lexer.syntaxError();
                 },
                 '&' => {
                     needs_decode = true;
-                    lexer.step();
+                    try lexer.step();
                 },
                 '\\' => {
                     backslash = logger.Range{ .loc = logger.Loc{
                         .start = @intCast(i32, lexer.end),
                     }, .len = 1 };
-                    lexer.step();
+                    try lexer.step();
                     continue;
                 },
                 quote => {
@@ -1391,7 +1398,7 @@ pub const Lexer = struct {
                         backslash.len += 1;
                         lexer.previous_backslash_quote_in_jsx = backslash;
                     }
-                    lexer.step();
+                    try lexer.step();
                     // not sure about this!
                     break :string_literal;
                 },
@@ -1400,7 +1407,7 @@ pub const Lexer = struct {
                     if (lexer.code_point >= 0x80) {
                         needs_decode = true;
                     }
-                    lexer.step();
+                    try lexer.step();
                 },
             }
             backslash = logger.Range.None;
@@ -1421,7 +1428,7 @@ pub const Lexer = struct {
 
     pub fn expectJSXElementChild(lexer: *LexerType, token: T) !void {
         if (lexer.token != token) {
-            lexer.expected(token);
+            try lexer.expected(token);
         }
 
         try lexer.nextJSXElementChild();
@@ -1440,11 +1447,11 @@ pub const Lexer = struct {
                     lexer.token = .t_end_of_file;
                 },
                 '{' => {
-                    lexer.step();
+                    try lexer.step();
                     lexer.token = .t_open_brace;
                 },
                 '<' => {
-                    lexer.step();
+                    try lexer.step();
                     lexer.token = .t_less_than;
                 },
                 else => {
@@ -1453,11 +1460,11 @@ pub const Lexer = struct {
                     string_literal: while (true) {
                         switch (lexer.code_point) {
                             -1 => {
-                                lexer.syntaxError();
+                                try lexer.syntaxError();
                             },
                             '&', '\r', '\n', 0x2028, 0x2029 => {
                                 needs_fixing = true;
-                                lexer.step();
+                                try lexer.step();
                             },
                             '{', '<' => {
                                 break :string_literal;
@@ -1467,7 +1474,7 @@ pub const Lexer = struct {
                                 if (lexer.code_point >= 0x80) {
                                     needs_fixing = true;
                                 }
-                                lexer.step();
+                                try lexer.step();
                             },
                         }
                     }
@@ -1596,41 +1603,41 @@ pub const Lexer = struct {
     }
     pub fn expectInsideJSXElement(lexer: *LexerType, token: T) !void {
         if (lexer.token != token) {
-            lexer.expected(token);
+            try lexer.expected(token);
         }
 
         try lexer.nextInsideJSXElement();
     }
 
-    fn scanRegExpValidateAndStep(lexer: *LexerType) void {
+    fn scanRegExpValidateAndStep(lexer: *LexerType) !void {
         if (lexer.code_point == '\\') {
-            lexer.step();
+            try lexer.step();
         }
 
         switch (lexer.code_point) {
             '\r', '\n', 0x2028, 0x2029 => {
                 // Newlines aren't allowed in regular expressions
-                lexer.syntaxError();
+                try lexer.syntaxError();
             },
             -1 => { // EOF
-                lexer.syntaxError();
+                try lexer.syntaxError();
             },
             else => {
-                lexer.step();
+                try lexer.step();
             },
         }
     }
 
-    pub fn rescanCloseBraceAsTemplateToken(lexer: *LexerType) void {
+    pub fn rescanCloseBraceAsTemplateToken(lexer: *LexerType) !void {
         if (lexer.token != .t_close_brace) {
-            lexer.expected(.t_close_brace);
+            try lexer.expected(.t_close_brace);
         }
 
         lexer.rescan_close_brace_as_template_token = true;
         lexer.code_point = '`';
         lexer.current = lexer.end;
         lexer.end -= 1;
-        lexer.next();
+        try lexer.next();
         lexer.rescan_close_brace_as_template_token = false;
     }
 
@@ -1684,10 +1691,10 @@ pub const Lexer = struct {
         return bytes.toOwnedSliceLength(end + 1);
     }
 
-    fn parseNumericLiteralOrDot(lexer: *LexerType) void {
+    fn parseNumericLiteralOrDot(lexer: *LexerType) !void {
         // Number or dot;
         var first = lexer.code_point;
-        lexer.step();
+        try lexer.step();
 
         // Dot without a digit after it;
         if (first == '.' and (lexer.code_point < '0' or lexer.code_point > '9')) {
@@ -1696,8 +1703,8 @@ pub const Lexer = struct {
                 lexer.current < lexer.source.contents.len) and
                 lexer.source.contents[lexer.current] == '.')
             {
-                lexer.step();
-                lexer.step();
+                try lexer.step();
+                try lexer.step();
                 lexer.token = T.t_dot_dot_dot;
                 return;
             }
@@ -1745,7 +1752,7 @@ pub const Lexer = struct {
             var isInvalidLegacyOctalLiteral = false;
             lexer.number = 0;
             if (!lexer.is_legacy_octal_literal) {
-                lexer.step();
+                try lexer.step();
             }
 
             integerLiteral: while (true) {
@@ -1753,12 +1760,12 @@ pub const Lexer = struct {
                     '_' => {
                         // Cannot have multiple underscores in a row;
                         if (lastUnderscoreEnd > 0 and lexer.end == lastUnderscoreEnd + 1) {
-                            lexer.syntaxError();
+                            try lexer.syntaxError();
                         }
 
                         // The first digit must exist;
                         if (isFirst or lexer.is_legacy_octal_literal) {
-                            lexer.syntaxError();
+                            try lexer.syntaxError();
                         }
 
                         lastUnderscoreEnd = lexer.end;
@@ -1771,7 +1778,7 @@ pub const Lexer = struct {
 
                     '2', '3', '4', '5', '6', '7' => {
                         if (base == 2) {
-                            lexer.syntaxError();
+                            try lexer.syntaxError();
                         }
                         lexer.number = lexer.number * base + float64(lexer.code_point - '0');
                     },
@@ -1779,34 +1786,34 @@ pub const Lexer = struct {
                         if (lexer.is_legacy_octal_literal) {
                             isInvalidLegacyOctalLiteral = true;
                         } else if (base < 10) {
-                            lexer.syntaxError();
+                            try lexer.syntaxError();
                         }
                         lexer.number = lexer.number * base + float64(lexer.code_point - '0');
                     },
                     'A', 'B', 'C', 'D', 'E', 'F' => {
                         if (base != 16) {
-                            lexer.syntaxError();
+                            try lexer.syntaxError();
                         }
                         lexer.number = lexer.number * base + float64(lexer.code_point + 10 - 'A');
                     },
 
                     'a', 'b', 'c', 'd', 'e', 'f' => {
                         if (base != 16) {
-                            lexer.syntaxError();
+                            try lexer.syntaxError();
                         }
                         lexer.number = lexer.number * base + float64(lexer.code_point + 10 - 'a');
                     },
                     else => {
                         // The first digit must exist;
                         if (isFirst) {
-                            lexer.syntaxError();
+                            try lexer.syntaxError();
                         }
 
                         break :integerLiteral;
                     },
                 }
 
-                lexer.step();
+                try lexer.step();
                 isFirst = false;
             }
 
@@ -1818,7 +1825,7 @@ pub const Lexer = struct {
 
                 // Can't use a leading zero for bigint literals;
                 if (isBigIntegerLiteral and lexer.is_legacy_octal_literal) {
-                    lexer.syntaxError();
+                    try lexer.syntaxError();
                 }
 
                 // Filter out underscores;
@@ -1857,18 +1864,18 @@ pub const Lexer = struct {
 
                     // Cannot have multiple underscores in a row;
                     if (lastUnderscoreEnd > 0 and lexer.end == lastUnderscoreEnd + 1) {
-                        lexer.syntaxError();
+                        try lexer.syntaxError();
                     }
 
                     // The specification forbids underscores in this case;
                     if (isInvalidLegacyOctalLiteral) {
-                        lexer.syntaxError();
+                        try lexer.syntaxError();
                     }
 
                     lastUnderscoreEnd = lexer.end;
                     underscoreCount += 1;
                 }
-                lexer.step();
+                try lexer.step();
             }
 
             // Fractional digits;
@@ -1876,13 +1883,13 @@ pub const Lexer = struct {
                 // An underscore must not come last;
                 if (lastUnderscoreEnd > 0 and lexer.end == lastUnderscoreEnd + 1) {
                     lexer.end -= 1;
-                    lexer.syntaxError();
+                    try lexer.syntaxError();
                 }
 
                 hasDotOrExponent = true;
-                lexer.step();
+                try lexer.step();
                 if (lexer.code_point == '_') {
-                    lexer.syntaxError();
+                    try lexer.syntaxError();
                 }
                 while (true) {
                     if (lexer.code_point < '0' or lexer.code_point > '9') {
@@ -1892,13 +1899,13 @@ pub const Lexer = struct {
 
                         // Cannot have multiple underscores in a row;
                         if (lastUnderscoreEnd > 0 and lexer.end == lastUnderscoreEnd + 1) {
-                            lexer.syntaxError();
+                            try lexer.syntaxError();
                         }
 
                         lastUnderscoreEnd = lexer.end;
                         underscoreCount += 1;
                     }
-                    lexer.step();
+                    try lexer.step();
                 }
             }
 
@@ -1907,16 +1914,16 @@ pub const Lexer = struct {
                 // An underscore must not come last;
                 if (lastUnderscoreEnd > 0 and lexer.end == lastUnderscoreEnd + 1) {
                     lexer.end -= 1;
-                    lexer.syntaxError();
+                    try lexer.syntaxError();
                 }
 
                 hasDotOrExponent = true;
-                lexer.step();
+                try lexer.step();
                 if (lexer.code_point == '+' or lexer.code_point == '-') {
-                    lexer.step();
+                    try lexer.step();
                 }
                 if (lexer.code_point < '0' or lexer.code_point > '9') {
-                    lexer.syntaxError();
+                    try lexer.syntaxError();
                 }
                 while (true) {
                     if (lexer.code_point < '0' or lexer.code_point > '9') {
@@ -1926,13 +1933,13 @@ pub const Lexer = struct {
 
                         // Cannot have multiple underscores in a row;
                         if (lastUnderscoreEnd > 0 and lexer.end == lastUnderscoreEnd + 1) {
-                            lexer.syntaxError();
+                            try lexer.syntaxError();
                         }
 
                         lastUnderscoreEnd = lexer.end;
                         underscoreCount += 1;
                     }
-                    lexer.step();
+                    try lexer.step();
                 }
             }
 
@@ -1959,7 +1966,7 @@ pub const Lexer = struct {
             if (lexer.code_point == 'n' and !hasDotOrExponent) {
                 // The only bigint literal that can start with 0 is "0n"
                 if (text.len > 1 and first == '0') {
-                    lexer.syntaxError();
+                    try lexer.syntaxError();
                 }
 
                 // Store bigints as text to avoid precision loss;
@@ -1984,18 +1991,18 @@ pub const Lexer = struct {
         // An underscore must not come last;
         if (lastUnderscoreEnd > 0 and lexer.end == lastUnderscoreEnd + 1) {
             lexer.end -= 1;
-            lexer.syntaxError();
+            try lexer.syntaxError();
         }
 
         // Handle bigint literals after the underscore-at-end check above;
         if (lexer.code_point == 'n' and !hasDotOrExponent) {
             lexer.token = T.t_big_integer_literal;
-            lexer.step();
+            try lexer.step();
         }
 
         // Identifiers can't occur immediately after numbers;
         if (isIdentifierStart(lexer.code_point)) {
-            lexer.syntaxError();
+            try lexer.syntaxError();
         }
     }
 };
@@ -2163,7 +2170,7 @@ fn test_lexer(contents: []const u8) Lexer {
 
 //     const source = logger.Source.initPathString("index.js", "for (let i = 0; i < 100; i++) { console.log('hi'); }", std.heap.page_allocator);
 //     var lex = try LexerType.init(log, source, alloc.dynamic);
-//     lex.next();
+//    try  lex.next();
 // }
 
 fn expectStr(lexer: *Lexer, expected: string, actual: string) void {
@@ -2183,27 +2190,27 @@ fn expectStr(lexer: *Lexer, expected: string, actual: string) void {
 test "Lexer.next() simple" {
     var lex = test_lexer("for (let i = 0; i < 100; i++) { }");
     expectStr(&lex, "\"for\"", tokenToString.get(lex.token));
-    lex.next();
+    try lex.next();
     expectStr(&lex, "\"(\"", tokenToString.get(lex.token));
-    lex.next();
+    try lex.next();
     expectStr(&lex, "let", lex.raw());
-    lex.next();
+    try lex.next();
     expectStr(&lex, "i", lex.raw());
-    lex.next();
+    try lex.next();
     expectStr(&lex, "=", lex.raw());
-    lex.next();
+    try lex.next();
     expectStr(&lex, "0", lex.raw());
-    lex.next();
+    try lex.next();
     expectStr(&lex, ";", lex.raw());
-    lex.next();
+    try lex.next();
     expectStr(&lex, "i", lex.raw());
-    lex.next();
+    try lex.next();
     std.testing.expect(lex.number == 0.0);
     expectStr(&lex, "<", lex.raw());
-    lex.next();
+    try lex.next();
     std.testing.expect(lex.number == 100.0);
     expectStr(&lex, "100", lex.raw());
-    lex.next();
+    try lex.next();
 }
 
 pub fn test_stringLiteralEquals(expected: string, source_text: string) void {
@@ -2221,7 +2228,7 @@ pub fn test_stringLiteralEquals(expected: string, source_text: string) void {
 
     var lex = try Lexer.init(&log, &source, std.heap.page_allocator);
     while (!lex.token.isString() and lex.token != .t_end_of_file) {
-        lex.next();
+        try lex.next();
     }
 
     var lit = std.unicode.utf16leToUtf8Alloc(std.heap.page_allocator, lex.string_literal) catch unreachable;

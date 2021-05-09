@@ -36,7 +36,7 @@ pub fn build(b: *std.build.Builder) void {
         // exe.is_linking_libc = false;
         // exe.is_dynamic = true;
         var lib = b.addExecutable("esdev", "src/main_wasm.zig");
-
+        lib.single_threaded = true;
         // exe.want_lto = true;
         // exe.linkLibrary(lib);
 

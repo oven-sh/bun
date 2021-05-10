@@ -1380,6 +1380,35 @@ pub const Expr = struct {
     loc: logger.Loc,
     data: Data,
 
+    pub const Query = struct { expr: Expr, loc: logger.Loc };
+
+    pub fn getProperty(expr: *Expr, name: string) ?Query {
+        const obj: *E.Object = expr.data.e_object orelse return null;
+
+        for (obj.properties) |prop| {
+            const value = prop.value orelse continue;
+            const key = prop.key orelse continue;
+            const key_str: *E.String = key.data.e_string orelse continue;
+            if (key_str.eql(string, name)) {
+                return Query{ .expr = value, .loc = key.loc };
+            }
+        }
+
+        return null;
+    }
+
+    pub fn getString(expr: *Expr, allocator: *std.mem.Allocator) !?string {
+        const key_str: *E.String = expr.data.e_string orelse return null;
+
+        return if (key_str.isUTF8()) key_str.value else key_str.string(allocator);
+    }
+
+    pub fn getBool(expr: *Expr, allocator: *std.mem.Allocator) ?bool {
+        const obj: *E.Boolean = expr.data.e_boolean orelse return null;
+
+        return obj.value;
+    }
+
     pub const EFlags = enum { none, ts_decorator };
 
     const Serializable = struct {

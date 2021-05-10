@@ -11,7 +11,6 @@ pub const Bundler = struct {
 
     pub fn init(options: options.TransformOptions, allocator: *std.mem.Allocator) Bundler {
         var log = logger.Log.init(allocator);
-
         return Bundler{
             .options = options,
             .allocator = allocator,

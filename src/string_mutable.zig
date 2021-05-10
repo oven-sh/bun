@@ -14,6 +14,10 @@ pub const MutableString = struct {
         };
     }
 
+    pub fn deinit(str: *MutableString) void {
+        str.list.deinit(str.allocator);
+    }
+
     pub fn growIfNeeded(self: *MutableString, amount: usize) !void {
         try self.list.ensureUnusedCapacity(self.allocator, amount);
     }

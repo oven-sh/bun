@@ -7,6 +7,51 @@ usingnamespace @import("global.zig");
 
 const assert = std.debug.assert;
 
+pub const Platform = enum {
+    node,
+    browser,
+    neutral,
+
+    const MAIN_FIELD_NAMES = [_]string{ "browser", "module", "main" };
+    pub const DefaultMainFields: std.EnumArray(Platform, []string) = comptime {
+        var array = std.EnumArray(Platform, []string);
+
+        // Note that this means if a package specifies "module" and "main", the ES6
+        // module will not be selected. This means tree shaking will not work when
+        // targeting node environments.
+        //
+        // This is unfortunately necessary for compatibility. Some packages
+        // incorrectly treat the "module" field as "code for the browser". It
+        // actually means "code for ES6 environments" which includes both node
+        // and the browser.
+        //
+        // For example, the package "@firebase/app" prints a warning on startup about
+        // the bundler incorrectly using code meant for the browser if the bundler
+        // selects the "module" field instead of the "main" field.
+        //
+        // If you want to enable tree shaking when targeting node, you will have to
+        // configure the main fields to be "module" and then "main". Keep in mind
+        // that some packages may break if you do this.
+        array.set(Platform.node, &([_]string{ MAIN_FIELD_NAMES[1], MAIN_FIELD_NAMES[2] }));
+
+        // Note that this means if a package specifies "main", "module", and
+        // "browser" then "browser" will win out over "module". This is the
+        // same behavior as webpack: https://github.com/webpack/webpack/issues/4674.
+        //
+        // This is deliberate because the presence of the "browser" field is a
+        // good signal that the "module" field may have non-browser stuff in it,
+        // which will crash or fail to be bundled when targeting the browser.
+        array.set(Platform.browser, &([_]string{ MAIN_FIELD_NAMES[0], MAIN_FIELD_NAMES[1], MAIN_FIELD_NAMES[2] }));
+
+        // The neutral platform is for people that don't want esbuild to try to
+        // pick good defaults for their platform. In that case, the list of main
+        // fields is empty by default. You must explicitly configure it yourself.
+        array.set(Platform.neutral, &([_]string{}));
+
+        return array;
+    };
+};
+
 pub const Loader = enum {
     jsx,
     js,
@@ -28,6 +73,17 @@ pub const defaultLoaders = std.ComptimeStringMap(Loader, .{
 });
 
 pub const JSX = struct {
+    pub const Pragma = struct {
+        factory: string = "React.createElement",
+        fragment: string = "React.Fragment",
+        runtime: JSX.Runtime = JSX.Runtime.automatic,
+
+        /// Facilitates automatic JSX importing
+        /// Set on a per file basis like this:
+        /// /** @jsxImportSource @emotion/core */
+        import_source: string = "react",
+    };
+
     parse: bool = true,
     factory: string = "createElement",
     fragment: string = "Fragment",

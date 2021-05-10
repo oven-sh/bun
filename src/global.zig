@@ -1,7 +1,20 @@
 const std = @import("std");
 pub usingnamespace @import("strings.zig");
 
-pub const isWasm = comptime std.Target.current.isWasm();
+pub const BuildTarget = enum { native, wasm, wasi };
+pub const build_target: BuildTarget = comptime {
+    if (std.Target.current.isWasm() and std.Target.current.getOsTag() == .wasi) {
+        return BuildTarget.wasi;
+    } else if (std.Target.current.isWasm()) {
+        return BuildTarget.wasm;
+    } else {
+        return BuildTarget.native;
+    }
+};
+
+pub const isWasm = build_target == .wasm;
+pub const isNative = build_target == .native;
+pub const isWasi = build_target == .wasi;
 
 pub const Output = struct {
     var source: *Source = undefined;

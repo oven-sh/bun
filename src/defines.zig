@@ -24,7 +24,7 @@ const Globals = struct {
     pub const InfinityData = js_ast.Expr.Data{ .e_number = Globals.InfinityPtr };
 };
 
-const defines_path = fs.Path.init("/tmp/internal/defines.json");
+const defines_path = fs.Path.initWithNamespace("defines.json", "internal");
 pub const RawDefines = std.StringHashMap(string);
 pub const UserDefines = std.StringHashMap(DefineData);
 
@@ -96,7 +96,12 @@ pub const DefineData = struct {
                 continue;
             }
             var _log = log;
-            var source = logger.Source{ .contents = entry.value, .path = defines_path, .identifier_name = "" };
+            var source = logger.Source{
+                .contents = entry.value,
+                .path = defines_path,
+                .identifier_name = "defines",
+                .key_path = fs.Path.initWithNamespace("defines", "internal"),
+            };
             var expr = try json_parser.ParseJSON(&source, _log, allocator);
             var data: js_ast.Expr.Data = undefined;
             switch (expr.data) {

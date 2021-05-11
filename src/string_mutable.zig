@@ -106,9 +106,6 @@ pub const MutableString = struct {
         try self.list.ensureUnusedCapacity(self.allocator, amount);
     }
 
-    pub fn deinit(self: *MutableString) !void {
-        self.list.deinit(self.allocator);
-    }
     pub fn appendChar(self: *MutableString, char: u8) callconv(.Inline) !void {
         try self.list.append(self.allocator, char);
     }

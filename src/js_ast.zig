@@ -1403,7 +1403,9 @@ pub const Expr = struct {
         return if (key_str.isUTF8()) key_str.value else key_str.string(allocator);
     }
 
-    pub fn getBool(expr: *Expr, allocator: *std.mem.Allocator) ?bool {
+    pub fn getBool(
+        expr: *Expr,
+    ) ?bool {
         const obj: *E.Boolean = expr.data.e_boolean orelse return null;
 
         return obj.value;

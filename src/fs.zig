@@ -6,6 +6,8 @@ const alloc = @import("alloc.zig");
 const expect = std.testing.expect;
 const Mutex = std.Thread.Mutex;
 
+const resolvePath = @import("./resolver/resolve_path.zig").resolvePath;
+
 // pub const FilesystemImplementation = @import("fs_impl.zig");
 
 //
@@ -414,16 +416,15 @@ pub const FileSystem = struct {
             return err;
         }
 
-        pub fn readFile(fs: *RealFS, path: string) !File {
+        pub fn readFile(fs: *RealFS, path: string, _size: ?usize) !File {
             fs.limiter.before();
             defer fs.limiter.after();
 
             const file: std.fs.File = std.fs.openFileAbsolute(path, std.fs.File.OpenFlags{ .read = true, .write = false }) catch |err| return fs.readFileError(path, err);
             defer file.close();
 
-            // return self.readFileAllocOptions(allocator, file_path, max_bytes, null, @alignOf(u8), null);
-            // TODO: this causes an extra call to .stat, do it manually and cache the results ourself.
-            const size = try file.getEndPos() catch |err| return fs.readFileError(path, err);
+            // Skip the extra file.stat() call when possible
+            const size = _size orelse (try file.getEndPos() catch |err| return fs.readFileError(path, err));
             const file_contents: []u8 = file.readToEndAllocOptions(fs.allocator, size, size, @alignOf(u8), null) catch |err| return fs.readFileError(path, err);
 
             if (fs.watcher) |watcher| {
@@ -596,19 +597,33 @@ pub const PathName = struct {
     }
 };
 
+threadlocal var normalize_buf: [1024]u8 = undefined;
+
 pub const Path = struct {
     pretty: string,
     text: string,
-    namespace: string,
+    namespace: string = "unspecified",
     name: PathName,
 
-    // TODO:
-    pub fn normalize(str: string) string {
+    pub fn generateKey(p: *Path, allocator: *std.mem.Allocator) !string {
+        return try std.fmt.allocPrint(allocator, "{s}://{s}", .{ p.namespace, p.text });
+    }
+
+    // for now, assume you won't try to normalize a path longer than 1024 chars
+    pub fn normalize(str: string, allocator: *std.mem.Allocator) string {
+        if (str.len == 0 or (str.len == 1 and str[0] == ' ')) return ".";
+        if (resolvePath(normalize_buf, str)) |out| {
+            return allocator.dupe(u8, out) catch unreachable;
+        }
         return str;
     }
 
     pub fn init(text: string) Path {
         return Path{ .pretty = text, .text = text, .namespace = "file", .name = PathName.init(text) };
+    }
+
+    pub fn initWithNamespace(text: string, namespace: string) Path {
+        return Path{ .pretty = text, .text = text, .namespace = namespace, .name = PathName.init(text) };
     }
 
     pub fn isBefore(a: *Path, b: Path) bool {

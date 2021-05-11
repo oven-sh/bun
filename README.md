@@ -1,4 +1,4 @@
-# esdev
+# Speedy
 
 Incredibly fast ECMAScript & TypeScript bundler designed for development.
 
@@ -8,7 +8,7 @@ JavaScript bundlers run very slow in web browsers.
 
 ## Purpose
 
-The purpose of esdev is to very quickly convert ECMAScript/TypeScript into something a web browser can execute.
+The purpose of Speedy is to very quickly convert ECMAScript/TypeScript into something a web browser can execute.
 
 Goals:
 
@@ -59,33 +59,33 @@ There's a number of reasons for this:
 
 #### Different constraints enable performance improvements
 
-If bundler means "merge N source files into 1 or few source file(s)", esdev is most definitely not a bundler. Unlike most bundlers today, esdev deliberately outputs
+If bundler means "merge N source files into 1 or few source file(s)", Speedy is most definitely not a bundler. Unlike most bundlers today, Speedy deliberately outputs
 
 If bundler means "turn my development code into something a browser can run",
 
 ### Compatibility Table
 
-| Feature                              | esbuild | esdev |
-| ------------------------------------ | ------- | ----- |
-| JSX (transform)                      | ✅      | ✅    |
-| TypeScript (transform)               | ✅      | ⌛    |
-| React Fast Refresh                   | ❌      | ⌛    |
-| Hot Module Reloading                 | ❌      | ⌛    |
-| Minification                         | ✅      | ❌    |
-| Tree Shaking                         | ✅      | ⌛    |
-| Incremental builds                   | ✅      | ⌛    |
-| CSS                                  | ✅      | 🗓️    |
-| Expose CSS dependencies per file     | ✅      | 🗓️    |
-| CommonJS, IIFE, UMD outputs          | ✅      | ❌    |
-| Node.js build target                 | ✅      | ❌    |
-| Code Splitting                       | ✅      | ⌛    |
-| Browser build target                 | ✅      | ⌛    |
-| Bundling for production              | ✅      | ❌    |
-| Support older browsers               | ✅      | ❌    |
-| Plugins                              | ✅      | 🗓️    |
-| AST Plugins                          | ❌      | ❌    |
-| Filesystem Cache API (for plugins)   | ❓      | 🗓️    |
-| Transform to ESM with `bundle` false | ❓      | ⌛    |
+| Feature                              | Speedy |
+| ------------------------------------ | ------ |
+| JSX (transform)                      | ✅     |
+| TypeScript (transform)               | ⌛     |
+| React Fast Refresh                   | ⌛     |
+| Hot Module Reloading                 | ⌛     |
+| Minification                         | ❌     |
+| Tree Shaking                         | ⌛     |
+| Incremental builds                   | ⌛     |
+| CSS                                  | 🗓️     |
+| Expose CSS dependencies per file     | 🗓️     |
+| CommonJS, IIFE, UMD outputs          | ❌     |
+| Node.js build target                 | ❌     |
+| Code Splitting                       | ⌛     |
+| Browser build target                 | ⌛     |
+| Bundling for production              | ❌     |
+| Support older browsers               | ❌     |
+| Plugins                              | 🗓️     |
+| AST Plugins                          | ❌     |
+| Filesystem Cache API (for plugins)   | 🗓️     |
+| Transform to ESM with `bundle` false | ⌛     |
 
 Key:
 
@@ -97,19 +97,29 @@ Key:
 | 🗓️  | Planned but work has not started           |
 | ❓  | Unknown                                    |
 
+### Compatibility Table (more info)
+
+| Feature                          | Speedy |
+| -------------------------------- | ------ |
+| `browser` in `package.json`      | ⌛     |
+| main fields in `package.json`    | ⌛     |
+| `exports` map in `package.json`  | 🗓️     |
+| `side_effects` in `package.json` | 🗓️     |
+| `extends` in `tsconfig.json`     | 🗓️     |
+
 #### Notes
 
 ##### Hot Module Reloading & React Fast Refresh
 
-esdev exposes a runtime API to support Hot Module Reloading and React Fast Refresh. React Fast Refresh depends on Hot Module Reloading to work, but you can turn either of them off. esdev itself doesn't serve bundled files, it's up to the development server to provide that.
+Speedy exposes a runtime API to support Hot Module Reloading and React Fast Refresh. React Fast Refresh depends on Hot Module Reloading to work, but you can turn either of them off. Speedy itself doesn't serve bundled files, it's up to the development server to provide that.
 
 ##### Code Splitting
 
-esdev supports code splitting the way browsers do natively: through ES Modules. This works great for local development files. It doesn't work great for node_modules or for production due to the sheer number of network requests. There are plans to make this better, stay tuned.
+Speedy supports code splitting the way browsers do natively: through ES Modules. This works great for local development files. It doesn't work great for node_modules or for production due to the sheer number of network requests. There are plans to make this better, stay tuned.
 
 ##### Support older browsers
 
-To simplify the parser, esdev doesn't support lowering features to non-current browsers. This means if you run a development build with esdev with, for example, optional chaining, it won't work in Internet Explorer 11. If you want to support older browsers, use a different tool.
+To simplify the parser, Speedy doesn't support lowering features to non-current browsers. This means if you run a development build with Speedy with, for example, optional chaining, it won't work in Internet Explorer 11. If you want to support older browsers, use a different tool.
 
 #### Implementation Notes
 
@@ -162,6 +172,6 @@ There are two ways to update references:
 
 Either approach works.
 
-###### How it's implemented in esdev
+###### How it's implemented in Speedy
 
 TODO: doc

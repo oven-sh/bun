@@ -4,7 +4,15 @@ const logger = @import("../logger.zig");
 const options = @import("../options.zig");
 const fs = @import("../fs.zig");
 const std = @import("std");
+const cache = @import("../cache.zig");
 
+const TSConfigJSON = @import("./tsconfig_json.zig").TSConfigJSON;
+const PackageJSON = @import("./package_json.zig").PackageJSON;
+usingnamespace @import("./data_url.zig");
+
+const StringBoolMap = std.StringHashMap(bool);
+
+const Path = fs.Path;
 pub const SideEffectsData = struct {
     source: *logger.Source,
     range: logger.Range,
@@ -39,11 +47,13 @@ pub const Resolver = struct {
 
     debug_logs: ?DebugLogs = null,
 
+    caches: cache.Cache.Set,
+
     // These are sets that represent various conditions for the "exports" field
     // in package.json.
-    esm_conditions_default: std.StringHashMap(bool),
-    esm_conditions_import: std.StringHashMap(bool),
-    esm_conditions_require: std.StringHashMap(bool),
+    // esm_conditions_default: std.StringHashMap(bool),
+    // esm_conditions_import: std.StringHashMap(bool),
+    // esm_conditions_require: std.StringHashMap(bool),
 
     // A special filtered import order for CSS "@import" imports.
     //
@@ -88,6 +98,8 @@ pub const Resolver = struct {
         indent: MutableString,
         notes: std.ArrayList(logger.Data),
 
+        pub const FlushMode = enum { fail, success };
+
         pub fn init(allocator: *std.mem.Allocator) DebugLogs {
             return .{
                 .indent = MutableString.init(allocator, 0),
@@ -121,11 +133,15 @@ pub const Resolver = struct {
 
             try d.notes.append(logger.rangeData(null, logger.Range.None, text));
         }
+
+        pub fn addNoteFmt(d: *DebugLogs, comptime fmt: string, args: anytype) !void {
+            return try d.addNote(try std.fmt.allocPrint(d.notes.allocator, fmt, args));
+        }
     };
 
     pub const PathPair = struct {
-        primary: logger.Path,
-        secondary: ?logger.Path = null,
+        primary: Path,
+        secondary: ?Path = null,
     };
 
     pub const Result = struct {
@@ -133,18 +149,253 @@ pub const Resolver = struct {
 
         jsx: options.JSX.Pragma = options.JSX.Pragma{},
 
-        // plugin_data: void
+        is_external: bool = false,
+
+        different_case: ?fs.FileSystem.Entry.Lookup.DifferentCase = null,
+
+        // If present, any ES6 imports to this file can be considered to have no side
+        // effects. This means they should be removed if unused.
+        primary_side_effects_data: ?SideEffectsData = null,
+
+        // If true, the class field transform should use Object.defineProperty().
+        use_define_for_class_fields_ts: ?bool = null,
+
+        // If true, unused imports are retained in TypeScript code. This matches the
+        // behavior of the "importsNotUsedAsValues" field in "tsconfig.json" when the
+        // value is not "remove".
+        preserve_unused_imports_ts: bool = false,
+
+        // This is the "type" field from "package.json"
+        module_type: options.ModuleType,
+
+        debug_meta: ?DebugMeta = null,
+
+        pub const DebugMeta = struct {
+            notes: std.ArrayList(logger.Data),
+            suggestion_text: string = "",
+            suggestion_message: string = "",
+
+            pub fn init(allocator: *std.mem.Allocator) DebugMeta {
+                return DebugMeta{ .notes = std.ArrayList(logger.Data).init(allocator) };
+            }
+
+            pub fn logErrorMsg(m: *DebugMeta, log: *logger.Log, _source: ?*const logger.Source, r: logger.Range, comptime fmt: string, args: anytype) !void {
+                if (_source != null and m.suggestion_message.len > 0) {
+                    const data = logger.rangeData(_source.?, r, m.suggestion_message);
+                    data.location.?.suggestion = m.suggestion_text;
+                    try m.notes.append(data);
+                }
+
+                try log.addMsg(Msg{
+                    .kind = .err,
+                    .data = logger.rangeData(_source, r, std.fmt.allocPrint(m.notes.allocator, fmt, args)),
+                    .notes = m.toOwnedSlice(),
+                });
+            }
+        };
     };
 
-    pub fn resolve(r: *Resolver, source_dir: string, import_path: string, kind: ast.ImportKind) Result {}
+    pub fn isExternalPattern(r: *Resolver, import_path: string) bool {
+        Global.notimpl();
+    }
 
-    fn dirInfoCached(r: *Resolver, path: string) !*DirInfo {
-        // First, check the cache
-        if (r.dir_cache.get(path)) |dir| {
-            return dir;
+    pub fn flushDebugLogs(r: *Resolver, flush_mode: DebugLogs.FlushMode) !void {
+        if (r.debug_logs) |debug| {
+            defer {
+                debug.deinit();
+                r.debug_logs = null;
+            }
+
+            if (mode == .failure) {
+                try r.log.addRangeDebugWithNotes(null, .empty, debug.what, debug.notes.toOwnedSlice());
+            } else if (@enumToInt(r.log.level) <= @enumToInt(logger.Log.Level.verbose)) {
+                try r.log.addVerboseWithNotes(null, .empty, debug.what, debug.notes.toOwnedSlice());
+            }
+        }
+    }
+
+    pub fn resolve(r: *Resolver, source_dir: string, import_path: string, kind: ast.ImportKind) !?Result {
+        if (r.log.level == .verbose) {
+            if (r.debug_logs != null) {
+                r.debug_logs.?.deinit();
+            }
+
+            r.debug_logs = DebugLogs.init(r.allocator);
         }
 
-        const info = try r.dirInfoUncached(path);
+        // Certain types of URLs default to being external for convenience
+        if (r.isExternalPattern(import_path) or
+            // "fill: url(#filter);"
+            (kind.isFromCSS() and strings.startsWith(import_path, "#")) or
+
+            // "background: url(http://example.com/images/image.png);"
+            strings.startsWith(import_path, "http://") or
+
+            // "background: url(https://example.com/images/image.png);"
+            strings.startsWith(import_path, "https://") or
+
+            // "background: url(//example.com/images/image.png);"
+            strings.startsWith(import_path, "//"))
+        {
+            if (r.debug_logs) |debug| {
+                try debug.addNote("Marking this path as implicitly external");
+            }
+            r.flushDebugLogs(.success) catch {};
+            return Result{ .path_pair = PathPair{
+                .primary = Path{ .text = import_path },
+                .is_external = true,
+            } };
+        }
+
+        if (DataURL.parse(import_path) catch null) |_data_url| {
+            const data_url: DataURL = _data_url;
+            // "import 'data:text/javascript,console.log(123)';"
+            // "@import 'data:text/css,body{background:white}';"
+            if (data_url.decode_mime_type() != .Unsupported) {
+                if (r.debug_logs) |debug| {
+                    debug.addNote("Putting this path in the \"dataurl\" namespace") catch {};
+                }
+                r.flushDebugLogs(.success) catch {};
+                return Resolver.Result{ .path_pair = PathPair{ .primary = Path{ .text = import_path, .namespace = "dataurl" } } };
+            }
+
+            // "background: url(data:image/png;base64,iVBORw0KGgo=);"
+            if (r.debug_logs) |debug| {
+                debug.addNote("Marking this \"dataurl\" as external") catch {};
+            }
+            r.flushDebugLogs(.success) catch {};
+            return Resolver.Result{
+                .path_pair = PathPair{ .primary = Path{ .text = import_path, .namespace = "dataurl" } },
+                .is_external = true,
+            };
+        }
+
+        // Fail now if there is no directory to resolve in. This can happen for
+        // virtual modules (e.g. stdin) if a resolve directory is not specified.
+        if (source_dir.len == 0) {
+            if (r.debug_logs) |debug| {
+                debug.addNote("Cannot resolve this path without a directory") catch {};
+            }
+            r.flushDebugLogs(.fail) catch {};
+            return null;
+        }
+
+        const hold = r.mutex.acquire();
+        defer hold.release();
+    }
+
+    pub fn resolveWithoutSymlinks(r: *Resolver, source_dir: string, import_path: string, kind: ast.ImportKind) !Result {
+        // This implements the module resolution algorithm from node.js, which is
+        // described here: https://nodejs.org/api/modules.html#modules_all_together
+        var result: Result = undefined;
+
+        // Return early if this is already an absolute path. In addition to asking
+        // the file system whether this is an absolute path, we also explicitly check
+        // whether it starts with a "/" and consider that an absolute path too. This
+        // is because relative paths can technically start with a "/" on Windows
+        // because it's not an absolute path on Windows. Then people might write code
+        // with imports that start with a "/" that works fine on Windows only to
+        // experience unexpected build failures later on other operating systems.
+        // Treating these paths as absolute paths on all platforms means Windows
+        // users will not be able to accidentally make use of these paths.
+        if (striongs.startsWith(import_path, "/") or std.fs.path.isAbsolutePosix(import_path)) {
+            if (r.debug_logs) |debug| {
+                debug.addNoteFmt("The import \"{s}\" is being treated as an absolute path", .{import_path}) catch {};
+            }
+
+            // First, check path overrides from the nearest enclosing TypeScript "tsconfig.json" file
+            if (try r.dirInfoCached(source_dir)) |_dir_info| {
+                const dir_info: *DirInfo = _dir_info;
+                if (dir_info.ts_config_json) |tsconfig| {
+                    if (tsconfig.paths.size() > 0) {}
+                }
+            }
+        }
+    }
+
+    pub const TSConfigExtender = struct {
+        visited: *StringBoolMap,
+        file_dir: string,
+        r: *Resolver,
+
+        pub fn extends(ctx: *TSConfigExtender, extends: String, range: logger.Range) ?*TSConfigJSON {
+            Global.notimpl();
+            // if (isPackagePath(extends)) {
+            //     // // If this is a package path, try to resolve it to a "node_modules"
+            //     // // folder. This doesn't use the normal node module resolution algorithm
+            //     // // both because it's different (e.g. we don't want to match a directory)
+            //     // // and because it would deadlock since we're currently in the middle of
+            //     // // populating the directory info cache.
+            //     // var current = ctx.file_dir;
+            //     // while (true) {
+            //     //     // Skip "node_modules" folders
+            //     //     if (!strings.eql(std.fs.path.basename(current), "node_modules")) {
+            //     //         var paths1 = [_]string{ current, "node_modules", extends };
+            //     //         var join1 = std.fs.path.join(ctx.r.allocator, &paths1) catch unreachable;
+            //     //         const res = ctx.r.parseTSConfig(join1, ctx.visited) catch |err| {
+            //     //             if (err == error.ENOENT) {
+            //     //                 continue;
+            //     //             } else if (err == error.ParseErrorImportCycle) {} else if (err != error.ParseErrorAlreadyLogged) {}
+            //     //             return null;
+            //     //         };
+            //     //         return res;
+
+            //     //     }
+            //     // }
+            // }
+        }
+    };
+
+    pub fn parseTSConfig(r: *Resolver, file: string, visited: *StringBoolMap) !?*TSConfigJSON {
+        if (visited.contains(file)) {
+            return error.ParseErrorImportCycle;
+        }
+        visited.put(file, true) catch unreachable;
+        const entry = try r.caches.fs.readFile(r.fs, file);
+        const key_path = Path.init(file);
+
+        const source = logger.Source{
+            .key_path = key_path,
+            .pretty_path = r.prettyPath(key_path),
+            .contents = entry.contents,
+        };
+        const file_dir = std.fs.path.dirname(file);
+
+        var result = try TSConfigJSON.parse(r.allocator, r.log, r.opts, r.caches.json) orelse return null;
+
+        if (result.base_url) |base| {
+            // this might leak
+            if (!std.fs.path.isAbsolute(base)) {
+                var paths = [_]string{ file_dir, base };
+                result.base_url = std.fs.path.join(r.allocator, paths) catch unreachable;
+            }
+        }
+
+        if (result.paths.count() > 0 and (result.base_url_for_paths.len == 0 or !std.fs.path.isAbsolute(result.base_url_for_paths))) {
+            // this might leak
+            var paths = [_]string{ file_dir, base };
+            result.base_url_for_paths = std.fs.path.join(r.allocator, paths) catch unreachable;
+        }
+
+        return result;
+    }
+
+    // TODO:
+    pub fn prettyPath(r: *Resolver, path: Ptah) string {
+        return path.text;
+    }
+
+    pub fn parsePackageJSON(r: *Resolver, file: string) !?*PackageJSON {
+        return try PackageJSON.parse(r, file);
+    }
+
+    pub fn isPackagePath(path: string) bool {
+        // this could probably be flattened into something more optimized
+        return path[0] != '/' and !strings.startsWith(path, "./") and !strings.startsWith(path, "../") and !strings.eql(path, ".") and !strings.eql(path, "..");
+    }
+
+    fn dirInfoCached(r: *Resolver, path: string) !*DirInfo {
+        const info = r.dir_cache.get(path) orelse try r.dirInfoUncached(path);
 
         try r.dir_cache.put(path, info);
     }
@@ -215,5 +466,87 @@ pub const Resolver = struct {
         }
 
         // Propagate the browser scope into child directories
+        if (parent) |parent_info| {
+            info.enclosing_browser_scope = parent_info.enclosing_browser_scope;
+
+            // Make sure "absRealPath" is the real path of the directory (resolving any symlinks)
+            if (!r.opts.preserve_symlinks) {
+                if (parent_info.entries.get(base)) |entry| {
+                    var symlink = entry.symlink(rfs);
+                    if (symlink.len > 0) {
+                        if (r.debug_logs) |logs| {
+                            try logs.addNote(std.fmt.allocPrint(r.allocator, "Resolved symlink \"{s}\" to \"{s}\"", .{ path, symlink }));
+                        }
+                        info.abs_real_path = symlink;
+                    } else if (parent_info.abs_real_path.len > 0) {
+                        // this might leak a little i'm not sure
+                        const parts = [_]string{ parent_info.abs_real_path, base };
+                        symlink = std.fs.path.join(r.allocator, &parts);
+                        if (r.debug_logs) |logs| {
+                            try logs.addNote(std.fmt.allocPrint(r.allocator, "Resolved symlink \"{s}\" to \"{s}\"", .{ path, symlink }));
+                        }
+                        info.abs_real_path = symlink;
+                    }
+                }
+            }
+        }
+
+        // Record if this directory has a package.json file
+        if (entries.get("package.json")) |entry| {
+            if (entry.kind(rfs) == .file) {
+                info.package_json = r.parsePackageJSON(path);
+
+                if (info.package_json) |pkg| {
+                    if (pkg.browser_map != null) {
+                        info.enclosing_browser_scope = info;
+                    }
+
+                    if (r.debug_logs) |logs| {
+                        try logs.addNote(std.fmt.allocPrint(r.allocator, "Resolved package.json in \"{s}\"", .{
+                            path,
+                        }));
+                    }
+                }
+            }
+        }
+
+        // Record if this directory has a tsconfig.json or jsconfig.json file
+        {
+            var tsconfig_path: ?string = null;
+            if (r.opts.tsconfig_override == null) {
+                var entry = entries.get("tsconfig.json");
+                if (entry.kind(rfs) == .file) {
+                    const parts = [_]string{ path, "tsconfig.json" };
+                    tsconfig_path = try std.fs.path.join(r.allocator, parts);
+                } else if (entries.get("jsconfig.json")) |jsconfig| {
+                    if (jsconfig.kind(rfs) == .file) {
+                        const parts = [_]string{ path, "jsconfig.json" };
+                        tsconfig_path = try std.fs.path.join(r.allocator, parts);
+                    }
+                }
+            } else if (parent == null) {
+                tsconfig_path = r.opts.tsconfig_override.?;
+            }
+
+            if (tsconfig_path) |tsconfigpath| {
+                var visited = std.StringHashMap(bool).init(r.allocator);
+                defer visited.deinit();
+                info.ts_config_json = r.parseTSConfig(tsconfigpath, visited) catch |err| {
+                    const pretty = r.prettyPath(fs.Path{ .text = tsconfigpath, .namespace = "file" });
+
+                    if (err == error.ENOENT) {
+                        r.log.addErrorFmt(null, .empty, r.allocator, "Cannot find tsconfig file \"{s}\"", .{pretty});
+                    } else if (err != error.ParseErrorAlreadyLogged) {
+                        r.log.addErrorFmt(null, .empty, r.allocator, "Cannot read file \"{s}\": {s}", .{ pretty, @errorName(err) });
+                    }
+                };
+            }
+        }
+
+        if (info.ts_config_json == null and parent != null) {
+            info.ts_config_json = parent.?.tsconfig_json;
+        }
+
+        return info;
     }
 };

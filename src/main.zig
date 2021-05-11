@@ -54,7 +54,7 @@ pub fn main() anyerror!void {
 
     const opts = try options.TransformOptions.initUncached(alloc.dynamic, entryPointName, code);
 
-    var source = logger.Source.initFile(opts.entry_point, alloc.dynamic);
+    var source = try logger.Source.initFile(opts.entry_point, alloc.dynamic);
     var ast: js_ast.Ast = undefined;
     var raw_defines = RawDefines.init(alloc.static);
     try raw_defines.put("process.env.NODE_ENV", "\"development\"");

@@ -4,19 +4,14 @@
 const std = @import("std");
 
 /// Resolves a unix-like path and removes all "." and ".." from it. Will not escape the root and can be used to sanitize inputs.
-pub fn resolvePath(buffer: []u8, src_path: []const u8) error{BufferTooSmall}![]u8 {
-    if (buffer.len == 0)
-        return error.BufferTooSmall;
-    if (src_path.len == 0) {
-        buffer[0] = '/';
-        return buffer[0..1];
-    }
-
+pub fn resolvePath(buffer: []u8, src_path: []const u8) ?[]u8 {
     var end: usize = 0;
-    buffer[0] = '/';
+    buffer[0] = '.';
 
     var iter = std.mem.tokenize(src_path, "/");
     while (iter.next()) |segment| {
+        if (end >= buffer.len) break;
+
         if (std.mem.eql(u8, segment, ".")) {
             continue;
         } else if (std.mem.eql(u8, segment, "..")) {
@@ -39,10 +34,16 @@ pub fn resolvePath(buffer: []u8, src_path: []const u8) error{BufferTooSmall}![]u
         }
     }
 
-    return if (end == 0)
+    const result = if (end == 0)
         buffer[0 .. end + 1]
     else
         buffer[0..end];
+
+    if (std.mem.eql(u8, result, src_path)) {
+        return null;
+    }
+
+    return result;
 }
 
 fn testResolve(expected: []const u8, input: []const u8) !void {

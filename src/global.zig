@@ -16,6 +16,8 @@ pub const isWasm = build_target == .wasm;
 pub const isNative = build_target == .native;
 pub const isWasi = build_target == .wasi;
 
+pub const isDebug = std.builtin.Mode.Debug == std.builtin.mode;
+
 pub const Output = struct {
     var source: *Source = undefined;
     pub const Source = struct {
@@ -84,5 +86,8 @@ pub const Global = struct {
         } else {
             std.debug.panic(fmt, args);
         }
+    }
+    pub fn notimpl() noreturn {
+        Global.panic("Not implemented yet!!!!!", .{});
     }
 };

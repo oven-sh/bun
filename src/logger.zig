@@ -59,6 +59,9 @@ pub const Location = struct {
     suggestion: ?string = null,
     offset: usize = 0,
 
+    // don't really know what's safe to deinit here!
+    pub fn deinit(l: *Location, allocator: *std.mem.Allocator) void {}
+
     pub fn init(file: []u8, namespace: []u8, line: i32, column: i32, length: u32, line_text: ?[]u8, suggestion: ?[]u8) Location {
         return Location{
             .file = file,
@@ -104,12 +107,32 @@ pub const Location = struct {
     }
 };
 
-pub const Data = struct { text: string, location: ?Location = null };
+pub const Data = struct {
+    text: string,
+    location: ?Location = null,
+    pub fn deinit(d: *Data, allocator: *std.mem.Allocator) void {
+        if (d.location) |loc| {
+            loc.deinit(allocator);
+        }
+
+        allocator.free(text);
+    }
+};
 
 pub const Msg = struct {
     kind: Kind = Kind.err,
     data: Data,
     notes: ?[]Data = null,
+
+    pub fn deinit(msg: *Msg, allocator: *std.mem.Allocator) void {
+        msg.data.deinit(allocator);
+        if (msg.notes) |notes| {
+            for (notes) |note| {
+                note.deinit(allocator);
+            }
+        }
+        msg.notes = null;
+    }
     pub fn doFormat(msg: *const Msg, to: anytype, formatterFunc: @TypeOf(std.fmt.format)) !void {
         try formatterFunc(to, "\n\n{s}: {s}\n{s}\n{s}:{}:{} {d}", .{
             msg.kind.string(),
@@ -157,6 +180,15 @@ pub const Log = struct {
     warnings: usize = 0,
     errors: usize = 0,
     msgs: ArrayList(Msg),
+    level: Level = Level.debug,
+
+    pub const Level = enum {
+        verbose,
+        debug,
+        info,
+        warn,
+        err,
+    };
 
     pub fn init(allocator: *std.mem.Allocator) Log {
         return Log{
@@ -169,6 +201,17 @@ pub const Log = struct {
             .kind = .verbose,
             .data = rangeData(source, Range{ .loc = loc }, text),
         });
+    }
+
+    pub fn appendTo(self: *Log, other: *Log) !void {
+        other.msgs.appendSlice(self.msgs.items);
+        other.warnings += self.warnings;
+        other.errors += self.errors;
+        self.msgs.deinit();
+    }
+
+    pub fn deinit(self: *Log) void {
+        self.msgs.deinit();
     }
 
     pub fn addVerboseWithNotes(source: ?*Source, loc: Loc, text: string, notes: []Data) !void {
@@ -251,6 +294,15 @@ pub const Log = struct {
         });
     }
 
+    pub fn addRangeDebugWithNotes(log: *Log, source: ?*Source, r: Range, text: string, notes: []Data) !void {
+        log.errors += 1;
+        try log.addMsg(Msg{
+            .kind = Kind.debug,
+            .data = rangeData(source, r, text),
+            .notes = notes,
+        });
+    }
+
     pub fn addRangeErrorWithNotes(log: *Log, source: ?*Source, r: Range, text: string, notes: []Data) !void {
         log.errors += 1;
         try log.addMsg(Msg{
@@ -298,6 +350,7 @@ pub fn usize2Loc(loc: usize) Loc {
 
 pub const Source = struct {
     path: fs.Path,
+    key_path: fs.Path,
     index: u32 = 0,
     contents: string,
 
@@ -313,11 +366,18 @@ pub const Source = struct {
         line_count: usize,
     };
 
-    pub fn initFile(file: fs.File, allocator: *std.mem.Allocator) Source {
+    pub fn initFile(file: fs.File, allocator: *std.mem.Allocator) !Source {
         var name = file.path.name;
         var identifier_name = name.nonUniqueNameString(allocator) catch unreachable;
 
-        return Source{ .path = file.path, .identifier_name = identifier_name, .contents = file.contents };
+        var source = Source{
+            .path = file.path,
+            .key_path = fs.Path.init(file.path.text),
+            .identifier_name = identifier_name,
+            .contents = file.contents,
+        };
+        source.path.namespace = "file";
+        return source;
     }
 
     pub fn initPathString(pathString: string, contents: string) Source {

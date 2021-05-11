@@ -1245,7 +1245,7 @@ pub const Parser = struct {
     p: ?*P,
 
     pub const Options = struct {
-        jsx: options.JSX,
+        jsx: options.JSX.Pragma,
         ts: bool = false,
         ascii_only: bool = true,
         keep_names: bool = true,
@@ -1431,16 +1431,9 @@ pub const Parser = struct {
 
     pub fn init(transform: options.TransformOptions, log: *logger.Log, source: *logger.Source, define: *Define, allocator: *std.mem.Allocator) !Parser {
         const lexer = try js_lexer.Lexer.init(log, source, allocator);
+        const jsx = if (transform.jsx != null) transform.jsx.? else options.JSX.Pragma{ .parse = false };
         return Parser{
-            .options = Options{
-                .ts = transform.loader == .tsx or transform.loader == .ts,
-                .jsx = options.JSX{
-                    .parse = transform.loader == .tsx or transform.loader == .jsx,
-                    .factory = transform.jsx_factory,
-                    .fragment = transform.jsx_fragment,
-                    .import_source = transform.jsx_import_source,
-                },
-            },
+            .options = Options{ .ts = transform.loader == .tsx or transform.loader == .ts, .jsx = jsx },
             .allocator = allocator,
             .lexer = lexer,
             .define = define,

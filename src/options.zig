@@ -7,6 +7,17 @@ usingnamespace @import("global.zig");
 
 const assert = std.debug.assert;
 
+pub const ModuleType = enum {
+    unknown,
+    cjs,
+    esm,
+
+    pub const List = std.ComptimeStringMap(ModuleType, .{
+        .{ "commonjs", ModuleType.cjs },
+        .{ "module", ModuleType.esm },
+    });
+};
+
 pub const Platform = enum {
     node,
     browser,
@@ -14,7 +25,7 @@ pub const Platform = enum {
 
     const MAIN_FIELD_NAMES = [_]string{ "browser", "module", "main" };
     pub const DefaultMainFields: std.EnumArray(Platform, []string) = comptime {
-        var array = std.EnumArray(Platform, []string);
+        var array = std.EnumArray(Platform, []string).initUndefined();
 
         // Note that this means if a package specifies "module" and "main", the ES6
         // module will not be selected. This means tree shaking will not work when
@@ -32,7 +43,8 @@ pub const Platform = enum {
         // If you want to enable tree shaking when targeting node, you will have to
         // configure the main fields to be "module" and then "main". Keep in mind
         // that some packages may break if you do this.
-        array.set(Platform.node, &([_]string{ MAIN_FIELD_NAMES[1], MAIN_FIELD_NAMES[2] }));
+        var list = [_]string{ MAIN_FIELD_NAMES[1], MAIN_FIELD_NAMES[2] };
+        array.set(Platform.node, &list);
 
         // Note that this means if a package specifies "main", "module", and
         // "browser" then "browser" will win out over "module". This is the
@@ -41,7 +53,8 @@ pub const Platform = enum {
         // This is deliberate because the presence of the "browser" field is a
         // good signal that the "module" field may have non-browser stuff in it,
         // which will crash or fail to be bundled when targeting the browser.
-        array.set(Platform.browser, &([_]string{ MAIN_FIELD_NAMES[0], MAIN_FIELD_NAMES[1], MAIN_FIELD_NAMES[2] }));
+        var listc = [_]string{ MAIN_FIELD_NAMES[0], MAIN_FIELD_NAMES[1], MAIN_FIELD_NAMES[2] };
+        array.set(Platform.browser, &listc);
 
         // The neutral platform is for people that don't want esbuild to try to
         // pick good defaults for their platform. In that case, the list of main
@@ -60,6 +73,10 @@ pub const Loader = enum {
     css,
     file,
     json,
+
+    pub fn isJSX(loader: Loader) bool {
+        return loader == .jsx or loader == .tsx;
+    }
 };
 
 pub const defaultLoaders = std.ComptimeStringMap(Loader, .{
@@ -82,6 +99,10 @@ pub const JSX = struct {
         /// Set on a per file basis like this:
         /// /** @jsxImportSource @emotion/core */
         import_source: string = "react",
+        jsx: string = "jsxDEV",
+
+        development: bool = true,
+        parse: bool = true,
     };
 
     parse: bool = true,
@@ -106,23 +127,22 @@ pub const TransformOptions = struct {
     footer: string = "",
     banner: string = "",
     define: std.StringHashMap(string),
-    loader: Loader = Loader.tsx,
+    loader: Loader = Loader.js,
     resolve_dir: string = "/",
-    jsx_factory: string = "React.createElement",
-    jsx_fragment: string = "Fragment",
-    jsx_import_source: string = "react",
-    ts: bool = true,
+    jsx: ?JSX.Pragma,
     react_fast_refresh: bool = false,
     inject: ?[]string = null,
     public_url: string = "/",
-    filesystem_cache: std.StringHashMap(fs.File),
+    preserve_symlinks: bool = false,
     entry_point: fs.File,
     resolve_paths: bool = false,
+    tsconfig_override: ?string = null,
+
+    platform: Platform = Platform.browser,
+    main_fields: []string = Platform.DefaultMainFields.get(Platform.browser),
 
     pub fn initUncached(allocator: *std.mem.Allocator, entryPointName: string, code: string) !TransformOptions {
         assert(entryPointName.len > 0);
-
-        var filesystemCache = std.StringHashMap(fs.File).init(allocator);
 
         var entryPoint = fs.File{
             .path = fs.Path.init(entryPointName),
@@ -139,16 +159,15 @@ pub const TransformOptions = struct {
             loader = defaultLoader;
         }
 
-        assert(loader != .file);
         assert(code.len > 0);
-        try filesystemCache.put(entryPointName, entryPoint);
 
         return TransformOptions{
             .entry_point = entryPoint,
             .define = define,
             .loader = loader,
-            .filesystem_cache = filesystemCache,
             .resolve_dir = entryPoint.path.name.dir,
+            .main_fields = Platform.DefaultMainFields.get(Platform.browser),
+            .jsx = if (Loader.isJSX(loader)) JSX.Pragma{} else null,
         };
     }
 };

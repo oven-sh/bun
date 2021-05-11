@@ -1,3 +1,3 @@
-[submodule "deps/wasi-libc"]
-	path = deps/wasi-libc
-	url = https://github.com/WebAssembly/wasi-libc
+# [submodule "src/deps/zig-clap"]
+# 	path = src/deps/zig-clap
+# 	url = https://github.com/Hejsil/zig-clap

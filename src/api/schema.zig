@@ -200,6 +200,9 @@ pub const Api = struct {
         /// platform
         platform: ?Platform = null,
 
+        /// watch
+        watch: ?bool = null,
+
         pub fn decode(allocator: *std.mem.Allocator, reader: anytype) anyerror!TransformOptions {
             var obj = std.mem.zeroes(TransformOptions);
             try update(&obj, allocator, reader);
@@ -374,6 +377,9 @@ pub const Api = struct {
                     17 => {
                         result.platform = try reader.readEnum(Platform, .Little);
                     },
+                    18 => {
+                        result.watch = (try reader.readByte()) == @as(u8, 1);
+                    },
                     else => {
                         return error.InvalidMessage;
                     },
@@ -533,6 +539,11 @@ pub const Api = struct {
             if (result.platform) |platform| {
                 try writer.writeByte(17);
                 try writer.writeIntNative(@TypeOf(@enumToInt(result.platform orelse unreachable)), @enumToInt(result.platform orelse unreachable));
+            }
+
+            if (result.watch) |watch| {
+                try writer.writeByte(18);
+                try writer.writeByte(@boolToInt(watch));
             }
             try writer.writeByte(0);
             return;

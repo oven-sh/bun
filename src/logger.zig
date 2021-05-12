@@ -14,6 +14,7 @@ pub const Kind = enum {
     warn,
     note,
     debug,
+    verbose,
 
     pub fn string(self: Kind) string {
         return switch (self) {
@@ -21,6 +22,7 @@ pub const Kind = enum {
             .warn => "warn",
             .note => "note",
             .debug => "debug",
+            .verbose => "verbose",
         };
     }
 };
@@ -230,7 +232,7 @@ pub const Log = struct {
         self.msgs.deinit();
     }
 
-    pub fn addVerboseWithNotes(source: ?*Source, loc: Loc, text: string, notes: []Data) !void {
+    pub fn addVerboseWithNotes(log: *Log, source: ?*Source, loc: Loc, text: string, notes: []Data) !void {
         try log.addMsg(Msg{
             .kind = .verbose,
             .data = rangeData(source, Range{ .loc = loc }, text),

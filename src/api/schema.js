@@ -227,6 +227,10 @@ function decodeTransformOptions(bb) {
       result["platform"] = Platform[bb.readByte()];
       break;
 
+    case 18:
+      result["watch"] = !!bb.readByte();
+      break;
+
     default:
       throw new Error("Attempted to parse invalid message");
     }
@@ -381,6 +385,12 @@ bb.writeByte(encoded);
     var encoded = Platform[value];
 if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + " for enum \"Platform\"");
 bb.writeByte(encoded);
+  }
+
+  var value = message["watch"];
+  if (value != null) {
+    bb.writeByte(18);
+    bb.writeByte(value);
   }
   bb.writeByte(0);
 

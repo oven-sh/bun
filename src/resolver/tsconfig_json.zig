@@ -19,7 +19,7 @@ pub const TSConfigJSON = struct {
     // "BaseURL" is missing, in which case it is as if "BaseURL" was ".". This
     // is to implement the "paths without baseUrl" feature from TypeScript 4.1.
     // More info: https://github.com/microsoft/TypeScript/issues/31869
-    base_url_for_paths = "",
+    base_url_for_paths: string = "",
 
     // The verbatim values of "compilerOptions.paths". The keys are patterns to
     // match and the values are arrays of fallback paths to search. Each key and

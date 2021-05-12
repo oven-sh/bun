@@ -13,27 +13,67 @@ const linker = @import("linker.zig");
 usingnamespace @import("ast/base.zig");
 usingnamespace @import("defines.zig");
 const panicky = @import("panic_handler.zig");
-const fs = @import("fs.zig");
+const Fs = @import("fs.zig");
 const Api = @import("api/schema.zig").Api;
+const Resolver = @import("./resolver/resolver.zig");
+const sync = @import("sync.zig");
+const ThreadPool = sync.ThreadPool;
+const ThreadSafeHashMap = @import("./thread_safe_hash_map.zig");
+
+// pub const
+// const BundleMap =
 
 pub const Bundler = struct {
     options: options.BundleOptions,
     log: *logger.Log,
     allocator: *std.mem.Allocator,
-    result: ?options.TransformResult = null,
+    result: options.TransformResult = undefined,
+    resolver: Resolver.Resolver,
+    fs: *Fs.FileSystem,
+    thread_pool: *ThreadPool,
+
+    // to_bundle:
+
+    // thread_pool: *ThreadPool,
 
     pub fn init(
         allocator: *std.mem.Allocator,
         log: *logger.Log,
         opts: Api.TransformOptions,
-    ) !Bundler {}
+    ) !Bundler {
+        var fs = try Fs.FileSystem.init1(allocator, opts.absolute_working_dir, opts.watch orelse false);
+        const bundle_options = try options.BundleOptions.fromApi(allocator, fs, log, opts);
+        var pool = try allocator.create(ThreadPool);
+        try pool.init(ThreadPool.InitConfig{
+            .allocator = allocator,
+        });
+        return Bundler{
+            .options = bundle_options,
+            .fs = fs,
+            .allocator = allocator,
+            .resolver = Resolver.Resolver.init1(allocator, log, fs, bundle_options),
+            .log = log,
+            .thread_pool = pool,
+        };
+    }
 
     pub fn bundle(
         allocator: *std.mem.Allocator,
         log: *logger.Log,
         opts: Api.TransformOptions,
     ) !options.TransformResult {
-        Global.notimpl();
+        var bundler = try Bundler.init(allocator, log, opts);
+
+        var entry_points = try allocator.alloc(Resolver.Resolver.Result, bundler.options.entry_points.len);
+        var entry_point_i: usize = 0;
+        for (bundler.options.entry_points) |entry| {
+            entry_points[entry_point_i] = bundler.resolver.resolve(bundler.fs.top_level_dir, entry, .entry_point) catch {
+                continue;
+            } orelse continue;
+            entry_point_i += 1;
+        }
+
+        return bundler.result;
     }
 };
 
@@ -88,11 +128,23 @@ pub const Transformer = struct {
         var jsx = if (opts.jsx) |_jsx| options.JSX.Pragma.fromApi(_jsx) else options.JSX.Pragma{};
 
         var output_i: usize = 0;
+        var chosen_alloc: *std.mem.Allocator = allocator;
+        var arena: std.heap.ArenaAllocator = undefined;
+        const watch = opts.watch orelse false;
+        const use_arenas = opts.entry_points.len > 8 or watch;
 
         for (opts.entry_points) |entry_point, i| {
-            var arena = std.heap.ArenaAllocator.init(allocator);
-            var chosen_alloc = &arena.allocator;
-            defer arena.deinit();
+            if (use_arenas) {
+                arena = std.heap.ArenaAllocator.init(allocator);
+                chosen_alloc = &arena.allocator;
+            }
+
+            defer {
+                if (use_arenas) {
+                    arena.deinit();
+                }
+            }
+
             var _log = logger.Log.init(allocator);
             var __log = &_log;
             var paths = [_]string{ cwd, entry_point };
@@ -110,7 +162,7 @@ pub const Transformer = struct {
                 chosen_alloc.free(absolutePath);
                 _log.appendTo(log) catch {};
             }
-            const _file = fs.File{ .path = fs.Path.init(entry_point), .contents = code };
+            const _file = Fs.File{ .path = Fs.Path.init(entry_point), .contents = code };
             var source = try logger.Source.initFile(_file, chosen_alloc);
             var loader: options.Loader = undefined;
             if (use_default_loaders) {

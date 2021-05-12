@@ -126,6 +126,7 @@ type uint32 = number;
     loader_values?: Loader[];
     main_fields?: string[];
     platform?: Platform;
+    watch?: boolean;
   }
 
   export interface FileHandle {

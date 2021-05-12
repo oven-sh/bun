@@ -119,7 +119,7 @@ pub const MimeType = enum {
 pub const DataURL = struct {
     mime_type: string,
     data: string,
-    is_base64: bool,
+    is_base64: bool = false,
 
     pub fn parse(url: string) ?DataURL {
         if (!strings.startsWith(url, "data:")) {
@@ -129,7 +129,7 @@ pub const DataURL = struct {
         const comma = strings.indexOfChar(url, ',') orelse return null;
 
         var parsed = DataURL{
-            .mime_type = url["data:"..comma],
+            .mime_type = url["data:".len..comma],
             .data = url[comma + 1 .. url.len],
         };
 

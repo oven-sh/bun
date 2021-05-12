@@ -360,7 +360,6 @@ pub const G = struct {
 
         flags: Flags.Function = Flags.Function.None,
     };
-
     pub const Arg = struct {
         ts_decorators: ?ExprNodeList = null,
         binding: BindingNodeIndex,

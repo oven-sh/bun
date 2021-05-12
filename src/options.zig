@@ -1,6 +1,6 @@
 const std = @import("std");
 const logger = @import("logger.zig");
-const fs = @import("fs.zig");
+const Fs = @import("fs.zig");
 const alloc = @import("alloc.zig");
 const resolver = @import("./resolver/resolver.zig");
 const api = @import("./api/schema.zig");
@@ -11,13 +11,14 @@ usingnamespace @import("global.zig");
 
 const assert = std.debug.assert;
 
-pub fn validatePath(log: *logger.Log, fs: *fs.FileSystem.Implementation, cwd: string, rel_path: string, allocator: *std.mem.Allocator, path_kind: string) string {
+pub fn validatePath(log: *logger.Log, fs: *Fs.FileSystem.Implementation, cwd: string, rel_path: string, allocator: *std.mem.Allocator, path_kind: string) string {
     if (rel_path.len == 0) {
         return "";
     }
     const paths = [_]string{ cwd, rel_path };
-    const out = std.fs.path.resolve(allocator, &path) catch |err| {
+    const out = std.fs.path.resolve(allocator, &paths) catch |err| {
         log.addErrorFmt(null, logger.Loc{}, allocator, "Invalid {s}: {s}", .{ path_kind, rel_path }) catch unreachable;
+        Global.panic("", .{});
     };
 
     return out;
@@ -42,7 +43,7 @@ pub const ExternalModules = struct {
         suffix: string,
     };
 
-    pub fn init(allocator: *std.mem.Allocator, fs: *fs.FileSystem.Implementation, cwd: string, externals: []string, log: *logger.Log) ExternalModules {
+    pub fn init(allocator: *std.mem.Allocator, fs: *Fs.FileSystem.Implementation, cwd: string, externals: []const string, log: *logger.Log) ExternalModules {
         var result = ExternalModules{
             .node_modules = std.BufSet.init(allocator),
             .abs_paths = std.BufSet.init(allocator),
@@ -56,9 +57,10 @@ pub const ExternalModules = struct {
         var patterns = std.ArrayList(WildcardPattern).init(allocator);
 
         for (externals) |external| {
+            const path = external;
             if (strings.indexOfChar(path, '*')) |i| {
                 if (strings.indexOfChar(path[i + 1 .. path.len], '*') != null) {
-                    log.addErrorFmt(null, .empty, allocator, "External path \"{s}\" cannot have more than one \"*\" wildcard", .{external}) catch unreachable;
+                    log.addErrorFmt(null, logger.Loc.Empty, allocator, "External path \"{s}\" cannot have more than one \"*\" wildcard", .{external}) catch unreachable;
                     return result;
                 }
 
@@ -100,8 +102,8 @@ pub const Platform = enum {
     neutral,
 
     const MAIN_FIELD_NAMES = [_]string{ "browser", "module", "main" };
-    pub const DefaultMainFields: std.EnumArray(Platform, []string) = comptime {
-        var array = std.EnumArray(Platform, []string).initUndefined();
+    pub const DefaultMainFields: std.EnumArray(Platform, []const string) = comptime {
+        var array = std.EnumArray(Platform, []const string).initUndefined();
 
         // Note that this means if a package specifies "module" and "main", the ES6
         // module will not be selected. This means tree shaking will not work when
@@ -234,7 +236,7 @@ const TypeScript = struct {
 pub const BundleOptions = struct {
     footer: string = "",
     banner: string = "",
-    define: defines.Define,
+    define: *defines.Define,
     loaders: std.StringHashMap(Loader),
     resolve_dir: string = "/",
     jsx: JSX.Pragma = JSX.Pragma{},
@@ -247,46 +249,61 @@ pub const BundleOptions = struct {
     resolve_mode: api.Api.ResolveMode,
     tsconfig_override: ?string = null,
     platform: Platform = Platform.browser,
-    main_fields: []string = Platform.DefaultMainFields.get(Platform.browser),
+    main_fields: []const string = Platform.DefaultMainFields.get(Platform.browser),
     log: *logger.Log,
-    external: ExternalModules,
-    entry_points: []string,
+    external: ExternalModules = ExternalModules{},
+    entry_points: []const string,
     pub fn fromApi(
         allocator: *std.mem.Allocator,
-        fs: *fs.FileSystem,
+        fs: *Fs.FileSystem,
+        log: *logger.Log,
         transform: Api.TransformOptions,
     ) !BundleOptions {
-        var log = logger.Log.init(allocator);
-        var opts: BundleOptions = std.mem.zeroes(BundleOptions);
+        var loader_values = try allocator.alloc(Loader, transform.loader_values.len);
+        for (loader_values) |_, i| {
+            const loader = switch (transform.loader_values[i]) {
+                .jsx => Loader.jsx,
+                .js => Loader.js,
+                .ts => Loader.ts,
+                .css => Loader.css,
+                .tsx => Loader.tsx,
+                .json => Loader.json,
+                else => unreachable,
+            };
 
-        opts.write = transform.write;
-        if (transform.jsx) |jsx| {
-            opts.jsx = JSX.Pragma.fromApi(jsx);
+            loader_values[i] = loader;
         }
-
-        options.loaders = try stringHashMapFromArrays(std.StringHashMap(Loader), allocator, transform.loader_keys, transform.loader_values);
         var user_defines = try stringHashMapFromArrays(defines.RawDefines, allocator, transform.define_keys, transform.define_values);
-
         if (transform.define_keys.len == 0) {
             try user_defines.put("process.env.NODE_ENV", "development");
         }
 
         var resolved_defines = try defines.DefineData.from_input(user_defines, log, allocator);
-        options.defines = try defines.Define.init(
-            allocator,
-        );
 
-        if (transform.external.len > 0) {
-            opts.external = try ExternalModules.init(allocator, opts.fs, opts.fs.top_level_dir, transform.external, &log);
+        var opts: BundleOptions = BundleOptions{
+            .log = log,
+            .resolve_mode = transform.resolve orelse .dev,
+            .define = try defines.Define.init(
+                allocator,
+                resolved_defines,
+            ),
+            .loaders = try stringHashMapFromArrays(std.StringHashMap(Loader), allocator, transform.loader_keys, loader_values),
+            .write = transform.write orelse false,
+            .external = ExternalModules.init(allocator, &fs.fs, fs.top_level_dir, transform.external, log),
+            .entry_points = transform.entry_points,
+        };
+
+        if (transform.jsx) |jsx| {
+            opts.jsx = JSX.Pragma.fromApi(jsx);
         }
 
         if (transform.platform) |plat| {
-            opts.platform = plat;
-            opts.main_fields = Platform.DefaultMainFields.get(plat);
+            opts.platform = if (plat == .browser) .browser else .node;
+            opts.main_fields = Platform.DefaultMainFields.get(opts.platform);
         }
 
         if (transform.main_fields.len > 0) {
-            options.main_fields = transform.main_fields;
+            opts.main_fields = transform.main_fields;
         }
 
         return opts;
@@ -304,7 +321,7 @@ pub const TransformOptions = struct {
     inject: ?[]string = null,
     public_url: string = "/",
     preserve_symlinks: bool = false,
-    entry_point: fs.File,
+    entry_point: Fs.File,
     resolve_paths: bool = false,
     tsconfig_override: ?string = null,
 
@@ -314,8 +331,8 @@ pub const TransformOptions = struct {
     pub fn initUncached(allocator: *std.mem.Allocator, entryPointName: string, code: string) !TransformOptions {
         assert(entryPointName.len > 0);
 
-        var entryPoint = fs.File{
-            .path = fs.Path.init(entryPointName),
+        var entryPoint = Fs.File{
+            .path = Fs.Path.init(entryPointName),
             .contents = code,
         };
 

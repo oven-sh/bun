@@ -1,11 +1,87 @@
 const std = @import("std");
-const log = @import("logger.zig");
+const logger = @import("logger.zig");
 const fs = @import("fs.zig");
 const alloc = @import("alloc.zig");
+const resolver = @import("./resolver/resolver.zig");
+const api = @import("./api/schema.zig");
+const Api = api.Api;
+const defines = @import("./defines.zig");
 
 usingnamespace @import("global.zig");
 
 const assert = std.debug.assert;
+
+pub fn validatePath(log: *logger.Log, fs: *fs.FileSystem.Implementation, cwd: string, rel_path: string, allocator: *std.mem.Allocator, path_kind: string) string {
+    if (rel_path.len == 0) {
+        return "";
+    }
+    const paths = [_]string{ cwd, rel_path };
+    const out = std.fs.path.resolve(allocator, &path) catch |err| {
+        log.addErrorFmt(null, logger.Loc{}, allocator, "Invalid {s}: {s}", .{ path_kind, rel_path }) catch unreachable;
+    };
+
+    return out;
+}
+
+pub fn stringHashMapFromArrays(comptime t: type, allocator: *std.mem.Allocator, keys: anytype, values: anytype) !t {
+    const hash_map = t.init(allocator);
+    hash_map.ensureCapacity(keys.len);
+    for (keys) |key, i| {
+        try hash_map.put(key, values[i]);
+    }
+
+    return hash_map;
+}
+
+pub const ExternalModules = struct {
+    node_modules: std.BufSet,
+    abs_paths: std.BufSet,
+    patterns: []WildcardPattern,
+    pub const WildcardPattern = struct {
+        prefix: string,
+        suffix: string,
+    };
+
+    pub fn init(allocator: *std.mem.Allocator, fs: *fs.FileSystem.Implementation, cwd: string, externals: []string, log: *logger.Log) ExternalModules {
+        var result = ExternalModules{
+            .node_modules = std.BufSet.init(allocator),
+            .abs_paths = std.BufSet.init(allocator),
+            .patterns = &([_]WildcardPattern{}),
+        };
+
+        if (externals.len == 0) {
+            return result;
+        }
+
+        var patterns = std.ArrayList(WildcardPattern).init(allocator);
+
+        for (externals) |external| {
+            if (strings.indexOfChar(path, '*')) |i| {
+                if (strings.indexOfChar(path[i + 1 .. path.len], '*') != null) {
+                    log.addErrorFmt(null, .empty, allocator, "External path \"{s}\" cannot have more than one \"*\" wildcard", .{external}) catch unreachable;
+                    return result;
+                }
+
+                patterns.append(WildcardPattern{
+                    .prefix = external[0..i],
+                    .suffix = external[i + 1 .. external.len],
+                }) catch unreachable;
+            } else if (resolver.Resolver.isPackagePath(external)) {
+                result.node_modules.put(external) catch unreachable;
+            } else {
+                const normalized = validatePath(log, fs, cwd, external, allocator, "external path");
+
+                if (normalized.len > 0) {
+                    result.abs_paths.put(normalized) catch unreachable;
+                }
+            }
+        }
+
+        result.patterns = patterns.toOwnedSlice();
+
+        return result;
+    }
+};
 
 pub const ModuleType = enum {
     unknown,
@@ -91,6 +167,7 @@ pub const defaultLoaders = std.ComptimeStringMap(Loader, .{
 
 pub const JSX = struct {
     pub const Pragma = struct {
+        // these need to be arrays
         factory: string = "React.createElement",
         fragment: string = "React.Fragment",
         runtime: JSX.Runtime = JSX.Runtime.automatic,
@@ -149,6 +226,11 @@ pub const TransformOptions = struct {
             .contents = code,
         };
 
+        var cwd: string = "/";
+        if (isWasi or isNative) {
+            cwd = try std.process.getCwdAlloc(allocator);
+        }
+
         var define = std.StringHashMap(string).init(allocator);
         try define.ensureCapacity(1);
 
@@ -177,7 +259,7 @@ pub const OutputFile = struct {
     contents: []u8,
 };
 
-pub const TransformResult = struct { errors: []log.Msg, warnings: []log.Msg, output_files: []OutputFile };
+pub const TransformResult = struct { errors: []logger.Msg, warnings: []logger.Msg, output_files: []OutputFile };
 
 test "TransformOptions.initUncached" {
     try alloc.setup(std.heap.page_allocator);

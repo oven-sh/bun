@@ -1259,6 +1259,14 @@ pub const Parser = struct {
 
         moduleType: ModuleType = ModuleType.esm,
         trim_unused_imports: bool = true,
+
+        pub fn init(jsx: options.JSX.Pragma, loader: options.Loader) Options {
+            return Options{
+                .ts = loader.isTypeScript(),
+
+                .jsx = jsx,
+            };
+        }
     };
 
     pub fn parse(self: *Parser) !js_ast.Result {
@@ -1429,11 +1437,10 @@ pub const Parser = struct {
         return result;
     }
 
-    pub fn init(transform: options.TransformOptions, log: *logger.Log, source: *logger.Source, define: *Define, allocator: *std.mem.Allocator) !Parser {
+    pub fn init(_options: Options, log: *logger.Log, source: *logger.Source, define: *Define, allocator: *std.mem.Allocator) !Parser {
         const lexer = try js_lexer.Lexer.init(log, source, allocator);
-        const jsx = if (transform.jsx != null) transform.jsx.? else options.JSX.Pragma{ .parse = false };
         return Parser{
-            .options = Options{ .ts = transform.loader == .tsx or transform.loader == .ts, .jsx = jsx },
+            .options = _options,
             .allocator = allocator,
             .lexer = lexer,
             .define = define,
@@ -8152,6 +8159,7 @@ pub const P = struct {
                             .was_jsx_element = true,
                         }, expr.loc);
                     },
+                    else => unreachable,
                 }
             },
 

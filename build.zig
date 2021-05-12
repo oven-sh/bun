@@ -23,9 +23,9 @@ pub fn build(b: *std.build.Builder) void {
         exe = b.addExecutable("esdev", "src/main_wasi.zig");
         exe.is_dynamic = true;
         if (mode == std.builtin.Mode.Debug) {
-            exe.setOutputDir("build/bin/debug");
+            exe.setOutputDir("build/wasi/debug");
         } else {
-            exe.setOutputDir("build/bin");
+            exe.setOutputDir("build/wasi");
         }
     } else if (target.getCpuArch().isWasm()) {
         std.debug.print("Build OS: WASM\n", .{});
@@ -87,6 +87,11 @@ pub fn build(b: *std.build.Builder) void {
             exe.setOutputDir("build/bin");
         }
     }
+
+    exe.addPackage(.{
+        .name = "clap",
+        .path = "src/deps/zig-clap/clap.zig",
+    });
 
     std.debug.print("Build Destination: {s}\n", .{exe.getOutputPath()});
     var walker = std.fs.walkPath(std.heap.page_allocator, cwd) catch unreachable;

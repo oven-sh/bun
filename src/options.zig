@@ -24,8 +24,8 @@ pub fn validatePath(log: *logger.Log, fs: *fs.FileSystem.Implementation, cwd: st
 }
 
 pub fn stringHashMapFromArrays(comptime t: type, allocator: *std.mem.Allocator, keys: anytype, values: anytype) !t {
-    const hash_map = t.init(allocator);
-    hash_map.ensureCapacity(keys.len);
+    var hash_map = t.init(allocator);
+    try hash_map.ensureCapacity(@intCast(u32, keys.len));
     for (keys) |key, i| {
         try hash_map.put(key, values[i]);
     }
@@ -153,6 +153,16 @@ pub const Loader = enum {
     pub fn isJSX(loader: Loader) bool {
         return loader == .jsx or loader == .tsx;
     }
+    pub fn isTypeScript(loader: Loader) bool {
+        return loader == .tsx or loader == .ts;
+    }
+
+    pub fn forFileName(filename: string, obj: anytype) ?Loader {
+        const ext = std.fs.path.extension(filename);
+        if (ext.len == 0 or (ext.len == 1 and ext[0] == '.')) return null;
+
+        return obj.get(ext);
+    }
 };
 
 pub const defaultLoaders = std.ComptimeStringMap(Loader, .{
@@ -180,6 +190,27 @@ pub const JSX = struct {
 
         development: bool = true,
         parse: bool = true,
+
+        pub fn fromApi(jsx: api.Api.Jsx) Pragma {
+            var pragma = JSX.Pragma{};
+
+            if (jsx.fragment.len > 0) {
+                pragma.jsx = jsx.fragment;
+            }
+
+            if (jsx.factory.len > 0) {
+                pragma.jsx = jsx.factory;
+            }
+
+            if (jsx.import_source.len > 0) {
+                pragma.jsx = jsx.import_source;
+            }
+
+            pragma.development = jsx.development;
+            pragma.runtime = jsx.runtime;
+            pragma.parse = true;
+            return pragma;
+        }
     };
 
     parse: bool = true,
@@ -193,11 +224,74 @@ pub const JSX = struct {
     /// /** @jsxImportSource @emotion/core */
     import_source: string = "react",
 
-    pub const Runtime = enum { classic, automatic };
+    pub const Runtime = api.Api.JsxRuntime;
 };
 
 const TypeScript = struct {
     parse: bool = false,
+};
+
+pub const BundleOptions = struct {
+    footer: string = "",
+    banner: string = "",
+    define: defines.Define,
+    loaders: std.StringHashMap(Loader),
+    resolve_dir: string = "/",
+    jsx: ?JSX.Pragma,
+    react_fast_refresh: bool = false,
+    inject: ?[]string = null,
+    public_url: string = "/",
+    output_dir: string = "",
+    write: bool = false,
+    preserve_symlinks: bool = false,
+    resolve_mode: api.Api.ResolveMode,
+    tsconfig_override: ?string = null,
+    fs: *fs.FileSystem,
+    platform: Platform = Platform.browser,
+    main_fields: []string = Platform.DefaultMainFields.get(Platform.browser),
+    log: *logger.Log,
+    external: ExternalModules,
+    entry_points: []string,
+    pub fn fromApi(
+        allocator: *std.mem.Allocator,
+        transform: Api.TransformOptions,
+    ) !BundleOptions {
+        var log = logger.Log.init(allocator);
+        var opts: BundleOptions = std.mem.zeroes(BundleOptions);
+
+        opts.fs = try fs.FileSystem.init1(allocator, transform.absolute_working_dir, false);
+        opts.write = transform.write;
+        if (transform.jsx) |jsx| {
+            opts.jsx = JSX.Pragma.fromApi(jsx);
+        }
+
+        options.loaders = try stringHashMapFromArrays(std.StringHashMap(Loader), allocator, transform.loader_keys, transform.loader_values);
+        var user_defines = try stringHashMapFromArrays(defines.RawDefines, allocator, transform.define_keys, transform.define_values);
+
+        if (transform.define_keys.len == 0) {
+            try user_defines.put("process.env.NODE_ENV", "development");
+        }
+
+        var resolved_defines = try defines.DefineData.from_input(user_defines, log, allocator);
+        options.defines = try defines.Define.init(
+            allocator,
+        );
+
+        if (transform.external.len > 0) {
+            opts.external = try ExternalModules.init(allocator, opts.fs, opts.fs.top_level_dir, transform.external, &log);
+        }
+
+        if (transform.platform) |plat| {
+            opts.platform = plat;
+            opts.main_fields = Platform.DefaultMainFields.get(plat);
+        }
+
+        if (transform.main_fields.len > 0) {
+            options.main_fields = transform.main_fields;
+        }
+
+        return opts;
+    }
 };
 
 pub const TransformOptions = struct {
@@ -255,11 +349,46 @@ pub const TransformOptions = struct {
 };
 
 pub const OutputFile = struct {
-    path: []u8,
-    contents: []u8,
+    path: string,
+    contents: string,
 };
 
-pub const TransformResult = struct { errors: []logger.Msg, warnings: []logger.Msg, output_files: []OutputFile };
+pub const TransformResult = struct {
+    errors: []logger.Msg,
+    warnings: []logger.Msg,
+    output_files: []OutputFile,
+    pub fn init(
+        output_files: []OutputFile,
+        log: *logger.Log,
+        allocator: *std.mem.Allocator,
+    ) !TransformResult {
+        var errors = try allocator.alloc(logger.Msg, log.errors);
+        var warnings = try allocator.alloc(logger.Msg, log.warnings);
+        var error_i: usize = 0;
+        var warning_i: usize = 0;
+        for (log.msgs.items) |msg| {
+            switch (msg.kind) {
+                logger.Kind.err => {
+                    std.debug.assert(warnings.len > warning_i);
+                    errors[error_i] = msg;
+                    error_i += 1;
+                },
+                logger.Kind.warn => {
+                    std.debug.assert(warnings.len > warning_i);
+                    warnings[warning_i] = msg;
+                    warning_i += 1;
+                },
+                else => {},
+            }
+        }
+
+        return TransformResult{
+            .output_files = output_files,
+            .errors = errors,
+            .warnings = warnings,
+        };
+    }
+};
 
 test "TransformOptions.initUncached" {
     try alloc.setup(std.heap.page_allocator);

@@ -11,21 +11,12 @@ const resolvePath = @import("./resolver/resolve_path.zig").resolvePath;
 // pub const FilesystemImplementation = @import("fs_impl.zig");
 
 //
-pub const Stat = packed struct {
-    // milliseconds
-    mtime: i64 = 0,
-    // last queried timestamp
-    qtime: i64 = 0,
-    kind: FileSystemEntry.Kind,
-};
 
 threadlocal var scratch_lookup_buffer = [_]u8{0} ** 255;
 
 pub const FileSystem = struct {
-    // This maps paths relative to absolute_working_dir to the structure of arrays of paths
-    stats: std.StringHashMap(Stat) = undefined,
     allocator: *std.mem.Allocator,
-    top_level_dir = "/",
+    top_level_dir: string = "/",
     fs: Implementation,
 
     pub const Error = error{
@@ -35,16 +26,28 @@ pub const FileSystem = struct {
         ENOTDIR,
     };
 
+    pub fn init1(allocator: *std.mem.Allocator, top_level_dir: ?string, enable_watcher: bool) !*FileSystem {
+        var files = try allocator.create(FileSystem);
+        files.* = FileSystem{
+            .allocator = allocator,
+            .top_level_dir = top_level_dir orelse (if (isBrowser) "/project" else try std.process.getCwdAlloc(allocator)),
+            .fs = Implementation.init(allocator, enable_watcher),
+            // .stats = std.StringHashMap(Stat).init(allocator),
+        };
+
+        return files;
+    }
+
     pub const DirEntry = struct {
         pub const EntryMap = std.StringArrayHashMap(*Entry);
         dir: string,
         data: EntryMap,
 
-        pub fn empty(dir: string, allocator: std.mem.Allocator) DirEntry {
+        pub fn empty(dir: string, allocator: *std.mem.Allocator) DirEntry {
             return DirEntry{ .dir = dir, .data = EntryMap.init(allocator) };
         }
 
-        pub fn init(dir: string, allocator: std.mem.Allocator) DirEntry {
+        pub fn init(dir: string, allocator: *std.mem.Allocator) DirEntry {
             return DirEntry{ .dir = dir, .data = EntryMap.init(allocator) };
         }
 
@@ -52,13 +55,6 @@ pub const FileSystem = struct {
             original_error: anyerror,
             canonical_error: anyerror,
         };
-
-        pub fn init(dir: string, allocator: *std.mem.Allocator) DirEntry {
-            return DirEntry{
-                .dir = dir,
-                .data = std.StringArrayHashMap(*Entry).init(allocator),
-            };
-        }
 
         pub fn deinit(d: *DirEntry) void {
             d.data.allocator.free(d.dir);
@@ -170,6 +166,15 @@ pub const FileSystem = struct {
         watcher: ?std.StringHashMap(WatchData) = null,
         watcher_mutex: Mutex = Mutex{},
 
+        pub fn init(allocator: *std.mem.Allocator, enable_watcher: bool) RealFS {
+            return RealFS{
+                .entries = std.StringHashMap(EntriesOption).init(allocator),
+                .allocator = allocator,
+                .limiter = Limiter.init(allocator),
+                .watcher = if (enable_watcher) std.StringHashMap(WatchData).init(allocator) else null,
+            };
+        }
+
         pub const ModKey = struct {
             inode: std.fs.File.INode = 0,
             size: u64 = 0,
@@ -274,7 +279,9 @@ pub const FileSystem = struct {
 
         // Limit the number of files open simultaneously to avoid ulimit issues
         pub const Limiter = struct {
-            chan: std.event.Channel(bool),
+            chan: ChannelVoid,
+
+            pub const ChannelVoid = std.event.Channel(void);
 
             pub fn init(allocator: *std.mem.Allocator) !Limiter {
                 var limiter = Limiter{ .chan = std.event.Channel(bool) };
@@ -286,7 +293,7 @@ pub const FileSystem = struct {
 
             // This will block if the number of open files is already at the limit
             pub fn before(limiter: *Limiter) void {
-                limiter.chan.put(false);
+                limiter.chan.put(void);
             }
 
             pub fn after(limiter: *Limiter) void {
@@ -514,8 +521,8 @@ pub const FileSystem = struct {
 
     pub const Implementation = comptime {
         switch (build_target) {
-            .wasi, .native => RealFS,
-            .wasm => WasmFS,
+            .wasi, .native => return RealFS,
+            .wasm => return WasmFS,
         }
     };
 };

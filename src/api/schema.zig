@@ -31,6 +31,42 @@ pub const Api = struct {
         }
     };
 
+    pub const ResolveMode = enum(u8) {
+        _none,
+        /// disable
+        disable,
+
+        /// lazy
+        lazy,
+
+        /// dev
+        dev,
+
+        /// bundle
+        bundle,
+
+        _,
+
+        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
+            return try std.json.stringify(@tagName(self), opts, o);
+        }
+    };
+
+    pub const Platform = enum(u8) {
+        _none,
+        /// browser
+        browser,
+
+        /// node
+        node,
+
+        _,
+
+        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
+            return try std.json.stringify(@tagName(self), opts, o);
+        }
+    };
+
     pub const JsxRuntime = enum(u8) {
         _none,
         /// automatic
@@ -48,28 +84,22 @@ pub const Api = struct {
 
     pub const Jsx = struct {
         /// factory
-        factory: []u8,
+        factory: []const u8,
 
         /// runtime
         runtime: JsxRuntime,
 
         /// fragment
-        fragment: []u8,
+        fragment: []const u8,
 
-        /// production
-        production: bool = false,
+        /// development
+        development: bool = false,
 
         /// import_source
-        import_source: []u8,
+        import_source: []const u8,
 
         /// react_fast_refresh
         react_fast_refresh: bool = false,
-
-        /// loader_keys
-        loader_keys: [][]u8,
-
-        /// loader_values
-        loader_values: []Loader,
 
         pub fn decode(allocator: *std.mem.Allocator, reader: anytype) anyerror!Jsx {
             var obj = std.mem.zeroes(Jsx);
@@ -89,39 +119,17 @@ pub const Api = struct {
                 result.fragment = try allocator.alloc(u8, length);
             }
             _ = try reader.readAll(result.fragment);
-            result.production = (try reader.readByte()) == @as(u8, 1);
+            result.development = (try reader.readByte()) == @as(u8, 1);
             length = try reader.readIntNative(u32);
             if (result.import_source.len != length) {
                 result.import_source = try allocator.alloc(u8, length);
             }
             _ = try reader.readAll(result.import_source);
             result.react_fast_refresh = (try reader.readByte()) == @as(u8, 1);
-            {
-                var array_count = try reader.readIntNative(u32);
-                if (array_count != result.loader_keys.len) {
-                    result.loader_keys = try allocator.alloc([]u8, array_count);
-                }
-                length = try reader.readIntNative(u32);
-                for (result.loader_keys) |content, j| {
-                    if (result.loader_keys[j].len != length and length > 0) {
-                        result.loader_keys[j] = try allocator.alloc(u8, length);
-                    }
-                    _ = try reader.readAll(result.loader_keys[j]);
-                }
-            }
-            length = try reader.readIntNative(u32);
-            result.loader_values = try allocator.alloc(Loader, length);
-            {
-                var j: usize = 0;
-                while (j < length) : (j += 1) {
-                    result.loader_values[j] = try reader.readEnum(Loader, .Little);
-                }
-            }
             return;
         }
 
         pub fn encode(result: *const @This(), writer: anytype) anyerror!void {
-            var n: usize = 0;
             try writer.writeIntNative(u32, @intCast(u32, result.factory.len));
             try writer.writeAll(std.mem.sliceAsBytes(result.factory));
 
@@ -130,50 +138,67 @@ pub const Api = struct {
             try writer.writeIntNative(u32, @intCast(u32, result.fragment.len));
             try writer.writeAll(std.mem.sliceAsBytes(result.fragment));
 
-            try writer.writeByte(@boolToInt(result.production));
+            try writer.writeByte(@boolToInt(result.development));
 
             try writer.writeIntNative(u32, @intCast(u32, result.import_source.len));
             try writer.writeAll(std.mem.sliceAsBytes(result.import_source));
 
             try writer.writeByte(@boolToInt(result.react_fast_refresh));
-
-            n = result.loader_keys.len;
-            _ = try writer.writeIntNative(u32, @intCast(u32, n));
-            {
-                var j: usize = 0;
-                while (j < n) : (j += 1) {
-                    _ = try writer.writeIntNative(u32, @intCast(u32, result.loader_keys[j].len));
-                    try writer.writeAll(std.mem.sliceAsBytes(result.loader_keys[j]));
-                }
-            }
-
-            n = result.loader_values.len;
-            _ = try writer.writeIntNative(u32, @intCast(u32, n));
-            {
-                var j: usize = 0;
-                while (j < n) : (j += 1) {
-                    try writer.writeByte(@enumToInt(result.loader_values[j]));
-                }
-            }
             return;
         }
     };
 
     pub const TransformOptions = struct {
         /// jsx
-        jsx: Jsx,
+        jsx: ?Jsx = null,
 
-        /// ts
-        ts: bool = false,
+        /// tsconfig_override
+        tsconfig_override: ?[]const u8 = null,
 
-        /// base_path
-        base_path: []u8,
+        /// resolve
+        resolve: ?ResolveMode = null,
+
+        /// public_url
+        public_url: ?[]const u8 = null,
+
+        /// absolute_working_dir
+        absolute_working_dir: ?[]const u8 = null,
 
         /// define_keys
-        define_keys: [][]u8,
+        define_keys: []const []const u8,
 
         /// define_values
-        define_values: [][]u8,
+        define_values: []const []const u8,
+
+        /// preserve_symlinks
+        preserve_symlinks: ?bool = null,
+
+        /// entry_points
+        entry_points: []const []const u8,
+
+        /// write
+        write: ?bool = null,
+
+        /// inject
+        inject: []const []const u8,
+
+        /// output_dir
+        output_dir: ?[]const u8 = null,
+
+        /// external
+        external: []const []const u8,
+
+        /// loader_keys
+        loader_keys: []const []const u8,
+
+        /// loader_values
+        loader_values: []const Loader,
+
+        /// main_fields
+        main_fields: []const []const u8,
+
+        /// platform
+        platform: ?Platform = null,
 
         pub fn decode(allocator: *std.mem.Allocator, reader: anytype) anyerror!TransformOptions {
             var obj = std.mem.zeroes(TransformOptions);
@@ -182,77 +207,341 @@ pub const Api = struct {
         }
         pub fn update(result: *TransformOptions, allocator: *std.mem.Allocator, reader: anytype) anyerror!void {
             var length: usize = 0;
-            result.jsx = try Jsx.decode(allocator, reader);
-            result.ts = (try reader.readByte()) == @as(u8, 1);
-            length = try reader.readIntNative(u32);
-            if (result.base_path.len != length) {
-                result.base_path = try allocator.alloc(u8, length);
+            while (true) {
+                const field_type: u8 = try reader.readByte();
+                switch (field_type) {
+                    0 => {
+                        return;
+                    },
+
+                    1 => {
+                        result.jsx = try Jsx.decode(allocator, reader);
+                    },
+                    2 => {
+                        length = try reader.readIntNative(u32);
+                        if ((result.tsconfig_override orelse &([_]u8{})).len != length) {
+                            result.tsconfig_override = try allocator.alloc(u8, length);
+                        }
+                        _ = try reader.readAll(result.tsconfig_override.?);
+                    },
+                    3 => {
+                        result.resolve = try reader.readEnum(ResolveMode, .Little);
+                    },
+                    4 => {
+                        length = try reader.readIntNative(u32);
+                        if ((result.public_url orelse &([_]u8{})).len != length) {
+                            result.public_url = try allocator.alloc(u8, length);
+                        }
+                        _ = try reader.readAll(result.public_url.?);
+                    },
+                    5 => {
+                        length = try reader.readIntNative(u32);
+                        if ((result.absolute_working_dir orelse &([_]u8{})).len != length) {
+                            result.absolute_working_dir = try allocator.alloc(u8, length);
+                        }
+                        _ = try reader.readAll(result.absolute_working_dir.?);
+                    },
+                    6 => {
+                        {
+                            var array_count = try reader.readIntNative(u32);
+                            if (array_count != result.define_keys.len) {
+                                result.define_keys = try allocator.alloc([]const u8, array_count);
+                            }
+                            length = try reader.readIntNative(u32);
+                            for (result.define_keys) |content, j| {
+                                if (result.define_keys[j].len != length and length > 0) {
+                                    result.define_keys[j] = try allocator.alloc(u8, length);
+                                }
+                                _ = try reader.readAll(result.define_keys[j].?);
+                            }
+                        }
+                    },
+                    7 => {
+                        {
+                            var array_count = try reader.readIntNative(u32);
+                            if (array_count != result.define_values.len) {
+                                result.define_values = try allocator.alloc([]const u8, array_count);
+                            }
+                            length = try reader.readIntNative(u32);
+                            for (result.define_values) |content, j| {
+                                if (result.define_values[j].len != length and length > 0) {
+                                    result.define_values[j] = try allocator.alloc(u8, length);
+                                }
+                                _ = try reader.readAll(result.define_values[j].?);
+                            }
+                        }
+                    },
+                    8 => {
+                        result.preserve_symlinks = (try reader.readByte()) == @as(u8, 1);
+                    },
+                    9 => {
+                        {
+                            var array_count = try reader.readIntNative(u32);
+                            if (array_count != result.entry_points.len) {
+                                result.entry_points = try allocator.alloc([]const u8, array_count);
+                            }
+                            length = try reader.readIntNative(u32);
+                            for (result.entry_points) |content, j| {
+                                if (result.entry_points[j].len != length and length > 0) {
+                                    result.entry_points[j] = try allocator.alloc(u8, length);
+                                }
+                                _ = try reader.readAll(result.entry_points[j].?);
+                            }
+                        }
+                    },
+                    10 => {
+                        result.write = (try reader.readByte()) == @as(u8, 1);
+                    },
+                    11 => {
+                        {
+                            var array_count = try reader.readIntNative(u32);
+                            if (array_count != result.inject.len) {
+                                result.inject = try allocator.alloc([]const u8, array_count);
+                            }
+                            length = try reader.readIntNative(u32);
+                            for (result.inject) |content, j| {
+                                if (result.inject[j].len != length and length > 0) {
+                                    result.inject[j] = try allocator.alloc(u8, length);
+                                }
+                                _ = try reader.readAll(result.inject[j].?);
+                            }
+                        }
+                    },
+                    12 => {
+                        length = try reader.readIntNative(u32);
+                        if ((result.output_dir orelse &([_]u8{})).len != length) {
+                            result.output_dir = try allocator.alloc(u8, length);
+                        }
+                        _ = try reader.readAll(result.output_dir.?);
+                    },
+                    13 => {
+                        {
+                            var array_count = try reader.readIntNative(u32);
+                            if (array_count != result.external.len) {
+                                result.external = try allocator.alloc([]const u8, array_count);
+                            }
+                            length = try reader.readIntNative(u32);
+                            for (result.external) |content, j| {
+                                if (result.external[j].len != length and length > 0) {
+                                    result.external[j] = try allocator.alloc(u8, length);
+                                }
+                                _ = try reader.readAll(result.external[j].?);
+                            }
+                        }
+                    },
+                    14 => {
+                        {
+                            var array_count = try reader.readIntNative(u32);
+                            if (array_count != result.loader_keys.len) {
+                                result.loader_keys = try allocator.alloc([]const u8, array_count);
+                            }
+                            length = try reader.readIntNative(u32);
+                            for (result.loader_keys) |content, j| {
+                                if (result.loader_keys[j].len != length and length > 0) {
+                                    result.loader_keys[j] = try allocator.alloc(u8, length);
+                                }
+                                _ = try reader.readAll(result.loader_keys[j].?);
+                            }
+                        }
+                    },
+                    15 => {
+                        length = try reader.readIntNative(u32);
+                        if (result.loader_values != length) {
+                            result.loader_values = try allocator.alloc(Loader, length);
+                        }
+                        {
+                            var j: usize = 0;
+                            while (j < length) : (j += 1) {
+                                result.loader_values[j] = try reader.readEnum(Loader, .Little);
+                            }
+                        }
+                    },
+                    16 => {
+                        {
+                            var array_count = try reader.readIntNative(u32);
+                            if (array_count != result.main_fields.len) {
+                                result.main_fields = try allocator.alloc([]const u8, array_count);
+                            }
+                            length = try reader.readIntNative(u32);
+                            for (result.main_fields) |content, j| {
+                                if (result.main_fields[j].len != length and length > 0) {
+                                    result.main_fields[j] = try allocator.alloc(u8, length);
+                                }
+                                _ = try reader.readAll(result.main_fields[j].?);
+                            }
+                        }
+                    },
+                    17 => {
+                        result.platform = try reader.readEnum(Platform, .Little);
+                    },
+                    else => {
+                        return error.InvalidMessage;
+                    },
+                }
             }
-            _ = try reader.readAll(result.base_path);
-            {
-                var array_count = try reader.readIntNative(u32);
-                if (array_count != result.define_keys.len) {
-                    result.define_keys = try allocator.alloc([]u8, array_count);
-                }
-                length = try reader.readIntNative(u32);
-                for (result.define_keys) |content, j| {
-                    if (result.define_keys[j].len != length and length > 0) {
-                        result.define_keys[j] = try allocator.alloc(u8, length);
-                    }
-                    _ = try reader.readAll(result.define_keys[j]);
-                }
-            }
-            {
-                var array_count = try reader.readIntNative(u32);
-                if (array_count != result.define_values.len) {
-                    result.define_values = try allocator.alloc([]u8, array_count);
-                }
-                length = try reader.readIntNative(u32);
-                for (result.define_values) |content, j| {
-                    if (result.define_values[j].len != length and length > 0) {
-                        result.define_values[j] = try allocator.alloc(u8, length);
-                    }
-                    _ = try reader.readAll(result.define_values[j]);
-                }
-            }
-            return;
         }
 
         pub fn encode(result: *const @This(), writer: anytype) anyerror!void {
             var n: usize = 0;
-            try result.jsx.encode(writer);
+            if (result.jsx) |jsx| {
+                try writer.writeByte(1);
+                try jsx.encode(writer);
+            }
 
-            try writer.writeByte(@boolToInt(result.ts));
+            if (result.tsconfig_override) |tsconfig_override| {
+                try writer.writeByte(2);
+                try writer.writeIntNative(u32, @intCast(u32, tsconfig_override.len));
+                try writer.writeAll(std.mem.sliceAsBytes(tsconfig_override));
+            }
 
-            try writer.writeIntNative(u32, @intCast(u32, result.base_path.len));
-            try writer.writeAll(std.mem.sliceAsBytes(result.base_path));
+            if (result.resolve) |resolve| {
+                try writer.writeByte(3);
+                try writer.writeIntNative(@TypeOf(@enumToInt(result.resolve orelse unreachable)), @enumToInt(result.resolve orelse unreachable));
+            }
 
-            n = result.define_keys.len;
-            _ = try writer.writeIntNative(u32, @intCast(u32, n));
-            {
-                var j: usize = 0;
-                while (j < n) : (j += 1) {
-                    _ = try writer.writeIntNative(u32, @intCast(u32, result.define_keys[j].len));
-                    try writer.writeAll(std.mem.sliceAsBytes(result.define_keys[j]));
+            if (result.public_url) |public_url| {
+                try writer.writeByte(4);
+                try writer.writeIntNative(u32, @intCast(u32, public_url.len));
+                try writer.writeAll(std.mem.sliceAsBytes(public_url));
+            }
+
+            if (result.absolute_working_dir) |absolute_working_dir| {
+                try writer.writeByte(5);
+                try writer.writeIntNative(u32, @intCast(u32, absolute_working_dir.len));
+                try writer.writeAll(std.mem.sliceAsBytes(absolute_working_dir));
+            }
+
+            if (result.define_keys) |define_keys| {
+                try writer.writeByte(6);
+                n = result.define_keys.len;
+                _ = try writer.writeIntNative(u32, @intCast(u32, n));
+                {
+                    var j: usize = 0;
+                    while (j < n) : (j += 1) {
+                        _ = try writer.writeIntNative(u32, @intCast(u32, result.define_keys[j].len));
+                        try writer.writeAll(std.mem.sliceAsBytes(define_keys[j]));
+                    }
                 }
             }
 
-            n = result.define_values.len;
-            _ = try writer.writeIntNative(u32, @intCast(u32, n));
-            {
-                var j: usize = 0;
-                while (j < n) : (j += 1) {
-                    _ = try writer.writeIntNative(u32, @intCast(u32, result.define_values[j].len));
-                    try writer.writeAll(std.mem.sliceAsBytes(result.define_values[j]));
+            if (result.define_values) |define_values| {
+                try writer.writeByte(7);
+                n = result.define_values.len;
+                _ = try writer.writeIntNative(u32, @intCast(u32, n));
+                {
+                    var j: usize = 0;
+                    while (j < n) : (j += 1) {
+                        _ = try writer.writeIntNative(u32, @intCast(u32, result.define_values[j].len));
+                        try writer.writeAll(std.mem.sliceAsBytes(define_values[j]));
+                    }
                 }
             }
+
+            if (result.preserve_symlinks) |preserve_symlinks| {
+                try writer.writeByte(8);
+                try writer.writeByte(@boolToInt(preserve_symlinks));
+            }
+
+            if (result.entry_points) |entry_points| {
+                try writer.writeByte(9);
+                n = result.entry_points.len;
+                _ = try writer.writeIntNative(u32, @intCast(u32, n));
+                {
+                    var j: usize = 0;
+                    while (j < n) : (j += 1) {
+                        _ = try writer.writeIntNative(u32, @intCast(u32, result.entry_points[j].len));
+                        try writer.writeAll(std.mem.sliceAsBytes(entry_points[j]));
+                    }
+                }
+            }
+
+            if (result.write) |write| {
+                try writer.writeByte(10);
+                try writer.writeByte(@boolToInt(write));
+            }
+
+            if (result.inject) |inject| {
+                try writer.writeByte(11);
+                n = result.inject.len;
+                _ = try writer.writeIntNative(u32, @intCast(u32, n));
+                {
+                    var j: usize = 0;
+                    while (j < n) : (j += 1) {
+                        _ = try writer.writeIntNative(u32, @intCast(u32, result.inject[j].len));
+                        try writer.writeAll(std.mem.sliceAsBytes(inject[j]));
+                    }
+                }
+            }
+
+            if (result.output_dir) |output_dir| {
+                try writer.writeByte(12);
+                try writer.writeIntNative(u32, @intCast(u32, output_dir.len));
+                try writer.writeAll(std.mem.sliceAsBytes(output_dir));
+            }
+
+            if (result.external) |external| {
+                try writer.writeByte(13);
+                n = result.external.len;
+                _ = try writer.writeIntNative(u32, @intCast(u32, n));
+                {
+                    var j: usize = 0;
+                    while (j < n) : (j += 1) {
+                        _ = try writer.writeIntNative(u32, @intCast(u32, result.external[j].len));
+                        try writer.writeAll(std.mem.sliceAsBytes(external[j]));
+                    }
+                }
+            }
+
+            if (result.loader_keys) |loader_keys| {
+                try writer.writeByte(14);
+                n = result.loader_keys.len;
+                _ = try writer.writeIntNative(u32, @intCast(u32, n));
+                {
+                    var j: usize = 0;
+                    while (j < n) : (j += 1) {
+                        _ = try writer.writeIntNative(u32, @intCast(u32, result.loader_keys[j].len));
+                        try writer.writeAll(std.mem.sliceAsBytes(loader_keys[j]));
+                    }
+                }
+            }
+
+            if (result.loader_values) |loader_values| {
+                try writer.writeByte(15);
+                n = result.loader_values.len;
+                _ = try writer.writeIntNative(u32, @intCast(u32, n));
+                {
+                    var j: usize = 0;
+                    while (j < n) : (j += 1) {
+                        try writer.writeByte(@enumToInt(result.loader_values[j] orelse unreachable));
+                    }
+                }
+            }
+
+            if (result.main_fields) |main_fields| {
+                try writer.writeByte(16);
+                n = result.main_fields.len;
+                _ = try writer.writeIntNative(u32, @intCast(u32, n));
+                {
+                    var j: usize = 0;
+                    while (j < n) : (j += 1) {
+                        _ = try writer.writeIntNative(u32, @intCast(u32, result.main_fields[j].len));
+                        try writer.writeAll(std.mem.sliceAsBytes(main_fields[j]));
+                    }
+                }
+            }
+
+            if (result.platform) |platform| {
+                try writer.writeByte(17);
+                try writer.writeIntNative(@TypeOf(@enumToInt(result.platform orelse unreachable)), @enumToInt(result.platform orelse unreachable));
+            }
+            try writer.writeByte(0);
             return;
         }
     };
 
     pub const FileHandle = struct {
         /// path
-        path: []u8,
+        path: []const u8,
 
         /// size
         size: u32 = 0,
@@ -293,10 +582,10 @@ pub const Api = struct {
         handle: ?FileHandle = null,
 
         /// path
-        path: ?[]u8 = null,
+        path: ?[]const u8 = null,
 
         /// contents
-        contents: []u8,
+        contents: []const u8,
 
         /// loader
         loader: ?Loader = null,
@@ -330,7 +619,7 @@ pub const Api = struct {
                     },
                     3 => {
                         length = @intCast(usize, try reader.readIntNative(u32));
-                        if (result.contents.len != length) {
+                        if (result.contents != length) {
                             result.contents = try allocator.alloc(u8, length);
                         }
                         _ = try reader.readAll(result.contents);
@@ -397,10 +686,10 @@ pub const Api = struct {
 
     pub const OutputFile = struct {
         /// data
-        data: []u8,
+        data: []const u8,
 
         /// path
-        path: []u8,
+        path: []const u8,
 
         pub fn decode(allocator: *std.mem.Allocator, reader: anytype) anyerror!OutputFile {
             var obj = std.mem.zeroes(OutputFile);
@@ -517,10 +806,10 @@ pub const Api = struct {
 
     pub const Location = struct {
         /// file
-        file: []u8,
+        file: []const u8,
 
         /// namespace
-        namespace: []u8,
+        namespace: []const u8,
 
         /// line
         line: i32 = 0,
@@ -529,10 +818,10 @@ pub const Api = struct {
         column: i32 = 0,
 
         /// line_text
-        line_text: []u8,
+        line_text: []const u8,
 
         /// suggestion
-        suggestion: []u8,
+        suggestion: []const u8,
 
         /// offset
         offset: u32 = 0,
@@ -594,7 +883,7 @@ pub const Api = struct {
 
     pub const MessageData = struct {
         /// text
-        text: ?[]u8 = null,
+        text: ?[]const u8 = null,
 
         /// location
         location: ?Location = null,

@@ -15,6 +15,7 @@ pub const build_target: BuildTarget = comptime {
 pub const isWasm = build_target == .wasm;
 pub const isNative = build_target == .native;
 pub const isWasi = build_target == .wasi;
+pub const isBrowser = !isWasi and isWasm;
 
 pub const isDebug = std.builtin.Mode.Debug == std.builtin.mode;
 

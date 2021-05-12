@@ -307,9 +307,14 @@ pub const Resolver = struct {
             if (try r.dirInfoCached(source_dir)) |_dir_info| {
                 const dir_info: *DirInfo = _dir_info;
                 if (dir_info.ts_config_json) |tsconfig| {
-                    if (tsconfig.paths.size() > 0) {}
+                    if (tsconfig.paths.size() > 0) {
+                        const res = r.matchTSConfigPaths(tsconfig, import_path, kind);
+                        return Result{ .path_pair = res.path_pair, .diff_case = res.diff_case };
+                    }
                 }
             }
+
+            
         }
     }
 
@@ -400,6 +405,16 @@ pub const Resolver = struct {
         try r.dir_cache.put(path, info);
     }
 
+    pub const MatchResult = struct {
+        path_pair: PathPair,
+        ok: bool = false,
+        diff_case: ?fs.FileSystem.Entry.Lookup.DifferentCase = null,
+    };
+
+    pub fn matchTSConfigPaths(r: *Resolver, tsconfig: *TSConfigJSON, path: string, kind: ast.ImportKind) MatchResult {
+        Global.notimpl();
+    }
+
     fn dirInfoUncached(r: *Resolver, path: string) !?*DirInfo {
         const rfs: r.fs.RealFS = r.fs.fs;
         var parent: ?*DirInfo = null;
@@ -417,7 +432,7 @@ pub const Resolver = struct {
             // set. It means we will just pass through the empty directory and
             // continue to check the directories above it, which is now node behaves.
             switch (_entries.err) {
-                fs.FileSystem.Error.EACCESS => {
+                error.EACCESS => {
                     entries = fs.FileSystem.DirEntry.empty(path, r.allocator);
                 },
 
@@ -428,8 +443,8 @@ pub const Resolver = struct {
                 // directory. The "pnpm" package manager generates a faulty "NODE_PATH"
                 // list which contains such paths and treating them as missing means we just
                 // ignore them during path resolution.
-                fs.FileSystem.Error.ENOENT,
-                fs.FileSystem.Error.ENOTDIR,
+                error.ENOENT,
+                error.ENOTDIR,
                 => {},
                 else => {
                     const pretty = r.prettyPath(fs.Path{ .text = path, .namespace = "file" });

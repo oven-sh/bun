@@ -128,7 +128,7 @@ pub const MutableString = struct {
         return self.list.toOwnedSlice(self.allocator);
     }
 
-    pub fn toOwnedSliceLeaky(self: *MutableString) []u8 {
+    pub fn toOwnedSliceLeaky(self: *MutableString) string {
         return self.list.items;
     }
 

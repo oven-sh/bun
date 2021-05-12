@@ -10,6 +10,17 @@ smol Loader {
     json = 7;
 }
 
+smol ResolveMode {
+  disable = 1;
+  lazy = 2;
+  dev = 3;
+  bundle = 4;
+}
+
+smol Platform {
+  browser = 1;
+  node = 2;
+}
 
 smol JSXRuntime {
   automatic = 1;
@@ -20,25 +31,42 @@ struct JSX {
   string factory;
   JSXRuntime runtime;
   string fragment;
-  bool production;
+  bool development;
 
   // Probably react
   string import_source;
 
   bool react_fast_refresh;
 
-  string[] loader_keys;
-  Loader[] loader_values;
 }
 
 
-struct TransformOptions {
-  JSX jsx;
-  bool ts;
+message TransformOptions {
+  JSX jsx = 1;
+  string tsconfig_override = 2;
+  ResolveMode resolve = 3;
 
-  string base_path;
-  string[] define_keys;
-  string[] define_values;
+  string public_url = 4;
+  string absolute_working_dir = 5;
+
+  string[] define_keys = 6;
+  string[] define_values = 7;
+
+  bool preserve_symlinks = 8;
+
+  string[] entry_points = 9;
+  bool write = 10;
+
+  string[] inject = 11;
+  string output_dir = 12;
+
+  string[] external = 13;
+
+  string[] loader_keys = 14;
+  Loader[] loader_values = 15;
+
+  string[] main_fields = 16;
+  Platform platform = 17;
 }
 
 struct FileHandle {

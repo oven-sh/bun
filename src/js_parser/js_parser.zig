@@ -1323,8 +1323,8 @@ pub const Parser = struct {
                     var i: usize = 0;
                     var additional_stmt: ?Stmt = null;
                     if (jsx_factory_symbol.use_count_estimate > 0) {
-                        jsx_imports[i] = p.options.jsx.factory;
-                        try symbols.put(p.options.jsx.factory, p.jsx_factory_ref);
+                        jsx_imports[i] = p.options.jsx.factory[0];
+                        try symbols.put(p.options.jsx.factory[0], p.jsx_factory_ref);
                         i += 1;
                     }
 
@@ -1347,9 +1347,9 @@ pub const Parser = struct {
                     }
 
                     if (jsx_fragment_symbol.use_count_estimate > 0) {
-                        jsx_imports[i] = p.options.jsx.fragment;
+                        jsx_imports[i] = p.options.jsx.fragment[0];
 
-                        try symbols.put(p.options.jsx.fragment, p.jsx_fragment_ref);
+                        try symbols.put(p.options.jsx.fragment[0], p.jsx_fragment_ref);
                         i += 1;
                     }
 
@@ -2208,9 +2208,9 @@ pub const P = struct {
                 p.jsx_filename_ref = p.newSymbol(.other, Prefill.Runtime.JSXFilename) catch unreachable;
             }
             const jsx_importname = p.options.jsx.jsx;
-            p.jsx_fragment_ref = p.newSymbol(.other, p.options.jsx.fragment) catch unreachable;
+            p.jsx_fragment_ref = p.newSymbol(.other, p.options.jsx.fragment[p.options.jsx.fragment.len - 1]) catch unreachable;
             p.jsx_runtime_ref = p.newSymbol(.other, jsx_importname) catch unreachable;
-            p.jsx_factory_ref = p.newSymbol(.other, p.options.jsx.factory) catch unreachable;
+            p.jsx_factory_ref = p.newSymbol(.other, p.options.jsx.factory[p.options.jsx.factory.len - 1]) catch unreachable;
         }
 
         // ECMAScript modules are always interpreted as strict mode. This has to be

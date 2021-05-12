@@ -44,28 +44,23 @@ pub const PackageJSON = struct {
     //
     browser_map: BrowserMap,
 
-    pub fn parse(r: *resolver.Resolver, input_path: string) ?*PackageJSON {
-        if (!has_set_default_main_fields) {
-            has_set_default_main_fields = true;
-        }
-
+    pub fn parse(r: *resolver.Resolver, input_path: string) ?PackageJSON {
         const parts = [_]string{ input_path, "package.json" };
         const package_json_path = std.fs.path.join(r.allocator, &parts) catch unreachable;
         errdefer r.allocator.free(package_json_path);
 
-        const entry: *r.caches.fs.Entry = try r.caches.fs.readFile(r.fs, input_path) catch |err| {
-            r.log.addErrorFmt(null, .empty, r.allocator, "Cannot read file \"{s}\": {s}", .{ r.prettyPath(fs.Path.init(input_path)), @errorName(err) }) catch unreachable;
+        const entry = r.caches.fs.readFile(r.fs, input_path) catch |err| {
+            r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Cannot read file \"{s}\": {s}", .{ r.prettyPath(fs.Path.init(input_path)), @errorName(err) }) catch unreachable;
             return null;
         };
 
-        if (r.debug_logs) |debug| {
+        if (r.debug_logs) |*debug| {
             debug.addNoteFmt("The file \"{s}\" exists", .{package_json_path}) catch unreachable;
         }
 
-        const key_path = fs.Path.init(allocator.dupe(package_json_path) catch unreachable);
+        const key_path = fs.Path.init(r.allocator.dupe(u8, package_json_path) catch unreachable);
 
-        var json_source = logger.Source.initPathString(key_path);
-        json_source.contents = entry.contents;
+        var json_source = logger.Source.initPathString(key_path.text, entry.contents);
         json_source.path.pretty = r.prettyPath(json_source.path);
 
         const json: js_ast.Expr = (r.caches.json.parseJSON(r.log, json_source, r.allocator) catch |err| {
@@ -77,8 +72,9 @@ pub const PackageJSON = struct {
 
         var package_json = PackageJSON{
             .source = json_source,
+            .module_type = .unknown,
             .browser_map = BrowserMap.init(r.allocator),
-            .main_fields_map = MainFieldMap.init(r.allocator),
+            .main_fields = MainFieldMap.init(r.allocator),
         };
 
         if (json.getProperty("type")) |type_json| {
@@ -110,7 +106,7 @@ pub const PackageJSON = struct {
             if (json.getProperty(main)) |main_json| {
                 const expr: js_ast.Expr = main_json.expr;
 
-                if ((main_json.getString(r.allocator) catch null)) |str| {
+                if ((expr.getString(r.allocator))) |str| {
                     if (str.len > 0) {
                         package_json.main_fields.put(main, str) catch unreachable;
                     }
@@ -132,13 +128,13 @@ pub const PackageJSON = struct {
             //   },
             //
             if (json.getProperty("browser")) |browser_prop| {
-                switch (browser_prop.data) {
+                switch (browser_prop.expr.data) {
                     .e_object => |obj| {
                         // The value is an object
 
                         // Remap all files in the browser field
                         for (obj.properties) |prop| {
-                            var _key_str = (prop.key orelse continue).getString(r.allocator) catch unreachable;
+                            var _key_str = (prop.key orelse continue).getString(r.allocator) orelse continue;
                             const value: js_ast.Expr = prop.value orelse continue;
 
                             // Normalize the path so we can compare against it without getting
@@ -155,7 +151,7 @@ pub const PackageJSON = struct {
                             switch (value.data) {
                                 .e_string => |str| {
                                     // If this is a string, it's a replacement package
-                                    package_json.browser_map.put(key, str) catch unreachable;
+                                    package_json.browser_map.put(key, str.string(r.allocator) catch unreachable) catch unreachable;
                                 },
                                 .e_boolean => |boolean| {
                                     if (!boolean.value) {
@@ -163,7 +159,7 @@ pub const PackageJSON = struct {
                                     }
                                 },
                                 else => {
-                                    r.log.addWarning("Each \"browser\" mapping must be a string or boolean", value.loc) catch unreachable;
+                                    r.log.addWarning(&json_source, value.loc, "Each \"browser\" mapping must be a string or boolean") catch unreachable;
                                 },
                             }
                         }

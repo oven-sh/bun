@@ -123,22 +123,22 @@ pub const FileSystem = struct {
             file,
         };
 
-        pub fn kind(entry: *Entry, fs: *Implementation) !Kind {
+        pub fn kind(entry: *Entry, fs: *Implementation) Kind {
             entry.mutex.lock();
             defer entry.mutex.unlock();
             if (entry.need_stat) {
                 entry.need_stat = false;
-                entry.cache = try fs.kind(entry.dir, entry.base);
+                entry.cache = fs.kind(entry.dir, entry.base) catch unreachable;
             }
             return entry.cache.kind;
         }
 
-        pub fn symlink(entry: *Entry, fs: *Implementation) !string {
+        pub fn symlink(entry: *Entry, fs: *Implementation) string {
             entry.mutex.lock();
             defer entry.mutex.unlock();
             if (entry.need_stat) {
                 entry.need_stat = false;
-                entry.cache = try fs.kind(entry.dir, entry.base);
+                entry.cache = fs.kind(entry.dir, entry.base) catch unreachable;
             }
             return entry.cache.symlink;
         }
@@ -175,32 +175,32 @@ pub const FileSystem = struct {
             };
         }
 
+        pub const ModKeyError = error{
+            Unusable,
+        };
         pub const ModKey = struct {
             inode: std.fs.File.INode = 0,
             size: u64 = 0,
             mtime: i128 = 0,
             mode: std.fs.File.Mode = 0,
 
-            pub const Error = error{
-                Unusable,
-            };
             pub fn generate(fs: *RealFS, path: string) anyerror!ModKey {
                 var file = try std.fs.openFileAbsolute(path, std.fs.File.OpenFlags{ .read = true });
                 defer file.close();
                 const stat = try file.stat();
 
-                const seconds = stat.mtime / std.time.ns_per_s;
+                const seconds = @divTrunc(stat.mtime, @as(@TypeOf(stat.mtime), std.time.ns_per_s));
 
                 // We can't detect changes if the file system zeros out the modification time
                 if (seconds == 0 and std.time.ns_per_s == 0) {
-                    return Error.Unusable;
+                    return error.Unusable;
                 }
 
                 // Don't generate a modification key if the file is too new
                 const now = std.time.nanoTimestamp();
-                const now_seconds = now / std.time.ns_per_s;
+                const now_seconds = @divTrunc(now, std.time.ns_per_s);
                 if (seconds > seconds or (seconds == now_seconds and stat.mtime > now)) {
-                    return Error.Unusable;
+                    return error.Unusable;
                 }
 
                 return ModKey{
@@ -214,35 +214,38 @@ pub const FileSystem = struct {
             pub const SafetyGap = 3;
         };
 
-        fn modKeyError(fs: *RealFS, path: string, err: anyerror) !void {
+        fn modKeyError(fs: *RealFS, path: string, err: anyerror) void {
             if (fs.watcher) |*watcher| {
-                watch_data.watch_mutex.lock();
-                defer watch_data.watch_mutex.unlock();
+                fs.watcher_mutex.lock();
+                defer fs.watcher_mutex.unlock();
                 var state = WatchData.State.file_missing;
 
                 switch (err) {
-                    ModKey.Error.Unusable => {
+                    error.Unusable => {
                         state = WatchData.State.file_unusable_mod_key;
                     },
                     else => {},
                 }
 
-                var entry = try watcher.getOrPutValue(path, WatchData{ .state = state });
+                var entry = watcher.getOrPutValue(path, WatchData{ .state = state }) catch unreachable;
                 entry.value.state = state;
             }
-            return err;
         }
 
-        pub fn modKey(fs: *RealFS, path: string) !ModKey {
+        pub fn modKey(fs: *RealFS, path: string) anyerror!ModKey {
             fs.limiter.before();
             defer fs.limiter.after();
 
-            const key = ModKey.generate(fs, path) catch |err| return fs.modKeyError(path, err);
+            const key = ModKey.generate(fs, path) catch |err| {
+                fs.modKeyError(path, err);
+                return err;
+            };
+
             if (fs.watcher) |*watcher| {
                 fs.watcher_mutex.lock();
                 defer fs.watcher_mutex.unlock();
 
-                var entry = try watcher.getOrPutValue(path, WatchData{ .state = .file_has_mod_key, .mod_key = key });
+                var entry = watcher.getOrPutValue(path, WatchData{ .state = .file_has_mod_key, .mod_key = key }) catch unreachable;
                 entry.value.mod_key = key;
             }
 
@@ -420,32 +423,39 @@ pub const FileSystem = struct {
             return result;
         }
 
-        fn readFileError(fs: *RealFS, path: string, err: anyerror) !void {
+        fn readFileError(fs: *RealFS, path: string, err: anyerror) void {
             if (fs.watcher) |*watcher| {
                 fs.watcher_mutex.lock();
                 defer fs.watcher_mutex.unlock();
-                var res = try watcher.getOrPutValue(path, WatchData{ .state = .file_missing });
+                var res = watcher.getOrPutValue(path, WatchData{ .state = .file_missing }) catch unreachable;
                 res.value.state = .file_missing;
             }
-
-            return err;
         }
 
         pub fn readFile(fs: *RealFS, path: string, _size: ?usize) !File {
             fs.limiter.before();
             defer fs.limiter.after();
 
-            const file: std.fs.File = std.fs.openFileAbsolute(path, std.fs.File.OpenFlags{ .read = true, .write = false }) catch |err| return fs.readFileError(path, err);
+            const file: std.fs.File = std.fs.openFileAbsolute(path, std.fs.File.OpenFlags{ .read = true, .write = false }) catch |err| {
+                fs.readFileError(path, err);
+                return err;
+            };
             defer file.close();
 
             // Skip the extra file.stat() call when possible
-            const size = _size orelse (try file.getEndPos() catch |err| return fs.readFileError(path, err));
-            const file_contents: []u8 = file.readToEndAllocOptions(fs.allocator, size, size, @alignOf(u8), null) catch |err| return fs.readFileError(path, err);
+            const size = _size orelse (file.getEndPos() catch |err| {
+                fs.readFileError(path, err);
+                return err;
+            });
+            const file_contents: []u8 = file.readToEndAllocOptions(fs.allocator, size, size, @alignOf(u8), null) catch |err| {
+                fs.readFileError(path, err);
+                return err;
+            };
 
             if (fs.watcher) |*watcher| {
-                var hold = fs.watcher_mutex.acquire();
-                defer hold.release();
-                var res = try watcher.getOrPutValue(path, WatchData{});
+                fs.watcher_mutex.lock();
+                defer fs.watcher_mutex.unlock();
+                var res = watcher.getOrPutValue(path, WatchData{}) catch unreachable;
                 res.value.state = .file_need_mod_key;
                 res.value.file_contents = file_contents;
             }
@@ -464,16 +474,17 @@ pub const FileSystem = struct {
 
             const file = try std.fs.openFileAbsolute(entry_path, .{ .read = true, .write = false });
             defer file.close();
-            const stat = try file.stat();
+            var stat = try file.stat();
+
             var _kind = stat.kind;
             var cache = Entry.Cache{ .kind = Entry.Kind.file, .symlink = "" };
-
+            var symlink: []u8 = &([_]u8{});
             if (_kind == .SymLink) {
                 // windows has a max filepath of 255 chars
                 // we give it a little longer for other platforms
-                var out_buffer = [_]u8{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
-                var out_slice = &(out_buffer);
-                var symlink = entry_path;
+                var out_buffer = std.mem.zeroes([512]u8);
+                var out_slice = &out_buffer;
+                symlink = entry_path;
                 var links_walked: u8 = 0;
 
                 while (links_walked < 255) : (links_walked += 1) {
@@ -482,7 +493,7 @@ pub const FileSystem = struct {
                     if (!std.fs.path.isAbsolute(link)) {
                         combo[0] = dir;
                         combo[1] = link;
-                        if (link.ptr != out_slice.ptr) {
+                        if (link.ptr != &out_buffer) {
                             fs.allocator.free(link);
                         }
                         link = std.fs.path.join(fs.allocator, &combo) catch return cache;
@@ -496,8 +507,8 @@ pub const FileSystem = struct {
                     const stat2 = file2.stat() catch return cache;
 
                     // Re-run "lstat" on the symlink target
-                    mode = stat2.mode;
-                    if (mode == .Symlink) {
+                    _kind = stat2.kind;
+                    if (_kind != .SymLink) {
                         break;
                     }
                     dir = std.fs.path.dirname(link) orelse return cache;
@@ -508,12 +519,11 @@ pub const FileSystem = struct {
                 }
             }
 
-            if (mode == .Directory) {
-                _kind = Entry.Kind.dir;
+            if (_kind == .Directory) {
+                cache.kind = .dir;
             } else {
-                _kind = Entry.Kind.file;
+                cache.kind = .file;
             }
-            cache.kind = _kind;
             cache.symlink = symlink;
 
             return cache;
@@ -627,7 +637,7 @@ pub const Path = struct {
     // for now, assume you won't try to normalize a path longer than 1024 chars
     pub fn normalize(str: string, allocator: *std.mem.Allocator) string {
         if (str.len == 0 or (str.len == 1 and str[0] == ' ')) return ".";
-        if (resolvePath(normalize_buf, str)) |out| {
+        if (resolvePath(&normalize_buf, str)) |out| {
             return allocator.dupe(u8, out) catch unreachable;
         }
         return str;

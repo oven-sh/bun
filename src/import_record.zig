@@ -28,6 +28,10 @@ pub const ImportKind = enum(u8) {
 
     // A CSS "url(...)" token
     url,
+
+    pub fn isFromCSS(k: ImportKind) bool {
+        return k == .at_conditional or k == .at or k == .url;
+    }
 };
 
 pub const ImportRecord = struct {

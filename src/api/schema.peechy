@@ -67,6 +67,8 @@ message TransformOptions {
 
   string[] main_fields = 16;
   Platform platform = 17;
+
+  bool watch = 18;
 }
 
 struct FileHandle {

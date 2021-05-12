@@ -14,6 +14,20 @@ pub const Cache = struct {
         js: JavaScript,
         fs: Fs,
         json: Json,
+
+        pub fn init(allocator: *std.mem.Allocator) Set {
+            return Set{
+                .js = JavaScript{},
+                .fs = Fs{
+                    .mutex = std.Thread.Mutex{},
+                    .entries = std.StringHashMap(Fs.Entry).init(allocator),
+                },
+                .json = Json{
+                    .mutex = std.Thread.Mutex{},
+                    .entries = std.StringHashMap(*Json.Entry).init(allocator),
+                },
+            };
+        }
     };
     pub const Fs = struct {
         mutex: std.Thread.Mutex,

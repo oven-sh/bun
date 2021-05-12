@@ -88,7 +88,7 @@ pub const MutableString = struct {
         return str;
     }
 
-    pub fn len(self: *MutableString) usize {
+    pub fn len(self: *const MutableString) usize {
         return self.list.items.len;
     }
 

@@ -1,5 +1,5 @@
 usingnamespace @import("../global.zig");
-const ast = @import("../ast.zig");
+const ast = @import("../import_record.zig");
 const logger = @import("../logger.zig");
 const options = @import("../options.zig");
 const fs = @import("../fs.zig");
@@ -28,19 +28,19 @@ pub const DirInfo = struct {
 
     // A pointer to the enclosing dirInfo with a valid "browser" field in
     // package.json. We need this to remap paths after they have been resolved.
-    enclosing_browser_scope: *?DirInfo = null,
+    enclosing_browser_scope: ?*DirInfo = null,
 
     abs_path: string,
     entries: fs.FileSystem.DirEntry,
     has_node_modules: bool = false, // Is there a "node_modules" subdirectory?
-    package_json: ?*PackageJSON, // Is there a "package.json" file?
-    ts_config_json: ?*TSConfigJSON, // Is there a "tsconfig.json" file in this directory or a parent directory?
+    package_json: ?*PackageJSON = null, // Is there a "package.json" file?
+    ts_config_json: ?*TSConfigJSON = null, // Is there a "tsconfig.json" file in this directory or a parent directory?
     abs_real_path: string = "", // If non-empty, this is the real absolute path resolving any symlinks
 
 };
 
 pub const Resolver = struct {
-    opts: options.TransformOptions,
+    opts: options.BundleOptions,
     fs: *fs.FileSystem,
     log: *logger.Log,
     allocator: *std.mem.Allocator,
@@ -93,6 +93,23 @@ pub const Resolver = struct {
     // all parent directories
     dir_cache: std.StringHashMap(?*DirInfo),
 
+    pub fn init1(
+        allocator: *std.mem.Allocator,
+        log: *logger.Log,
+        _fs: *fs.FileSystem,
+        opts: options.BundleOptions,
+    ) Resolver {
+        return Resolver{
+            .allocator = allocator,
+            .dir_cache = std.StringHashMap(?*DirInfo).init(allocator),
+            .mutex = std.Thread.Mutex{},
+            .caches = cache.Cache.Set.init(allocator),
+            .opts = opts,
+            .fs = _fs,
+            .log = log,
+        };
+    }
+
     pub const DebugLogs = struct {
         what: string = "",
         indent: MutableString,
@@ -100,9 +117,10 @@ pub const Resolver = struct {
 
         pub const FlushMode = enum { fail, success };
 
-        pub fn init(allocator: *std.mem.Allocator) DebugLogs {
-            return .{
-                .indent = MutableString.init(allocator, 0),
+        pub fn init(allocator: *std.mem.Allocator) !DebugLogs {
+            var mutable = try MutableString.init(allocator, 0);
+            return DebugLogs{
+                .indent = mutable,
                 .notes = std.ArrayList(logger.Data).init(allocator),
             };
         }
@@ -110,7 +128,7 @@ pub const Resolver = struct {
         pub fn deinit(d: DebugLogs) void {
             var allocator = d.notes.allocator;
             d.notes.deinit();
-            d.indent.deinit();
+            // d.indent.deinit();
         }
 
         pub fn increaseIndent(d: *DebugLogs) !void {
@@ -125,9 +143,9 @@ pub const Resolver = struct {
             var text = _text;
             const len = d.indent.len();
             if (len > 0) {
-                text = try d.notes.allocator.alloc(u8, text.len + d.indent.len);
-                std.mem.copy(u8, text, d.indent);
-                std.mem.copy(u8, text[d.indent.len..text.len], _text);
+                var __text = try d.notes.allocator.alloc(u8, text.len + len);
+                std.mem.copy(u8, __text, d.indent.list.items);
+                std.mem.copy(u8, __text[len..text.len], _text);
                 d.notes.allocator.free(_text);
             }
 
@@ -151,7 +169,7 @@ pub const Resolver = struct {
 
         is_external: bool = false,
 
-        different_case: ?fs.FileSystem.Entry.Lookup.DifferentCase = null,
+        diff_case: ?fs.FileSystem.Entry.Lookup.DifferentCase = null,
 
         // If present, any ES6 imports to this file can be considered to have no side
         // effects. This means they should be removed if unused.
@@ -166,7 +184,7 @@ pub const Resolver = struct {
         preserve_unused_imports_ts: bool = false,
 
         // This is the "type" field from "package.json"
-        module_type: options.ModuleType,
+        module_type: options.ModuleType = options.ModuleType.unknown,
 
         debug_meta: ?DebugMeta = null,
 
@@ -200,16 +218,16 @@ pub const Resolver = struct {
     }
 
     pub fn flushDebugLogs(r: *Resolver, flush_mode: DebugLogs.FlushMode) !void {
-        if (r.debug_logs) |debug| {
+        if (r.debug_logs) |*debug| {
             defer {
                 debug.deinit();
                 r.debug_logs = null;
             }
 
-            if (mode == .failure) {
-                try r.log.addRangeDebugWithNotes(null, .empty, debug.what, debug.notes.toOwnedSlice());
+            if (flush_mode == DebugLogs.FlushMode.fail) {
+                try r.log.addRangeDebugWithNotes(null, logger.Range{ .loc = logger.Loc{} }, debug.what, debug.notes.toOwnedSlice());
             } else if (@enumToInt(r.log.level) <= @enumToInt(logger.Log.Level.verbose)) {
-                try r.log.addVerboseWithNotes(null, .empty, debug.what, debug.notes.toOwnedSlice());
+                try r.log.addVerboseWithNotes(null, logger.Loc.Empty, debug.what, debug.notes.toOwnedSlice());
             }
         }
     }
@@ -220,7 +238,7 @@ pub const Resolver = struct {
                 r.debug_logs.?.deinit();
             }
 
-            r.debug_logs = DebugLogs.init(r.allocator);
+            r.debug_logs = try DebugLogs.init(r.allocator);
         }
 
         // Certain types of URLs default to being external for convenience
@@ -237,35 +255,38 @@ pub const Resolver = struct {
             // "background: url(//example.com/images/image.png);"
             strings.startsWith(import_path, "//"))
         {
-            if (r.debug_logs) |debug| {
+            if (r.debug_logs) |*debug| {
                 try debug.addNote("Marking this path as implicitly external");
             }
             r.flushDebugLogs(.success) catch {};
-            return Result{ .path_pair = PathPair{
-                .primary = Path{ .text = import_path },
+            return Result{
+                .path_pair = PathPair{
+                    .primary = Path.init(import_path),
+                },
                 .is_external = true,
-            } };
+                .module_type = .esm,
+            };
         }
 
-        if (DataURL.parse(import_path) catch null) |_data_url| {
+        if (DataURL.parse(import_path)) |_data_url| {
             const data_url: DataURL = _data_url;
             // "import 'data:text/javascript,console.log(123)';"
             // "@import 'data:text/css,body{background:white}';"
             if (data_url.decode_mime_type() != .Unsupported) {
-                if (r.debug_logs) |debug| {
+                if (r.debug_logs) |*debug| {
                     debug.addNote("Putting this path in the \"dataurl\" namespace") catch {};
                 }
                 r.flushDebugLogs(.success) catch {};
-                return Resolver.Result{ .path_pair = PathPair{ .primary = Path{ .text = import_path, .namespace = "dataurl" } } };
+                return Resolver.Result{ .path_pair = PathPair{ .primary = Path.initWithNamespace(import_path, "dataurl") } };
             }
 
             // "background: url(data:image/png;base64,iVBORw0KGgo=);"
-            if (r.debug_logs) |debug| {
+            if (r.debug_logs) |*debug| {
                 debug.addNote("Marking this \"dataurl\" as external") catch {};
             }
             r.flushDebugLogs(.success) catch {};
             return Resolver.Result{
-                .path_pair = PathPair{ .primary = Path{ .text = import_path, .namespace = "dataurl" } },
+                .path_pair = PathPair{ .primary = Path.initWithNamespace(import_path, "dataurl") },
                 .is_external = true,
             };
         }
@@ -273,7 +294,7 @@ pub const Resolver = struct {
         // Fail now if there is no directory to resolve in. This can happen for
         // virtual modules (e.g. stdin) if a resolve directory is not specified.
         if (source_dir.len == 0) {
-            if (r.debug_logs) |debug| {
+            if (r.debug_logs) |*debug| {
                 debug.addNote("Cannot resolve this path without a directory") catch {};
             }
             r.flushDebugLogs(.fail) catch {};
@@ -282,6 +303,10 @@ pub const Resolver = struct {
 
         const hold = r.mutex.acquire();
         defer hold.release();
+
+        var result = try r.resolveWithoutSymlinks(source_dir, import_path, kind);
+
+        return result;
     }
 
     pub fn resolveWithoutSymlinks(r: *Resolver, source_dir: string, import_path: string, kind: ast.ImportKind) !Result {
@@ -298,24 +323,24 @@ pub const Resolver = struct {
         // experience unexpected build failures later on other operating systems.
         // Treating these paths as absolute paths on all platforms means Windows
         // users will not be able to accidentally make use of these paths.
-        if (striongs.startsWith(import_path, "/") or std.fs.path.isAbsolutePosix(import_path)) {
-            if (r.debug_logs) |debug| {
+        if (strings.startsWith(import_path, "/") or std.fs.path.isAbsolutePosix(import_path)) {
+            if (r.debug_logs) |*debug| {
                 debug.addNoteFmt("The import \"{s}\" is being treated as an absolute path", .{import_path}) catch {};
             }
 
             // First, check path overrides from the nearest enclosing TypeScript "tsconfig.json" file
-            if (try r.dirInfoCached(source_dir)) |_dir_info| {
+            if ((r.dirInfoCached(source_dir) catch null)) |_dir_info| {
                 const dir_info: *DirInfo = _dir_info;
                 if (dir_info.ts_config_json) |tsconfig| {
-                    if (tsconfig.paths.size() > 0) {
+                    if (tsconfig.paths.count() > 0) {
                         const res = r.matchTSConfigPaths(tsconfig, import_path, kind);
                         return Result{ .path_pair = res.path_pair, .diff_case = res.diff_case };
                     }
                 }
             }
-
-            
         }
+
+        return result;
     }
 
     pub const TSConfigExtender = struct {
@@ -386,7 +411,7 @@ pub const Resolver = struct {
     }
 
     // TODO:
-    pub fn prettyPath(r: *Resolver, path: Ptah) string {
+    pub fn prettyPath(r: *Resolver, path: Path) string {
         return path.text;
     }
 
@@ -399,10 +424,12 @@ pub const Resolver = struct {
         return path[0] != '/' and !strings.startsWith(path, "./") and !strings.startsWith(path, "../") and !strings.eql(path, ".") and !strings.eql(path, "..");
     }
 
-    fn dirInfoCached(r: *Resolver, path: string) !*DirInfo {
+    fn dirInfoCached(r: *Resolver, path: string) !?*DirInfo {
         const info = r.dir_cache.get(path) orelse try r.dirInfoUncached(path);
 
         try r.dir_cache.put(path, info);
+
+        return info;
     }
 
     pub const MatchResult = struct {
@@ -415,12 +442,12 @@ pub const Resolver = struct {
         Global.notimpl();
     }
 
-    fn dirInfoUncached(r: *Resolver, path: string) !?*DirInfo {
-        const rfs: r.fs.RealFS = r.fs.fs;
+    fn dirInfoUncached(r: *Resolver, path: string) anyerror!?*DirInfo {
+        var rfs: *fs.FileSystem.RealFS = &r.fs.fs;
         var parent: ?*DirInfo = null;
         const parent_dir = std.fs.path.dirname(path) orelse return null;
         if (!strings.eql(parent_dir, path)) {
-            parent = r.dirInfoCached(parent_dir);
+            parent = try r.dirInfoCached(parent_dir);
         }
 
         // List the directories
@@ -431,7 +458,7 @@ pub const Resolver = struct {
             // case on Unix for directories that only have the execute permission bit
             // set. It means we will just pass through the empty directory and
             // continue to check the directories above it, which is now node behaves.
-            switch (_entries.err) {
+            switch (_entries.err.original_err) {
                 error.EACCESS => {
                     entries = fs.FileSystem.DirEntry.empty(path, r.allocator);
                 },
@@ -447,7 +474,7 @@ pub const Resolver = struct {
                 error.ENOTDIR,
                 => {},
                 else => {
-                    const pretty = r.prettyPath(fs.Path{ .text = path, .namespace = "file" });
+                    const pretty = r.prettyPath(Path.init(path));
                     r.log.addErrorFmt(
                         null,
                         logger.Loc{},
@@ -455,9 +482,9 @@ pub const Resolver = struct {
                         "Cannot read directory \"{s}\": {s}",
                         .{
                             pretty,
-                            @errorName(err),
+                            @errorName(_entries.err.original_err),
                         },
-                    );
+                    ) catch {};
                     return null;
                 },
             }
@@ -468,7 +495,7 @@ pub const Resolver = struct {
         var info = try r.allocator.create(DirInfo);
         info.* = DirInfo{
             .abs_path = path,
-            .parent = parent_dir,
+            .parent = parent,
             .entries = entries,
         };
 
@@ -476,7 +503,8 @@ pub const Resolver = struct {
         var base = std.fs.path.basename(path);
         if (!strings.eqlComptime(base, "node_modules")) {
             if (entries.get("node_modules")) |entry| {
-                info.has_node_modules = entry.entry.kind(rfs) == .dir;
+                // the catch might be wrong!
+                info.has_node_modules = (entry.entry.kind(rfs) catch .file) == .dir;
             }
         }
 
@@ -547,12 +575,12 @@ pub const Resolver = struct {
                 var visited = std.StringHashMap(bool).init(r.allocator);
                 defer visited.deinit();
                 info.ts_config_json = r.parseTSConfig(tsconfigpath, visited) catch |err| {
-                    const pretty = r.prettyPath(fs.Path{ .text = tsconfigpath, .namespace = "file" });
+                    const pretty = r.prettyPath(Path.init(tsconfigpath));
 
                     if (err == error.ENOENT) {
-                        r.log.addErrorFmt(null, .empty, r.allocator, "Cannot find tsconfig file \"{s}\"", .{pretty});
+                        r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Cannot find tsconfig file \"{s}\"", .{pretty});
                     } else if (err != error.ParseErrorAlreadyLogged) {
-                        r.log.addErrorFmt(null, .empty, r.allocator, "Cannot read file \"{s}\": {s}", .{ pretty, @errorName(err) });
+                        r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Cannot read file \"{s}\": {s}", .{ pretty, @errorName(err) });
                     }
                 };
             }

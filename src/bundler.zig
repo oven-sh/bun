@@ -125,7 +125,7 @@ pub const Transformer = struct {
         );
         var use_default_loaders = loader_map.count() == 0;
 
-        var jsx = if (opts.jsx) |_jsx| options.JSX.Pragma.fromApi(_jsx) else options.JSX.Pragma{};
+        var jsx = if (opts.jsx) |_jsx| try options.JSX.Pragma.fromApi(_jsx, allocator) else options.JSX.Pragma{};
 
         var output_i: usize = 0;
         var chosen_alloc: *std.mem.Allocator = allocator;

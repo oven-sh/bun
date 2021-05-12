@@ -180,8 +180,8 @@ pub const defaultLoaders = std.ComptimeStringMap(Loader, .{
 pub const JSX = struct {
     pub const Pragma = struct {
         // these need to be arrays
-        factory: []string = &(Defaults.Factory),
-        fragment: []string = &(Defaults.Fragment),
+        factory: []const string = &(Defaults.Factory),
+        fragment: []const string = &(Defaults.Fragment),
         runtime: JSX.Runtime = JSX.Runtime.automatic,
 
         /// Facilitates automatic JSX importing
@@ -197,15 +197,52 @@ pub const JSX = struct {
             pub var Fragment = [_]string{ "React", "Fragment" };
         };
 
-        pub fn fromApi(jsx: api.Api.Jsx) Pragma {
+        // "React.createElement" => ["React", "createElement"]
+        // ...unless new is "React.createElement" and original is ["React", "createElement"]
+        // saves an allocation for the majority case
+        pub fn memberListToComponentsIfDifferent(allocator: *std.mem.Allocator, original: []const string, new: string) ![]const string {
+            var splitter = std.mem.split(new, ".");
+
+            var needs_alloc = false;
+            var count: usize = 0;
+            while (splitter.next()) |str| {
+                const i = (splitter.index orelse break);
+                count = i;
+                if (i > original.len) {
+                    needs_alloc = true;
+                    break;
+                }
+
+                if (!strings.eql(original[i], str)) {
+                    needs_alloc = true;
+                    break;
+                }
+            }
+
+            if (!needs_alloc) {
+                return original;
+            }
+
+            var out = try allocator.alloc(string, count + 1);
+
+            splitter = std.mem.split(new, ".");
+            var i: usize = 0;
+            while (splitter.next()) |str| {
+                out[i] = str;
+                i += 1;
+            }
+            return out;
+        }
+
+        pub fn fromApi(jsx: api.Api.Jsx, allocator: *std.mem.Allocator) !Pragma {
             var pragma = JSX.Pragma{};
 
             if (jsx.fragment.len > 0) {
-                pragma.jsx = jsx.fragment;
+                pragma.fragment = try memberListToComponentsIfDifferent(allocator, pragma.fragment, jsx.fragment);
             }
 
             if (jsx.factory.len > 0) {
-                pragma.jsx = jsx.factory;
+                pragma.factory = try memberListToComponentsIfDifferent(allocator, pragma.factory, jsx.factory);
             }
 
             if (jsx.import_source.len > 0) {
@@ -298,7 +335,7 @@ pub const BundleOptions = struct {
         };
 
         if (transform.jsx) |jsx| {
-            opts.jsx = JSX.Pragma.fromApi(jsx);
+            opts.jsx = try JSX.Pragma.fromApi(jsx, allocator);
         }
 
         if (transform.platform) |plat| {

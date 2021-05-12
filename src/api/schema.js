@@ -30,6 +30,38 @@ const LoaderKeys = {
   "file": "file",
   "json": "json"
 };
+const ResolveMode = {
+  "1": 1,
+  "2": 2,
+  "3": 3,
+  "4": 4,
+  "disable": 1,
+  "lazy": 2,
+  "dev": 3,
+  "bundle": 4
+};
+const ResolveModeKeys = {
+  "1": "disable",
+  "2": "lazy",
+  "3": "dev",
+  "4": "bundle",
+  "disable": "disable",
+  "lazy": "lazy",
+  "dev": "dev",
+  "bundle": "bundle"
+};
+const Platform = {
+  "1": 1,
+  "2": 2,
+  "browser": 1,
+  "node": 2
+};
+const PlatformKeys = {
+  "1": "browser",
+  "2": "node",
+  "browser": "browser",
+  "node": "node"
+};
 const JSXRuntime = {
   "1": 1,
   "2": 2,
@@ -49,15 +81,9 @@ function decodeJSX(bb) {
   result["factory"] = bb.readString();
   result["runtime"] = JSXRuntime[bb.readByte()];
   result["fragment"] = bb.readString();
-  result["production"] = !!bb.readByte();
+  result["development"] = !!bb.readByte();
   result["import_source"] = bb.readString();
   result["react_fast_refresh"] = !!bb.readByte();
-  var length = bb.readVarUint();
-  var values = result["loader_keys"] = Array(length);
-  for (var i = 0; i < length; i++) values[i] = bb.readString();
-  var length = bb.readVarUint();
-  var values = result["loader_values"] = Array(length);
-  for (var i = 0; i < length; i++) values[i] = Loader[bb.readByte()];
   return result;
 }
 
@@ -86,11 +112,11 @@ bb.writeByte(encoded);
     throw new Error("Missing required field \"fragment\"");
   }
 
-  var value = message["production"];
+  var value = message["development"];
   if (value != null) {
     bb.writeByte(value);
   } else {
-    throw new Error("Missing required field \"production\"");
+    throw new Error("Missing required field \"development\"");
   }
 
   var value = message["import_source"];
@@ -107,20 +133,227 @@ bb.writeByte(encoded);
     throw new Error("Missing required field \"react_fast_refresh\"");
   }
 
-  var value = message["loader_keys"];
+}
+
+function decodeTransformOptions(bb) {
+  var result = {};
+
+  while (true) {
+    switch (bb.readByte()) {
+    case 0:
+      return result;
+
+    case 1:
+      result["jsx"] = decodeJSX(bb);
+      break;
+
+    case 2:
+      result["tsconfig_override"] = bb.readString();
+      break;
+
+    case 3:
+      result["resolve"] = ResolveMode[bb.readByte()];
+      break;
+
+    case 4:
+      result["public_url"] = bb.readString();
+      break;
+
+    case 5:
+      result["absolute_working_dir"] = bb.readString();
+      break;
+
+    case 6:
+      var length = bb.readVarUint();
+      var values = result["define_keys"] = Array(length);
+      for (var i = 0; i < length; i++) values[i] = bb.readString();
+      break;
+
+    case 7:
+      var length = bb.readVarUint();
+      var values = result["define_values"] = Array(length);
+      for (var i = 0; i < length; i++) values[i] = bb.readString();
+      break;
+
+    case 8:
+      result["preserve_symlinks"] = !!bb.readByte();
+      break;
+
+    case 9:
+      var length = bb.readVarUint();
+      var values = result["entry_points"] = Array(length);
+      for (var i = 0; i < length; i++) values[i] = bb.readString();
+      break;
+
+    case 10:
+      result["write"] = !!bb.readByte();
+      break;
+
+    case 11:
+      var length = bb.readVarUint();
+      var values = result["inject"] = Array(length);
+      for (var i = 0; i < length; i++) values[i] = bb.readString();
+      break;
+
+    case 12:
+      result["output_dir"] = bb.readString();
+      break;
+
+    case 13:
+      var length = bb.readVarUint();
+      var values = result["external"] = Array(length);
+      for (var i = 0; i < length; i++) values[i] = bb.readString();
+      break;
+
+    case 14:
+      var length = bb.readVarUint();
+      var values = result["loader_keys"] = Array(length);
+      for (var i = 0; i < length; i++) values[i] = bb.readString();
+      break;
+
+    case 15:
+      var length = bb.readVarUint();
+      var values = result["loader_values"] = Array(length);
+      for (var i = 0; i < length; i++) values[i] = Loader[bb.readByte()];
+      break;
+
+    case 16:
+      var length = bb.readVarUint();
+      var values = result["main_fields"] = Array(length);
+      for (var i = 0; i < length; i++) values[i] = bb.readString();
+      break;
+
+    case 17:
+      result["platform"] = Platform[bb.readByte()];
+      break;
+
+    default:
+      throw new Error("Attempted to parse invalid message");
+    }
+  }
+}
+
+function encodeTransformOptions(message, bb) {
+
+  var value = message["jsx"];
   if (value != null) {
+    bb.writeByte(1);
+    encodeJSX(value, bb);
+  }
+
+  var value = message["tsconfig_override"];
+  if (value != null) {
+    bb.writeByte(2);
+    bb.writeString(value);
+  }
+
+  var value = message["resolve"];
+  if (value != null) {
+    bb.writeByte(3);
+    var encoded = ResolveMode[value];
+if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + " for enum \"ResolveMode\"");
+bb.writeByte(encoded);
+  }
+
+  var value = message["public_url"];
+  if (value != null) {
+    bb.writeByte(4);
+    bb.writeString(value);
+  }
+
+  var value = message["absolute_working_dir"];
+  if (value != null) {
+    bb.writeByte(5);
+    bb.writeString(value);
+  }
+
+  var value = message["define_keys"];
+  if (value != null) {
+    bb.writeByte(6);
     var values = value, n = values.length;
     bb.writeVarUint(n);
     for (var i = 0; i < n; i++) {
       value = values[i];
       bb.writeString(value);
     }
-  } else {
-    throw new Error("Missing required field \"loader_keys\"");
+  }
+
+  var value = message["define_values"];
+  if (value != null) {
+    bb.writeByte(7);
+    var values = value, n = values.length;
+    bb.writeVarUint(n);
+    for (var i = 0; i < n; i++) {
+      value = values[i];
+      bb.writeString(value);
+    }
+  }
+
+  var value = message["preserve_symlinks"];
+  if (value != null) {
+    bb.writeByte(8);
+    bb.writeByte(value);
+  }
+
+  var value = message["entry_points"];
+  if (value != null) {
+    bb.writeByte(9);
+    var values = value, n = values.length;
+    bb.writeVarUint(n);
+    for (var i = 0; i < n; i++) {
+      value = values[i];
+      bb.writeString(value);
+    }
+  }
+
+  var value = message["write"];
+  if (value != null) {
+    bb.writeByte(10);
+    bb.writeByte(value);
+  }
+
+  var value = message["inject"];
+  if (value != null) {
+    bb.writeByte(11);
+    var values = value, n = values.length;
+    bb.writeVarUint(n);
+    for (var i = 0; i < n; i++) {
+      value = values[i];
+      bb.writeString(value);
+    }
+  }
+
+  var value = message["output_dir"];
+  if (value != null) {
+    bb.writeByte(12);
+    bb.writeString(value);
+  }
+
+  var value = message["external"];
+  if (value != null) {
+    bb.writeByte(13);
+    var values = value, n = values.length;
+    bb.writeVarUint(n);
+    for (var i = 0; i < n; i++) {
+      value = values[i];
+      bb.writeString(value);
+    }
+  }
+
+  var value = message["loader_keys"];
+  if (value != null) {
+    bb.writeByte(14);
+    var values = value, n = values.length;
+    bb.writeVarUint(n);
+    for (var i = 0; i < n; i++) {
+      value = values[i];
+      bb.writeString(value);
+    }
   }
 
   var value = message["loader_values"];
   if (value != null) {
+    bb.writeByte(15);
     var values = value, n = values.length;
     bb.writeVarUint(n);
     for (var i = 0; i < n; i++) {
@@ -129,73 +362,27 @@ bb.writeByte(encoded);
 if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + " for enum \"Loader\"");
 bb.writeByte(encoded);
     }
-  } else {
-    throw new Error("Missing required field \"loader_values\"");
   }
 
-}
-
-function decodeTransformOptions(bb) {
-  var result = {};
-
-  result["jsx"] = decodeJSX(bb);
-  result["ts"] = !!bb.readByte();
-  result["base_path"] = bb.readString();
-  var length = bb.readVarUint();
-  var values = result["define_keys"] = Array(length);
-  for (var i = 0; i < length; i++) values[i] = bb.readString();
-  var length = bb.readVarUint();
-  var values = result["define_values"] = Array(length);
-  for (var i = 0; i < length; i++) values[i] = bb.readString();
-  return result;
-}
-
-function encodeTransformOptions(message, bb) {
-
-  var value = message["jsx"];
+  var value = message["main_fields"];
   if (value != null) {
-    encodeJSX(value, bb);
-  } else {
-    throw new Error("Missing required field \"jsx\"");
-  }
-
-  var value = message["ts"];
-  if (value != null) {
-    bb.writeByte(value);
-  } else {
-    throw new Error("Missing required field \"ts\"");
-  }
-
-  var value = message["base_path"];
-  if (value != null) {
-    bb.writeString(value);
-  } else {
-    throw new Error("Missing required field \"base_path\"");
-  }
-
-  var value = message["define_keys"];
-  if (value != null) {
+    bb.writeByte(16);
     var values = value, n = values.length;
     bb.writeVarUint(n);
     for (var i = 0; i < n; i++) {
       value = values[i];
       bb.writeString(value);
     }
-  } else {
-    throw new Error("Missing required field \"define_keys\"");
   }
 
-  var value = message["define_values"];
+  var value = message["platform"];
   if (value != null) {
-    var values = value, n = values.length;
-    bb.writeVarUint(n);
-    for (var i = 0; i < n; i++) {
-      value = values[i];
-      bb.writeString(value);
-    }
-  } else {
-    throw new Error("Missing required field \"define_values\"");
+    bb.writeByte(17);
+    var encoded = Platform[value];
+if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + " for enum \"Platform\"");
+bb.writeByte(encoded);
   }
+  bb.writeByte(0);
 
 }
 
@@ -603,6 +790,10 @@ function encodeLog(message, bb) {
 
 export { Loader }
 export { LoaderKeys }
+export { ResolveMode }
+export { ResolveModeKeys }
+export { Platform }
+export { PlatformKeys }
 export { JSXRuntime }
 export { JSXRuntimeKeys }
 export { decodeJSX }

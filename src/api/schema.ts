@@ -39,29 +39,13 @@ type uint32 = number;
   }
   export enum ResolveMode {
     disable = 1,
-    lazy = 2,
-    dev = 3,
-    bundle = 4
+    lazy = 2
   }
   export const ResolveModeKeys = {
     1: "disable",
     disable: "disable",
     2: "lazy",
-    lazy: "lazy",
-    3: "dev",
-    dev: "dev",
-    4: "bundle",
-    bundle: "bundle"
-  }
-  export enum Platform {
-    browser = 1,
-    node = 2
-  }
-  export const PlatformKeys = {
-    1: "browser",
-    browser: "browser",
-    2: "node",
-    node: "node"
+    lazy: "lazy"
   }
   export enum JSXRuntime {
     automatic = 1,
@@ -106,6 +90,8 @@ type uint32 = number;
     development: boolean;
     import_source: string;
     react_fast_refresh: boolean;
+    loader_keys: string[];
+    loader_values: Loader[];
   }
 
   export interface TransformOptions {
@@ -121,11 +107,7 @@ type uint32 = number;
     write?: boolean;
     inject?: string[];
     output_dir?: string;
-    external?: string[];
-    loader_keys?: string[];
-    loader_values?: Loader[];
-    main_fields?: string[];
-    platform?: Platform;
+    externals?: string[];
   }
 
   export interface FileHandle {

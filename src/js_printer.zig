@@ -83,7 +83,7 @@ pub const Options = struct {
     }
 };
 
-pub const PrintResult = struct { js: []u8, source_map: ?SourceMapChunk = null };
+pub const PrintResult = struct { js: string, source_map: ?SourceMapChunk = null };
 
 // Zig represents booleans in packed structs as 1 bit, with no padding
 // This is effectively a bit field

@@ -1,0 +1,14 @@
+pkgs:
+  clap:
+    version: 0.3.0
+    license: Unlicense
+    description: Simple command line argument parsing library 
+    source_url: "https://github.com/Hejsil/zig-clap"
+    root: clap.zig
+    files:
+      README.md
+      LICENSE
+      build.zig
+      clap/*.zig
+      example/*.zig
+

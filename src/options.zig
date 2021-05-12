@@ -237,7 +237,7 @@ pub const BundleOptions = struct {
     define: defines.Define,
     loaders: std.StringHashMap(Loader),
     resolve_dir: string = "/",
-    jsx: ?JSX.Pragma,
+    jsx: JSX.Pragma = JSX.Pragma{},
     react_fast_refresh: bool = false,
     inject: ?[]string = null,
     public_url: string = "/",
@@ -246,7 +246,6 @@ pub const BundleOptions = struct {
     preserve_symlinks: bool = false,
     resolve_mode: api.Api.ResolveMode,
     tsconfig_override: ?string = null,
-    fs: *fs.FileSystem,
     platform: Platform = Platform.browser,
     main_fields: []string = Platform.DefaultMainFields.get(Platform.browser),
     log: *logger.Log,
@@ -254,12 +253,12 @@ pub const BundleOptions = struct {
     entry_points: []string,
     pub fn fromApi(
         allocator: *std.mem.Allocator,
+        fs: *fs.FileSystem,
         transform: Api.TransformOptions,
     ) !BundleOptions {
         var log = logger.Log.init(allocator);
         var opts: BundleOptions = std.mem.zeroes(BundleOptions);
 
-        opts.fs = try fs.FileSystem.init1(allocator, transform.absolute_working_dir, false);
         opts.write = transform.write;
         if (transform.jsx) |jsx| {
             opts.jsx = JSX.Pragma.fromApi(jsx);

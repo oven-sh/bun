@@ -545,7 +545,7 @@ pub fn initJSXEntityMap() !void {
     }
 
     has_loaded_jsx_map = true;
-    jsxEntity = JSXEntityMap.init(alloc.dynamic);
+    jsxEntity = JSXEntityMap.init(alloc.static);
     // return jsxEntity;
     jsxEntity.ensureCapacity(255) catch unreachable;
 

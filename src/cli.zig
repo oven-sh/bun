@@ -277,7 +277,7 @@ pub const Cli = struct {
     pub fn startTransform(allocator: *std.mem.Allocator, args: Api.TransformOptions, log: *logger.Log) anyerror!void {}
     pub fn start(allocator: *std.mem.Allocator, stdout: anytype, stderr: anytype, comptime MainPanicHandler: type) anyerror!void {
         const start_time = std.time.nanoTimestamp();
-        var log = logger.Log.init(alloc.dynamic);
+        var log = logger.Log.init(allocator);
         var panicker = MainPanicHandler.init(&log);
         MainPanicHandler.Singleton = &panicker;
 

@@ -88,26 +88,30 @@ pub const Transformer = struct {
         var jsx = if (opts.jsx) |_jsx| options.JSX.Pragma.fromApi(_jsx) else options.JSX.Pragma{};
 
         var output_i: usize = 0;
+
         for (opts.entry_points) |entry_point, i| {
+            var arena = std.heap.ArenaAllocator.init(allocator);
+            var chosen_alloc = &arena.allocator;
+            defer arena.deinit();
             var _log = logger.Log.init(allocator);
             var __log = &_log;
             var paths = [_]string{ cwd, entry_point };
-            const absolutePath = try std.fs.path.resolve(alloc.dynamic, &paths);
+            const absolutePath = try std.fs.path.resolve(chosen_alloc, &paths);
 
             const file = try std.fs.openFileAbsolute(absolutePath, std.fs.File.OpenFlags{ .read = true });
             defer file.close();
             const stat = try file.stat();
 
-            const code = try file.readToEndAlloc(alloc.dynamic, stat.size);
+            const code = try file.readToEndAlloc(allocator, stat.size);
             defer {
                 if (_log.msgs.items.len == 0) {
                     allocator.free(code);
                 }
-                alloc.dynamic.free(absolutePath);
+                chosen_alloc.free(absolutePath);
                 _log.appendTo(log) catch {};
             }
             const _file = fs.File{ .path = fs.Path.init(entry_point), .contents = code };
-            var source = try logger.Source.initFile(_file, alloc.dynamic);
+            var source = try logger.Source.initFile(_file, chosen_alloc);
             var loader: options.Loader = undefined;
             if (use_default_loaders) {
                 loader = options.defaultLoaders.get(std.fs.path.extension(absolutePath)) orelse continue;
@@ -122,9 +126,9 @@ pub const Transformer = struct {
 
             const parser_opts = js_parser.Parser.Options.init(jsx, loader);
             var _source = &source;
-            const res = _transform(allocator, allocator, __log, parser_opts, loader, define, _source) catch continue;
+            const res = _transform(chosen_alloc, allocator, __log, parser_opts, loader, define, _source) catch continue;
 
-            const relative_path = try std.fs.path.relative(allocator, cwd, absolutePath);
+            const relative_path = try std.fs.path.relative(chosen_alloc, cwd, absolutePath);
             var out_parts = [_]string{ output_dir, relative_path };
             const out_path = try std.fs.path.join(allocator, &out_parts);
             try output_files.append(options.OutputFile{ .path = out_path, .contents = res.js });
@@ -159,7 +163,7 @@ pub const Transformer = struct {
                 ast = js_ast.Ast.initTest(&([_]js_ast.Part{part}));
             },
             .jsx, .tsx, .ts, .js => {
-                var parser = try js_parser.Parser.init(opts, log, source, define, alloc.dynamic);
+                var parser = try js_parser.Parser.init(opts, log, source, define, allocator);
                 var res = try parser.parse();
                 ast = res.ast;
             },

@@ -34,7 +34,7 @@ pub const DirInfo = struct {
     entries: fs.FileSystem.DirEntry,
     has_node_modules: bool = false, // Is there a "node_modules" subdirectory?
     package_json: ?*PackageJSON = null, // Is there a "package.json" file?
-    ts_config_json: ?*TSConfigJSON = null, // Is there a "tsconfig.json" file in this directory or a parent directory?
+    tsconfig_json: ?*TSConfigJSON = null, // Is there a "tsconfig.json" file in this directory or a parent directory?
     abs_real_path: string = "", // If non-empty, this is the real absolute path resolving any symlinks
 
 };
@@ -331,7 +331,7 @@ pub const Resolver = struct {
             // First, check path overrides from the nearest enclosing TypeScript "tsconfig.json" file
             if ((r.dirInfoCached(source_dir) catch null)) |_dir_info| {
                 const dir_info: *DirInfo = _dir_info;
-                if (dir_info.ts_config_json) |tsconfig| {
+                if (dir_info.tsconfig_json) |tsconfig| {
                     if (tsconfig.paths.count() > 0) {
                         const res = r.matchTSConfigPaths(tsconfig, import_path, kind);
                         return Result{ .path_pair = res.path_pair, .diff_case = res.diff_case };
@@ -384,27 +384,23 @@ pub const Resolver = struct {
         const entry = try r.caches.fs.readFile(r.fs, file);
         const key_path = Path.init(file);
 
-        const source = logger.Source{
-            .key_path = key_path,
-            .pretty_path = r.prettyPath(key_path),
-            .contents = entry.contents,
-        };
-        const file_dir = std.fs.path.dirname(file);
+        const source = logger.Source.initPathString(key_path.text, entry.contents);
+        const file_dir = std.fs.path.dirname(file) orelse return null;
 
-        var result = try TSConfigJSON.parse(r.allocator, r.log, r.opts, r.caches.json) orelse return null;
+        var result = (try TSConfigJSON.parse(r.allocator, r.log, source, &r.caches.json)) orelse return null;
 
         if (result.base_url) |base| {
             // this might leak
             if (!std.fs.path.isAbsolute(base)) {
-                var paths = [_]string{ file_dir, base };
-                result.base_url = std.fs.path.join(r.allocator, paths) catch unreachable;
+                const paths = [_]string{ file_dir, base };
+                result.base_url = std.fs.path.join(r.allocator, &paths) catch unreachable;
             }
         }
 
         if (result.paths.count() > 0 and (result.base_url_for_paths.len == 0 or !std.fs.path.isAbsolute(result.base_url_for_paths))) {
             // this might leak
-            var paths = [_]string{ file_dir, base };
-            result.base_url_for_paths = std.fs.path.join(r.allocator, paths) catch unreachable;
+            const paths = [_]string{ file_dir, result.base_url.? };
+            result.base_url_for_paths = std.fs.path.join(r.allocator, &paths) catch unreachable;
         }
 
         return result;
@@ -416,7 +412,10 @@ pub const Resolver = struct {
     }
 
     pub fn parsePackageJSON(r: *Resolver, file: string) !?*PackageJSON {
-        return try PackageJSON.parse(r, file);
+        const pkg = PackageJSON.parse(r, file) orelse return null;
+        var _pkg = try r.allocator.create(PackageJSON);
+        _pkg.* = pkg;
+        return _pkg;
     }
 
     pub fn isPackagePath(path: string) bool {
@@ -504,7 +503,7 @@ pub const Resolver = struct {
         if (!strings.eqlComptime(base, "node_modules")) {
             if (entries.get("node_modules")) |entry| {
                 // the catch might be wrong!
-                info.has_node_modules = (entry.entry.kind(rfs) catch .file) == .dir;
+                info.has_node_modules = (entry.entry.kind(rfs)) == .dir;
             }
         }
 
@@ -514,19 +513,21 @@ pub const Resolver = struct {
 
             // Make sure "absRealPath" is the real path of the directory (resolving any symlinks)
             if (!r.opts.preserve_symlinks) {
-                if (parent_info.entries.get(base)) |entry| {
+                if (parent_info.entries.get(base)) |lookup| {
+                    const entry = lookup.entry;
+
                     var symlink = entry.symlink(rfs);
                     if (symlink.len > 0) {
-                        if (r.debug_logs) |logs| {
-                            try logs.addNote(std.fmt.allocPrint(r.allocator, "Resolved symlink \"{s}\" to \"{s}\"", .{ path, symlink }));
+                        if (r.debug_logs) |*logs| {
+                            try logs.addNote(std.fmt.allocPrint(r.allocator, "Resolved symlink \"{s}\" to \"{s}\"", .{ path, symlink }) catch unreachable);
                         }
                         info.abs_real_path = symlink;
                     } else if (parent_info.abs_real_path.len > 0) {
                         // this might leak a little i'm not sure
                         const parts = [_]string{ parent_info.abs_real_path, base };
-                        symlink = std.fs.path.join(r.allocator, &parts);
-                        if (r.debug_logs) |logs| {
-                            try logs.addNote(std.fmt.allocPrint(r.allocator, "Resolved symlink \"{s}\" to \"{s}\"", .{ path, symlink }));
+                        symlink = std.fs.path.join(r.allocator, &parts) catch unreachable;
+                        if (r.debug_logs) |*logs| {
+                            try logs.addNote(std.fmt.allocPrint(r.allocator, "Resolved symlink \"{s}\" to \"{s}\"", .{ path, symlink }) catch unreachable);
                         }
                         info.abs_real_path = symlink;
                     }
@@ -535,19 +536,20 @@ pub const Resolver = struct {
         }
 
         // Record if this directory has a package.json file
-        if (entries.get("package.json")) |entry| {
+        if (entries.get("package.json")) |lookup| {
+            const entry = lookup.entry;
             if (entry.kind(rfs) == .file) {
-                info.package_json = r.parsePackageJSON(path);
+                info.package_json = r.parsePackageJSON(path) catch null;
 
                 if (info.package_json) |pkg| {
-                    if (pkg.browser_map != null) {
+                    if (pkg.browser_map.count() > 0) {
                         info.enclosing_browser_scope = info;
                     }
 
-                    if (r.debug_logs) |logs| {
-                        try logs.addNote(std.fmt.allocPrint(r.allocator, "Resolved package.json in \"{s}\"", .{
+                    if (r.debug_logs) |*logs| {
+                        logs.addNoteFmt("Resolved package.json in \"{s}\"", .{
                             path,
-                        }));
+                        }) catch unreachable;
                     }
                 }
             }
@@ -557,14 +559,20 @@ pub const Resolver = struct {
         {
             var tsconfig_path: ?string = null;
             if (r.opts.tsconfig_override == null) {
-                var entry = entries.get("tsconfig.json");
-                if (entry.kind(rfs) == .file) {
-                    const parts = [_]string{ path, "tsconfig.json" };
-                    tsconfig_path = try std.fs.path.join(r.allocator, parts);
-                } else if (entries.get("jsconfig.json")) |jsconfig| {
-                    if (jsconfig.kind(rfs) == .file) {
-                        const parts = [_]string{ path, "jsconfig.json" };
-                        tsconfig_path = try std.fs.path.join(r.allocator, parts);
+                if (entries.get("tsconfig.json")) |lookup| {
+                    const entry = lookup.entry;
+                    if (entry.kind(rfs) == .file) {
+                        const parts = [_]string{ path, "tsconfig.json" };
+                        tsconfig_path = try std.fs.path.join(r.allocator, &parts);
+                    }
+                }
+                if (tsconfig_path == null) {
+                    if (entries.get("jsconfig.json")) |lookup| {
+                        const entry = lookup.entry;
+                        if (entry.kind(rfs) == .file) {
+                            const parts = [_]string{ path, "jsconfig.json" };
+                            tsconfig_path = try std.fs.path.join(r.allocator, &parts);
+                        }
                     }
                 }
             } else if (parent == null) {
@@ -574,20 +582,21 @@ pub const Resolver = struct {
             if (tsconfig_path) |tsconfigpath| {
                 var visited = std.StringHashMap(bool).init(r.allocator);
                 defer visited.deinit();
-                info.ts_config_json = r.parseTSConfig(tsconfigpath, visited) catch |err| {
+                info.tsconfig_json = r.parseTSConfig(tsconfigpath, &visited) catch |err| brk: {
                     const pretty = r.prettyPath(Path.init(tsconfigpath));
 
                     if (err == error.ENOENT) {
-                        r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Cannot find tsconfig file \"{s}\"", .{pretty});
+                        r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Cannot find tsconfig file \"{s}\"", .{pretty}) catch unreachable;
                     } else if (err != error.ParseErrorAlreadyLogged) {
-                        r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Cannot read file \"{s}\": {s}", .{ pretty, @errorName(err) });
+                        r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Cannot read file \"{s}\": {s}", .{ pretty, @errorName(err) }) catch unreachable;
                     }
+                    break :brk null;
                 };
             }
         }
 
-        if (info.ts_config_json == null and parent != null) {
-            info.ts_config_json = parent.?.tsconfig_json;
+        if (info.tsconfig_json == null and parent != null) {
+            info.tsconfig_json = parent.?.tsconfig_json;
         }
 
         return info;

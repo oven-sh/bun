@@ -214,7 +214,7 @@ pub const Log = struct {
         };
     }
 
-    pub fn addVerbose(log: *Log, source: ?*Source, loc: Loc, text: string) !void {
+    pub fn addVerbose(log: *Log, source: ?*const Source, loc: Loc, text: string) !void {
         try log.addMsg(Msg{
             .kind = .verbose,
             .data = rangeData(source, Range{ .loc = loc }, text),
@@ -232,7 +232,7 @@ pub const Log = struct {
         self.msgs.deinit();
     }
 
-    pub fn addVerboseWithNotes(log: *Log, source: ?*Source, loc: Loc, text: string, notes: []Data) !void {
+    pub fn addVerboseWithNotes(log: *Log, source: ?*const Source, loc: Loc, text: string, notes: []Data) !void {
         try log.addMsg(Msg{
             .kind = .verbose,
             .data = rangeData(source, Range{ .loc = loc }, text),
@@ -240,7 +240,7 @@ pub const Log = struct {
         });
     }
 
-    pub fn addRangeError(log: *Log, source: ?*Source, r: Range, text: string) !void {
+    pub fn addRangeError(log: *Log, source: ?*const Source, r: Range, text: string) !void {
         log.errors += 1;
         try log.addMsg(Msg{
             .kind = .err,
@@ -248,7 +248,7 @@ pub const Log = struct {
         });
     }
 
-    pub fn addRangeErrorFmt(log: *Log, source: ?*Source, r: Range, allocator: *std.mem.Allocator, comptime text: string, args: anytype) !void {
+    pub fn addRangeErrorFmt(log: *Log, source: ?*const Source, r: Range, allocator: *std.mem.Allocator, comptime text: string, args: anytype) !void {
         log.errors += 1;
         try log.addMsg(Msg{
             .kind = .err,
@@ -256,7 +256,7 @@ pub const Log = struct {
         });
     }
 
-    pub fn addRangeErrorFmtWithNotes(log: *Log, source: ?*Source, r: Range, allocator: *std.mem.Allocator, notes: []Data, comptime text: string, args: anytype) !void {
+    pub fn addRangeErrorFmtWithNotes(log: *Log, source: ?*const Source, r: Range, allocator: *std.mem.Allocator, notes: []Data, comptime text: string, args: anytype) !void {
         log.errors += 1;
         try log.addMsg(Msg{
             .kind = .err,
@@ -265,7 +265,7 @@ pub const Log = struct {
         });
     }
 
-    pub fn addErrorFmt(log: *Log, source: ?*Source, l: Loc, allocator: *std.mem.Allocator, comptime text: string, args: anytype) !void {
+    pub fn addErrorFmt(log: *Log, source: ?*const Source, l: Loc, allocator: *std.mem.Allocator, comptime text: string, args: anytype) !void {
         log.errors += 1;
         try log.addMsg(Msg{
             .kind = .err,
@@ -273,7 +273,7 @@ pub const Log = struct {
         });
     }
 
-    pub fn addRangeWarning(log: *Log, source: ?*Source, r: Range, text: string) !void {
+    pub fn addRangeWarning(log: *Log, source: ?*const Source, r: Range, text: string) !void {
         log.warnings += 1;
         try log.addMsg(Msg{
             .kind = .warn,
@@ -281,7 +281,7 @@ pub const Log = struct {
         });
     }
 
-    pub fn addWarningFmt(log: *Log, source: ?*Source, l: Loc, allocator: *std.mem.Allocator, comptime text: string, args: anytype) !void {
+    pub fn addWarningFmt(log: *Log, source: ?*const Source, l: Loc, allocator: *std.mem.Allocator, comptime text: string, args: anytype) !void {
         log.warnings += 1;
         try log.addMsg(Msg{
             .kind = .err,
@@ -289,7 +289,7 @@ pub const Log = struct {
         });
     }
 
-    pub fn addRangeWarningFmt(log: *Log, source: ?*Source, r: Range, allocator: *std.mem.Allocator, comptime text: string, args: anytype) !void {
+    pub fn addRangeWarningFmt(log: *Log, source: ?*const Source, r: Range, allocator: *std.mem.Allocator, comptime text: string, args: anytype) !void {
         log.warnings += 1;
         try log.addMsg(Msg{
             .kind = .warn,
@@ -297,7 +297,7 @@ pub const Log = struct {
         });
     }
 
-    pub fn addWarning(log: *Log, source: ?*Source, l: Loc, text: string) !void {
+    pub fn addWarning(log: *Log, source: ?*const Source, l: Loc, text: string) !void {
         log.warnings += 1;
         try log.addMsg(Msg{
             .kind = .warn,
@@ -305,14 +305,14 @@ pub const Log = struct {
         });
     }
 
-    pub fn addRangeDebug(log: *Log, source: ?*Source, r: Range, text: string) !void {
+    pub fn addRangeDebug(log: *Log, source: ?*const Source, r: Range, text: string) !void {
         try log.addMsg(Msg{
             .kind = .debug,
             .data = rangeData(source, r, text),
         });
     }
 
-    pub fn addRangeDebugWithNotes(log: *Log, source: ?*Source, r: Range, text: string, notes: []Data) !void {
+    pub fn addRangeDebugWithNotes(log: *Log, source: ?*const Source, r: Range, text: string, notes: []Data) !void {
         // log.de += 1;
         try log.addMsg(Msg{
             .kind = Kind.debug,
@@ -321,7 +321,7 @@ pub const Log = struct {
         });
     }
 
-    pub fn addRangeErrorWithNotes(log: *Log, source: ?*Source, r: Range, text: string, notes: []Data) !void {
+    pub fn addRangeErrorWithNotes(log: *Log, source: ?*const Source, r: Range, text: string, notes: []Data) !void {
         log.errors += 1;
         try log.addMsg(Msg{
             .kind = Kind.err,
@@ -330,7 +330,7 @@ pub const Log = struct {
         });
     }
 
-    pub fn addRangeWarningWithNotes(log: *Log, source: ?*Source, r: Range, text: string, notes: []Data) !void {
+    pub fn addRangeWarningWithNotes(log: *Log, source: ?*const Source, r: Range, text: string, notes: []Data) !void {
         log.warnings += 1;
         try log.addMsg(Msg{
             .kind = .warning,
@@ -345,7 +345,7 @@ pub const Log = struct {
     }
 
     // TODO:
-    pub fn addError(self: *Log, _source: ?*Source, loc: Loc, text: string) !void {
+    pub fn addError(self: *Log, _source: ?*const Source, loc: Loc, text: string) !void {
         self.errors += 1;
         try self.addMsg(Msg{ .kind = .err, .data = rangeData(_source, Range{ .loc = loc }, text) });
     }
@@ -400,14 +400,14 @@ pub const Source = struct {
 
     pub fn initPathString(pathString: string, contents: string) Source {
         var path = fs.Path.init(pathString);
-        return Source{ .path = path, .identifier_name = path.name.base, .contents = contents };
+        return Source{ .key_path = path, .path = path, .identifier_name = path.name.base, .contents = contents };
     }
 
-    pub fn textForRange(self: *Source, r: Range) string {
+    pub fn textForRange(self: *const Source, r: Range) string {
         return self.contents[r.loc.i()..r.endI()];
     }
 
-    pub fn rangeOfOperatorBefore(self: *Source, loc: Loc, op: string) Range {
+    pub fn rangeOfOperatorBefore(self: *const Source, loc: Loc, op: string) Range {
         const text = self.contents[0..loc.i()];
         const index = strings.index(text, op);
         if (index >= 0) {
@@ -419,7 +419,7 @@ pub const Source = struct {
         return Range{ .loc = loc };
     }
 
-    pub fn rangeOfString(self: *Source, loc: Loc) Range {
+    pub fn rangeOfString(self: *const Source, loc: Loc) Range {
         const text = self.contents[loc.i()..];
 
         if (text.len == 0) {
@@ -446,7 +446,7 @@ pub const Source = struct {
         return Range{ .loc = loc, .len = 0 };
     }
 
-    pub fn rangeOfOperatorAfter(self: *Source, loc: Loc, op: string) Range {
+    pub fn rangeOfOperatorAfter(self: *const Source, loc: Loc, op: string) Range {
         const text = self.contents[loc.i()..];
         const index = strings.index(text, op);
         if (index >= 0) {

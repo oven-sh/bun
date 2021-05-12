@@ -8,6 +8,8 @@ const options = @import("./options.zig");
 const Defines = @import("./defines.zig").Defines;
 const std = @import("std");
 const fs = @import("./fs.zig");
+const sync = @import("sync.zig");
+const Mutex = sync.Mutex;
 
 pub const Cache = struct {
     pub const Set = struct {
@@ -19,18 +21,18 @@ pub const Cache = struct {
             return Set{
                 .js = JavaScript{},
                 .fs = Fs{
-                    .mutex = std.Thread.Mutex{},
+                    .mutex = Mutex.init(),
                     .entries = std.StringHashMap(Fs.Entry).init(allocator),
                 },
                 .json = Json{
-                    .mutex = std.Thread.Mutex{},
+                    .mutex = Mutex.init(),
                     .entries = std.StringHashMap(*Json.Entry).init(allocator),
                 },
             };
         }
     };
     pub const Fs = struct {
-        mutex: std.Thread.Mutex,
+        mutex: Mutex,
         entries: std.StringHashMap(Entry),
 
         pub const Entry = struct {
@@ -54,12 +56,12 @@ pub const Cache = struct {
             c.entries.deinit();
         }
 
-        pub fn readFile(c: *Fs, _fs: fs.FileSystem, path: string) !*Entry {
-            const rfs: _fs.RealFS = _fs.fs;
+        pub fn readFile(c: *Fs, _fs: *fs.FileSystem, path: string) !Entry {
+            var rfs = _fs.fs;
 
             {
-                const hold = c.mutex.acquire();
-                defer hold.release();
+                c.mutex.lock();
+                defer c.mutex.unlock();
                 if (c.entries.get(path)) |entry| {
                     return entry;
                 }
@@ -67,7 +69,7 @@ pub const Cache = struct {
 
             // If the file's modification key hasn't changed since it was cached, assume
             // the contents of the file are also the same and skip reading the file.
-            var mod_key: ?fs.FileSystem.Implementation.ModKey = rfs.modKey(path) catch |err| {
+            var mod_key: ?fs.FileSystem.Implementation.ModKey = rfs.modKey(path) catch |err| handler: {
                 switch (err) {
                     error.FileNotFound, error.AccessDenied => {
                         return err;
@@ -76,7 +78,7 @@ pub const Cache = struct {
                         if (isDebug) {
                             Output.printError("modkey error: {s}", .{@errorName(err)});
                         }
-                        mod_key = null;
+                        break :handler null;
                     },
                 }
             };
@@ -94,15 +96,16 @@ pub const Cache = struct {
                 .mod_key = mod_key,
             };
 
-            const hold = c.mutex.acquire();
-            defer hold.release();
-            var res = c.entries.getOrPut(path, entry) catch unreachable;
+            c.mutex.lock();
+            defer c.mutex.unlock();
+            var res = c.entries.getOrPut(path) catch unreachable;
+
             if (res.found_existing) {
                 res.entry.value.deinit(c.entries.allocator);
             }
 
             res.entry.value = entry;
-            return &en.value;
+            return res.entry.value;
         }
     };
 
@@ -153,19 +156,19 @@ pub const Cache = struct {
             ok: bool = false,
             // msgs: []logger.Msg,
         };
-        mutex: std.Thread.Mutex,
+        mutex: Mutex,
         entries: std.StringHashMap(*Entry),
         pub fn init(allocator: *std.mem.Allocator) Json {
             return Json{
-                .mutex = std.Thread.Mutex{},
+                .mutex = Mutex.init(),
                 .entries = std.StringHashMap(Entry).init(allocator),
             };
         }
-        fn parse(cache: *@This(), log: *logger.Log, source: logger.Source, allocator: *std.mem.Allocator, is_tsconfig: bool, func: anytype) anyerror!?Expr {
+        fn parse(cache: *@This(), log: *logger.Log, source: logger.Source, allocator: *std.mem.Allocator, is_tsconfig: bool, func: anytype) anyerror!?js_ast.Expr {
             {
-                const hold = cache.mutex.acquire();
-                defer hold.release();
-                if (cache.entries.get(source.key_path)) |entry| {
+                cache.mutex.lock();
+                defer cache.mutex.unlock();
+                if (cache.entries.get(source.key_path.text)) |entry| {
                     return entry.expr;
                 }
             }
@@ -174,8 +177,8 @@ pub const Cache = struct {
             defer {
                 temp_log.appendTo(log) catch {};
             }
-            const expr = func(&source, &temp_log, allocator) catch {
-                null;
+            const expr = func(&source, &temp_log, allocator) catch handler: {
+                break :handler null;
             };
             const entry = try allocator.create(Entry);
             entry.* = Entry{
@@ -185,18 +188,18 @@ pub const Cache = struct {
                 .ok = expr != null,
             };
 
-            const hold = cache.mutex.acquire();
-            defer hold.release();
-            std.debug.assert(source.key_path.len > 0); // missing key_path in source
-            try cache.entries.put(source.key_path, entry);
+            cache.mutex.lock();
+            defer cache.mutex.unlock();
+            std.debug.assert(source.key_path.text.len > 0); // missing key_path in source
+            try cache.entries.put(source.key_path.text, entry);
             return entry.expr;
         }
-        pub fn parseJSON(cache: *@This(), log: *logger.Log, source: logger.Source, allocator: *std.mem.Allocator) anyerror!?Expr {
-            return @call(std.builtin.CallOptions{ .modifier = .always_tail }, parse, .{ cache, log, opts, source, allocator, false, json_parser.ParseJSON });
+        pub fn parseJSON(cache: *@This(), log: *logger.Log, source: logger.Source, allocator: *std.mem.Allocator) anyerror!?js_ast.Expr {
+            return @call(std.builtin.CallOptions{ .modifier = .always_tail }, parse, .{ cache, log, source, allocator, false, json_parser.ParseJSON });
         }
 
-        pub fn parseTSConfig(cache: *@This(), log: *logger.Log, source: logger.Source, allocator: *std.mem.Allocator) anyerror!?Expr {
-            return @call(std.builtin.CallOptions{ .modifier = .always_tail }, parse, .{ cache, log, opts, source, allocator, true, json_parser.ParseTSConfig });
+        pub fn parseTSConfig(cache: *@This(), log: *logger.Log, source: logger.Source, allocator: *std.mem.Allocator) anyerror!?js_ast.Expr {
+            return @call(std.builtin.CallOptions{ .modifier = .always_tail }, parse, .{ cache, log, source, allocator, true, json_parser.ParseTSConfig });
         }
     };
 };

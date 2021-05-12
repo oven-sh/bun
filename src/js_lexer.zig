@@ -52,7 +52,7 @@ pub const Lexer = struct {
     log: *logger.Log,
     json_options: ?JSONOptions = null,
     for_global_name: bool = false,
-    source: *logger.Source,
+    source: *const logger.Source,
     current: usize = 0,
     start: usize = 0,
     end: usize = 0,
@@ -1094,11 +1094,11 @@ pub const Lexer = struct {
         };
     }
 
-    pub fn initGlobalName(log: *logger.Log, source: *logger.Source, allocator: *std.mem.Allocator) !LexerType {
-        var empty_string_literal: JavascriptString = emptyJavaScriptString;
+    pub fn initGlobalName(log: *logger.Log, source: *const logger.Source, allocator: *std.mem.Allocator) !LexerType {
+        var empty_string_literal: JavascriptString = &emptyJavaScriptString;
         var lex = LexerType{
             .log = log,
-            .source = source.*,
+            .source = source,
             .string_literal_is_ascii = true,
             .string_literal = empty_string_literal,
             .string_literal_buffer = std.ArrayList(u16).init(allocator),
@@ -1113,11 +1113,11 @@ pub const Lexer = struct {
         return lex;
     }
 
-    pub fn initTSConfig(log: *logger.Log, source: *logger.Source, allocator: *std.mem.Allocator) !LexerType {
-        var empty_string_literal: JavascriptString = emptyJavaScriptString;
+    pub fn initTSConfig(log: *logger.Log, source: *const logger.Source, allocator: *std.mem.Allocator) !LexerType {
+        var empty_string_literal: JavascriptString = &emptyJavaScriptString;
         var lex = LexerType{
             .log = log,
-            .source = source.*,
+            .source = source,
             .string_literal = empty_string_literal,
             .string_literal_buffer = std.ArrayList(u16).init(allocator),
             .prev_error_loc = logger.Loc.Empty,
@@ -1135,7 +1135,7 @@ pub const Lexer = struct {
         return lex;
     }
 
-    pub fn initJSON(log: *logger.Log, source: *logger.Source, allocator: *std.mem.Allocator) !LexerType {
+    pub fn initJSON(log: *logger.Log, source: *const logger.Source, allocator: *std.mem.Allocator) !LexerType {
         var empty_string_literal: JavascriptString = &emptyJavaScriptString;
         var lex = LexerType{
             .log = log,

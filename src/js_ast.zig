@@ -938,7 +938,7 @@ pub const E = struct {
                         }
                     },
                     string => {
-                        return strings.utf16EqlString(other.utf8, s.value);
+                        return strings.utf16EqlString(s.value, other);
                     },
                     JavascriptString => {
                         return std.mem.eql(u16, other.value, s.value);
@@ -1381,13 +1381,15 @@ pub const Expr = struct {
 
     pub const Query = struct { expr: Expr, loc: logger.Loc };
 
-    pub fn getProperty(expr: *Expr, name: string) ?Query {
-        const obj: *E.Object = expr.data.e_object orelse return null;
+    pub fn getProperty(expr: *const Expr, name: string) ?Query {
+        if (std.meta.activeTag(expr.data) != .e_object) return null;
+        const obj: *E.Object = expr.data.e_object;
 
         for (obj.properties) |prop| {
             const value = prop.value orelse continue;
             const key = prop.key orelse continue;
-            const key_str: *E.String = key.data.e_string orelse continue;
+            if (std.meta.activeTag(key.data) != .e_string) continue;
+            const key_str: *E.String = key.data.e_string;
             if (key_str.eql(string, name)) {
                 return Query{ .expr = value, .loc = key.loc };
             }
@@ -1396,16 +1398,20 @@ pub const Expr = struct {
         return null;
     }
 
-    pub fn getString(expr: *Expr, allocator: *std.mem.Allocator) !?string {
-        const key_str: *E.String = expr.data.e_string orelse return null;
+    pub fn getString(expr: *const Expr, allocator: *std.mem.Allocator) ?string {
+        if (std.meta.activeTag(expr.data) != .e_string) return null;
 
-        return if (key_str.isUTF8()) key_str.value else key_str.string(allocator);
+        const key_str: *E.String = expr.data.e_string;
+
+        return if (key_str.isUTF8()) key_str.utf8 else key_str.string(allocator) catch null;
     }
 
     pub fn getBool(
-        expr: *Expr,
+        expr: *const Expr,
     ) ?bool {
-        const obj: *E.Boolean = expr.data.e_boolean orelse return null;
+        if (std.meta.activeTag(expr.data) != .e_boolean) return null;
+
+        const obj = expr.data.e_boolean;
 
         return obj.value;
     }

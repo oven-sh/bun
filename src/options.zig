@@ -180,8 +180,8 @@ pub const defaultLoaders = std.ComptimeStringMap(Loader, .{
 pub const JSX = struct {
     pub const Pragma = struct {
         // these need to be arrays
-        factory: string = "React.createElement",
-        fragment: string = "React.Fragment",
+        factory: []string = &(Defaults.Factory),
+        fragment: []string = &(Defaults.Fragment),
         runtime: JSX.Runtime = JSX.Runtime.automatic,
 
         /// Facilitates automatic JSX importing
@@ -192,6 +192,10 @@ pub const JSX = struct {
 
         development: bool = true,
         parse: bool = true,
+        pub const Defaults = struct {
+            pub var Factory = [_]string{ "React", "createElement" };
+            pub var Fragment = [_]string{ "React", "Fragment" };
+        };
 
         pub fn fromApi(jsx: api.Api.Jsx) Pragma {
             var pragma = JSX.Pragma{};

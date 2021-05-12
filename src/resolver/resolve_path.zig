@@ -25,7 +25,7 @@ pub fn resolvePath(buffer: []u8, src_path: []const u8) ?[]u8 {
             }
         } else {
             if (end + segment.len + 1 > buffer.len)
-                return error.BufferTooSmall;
+                return null;
 
             const start = end;
             buffer[end] = '/';

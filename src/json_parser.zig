@@ -41,11 +41,11 @@ const Lexer = js_lexer.Lexer;
 fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
     return struct {
         lexer: Lexer,
-        source: *logger.Source,
+        source: *const logger.Source,
         log: *logger.Log,
         allocator: *std.mem.Allocator,
 
-        pub fn init(allocator: *std.mem.Allocator, source: *logger.Source, log: *logger.Log) !Parser {
+        pub fn init(allocator: *std.mem.Allocator, source: *const logger.Source, log: *logger.Log) !Parser {
             if (opts.allow_comments) {
                 return Parser{
                     .lexer = try Lexer.initTSConfig(log, source, allocator),
@@ -210,14 +210,14 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
 const JSONParser = JSONLikeParser(js_lexer.JSONOptions{});
 const TSConfigParser = JSONLikeParser(js_lexer.JSONOptions{ .allow_comments = true, .allow_trailing_commas = true });
 
-pub fn ParseJSON(source: *logger.Source, log: *logger.Log, allocator: *std.mem.Allocator) !Expr {
+pub fn ParseJSON(source: *const logger.Source, log: *logger.Log, allocator: *std.mem.Allocator) !Expr {
     var parser = try JSONParser.init(allocator, source, log);
 
     return parser.parseExpr();
 }
 
-pub fn ParseTSConfig(log: logger.Loc, source: *logger.Source, allocator: *std.mem.Allocator) !Expr {
-    var parser = try TSConfigParser.init(allocator, log, source);
+pub fn ParseTSConfig(source: *const logger.Source, log: *logger.Log, allocator: *std.mem.Allocator) !Expr {
+    var parser = try TSConfigParser.init(allocator, source, log);
 
     return parser.parseExpr();
 }

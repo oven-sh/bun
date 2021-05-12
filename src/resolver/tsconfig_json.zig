@@ -1,10 +1,10 @@
 usingnamespace @import("../global.zig");
 const std = @import("std");
 const options = @import("../options.zig");
-const log = @import("../logger.zig");
-const cache = @import("../cache.zig");
 const logger = @import("../logger.zig");
+const cache = @import("../cache.zig");
 const js_ast = @import("../js_ast.zig");
+const js_lexer = @import("../js_lexer.zig");
 const alloc = @import("../alloc.zig");
 
 const PathsMap = std.StringHashMap([]string);
@@ -53,7 +53,6 @@ pub const TSConfigJSON = struct {
         allocator: *std.mem.Allocator,
         log: *logger.Log,
         source: logger.Source,
-        opts: options.TransformOptions,
         json_cache: *cache.Cache.Json,
     ) anyerror!?*TSConfigJSON {
         // Unfortunately "tsconfig.json" isn't actually JSON. It's some other
@@ -64,52 +63,52 @@ pub const TSConfigJSON = struct {
         // these particular files. This is likely not a completely accurate
         // emulation of what the TypeScript compiler does (e.g. string escape
         // behavior may also be different).
-        const json: js_ast.Expr = (json_cache.parseTSConfig(log, opts, source, allocator) catch null) orelse return null;
+        const json: js_ast.Expr = (json_cache.parseTSConfig(log, source, allocator) catch null) orelse return null;
 
         var result: TSConfigJSON = TSConfigJSON{ .abs_path = source.key_path.text, .paths = PathsMap.init(allocator) };
         errdefer allocator.free(result.paths);
-        if (extends != null) {
-            if (json.getProperty("extends")) |extends_value| {
-                log.addWarning(&source, extends_value.loc, "\"extends\" is not implemented yet") catch unreachable;
-                // if ((extends_value.expr.getString(allocator) catch null)) |str| {
-                //     if (extends(str, source.rangeOfString(extends_value.loc))) |base| {
-                //         result.jsx = base.jsx;
-                //         result.base_url_for_paths = base.base_url_for_paths;
-                //         result.use_define_for_class_fields = base.use_define_for_class_fields;
-                //         result.preserve_imports_not_used_as_values = base.preserve_imports_not_used_as_values;
-                //         //  https://github.com/microsoft/TypeScript/issues/14527#issuecomment-284948808
-                //         result.paths = base.paths;
-                //     }
-                // }
-            }
+        if (json.getProperty("extends")) |extends_value| {
+            log.addWarning(&source, extends_value.loc, "\"extends\" is not implemented yet") catch unreachable;
+            // if ((extends_value.expr.getString(allocator) catch null)) |str| {
+            //     if (extends(str, source.rangeOfString(extends_value.loc))) |base| {
+            //         result.jsx = base.jsx;
+            //         result.base_url_for_paths = base.base_url_for_paths;
+            //         result.use_define_for_class_fields = base.use_define_for_class_fields;
+            //         result.preserve_imports_not_used_as_values = base.preserve_imports_not_used_as_values;
+            //         //  https://github.com/microsoft/TypeScript/issues/14527#issuecomment-284948808
+            //         result.paths = base.paths;
+            //     }
+            // }
         }
 
         // Parse "compilerOptions"
         if (json.getProperty("compilerOptions")) |compiler_opts| {
+            var has_base_url = false;
             // Parse "baseUrl"
             if (compiler_opts.expr.getProperty("baseUrl")) |base_url_prop| {
                 // maybe we should add a warning when it exists but the value is an array or osmething invalid?
-                if ((base_url_prop.expr.getString(allocator) catch null)) |base_url| {
+                if ((base_url_prop.expr.getString(allocator))) |base_url| {
                     result.base_url = base_url;
+                    has_base_url = true;
                 }
             }
 
             // Parse "jsxFactory"
             if (compiler_opts.expr.getProperty("jsxFactory")) |jsx_prop| {
                 if (jsx_prop.expr.getString(allocator)) |str| {
-                    result.jsx.factory = try parseMemberExpressionForJSX(log, source, jsx_prop.loc, str, allocator);
+                    result.jsx.factory = try parseMemberExpressionForJSX(log, &source, jsx_prop.loc, str, allocator);
                 }
             }
 
             // Parse "jsxFragmentFactory"
             if (compiler_opts.expr.getProperty("jsxFactory")) |jsx_prop| {
                 if (jsx_prop.expr.getString(allocator)) |str| {
-                    result.jsx.fragment = try parseMemberExpressionForJSX(log, source, jsx_prop.loc, str, allocator);
+                    result.jsx.fragment = try parseMemberExpressionForJSX(log, &source, jsx_prop.loc, str, allocator);
                 }
             }
 
             // Parse "jsxImportSource"
-            if (compiler_opts.expr.getProperty("jsxImportSource")) |jsx_factory_prop| {
+            if (compiler_opts.expr.getProperty("jsxImportSource")) |jsx_prop| {
                 if (jsx_prop.expr.getString(allocator)) |str| {
                     result.jsx.import_source = str;
                 }
@@ -123,16 +122,16 @@ pub const TSConfigJSON = struct {
             }
 
             // Parse "importsNotUsedAsValues"
-            if (compiler_opts.expr.getProperty("importsNotUsedAsValues")) |imports_not_used_as_values_prop| {
+            if (compiler_opts.expr.getProperty("importsNotUsedAsValues")) |jsx_prop| {
                 // This should never allocate since it will be utf8
-                if ((jsx_prop.expr.getString(allocator) catch null)) |str| {
+                if ((jsx_prop.expr.getString(allocator))) |str| {
                     switch (ImportsNotUsedAsValue.List.get(str) orelse ImportsNotUsedAsValue.invalid) {
                         .preserve, .err => {
                             result.preserve_imports_not_used_as_values = true;
                         },
                         .remove => {},
                         else => {
-                            log.addRangeWarningFmt(source, source.rangeOfString(imports_not_used_as_values_prop.loc), allocator, "Invalid value \"{s}\" for \"importsNotUsedAsValues\"", .{str}) catch {};
+                            log.addRangeWarningFmt(&source, source.rangeOfString(jsx_prop.loc), allocator, "Invalid value \"{s}\" for \"importsNotUsedAsValues\"", .{str}) catch {};
                         },
                     }
                 }
@@ -146,9 +145,9 @@ pub const TSConfigJSON = struct {
                         result.paths = PathsMap.init(allocator);
                         for (paths.properties) |property| {
                             const key_prop = property.key orelse continue;
-                            const key = (key_prop.getString(allocator) catch null) orelse continue;
+                            const key = (key_prop.getString(allocator)) orelse continue;
 
-                            if (!TSConfigJSON.isValidTSConfigPathNoBaseURLPattern(key, log, source, key_prop.loc)) {
+                            if (!TSConfigJSON.isValidTSConfigPathNoBaseURLPattern(key, log, &source, allocator, key_prop.loc)) {
                                 continue;
                             }
 
@@ -178,20 +177,27 @@ pub const TSConfigJSON = struct {
                             switch (value_prop.data) {
                                 .e_array => |array| {
                                     if (array.items.len > 0) {
-                                        var paths = allocator.alloc(string, array.items.len) catch unreachable;
-                                        errdefer allocator.free(paths);
+                                        var values = allocator.alloc(string, array.items.len) catch unreachable;
+                                        errdefer allocator.free(values);
                                         var count: usize = 0;
                                         for (array.items) |expr| {
-                                            if ((expr.getString(allocator) catch null)) |str| {
-                                                if (TSConfigJSON.isValidTSConfigPathPattern(str, log, source, loc, allocator) and
+                                            if ((expr.getString(allocator))) |str| {
+                                                if (TSConfigJSON.isValidTSConfigPathPattern(
+                                                    str,
+                                                    log,
+                                                    &source,
+                                                    expr.loc,
+                                                    allocator,
+                                                ) and
                                                     (has_base_url or
                                                     TSConfigJSON.isValidTSConfigPathNoBaseURLPattern(
                                                     str,
                                                     log,
-                                                    source,
-                                                    loc,
+                                                    &source,
+                                                    allocator,
+                                                    expr.loc,
                                                 ))) {
-                                                    paths[count] = str;
+                                                    values[count] = str;
                                                     count += 1;
                                                 }
                                             }
@@ -199,15 +205,15 @@ pub const TSConfigJSON = struct {
                                         if (count > 0) {
                                             result.paths.put(
                                                 key,
-                                                paths[0..count],
+                                                values[0..count],
                                             ) catch unreachable;
                                         }
                                     }
                                 },
                                 else => {
                                     log.addRangeWarningFmt(
-                                        source,
-                                        log,
+                                        &source,
+                                        source.rangeOfString(key_prop.loc),
                                         allocator,
                                         "Substitutions for pattern \"{s}\" should be an array",
                                         .{key},
@@ -226,7 +232,7 @@ pub const TSConfigJSON = struct {
         return _result;
     }
 
-    pub fn isValidTSConfigPathPattern(text: string, log: *logger.Log, source: *logger.Source, loc: logger.Loc, allocator: *std.mem.Allocator) bool {
+    pub fn isValidTSConfigPathPattern(text: string, log: *logger.Log, source: *const logger.Source, loc: logger.Loc, allocator: *std.mem.Allocator) bool {
         var found_asterisk = false;
         for (text) |c, i| {
             if (c == '*') {
@@ -242,7 +248,7 @@ pub const TSConfigJSON = struct {
         return true;
     }
 
-    pub fn parseMemberExpressionForJSX(log: *logger.Log, source: *logger.Source, loc: logger.Loc, text: string, allocator: *std.mem.Allocator) ![]string {
+    pub fn parseMemberExpressionForJSX(log: *logger.Log, source: *const logger.Source, loc: logger.Loc, text: string, allocator: *std.mem.Allocator) ![]string {
         if (text.len == 0) {
             return &([_]string{});
         }
@@ -267,7 +273,7 @@ pub const TSConfigJSON = struct {
         return c == '/' or c == '\\';
     }
 
-    pub fn isValidTSConfigPathNoBaseURLPattern(text: string, log: logger.Log, source: *logger.Source, loc: logger.Loc) bool {
+    pub fn isValidTSConfigPathNoBaseURLPattern(text: string, log: *logger.Log, source: *const logger.Source, allocator: *std.mem.Allocator, loc: logger.Loc) bool {
         var c0: u8 = 0;
         var c1: u8 = 0;
         var c2: u8 = 0;

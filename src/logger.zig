@@ -133,7 +133,23 @@ pub const Msg = struct {
         }
         msg.notes = null;
     }
-    pub fn doFormat(msg: *const Msg, to: anytype, formatterFunc: @TypeOf(std.fmt.format)) !void {
+
+    pub fn writeFormat(
+        msg: *const Msg,
+        to: anytype,
+    ) !void {
+        try std.fmt.format(to, "\n\n{s}: {s}\n{s}\n{s}:{}:{} {d}", .{
+            msg.kind.string(),
+            msg.data.text,
+            msg.data.location.?.line_text,
+            msg.data.location.?.file,
+            msg.data.location.?.line,
+            msg.data.location.?.column,
+            msg.data.location.?.offset,
+        });
+    }
+
+    pub fn doFormat(msg: *const Msg, to: anytype, formatterFunc: anytype) !void {
         try formatterFunc(to, "\n\n{s}: {s}\n{s}\n{s}:{}:{} {d}", .{
             msg.kind.string(),
             msg.data.text,
@@ -204,7 +220,7 @@ pub const Log = struct {
     }
 
     pub fn appendTo(self: *Log, other: *Log) !void {
-        other.msgs.appendSlice(self.msgs.items);
+        try other.msgs.appendSlice(self.msgs.items);
         other.warnings += self.warnings;
         other.errors += self.errors;
         self.msgs.deinit();
@@ -295,7 +311,7 @@ pub const Log = struct {
     }
 
     pub fn addRangeDebugWithNotes(log: *Log, source: ?*Source, r: Range, text: string, notes: []Data) !void {
-        log.errors += 1;
+        // log.de += 1;
         try log.addMsg(Msg{
             .kind = Kind.debug,
             .data = rangeData(source, r, text),

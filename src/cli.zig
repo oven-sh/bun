@@ -150,9 +150,9 @@ pub const Cli = struct {
             var loader_keys = loader_tuple.keys;
             var loader_values = loader_tuple.values;
             var entry_points = args.positionals();
-            var write = entry_points.len > 1;
             var inject = args.options("--inject");
             var output_dir = args.option("--outdir");
+            var write = entry_points.len > 1 or output_dir != null;
             if (write and output_dir == null) {
                 var _paths = [_]string{ cwd, "out" };
                 output_dir = try std.fs.path.resolve(allocator, &_paths);
@@ -276,6 +276,7 @@ pub const Cli = struct {
     }
     pub fn startTransform(allocator: *std.mem.Allocator, args: Api.TransformOptions, log: *logger.Log) anyerror!void {}
     pub fn start(allocator: *std.mem.Allocator, stdout: anytype, stderr: anytype, comptime MainPanicHandler: type) anyerror!void {
+        const start_time = std.time.nanoTimestamp();
         var log = logger.Log.init(alloc.dynamic);
         var panicker = MainPanicHandler.init(&log);
         MainPanicHandler.Singleton = &panicker;
@@ -298,9 +299,73 @@ pub const Cli = struct {
                 );
             },
         }
+        var did_write = false;
 
-        for (result.output_files) |file| {
-            try stdout.writer().writeAll(file.contents);
+        var writer = stdout.writer();
+
+        if (args.write) |write| {
+            if (write) {
+                did_write = true;
+                var root_dir = try std.fs.openDirAbsolute(args.absolute_working_dir.?, std.fs.Dir.OpenDirOptions{});
+                defer root_dir.close();
+                for (result.output_files) |f| {
+                    try root_dir.makePath(std.fs.path.dirname(f.path) orelse unreachable);
+
+                    var _handle = try std.fs.createFileAbsolute(f.path, std.fs.File.CreateFlags{
+                        .truncate = true,
+                    });
+                    try _handle.seekTo(0);
+
+                    defer _handle.close();
+
+                    try _handle.writeAll(f.contents);
+                }
+
+                var max_path_len: usize = 0;
+                var max_padded_size: usize = 0;
+                for (result.output_files) |file| {
+                    max_path_len = std.math.max(file.path.len, max_path_len);
+                }
+
+                _ = try writer.write("\n");
+                for (result.output_files) |file| {
+                    const padding_count = 2 + (max_path_len - file.path.len);
+
+                    try writer.writeByteNTimes(' ', 2);
+                    try writer.writeAll(file.path);
+                    try writer.writeByteNTimes(' ', padding_count);
+                    const size = @intToFloat(f64, file.contents.len) / 1000.0;
+                    try std.fmt.formatFloatDecimal(size, .{ .precision = 2 }, writer);
+                    try writer.writeAll(" KB\n");
+                }
+            }
+        }
+
+        if (!did_write) {
+            for (result.output_files) |file, i| {
+                try writer.writeAll(file.contents);
+                if (i > 0) {
+                    _ = try writer.write("\n\n");
+                }
+            }
+        }
+
+        var err_writer = stderr.writer();
+        for (result.errors) |err| {
+            try err.writeFormat(err_writer);
+            _ = try err_writer.write("\n");
+        }
+
+        for (result.warnings) |err| {
+            try err.writeFormat(err_writer);
+            _ = try err_writer.write("\n");
+        }
+
+        const duration = std.time.nanoTimestamp() - start_time;
+
+        if (did_write and duration < @as(i128, @as(i128, std.time.ns_per_s) * @as(i128, 2))) {
+            var elapsed = @divFloor(duration, @as(i128, std.time.ns_per_ms));
+            try writer.print("\nCompleted in {d}ms", .{elapsed});
         }
     }
 };

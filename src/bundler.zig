@@ -22,6 +22,12 @@ pub const Bundler = struct {
     allocator: *std.mem.Allocator,
     result: ?options.TransformResult = null,
 
+    pub fn init(
+        allocator: *std.mem.Allocator,
+        log: *logger.Log,
+        opts: Api.TransformOptions,
+    ) !Bundler {}
+
     pub fn bundle(
         allocator: *std.mem.Allocator,
         log: *logger.Log,
@@ -54,6 +60,8 @@ pub const Transformer = struct {
         );
 
         const cwd = opts.absolute_working_dir orelse try std.process.getCwdAlloc(allocator);
+        const output_dir_parts = [_]string{ cwd, opts.output_dir orelse "out" };
+        const output_dir = try std.fs.path.join(allocator, &output_dir_parts);
         var output_files = try std.ArrayList(options.OutputFile).initCapacity(allocator, opts.entry_points.len);
         var loader_values = try allocator.alloc(options.Loader, opts.loader_values.len);
         for (loader_values) |_, i| {
@@ -78,8 +86,11 @@ pub const Transformer = struct {
         var use_default_loaders = loader_map.count() == 0;
 
         var jsx = if (opts.jsx) |_jsx| options.JSX.Pragma.fromApi(_jsx) else options.JSX.Pragma{};
+
         var output_i: usize = 0;
         for (opts.entry_points) |entry_point, i| {
+            var _log = logger.Log.init(allocator);
+            var __log = &_log;
             var paths = [_]string{ cwd, entry_point };
             const absolutePath = try std.fs.path.resolve(alloc.dynamic, &paths);
 
@@ -88,6 +99,13 @@ pub const Transformer = struct {
             const stat = try file.stat();
 
             const code = try file.readToEndAlloc(alloc.dynamic, stat.size);
+            defer {
+                if (_log.msgs.items.len == 0) {
+                    allocator.free(code);
+                }
+                alloc.dynamic.free(absolutePath);
+                _log.appendTo(log) catch {};
+            }
             const _file = fs.File{ .path = fs.Path.init(entry_point), .contents = code };
             var source = try logger.Source.initFile(_file, alloc.dynamic);
             var loader: options.Loader = undefined;
@@ -100,10 +118,16 @@ pub const Transformer = struct {
                 ) orelse continue;
             }
 
+            jsx.parse = loader.isJSX();
+
             const parser_opts = js_parser.Parser.Options.init(jsx, loader);
             var _source = &source;
-            const res = _transform(allocator, log, parser_opts, loader, define, _source) catch continue;
-            try output_files.append(options.OutputFile{ .path = absolutePath, .contents = res.js });
+            const res = _transform(allocator, allocator, __log, parser_opts, loader, define, _source) catch continue;
+
+            const relative_path = try std.fs.path.relative(allocator, cwd, absolutePath);
+            var out_parts = [_]string{ output_dir, relative_path };
+            const out_path = try std.fs.path.join(allocator, &out_parts);
+            try output_files.append(options.OutputFile{ .path = out_path, .contents = res.js });
         }
 
         return try options.TransformResult.init(output_files.toOwnedSlice(), log, allocator);
@@ -111,6 +135,7 @@ pub const Transformer = struct {
 
     pub fn _transform(
         allocator: *std.mem.Allocator,
+        result_allocator: *std.mem.Allocator,
         log: *logger.Log,
         opts: js_parser.Parser.Options,
         loader: options.Loader,
@@ -121,8 +146,8 @@ pub const Transformer = struct {
 
         switch (loader) {
             .json => {
-                var expr = try json_parser.ParseJSON(source, log, alloc.dynamic);
-                var stmt = js_ast.Stmt.alloc(alloc.dynamic, js_ast.S.ExportDefault{
+                var expr = try json_parser.ParseJSON(source, log, allocator);
+                var stmt = js_ast.Stmt.alloc(allocator, js_ast.S.ExportDefault{
                     .value = js_ast.StmtOrExpr{ .expr = expr },
                     .default_name = js_ast.LocRef{ .loc = logger.Loc{}, .ref = Ref{} },
                 }, logger.Loc{ .start = 0 });
@@ -147,7 +172,7 @@ pub const Transformer = struct {
         var symbols: [][]js_ast.Symbol = &([_][]js_ast.Symbol{ast.symbols});
 
         return try js_printer.printAst(
-            alloc.dynamic,
+            result_allocator,
             ast,
             js_ast.Symbol.Map.initList(symbols),
             source,

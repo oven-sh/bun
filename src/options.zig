@@ -362,21 +362,15 @@ pub const TransformResult = struct {
         log: *logger.Log,
         allocator: *std.mem.Allocator,
     ) !TransformResult {
-        var errors = try allocator.alloc(logger.Msg, log.errors);
-        var warnings = try allocator.alloc(logger.Msg, log.warnings);
-        var error_i: usize = 0;
-        var warning_i: usize = 0;
+        var errors = try std.ArrayList(logger.Msg).initCapacity(allocator, log.errors);
+        var warnings = try std.ArrayList(logger.Msg).initCapacity(allocator, log.warnings);
         for (log.msgs.items) |msg| {
             switch (msg.kind) {
                 logger.Kind.err => {
-                    std.debug.assert(warnings.len > warning_i);
-                    errors[error_i] = msg;
-                    error_i += 1;
+                    errors.append(msg) catch unreachable;
                 },
                 logger.Kind.warn => {
-                    std.debug.assert(warnings.len > warning_i);
-                    warnings[warning_i] = msg;
-                    warning_i += 1;
+                    warnings.append(msg) catch unreachable;
                 },
                 else => {},
             }
@@ -384,8 +378,8 @@ pub const TransformResult = struct {
 
         return TransformResult{
             .output_files = output_files,
-            .errors = errors,
-            .warnings = warnings,
+            .errors = errors.toOwnedSlice(),
+            .warnings = warnings.toOwnedSlice(),
         };
     }
 };

@@ -1239,7 +1239,7 @@ pub const Parser = struct {
     options: Options,
     lexer: js_lexer.Lexer,
     log: *logger.Log,
-    source: *logger.Source,
+    source: *const logger.Source,
     define: *Define,
     allocator: *std.mem.Allocator,
     p: ?*P,
@@ -1437,7 +1437,7 @@ pub const Parser = struct {
         return result;
     }
 
-    pub fn init(_options: Options, log: *logger.Log, source: *logger.Source, define: *Define, allocator: *std.mem.Allocator) !Parser {
+    pub fn init(_options: Options, log: *logger.Log, source: *const logger.Source, define: *Define, allocator: *std.mem.Allocator) !Parser {
         const lexer = try js_lexer.Lexer.init(log, source, allocator);
         return Parser{
             .options = _options,
@@ -1549,7 +1549,7 @@ pub const P = struct {
     options: Parser.Options,
     log: *logger.Log,
     define: *Define,
-    source: *logger.Source,
+    source: *const logger.Source,
     lexer: js_lexer.Lexer,
     allow_in: bool = false,
     allow_private_identifiers: bool = false,
@@ -10918,7 +10918,7 @@ pub const P = struct {
         };
     }
 
-    pub fn init(allocator: *std.mem.Allocator, log: *logger.Log, source: *logger.Source, define: *Define, lexer: js_lexer.Lexer, opts: Parser.Options) !*P {
+    pub fn init(allocator: *std.mem.Allocator, log: *logger.Log, source: *const logger.Source, define: *Define, lexer: js_lexer.Lexer, opts: Parser.Options) !*P {
         var _parser = try allocator.create(P);
         var parser = P{
             .symbol_uses = SymbolUseMap.init(allocator),

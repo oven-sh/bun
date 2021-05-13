@@ -1202,16 +1202,18 @@ pub const Resolver = struct {
         }
 
         // Try the path with extensions
+
         std.mem.copy(u8, &TemporaryBuffer.ExtensionPathBuf, path);
         for (r.opts.extension_order) |ext| {
             var buffer = TemporaryBuffer.ExtensionPathBuf[0 .. path.len + ext.len];
             std.mem.copy(u8, buffer[path.len..buffer.len], ext);
+            const file_name = buffer[path.len - base.len .. buffer.len];
 
             if (r.debug_logs) |*debug| {
                 debug.addNoteFmt("Checking for file \"{s}{s}\" ", .{ base, ext }) catch {};
             }
 
-            if (entries.get(buffer[path.len - base.len .. buffer.len])) |query| {
+            if (entries.get(file_name)) |query| {
                 if (query.entry.kind(rfs) == .file) {
                     if (r.debug_logs) |*debug| {
                         debug.addNoteFmt("Found file \"{s}\" ", .{buffer}) catch {};

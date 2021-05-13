@@ -19,7 +19,7 @@ const Resolver = @import("./resolver/resolver.zig");
 const sync = @import("sync.zig");
 const ThreadPool = sync.ThreadPool;
 const ThreadSafeHashMap = @import("./thread_safe_hash_map.zig");
-
+const ImportRecord = @import("./import_record.zig").ImportRecord;
 // pub const
 // const BundleMap =
 const ResolveResults = ThreadSafeHashMap.ThreadSafeStringHashMap(Resolver.Resolver.Result);
@@ -31,8 +31,9 @@ pub const Bundler = struct {
     resolver: Resolver.Resolver,
     fs: *Fs.FileSystem,
     // thread_pool: *ThreadPool,
-
+    output_files: std.ArrayList(options.OutputFile),
     resolve_results: *ResolveResults,
+    resolve_queue: std.fifo.LinearFifo(Resolver.Resolver.Result, std.fifo.LinearFifoBufferType.Dynamic),
 
     // to_bundle:
 
@@ -58,10 +59,127 @@ pub const Bundler = struct {
             // .thread_pool = pool,
             .result = options.TransformResult{},
             .resolve_results = try ResolveResults.init(allocator),
+            .resolve_queue = std.fifo.LinearFifo(Resolver.Resolver.Result, std.fifo.LinearFifoBufferType.Dynamic).init(allocator),
+            .output_files = std.ArrayList(options.OutputFile).init(allocator),
         };
     }
 
-    pub fn scan(bundler: *Bundler) !void {}
+    pub fn processImportRecord(bundler: *Bundler, source_dir: string, import_record: *ImportRecord) !void {
+        var resolve_result = (bundler.resolver.resolve(source_dir, import_record.path.text, import_record.kind) catch null) orelse return;
+
+        if (!bundler.resolve_results.contains(resolve_result.path_pair.primary.text)) {
+            try bundler.resolve_results.put(resolve_result.path_pair.primary.text, resolve_result);
+            try bundler.resolve_queue.writeItem(resolve_result);
+        }
+
+        if (!strings.eql(import_record.path.text, resolve_result.path_pair.primary.text)) {
+            import_record.path = Fs.Path.init(resolve_result.path_pair.primary.text);
+        }
+    }
+
+    pub fn buildWithResolveResult(bundler: *Bundler, resolve_result: Resolver.Resolver.Result) !void {
+        if (resolve_result.is_external) {
+            return;
+        }
+
+        // Step 1. Parse & scan
+        const result = bundler.parse(resolve_result.path_pair.primary) orelse return;
+
+        switch (result.loader) {
+            .jsx, .js, .ts, .tsx => {
+                const ast = result.ast;
+
+                for (ast.import_records) |*import_record| {
+                    bundler.processImportRecord(
+                        std.fs.path.dirname(resolve_result.path_pair.primary.text) orelse resolve_result.path_pair.primary.text,
+                        import_record,
+                    ) catch continue;
+                }
+            },
+            else => {},
+        }
+
+        try bundler.print(
+            result,
+        );
+    }
+
+    pub fn print(
+        bundler: *Bundler,
+        result: ParseResult,
+    ) !void {
+        var allocator = bundler.allocator;
+        const relative_path = try std.fs.path.relative(bundler.allocator, bundler.fs.top_level_dir, result.source.path.text);
+        var out_parts = [_]string{ bundler.options.output_dir, relative_path };
+        const out_path = try std.fs.path.join(bundler.allocator, &out_parts);
+
+        const ast = result.ast;
+
+        var _linker = linker.Linker{};
+        var symbols: [][]js_ast.Symbol = &([_][]js_ast.Symbol{ast.symbols});
+
+        const print_result = try js_printer.printAst(
+            allocator,
+            ast,
+            js_ast.Symbol.Map.initList(symbols),
+            &result.source,
+            false,
+            js_printer.Options{ .to_module_ref = ast.module_ref orelse js_ast.Ref{ .inner_index = 0 } },
+            &_linker,
+        );
+        try bundler.output_files.append(options.OutputFile{
+            .path = out_path,
+            .contents = print_result.js,
+        });
+    }
+
+    pub const ParseResult = struct {
+        source: logger.Source,
+        loader: options.Loader,
+
+        ast: js_ast.Ast,
+    };
+
+    pub fn parse(bundler: *Bundler, path: Fs.Path) ?ParseResult {
+        var result: ParseResult = undefined;
+        const loader: options.Loader = bundler.options.loaders.get(path.name.ext) orelse .file;
+        const entry = bundler.resolver.caches.fs.readFile(bundler.fs, path.text) catch return null;
+        const source = logger.Source.initFile(Fs.File{ .path = path, .contents = entry.contents }, bundler.allocator) catch return null;
+
+        switch (loader) {
+            .js, .jsx, .ts, .tsx => {
+                var jsx = bundler.options.jsx;
+                jsx.parse = loader.isJSX();
+                var opts = js_parser.Parser.Options.init(jsx, loader);
+                const value = (bundler.resolver.caches.js.parse(bundler.allocator, opts, bundler.options.define, bundler.log, &source) catch null) orelse return null;
+                return ParseResult{
+                    .ast = value,
+                    .source = source,
+                    .loader = loader,
+                };
+            },
+            .json => {
+                var expr = json_parser.ParseJSON(&source, bundler.log, bundler.allocator) catch return null;
+                var stmt = js_ast.Stmt.alloc(bundler.allocator, js_ast.S.ExportDefault{
+                    .value = js_ast.StmtOrExpr{ .expr = expr },
+                    .default_name = js_ast.LocRef{ .loc = logger.Loc{}, .ref = Ref{} },
+                }, logger.Loc{ .start = 0 });
+
+                var part = js_ast.Part{
+                    .stmts = &([_]js_ast.Stmt{stmt}),
+                };
+
+                return ParseResult{
+                    .ast = js_ast.Ast.initTest(&([_]js_ast.Part{part})),
+                    .source = source,
+                    .loader = loader,
+                };
+            },
+            else => Global.panic("Unsupported loader {s}", .{loader}),
+        }
+
+        return null;
+    }
 
     pub fn bundle(
         allocator: *std.mem.Allocator,
@@ -77,8 +195,54 @@ pub const Bundler = struct {
             bundler.resolver.debug_logs = try Resolver.Resolver.DebugLogs.init(allocator);
         }
 
+        var rfs: *Fs.FileSystem.RealFS = &bundler.fs.fs;
+
         var entry_point_i: usize = 0;
-        for (bundler.options.entry_points) |entry| {
+        for (bundler.options.entry_points) |_entry| {
+            var entry: string = _entry;
+            // if (!std.fs.path.isAbsolute(_entry)) {
+            //     const _paths = [_]string{ bundler.fs.top_level_dir, _entry };
+            //     entry = std.fs.path.join(allocator, &_paths) catch unreachable;
+            // } else {
+            //     entry = allocator.dupe(u8, _entry) catch unreachable;
+            // }
+
+            // const dir = std.fs.path.dirname(entry) orelse continue;
+            // const base = std.fs.path.basename(entry);
+
+            // var dir_entry = try rfs.readDirectory(dir);
+            // if (std.meta.activeTag(dir_entry) == .err) {
+            //     log.addErrorFmt(null, logger.Loc.Empty, allocator, "Failed to read directory: {s} - {s}", .{ dir, @errorName(dir_entry.err.original_err) }) catch unreachable;
+            //     continue;
+            // }
+
+            // const file_entry = dir_entry.entries.get(base) orelse continue;
+            // if (file_entry.entry.kind(rfs) != .file) {
+            //     continue;
+            // }
+
+            if (!strings.startsWith(entry, "./")) {
+                // allocator.free(entry);
+
+                // Entry point paths without a leading "./" are interpreted as package
+                // paths. This happens because they go through general path resolution
+                // like all other import paths so that plugins can run on them. Requiring
+                // a leading "./" for a relative path simplifies writing plugins because
+                // entry points aren't a special case.
+                //
+                // However, requiring a leading "./" also breaks backward compatibility
+                // and makes working with the CLI more difficult. So attempt to insert
+                // "./" automatically when needed. We don't want to unconditionally insert
+                // a leading "./" because the path may not be a file system path. For
+                // example, it may be a URL. So only insert a leading "./" when the path
+                // is an exact match for an existing file.
+                var __entry = allocator.alloc(u8, "./".len + entry.len) catch unreachable;
+                __entry[0] = '.';
+                __entry[1] = '/';
+                std.mem.copy(u8, __entry[2..__entry.len], entry);
+                entry = __entry;
+            }
+
             const result = bundler.resolver.resolve(bundler.fs.top_level_dir, entry, .entry_point) catch {
                 continue;
             } orelse continue;
@@ -90,6 +254,7 @@ pub const Bundler = struct {
             entry_points[entry_point_i] = result;
             Output.print("Resolved {s} => {s}", .{ entry, result.path_pair.primary.text });
             entry_point_i += 1;
+            bundler.resolve_queue.writeItem(result) catch unreachable;
         }
 
         if (isDebug) {
@@ -99,11 +264,15 @@ pub const Bundler = struct {
         }
 
         switch (bundler.options.resolve_mode) {
-            .lazy, .dev, .bundle => {},
+            .lazy, .dev, .bundle => {
+                while (bundler.resolve_queue.readItem()) |item| {
+                    bundler.buildWithResolveResult(item) catch continue;
+                }
+            },
             else => Global.panic("Unsupported resolve mode: {s}", .{@tagName(bundler.options.resolve_mode)}),
         }
 
-        return bundler.result;
+        return try options.TransformResult.init(bundler.output_files.toOwnedSlice(), log, allocator);
     }
 };
 

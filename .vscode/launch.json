@@ -10,6 +10,23 @@
       "args": ["/usr/local/bin/zig"],
       "cwd": "${workspaceFolder}",
       "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Dev Launch",
+      "program": "${workspaceFolder}/build/bin/debug/esdev",
+      "preLaunchTask": "build",
+      "args": [
+        "--resolve=dev",
+        "--cwd",
+        "./src/test",
+        "./fixtures/for-loop-bug",
+        "-o",
+        "out"
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "internalConsole"
     }
   ]
 }

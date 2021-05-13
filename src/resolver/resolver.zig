@@ -151,7 +151,7 @@ pub const Resolver = struct {
             if (len > 0) {
                 var __text = try d.notes.allocator.alloc(u8, text.len + len);
                 std.mem.copy(u8, __text, d.indent.list.items);
-                std.mem.copy(u8, __text[len..text.len], _text);
+                std.mem.copy(u8, __text[len..__text.len], _text);
                 d.notes.allocator.free(_text);
             }
 
@@ -1197,7 +1197,7 @@ pub const Resolver = struct {
                     debug.addNoteFmt("Found file \"{s}\" ", .{base}) catch {};
                 }
 
-                return LoadResult{ .path = base, .diff_case = query.diff_case };
+                return LoadResult{ .path = path, .diff_case = query.diff_case };
             }
         }
 
@@ -1211,7 +1211,7 @@ pub const Resolver = struct {
                 debug.addNoteFmt("Checking for file \"{s}{s}\" ", .{ base, ext }) catch {};
             }
 
-            if (entries.get(buffer)) |query| {
+            if (entries.get(buffer[path.len - base.len .. buffer.len])) |query| {
                 if (query.entry.kind(rfs) == .file) {
                     if (r.debug_logs) |*debug| {
                         debug.addNoteFmt("Found file \"{s}\" ", .{buffer}) catch {};

@@ -386,7 +386,7 @@ pub const FileSystem = struct {
 
                 // First, check the cache
                 if (fs.entries.get(dir)) |_dir| {
-                    return EntriesOption{ .entries = _dir.entries };
+                    return _dir;
                 }
             }
 

@@ -72,6 +72,11 @@ pub const Bundler = struct {
 
         var entry_points = try allocator.alloc(Resolver.Resolver.Result, bundler.options.entry_points.len);
 
+        if (isDebug) {
+            log.level = .verbose;
+            bundler.resolver.debug_logs = try Resolver.Resolver.DebugLogs.init(allocator);
+        }
+
         var entry_point_i: usize = 0;
         for (bundler.options.entry_points) |entry| {
             const result = bundler.resolver.resolve(bundler.fs.top_level_dir, entry, .entry_point) catch {
@@ -85,6 +90,12 @@ pub const Bundler = struct {
             entry_points[entry_point_i] = result;
             Output.print("Resolved {s} => {s}", .{ entry, result.path_pair.primary.text });
             entry_point_i += 1;
+        }
+
+        if (isDebug) {
+            for (log.msgs.items) |msg| {
+                try msg.writeFormat(std.io.getStdOut().writer());
+            }
         }
 
         switch (bundler.options.resolve_mode) {

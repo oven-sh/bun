@@ -140,15 +140,22 @@ pub const Msg = struct {
         msg: *const Msg,
         to: anytype,
     ) !void {
-        try std.fmt.format(to, "\n\n{s}: {s}\n{s}\n{s}:{}:{} {d}", .{
-            msg.kind.string(),
-            msg.data.text,
-            msg.data.location.?.line_text,
-            msg.data.location.?.file,
-            msg.data.location.?.line,
-            msg.data.location.?.column,
-            msg.data.location.?.offset,
-        });
+        if (msg.data.location) |location| {
+            try std.fmt.format(to, "\n\n{s}: {s}\n{s}\n{s}:{}:{} {d}", .{
+                msg.kind.string(),
+                msg.data.text,
+                location.line_text,
+                location.file,
+                location.line,
+                location.column,
+                location.offset,
+            });
+        } else {
+            try std.fmt.format(to, "\n\n{s}: {s}\n", .{
+                msg.kind.string(),
+                msg.data.text,
+            });
+        }
     }
 
     pub fn doFormat(msg: *const Msg, to: anytype, formatterFunc: anytype) !void {

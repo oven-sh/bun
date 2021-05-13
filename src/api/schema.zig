@@ -203,6 +203,9 @@ pub const Api = struct {
         /// watch
         watch: ?bool = null,
 
+        /// extension_order
+        extension_order: []const []const u8,
+
         pub fn decode(allocator: *std.mem.Allocator, reader: anytype) anyerror!TransformOptions {
             var obj = std.mem.zeroes(TransformOptions);
             try update(&obj, allocator, reader);
@@ -380,6 +383,21 @@ pub const Api = struct {
                     18 => {
                         result.watch = (try reader.readByte()) == @as(u8, 1);
                     },
+                    19 => {
+                        {
+                            var array_count = try reader.readIntNative(u32);
+                            if (array_count != result.extension_order.len) {
+                                result.extension_order = try allocator.alloc([]const u8, array_count);
+                            }
+                            length = try reader.readIntNative(u32);
+                            for (result.extension_order) |content, j| {
+                                if (result.extension_order[j].len != length and length > 0) {
+                                    result.extension_order[j] = try allocator.alloc(u8, length);
+                                }
+                                _ = try reader.readAll(result.extension_order[j].?);
+                            }
+                        }
+                    },
                     else => {
                         return error.InvalidMessage;
                     },
@@ -544,6 +562,19 @@ pub const Api = struct {
             if (result.watch) |watch| {
                 try writer.writeByte(18);
                 try writer.writeByte(@boolToInt(watch));
+            }
+
+            if (result.extension_order) |extension_order| {
+                try writer.writeByte(19);
+                n = result.extension_order.len;
+                _ = try writer.writeIntNative(u32, @intCast(u32, n));
+                {
+                    var j: usize = 0;
+                    while (j < n) : (j += 1) {
+                        _ = try writer.writeIntNative(u32, @intCast(u32, result.extension_order[j].len));
+                        try writer.writeAll(std.mem.sliceAsBytes(extension_order[j]));
+                    }
+                }
             }
             try writer.writeByte(0);
             return;

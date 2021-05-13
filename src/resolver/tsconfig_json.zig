@@ -7,7 +7,10 @@ const js_ast = @import("../js_ast.zig");
 const js_lexer = @import("../js_lexer.zig");
 const alloc = @import("../alloc.zig");
 
-const PathsMap = std.StringHashMap([]string);
+// Heuristic: you probably don't have 100 of these
+// Probably like 5-10
+// Array iteration is faster and deterministically ordered in that case.
+const PathsMap = std.StringArrayHashMap([]string);
 
 pub const TSConfigJSON = struct {
     abs_path: string,

@@ -629,6 +629,7 @@ pub const Path = struct {
     text: string,
     namespace: string = "unspecified",
     name: PathName,
+    is_disabled: bool = false,
 
     pub fn generateKey(p: *Path, allocator: *std.mem.Allocator) !string {
         return try std.fmt.allocPrint(allocator, "{s}://{s}", .{ p.namespace, p.text });
@@ -639,6 +640,26 @@ pub const Path = struct {
         if (str.len == 0 or (str.len == 1 and str[0] == ' ')) return ".";
         if (resolvePath(&normalize_buf, str)) |out| {
             return allocator.dupe(u8, out) catch unreachable;
+        }
+        return str;
+    }
+
+    // for now, assume you won't try to normalize a path longer than 1024 chars
+    pub fn normalizeNoAlloc(str: string, comptime remap_windows_paths: bool) string {
+        if (str.len == 0 or (str.len == 1 and (str[0] == ' ' or str[0] == '\\'))) return ".";
+
+        if (remap_windows_paths) {
+            std.mem.copy(u8, &normalize_buf, str);
+            var i: usize = 0;
+            while (i < str.len) : (i += 1) {
+                if (str[i] == '\\') {
+                    normalize_buf[i] = '/';
+                }
+            }
+        }
+
+        if (resolvePath(&normalize_buf, str)) |out| {
+            return out;
         }
         return str;
     }

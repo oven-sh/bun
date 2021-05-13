@@ -5,9 +5,9 @@ const logger = @import("logger.zig");
 
 pub const Renamer = struct {
     symbols: js_ast.Symbol.Map,
-    source: *logger.Source,
+    source: *const logger.Source,
 
-    pub fn init(symbols: js_ast.Symbol.Map, source: *logger.Source) Renamer {
+    pub fn init(symbols: js_ast.Symbol.Map, source: *const logger.Source) Renamer {
         return Renamer{ .symbols = symbols, .source = source };
     }
 

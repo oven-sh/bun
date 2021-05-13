@@ -1156,7 +1156,7 @@ pub const Lexer = struct {
         return lex;
     }
 
-    pub fn init(log: *logger.Log, source: *logger.Source, allocator: *std.mem.Allocator) !LexerType {
+    pub fn init(log: *logger.Log, source: *const logger.Source, allocator: *std.mem.Allocator) !LexerType {
         try tables.initJSXEntityMap();
         var empty_string_literal: JavascriptString = &emptyJavaScriptString;
         var lex = LexerType{
@@ -2142,7 +2142,7 @@ pub fn isIdentifierUTF16(text: JavascriptString) bool {
 
 // TODO: implement this to actually work right
 // this fn is a stub!
-pub fn rangeOfIdentifier(source: *Source, loc: logger.Loc) logger.Range {
+pub fn rangeOfIdentifier(source: *const Source, loc: logger.Loc) logger.Range {
     var r = logger.Range{ .loc = loc, .len = 0 };
     const offset = @intCast(usize, loc.start);
     var i: usize = 0;

@@ -5,7 +5,7 @@ const logger = @import("./logger.zig");
 const js_parser = @import("./js_parser/js_parser.zig");
 const json_parser = @import("./json_parser.zig");
 const options = @import("./options.zig");
-const Defines = @import("./defines.zig").Defines;
+const Define = @import("./defines.zig").Define;
 const std = @import("std");
 const fs = @import("./fs.zig");
 const sync = @import("sync.zig");
@@ -139,11 +139,18 @@ pub const Cache = struct {
         pub const Result = js_ast.Result;
         // For now, we're not going to cache JavaScript ASTs.
         // It's probably only relevant when bundling for production.
-        pub fn parse(cache: *@This(), allocator: *std.mem.Allocator, opts: options.TransformOptions, defines: Defines, log: *logger.Log, source: logger.Source) anyerror!?js_ast.Ast {
+        pub fn parse(
+            cache: *@This(),
+            allocator: *std.mem.Allocator,
+            opts: js_parser.Parser.Options,
+            defines: *Define,
+            log: *logger.Log,
+            source: *const logger.Source,
+        ) anyerror!?js_ast.Ast {
             var temp_log = logger.Log.init(allocator);
             defer temp_log.deinit();
 
-            var parser = js_parser.Parser.init(opts, temp_log, &source, defines, allocator) catch |err| {
+            var parser = js_parser.Parser.init(opts, &temp_log, source, defines, allocator) catch |err| {
                 temp_log.appendTo(log) catch {};
                 return null;
             };

@@ -935,8 +935,18 @@ pub const Resolver = struct {
                 }
             }
         }
+        const _paths = [_]string{ field_rel_path, path };
+        const field_abs_path = std.fs.path.join(r.allocator, &_paths) catch unreachable;
 
-        return r.loadAsIndex(dir_info, path, extension_order);
+        const field_dir_info = (r.dirInfoCached(field_abs_path) catch null) orelse {
+            r.allocator.free(field_abs_path);
+            return null;
+        };
+
+        return r.loadAsIndexWithBrowserRemapping(field_dir_info, field_abs_path, extension_order) orelse {
+            r.allocator.free(field_abs_path);
+            return null;
+        };
     }
 
     pub fn loadAsIndex(r: *Resolver, dir_info: *DirInfo, path: string, extension_order: []const string) ?MatchResult {

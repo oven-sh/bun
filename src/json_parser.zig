@@ -93,11 +93,20 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
                     return p.e(E.Null{}, loc);
                 },
                 .t_string_literal => {
-                    const value = p.lexer.string_literal;
+                    var str: E.String = undefined;
+                    if (p.lexer.string_literal_is_ascii) {
+                        str = E.String{
+                            .utf8 = p.lexer.string_literal_slice,
+                        };
+                    } else {
+                        const value = p.lexer.stringLiteralUTF16();
+                        str = E.String{
+                            .value = value,
+                        };
+                    }
+
                     try p.lexer.next();
-                    return p.e(E.String{
-                        .value = value,
-                    }, loc);
+                    return p.e(str, loc);
                 },
                 .t_numeric_literal => {
                     const value = p.lexer.number;
@@ -143,7 +152,7 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
                     try p.lexer.next();
                     var is_single_line = !p.lexer.has_newline_before;
                     var properties = std.ArrayList(G.Property).init(p.allocator);
-                    var duplicates = std.StringHashMap(u1).init(p.allocator);
+                    var duplicates = std.BufSet.init(p.allocator);
 
                     while (p.lexer.token != .t_close_brace) {
                         if (properties.items.len > 0) {
@@ -158,17 +167,29 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
                             }
                         }
 
-                        var key_string = p.lexer.string_literal;
-                        var key_range = p.lexer.range();
-                        var key = p.e(E.String{ .value = key_string }, key_range.loc);
-                        try p.lexer.expect(.t_string_literal);
-                        var key_text = p.lexer.utf16ToString(key_string);
-                        // Warn about duplicate keys
-
-                        const entry = duplicates.getOrPut(key_text) catch unreachable;
-                        if (entry.found_existing) {
-                            p.log.addRangeWarningFmt(p.source, key_range, p.allocator, "Duplicate key \"{s}\" in object literal", .{key_text}) catch unreachable;
+                        var str: E.String = undefined;
+                        if (p.lexer.string_literal_is_ascii) {
+                            str = E.String{
+                                .utf8 = p.lexer.string_literal_slice,
+                            };
+                        } else {
+                            const value = p.lexer.stringLiteralUTF16();
+                            str = E.String{
+                                .value = value,
+                            };
                         }
+                        const is_duplicate = duplicates.exists(p.lexer.string_literal_slice);
+                        if (!is_duplicate) {
+                            duplicates.put(p.lexer.string_literal_slice) catch unreachable;
+                        }
+                        var key_range = p.lexer.range();
+                        // Warn about duplicate keys
+                        if (is_duplicate) {
+                            p.log.addRangeWarningFmt(p.source, key_range, p.allocator, "Duplicate key \"{s}\" in object literal", .{p.lexer.string_literal_slice}) catch unreachable;
+                        }
+
+                        var key = p.e(str, key_range.loc);
+                        try p.lexer.expect(.t_string_literal);
 
                         try p.lexer.expect(.t_colon);
                         var value = try p.parseExpr();

@@ -9,9 +9,9 @@ pub fn ThreadSafeStringHashMap(comptime Value: type) type {
         lock: sync.RwLock,
         pub const HashMap = @This();
 
-        pub fn init(allocator: *std.mem.Allocator) !*HashMapType {
-            var self = try allocator.create(HashMapType);
-            self.* = HashMapType{ .backing = HashMapType.init(allocator), .lock = sync.RwLock.init() };
+        pub fn init(allocator: *std.mem.Allocator) !*HashMap {
+            var self = try allocator.create(HashMap);
+            self.* = HashMap{ .backing = HashMapType.init(allocator), .lock = sync.RwLock.init() };
 
             return self;
         }
@@ -20,6 +20,12 @@ pub fn ThreadSafeStringHashMap(comptime Value: type) type {
             self.lock.lockShared();
             defer self.lock.unlockShared();
             return self.backing.get(key);
+        }
+
+        pub fn contains(self: *HashMap, str: string) bool {
+            self.lock.lockShared();
+            defer self.lock.unlockShared();
+            return self.backing.contains(str);
         }
 
         pub fn deinit(self: *HashMap, allocator: *std.mem.Allocator) void {

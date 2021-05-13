@@ -22,7 +22,7 @@ const ThreadSafeHashMap = @import("./thread_safe_hash_map.zig");
 
 // pub const
 // const BundleMap =
-
+const ResolveResults = ThreadSafeHashMap.ThreadSafeStringHashMap(Resolver.Resolver.Result);
 pub const Bundler = struct {
     options: options.BundleOptions,
     log: *logger.Log,
@@ -30,7 +30,9 @@ pub const Bundler = struct {
     result: options.TransformResult = undefined,
     resolver: Resolver.Resolver,
     fs: *Fs.FileSystem,
-    thread_pool: *ThreadPool,
+    // thread_pool: *ThreadPool,
+
+    resolve_results: *ResolveResults,
 
     // to_bundle:
 
@@ -43,19 +45,23 @@ pub const Bundler = struct {
     ) !Bundler {
         var fs = try Fs.FileSystem.init1(allocator, opts.absolute_working_dir, opts.watch orelse false);
         const bundle_options = try options.BundleOptions.fromApi(allocator, fs, log, opts);
-        var pool = try allocator.create(ThreadPool);
-        try pool.init(ThreadPool.InitConfig{
-            .allocator = allocator,
-        });
+        // var pool = try allocator.create(ThreadPool);
+        // try pool.init(ThreadPool.InitConfig{
+        //     .allocator = allocator,
+        // });
         return Bundler{
             .options = bundle_options,
             .fs = fs,
             .allocator = allocator,
             .resolver = Resolver.Resolver.init1(allocator, log, fs, bundle_options),
             .log = log,
-            .thread_pool = pool,
+            // .thread_pool = pool,
+            .result = options.TransformResult{},
+            .resolve_results = try ResolveResults.init(allocator),
         };
     }
+
+    pub fn scan(bundler: *Bundler) !void {}
 
     pub fn bundle(
         allocator: *std.mem.Allocator,
@@ -65,12 +71,25 @@ pub const Bundler = struct {
         var bundler = try Bundler.init(allocator, log, opts);
 
         var entry_points = try allocator.alloc(Resolver.Resolver.Result, bundler.options.entry_points.len);
+
         var entry_point_i: usize = 0;
         for (bundler.options.entry_points) |entry| {
-            entry_points[entry_point_i] = bundler.resolver.resolve(bundler.fs.top_level_dir, entry, .entry_point) catch {
+            const result = bundler.resolver.resolve(bundler.fs.top_level_dir, entry, .entry_point) catch {
                 continue;
             } orelse continue;
+            const key = result.path_pair.primary.text;
+            if (bundler.resolve_results.contains(key)) {
+                continue;
+            }
+            try bundler.resolve_results.put(key, result);
+            entry_points[entry_point_i] = result;
+            Output.print("Resolved {s} => {s}", .{ entry, result.path_pair.primary.text });
             entry_point_i += 1;
+        }
+
+        switch (bundler.options.resolve_mode) {
+            .lazy, .dev, .bundle => {},
+            else => Global.panic("Unsupported resolve mode: {s}", .{@tagName(bundler.options.resolve_mode)}),
         }
 
         return bundler.result;

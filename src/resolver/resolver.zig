@@ -39,10 +39,10 @@ pub const DirInfo = struct {
 
 };
 pub const TemporaryBuffer = struct {
-    pub var ExtensionPathBuf = std.mem.zeroes([512]u8);
-    pub var TSConfigMatchStarBuf = std.mem.zeroes([512]u8);
-    pub var TSConfigMatchPathBuf = std.mem.zeroes([512]u8);
-    pub var TSConfigMatchFullBuf = std.mem.zeroes([512]u8);
+    pub threadlocal var ExtensionPathBuf = std.mem.zeroes([512]u8);
+    pub threadlocal var TSConfigMatchStarBuf = std.mem.zeroes([512]u8);
+    pub threadlocal var TSConfigMatchPathBuf = std.mem.zeroes([512]u8);
+    pub threadlocal var TSConfigMatchFullBuf = std.mem.zeroes([512]u8);
 };
 
 pub const Resolver = struct {
@@ -194,6 +194,9 @@ pub const Resolver = struct {
 
         is_external: bool = false,
 
+        // This is true when the package was loaded from within the node_modules directory.
+        is_from_node_modules: bool = false,
+
         diff_case: ?Fs.FileSystem.Entry.Lookup.DifferentCase = null,
 
         // If present, any ES6 imports to this file can be considered to have no side
@@ -239,7 +242,18 @@ pub const Resolver = struct {
     };
 
     pub fn isExternalPattern(r: *Resolver, import_path: string) bool {
-        Global.notimpl();
+        for (r.opts.external.patterns) |pattern| {
+            if (import_path.len >= pattern.prefix.len + pattern.suffix.len and (strings.startsWith(
+                import_path,
+                pattern.prefix,
+            ) and strings.endsWith(
+                import_path,
+                pattern.suffix,
+            ))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     pub fn flushDebugLogs(r: *Resolver, flush_mode: DebugLogs.FlushMode) !void {
@@ -487,7 +501,11 @@ pub const Resolver = struct {
                                     if (pair.secondary != null) {
                                         pair.secondary.?.is_disabled = true;
                                     }
-                                    return Result{ .path_pair = pair, .diff_case = node_module.diff_case };
+                                    return Result{
+                                        .path_pair = pair,
+                                        .diff_case = node_module.diff_case,
+                                        .is_from_node_modules = true,
+                                    };
                                 }
                             } else {
                                 var primary = Path.init(import_path);
@@ -544,6 +562,11 @@ pub const Resolver = struct {
     }
 
     pub fn loadNodeModules(r: *Resolver, import_path: string, kind: ast.ImportKind, _dir_info: *DirInfo) ?MatchResult {
+        var res = _loadNodeModules(r, import_path, kind, _dir_info) orelse return null;
+        res.is_node_module = true;
+        return res;
+    }
+    pub fn _loadNodeModules(r: *Resolver, import_path: string, kind: ast.ImportKind, _dir_info: *DirInfo) ?MatchResult {
         var dir_info = _dir_info;
         if (r.debug_logs) |*debug| {
             debug.addNoteFmt("Searching for {s} in \"node_modules\" directories starting from \"{s}\"", .{ import_path, dir_info.abs_path }) catch {};
@@ -706,6 +729,7 @@ pub const Resolver = struct {
 
     pub const MatchResult = struct {
         path_pair: PathPair,
+        is_node_module: bool = false,
         diff_case: ?Fs.FileSystem.Entry.Lookup.DifferentCase = null,
     };
 

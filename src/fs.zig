@@ -443,10 +443,11 @@ pub const FileSystem = struct {
             defer file.close();
 
             // Skip the extra file.stat() call when possible
-            const size = _size orelse (file.getEndPos() catch |err| {
+            var size = _size orelse (file.getEndPos() catch |err| {
                 fs.readFileError(path, err);
                 return err;
             });
+
             const file_contents: []u8 = file.readToEndAllocOptions(fs.allocator, size, size, @alignOf(u8), null) catch |err| {
                 fs.readFileError(path, err);
                 return err;

@@ -421,9 +421,9 @@ pub const OutputFile = struct {
 };
 
 pub const TransformResult = struct {
-    errors: []logger.Msg,
-    warnings: []logger.Msg,
-    output_files: []OutputFile,
+    errors: []logger.Msg = &([_]logger.Msg{}),
+    warnings: []logger.Msg = &([_]logger.Msg{}),
+    output_files: []OutputFile = &([_]OutputFile{}),
     pub fn init(
         output_files: []OutputFile,
         log: *logger.Log,

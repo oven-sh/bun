@@ -83,13 +83,22 @@ pub const Cache = struct {
                 }
             };
 
-            const size = if (mod_key != null) mod_key.?.size else null;
-            const file = rfs.readFile(path, size) catch |err| {
-                if (isDebug) {
-                    Output.printError("{s}: readFile error -- {s}", .{ path, @errorName(err) });
-                }
-                return err;
-            };
+            var file: fs.File = undefined;
+            if (mod_key) |modk| {
+                file = rfs.readFile(path, modk.size) catch |err| {
+                    if (isDebug) {
+                        Output.printError("{s}: readFile error -- {s}", .{ path, @errorName(err) });
+                    }
+                    return err;
+                };
+            } else {
+                file = rfs.readFile(path, null) catch |err| {
+                    if (isDebug) {
+                        Output.printError("{s}: readFile error -- {s}", .{ path, @errorName(err) });
+                    }
+                    return err;
+                };
+            }
 
             const entry = Entry{
                 .contents = file.contents,
@@ -195,11 +204,11 @@ pub const Cache = struct {
             return entry.expr;
         }
         pub fn parseJSON(cache: *@This(), log: *logger.Log, source: logger.Source, allocator: *std.mem.Allocator) anyerror!?js_ast.Expr {
-            return @call(std.builtin.CallOptions{ .modifier = .always_tail }, parse, .{ cache, log, source, allocator, false, json_parser.ParseJSON });
+            return try parse(cache, log, source, allocator, false, json_parser.ParseJSON);
         }
 
         pub fn parseTSConfig(cache: *@This(), log: *logger.Log, source: logger.Source, allocator: *std.mem.Allocator) anyerror!?js_ast.Expr {
-            return @call(std.builtin.CallOptions{ .modifier = .always_tail }, parse, .{ cache, log, source, allocator, true, json_parser.ParseTSConfig });
+            return try parse(cache, log, source, allocator, true, json_parser.ParseTSConfig);
         }
     };
 };

@@ -4,7 +4,8 @@
     {
       "label": "build",
       "type": "process",
-      "command": "zig build",
+      "command": "zig",
+      "args": ["build"],
       "group": {
         "kind": "build",
         "isDefault": true

@@ -231,6 +231,12 @@ function decodeTransformOptions(bb) {
       result["watch"] = !!bb.readByte();
       break;
 
+    case 19:
+      var length = bb.readVarUint();
+      var values = result["extension_order"] = Array(length);
+      for (var i = 0; i < length; i++) values[i] = bb.readString();
+      break;
+
     default:
       throw new Error("Attempted to parse invalid message");
     }
@@ -391,6 +397,17 @@ bb.writeByte(encoded);
   if (value != null) {
     bb.writeByte(18);
     bb.writeByte(value);
+  }
+
+  var value = message["extension_order"];
+  if (value != null) {
+    bb.writeByte(19);
+    var values = value, n = values.length;
+    bb.writeVarUint(n);
+    for (var i = 0; i < n; i++) {
+      value = values[i];
+      bb.writeString(value);
+    }
   }
   bb.writeByte(0);
 

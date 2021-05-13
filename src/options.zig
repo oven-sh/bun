@@ -294,6 +294,12 @@ pub const BundleOptions = struct {
     log: *logger.Log,
     external: ExternalModules = ExternalModules{},
     entry_points: []const string,
+    extension_order: []const string = &Defaults.ExtensionOrder,
+
+    pub const Defaults = struct {
+        pub var ExtensionOrder = [_]string{ ".tsx", ".ts", ".jsx", ".js", ".json" };
+    };
+
     pub fn fromApi(
         allocator: *std.mem.Allocator,
         fs: *Fs.FileSystem,
@@ -336,6 +342,10 @@ pub const BundleOptions = struct {
 
         if (transform.jsx) |jsx| {
             opts.jsx = try JSX.Pragma.fromApi(jsx, allocator);
+        }
+
+        if (transform.extension_order.len > 0) {
+            opts.extension_order = transform.extension_order;
         }
 
         if (transform.platform) |plat| {

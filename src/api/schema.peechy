@@ -69,6 +69,8 @@ message TransformOptions {
   Platform platform = 17;
 
   bool watch = 18;
+
+  string[] extension_order = 19;
 }
 
 struct FileHandle {

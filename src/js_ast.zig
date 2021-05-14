@@ -361,7 +361,7 @@ pub const G = struct {
         flags: Flags.Function = Flags.Function.None,
     };
     pub const Arg = struct {
-        ts_decorators: ?ExprNodeList = null,
+        ts_decorators: ExprNodeList = &([_]Expr{}),
         binding: BindingNodeIndex,
         default: ?ExprNodeIndex = null,
 
@@ -951,7 +951,11 @@ pub const E = struct {
         }
 
         pub fn string(s: *String, allocator: *std.mem.Allocator) !string {
-            return try std.unicode.utf16leToUtf8Alloc(allocator, s.value);
+            if (s.isUTF8()) {
+                return s.utf8;
+            } else {
+                return strings.toUTF8Alloc(allocator, s.value);
+            }
         }
 
         pub fn jsonStringify(s: *const String, options: anytype, writer: anytype) !void {
@@ -1011,16 +1015,16 @@ pub const E = struct {
     };
 
     pub const Require = struct {
-        import_record_index: Ref.Int = 0,
+        import_record_index: u32 = 0,
     };
 
     pub const RequireOrRequireResolve = struct {
-        import_record_index: Ref.Int = 0,
+        import_record_index: u32 = 0,
     };
 
     pub const Import = struct {
         expr: ExprNodeIndex,
-        import_record_index: Ref.Int,
+        import_record_index: u32,
 
         // Comments inside "import()" expressions have special meaning for Webpack.
         // Preserving comments inside these expressions makes it possible to use

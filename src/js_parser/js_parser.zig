@@ -1393,7 +1393,7 @@ pub const Parser = struct {
             //     }
             // }
             // p.popScope();
-            var parts_slice: []js_ast.Part = undefined;
+            var parts_slice: []js_ast.Part = &([_]js_ast.Part{});
 
             if (before.items.len > 0 or after.items.len > 0) {
                 const before_len = before.items.len;
@@ -1789,7 +1789,7 @@ pub const P = struct {
             p.import_records_for_current_part.append(import_record_index) catch unreachable;
             return p.e(E.Import{
                 .expr = arg,
-                .import_record_index = @intCast(Ref.Int, import_record_index),
+                .import_record_index = Ref.toInt(import_record_index),
                 // .leading_interior_comments = arg.data.e_string.
             }, state.loc);
         }
@@ -1809,6 +1809,25 @@ pub const P = struct {
     }
 
     pub fn transposeRequire(p: *P, arg: Expr, transpose_state: anytype) Expr {
+        switch (arg.data) {
+            .e_string => |str| {
+                // Ignore calls to require() if the control flow is provably dead here.
+                // We don't want to spend time scanning the required files if they will
+                // never be used.
+                if (p.is_control_flow_dead) {
+                    return Expr{ .data = nullExprData, .loc = arg.loc };
+                }
+
+                const import_record_index = p.addImportRecord(.require, arg.loc, str.string(p.allocator) catch unreachable);
+                p.import_records.items[import_record_index].handles_import_errors = p.fn_or_arrow_data_visit.try_body_count != 0;
+                p.import_records_for_current_part.append(import_record_index) catch unreachable;
+
+                p.ignoreUsage(p.require_ref);
+                return p.e(E.Require{ .import_record_index = import_record_index }, arg.loc);
+            },
+            else => {},
+        }
+
         return arg;
     }
 
@@ -2225,9 +2244,9 @@ pub const P = struct {
 
         p.hoistSymbols(p.module_scope);
 
-        p.require_ref = try p.newSymbol(.unbound, "require");
-        p.exports_ref = try p.newSymbol(.hoisted, "exports");
-        p.module_ref = try p.newSymbol(.hoisted, "module");
+        p.require_ref = try p.declareCommonJSSymbol(.unbound, "require");
+        p.exports_ref = try p.declareCommonJSSymbol(.hoisted, "exports");
+        p.module_ref = try p.declareCommonJSSymbol(.hoisted, "module");
     }
 
     pub fn hoistSymbols(p: *P, scope: *js_ast.Scope) void {
@@ -2385,7 +2404,7 @@ pub const P = struct {
 
                     properties.append(B.Property{
                         .flags = Flags.Property{
-                            .is_spread = item.kind == .spread,
+                            .is_spread = item.kind == .spread or item.flags.is_spread,
                             .is_computed = item.flags.is_computed,
                         },
 
@@ -2485,7 +2504,7 @@ pub const P = struct {
         }
 
         var name: ?js_ast.LocRef = null;
-        var nameText: string = undefined;
+        var nameText: string = "";
 
         // The name is optional for "export default function() {}" pseudo-statements
         if (!opts.is_name_optional or p.lexer.token == T.t_identifier) {
@@ -2629,7 +2648,7 @@ pub const P = struct {
                 continue;
             }
 
-            var ts_decorators: []ExprNodeIndex = undefined;
+            var ts_decorators: []ExprNodeIndex = &([_]ExprNodeIndex{});
             if (opts.allow_ts_decorators) {
                 ts_decorators = try p.parseTypeScriptDecorators();
             }
@@ -2722,7 +2741,9 @@ pub const P = struct {
 
             try p.lexer.next();
         }
-        func.args = args.toOwnedSlice();
+        if (args.items.len > 0) {
+            func.args = args.toOwnedSlice();
+        }
 
         // Reserve the special name "arguments" in this scope. This ensures that it
         // shadows any variable called "arguments" in any parent scopes. But only do
@@ -2849,8 +2870,8 @@ pub const P = struct {
 
     pub fn newSymbol(p: *P, kind: Symbol.Kind, identifier: string) !js_ast.Ref {
         const ref = js_ast.Ref{
-            .source_index = @intCast(Ref.Int, p.source.index),
-            .inner_index = @intCast(Ref.Int, p.symbols.items.len),
+            .source_index = Ref.toInt(p.source.index),
+            .inner_index = Ref.toInt(p.symbols.items.len),
         };
         try p.symbols.append(Symbol{
             .kind = kind,
@@ -2861,7 +2882,6 @@ pub const P = struct {
         if (p.options.ts) {
             try p.ts_use_counts.append(0);
         }
-
         return ref;
     }
 
@@ -3179,10 +3199,10 @@ pub const P = struct {
                         }
 
                         try p.lexer.next();
-                        var namespace_ref: js_ast.Ref = undefined;
+                        var namespace_ref: js_ast.Ref = js_ast.Ref.None;
                         var alias: ?js_ast.G.ExportStarAlias = null;
-                        var path_loc: logger.Loc = undefined;
-                        var path_text: string = undefined;
+                        var path_loc: logger.Loc = logger.Loc.Empty;
+                        var path_text: string = "";
 
                         if (p.lexer.isContextualKeyword("as")) {
                             // "export * as ns from 'path'"
@@ -3673,7 +3693,7 @@ pub const P = struct {
                 p.es6_import_keyword = p.lexer.range();
                 try p.lexer.next();
                 var stmt: S.Import = S.Import{
-                    .namespace_ref = undefined,
+                    .namespace_ref = Ref.None,
                     .import_record_index = std.math.maxInt(u32),
                 };
                 var was_originally_bare_import = false;
@@ -3727,7 +3747,7 @@ pub const P = struct {
                         }
                         var importClause = try p.parseImportClause();
                         stmt = S.Import{
-                            .namespace_ref = undefined,
+                            .namespace_ref = Ref.None,
                             .import_record_index = std.math.maxInt(u32),
                             .items = importClause.items,
                             .is_single_line = importClause.is_single_line,
@@ -3743,7 +3763,7 @@ pub const P = struct {
                         }
 
                         const default_name = p.lexer.identifier;
-                        stmt = S.Import{ .namespace_ref = undefined, .import_record_index = std.math.maxInt(u32), .default_name = LocRef{
+                        stmt = S.Import{ .namespace_ref = Ref.None, .import_record_index = std.math.maxInt(u32), .default_name = LocRef{
                             .loc = p.lexer.loc(),
                             .ref = try p.storeNameInRef(default_name),
                         } };
@@ -4434,7 +4454,7 @@ pub const P = struct {
     }
 
     pub fn parsePropertyBinding(p: *P) anyerror!B.Property {
-        var key: js_ast.Expr = undefined;
+        var key: js_ast.Expr = Expr{ .loc = logger.Loc.Empty, .data = Prefill.Data.EMissing };
         var is_computed = false;
 
         switch (p.lexer.token) {
@@ -4816,8 +4836,8 @@ pub const P = struct {
         var scope = p.current_scope;
         if (p.isStrictMode()) {
             var why: string = "";
-            var notes: []logger.Data = undefined;
-            var where: logger.Range = undefined;
+            var notes: []logger.Data = &[_]logger.Data{};
+            var where: logger.Range = logger.Range.None;
             switch (scope.strict_mode) {
                 .implicit_strict_mode_import => {
                     where = p.es6_import_keyword;
@@ -4852,6 +4872,49 @@ pub const P = struct {
         return true;
     }
 
+    pub fn declareCommonJSSymbol(p: *P, kind: Symbol.Kind, name: string) !Ref {
+        const member = p.module_scope.members.get(name);
+
+        // If the code declared this symbol using "var name", then this is actually
+        // not a collision. For example, node will let you do this:
+        //
+        //   var exports;
+        //   module.exports.foo = 123;
+        //   console.log(exports.foo);
+        //
+        // This works because node's implementation of CommonJS wraps the entire
+        // source file like this:
+        //
+        //   (function(require, exports, module, __filename, __dirname) {
+        //     var exports;
+        //     module.exports.foo = 123;
+        //     console.log(exports.foo);
+        //   })
+        //
+        // Both the "exports" argument and "var exports" are hoisted variables, so
+        // they don't collide.
+        if (member) |_member| {
+            if (p.symbols.items[_member.ref.inner_index].kind == .hoisted and kind == .hoisted and !p.has_es_module_syntax) {
+                return _member.ref;
+            }
+        }
+
+        // Create a new symbol if we didn't merge with an existing one above
+        const ref = try p.newSymbol(kind, name);
+
+        if (member == null) {
+            try p.module_scope.members.put(name, Scope.Member{ .ref = ref, .loc = logger.Loc.Empty });
+            return ref;
+        }
+
+        // If the variable was declared, then it shadows this symbol. The code in
+        // this module will be unable to reference this symbol. However, we must
+        // still add the symbol to the scope so it gets minified (automatically-
+        // generated code may still reference the symbol).
+        try p.module_scope.generated.append(ref);
+        return ref;
+    }
+
     pub fn declareSymbol(p: *P, kind: Symbol.Kind, loc: logger.Loc, name: string) !Ref {
         // p.checkForNonBMPCodePoint(loc, name)
 
@@ -4870,7 +4933,7 @@ pub const P = struct {
             switch (p.canMergeSymbols(scope, symbol.kind, kind)) {
                 .forbidden => {
                     const r = js_lexer.rangeOfIdentifier(p.source, loc);
-                    var notes: []logger.Data = undefined;
+                    var notes: []logger.Data = &[_]logger.Data{};
                     notes = &([_]logger.Data{logger.rangeData(p.source, r, try std.fmt.allocPrint(p.allocator, "{s} has already been declared", .{name}))});
                     try p.log.addRangeErrorWithNotes(p.source, r, try std.fmt.allocPrint(p.allocator, "{s} was originally declared here", .{name}), notes);
                     return existing.ref;
@@ -5072,11 +5135,11 @@ pub const P = struct {
 
     pub fn storeNameInRef(p: *P, name: string) !js_ast.Ref {
         if (@ptrToInt(p.source.contents.ptr) <= @ptrToInt(name.ptr) and (@ptrToInt(name.ptr) + name.len) <= (@ptrToInt(p.source.contents.ptr) + p.source.contents.len)) {
-            const start = @intCast(Ref.Int, @ptrToInt(name.ptr) - @ptrToInt(p.source.contents.ptr));
-            const end = @intCast(Ref.Int, name.len);
+            const start = Ref.toInt(@ptrToInt(name.ptr) - @ptrToInt(p.source.contents.ptr));
+            const end = Ref.toInt(name.len);
             return js_ast.Ref{ .source_index = start, .inner_index = end, .is_source_contents_slice = true };
         } else if (p.allocated_names.capacity > 0) {
-            const inner_index = @intCast(Ref.Int, p.allocated_names.items.len);
+            const inner_index = Ref.toInt(p.allocated_names.items.len);
             try p.allocated_names.append(name);
             return js_ast.Ref{ .source_index = std.math.maxInt(Ref.Int), .inner_index = inner_index };
         } else {
@@ -5338,7 +5401,7 @@ pub const P = struct {
     }
 
     pub fn parseProperty(p: *P, kind: Property.Kind, opts: *PropertyOpts, errors: ?*DeferredErrors) anyerror!?G.Property {
-        var key: Expr = undefined;
+        var key: Expr = Expr{ .loc = logger.Loc.Empty, .data = Prefill.Data.EMissing };
         var key_range = p.lexer.range();
         var is_computed = false;
 
@@ -5659,7 +5722,7 @@ pub const P = struct {
             switch (key.data) {
                 .e_private_identifier => |private| {
                     var declare: Symbol.Kind = undefined;
-                    var suffix: string = undefined;
+                    var suffix: string = "";
                     switch (kind) {
                         .get => {
                             if (opts.is_static) {
@@ -5932,7 +5995,7 @@ pub const P = struct {
         return _parseSuffix(p, left, level, errors orelse &DeferredErrors.None, flags);
     }
     pub fn _parseSuffix(p: *P, _left: Expr, level: Level, errors: *DeferredErrors, flags: Expr.EFlags) anyerror!Expr {
-        var expr: Expr = undefined;
+        var expr: Expr = Expr{ .loc = logger.Loc.Empty, .data = Prefill.Data.EMissing };
         var left = _left;
         var loc = p.lexer.loc();
         var optional_chain: ?js_ast.OptionalChain = null;
@@ -5961,7 +6024,7 @@ pub const P = struct {
             }
 
             // Stop now if this token is forbidden to follow a TypeScript "as" cast
-            if (p.lexer.loc().start == p.forbid_suffix_after_as_loc.start) {
+            if (p.forbid_suffix_after_as_loc.start > -1 and p.lexer.loc().start == p.forbid_suffix_after_as_loc.start) {
                 return left;
             }
 
@@ -6152,7 +6215,7 @@ pub const P = struct {
                     //   }
                     //
                     // This matches the behavior of the TypeScript compiler.
-                    if (flags != .ts_decorator) {
+                    if (flags == .ts_decorator) {
                         return left;
                     }
 
@@ -7063,7 +7126,7 @@ pub const P = struct {
                             const dots_loc = p.lexer.loc();
                             try p.lexer.next();
                             items.append(
-                                try p.parseExprOrBindings(.comma, &self_errors),
+                                p.e(E.Spread{ .value = try p.parseExprOrBindings(.comma, &self_errors) }, dots_loc),
                             ) catch unreachable;
                         },
                         else => {
@@ -7446,7 +7509,7 @@ pub const P = struct {
         // Fragments of the form "React.Fragment" are not parsed as fragments.
         if (@as(JSXTag.TagType, tag.data) == .tag) {
             start_tag = tag.data.tag;
-            var spread_loc: logger.Loc = undefined;
+            var spread_loc: logger.Loc = logger.Loc.Empty;
             var props = List(G.Property).init(p.allocator);
             var key_prop_i: i32 = -1;
             var spread_prop_i: i32 = -1;
@@ -7916,7 +7979,7 @@ pub const P = struct {
                 // In an ES6 module, "this" is supposed to be undefined. Instead of
                 // doing this at runtime using "fn.call(undefined)", we do it at
                 // compile time using expression substitution here.
-                return p.e(E.Undefined{}, loc);
+                return Expr{ .loc = loc, .data = nullValueExpr };
             } else {
                 // In a CommonJS module, "this" is supposed to be the same as "exports".
                 // Instead of doing this at runtime using "fn.call(module.exports)", we
@@ -8949,8 +9012,8 @@ pub const P = struct {
         var duplicate_args_check_ptr: ?*StringBoolMap = if (duplicate_args_check != null) &duplicate_args_check.? else null;
 
         while (i < args.len) : (i += 1) {
-            if (args[i].ts_decorators) |decs| {
-                args[i].ts_decorators = p.visitTSDecorators(decs);
+            if (args[i].ts_decorators.len > 0) {
+                args[i].ts_decorators = p.visitTSDecorators(args[i].ts_decorators);
             }
 
             p.visitBinding(args[i].binding, duplicate_args_check_ptr);
@@ -9218,7 +9281,7 @@ pub const P = struct {
             // something else without paying the cost of a whole-tree traversal during
             // module linking just to rewrite these EDot expressions.
             if (p.import_items_for_namespace.get(id.ref)) |*import_items| {
-                var item: LocRef = undefined;
+                var item: LocRef = LocRef{ .loc = logger.Loc.Empty, .ref = null };
 
                 if (!import_items.contains(name)) {
                     item = LocRef{ .loc = name_loc, .ref = p.newSymbol(.import, name) catch unreachable };
@@ -9425,7 +9488,7 @@ pub const P = struct {
                     .stmt => |s2| {
                         switch (s2.data) {
                             .s_function => |func| {
-                                var name: string = undefined;
+                                var name: string = "";
                                 if (func.func.name) |func_loc| {
                                     name = p.loadNameFromRef(func_loc.ref.?);
                                 } else {
@@ -9436,9 +9499,9 @@ pub const P = struct {
                                 p.visitFunc(&func.func, func.func.open_parens_loc);
                                 stmts.append(stmt.*) catch unreachable;
 
-                                if (func.func.name != null and func.func.name.?.ref != null) {
-                                    stmts.append(p.keepStmtSymbolName(func.func.name.?.loc, func.func.name.?.ref.?, name)) catch unreachable;
-                                }
+                                // if (func.func.name != null and func.func.name.?.ref != null) {
+                                //     stmts.append(p.keepStmtSymbolName(func.func.name.?.loc, func.func.name.?.ref.?, name)) catch unreachable;
+                                // }
                                 // prevent doubling export default function name
                                 return;
                             },
@@ -9807,14 +9870,14 @@ pub const P = struct {
                     stmts.appendAssumeCapacity(stmt.*);
                 }
 
-                stmts.appendAssumeCapacity(
-                    // i wonder if this will crash
-                    p.keepStmtSymbolName(
-                        data.func.name.?.loc,
-                        data.func.name.?.ref.?,
-                        p.symbols.items[data.func.name.?.ref.?.inner_index].original_name,
-                    ),
-                );
+                // stmts.appendAssumeCapacity(
+                //     // i wonder if this will crash
+                //     p.keepStmtSymbolName(
+                //         data.func.name.?.loc,
+                //         data.func.name.?.ref.?,
+                //         p.symbols.items[data.func.name.?.ref.?.inner_index].original_name,
+                //     ),
+                // );
                 return;
             },
             .s_class => |data| {
@@ -9878,7 +9941,7 @@ pub const P = struct {
                 for (data.values) |*enum_value| {
                     // gotta allocate here so it lives after this function stack frame goes poof
                     const name = p.lexer.utf16ToString(enum_value.name);
-                    var assign_target: Expr = undefined;
+                    var assign_target: Expr = Expr{ .loc = logger.Loc.Empty, .data = Prefill.Data.EMissing };
                     var enum_value_type: EnumValueType = EnumValueType.unknown;
                     if (enum_value.value != null) {
                         enum_value.value = p.visitExpr(enum_value.value.?);
@@ -10299,7 +10362,7 @@ pub const P = struct {
     }
 
     pub fn findLabelSymbol(p: *P, loc: logger.Loc, name: string) FindLabelSymbolResult {
-        var res = FindLabelSymbolResult{ .ref = undefined, .is_loop = false };
+        var res = FindLabelSymbolResult{ .ref = Ref.None, .is_loop = false };
 
         var _scope: ?*Scope = p.current_scope;
 

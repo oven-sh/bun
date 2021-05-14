@@ -170,7 +170,7 @@ pub const Loader = enum {
 pub const defaultLoaders = std.ComptimeStringMap(Loader, .{
     .{ ".jsx", Loader.jsx },
     .{ ".json", Loader.json },
-    .{ ".js", Loader.js },
+    .{ ".js", Loader.jsx },
     .{ ".mjs", Loader.js },
     .{ ".css", Loader.css },
     .{ ".ts", Loader.ts },
@@ -320,6 +320,15 @@ pub const BundleOptions = struct {
 
             loader_values[i] = loader;
         }
+
+        var loaders = try stringHashMapFromArrays(std.StringHashMap(Loader), allocator, transform.loader_keys, loader_values);
+        comptime const default_loader_ext = [_]string{ ".jsx", ".json", ".js", ".mjs", ".css", ".ts", ".tsx" };
+        inline for (default_loader_ext) |ext| {
+            if (!loaders.contains(ext)) {
+                try loaders.put(ext, defaultLoaders.get(ext).?);
+            }
+        }
+
         var user_defines = try stringHashMapFromArrays(defines.RawDefines, allocator, transform.define_keys, transform.define_values);
         if (transform.define_keys.len == 0) {
             try user_defines.put("process.env.NODE_ENV", "development");
@@ -334,7 +343,7 @@ pub const BundleOptions = struct {
                 allocator,
                 resolved_defines,
             ),
-            .loaders = try stringHashMapFromArrays(std.StringHashMap(Loader), allocator, transform.loader_keys, loader_values),
+            .loaders = loaders,
             .write = transform.write orelse false,
             .external = ExternalModules.init(allocator, &fs.fs, fs.top_level_dir, transform.external, log),
             .entry_points = transform.entry_points,

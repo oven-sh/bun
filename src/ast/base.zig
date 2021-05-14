@@ -33,6 +33,9 @@ pub const Ref = packed struct {
         .inner_index = std.math.maxInt(Ref.Int),
         .source_index = std.math.maxInt(Ref.Int),
     };
+    pub fn toInt(int: anytype) Int {
+        return std.math.cast(Ref.Int, int) catch 0;
+    }
     pub fn isNull(self: *const Ref) bool {
         return self.source_index == std.math.maxInt(Ref.Int) and self.inner_index == std.math.maxInt(Ref.Int);
     }
@@ -41,7 +44,7 @@ pub const Ref = packed struct {
         return self.source_index == std.math.maxInt(Ref.Int);
     }
 
-    pub fn isSourceIndexNull(int: Ref.Int) bool {
+    pub fn isSourceIndexNull(int: anytype) bool {
         return int == std.math.maxInt(Ref.Int);
     }
 

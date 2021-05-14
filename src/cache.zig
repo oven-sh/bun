@@ -148,7 +148,6 @@ pub const Cache = struct {
             source: *const logger.Source,
         ) anyerror!?js_ast.Ast {
             var temp_log = logger.Log.init(allocator);
-            defer temp_log.deinit();
 
             var parser = js_parser.Parser.init(opts, &temp_log, source, defines, allocator) catch |err| {
                 temp_log.appendTo(log) catch {};

@@ -110,7 +110,7 @@ pub const Bundler = struct {
     ) !void {
         var allocator = bundler.allocator;
         const relative_path = try std.fs.path.relative(bundler.allocator, bundler.fs.top_level_dir, result.source.path.text);
-        var out_parts = [_]string{ bundler.options.output_dir, relative_path };
+        var out_parts = [_]string{ bundler.fs.top_level_dir, relative_path };
         const out_path = try std.fs.path.join(bundler.allocator, &out_parts);
 
         const ast = result.ast;
@@ -175,7 +175,10 @@ pub const Bundler = struct {
                     .loader = loader,
                 };
             },
-            else => Global.panic("Unsupported loader {s}", .{loader}),
+            .css => {
+                return null;
+            },
+            else => Global.panic("Unsupported loader {s} for path: {s}", .{ loader, source.path.text }),
         }
 
         return null;
@@ -419,7 +422,7 @@ pub const Transformer = struct {
                 ast = res.ast;
             },
             else => {
-                Global.panic("Unsupported loader: {s}", .{loader});
+                Global.panic("Unsupported loader: {s} for path: {s}", .{ loader, source.path.text });
             },
         }
 

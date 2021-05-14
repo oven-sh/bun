@@ -464,68 +464,68 @@ pub const Resolver = struct {
                     return null;
                 }
             }
+        }
 
-            if (check_package) {
-                // Check for external packages first
-                if (r.opts.external.node_modules.count() > 0) {
-                    var query = import_path;
-                    while (true) {
-                        if (r.opts.external.node_modules.exists(query)) {
-                            if (r.debug_logs) |*debug| {
-                                debug.addNoteFmt("The path \"{s}\" was marked as external by the user", .{query}) catch {};
-                            }
-                            return Result{
-                                .path_pair = .{ .primary = Path.init(query) },
-                                .is_external = true,
-                            };
+        if (check_package) {
+            // Check for external packages first
+            if (r.opts.external.node_modules.count() > 0) {
+                var query = import_path;
+                while (true) {
+                    if (r.opts.external.node_modules.exists(query)) {
+                        if (r.debug_logs) |*debug| {
+                            debug.addNoteFmt("The path \"{s}\" was marked as external by the user", .{query}) catch {};
                         }
-
-                        // If the module "foo" has been marked as external, we also want to treat
-                        // paths into that module such as "foo/bar" as external too.
-                        var slash = strings.lastIndexOfChar(query, '/') orelse break;
-                        query = query[0..slash];
+                        return Result{
+                            .path_pair = .{ .primary = Path.init(query) },
+                            .is_external = true,
+                        };
                     }
+
+                    // If the module "foo" has been marked as external, we also want to treat
+                    // paths into that module such as "foo/bar" as external too.
+                    var slash = strings.lastIndexOfChar(query, '/') orelse break;
+                    query = query[0..slash];
                 }
+            }
 
-                const source_dir_info = (r.dirInfoCached(source_dir) catch null) orelse return null;
+            const source_dir_info = (r.dirInfoCached(source_dir) catch null) orelse return null;
 
-                // Support remapping one package path to another via the "browser" field
-                if (source_dir_info.enclosing_browser_scope) |browser_scope| {
-                    if (browser_scope.package_json) |package_json| {
-                        if (r.checkBrowserMap(package_json, import_path)) |remapped| {
-                            if (remapped.len == 0) {
-                                // "browser": {"module": false}
-                                if (r.loadNodeModules(import_path, kind, source_dir_info)) |node_module| {
-                                    var pair = node_module.path_pair;
-                                    pair.primary.is_disabled = true;
-                                    if (pair.secondary != null) {
-                                        pair.secondary.?.is_disabled = true;
-                                    }
-                                    return Result{
-                                        .path_pair = pair,
-                                        .diff_case = node_module.diff_case,
-                                        .is_from_node_modules = true,
-                                    };
+            // Support remapping one package path to another via the "browser" field
+            if (source_dir_info.enclosing_browser_scope) |browser_scope| {
+                if (browser_scope.package_json) |package_json| {
+                    if (r.checkBrowserMap(package_json, import_path)) |remapped| {
+                        if (remapped.len == 0) {
+                            // "browser": {"module": false}
+                            if (r.loadNodeModules(import_path, kind, source_dir_info)) |node_module| {
+                                var pair = node_module.path_pair;
+                                pair.primary.is_disabled = true;
+                                if (pair.secondary != null) {
+                                    pair.secondary.?.is_disabled = true;
                                 }
-                            } else {
-                                var primary = Path.init(import_path);
-                                primary.is_disabled = true;
                                 return Result{
-                                    .path_pair = PathPair{ .primary = primary },
-                                    // this might not be null? i think it is
-                                    .diff_case = null,
+                                    .path_pair = pair,
+                                    .diff_case = node_module.diff_case,
+                                    .is_from_node_modules = true,
                                 };
                             }
+                        } else {
+                            var primary = Path.init(import_path);
+                            primary.is_disabled = true;
+                            return Result{
+                                .path_pair = PathPair{ .primary = primary },
+                                // this might not be null? i think it is
+                                .diff_case = null,
+                            };
                         }
                     }
                 }
+            }
 
-                if (r.resolveWithoutRemapping(source_dir_info, import_path, kind)) |res| {
-                    result = Result{ .path_pair = res.path_pair, .diff_case = res.diff_case };
-                } else {
-                    // Note: node's "self references" are not currently supported
-                    return null;
-                }
+            if (r.resolveWithoutRemapping(source_dir_info, import_path, kind)) |res| {
+                result = Result{ .path_pair = res.path_pair, .diff_case = res.diff_case };
+            } else {
+                // Note: node's "self references" are not currently supported
+                return null;
             }
         }
 

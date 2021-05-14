@@ -262,6 +262,8 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
             p: *Printer,
         ) void {
             const n = p.js.len();
+            if (n <= 0) return;
+
             switch (p.js.list.items[n - 1]) {
                 ' ', '\n' => {},
                 else => {
@@ -659,7 +661,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
             }
         }
 
-        pub fn printRequireOrImportExpr(p: *Printer, import_record_index: Ref.Int, leading_interior_comments: []G.Comment, _level: Level, flags: ExprFlag) void {
+        pub fn printRequireOrImportExpr(p: *Printer, import_record_index: u32, leading_interior_comments: []G.Comment, _level: Level, flags: ExprFlag) void {
             var level = _level;
             assert(p.import_records.len > import_record_index);
             const record = p.import_records[import_record_index];
@@ -678,7 +680,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
 
                     // First, we will assert to make detecting this case a little clearer for us in development.
                     if (std.builtin.mode == std.builtin.Mode.Debug) {
-                        Global.panic("Internal error: {s} is an external require, which should never happen.", .{record});
+                        // Global.panic("Internal error: {s} is an external require, which should never happen.", .{record});
                     }
 
                     p.printSpaceBeforeIdentifier();
@@ -689,7 +691,10 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     // so that's require("foo").default.bar rather than require("foo").bar
                     // We are assuming that the target import has been converted into something with an "export default".
                     // If it's not esm, the code won't work anyway
-                    p.printFmt("/* require(\"{s}\") */(await import(", .{record.path.text});
+                    p.js.growIfNeeded("/* require(\"\") */(await import(".len + record.path.text.len) catch unreachable;
+                    p.print("/* require(\"");
+                    p.print(record.path.text);
+                    p.print("*/(await import(");
                     p.addSourceMapping(record.range.loc);
                     p.printQuotedUTF8(record.path.text, true);
                     p.print(").default)");
@@ -1302,10 +1307,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                 },
                 .e_reg_exp => |e| {
                     const n = p.js.len();
-                    const tail = p.js.list.items[n - 1];
 
                     // Avoid forming a single-line comment
-                    if (n > 0 and tail == '/') {
+                    if (n > 0 and p.js.list.items[n - 1] == '/') {
                         p.print(" ");
                     }
 
@@ -1636,6 +1640,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
             if (item.kind == .spread) {
                 p.print("...");
                 p.printExpr(item.value.?, .comma, ExprFlag.None());
+                return;
             }
 
             if (item.flags.is_static) {

@@ -134,9 +134,9 @@ pub const Lexer = struct {
         var msg = self.log.addRangeError(self.source, r, errorMessage);
         self.prev_error_loc = r.loc;
 
-        if (panic) {
-            return Error.ParserError;
-        }
+        // if (panic) {
+        //     return Error.ParserError;
+        // }
     }
 
     fn doPanic(self: *LexerType, content: []const u8) void {
@@ -1189,6 +1189,7 @@ pub const Lexer = struct {
                             },
                         }
                     }
+                    return;
                 },
                 '[' => {
                     try lexer.step();

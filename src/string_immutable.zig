@@ -142,6 +142,25 @@ pub fn eqlUtf16(comptime self: string, other: JavascriptString) bool {
     return std.mem.eql(u16, std.unicode.utf8ToUtf16LeStringLiteral(self), other);
 }
 
+pub fn toUTF8Alloc(allocator: *std.mem.Allocator, js: JavascriptString) !string {
+    var temp = std.mem.zeroes([4]u8);
+    var list = std.ArrayList(u8).initCapacity(allocator, js.len) catch unreachable;
+    var i: usize = 0;
+    while (i < js.len) : (i += 1) {
+        var r1 = @intCast(i32, js[i]);
+        if (r1 >= 0xD800 and r1 <= 0xDBFF and i + 1 < js.len) {
+            const r2 = @intCast(i32, js[i] + 1);
+            if (r2 >= 0xDC00 and r2 <= 0xDFFF) {
+                r1 = (r1 - 0xD800) << 10 | (r2 - 0xDC00) + 0x10000;
+                i += 1;
+            }
+        }
+        const width = encodeWTF8Rune(&temp, r1);
+        list.appendSlice(temp[0..width]) catch unreachable;
+    }
+    return list.toOwnedSlice();
+}
+
 // Check utf16 string equals utf8 string without allocating extra memory
 pub fn utf16EqlString(text: []u16, str: string) bool {
     if (text.len > str.len) {

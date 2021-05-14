@@ -2618,7 +2618,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                 },
             }
         }
-        pub fn printIf(p: *Printer, s: *S.If) void {
+        pub fn printIf(p: *Printer, s: *const S.If) void {
             p.printSpaceBeforeIdentifier();
             p.print("if");
             p.printSpace();
@@ -2693,7 +2693,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
             }
         }
 
-        pub fn wrapToAvoidAmbiguousElse(_s: *Stmt.Data) bool {
+        pub fn wrapToAvoidAmbiguousElse(_s: *const Stmt.Data) bool {
             var s = _s;
 
             while (true) {

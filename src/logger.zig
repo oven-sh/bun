@@ -366,11 +366,7 @@ pub const Log = struct {
 };
 
 pub fn usize2Loc(loc: usize) Loc {
-    if (loc > std.math.maxInt(i32)) {
-        return Loc.Empty;
-    } else {
-        return Loc{ .start = @intCast(i32, loc) };
-    }
+    return Loc{ .start = std.math.lossyCast(i32, loc) };
 }
 
 pub const Source = struct {

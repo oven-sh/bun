@@ -4122,6 +4122,7 @@ pub const P = struct {
         // Remove any direct children from their parent
         var scope = p.current_scope;
         var children = scope.children;
+
         for (p.scopes_in_order.items[scope_index..]) |_child| {
             const child = _child orelse continue;
 
@@ -4507,9 +4508,7 @@ pub const P = struct {
 
                 const ref = p.storeNameInRef(name) catch unreachable;
 
-                key = p.e(E.String{
-                    .utf8 = p.lexer.string_literal_slice,
-                }, loc);
+                key = p.e(p.lexer.toEString(), loc);
 
                 if (p.lexer.token != .t_colon and p.lexer.token != .t_open_paren) {
                     const value = p.b(B.Identifier{ .ref = ref }, loc);
@@ -5535,9 +5534,7 @@ pub const P = struct {
                     }
                 }
 
-                key = p.e(E.String{
-                    .value = p.lexer.stringToUTF16(name),
-                }, name_range.loc);
+                key = p.e(p.lexer.toEString(), name_range.loc);
 
                 // Parse a shorthand property
                 if (!opts.is_class and kind == .normal and p.lexer.token != .t_colon and p.lexer.token != .t_open_paren and p.lexer.token != .t_less_than and !opts.is_generator and !js_lexer.Keywords.has(name)) {
@@ -5562,7 +5559,9 @@ pub const P = struct {
                         .key = key,
                         .value = value,
                         .initializer = initializer,
-                        .flags = Flags.Property{ .was_shorthand = true },
+                        .flags = Flags.Property{
+                            .was_shorthand = true,
+                        },
                     };
                 }
             },
@@ -5588,7 +5587,7 @@ pub const P = struct {
             if (!is_computed) {
                 switch (key.data) {
                     .e_string => |str| {
-                        if (std.mem.eql(u16, str.value, std.unicode.utf8ToUtf16LeStringLiteral("constructor")) or (opts.is_static and std.mem.eql(u16, str.value, std.unicode.utf8ToUtf16LeStringLiteral("prototype")))) {
+                        if (str.eql(string, "constructor") or (opts.is_static and str.eql(string, "prototype"))) {
                             // TODO: fmt error message to include string value.
                             p.log.addRangeError(p.source, key_range, "Invalid field name") catch unreachable;
                         }
@@ -5772,8 +5771,8 @@ pub const P = struct {
             };
         }
 
+        // Parse an object key/value pair
         try p.lexer.expect(.t_colon);
-
         const value = try p.parseExprOrBindings(.comma, errors);
 
         return G.Property{
@@ -5941,23 +5940,12 @@ pub const P = struct {
         if (p.lexer.legacy_octal_loc.start > loc.start) {
             legacy_octal_loc = p.lexer.legacy_octal_loc;
         }
-        if (p.lexer.string_literal_is_ascii) {
-            const expr = p.e(E.String{
-                .utf8 = p.lexer.string_literal_slice,
-                .legacy_octal_loc = legacy_octal_loc,
-                .prefer_template = p.lexer.token == .t_no_substitution_template_literal,
-            }, loc);
-            try p.lexer.next();
-            return expr;
-        } else {
-            const expr = p.e(E.String{
-                .value = p.allocator.dupe(u16, p.lexer.string_literal) catch unreachable,
-                .legacy_octal_loc = legacy_octal_loc,
-                .prefer_template = p.lexer.token == .t_no_substitution_template_literal,
-            }, loc);
-            try p.lexer.next();
-            return expr;
-        }
+        var str = p.lexer.toEString();
+        str.prefer_template = p.lexer.token == .t_no_substitution_template_literal;
+
+        const expr = p.e(str, loc);
+        try p.lexer.next();
+        return expr;
     }
 
     pub fn parseCallArgs(p: *P) anyerror![]Expr {
@@ -7470,17 +7458,10 @@ pub const P = struct {
         try p.lexer.nextInsideJSXElement();
         if (p.lexer.token == .t_string_literal) {
             previous_string_with_backslash_loc.start = std.math.max(p.lexer.loc().start, p.lexer.previous_backslash_quote_in_jsx.loc.start);
-            if (p.lexer.string_literal_is_ascii) {
-                const expr = p.e(E.String{
-                    .utf8 = p.lexer.string_literal_slice,
-                }, previous_string_with_backslash_loc.*);
-                try p.lexer.nextInsideJSXElement();
-                return expr;
-            } else {
-                const expr = p.e(E.String{ .value = try p.allocator.dupe(u16, p.lexer.string_literal) }, previous_string_with_backslash_loc.*);
-                try p.lexer.nextInsideJSXElement();
-                return expr;
-            }
+            const expr = p.e(p.lexer.toEString(), previous_string_with_backslash_loc.*);
+
+            try p.lexer.nextInsideJSXElement();
+            return expr;
         } else {
             // Use Expect() not ExpectInsideJSXElement() so we can parse expression tokens
             try p.lexer.expect(.t_open_brace);
@@ -7538,7 +7519,7 @@ pub const P = struct {
                             continue;
                         }
 
-                        var prop_name = p.e(E.String{ .value = p.lexer.stringToUTF16(prop_name_literal) }, key_range.loc);
+                        var prop_name = p.e(E.String{ .utf8 = prop_name_literal }, key_range.loc);
 
                         // Parse the value
                         var value: Expr = undefined;
@@ -7620,14 +7601,7 @@ pub const P = struct {
         while (true) {
             switch (p.lexer.token) {
                 .t_string_literal => {
-                    if (p.lexer.string_literal_is_ascii) {
-                        try children.append(p.e(E.String{
-                            .utf8 = p.lexer.string_literal_slice,
-                        }, loc));
-                    } else {
-                        try children.append(p.e(E.String{ .value = try p.allocator.dupe(u16, p.lexer.string_literal) }, loc));
-                    }
-
+                    try children.append(p.e(p.lexer.toEString(), loc));
                     try p.lexer.nextJSXElementChild();
                 },
                 .t_open_brace => {
@@ -8608,7 +8582,7 @@ pub const P = struct {
                         e_.value = p.visitExprInOut(e_.value, ExprIn{ .assign_target = e_.op.unaryAssignTarget() });
 
                         if (SideEffects.toTypeof(e_.value.data)) |typeof| {
-                            return p.e(E.String{ .value = p.lexer.stringToUTF16(typeof) }, expr.loc);
+                            return p.e(E.String{ .utf8 = typeof }, expr.loc);
                         }
                     },
                     .un_delete => {
@@ -8939,7 +8913,6 @@ pub const P = struct {
                     .is_arrow = true,
                     .is_async = e_.is_async,
                 };
-                defer p.fn_or_arrow_data_visit = old_fn_or_arrow_data;
 
                 // Mark if we're inside an async arrow function. This value should be true
                 // even if we're inside multiple arrow functions and the closest inclosing
@@ -8947,24 +8920,24 @@ pub const P = struct {
                 // function within the current enclosing function is async.
                 const old_inside_async_arrow_fn = p.fn_only_data_visit.is_inside_async_arrow_fn;
                 p.fn_only_data_visit.is_inside_async_arrow_fn = e_.is_async or p.fn_only_data_visit.is_inside_async_arrow_fn;
-                defer p.fn_only_data_visit.is_inside_async_arrow_fn = old_inside_async_arrow_fn;
 
                 p.pushScopeForVisitPass(.function_args, expr.loc) catch unreachable;
-                defer p.popScope();
-
                 p.visitArgs(e_.args, VisitArgsOpts{
                     .has_rest_arg = e_.has_rest_arg,
                     .body = e_.body.stmts,
                     .is_unique_formal_parameters = true,
                 });
-
                 p.pushScopeForVisitPass(.function_body, e_.body.loc) catch unreachable;
-                defer p.popScope();
 
                 var stmts_list = List(Stmt).fromOwnedSlice(p.allocator, e_.body.stmts);
                 var temp_opts = PrependTempRefsOpts{ .kind = StmtsKind.fn_body };
                 p.visitStmtsAndPrependTempRefs(&stmts_list, &temp_opts) catch unreachable;
                 e_.body.stmts = stmts_list.toOwnedSlice();
+                p.popScope();
+                p.popScope();
+
+                p.fn_only_data_visit.is_inside_async_arrow_fn = old_inside_async_arrow_fn;
+                p.fn_or_arrow_data_visit = old_fn_or_arrow_data;
             },
             .e_function => |e_| {
                 p.visitFunc(&e_.func, expr.loc);
@@ -9637,6 +9610,7 @@ pub const P = struct {
                 data.value = p.visitExpr(data.value);
             },
             .s_return => |data| {
+                // Forbid top-level return inside modules with ECMAScript-style exports
                 if (p.fn_or_arrow_data_visit.is_outside_fn_or_arrow) {
                     const where = where: {
                         if (p.es6_export_keyword.len > 0) {
@@ -9666,7 +9640,6 @@ pub const P = struct {
             .s_block => |data| {
                 {
                     p.pushScopeForVisitPass(.block, stmt.loc) catch unreachable;
-                    defer p.popScope();
 
                     // Pass the "is loop body" status on to the direct children of a block used
                     // as a loop body. This is used to enable optimizations specific to the
@@ -9675,17 +9648,20 @@ pub const P = struct {
                     var _stmts = List(Stmt).fromOwnedSlice(p.allocator, data.stmts);
                     p.visitStmts(&_stmts, kind) catch unreachable;
                     data.stmts = _stmts.toOwnedSlice();
+                    p.popScope();
                 }
 
-                // trim empty statements
-                if (data.stmts.len == 0) {
-                    stmts.append(Stmt{ .data = Prefill.Data.SEmpty, .loc = stmt.loc }) catch unreachable;
-                    return;
-                } else if (data.stmts.len == 1 and !statementCaresAboutScope(data.stmts[0])) {
-                    // Unwrap blocks containing a single statement
-                    stmts.append(data.stmts[0]) catch unreachable;
-                    return;
-                }
+                // // trim empty statements
+                // if (data.stmts.len == 0) {
+                //     stmts.append(Stmt{ .data = Prefill.Data.SEmpty, .loc = stmt.loc }) catch unreachable;
+                //     return;
+                // } else if (data.stmts.len == 1 and !statementCaresAboutScope(data.stmts[0])) {
+                //     // Unwrap blocks containing a single statement
+                //     stmts.append(data.stmts[0]) catch unreachable;
+                //     return;
+                // }
+                stmts.append(stmt.*) catch unreachable;
+                return;
             },
             .s_with => |data| {
                 notimpl();
@@ -9708,9 +9684,9 @@ pub const P = struct {
                 const effects = SideEffects.toBoolean(data.test_.data);
                 if (effects.ok and !effects.value) {
                     const old = p.is_control_flow_dead;
-                    defer p.is_control_flow_dead = old;
                     p.is_control_flow_dead = true;
                     data.yes = p.visitSingleStmt(data.yes, StmtsKind.none);
+                    p.is_control_flow_dead = old;
                 } else {
                     data.yes = p.visitSingleStmt(data.yes, StmtsKind.none);
                 }
@@ -10542,6 +10518,7 @@ pub const P = struct {
         }, loc);
     }
 
+    // Try separating the list for appending, so that it's not a pointer.
     fn visitStmts(p: *P, stmts: *List(Stmt), kind: StmtsKind) !void {
         // Save the current control-flow liveness. This represents if we are
         // currently inside an "if (false) { ... }" block.
@@ -10555,7 +10532,7 @@ pub const P = struct {
         defer visited.deinit();
         defer after.deinit();
 
-        for (stmts.items) |*stmt| {
+        for (stmts.items) |*stmt, i| {
             const list = list_getter: {
                 switch (stmt.data) {
                     .s_export_equals => {
@@ -10982,8 +10959,23 @@ pub const P = struct {
     }
 
     pub fn init(allocator: *std.mem.Allocator, log: *logger.Log, source: *const logger.Source, define: *Define, lexer: js_lexer.Lexer, opts: Parser.Options) !*P {
+        var scope_order = try std.ArrayListUnmanaged(?ScopeOrder).initCapacity(allocator, 1);
+        var scope = try allocator.create(Scope);
+        scope.* = Scope{
+            .members = @TypeOf(scope.members).init(allocator),
+            .children = @TypeOf(scope.children).init(
+                allocator,
+            ),
+            .generated = @TypeOf(scope.generated).init(allocator),
+            .kind = .entry,
+            .label_ref = null,
+            .parent = null,
+        };
+
+        scope_order.appendAssumeCapacity(ScopeOrder{ .loc = locModuleScope, .scope = scope });
+
         var _parser = try allocator.create(P);
-        var parser = P{
+        _parser.* = P{
             .symbol_uses = SymbolUseMap.init(allocator),
             .call_target = nullExprData,
             .delete_target = nullExprData,
@@ -11009,7 +11001,8 @@ pub const P = struct {
             .named_exports = @TypeOf(_parser.named_exports).init(allocator),
             .top_level_symbol_to_parts = @TypeOf(_parser.top_level_symbol_to_parts).init(allocator),
             .import_namespace_cc_map = @TypeOf(_parser.import_namespace_cc_map).init(allocator),
-            .scopes_in_order = try std.ArrayListUnmanaged(?ScopeOrder).initCapacity(allocator, 1),
+            .scopes_in_order = scope_order,
+            .current_scope = scope,
             .temp_refs_to_declare = @TypeOf(_parser.temp_refs_to_declare).init(allocator),
             .relocated_top_level_vars = @TypeOf(_parser.relocated_top_level_vars).init(allocator),
             .log = log,
@@ -11027,10 +11020,6 @@ pub const P = struct {
             .lexer = lexer,
             .data = js_ast.AstData.init(allocator),
         };
-
-        _parser.* = parser;
-
-        _ = try _parser.pushScopeForParsePass(.entry, locModuleScope);
 
         return _parser;
     }

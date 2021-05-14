@@ -950,7 +950,7 @@ pub const E = struct {
             }
         }
 
-        pub fn string(s: *String, allocator: *std.mem.Allocator) !string {
+        pub fn string(s: *const String, allocator: *std.mem.Allocator) !string {
             if (s.isUTF8()) {
                 return s.utf8;
             } else {
@@ -1387,13 +1387,13 @@ pub const Expr = struct {
 
     pub fn getProperty(expr: *const Expr, name: string) ?Query {
         if (std.meta.activeTag(expr.data) != .e_object) return null;
-        const obj: *E.Object = expr.data.e_object;
+        const obj: *const E.Object = expr.data.e_object;
 
         for (obj.properties) |prop| {
             const value = prop.value orelse continue;
             const key = prop.key orelse continue;
             if (std.meta.activeTag(key.data) != .e_string) continue;
-            const key_str: *E.String = key.data.e_string;
+            const key_str: *const E.String = key.data.e_string;
             if (key_str.eql(string, name)) {
                 return Query{ .expr = value, .loc = key.loc };
             }
@@ -1405,7 +1405,7 @@ pub const Expr = struct {
     pub fn getString(expr: *const Expr, allocator: *std.mem.Allocator) ?string {
         if (std.meta.activeTag(expr.data) != .e_string) return null;
 
-        const key_str: *E.String = expr.data.e_string;
+        const key_str: *const E.String = expr.data.e_string;
 
         return if (key_str.isUTF8()) key_str.utf8 else key_str.string(allocator) catch null;
     }
@@ -3193,6 +3193,7 @@ pub const StrictModeKind = packed enum(u7) {
 };
 
 pub const Scope = struct {
+    id: usize = 0,
     kind: Kind = Kind.block,
     parent: ?*Scope,
     children: std.ArrayList(*Scope),

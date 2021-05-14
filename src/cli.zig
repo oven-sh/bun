@@ -305,52 +305,52 @@ pub const Cli = struct {
 
         var writer = stdout.writer();
 
-        // if (args.write) |write| {
-        //     if (write) {
-        //         did_write = true;
-        //         var root_dir = try std.fs.openDirAbsolute(args.absolute_working_dir.?, std.fs.Dir.OpenDirOptions{});
-        //         defer root_dir.close();
-        //         for (result.output_files) |f| {
-        //             try root_dir.makePath(std.fs.path.dirname(f.path) orelse unreachable);
+        if (args.write) |write| {
+            if (write) {
+                did_write = true;
+                var root_dir = try std.fs.openDirAbsolute(args.absolute_working_dir.?, std.fs.Dir.OpenDirOptions{});
+                defer root_dir.close();
+                // for (result.output_files) |f| {
+                //     try root_dir.makePath(std.fs.path.dirname(f.path) orelse unreachable);
 
-        //             var _handle = try std.fs.createFileAbsolute(f.path, std.fs.File.CreateFlags{
-        //                 .truncate = true,
-        //             });
-        //             try _handle.seekTo(0);
+                //     var _handle = try std.fs.createFileAbsolute(f.path, std.fs.File.CreateFlags{
+                //         .truncate = true,
+                //     });
+                //     try _handle.seekTo(0);
 
-        //             defer _handle.close();
+                //     defer _handle.close();
 
-        //             try _handle.writeAll(f.contents);
-        //         }
+                //     try _handle.writeAll(f.contents);
+                // }
 
-        var max_path_len: usize = 0;
-        var max_padded_size: usize = 0;
-        for (result.output_files) |file| {
-            max_path_len = std.math.max(file.path.len, max_path_len);
+                var max_path_len: usize = 0;
+                var max_padded_size: usize = 0;
+                for (result.output_files) |file| {
+                    max_path_len = std.math.max(file.path.len, max_path_len);
+                }
+
+                _ = try writer.write("\n");
+                for (result.output_files) |file| {
+                    const padding_count = 2 + (max_path_len - file.path.len);
+
+                    try writer.writeByteNTimes(' ', 2);
+                    try writer.writeAll(file.path);
+                    try writer.writeByteNTimes(' ', padding_count);
+                    const size = @intToFloat(f64, file.contents.len) / 1000.0;
+                    try std.fmt.formatFloatDecimal(size, .{ .precision = 2 }, writer);
+                    try writer.writeAll(" KB\n");
+                }
+            }
         }
 
-        _ = try writer.write("\n");
-        for (result.output_files) |file| {
-            const padding_count = 2 + (max_path_len - file.path.len);
-
-            try writer.writeByteNTimes(' ', 2);
-            try writer.writeAll(file.path);
-            try writer.writeByteNTimes(' ', padding_count);
-            const size = @intToFloat(f64, file.contents.len) / 1000.0;
-            try std.fmt.formatFloatDecimal(size, .{ .precision = 2 }, writer);
-            try writer.writeAll(" KB\n");
+        if (!did_write) {
+            for (result.output_files) |file, i| {
+                try writer.writeAll(file.contents);
+                if (i > 0) {
+                    _ = try writer.write("\n\n");
+                }
+            }
         }
-        //     }
-        // }
-
-        // if (!did_write) {
-        //     for (result.output_files) |file, i| {
-        //         try writer.writeAll(file.contents);
-        //         if (i > 0) {
-        //             _ = try writer.write("\n\n");
-        //         }
-        //     }
-        // }
 
         var err_writer = stderr.writer();
         for (result.errors) |err| {

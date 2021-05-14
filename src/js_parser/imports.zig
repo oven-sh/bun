@@ -37,4 +37,4 @@ pub const Symbol = js_ast.Symbol;
 pub const Level = js_ast.Op.Level;
 pub const Op = js_ast.Op;
 pub const Scope = js_ast.Scope;
-pub const locModuleScope = logger.Loc.Empty;
+pub const locModuleScope = logger.Loc{ .start = -100 };

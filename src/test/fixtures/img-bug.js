@@ -1,23 +1,10 @@
-function get() {
-  if (true) {
-    if (true) {
-      if (true) {
-        console.log("HI");
-        if (true) {
-          return { hi: () => true };
-        }
-      }
-    }
+const hi = () => ({
+  its_ireelevant: () => true,
+});
+const hey = () => ({
+  any_name_will_do: () => true,
+});
 
-    if (true) {
-      if (true) {
-        if (true) {
-          return { hi: () => true };
-        }
-      }
-    }
-  }
-}
 // function getWidths(width, layout, sizes) {
 //   if (sizes && (layout === "fill" || layout === "responsive")) {
 //     // Find all the "vw" percent sizes used in the sizes prop

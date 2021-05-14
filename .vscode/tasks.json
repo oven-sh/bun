@@ -6,6 +6,14 @@
       "type": "process",
       "command": "zig",
       "args": ["build"],
+      "presentation": {
+        "echo": true,
+        "reveal": "silent",
+        "focus": false,
+        "panel": "shared",
+        "showReuseMessage": false,
+        "clear": false
+      },
       "group": {
         "kind": "build",
         "isDefault": true

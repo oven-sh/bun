@@ -11,6 +11,23 @@
       "cwd": "${workspaceFolder}",
       "console": "internalConsole"
     },
+    // {
+    //   "type": "lldb",
+    //   "request": "launch",
+    //   "name": "Dev Launch",
+    //   "program": "${workspaceFolder}/build/bin/debug/esdev",
+    //   "preLaunchTask": "build",
+    //   "args": [
+    //     "--resolve=dev",
+    //     "--cwd",
+    //     "./src/api/demo",
+    //     "pages/index.js",
+    //     "-o",
+    //     "out"
+    //   ],
+    //   "cwd": "${workspaceFolder}",
+    //   "console": "internalConsole"
+    // }
     {
       "type": "lldb",
       "request": "launch",
@@ -20,13 +37,18 @@
       "args": [
         "--resolve=dev",
         "--cwd",
-        "./src/test",
-        "./fixtures/for-loop-bug",
+        "/",
+        "/Users/jarredsumner/Code/esdev/src/test/fixtures/img-bug.js",
         "-o",
         "out"
       ],
       "cwd": "${workspaceFolder}",
-      "console": "internalConsole"
+      "console": "internalConsole",
+      "presentation": {
+        "hidden": false,
+        "group": "",
+        "order": 1
+      }
     }
   ]
 }

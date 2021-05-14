@@ -3237,7 +3237,7 @@ pub const Scope = struct {
     }
 
     pub fn kindStopsHoisting(s: *Scope) bool {
-        return @enumToInt(s.kind) > @enumToInt(Kind.entry);
+        return @enumToInt(s.kind) >= @enumToInt(Kind.entry);
     }
 
     pub fn initPtr(allocator: *std.mem.Allocator) !*Scope {

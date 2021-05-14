@@ -279,7 +279,6 @@ pub const Lexer = struct {
         lexer.string_literal_slice = lexer.source.contents[lexer.start + 1 .. lexer.end - suffixLen];
         lexer.string_literal_is_ascii = !needs_slow_path;
         lexer.string_literal_buffer.shrinkRetainingCapacity(0);
-        lexer.string_literal.len = lexer.string_literal_slice.len;
         if (needs_slow_path) {
             lexer.string_literal_buffer.ensureTotalCapacity(lexer.string_literal_slice.len) catch unreachable;
             var slice = lexer.string_literal_buffer.allocatedSlice();
@@ -1172,6 +1171,14 @@ pub const Lexer = struct {
         try lex.next();
 
         return lex;
+    }
+
+    pub fn toEString(lexer: *LexerType) js_ast.E.String {
+        if (lexer.string_literal_is_ascii) {
+            return js_ast.E.String{ .utf8 = lexer.string_literal_slice };
+        } else {
+            return js_ast.E.String{ .value = lexer.stringLiteralUTF16() };
+        }
     }
 
     pub fn scanRegExp(lexer: *LexerType) !void {

@@ -1717,7 +1717,41 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                 },
                 .e_string => |key| {
                     p.addSourceMapping(item.key.?.loc);
-                    if (p.canPrintIdentifierUTF16(key.value)) {
+                    if (key.isUTF8()) {
+                        p.printSpaceBeforeIdentifier();
+                        p.printIdentifier(key.utf8);
+
+                        // Use a shorthand property if the names are the same
+                        if (item.value) |val| {
+                            switch (val.data) {
+                                .e_identifier => |e| {
+                                    // TODO: is needing to check item.flags.was_shorthand a bug?
+                                    // esbuild doesn't have to do that...
+                                    // maybe it's a symptom of some other underlying issue
+                                    // or maybe, it's because i'm not lowering the same way that esbuild does.
+                                    if (strings.eql(key.utf8, p.renamer.nameForSymbol(e.ref))) {
+                                        if (item.initializer) |initial| {
+                                            p.printInitializer(initial);
+                                        }
+                                        return;
+                                    }
+                                    // if (strings) {}
+                                },
+                                .e_import_identifier => |e| {
+                                    const ref = p.symbols.follow(e.ref);
+                                    if (p.symbols.get(ref)) |symbol| {
+                                        if (symbol.namespace_alias == null and strings.eql(key.utf8, p.renamer.nameForSymbol(e.ref))) {
+                                            if (item.initializer) |initial| {
+                                                p.printInitializer(initial);
+                                            }
+                                            return;
+                                        }
+                                    }
+                                },
+                                else => {},
+                            }
+                        }
+                    } else if (p.canPrintIdentifierUTF16(key.value)) {
                         p.printSpaceBeforeIdentifier();
                         p.printIdentifierUTF16(key.value) catch unreachable;
 
@@ -1902,7 +1936,24 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
 
                                 switch (property.key.data) {
                                     .e_string => |str| {
-                                        if (p.canPrintIdentifierUTF16(str.value)) {
+                                        if (str.isUTF8()) {
+                                            p.addSourceMapping(property.key.loc);
+                                            p.printSpaceBeforeIdentifier();
+                                            p.printIdentifier(str.utf8);
+
+                                            // Use a shorthand property if the names are the same
+                                            switch (property.value.data) {
+                                                .b_identifier => |id| {
+                                                    if (str.eql(string, p.renamer.nameForSymbol(id.ref))) {
+                                                        p.maybePrintDefaultBindingValue(property);
+                                                        continue;
+                                                    }
+                                                },
+                                                else => {
+                                                    p.printExpr(property.key, .lowest, ExprFlag.None());
+                                                },
+                                            }
+                                        } else if (p.canPrintIdentifierUTF16(str.value)) {
                                             p.addSourceMapping(property.key.loc);
                                             p.printSpaceBeforeIdentifier();
                                             p.printIdentifierUTF16(str.value) catch unreachable;

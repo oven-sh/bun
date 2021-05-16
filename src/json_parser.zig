@@ -249,7 +249,7 @@ const js_printer = @import("js_printer.zig");
 const renamer = @import("renamer.zig");
 const SymbolList = [][]Symbol;
 
-fn expectPrintedJSON(_contents: string, expected: string) void {
+fn expectPrintedJSON(_contents: string, expected: string) !void {
     var contents = alloc.dynamic.alloc(u8, _contents.len + 1) catch unreachable;
     std.mem.copy(u8, contents, _contents);
     contents[contents.len - 1] = ';';
@@ -292,20 +292,21 @@ fn expectPrintedJSON(_contents: string, expected: string) void {
 }
 
 test "ParseJSON" {
-    expectPrintedJSON("true", "true");
-    expectPrintedJSON("false", "false");
-    expectPrintedJSON("1", "1");
-    expectPrintedJSON("10", "10");
-    expectPrintedJSON("100", "100");
-    expectPrintedJSON("100.1", "100.1");
-    expectPrintedJSON("19.1", "19.1");
-    expectPrintedJSON("19.12", "19.12");
-    expectPrintedJSON("3.4159820837456", "3.4159820837456");
-    expectPrintedJSON("-10000.25", "-10000.25");
-    expectPrintedJSON("\"hi\"", "\"hi\"");
-    expectPrintedJSON("{\"hi\": 1, \"hey\": \"200\", \"boom\": {\"yo\": true}}", "({\"hi\": 1, \"hey\": \"200\", \"boom\": {\"yo\": true}})");
-    expectPrintedJSON("{\"hi\": \"hey\"}", "({hi: \"hey\"})");
-    expectPrintedJSON("{\"hi\": [\"hey\", \"yo\"]}", "({hi:[\"hey\",\"yo\"]})");
+    try alloc.setup(std.heap.c_allocator);
+    try expectPrintedJSON("true", "true");
+    try expectPrintedJSON("false", "false");
+    try expectPrintedJSON("1", "1");
+    try expectPrintedJSON("10", "10");
+    try expectPrintedJSON("100", "100");
+    try expectPrintedJSON("100.1", "100.1");
+    try expectPrintedJSON("19.1", "19.1");
+    try expectPrintedJSON("19.12", "19.12");
+    try expectPrintedJSON("3.4159820837456", "3.4159820837456");
+    try expectPrintedJSON("-10000.25", "-10000.25");
+    try expectPrintedJSON("\"hi\"", "\"hi\"");
+    try expectPrintedJSON("{\"hi\": 1, \"hey\": \"200\", \"boom\": {\"yo\": true}}", "({\"hi\": 1, \"hey\": \"200\", \"boom\": {\"yo\": true}})");
+    try expectPrintedJSON("{\"hi\": \"hey\"}", "({hi: \"hey\"})");
+    try expectPrintedJSON("{\"hi\": [\"hey\", \"yo\"]}", "({hi:[\"hey\",\"yo\"]})");
     // TODO: emoji?
 }
 

@@ -1455,10 +1455,10 @@ pub const Expr = struct {
                 return Expr.joinWithComma(all[0], all[1], allocator);
             },
             else => {
-                var expr = Expr.joinWithComma(all[0], all[1], allocator);
-                var _all = all[2 .. all.len - 1];
-                for (_all) |right| {
-                    expr = Expr.joinWithComma(expr, right, allocator);
+                var i: usize = 1;
+                var expr = all[0];
+                while (i < all.len) : (i += 1) {
+                    expr = Expr.joinWithComma(expr, all[i], allocator);
                 }
 
                 return expr;

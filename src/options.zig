@@ -335,7 +335,7 @@ pub const BundleOptions = struct {
         }
 
         var resolved_defines = try defines.DefineData.from_input(user_defines, log, allocator);
-
+        const output_dir_parts = [_]string{ try std.process.getCwdAlloc(allocator), transform.output_dir orelse "out" };
         var opts: BundleOptions = BundleOptions{
             .log = log,
             .resolve_mode = transform.resolve orelse .dev,
@@ -343,6 +343,7 @@ pub const BundleOptions = struct {
                 allocator,
                 resolved_defines,
             ),
+            .output_dir = try std.fs.path.join(allocator, &output_dir_parts),
             .loaders = loaders,
             .write = transform.write orelse false,
             .external = ExternalModules.init(allocator, &fs.fs, fs.top_level_dir, transform.external, log),
@@ -459,12 +460,3 @@ pub const TransformResult = struct {
         };
     }
 };
-
-test "TransformOptions.initUncached" {
-    try alloc.setup(std.heap.page_allocator);
-    const opts = try TransformOptions.initUncached(alloc.dynamic, "lol.jsx", "<Hi />");
-
-    std.testing.expectEqualStrings("lol", opts.entry_point.path.name.base);
-    std.testing.expectEqualStrings(".jsx", opts.entry_point.path.name.ext);
-    std.testing.expect(Loader.jsx == opts.loader);
-}

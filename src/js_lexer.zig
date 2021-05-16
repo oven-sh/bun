@@ -2176,14 +2176,16 @@ fn float64(num: anytype) callconv(.Inline) f64 {
 }
 
 fn test_lexer(contents: []const u8) Lexer {
-    alloc.setup(std.heap.page_allocator) catch unreachable;
+    alloc.setup(std.heap.c_allocator) catch unreachable;
     var log = alloc.dynamic.create(logger.Log) catch unreachable;
     log.* = logger.Log.init(alloc.dynamic);
-    var source = logger.Source.initPathString(
+    var _source = logger.Source.initPathString(
         "index.js",
         contents,
     );
-    return Lexer.init(log, &source, alloc.dynamic) catch unreachable;
+    var source = alloc.dynamic.create(logger.Source) catch unreachable;
+    source.* = _source;
+    return Lexer.init(log, source, alloc.dynamic) catch unreachable;
 }
 
 // test "LexerType.next()" {
@@ -2238,7 +2240,7 @@ test "Lexer.next() simple" {
     try lex.next();
 }
 
-pub fn test_stringLiteralEquals(expected: string, source_text: string) void {
+pub fn test_stringLiteralEquals(expected: string, source_text: string) !void {
     var msgs = std.ArrayList(logger.Msg).init(std.testing.allocator);
     var log = logger.Log{
         .msgs = msgs,
@@ -2256,8 +2258,9 @@ pub fn test_stringLiteralEquals(expected: string, source_text: string) void {
         try lex.next();
     }
 
-    var lit = std.unicode.utf16leToUtf8Alloc(std.heap.page_allocator, lex.string_literal) catch unreachable;
+    var lit = std.unicode.utf16leToUtf8Alloc(std.heap.page_allocator, lex.stringLiteralUTF16()) catch unreachable;
     std.testing.expectEqualStrings(expected, lit);
+    std.testing.expectEqualStrings(expected, lex.string_literal_slice);
 }
 
 pub fn test_skipTo(lexer: *LexerType, n: string) void {
@@ -2269,10 +2272,10 @@ pub fn test_skipTo(lexer: *LexerType, n: string) void {
 }
 
 test "LexerType.rawTemplateContents" {
-    test_stringLiteralEquals("hello!", "const a = 'hello!';");
-    test_stringLiteralEquals("hello!hi", "const b = 'hello!hi';");
-    test_stringLiteralEquals("hello!\n\nhi", "const b = `hello!\n\nhi`;");
+    try test_stringLiteralEquals("hello!", "const a = 'hello!';");
+    try test_stringLiteralEquals("hello!hi", "const b = 'hello!hi';");
+    try test_stringLiteralEquals("hello!\n\nhi", "const b = `hello!\n\nhi`;");
     // TODO: \r\n
     // test_stringLiteralEquals("hello!\nhi", "const b = `hello!\r\nhi`;");
-    test_stringLiteralEquals("hello!", "const b = `hello!${\"hi\"}`");
+    try test_stringLiteralEquals("hello!", "const b = `hello!${\"hi\"}`");
 }

@@ -558,7 +558,7 @@ test "print msg" {
 }
 
 test "ErrorPosition" {
-    const source = Source{ .contents = @embedFile("./test/fixtures/simple.jsx"), .path = fs.Path.init("/src/test/fixtures/simple.jsx"), .identifier_name = "simple" };
+    const source = Source.initPathString("/src/test/fixtures/simple.jsx", @embedFile("./test/fixtures/simple.jsx"));
     const error_position = source.initErrorPosition(Loc{ .start = 979 });
 
     std.testing.expectEqual(@as(usize, 973), @as(usize, error_position.line_start));

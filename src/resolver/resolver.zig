@@ -5,14 +5,72 @@ const options = @import("../options.zig");
 const Fs = @import("../fs.zig");
 const std = @import("std");
 const cache = @import("../cache.zig");
-
+const sync = @import("../sync.zig");
 const TSConfigJSON = @import("./tsconfig_json.zig").TSConfigJSON;
 const PackageJSON = @import("./package_json.zig").PackageJSON;
 usingnamespace @import("./data_url.zig");
 
+const Wyhash = std.hash.Wyhash;
+const hash_map_v2 = @import("../hash_map_v2.zig");
+const Mutex = sync.Mutex;
 const StringBoolMap = std.StringHashMap(bool);
 
+// https://en.wikipedia.org/wiki/.bss#BSS_in_C
+pub fn BSSSectionAllocator(comptime size: usize) type {
+    const FixedBufferAllocator = std.heap.FixedBufferAllocator;
+    return struct {
+        var backing_buf: [size]u8 = undefined;
+        var fixed_buffer_allocator = FixedBufferAllocator.init(&backing_buf);
+        var buf_allocator = &fixed_buffer_allocator.allocator;
+        const Allocator = std.mem.Allocator;
+        const Self = @This();
+
+        allocator: Allocator,
+        fallback_allocator: *Allocator,
+
+        pub fn get(self: *Self) *Allocator {
+            return &self.allocator;
+        }
+
+        pub fn init(fallback_allocator: *Allocator) Self {
+            return Self{ .fallback_allocator = fallback_allocator, .allocator = Allocator{
+                .allocFn = BSSSectionAllocator(size).alloc,
+                .resizeFn = BSSSectionAllocator(size).resize,
+            } };
+        }
+
+        pub fn alloc(
+            allocator: *Allocator,
+            len: usize,
+            ptr_align: u29,
+            len_align: u29,
+            return_address: usize,
+        ) error{OutOfMemory}![]u8 {
+            const self = @fieldParentPtr(Self, "allocator", allocator);
+            return buf_allocator.allocFn(buf_allocator, len, ptr_align, len_align, return_address) catch
+                return self.fallback_allocator.allocFn(self.fallback_allocator, len, ptr_align, len_align, return_address);
+        }
+
+        pub fn resize(
+            allocator: *Allocator,
+            buf: []u8,
+            buf_align: u29,
+            new_len: usize,
+            len_align: u29,
+            return_address: usize,
+        ) error{OutOfMemory}!usize {
+            const self = @fieldParentPtr(Self, "allocator", allocator);
+            if (fixed_buffer_allocator.ownsPtr(buf.ptr)) {
+                return fixed_buffer_allocator.allocator.resizeFn(&fixed_buffer_allocator.allocator, buf, buf_align, new_len, len_align, return_address);
+            } else {
+                return self.fallback_allocator.resizeFn(self.fallback_allocator, buf, buf_align, new_len, len_align, return_address);
+            }
+        }
+    };
+}
+
 const Path = Fs.Path;
+
 pub const SideEffectsData = struct {
     source: *logger.Source,
     range: logger.Range,
@@ -22,21 +80,131 @@ pub const SideEffectsData = struct {
 };
 
 pub const DirInfo = struct {
+    pub const Index = u32;
+
     // These objects are immutable, so we can just point to the parent directory
     // and avoid having to lock the cache again
-    parent: ?*DirInfo = null,
+    parent: Index = HashMap.NotFound,
 
     // A pointer to the enclosing dirInfo with a valid "browser" field in
     // package.json. We need this to remap paths after they have been resolved.
-    enclosing_browser_scope: ?*DirInfo = null,
+    enclosing_browser_scope: Index = HashMap.NotFound,
 
-    abs_path: string,
-    entries: Fs.FileSystem.DirEntry,
+    abs_path: string = "",
+    entries: Fs.FileSystem.DirEntry = undefined,
     has_node_modules: bool = false, // Is there a "node_modules" subdirectory?
     package_json: ?*PackageJSON = null, // Is there a "package.json" file?
     tsconfig_json: ?*TSConfigJSON = null, // Is there a "tsconfig.json" file in this directory or a parent directory?
     abs_real_path: string = "", // If non-empty, this is the real absolute path resolving any symlinks
 
+    pub fn getParent(i: *DirInfo) ?*DirInfo {
+        if (i.parent == HashMap.NotFound) return null;
+        std.debug.assert(i.parent < HashMap.instance._data.len);
+        return &HashMap.instance._data.items(.value)[i.parent];
+    }
+    pub fn getEnclosingBrowserScope(i: *DirInfo) ?*DirInfo {
+        if (i.enclosing_browser_scope == HashMap.NotFound) return null;
+        std.debug.assert(i.enclosing_browser_scope < HashMap.instance._data.len);
+        return &HashMap.instance._data.items(.value)[i.enclosing_browser_scope];
+    }
+
+    // Goal: Really fast, low allocation directory map exploiting cache locality where we don't worry about lifetimes much.
+    // 1. Don't store the keys or values of directories that don't exist
+    // 2. Don't expect a provided key to exist after it's queried
+    // 3. Store whether a directory has been queried and whether that query was successful.
+    // 4. Allocate onto the https://en.wikipedia.org/wiki/.bss#BSS_in_C instead of the heap, so we can avoid memory leaks
+    pub const HashMap = struct {
+        // In a small next.js app with few additional dependencies, there are 191 directories in the node_modules folder
+        // fd . -d 9999 -L -t d --no-ignore | wc -l
+        const PreallocatedCount = 256;
+        const StringAllocatorSize = 128 * PreallocatedCount;
+        const FallbackStringAllocator = BSSSectionAllocator(StringAllocatorSize);
+        const FallbackAllocatorSize = @divExact(@bitSizeOf(Entry), 8) * PreallocatedCount;
+        const FallbackAllocator = BSSSectionAllocator(FallbackAllocatorSize);
+        const BackingHashMap = std.AutoHashMapUnmanaged(u64, Index);
+        pub const Entry = struct {
+            key: string,
+            value: DirInfo,
+        };
+        string_allocator: FallbackStringAllocator,
+        fallback_allocator: FallbackAllocator,
+        allocator: *std.mem.Allocator,
+        _data: std.MultiArrayList(Entry),
+        hash_map: BackingHashMap,
+        const Seed = 999;
+        pub const NotFound: Index = std.math.maxInt(Index);
+        var instance: HashMap = undefined;
+
+        pub fn at(d: *HashMap, index: Index) *DirInfo {
+            return &d._data.items(.value)[index];
+        }
+
+        pub const Result = struct {
+            index: Index = NotFound,
+            hash: u64 = 0,
+            status: Status = Status.unknown,
+
+            pub const Status = enum { unknown, not_found, exists };
+        };
+
+        // pub fn get(d: *HashMap, key: string) Result {
+        //     const _key = Wyhash.hash(Seed, key);
+        //     const index = d.hash_map.get(_key) orelse return Result{};
+
+        //     return d._data.items(.value)[index];
+        // }
+
+        pub fn getOrPut(
+            d: *HashMap,
+            key: string,
+        ) Result {
+            const _key = Wyhash.hash(Seed, key);
+            const index = d.hash_map.get(_key) orelse return Result{
+                .index = std.math.maxInt(u32),
+                .status = .unknown,
+                .hash = _key,
+            };
+            if (index == NotFound) {
+                return Result{ .index = NotFound, .status = .not_found, .hash = _key };
+            }
+
+            return Result{ .index = index, .status = .exists, .hash = _key };
+        }
+
+        pub fn put(d: *HashMap, hash: u64, key: string, value: DirInfo) *DirInfo {
+            const entry = Entry{
+                .value = value,
+                .key = d.string_allocator.get().dupe(u8, key) catch unreachable,
+            };
+            const index = d._data.len;
+            d._data.append(d.fallback_allocator.get(), entry) catch unreachable;
+            d.hash_map.put(d.allocator, hash, @intCast(DirInfo.Index, index)) catch unreachable;
+            return &d._data.items(.value)[index];
+        }
+
+        pub fn init(allocator: *std.mem.Allocator) *HashMap {
+            var list = std.MultiArrayList(Entry){};
+            instance = HashMap{
+                ._data = undefined,
+                .string_allocator = FallbackStringAllocator.init(allocator),
+                .allocator = allocator,
+                .hash_map = BackingHashMap{},
+                .fallback_allocator = FallbackAllocator.init(allocator),
+            };
+            list.ensureTotalCapacity(instance.allocator, PreallocatedCount) catch unreachable;
+            instance._data = list;
+            return &instance;
+        }
+
+        pub fn markNotFound(d: *HashMap, hash: u64) void {
+            d.hash_map.put(d.allocator, hash, NotFound) catch unreachable;
+        }
+
+        pub fn deinit(i: *HashMap) void {
+            i._data.deinit(i.allocator);
+            i.hash_map.deinit(i.allocator);
+        }
+    };
 };
 pub const TemporaryBuffer = struct {
     pub threadlocal var ExtensionPathBuf = std.mem.zeroes([512]u8);
@@ -93,11 +261,11 @@ pub const Resolver = struct {
     // reducing parallelism in the resolver helps the rest of the bundler go
     // faster. I'm not sure why this is but please don't change this unless you
     // do a lot of testing with various benchmarks and there aren't any regressions.
-    mutex: std.Thread.Mutex,
+    mutex: Mutex,
 
     // This cache maps a directory path to information about that directory and
     // all parent directories
-    dir_cache: std.StringHashMap(?*DirInfo),
+    dir_cache: *DirInfo.HashMap,
 
     pub fn init1(
         allocator: *std.mem.Allocator,
@@ -107,8 +275,8 @@ pub const Resolver = struct {
     ) Resolver {
         return Resolver{
             .allocator = allocator,
-            .dir_cache = std.StringHashMap(?*DirInfo).init(allocator),
-            .mutex = std.Thread.Mutex{},
+            .dir_cache = DirInfo.HashMap.init(allocator),
+            .mutex = Mutex.init(),
             .caches = cache.Cache.Set.init(allocator),
             .opts = opts,
             .fs = _fs,
@@ -340,8 +508,8 @@ pub const Resolver = struct {
             return null;
         }
 
-        const hold = r.mutex.acquire();
-        defer hold.release();
+        r.mutex.lock();
+        defer r.mutex.unlock();
 
         var result = try r.resolveWithoutSymlinks(source_dir, import_path, kind);
 
@@ -429,7 +597,7 @@ pub const Resolver = struct {
 
             // Check the "browser" map for the first time (1 out of 2)
             if (r.dirInfoCached(std.fs.path.dirname(abs_path) orelse unreachable) catch null) |_import_dir_info| {
-                if (_import_dir_info.enclosing_browser_scope) |import_dir_info| {
+                if (_import_dir_info.getEnclosingBrowserScope()) |import_dir_info| {
                     if (import_dir_info.package_json) |pkg| {
                         const pkg_json_dir = std.fs.path.dirname(pkg.source.key_path.text) orelse unreachable;
 
@@ -491,7 +659,7 @@ pub const Resolver = struct {
             const source_dir_info = (r.dirInfoCached(source_dir) catch null) orelse return null;
 
             // Support remapping one package path to another via the "browser" field
-            if (source_dir_info.enclosing_browser_scope) |browser_scope| {
+            if (source_dir_info.getEnclosingBrowserScope()) |browser_scope| {
                 if (browser_scope.package_json) |package_json| {
                     if (r.checkBrowserMap(package_json, import_path)) |remapped| {
                         if (remapped.len == 0) {
@@ -533,7 +701,7 @@ pub const Resolver = struct {
         while (iter.next()) |*path| {
             const dirname = std.fs.path.dirname(path.text) orelse continue;
             const base_dir_info = ((r.dirInfoCached(dirname) catch null)) orelse continue;
-            const dir_info = base_dir_info.enclosing_browser_scope orelse continue;
+            const dir_info = base_dir_info.getEnclosingBrowserScope() orelse continue;
             const pkg_json = dir_info.package_json orelse continue;
             const rel_path = std.fs.path.relative(r.allocator, pkg_json.source.key_path.text, path.text) catch continue;
             if (r.checkBrowserMap(pkg_json, rel_path)) |remapped| {
@@ -597,7 +765,7 @@ pub const Resolver = struct {
                 if (r.loadAsFileOrDirectory(abs, kind)) |res| {
                     return res;
                 }
-                r.allocator.free(abs);
+                // r.allocator.free(abs);
             }
         }
 
@@ -617,10 +785,10 @@ pub const Resolver = struct {
                 if (r.loadAsFileOrDirectory(abs_path, kind)) |res| {
                     return res;
                 }
-                r.allocator.free(abs_path);
+                // r.allocator.free(abs_path);
             }
 
-            dir_info = dir_info.parent orelse break;
+            dir_info = dir_info.getParent() orelse break;
         }
 
         // Mostly to cut scope, we don't resolve `NODE_PATH` environment variable.
@@ -720,11 +888,30 @@ pub const Resolver = struct {
     }
 
     fn dirInfoCached(r: *Resolver, path: string) !?*DirInfo {
-        const info = r.dir_cache.get(path) orelse try r.dirInfoUncached(path);
+        var dir_info_entry = r.dir_cache.getOrPut(
+            path,
+        );
 
-        try r.dir_cache.put(path, info);
+        switch (dir_info_entry.status) {
+            .unknown => {
+                return try r.dirInfoUncached(path, dir_info_entry);
+            },
+            .not_found => {
+                return null;
+            },
+            .exists => {
+                return r.dir_cache.at(dir_info_entry.index);
+            },
+        }
+        // if (__entry.found_existing) {
+        //     return if (__entry.entry.value == DirInfo.NotFound) null else __entry.entry.value;
+        // }
 
-        return info;
+        // __entry.entry.value = DirInfo.NotFound;
+
+        // try r.dirInfoUncached(path);
+        // const entry = r.dir_cache.get(path) orelse unreachable;
+        // return if (__entry.entry.value == DirInfo.NotFound) null else entry;
     }
 
     pub const MatchResult = struct {
@@ -939,7 +1126,7 @@ pub const Resolver = struct {
         }
 
         // Potentially remap using the "browser" field
-        if (dir_info.enclosing_browser_scope) |browser_scope| {
+        if (dir_info.getEnclosingBrowserScope()) |browser_scope| {
             if (browser_scope.package_json) |browser_json| {
                 if (r.checkBrowserMap(browser_json, field_rel_path)) |remap| {
                     // Is the path disabled?
@@ -1002,7 +1189,7 @@ pub const Resolver = struct {
     }
 
     pub fn loadAsIndexWithBrowserRemapping(r: *Resolver, dir_info: *DirInfo, path: string, extension_order: []const string) ?MatchResult {
-        if (dir_info.enclosing_browser_scope) |browser_scope| {
+        if (dir_info.getEnclosingBrowserScope()) |browser_scope| {
             comptime const field_rel_path = "index";
             if (browser_scope.package_json) |browser_json| {
                 if (r.checkBrowserMap(browser_json, field_rel_path)) |remap| {
@@ -1280,12 +1467,23 @@ pub const Resolver = struct {
         return null;
     }
 
-    fn dirInfoUncached(r: *Resolver, path: string) anyerror!?*DirInfo {
+    fn dirInfoUncached(r: *Resolver, path: string, result: DirInfo.HashMap.Result) anyerror!?*DirInfo {
         var rfs: *Fs.FileSystem.RealFS = &r.fs.fs;
         var parent: ?*DirInfo = null;
-        const parent_dir = std.fs.path.dirname(path) orelse return null;
-        if (!strings.eql(parent_dir, path)) {
-            parent = try r.dirInfoCached(parent_dir);
+
+        const parent_dir = std.fs.path.dirname(path) orelse {
+            r.dir_cache.markNotFound(result.hash);
+            return null;
+        };
+
+        var parent_result: DirInfo.HashMap.Result = undefined;
+        if (parent_dir.len > 1 and !strings.eql(parent_dir, path)) {
+            parent = (try r.dirInfoCached(parent_dir)) orelse {
+                r.dir_cache.markNotFound(result.hash);
+                return null;
+            };
+
+            parent_result = r.dir_cache.getOrPut(parent_dir);
         }
 
         // List the directories
@@ -1323,6 +1521,7 @@ pub const Resolver = struct {
                             @errorName(_entries.err.original_err),
                         },
                     ) catch {};
+                    r.dir_cache.markNotFound(result.hash);
                     return null;
                 },
             }
@@ -1330,10 +1529,9 @@ pub const Resolver = struct {
             entries = _entries.entries;
         }
 
-        var info = try r.allocator.create(DirInfo);
-        info.* = DirInfo{
+        var info = DirInfo{
             .abs_path = path,
-            .parent = parent,
+            .parent = if (parent != null) parent_result.index else DirInfo.HashMap.NotFound,
             .entries = entries,
         };
 
@@ -1382,7 +1580,8 @@ pub const Resolver = struct {
 
                 if (info.package_json) |pkg| {
                     if (pkg.browser_map.count() > 0) {
-                        info.enclosing_browser_scope = info;
+                        // it has not been written yet, so we reserve the next index
+                        info.enclosing_browser_scope = @intCast(DirInfo.Index, DirInfo.HashMap.instance._data.len);
                     }
 
                     if (r.debug_logs) |*logs| {
@@ -1438,6 +1637,7 @@ pub const Resolver = struct {
             info.tsconfig_json = parent.?.tsconfig_json;
         }
 
-        return info;
+        info.entries = entries;
+        return r.dir_cache.put(result.hash, path, info);
     }
 };

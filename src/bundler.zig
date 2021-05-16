@@ -110,7 +110,7 @@ pub const Bundler = struct {
     ) !void {
         var allocator = bundler.allocator;
         const relative_path = try std.fs.path.relative(bundler.allocator, bundler.fs.top_level_dir, result.source.path.text);
-        var out_parts = [_]string{ bundler.fs.top_level_dir, relative_path };
+        var out_parts = [_]string{ bundler.options.output_dir, relative_path };
         const out_path = try std.fs.path.join(bundler.allocator, &out_parts);
 
         const ast = result.ast;
@@ -302,7 +302,7 @@ pub const Transformer = struct {
         );
 
         const cwd = opts.absolute_working_dir orelse try std.process.getCwdAlloc(allocator);
-        const output_dir_parts = [_]string{ cwd, opts.output_dir orelse "out" };
+        const output_dir_parts = [_]string{ try std.process.getCwdAlloc(allocator), opts.output_dir orelse "out" };
         const output_dir = try std.fs.path.join(allocator, &output_dir_parts);
         var output_files = try std.ArrayList(options.OutputFile).initCapacity(allocator, opts.entry_points.len);
         var loader_values = try allocator.alloc(options.Loader, opts.loader_values.len);

@@ -310,18 +310,18 @@ pub const Cli = struct {
                 did_write = true;
                 var root_dir = try std.fs.openDirAbsolute(args.absolute_working_dir.?, std.fs.Dir.OpenDirOptions{});
                 defer root_dir.close();
-                // for (result.output_files) |f| {
-                //     try root_dir.makePath(std.fs.path.dirname(f.path) orelse unreachable);
+                for (result.output_files) |f| {
+                    try root_dir.makePath(std.fs.path.dirname(f.path) orelse unreachable);
 
-                //     var _handle = try std.fs.createFileAbsolute(f.path, std.fs.File.CreateFlags{
-                //         .truncate = true,
-                //     });
-                //     try _handle.seekTo(0);
+                    var _handle = try std.fs.createFileAbsolute(f.path, std.fs.File.CreateFlags{
+                        .truncate = true,
+                    });
+                    try _handle.seekTo(0);
 
-                //     defer _handle.close();
+                    defer _handle.close();
 
-                //     try _handle.writeAll(f.contents);
-                // }
+                    try _handle.writeAll(f.contents);
+                }
 
                 var max_path_len: usize = 0;
                 var max_padded_size: usize = 0;

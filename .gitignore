@@ -24,3 +24,9 @@ src/deps/zig-clap/README.md
 src/deps/zig-clap/.github
 src/deps/zig-clap/.gitattributes
 out
+
+.trace
+cover
+coverage
+coverv
+*.trace

@@ -15,20 +15,16 @@ pub fn build(b: *std.build.Builder) void {
     var cwd = std.os.getcwd(&cwd_buf) catch unreachable;
     var exe: *std.build.LibExeObjStep = undefined;
 
-    std.debug.print("Build Mode: {s}\n", .{@tagName(mode)});
+    var output_dir_buf = std.mem.zeroes([4096]u8);
+    var bin_label = if (mode == std.builtin.Mode.Debug) "/debug/" else "/";
+    const output_dir = std.fmt.bufPrint(&output_dir_buf, "build{s}{s}-{s}", .{ bin_label, @tagName(target.getOs().tag), @tagName(target.getCpuArch()) }) catch unreachable;
 
     if (target.getOsTag() == .wasi) {
-        std.debug.print("Build OS: Wasi\n", .{});
         exe.enable_wasmtime = true;
         exe = b.addExecutable("esdev", "src/main_wasi.zig");
         exe.is_dynamic = true;
-        if (mode == std.builtin.Mode.Debug) {
-            exe.setOutputDir("build/wasi/debug");
-        } else {
-            exe.setOutputDir("build/wasi");
-        }
+        exe.setOutputDir(output_dir);
     } else if (target.getCpuArch().isWasm()) {
-        std.debug.print("Build OS: WASM\n", .{});
         // exe = b.addExecutable(
         //     "esdev",
         //     "src/main_wasm.zig",
@@ -45,17 +41,15 @@ pub fn build(b: *std.build.Builder) void {
             var features = target.getCpuFeatures();
             features.addFeature(2);
             target.updateCpuFeatures(&features);
-            lib.setOutputDir("build/wasm/debug");
         } else {
             // lib.strip = true;
-            lib.setOutputDir("build/wasm");
         }
 
+        lib.setOutputDir(output_dir);
         lib.want_lto = true;
         b.install_path = lib.getOutputPath();
 
-        std.debug.print("Build Destination: {s}\n", .{lib.getOutputPath()});
-
+        std.debug.print("Build: ./{s}\n", .{lib.getOutputPath()});
         b.default_step.dependOn(&lib.step);
         b.verbose_link = true;
         lib.setTarget(target);
@@ -77,15 +71,8 @@ pub fn build(b: *std.build.Builder) void {
 
         return;
     } else {
-        std.debug.print("Build OS: Native\n", .{});
         exe = b.addExecutable("esdev", "src/main.zig");
         exe.linkLibC();
-
-        if (mode == std.builtin.Mode.Debug) {
-            exe.setOutputDir("build/bin/debug");
-        } else {
-            exe.setOutputDir("build/bin");
-        }
     }
 
     exe.addPackage(.{
@@ -93,7 +80,8 @@ pub fn build(b: *std.build.Builder) void {
         .path = "src/deps/zig-clap/clap.zig",
     });
 
-    std.debug.print("Build Destination: {s}\n", .{exe.getOutputPath()});
+    exe.setOutputDir(output_dir);
+    std.debug.print("Build: ./{s}\n", .{exe.getOutputPath()});
     var walker = std.fs.walkPath(std.heap.page_allocator, cwd) catch unreachable;
     if (std.builtin.is_test) {
         while (walker.next() catch unreachable) |entry| {
@@ -105,9 +93,8 @@ pub fn build(b: *std.build.Builder) void {
     }
     exe.setTarget(target);
     exe.setBuildMode(mode);
-    b.install_path = exe.getOutputPath();
+    b.install_path = output_dir;
 
-    std.fs.deleteTreeAbsolute(std.fs.path.join(std.heap.page_allocator, &.{ cwd, exe.getOutputPath() }) catch unreachable) catch {};
     if (!target.getCpuArch().isWasm()) {
         exe.addLibPath("/usr/local/lib");
     }

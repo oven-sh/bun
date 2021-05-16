@@ -1,0 +1,318 @@
+/Users/jarredsumner/Code/esdev: readFile error -- IsDir/Users/jarredsumner/Code/esdev/src/api/demo: readFile error -- IsDir/Users/jarredsumner/Code/esdev/src/api/demo/.: readFile error -- IsDir/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/next: readFile error -- IsDir/Users/jarredsumner/Code/esdev/src/api/demo/./pages/..: readFile error -- IsDir/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/react: readFile error -- IsDir/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/next/.: readFile error -- IsDir/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/react/.: readFile error -- IsDir
+
+error: Cannot read file "/Users/jarredsumner/Code/esdev": IsDir
+
+
+
+error: Cannot read file "/Users/jarredsumner/Code/esdev/src/api/demo": IsDir
+
+
+
+error: Cannot read file "/Users/jarredsumner/Code/esdev/src/api/demo/.": IsDir
+
+
+
+error: Cannot read file "/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/next": IsDir
+
+
+
+error: Cannot read file "/Users/jarredsumner/Code/esdev/src/api/demo/./pages/..": IsDir
+
+
+
+error: Cannot read file "/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/react": IsDir
+
+
+
+error: Cannot read file "/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/next/.": IsDir
+
+
+
+error: Cannot read file "/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/react/.": IsDir
+
+
+
+error: Cannot assign to property on import "newObj"
+"use strict";exports.__esModule=true;exports.defaultHead=defaultHead;exports.default=void 0;var _react=_interopRequireWildcard(require("react"));var _sideEffect=_interopRequireDefault(require("./side-effect"));var _ampContext=require("./amp-context");var _headManagerContext=require("./head-manager-context");var _amp=require("./amp");function _interopRequireDefault(obj){return obj&&obj.__esModule?obj:{default:obj};}function _getRequireWildcardCache(){if(typeof WeakMap!=="function")return null;var cache=new WeakMap();_getRequireWildcardCache=function(){return cache;};return cache;}function _interopRequireWildcard(obj){if(obj&&obj.__esModule){return obj;}if(obj===null||typeof obj!=="object"&&typeof obj!=="function"){return{default:obj};}var cache=_getRequireWildcardCache();if(cache&&cache.has(obj)){return cache.get(obj);}var newObj={};var hasPropertyDescriptor=Object.defineProperty&&Object.getOwnPropertyDescriptor;for(var key in obj){if(Object.prototype.hasOwnProperty.call(obj,key)){var desc=hasPropertyDescriptor?Object.getOwnPropertyDescriptor(obj,key):null;if(desc&&(desc.get||desc.set)){Object.defineProperty(newObj,key,desc);}else{newObj[key]=obj[key];}}}newObj.default=obj;if(cache){cache.set(obj,newObj);}return newObj;}function defaultHead(inAmpMode=false){const head=[/*#__PURE__*/_react.default.createElement("meta",{charSet:"utf-8"})];if(!inAmpMode){head.push(/*#__PURE__*/_react.default.createElement("meta",{name:"viewport",content:"width=device-width"}));}return head;}function onlyReactElement(list,child){// React children can be "string" or "number" in this case we ignore them for backwards compat
+
+/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/next/./dist/next-server/lib/head.js:1:1149 1148
+
+
+error: Cannot assign to property on import "metaCategories"
+switch(h.type){case'title':case'base':if(tags.has(h.type)){isUnique=false;}else{tags.add(h.type);}break;case'meta':for(let i=0,len=METATYPES.length;i<len;i++){const metatype=METATYPES[i];if(!h.props.hasOwnProperty(metatype))continue;if(metatype==='charSet'){if(metaTypes.has(metatype)){isUnique=false;}else{metaTypes.add(metatype);}}else{const category=h.props[metatype];const categories=metaCategories[metatype]||new Set();if((metatype!=='name'||!hasKey)&&categories.has(category)){isUnique=false;}else{categories.add(category);metaCategories[metatype]=categories;}}}break;}return isUnique;};}/**
+
+/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/next/./dist/next-server/lib/head.js:8:530 3158
+
+
+error: Cannot assign to property on import "newProps"
+['https://fonts.googleapis.com/css'].some(url=>c.props['href'].startsWith(url))){const newProps={...(c.props||{})};newProps['data-href']=newProps['href'];newProps['href']=undefined;return/*#__PURE__*/_react.default.cloneElement(c,newProps);}}return/*#__PURE__*/_react.default.cloneElement(c,{key});});}/**
+
+/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/next/./dist/next-server/lib/head.js:12:116 3986
+
+
+error: Cannot assign to property on import "newProps"
+['https://fonts.googleapis.com/css'].some(url=>c.props['href'].startsWith(url))){const newProps={...(c.props||{})};newProps['data-href']=newProps['href'];newProps['href']=undefined;return/*#__PURE__*/_react.default.cloneElement(c,newProps);}}return/*#__PURE__*/_react.default.cloneElement(c,{key});});}/**
+
+/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/next/./dist/next-server/lib/head.js:12:155 4025
+
+
+error: Cannot read directory "/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/next/./node_modules/@babel/runtime/helpers": FileNotFound
+
+
+
+error: Cannot read directory "/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/next/./node_modules/@babel": FileNotFound
+
+
+
+error: Cannot read directory "/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/next/node_modules/@babel/runtime/helpers": FileNotFound
+
+
+
+error: Cannot read directory "/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/next/node_modules/@babel": FileNotFound
+
+
+
+error: Cannot read directory "/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/@babel/runtime/helpers": FileNotFound
+
+
+
+error: Cannot read directory "/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/@babel/runtime": FileNotFound
+
+
+
+error: Cannot read directory "/Users/jarredsumner/Code/esdev/src/api/demo/node_modules/@babel/runtime/helpers": FileNotFound
+
+
+
+error: Cannot read directory "/Users/jarredsumner/Code/esdev/src/api/demo/node_modules/@babel/runtime": FileNotFound
+
+
+
+error: Cannot read directory "/Users/jarredsumner/Code/esdev/node_modules/@babel/runtime/helpers": FileNotFound
+
+
+
+error: Cannot read directory "/Users/jarredsumner/Code/esdev/node_modules/@babel/runtime": FileNotFound
+
+
+
+error: Cannot read directory "/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/next/./node_modules/@babel/runtime/helpers": FileNotFound
+
+
+
+error: Cannot read directory "/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/next/node_modules/@babel/runtime/helpers": FileNotFound
+
+
+
+error: Cannot read directory "/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/@babel/runtime/helpers": FileNotFound
+
+
+
+error: Cannot read directory "/Users/jarredsumner/Code/esdev/src/api/demo/node_modules/@babel/runtime/helpers": FileNotFound
+
+
+
+error: Cannot read directory "/Users/jarredsumner/Code/esdev/node_modules/@babel/runtime/helpers": FileNotFound
+
+
+
+error: Cannot read directory "/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/next/./node_modules/react": FileNotFound
+
+
+
+error: Cannot read directory "/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/next/node_modules/react": FileNotFound
+
+
+
+error: Expected ")" but found ,
+function J(a,b,c){var e,d={},k=null,h=null;if(null!=b)for(e in void 0!==b.ref&&(h=b.ref),void 0!==b.key&&(k=""+b.key),b)H.call(b,e)&&!I.hasOwnProperty(e)&&(d[e]=b[e]);var g=arguments.length-2;if(1===g)d.children=c;else if(1<g){for(var f=Array(g),m=0;m<g;m++)f[m]=arguments[m+2];d.children=f}if(a&&a.defaultProps)for(e in g=a.defaultProps,g)void 0===d[e]&&(d[e]=g[e]);return{$$typeof:n,type:a,key:k,ref:h,props:d,_owner:G.current}}
+
+/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/react/./cjs/react.production.min.js:14:89 2171
+
+
+error: Expected ";" but found )
+function J(a,b,c){var e,d={},k=null,h=null;if(null!=b)for(e in void 0!==b.ref&&(h=b.ref),void 0!==b.key&&(k=""+b.key),b)H.call(b,e)&&!I.hasOwnProperty(e)&&(d[e]=b[e]);var g=arguments.length-2;if(1===g)d.children=c;else if(1<g){for(var f=Array(g),m=0;m<g;m++)f[m]=arguments[m+2];d.children=f}if(a&&a.defaultProps)for(e in g=a.defaultProps,g)void 0===d[e]&&(d[e]=g[e]);return{$$typeof:n,type:a,key:k,ref:h,props:d,_owner:G.current}}
+
+/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/react/./cjs/react.production.min.js:14:120 2202
+
+
+error: Expected ")" but found ,
+function J(a,b,c){var e,d={},k=null,h=null;if(null!=b)for(e in void 0!==b.ref&&(h=b.ref),void 0!==b.key&&(k=""+b.key),b)H.call(b,e)&&!I.hasOwnProperty(e)&&(d[e]=b[e]);var g=arguments.length-2;if(1===g)d.children=c;else if(1<g){for(var f=Array(g),m=0;m<g;m++)f[m]=arguments[m+2];d.children=f}if(a&&a.defaultProps)for(e in g=a.defaultProps,g)void 0===d[e]&&(d[e]=g[e]);return{$$typeof:n,type:a,key:k,ref:h,props:d,_owner:G.current}}
+
+/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/react/./cjs/react.production.min.js:14:338 2420
+
+
+error: Expected ";" but found )
+function J(a,b,c){var e,d={},k=null,h=null;if(null!=b)for(e in void 0!==b.ref&&(h=b.ref),void 0!==b.key&&(k=""+b.key),b)H.call(b,e)&&!I.hasOwnProperty(e)&&(d[e]=b[e]);var g=arguments.length-2;if(1===g)d.children=c;else if(1<g){for(var f=Array(g),m=0;m<g;m++)f[m]=arguments[m+2];d.children=f}if(a&&a.defaultProps)for(e in g=a.defaultProps,g)void 0===d[e]&&(d[e]=g[e]);return{$$typeof:n,type:a,key:k,ref:h,props:d,_owner:G.current}}
+
+/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/react/./cjs/react.production.min.js:14:340 2422
+
+
+error: Cannot assign to property on import "d"
+function J(a,b,c){var e,d={},k=null,h=null;if(null!=b)for(e in void 0!==b.ref&&(h=b.ref),void 0!==b.key&&(k=""+b.key),b)H.call(b,e)&&!I.hasOwnProperty(e)&&(d[e]=b[e]);var g=arguments.length-2;if(1===g)d.children=c;else if(1<g){for(var f=Array(g),m=0;m<g;m++)f[m]=arguments[m+2];d.children=f}if(a&&a.defaultProps)for(e in g=a.defaultProps,g)void 0===d[e]&&(d[e]=g[e]);return{$$typeof:n,type:a,key:k,ref:h,props:d,_owner:G.current}}
+
+/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/react/./cjs/react.production.min.js:14:157 2239
+
+
+error: Cannot assign to property on import "f"
+function J(a,b,c){var e,d={},k=null,h=null;if(null!=b)for(e in void 0!==b.ref&&(h=b.ref),void 0!==b.key&&(k=""+b.key),b)H.call(b,e)&&!I.hasOwnProperty(e)&&(d[e]=b[e]);var g=arguments.length-2;if(1===g)d.children=c;else if(1<g){for(var f=Array(g),m=0;m<g;m++)f[m]=arguments[m+2];d.children=f}if(a&&a.defaultProps)for(e in g=a.defaultProps,g)void 0===d[e]&&(d[e]=g[e]);return{$$typeof:n,type:a,key:k,ref:h,props:d,_owner:G.current}}
+
+/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/react/./cjs/react.production.min.js:14:259 2341
+
+
+error: Cannot assign to property on import "d"
+function J(a,b,c){var e,d={},k=null,h=null;if(null!=b)for(e in void 0!==b.ref&&(h=b.ref),void 0!==b.key&&(k=""+b.key),b)H.call(b,e)&&!I.hasOwnProperty(e)&&(d[e]=b[e]);var g=arguments.length-2;if(1===g)d.children=c;else if(1<g){for(var f=Array(g),m=0;m<g;m++)f[m]=arguments[m+2];d.children=f}if(a&&a.defaultProps)for(e in g=a.defaultProps,g)void 0===d[e]&&(d[e]=g[e]);return{$$typeof:n,type:a,key:k,ref:h,props:d,_owner:G.current}}
+
+/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/react/./cjs/react.production.min.js:14:357 2439
+
+
+error: Cannot assign to property on import "e"
+exports.cloneElement=function(a,b,c){if(null===a||void 0===a)throw Error(z(267,a));var e=l({},a.props),d=a.key,k=a.ref,h=a._owner;if(null!=b){void 0!==b.ref&&(k=b.ref,h=G.current);void 0!==b.key&&(d=""+b.key);if(a.type&&a.type.defaultProps)var g=a.type.defaultProps;for(f in b)H.call(b,f)&&!I.hasOwnProperty(f)&&(e[f]=void 0===b[f]&&void 0!==g?g[f]:b[f])}var f=arguments.length-2;if(1===f)e.children=c;else if(1<f){g=Array(f);for(var m=0;m<f;m++)g[m]=arguments[m+2];e.children=g}return{$$typeof:n,type:a.type,
+
+/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/react/./cjs/react.production.min.js:20:314 4973
+
+
+error: Cannot assign to property on import "g"
+exports.cloneElement=function(a,b,c){if(null===a||void 0===a)throw Error(z(267,a));var e=l({},a.props),d=a.key,k=a.ref,h=a._owner;if(null!=b){void 0!==b.ref&&(k=b.ref,h=G.current);void 0!==b.key&&(d=""+b.key);if(a.type&&a.type.defaultProps)var g=a.type.defaultProps;for(f in b)H.call(b,f)&&!I.hasOwnProperty(f)&&(e[f]=void 0===b[f]&&void 0!==g?g[f]:b[f])}var f=arguments.length-2;if(1===f)e.children=c;else if(1<f){g=Array(f);for(var m=0;m<f;m++)g[m]=arguments[m+2];e.children=g}return{$$typeof:n,type:a.type,
+
+/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/react/./cjs/react.production.min.js:20:447 5106
+
+
+error: Cannot assign to property on import "args"
+      args[_key - 1] = arguments[_key];
+
+/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/react/./cjs/react.development.js:184:7 5256
+
+
+error: Cannot assign to property on import "args"
+      args[_key2 - 1] = arguments[_key2];
+
+/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/react/./cjs/react.development.js:193:7 5499
+
+
+error: Cannot assign to property on import "didWarnStateUpdateForUnmountedComponent"
+    didWarnStateUpdateForUnmountedComponent[warningKey] = true;
+
+/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/react/./cjs/react.development.js:238:5 7144
+
+
+error: Cannot assign to property on import "didWarnAboutStringRefs"
+        didWarnAboutStringRefs[componentName] = true;
+
+/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/react/./cjs/react.development.js:622:9 19312
+
+
+error: Cannot assign to property on import "props"
+        props[propName] = config[propName];
+
+/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/react/./cjs/react.development.js:734:9 22825
+
+
+error: Cannot assign to property on import "childArray"
+      childArray[i] = arguments[i + 2];
+
+/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/react/./cjs/react.development.js:749:7 23234
+
+
+error: Cannot assign to property on import "props"
+        props[propName] = defaultProps[propName];
+
+/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/react/./cjs/react.development.js:767:9 23588
+
+
+error: Cannot assign to property on import "props"
+          props[propName] = defaultProps[propName];
+
+/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/react/./cjs/react.development.js:842:11 25862
+
+
+error: Cannot assign to property on import "props"
+          props[propName] = config[propName];
+
+/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/react/./cjs/react.development.js:844:11 25931
+
+
+error: Cannot assign to property on import "childArray"
+      childArray[i] = arguments[i + 2];
+
+/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/react/./cjs/react.development.js:860:7 26350
+
+
+error: Cannot use "break" here
+          break;
+
+/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/react/./cjs/react.development.js:1790:11 55454
+
+
+error: Cannot assign to property on import "loggedTypeFailures"
+          loggedTypeFailures[error$1.message] = true;
+
+/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/react/./cjs/react.development.js:1932:11 60269
+
+
+error: Cannot assign to property on import "ownerHasKeyUseWarning"
+  ownerHasKeyUseWarning[currentComponentErrorInfo] = true; // Usually the current owner is the offender, but if it accepts children as a
+
+/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/react/./cjs/react.development.js:2038:3 62986
+
+
+error: Cannot use "break" here
+        break;
+
+/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/react/./cjs/react.development.js:2169:9 67164
+
+
+error: Cannot read directory "/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/react/./node_modules/object-assign": FileNotFound
+
+
+
+error: Cannot read directory "/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/react/node_modules/object-assign": FileNotFound
+
+
+
+error: Cannot read directory "/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/object-assign": FileNotFound
+
+
+
+error: Cannot read directory "/Users/jarredsumner/Code/esdev/src/api/demo/node_modules/object-assign": FileNotFound
+
+
+
+error: Cannot read directory "/Users/jarredsumner/Code/esdev/node_modules/object-assign": FileNotFound
+
+
+
+error: Unexpected "super"
+"use strict";exports.__esModule=true;exports.default=void 0;var _react=require("react");const isServer=typeof window==='undefined';class _default extends _react.Component{constructor(props){super(props);this._hasHeadManager=void 0;this.emitChange=()=>{if(this._hasHeadManager){this.props.headManager.updateHead(this.props.reduceComponentsToState([...this.props.headManager.mountedInstances],this.props));}};this._hasHeadManager=this.props.headManager&&this.props.headManager.mountedInstances;if(isServer&&this._hasHeadManager){this.props.headManager.mountedInstances.add(this);this.emitChange();}}componentDidMount(){if(this._hasHeadManager){this.props.headManager.mountedInstances.add(this);}this.emitChange();}componentDidUpdate(){this.emitChange();}componentWillUnmount(){if(this._hasHeadManager){this.props.headManager.mountedInstances.delete(this);}this.emitChange();}render(){return null;}}exports.default=_default;
+
+/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/next/./dist/next-server/lib/./side-effect.js:1:191 190
+
+
+error: Cannot assign to property on import "newObj"
+"use strict";exports.__esModule=true;exports.defaultHead=defaultHead;exports.default=void 0;var _react=_interopRequireWildcard(require("react"));var _sideEffect=_interopRequireDefault(require("./side-effect"));var _ampContext=require("./amp-context");var _headManagerContext=require("./head-manager-context");var _amp=require("./amp");function _interopRequireDefault(obj){return obj&&obj.__esModule?obj:{default:obj};}function _getRequireWildcardCache(){if(typeof WeakMap!=="function")return null;var cache=new WeakMap();_getRequireWildcardCache=function(){return cache;};return cache;}function _interopRequireWildcard(obj){if(obj&&obj.__esModule){return obj;}if(obj===null||typeof obj!=="object"&&typeof obj!=="function"){return{default:obj};}var cache=_getRequireWildcardCache();if(cache&&cache.has(obj)){return cache.get(obj);}var newObj={};var hasPropertyDescriptor=Object.defineProperty&&Object.getOwnPropertyDescriptor;for(var key in obj){if(Object.prototype.hasOwnProperty.call(obj,key)){var desc=hasPropertyDescriptor?Object.getOwnPropertyDescriptor(obj,key):null;if(desc&&(desc.get||desc.set)){Object.defineProperty(newObj,key,desc);}else{newObj[key]=obj[key];}}}newObj.default=obj;if(cache){cache.set(obj,newObj);}return newObj;}function defaultHead(inAmpMode=false){const head=[/*#__PURE__*/_react.default.createElement("meta",{charSet:"utf-8"})];if(!inAmpMode){head.push(/*#__PURE__*/_react.default.createElement("meta",{name:"viewport",content:"width=device-width"}));}return head;}function onlyReactElement(list,child){// React children can be "string" or "number" in this case we ignore them for backwards compat
+
+/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/next/./dist/client/../next-server/lib/head.js:1:1149 1148
+
+
+error: Cannot assign to property on import "metaCategories"
+switch(h.type){case'title':case'base':if(tags.has(h.type)){isUnique=false;}else{tags.add(h.type);}break;case'meta':for(let i=0,len=METATYPES.length;i<len;i++){const metatype=METATYPES[i];if(!h.props.hasOwnProperty(metatype))continue;if(metatype==='charSet'){if(metaTypes.has(metatype)){isUnique=false;}else{metaTypes.add(metatype);}}else{const category=h.props[metatype];const categories=metaCategories[metatype]||new Set();if((metatype!=='name'||!hasKey)&&categories.has(category)){isUnique=false;}else{categories.add(category);metaCategories[metatype]=categories;}}}break;}return isUnique;};}/**
+
+/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/next/./dist/client/../next-server/lib/head.js:8:530 3158
+
+
+error: Cannot assign to property on import "newProps"
+['https://fonts.googleapis.com/css'].some(url=>c.props['href'].startsWith(url))){const newProps={...(c.props||{})};newProps['data-href']=newProps['href'];newProps['href']=undefined;return/*#__PURE__*/_react.default.cloneElement(c,newProps);}}return/*#__PURE__*/_react.default.cloneElement(c,{key});});}/**
+
+/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/next/./dist/client/../next-server/lib/head.js:12:116 3986
+
+
+error: Cannot assign to property on import "newProps"
+['https://fonts.googleapis.com/css'].some(url=>c.props['href'].startsWith(url))){const newProps={...(c.props||{})};newProps['data-href']=newProps['href'];newProps['href']=undefined;return/*#__PURE__*/_react.default.cloneElement(c,newProps);}}return/*#__PURE__*/_react.default.cloneElement(c,{key});});}/**
+
+/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/next/./dist/client/../next-server/lib/head.js:12:155 4025
+
+
+error: Unexpected "super"
+"use strict";exports.__esModule=true;exports.default=void 0;var _react=require("react");const isServer=typeof window==='undefined';class _default extends _react.Component{constructor(props){super(props);this._hasHeadManager=void 0;this.emitChange=()=>{if(this._hasHeadManager){this.props.headManager.updateHead(this.props.reduceComponentsToState([...this.props.headManager.mountedInstances],this.props));}};this._hasHeadManager=this.props.headManager&&this.props.headManager.mountedInstances;if(isServer&&this._hasHeadManager){this.props.headManager.mountedInstances.add(this);this.emitChange();}}componentDidMount(){if(this._hasHeadManager){this.props.headManager.mountedInstances.add(this);}this.emitChange();}componentDidUpdate(){this.emitChange();}componentWillUnmount(){if(this._hasHeadManager){this.props.headManager.mountedInstances.delete(this);}this.emitChange();}render(){return null;}}exports.default=_default;
+
+/Users/jarredsumner/Code/esdev/src/api/demo/./node_modules/next/./dist/client/../next-server/lib/./side-effect.js:1:191 190

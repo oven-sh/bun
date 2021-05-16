@@ -15,40 +15,58 @@
     //   "type": "lldb",
     //   "request": "launch",
     //   "name": "Dev Launch",
-    //   "program": "${workspaceFolder}/build/bin/debug/esdev",
+    //   "program": "${workspaceFolder}/build/debug/macos-x86_64/esdev",
     //   "preLaunchTask": "build",
     //   "args": [
-    //     "--resolve=dev",
+    //     "--resolve=disable",
     //     "--cwd",
-    //     "./src/api/demo",
-    //     "pages/index.js",
+    //     "${workspaceFolder}",
+    //     "src/test/fixtures/cannot-assign-to-import-bug.js",
     //     "-o",
     //     "out"
     //   ],
     //   "cwd": "${workspaceFolder}",
     //   "console": "internalConsole"
     // }
+
     {
       "type": "lldb",
       "request": "launch",
       "name": "Dev Launch",
-      "program": "${workspaceFolder}/build/bin/debug/esdev",
+      "program": "${workspaceFolder}/build/debug/macos-x86_64/esdev",
       "preLaunchTask": "build",
       "args": [
         "--resolve=dev",
         "--cwd",
-        "/",
-        "/Users/jarredsumner/Code/esdev/src/test/fixtures/img-bug.js",
+        "./src/api/demo",
+        "pages/index.js",
         "-o",
         "out"
       ],
       "cwd": "${workspaceFolder}",
-      "console": "internalConsole",
-      "presentation": {
-        "hidden": false,
-        "group": "",
-        "order": 1
-      }
+      "console": "internalConsole"
     }
+    // {
+    //   "type": "lldb",
+    //   "request": "launch",
+    //   "name": "Dev Launch",
+    //   "program": "${workspaceFolder}/build/bin/debug/esdev",
+    //   "preLaunchTask": "build",
+    //   "args": [
+    //     "--resolve=dev",
+    //     "--cwd",
+    //     "/",
+    //     "/Users/jarredsumner/Code/esdev/src/test/fixtures/img-bug.js",
+    //     "-o",
+    //     "out"
+    //   ],
+    //   "cwd": "${workspaceFolder}",
+    //   "console": "internalConsole",
+    //   "presentation": {
+    //     "hidden": false,
+    //     "group": "",
+    //     "order": 1
+    //   }
+    // }
   ]
 }

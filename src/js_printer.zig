@@ -1080,10 +1080,10 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     flags.forbid_in = true;
                     p.printExpr(e.test_, .conditional, flags);
                     p.printSpace();
-                    p.print("?");
+                    p.print("? ");
                     p.printExpr(e.yes, .yield, ExprFlag.None());
                     p.printSpace();
-                    p.print(":");
+                    p.print(": ");
                     flags.forbid_in = true;
                     p.printExpr(e.no, .yield, flags);
                     if (wrap) {

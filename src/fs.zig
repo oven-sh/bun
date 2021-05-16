@@ -10,8 +10,6 @@ const resolvePath = @import("./resolver/resolve_path.zig").resolvePath;
 
 // pub const FilesystemImplementation = @import("fs_impl.zig");
 
-//
-
 threadlocal var scratch_lookup_buffer = [_]u8{0} ** 255;
 
 pub const FileSystem = struct {

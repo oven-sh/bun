@@ -66,6 +66,10 @@ pub const Tester = struct {
         }
 
         pub fn evaluate_outcome(self: *const @This()) Outcome {
+            if (self.expected.len > self.result.len) {
+                return .fail;
+            }
+
             for (self.expected) |char, i| {
                 if (char != self.result[i]) {
                     return Outcome.fail;

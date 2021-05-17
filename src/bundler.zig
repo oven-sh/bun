@@ -265,7 +265,6 @@ pub const Bundler = struct {
                 try msg.writeFormat(std.io.getStdOut().writer());
             }
         }
-
         switch (bundler.options.resolve_mode) {
             .lazy, .dev, .bundle => {
                 while (bundler.resolve_queue.readItem()) |item| {

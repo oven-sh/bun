@@ -275,7 +275,6 @@ pub const Lexer = struct {
         }
 
         // Reset string literal
-        lexer.string_literal = &([_]u16{});
         lexer.string_literal_slice = lexer.source.contents[lexer.start + 1 .. lexer.end - suffixLen];
         lexer.string_literal_is_ascii = !needs_slow_path;
         lexer.string_literal_buffer.shrinkRetainingCapacity(0);
@@ -283,8 +282,6 @@ pub const Lexer = struct {
             lexer.string_literal_buffer.ensureTotalCapacity(lexer.string_literal_slice.len) catch unreachable;
             var slice = lexer.string_literal_buffer.allocatedSlice();
             lexer.string_literal_buffer.items = slice[0..strings.toUTF16Buf(lexer.string_literal_slice, slice)];
-            lexer.string_literal = lexer.string_literal_buffer.items;
-            lexer.string_literal_slice = &[_]u8{};
         }
 
         if (quote == '\'' and lexer.json_options != null) {
@@ -483,6 +480,7 @@ pub const Lexer = struct {
                         if (lexer.code_point == '\\') {
                             try lexer.scanIdentifierWithEscapes();
                             lexer.token = T.t_private_identifier;
+
                             // lexer.Identifier, lexer.Token = lexer.scanIdentifierWithEscapes(normalIdentifier);
                         } else {
                             lexer.token = T.t_private_identifier;
@@ -766,7 +764,6 @@ pub const Lexer = struct {
                             lexer.token = .t_slash_equals;
                         },
                         '/' => {
-                            try lexer.step();
                             singleLineComment: while (true) {
                                 try lexer.step();
                                 switch (lexer.code_point) {
@@ -1440,14 +1437,12 @@ pub const Lexer = struct {
 
         lexer.token = .t_string_literal;
         lexer.string_literal_slice = lexer.source.contents[lexer.start + 1 .. lexer.end - 1];
-        lexer.string_literal.len = lexer.string_literal_slice.len;
         lexer.string_literal_is_ascii = !needs_decode;
-        lexer.string_literal_buffer.shrinkRetainingCapacity(0);
+        lexer.string_literal_buffer.clearRetainingCapacity();
         if (needs_decode) {
             lexer.string_literal_buffer.ensureTotalCapacity(lexer.string_literal_slice.len) catch unreachable;
             try lexer.decodeJSXEntities(lexer.string_literal_slice, &lexer.string_literal_buffer);
             lexer.string_literal = lexer.string_literal_buffer.items;
-            lexer.string_literal_slice = &([_]u8{0});
         }
     }
 

@@ -50,7 +50,10 @@ pub const PackageJSON = struct {
         errdefer r.allocator.free(package_json_path);
 
         const entry = r.caches.fs.readFile(r.fs, input_path) catch |err| {
-            r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Cannot read file \"{s}\": {s}", .{ r.prettyPath(fs.Path.init(input_path)), @errorName(err) }) catch unreachable;
+            if (err != error.IsDir) {
+                r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Cannot read file \"{s}\": {s}", .{ r.prettyPath(fs.Path.init(input_path)), @errorName(err) }) catch unreachable;
+            }
+
             return null;
         };
 
@@ -146,7 +149,7 @@ pub const PackageJSON = struct {
                             // import of "foo", but that's actually not a bug. Or arguably it's a
                             // bug in Browserify but we have to replicate this bug because packages
                             // do this in the wild.
-                            const key = fs.Path.normalize(_key_str, r.allocator);
+                            const key = r.allocator.dupe(u8, r.fs.normalize(_key_str)) catch unreachable;
 
                             switch (value.data) {
                                 .e_string => |str| {

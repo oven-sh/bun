@@ -6,11 +6,13 @@ const expect = std.testing.expect;
 const Mutex = sync.Mutex;
 const Semaphore = sync.Semaphore;
 
-const resolvePath = @import("./resolver/resolve_path.zig").resolvePath;
+const path_handler = @import("./resolver/resolve_path.zig");
+
+const allocators = @import("./allocators.zig");
 
 // pub const FilesystemImplementation = @import("fs_impl.zig");
 
-threadlocal var scratch_lookup_buffer = [_]u8{0} ** 255;
+threadlocal var scratch_lookup_buffer: [256]u8 = undefined;
 
 pub const FileSystem = struct {
     allocator: *std.mem.Allocator,
@@ -40,6 +42,14 @@ pub const FileSystem = struct {
         pub const EntryMap = std.StringArrayHashMap(*Entry);
         dir: string,
         data: EntryMap,
+
+        pub fn updateDir(i: *DirEntry, dir: string) void {
+            var iter = i.data.iterator();
+            i.dir = dir;
+            while (iter.next()) |entry| {
+                entry.value.dir = dir;
+            }
+        }
 
         pub fn empty(dir: string, allocator: *std.mem.Allocator) DirEntry {
             return DirEntry{ .dir = dir, .data = EntryMap.init(allocator) };
@@ -154,10 +164,26 @@ pub const FileSystem = struct {
     // pub fn readDir(fs: *FileSystemEntry, path: string) ?[]string {
 
     // }
+    pub fn normalize(f: *@This(), str: string) string {
+        return @call(.{ .modifier = .always_inline }, path_handler.normalizeAndJoin, .{ f.top_level_dir, .auto, str });
+    }
+
+    pub fn join(f: *@This(), parts: anytype) string {
+        return @call(.{ .modifier = .always_inline }, path_handler.normalizeAndJoinString, .{
+            f.top_level_dir,
+            parts,
+            .auto,
+        });
+    }
+
+    pub fn joinAlloc(f: *@This(), allocator: *std.mem.Allocator, parts: anytype) !string {
+        const joined = f.join(parts);
+        return try allocator.dupe(u8, joined);
+    }
 
     pub const RealFS = struct {
         entries_mutex: Mutex = Mutex.init(),
-        entries: std.StringHashMap(EntriesOption),
+        entries: *EntriesOption.Map,
         allocator: *std.mem.Allocator,
         do_not_cache_entries: bool = false,
         limiter: Limiter,
@@ -166,7 +192,7 @@ pub const FileSystem = struct {
 
         pub fn init(allocator: *std.mem.Allocator, enable_watcher: bool) RealFS {
             return RealFS{
-                .entries = std.StringHashMap(EntriesOption).init(allocator),
+                .entries = EntriesOption.Map.init(allocator),
                 .allocator = allocator,
                 .limiter = Limiter.init(allocator),
                 .watcher = if (enable_watcher) std.StringHashMap(WatchData).init(allocator) else null,
@@ -276,6 +302,11 @@ pub const FileSystem = struct {
                 entries,
                 err,
             };
+
+            // This custom map implementation:
+            // - Preallocates a fixed amount of directory name space
+            // - Doesn't store directory names which don't exist.
+            pub const Map = allocators.BSSMap(EntriesOption, 1024, true, 128);
         };
 
         // Limit the number of files open simultaneously to avoid ulimit issues
@@ -305,15 +336,20 @@ pub const FileSystem = struct {
             }
         };
 
-        fn readdir(fs: *RealFS, _dir: string) !DirEntry {
+        pub fn openDir(fs: *RealFS, unsafe_dir_string: string) std.fs.File.OpenError!std.fs.Dir {
+            return try std.fs.openDirAbsolute(unsafe_dir_string, std.fs.Dir.OpenDirOptions{ .iterate = true, .access_sub_paths = true });
+        }
+
+        fn readdir(
+            fs: *RealFS,
+            _dir: string,
+            handle: std.fs.Dir,
+        ) !DirEntry {
             fs.limiter.before();
             defer fs.limiter.after();
 
-            var handle = try std.fs.openDirAbsolute(_dir, std.fs.Dir.OpenDirOptions{ .iterate = true, .access_sub_paths = true });
-            defer handle.close();
-
             var iter: std.fs.Dir.Iterator = handle.iterate();
-            var dir = DirEntry{ .data = DirEntry.EntryMap.init(fs.allocator), .dir = _dir };
+            var dir = DirEntry.init("", fs.allocator);
             errdefer dir.deinit();
             while (try iter.next()) |_entry| {
                 const entry: std.fs.Dir.Entry = _entry;
@@ -342,7 +378,7 @@ pub const FileSystem = struct {
                 var entry_ptr = try fs.allocator.create(Entry);
                 entry_ptr.* = Entry{
                     .base = name,
-                    .dir = _dir,
+                    .dir = "",
                     .mutex = Mutex.init(),
                     // Call "stat" lazily for performance. The "@material-ui/icons" package
                     // contains a directory with over 11,000 entries in it and running "stat"
@@ -356,12 +392,11 @@ pub const FileSystem = struct {
 
                 try dir.data.put(name, entry_ptr);
             }
-            // Copy at the bottom here so in the event of an error, we don't deinit the dir string.
-            dir.dir = _dir;
+
             return dir;
         }
 
-        fn readDirectoryError(fs: *RealFS, dir: string, err: anyerror) !void {
+        fn readDirectoryError(fs: *RealFS, dir: string, err: anyerror) !*EntriesOption {
             if (fs.watcher) |*watcher| {
                 fs.watcher_mutex.lock();
                 defer fs.watcher_mutex.unlock();
@@ -371,27 +406,52 @@ pub const FileSystem = struct {
             if (!fs.do_not_cache_entries) {
                 fs.entries_mutex.lock();
                 defer fs.entries_mutex.unlock();
-
-                try fs.entries.put(dir, EntriesOption{
+                var get_or_put_result = try fs.entries.getOrPut(dir);
+                var opt = try fs.entries.put(null, false, &get_or_put_result, EntriesOption{
                     .err = DirEntry.Err{ .original_err = err, .canonical_error = err },
                 });
+
+                return opt;
             }
+
+            temp_entries_option = EntriesOption{
+                .err = DirEntry.Err{ .original_err = err, .canonical_error = err },
+            };
+            return &temp_entries_option;
         }
-        pub fn readDirectory(fs: *RealFS, dir: string) !EntriesOption {
+
+        threadlocal var temp_entries_option: EntriesOption = undefined;
+
+        pub fn readDirectory(fs: *RealFS, dir: string, _handle: ?std.fs.Dir, recursive: bool) !*EntriesOption {
+            var cache_result: ?allocators.Result = null;
+
             if (!fs.do_not_cache_entries) {
                 fs.entries_mutex.lock();
                 defer fs.entries_mutex.unlock();
 
-                // First, check the cache
-                if (fs.entries.get(dir)) |_dir| {
-                    return _dir;
+                cache_result = try fs.entries.getOrPut(dir);
+
+                if (cache_result.?.hasCheckedIfExists()) {
+                    if (fs.entries.atIndex(cache_result.?.index)) |cached_result| {
+                        return cached_result;
+                    }
+                }
+            }
+
+            var handle = _handle orelse try fs.openDir(dir);
+
+            defer {
+                if (_handle == null) {
+                    handle.close();
                 }
             }
 
             // Cache miss: read the directory entries
-            const entries = fs.readdir(dir) catch |err| {
-                _ = fs.readDirectoryError(dir, err) catch {};
-                return err;
+            const entries = fs.readdir(
+                dir,
+                handle,
+            ) catch |err| {
+                return fs.readDirectoryError(dir, err) catch unreachable;
             };
 
             if (fs.watcher) |*watcher| {
@@ -409,16 +469,23 @@ pub const FileSystem = struct {
                     WatchData{ .dir_entries = names, .state = .dir_has_entries },
                 );
             }
-
-            fs.entries_mutex.lock();
-            defer fs.entries_mutex.unlock();
-            const result = EntriesOption{
-                .entries = entries,
-            };
             if (!fs.do_not_cache_entries) {
-                try fs.entries.put(dir, result);
+                fs.entries_mutex.lock();
+                defer fs.entries_mutex.unlock();
+                const result = EntriesOption{
+                    .entries = entries,
+                };
+
+                var entries_ptr = try fs.entries.put(dir, true, &cache_result.?, result);
+                const dir_key = fs.entries.keyAtIndex(cache_result.?.index) orelse unreachable;
+                entries_ptr.entries.updateDir(dir_key);
+                return entries_ptr;
             }
-            return result;
+
+            temp_entries_option = EntriesOption{ .entries = entries };
+            temp_entries_option.entries.updateDir(try fs.allocator.dupe(u8, dir));
+
+            return &temp_entries_option;
         }
 
         fn readFileError(fs: *RealFS, path: string, err: anyerror) void {
@@ -622,6 +689,7 @@ pub const PathName = struct {
 };
 
 threadlocal var normalize_buf: [1024]u8 = undefined;
+threadlocal var join_buf: [1024]u8 = undefined;
 
 pub const Path = struct {
     pretty: string,
@@ -632,35 +700,6 @@ pub const Path = struct {
 
     pub fn generateKey(p: *Path, allocator: *std.mem.Allocator) !string {
         return try std.fmt.allocPrint(allocator, "{s}://{s}", .{ p.namespace, p.text });
-    }
-
-    // for now, assume you won't try to normalize a path longer than 1024 chars
-    pub fn normalize(str: string, allocator: *std.mem.Allocator) string {
-        if (str.len == 0 or (str.len == 1 and str[0] == ' ')) return ".";
-        if (resolvePath(&normalize_buf, str)) |out| {
-            return allocator.dupe(u8, out) catch unreachable;
-        }
-        return str;
-    }
-
-    // for now, assume you won't try to normalize a path longer than 1024 chars
-    pub fn normalizeNoAlloc(str: string, comptime remap_windows_paths: bool) string {
-        if (str.len == 0 or (str.len == 1 and (str[0] == ' ' or str[0] == '\\'))) return ".";
-
-        if (remap_windows_paths) {
-            std.mem.copy(u8, &normalize_buf, str);
-            var i: usize = 0;
-            while (i < str.len) : (i += 1) {
-                if (str[i] == '\\') {
-                    normalize_buf[i] = '/';
-                }
-            }
-        }
-
-        if (resolvePath(&normalize_buf, str)) |out| {
-            return out;
-        }
-        return str;
     }
 
     pub fn init(text: string) Path {

@@ -15,59 +15,7 @@ const hash_map_v2 = @import("../hash_map_v2.zig");
 const Mutex = sync.Mutex;
 const StringBoolMap = std.StringHashMap(bool);
 
-// https://en.wikipedia.org/wiki/.bss#BSS_in_C
-pub fn BSSSectionAllocator(comptime size: usize) type {
-    const FixedBufferAllocator = std.heap.FixedBufferAllocator;
-    return struct {
-        var backing_buf: [size]u8 = undefined;
-        var fixed_buffer_allocator = FixedBufferAllocator.init(&backing_buf);
-        var buf_allocator = &fixed_buffer_allocator.allocator;
-        const Allocator = std.mem.Allocator;
-        const Self = @This();
-
-        allocator: Allocator,
-        fallback_allocator: *Allocator,
-
-        pub fn get(self: *Self) *Allocator {
-            return &self.allocator;
-        }
-
-        pub fn init(fallback_allocator: *Allocator) Self {
-            return Self{ .fallback_allocator = fallback_allocator, .allocator = Allocator{
-                .allocFn = BSSSectionAllocator(size).alloc,
-                .resizeFn = BSSSectionAllocator(size).resize,
-            } };
-        }
-
-        pub fn alloc(
-            allocator: *Allocator,
-            len: usize,
-            ptr_align: u29,
-            len_align: u29,
-            return_address: usize,
-        ) error{OutOfMemory}![]u8 {
-            const self = @fieldParentPtr(Self, "allocator", allocator);
-            return buf_allocator.allocFn(buf_allocator, len, ptr_align, len_align, return_address) catch
-                return self.fallback_allocator.allocFn(self.fallback_allocator, len, ptr_align, len_align, return_address);
-        }
-
-        pub fn resize(
-            allocator: *Allocator,
-            buf: []u8,
-            buf_align: u29,
-            new_len: usize,
-            len_align: u29,
-            return_address: usize,
-        ) error{OutOfMemory}!usize {
-            const self = @fieldParentPtr(Self, "allocator", allocator);
-            if (fixed_buffer_allocator.ownsPtr(buf.ptr)) {
-                return fixed_buffer_allocator.allocator.resizeFn(&fixed_buffer_allocator.allocator, buf, buf_align, new_len, len_align, return_address);
-            } else {
-                return self.fallback_allocator.resizeFn(self.fallback_allocator, buf, buf_align, new_len, len_align, return_address);
-            }
-        }
-    };
-}
+const allocators = @import("../allocators.zig");
 
 const Path = Fs.Path;
 
@@ -84,11 +32,11 @@ pub const DirInfo = struct {
 
     // These objects are immutable, so we can just point to the parent directory
     // and avoid having to lock the cache again
-    parent: Index = HashMap.NotFound,
+    parent: Index = allocators.NotFound,
 
     // A pointer to the enclosing dirInfo with a valid "browser" field in
     // package.json. We need this to remap paths after they have been resolved.
-    enclosing_browser_scope: Index = HashMap.NotFound,
+    enclosing_browser_scope: Index = allocators.NotFound,
 
     abs_path: string = "",
     entries: Fs.FileSystem.DirEntry = undefined,
@@ -98,14 +46,10 @@ pub const DirInfo = struct {
     abs_real_path: string = "", // If non-empty, this is the real absolute path resolving any symlinks
 
     pub fn getParent(i: *DirInfo) ?*DirInfo {
-        if (i.parent == HashMap.NotFound) return null;
-        std.debug.assert(i.parent < HashMap.instance._data.len);
-        return &HashMap.instance._data.items(.value)[i.parent];
+        return HashMap.instance.atIndex(i.parent);
     }
     pub fn getEnclosingBrowserScope(i: *DirInfo) ?*DirInfo {
-        if (i.enclosing_browser_scope == HashMap.NotFound) return null;
-        std.debug.assert(i.enclosing_browser_scope < HashMap.instance._data.len);
-        return &HashMap.instance._data.items(.value)[i.enclosing_browser_scope];
+        return HashMap.instance.atIndex(i.enclosing_browser_scope);
     }
 
     // Goal: Really fast, low allocation directory map exploiting cache locality where we don't worry about lifetimes much.
@@ -113,98 +57,7 @@ pub const DirInfo = struct {
     // 2. Don't expect a provided key to exist after it's queried
     // 3. Store whether a directory has been queried and whether that query was successful.
     // 4. Allocate onto the https://en.wikipedia.org/wiki/.bss#BSS_in_C instead of the heap, so we can avoid memory leaks
-    pub const HashMap = struct {
-        // In a small next.js app with few additional dependencies, there are 191 directories in the node_modules folder
-        // fd . -d 9999 -L -t d --no-ignore | wc -l
-        const PreallocatedCount = 256;
-        const StringAllocatorSize = 128 * PreallocatedCount;
-        const FallbackStringAllocator = BSSSectionAllocator(StringAllocatorSize);
-        const FallbackAllocatorSize = @divExact(@bitSizeOf(Entry), 8) * PreallocatedCount;
-        const FallbackAllocator = BSSSectionAllocator(FallbackAllocatorSize);
-        const BackingHashMap = std.AutoHashMapUnmanaged(u64, Index);
-        pub const Entry = struct {
-            key: string,
-            value: DirInfo,
-        };
-        string_allocator: FallbackStringAllocator,
-        fallback_allocator: FallbackAllocator,
-        allocator: *std.mem.Allocator,
-        _data: std.MultiArrayList(Entry),
-        hash_map: BackingHashMap,
-        const Seed = 999;
-        pub const NotFound: Index = std.math.maxInt(Index);
-        var instance: HashMap = undefined;
-
-        pub fn at(d: *HashMap, index: Index) *DirInfo {
-            return &d._data.items(.value)[index];
-        }
-
-        pub const Result = struct {
-            index: Index = NotFound,
-            hash: u64 = 0,
-            status: Status = Status.unknown,
-
-            pub const Status = enum { unknown, not_found, exists };
-        };
-
-        // pub fn get(d: *HashMap, key: string) Result {
-        //     const _key = Wyhash.hash(Seed, key);
-        //     const index = d.hash_map.get(_key) orelse return Result{};
-
-        //     return d._data.items(.value)[index];
-        // }
-
-        pub fn getOrPut(
-            d: *HashMap,
-            key: string,
-        ) Result {
-            const _key = Wyhash.hash(Seed, key);
-            const index = d.hash_map.get(_key) orelse return Result{
-                .index = std.math.maxInt(u32),
-                .status = .unknown,
-                .hash = _key,
-            };
-            if (index == NotFound) {
-                return Result{ .index = NotFound, .status = .not_found, .hash = _key };
-            }
-
-            return Result{ .index = index, .status = .exists, .hash = _key };
-        }
-
-        pub fn put(d: *HashMap, hash: u64, key: string, value: DirInfo) *DirInfo {
-            const entry = Entry{
-                .value = value,
-                .key = d.string_allocator.get().dupe(u8, key) catch unreachable,
-            };
-            const index = d._data.len;
-            d._data.append(d.fallback_allocator.get(), entry) catch unreachable;
-            d.hash_map.put(d.allocator, hash, @intCast(DirInfo.Index, index)) catch unreachable;
-            return &d._data.items(.value)[index];
-        }
-
-        pub fn init(allocator: *std.mem.Allocator) *HashMap {
-            var list = std.MultiArrayList(Entry){};
-            instance = HashMap{
-                ._data = undefined,
-                .string_allocator = FallbackStringAllocator.init(allocator),
-                .allocator = allocator,
-                .hash_map = BackingHashMap{},
-                .fallback_allocator = FallbackAllocator.init(allocator),
-            };
-            list.ensureTotalCapacity(instance.allocator, PreallocatedCount) catch unreachable;
-            instance._data = list;
-            return &instance;
-        }
-
-        pub fn markNotFound(d: *HashMap, hash: u64) void {
-            d.hash_map.put(d.allocator, hash, NotFound) catch unreachable;
-        }
-
-        pub fn deinit(i: *HashMap) void {
-            i._data.deinit(i.allocator);
-            i.hash_map.deinit(i.allocator);
-        }
-    };
+    pub const HashMap = allocators.BSSMap(DirInfo, 1024, true, 128);
 };
 pub const TemporaryBuffer = struct {
     pub threadlocal var ExtensionPathBuf = std.mem.zeroes([512]u8);
@@ -578,7 +431,7 @@ pub const Resolver = struct {
 
         if (check_relative) {
             const parts = [_]string{ source_dir, import_path };
-            const abs_path = std.fs.path.join(r.allocator, &parts) catch unreachable;
+            const abs_path = r.fs.join(&parts);
 
             if (r.opts.external.abs_paths.count() > 0 and r.opts.external.abs_paths.exists(abs_path)) {
                 // If the string literal in the source text is an absolute path and has
@@ -760,7 +613,7 @@ pub const Resolver = struct {
             // Try looking up the path relative to the base URL
             if (tsconfig.base_url) |base| {
                 const paths = [_]string{ base, import_path };
-                const abs = std.fs.path.join(r.allocator, &paths) catch unreachable;
+                const abs = r.fs.join(paths);
 
                 if (r.loadAsFileOrDirectory(abs, kind)) |res| {
                     return res;
@@ -775,7 +628,7 @@ pub const Resolver = struct {
             // don't ever want to search for "node_modules/node_modules"
             if (dir_info.has_node_modules) {
                 var _paths = [_]string{ dir_info.abs_path, "node_modules", import_path };
-                const abs_path = std.fs.path.join(r.allocator, &_paths) catch unreachable;
+                const abs_path = r.fs.join(&_paths);
                 if (r.debug_logs) |*debug| {
                     debug.addNoteFmt("Checking for a package in the directory \"{s}\"", .{abs_path}) catch {};
                 }
@@ -802,7 +655,7 @@ pub const Resolver = struct {
             return r.loadNodeModules(import_path, kind, source_dir_info);
         } else {
             const paths = [_]string{ source_dir_info.abs_path, import_path };
-            var resolved = std.fs.path.join(r.allocator, &paths) catch unreachable;
+            var resolved = r.fs.join(&paths);
             return r.loadAsFileOrDirectory(resolved, kind);
         }
     }
@@ -825,7 +678,7 @@ pub const Resolver = struct {
             //     //     // Skip "node_modules" folders
             //     //     if (!strings.eql(std.fs.path.basename(current), "node_modules")) {
             //     //         var paths1 = [_]string{ current, "node_modules", extends };
-            //     //         var join1 = std.fs.path.join(ctx.r.allocator, &paths1) catch unreachable;
+            //     //         var join1 = r.fs.joinAlloc(ctx.r.allocator, &paths1) catch unreachable;
             //     //         const res = ctx.r.parseTSConfig(join1, ctx.visited) catch |err| {
             //     //             if (err == error.ENOENT) {
             //     //                 continue;
@@ -857,14 +710,14 @@ pub const Resolver = struct {
             // this might leak
             if (!std.fs.path.isAbsolute(base)) {
                 const paths = [_]string{ file_dir, base };
-                result.base_url = std.fs.path.join(r.allocator, &paths) catch unreachable;
+                result.base_url = r.fs.joinAlloc(r.allocator, &paths) catch unreachable;
             }
         }
 
         if (result.paths.count() > 0 and (result.base_url_for_paths.len == 0 or !std.fs.path.isAbsolute(result.base_url_for_paths))) {
             // this might leak
             const paths = [_]string{ file_dir, result.base_url.? };
-            result.base_url_for_paths = std.fs.path.join(r.allocator, &paths) catch unreachable;
+            result.base_url_for_paths = r.fs.joinAlloc(r.allocator, &paths) catch unreachable;
         }
 
         return result;
@@ -888,10 +741,13 @@ pub const Resolver = struct {
     }
 
     fn dirInfoCached(r: *Resolver, path: string) !?*DirInfo {
-        var dir_info_entry = r.dir_cache.getOrPut(
-            path,
-        );
+        var dir_info_entry = try r.dir_cache.getOrPut(path);
 
+        var ptr = try r.dirInfoCachedGetOrPut(path, &dir_info_entry);
+        return ptr;
+    }
+
+    fn dirInfoCachedGetOrPut(r: *Resolver, path: string, dir_info_entry: *allocators.Result) !?*DirInfo {
         switch (dir_info_entry.status) {
             .unknown => {
                 return try r.dirInfoUncached(path, dir_info_entry);
@@ -900,7 +756,7 @@ pub const Resolver = struct {
                 return null;
             },
             .exists => {
-                return r.dir_cache.at(dir_info_entry.index);
+                return r.dir_cache.atIndex(dir_info_entry.index);
             },
         }
         // if (__entry.found_existing) {
@@ -953,7 +809,7 @@ pub const Resolver = struct {
 
                         if (!std.fs.path.isAbsolute(absolute_original_path)) {
                             const parts = [_]string{ abs_base_url, original_path };
-                            absolute_original_path = std.fs.path.join(r.allocator, &parts) catch unreachable;
+                            absolute_original_path = r.fs.joinAlloc(r.allocator, &parts) catch unreachable;
                             was_alloc = true;
                         }
 
@@ -1032,12 +888,12 @@ pub const Resolver = struct {
                 const region = TemporaryBuffer.TSConfigMatchPathBuf[0..total_length];
 
                 // Load the original path relative to the "baseUrl" from tsconfig.json
-                var absolute_original_path = region;
+                var absolute_original_path: string = region;
 
                 var did_allocate = false;
                 if (!std.fs.path.isAbsolute(region)) {
-                    const paths = [_]string{ abs_base_url, original_path };
-                    absolute_original_path = std.fs.path.join(r.allocator, &paths) catch unreachable;
+                    var paths = [_]string{ abs_base_url, original_path };
+                    absolute_original_path = r.fs.joinAlloc(r.allocator, &paths) catch unreachable;
                     did_allocate = true;
                 } else {
                     absolute_original_path = std.mem.dupe(r.allocator, u8, region) catch unreachable;
@@ -1059,7 +915,7 @@ pub const Resolver = struct {
 
     pub fn checkBrowserMap(r: *Resolver, pkg: *PackageJSON, input_path: string) ?string {
         // Normalize the path so we can compare against it without getting confused by "./"
-        var cleaned = Path.normalizeNoAlloc(input_path, true);
+        var cleaned = r.fs.normalize(input_path);
         const original_cleaned = cleaned;
 
         if (cleaned.len == 1 and cleaned[0] == '.') {
@@ -1132,7 +988,7 @@ pub const Resolver = struct {
                     // Is the path disabled?
                     if (remap.len == 0) {
                         const paths = [_]string{ path, field_rel_path };
-                        const new_path = std.fs.path.join(r.allocator, &paths) catch unreachable;
+                        const new_path = r.fs.joinAlloc(r.allocator, &paths) catch unreachable;
                         var _path = Path.init(new_path);
                         _path.is_disabled = true;
                         return MatchResult{
@@ -1147,7 +1003,7 @@ pub const Resolver = struct {
             }
         }
         const _paths = [_]string{ field_rel_path, path };
-        const field_abs_path = std.fs.path.join(r.allocator, &_paths) catch unreachable;
+        const field_abs_path = r.fs.joinAlloc(r.allocator, &_paths) catch unreachable;
 
         const field_dir_info = (r.dirInfoCached(field_abs_path) catch null) orelse {
             r.allocator.free(field_abs_path);
@@ -1171,7 +1027,7 @@ pub const Resolver = struct {
             if (dir_info.entries.get(base)) |lookup| {
                 if (lookup.entry.kind(rfs) == .file) {
                     const parts = [_]string{ path, base };
-                    const out_buf = std.fs.path.join(r.allocator, &parts) catch unreachable;
+                    const out_buf = r.fs.joinAlloc(r.allocator, &parts) catch unreachable;
                     if (r.debug_logs) |*debug| {
                         debug.addNoteFmt("Found file: \"{s}\"", .{out_buf}) catch unreachable;
                     }
@@ -1197,7 +1053,7 @@ pub const Resolver = struct {
                     // This doesn't really make sense to me.
                     if (remap.len == 0) {
                         const paths = [_]string{ path, field_rel_path };
-                        const new_path = std.fs.path.join(r.allocator, &paths) catch unreachable;
+                        const new_path = r.fs.joinAlloc(r.allocator, &paths) catch unreachable;
                         var _path = Path.init(new_path);
                         _path.is_disabled = true;
                         return MatchResult{
@@ -1208,7 +1064,7 @@ pub const Resolver = struct {
                     }
 
                     const new_paths = [_]string{ path, remap };
-                    const remapped_abs = std.fs.path.join(r.allocator, &new_paths) catch unreachable;
+                    const remapped_abs = r.fs.joinAlloc(r.allocator, &new_paths) catch unreachable;
 
                     // Is this a file
                     if (r.loadAsFile(remapped_abs, extension_order)) |file_result| {
@@ -1347,13 +1203,13 @@ pub const Resolver = struct {
             }
         }
 
-        // Read the directory entries once to minimize locking
-        const dir_path = std.fs.path.dirname(path) orelse unreachable; // Expected path to be a file.
-        const dir_entry: Fs.FileSystem.RealFS.EntriesOption = r.fs.fs.readDirectory(dir_path) catch {
+        const dir_path = std.fs.path.dirname(path) orelse "/";
+
+        const dir_entry: *Fs.FileSystem.RealFS.EntriesOption = rfs.readDirectory(dir_path, null, false) catch {
             return null;
         };
 
-        if (@as(Fs.FileSystem.RealFS.EntriesOption.Tag, dir_entry) == .err) {
+        if (@as(Fs.FileSystem.RealFS.EntriesOption.Tag, dir_entry.*) == .err) {
             if (dir_entry.err.original_err != error.ENOENT) {
                 r.log.addErrorFmt(
                     null,
@@ -1383,8 +1239,9 @@ pub const Resolver = struct {
                 if (r.debug_logs) |*debug| {
                     debug.addNoteFmt("Found file \"{s}\" ", .{base}) catch {};
                 }
-
-                return LoadResult{ .path = path, .diff_case = query.diff_case };
+                const abs_path_parts = [_]string{ query.entry.dir, query.entry.base };
+                const abs_path = r.fs.joinAlloc(r.allocator, &abs_path_parts) catch unreachable;
+                return LoadResult{ .path = abs_path, .diff_case = query.diff_case };
             }
         }
 
@@ -1467,73 +1324,95 @@ pub const Resolver = struct {
         return null;
     }
 
-    fn dirInfoUncached(r: *Resolver, path: string, result: DirInfo.HashMap.Result) anyerror!?*DirInfo {
+    fn dirInfoUncached(r: *Resolver, unsafe_path: string, result: *allocators.Result) anyerror!?*DirInfo {
         var rfs: *Fs.FileSystem.RealFS = &r.fs.fs;
         var parent: ?*DirInfo = null;
 
-        const parent_dir = std.fs.path.dirname(path) orelse {
-            r.dir_cache.markNotFound(result.hash);
-            return null;
+        var is_root = false;
+        const parent_dir = (std.fs.path.dirname(unsafe_path) orelse parent_dir_handle: {
+            is_root = true;
+            break :parent_dir_handle "/";
+        });
+
+        var parent_result: allocators.Result = allocators.Result{
+            .hash = std.math.maxInt(u64),
+            .index = allocators.NotFound,
+            .status = .unknown,
         };
+        if (!is_root and !strings.eql(parent_dir, unsafe_path)) {
+            parent = r.dirInfoCached(parent_dir) catch null;
 
-        var parent_result: DirInfo.HashMap.Result = undefined;
-        if (parent_dir.len > 1 and !strings.eql(parent_dir, path)) {
-            parent = (try r.dirInfoCached(parent_dir)) orelse {
-                r.dir_cache.markNotFound(result.hash);
-                return null;
-            };
-
-            parent_result = r.dir_cache.getOrPut(parent_dir);
+            if (parent != null) {
+                parent_result = try r.dir_cache.getOrPut(parent_dir);
+            }
         }
+
+        var entries: Fs.FileSystem.DirEntry = Fs.FileSystem.DirEntry.empty(unsafe_path, r.allocator);
 
         // List the directories
-        var _entries = try rfs.readDirectory(path);
-        var entries: @TypeOf(_entries.entries) = undefined;
-        if (std.meta.activeTag(_entries) == .err) {
-            // Just pretend this directory is empty if we can't access it. This is the
-            // case on Unix for directories that only have the execute permission bit
-            // set. It means we will just pass through the empty directory and
-            // continue to check the directories above it, which is now node behaves.
-            switch (_entries.err.original_err) {
-                error.EACCESS => {
-                    entries = Fs.FileSystem.DirEntry.empty(path, r.allocator);
-                },
+        if (!is_root) {
+            var _entries: *Fs.FileSystem.RealFS.EntriesOption = undefined;
 
-                // Ignore "ENOTDIR" here so that calling "ReadDirectory" on a file behaves
-                // as if there is nothing there at all instead of causing an error due to
-                // the directory actually being a file. This is a workaround for situations
-                // where people try to import from a path containing a file as a parent
-                // directory. The "pnpm" package manager generates a faulty "NODE_PATH"
-                // list which contains such paths and treating them as missing means we just
-                // ignore them during path resolution.
-                error.ENOENT,
-                error.ENOTDIR,
-                => {},
-                else => {
-                    const pretty = r.prettyPath(Path.init(path));
-                    r.log.addErrorFmt(
-                        null,
-                        logger.Loc{},
-                        r.allocator,
-                        "Cannot read directory \"{s}\": {s}",
-                        .{
-                            pretty,
-                            @errorName(_entries.err.original_err),
-                        },
-                    ) catch {};
-                    r.dir_cache.markNotFound(result.hash);
-                    return null;
-                },
+            _entries = try rfs.readDirectory(unsafe_path, null, true);
+
+            if (std.meta.activeTag(_entries.*) == .err) {
+                // Just pretend this directory is empty if we can't access it. This is the
+                // case on Unix for directories that only have the execute permission bit
+                // set. It means we will just pass through the empty directory and
+                // continue to check the directories above it, which is now node behaves.
+                switch (_entries.err.original_err) {
+                    error.EACCESS => {
+                        entries = Fs.FileSystem.DirEntry.empty(unsafe_path, r.allocator);
+                    },
+
+                    // Ignore "ENOTDIR" here so that calling "ReadDirectory" on a file behaves
+                    // as if there is nothing there at all instead of causing an error due to
+                    // the directory actually being a file. This is a workaround for situations
+                    // where people try to import from a path containing a file as a parent
+                    // directory. The "pnpm" package manager generates a faulty "NODE_PATH"
+                    // list which contains such paths and treating them as missing means we just
+                    // ignore them during path resolution.
+                    error.ENOENT,
+                    error.ENOTDIR,
+                    error.IsDir,
+                    => {
+                        entries = Fs.FileSystem.DirEntry.empty(unsafe_path, r.allocator);
+                    },
+                    else => {
+                        const pretty = r.prettyPath(Path.init(unsafe_path));
+                        result.status = .not_found;
+                        r.log.addErrorFmt(
+                            null,
+                            logger.Loc{},
+                            r.allocator,
+                            "Cannot read directory \"{s}\": {s}",
+                            .{
+                                pretty,
+                                @errorName(_entries.err.original_err),
+                            },
+                        ) catch {};
+                        r.dir_cache.markNotFound(result.*);
+                        return null;
+                    },
+                }
+            } else {
+                entries = _entries.entries;
             }
-        } else {
-            entries = _entries.entries;
         }
 
-        var info = DirInfo{
-            .abs_path = path,
-            .parent = if (parent != null) parent_result.index else DirInfo.HashMap.NotFound,
-            .entries = entries,
+        var info = dir_info_getter: {
+            var _info = DirInfo{
+                .abs_path = "",
+                .parent = parent_result.index,
+                .entries = entries,
+            };
+            result.status = .exists;
+            var __info = try r.dir_cache.put(unsafe_path, true, result, _info);
+            __info.abs_path = r.dir_cache.keyAtIndex(result.index).?;
+            break :dir_info_getter __info;
         };
+
+        const path = info.abs_path;
 
         // A "node_modules" directory isn't allowed to directly contain another "node_modules" directory
         var base = std.fs.path.basename(path);
@@ -1544,29 +1423,31 @@ pub const Resolver = struct {
             }
         }
 
-        // Propagate the browser scope into child directories
-        if (parent) |parent_info| {
-            info.enclosing_browser_scope = parent_info.enclosing_browser_scope;
+        if (parent_result.status != .unknown) {
+            // Propagate the browser scope into child directories
+            if (parent) |parent_info| {
+                info.enclosing_browser_scope = parent_info.enclosing_browser_scope;
 
-            // Make sure "absRealPath" is the real path of the directory (resolving any symlinks)
-            if (!r.opts.preserve_symlinks) {
-                if (parent_info.entries.get(base)) |lookup| {
-                    const entry = lookup.entry;
+                // Make sure "absRealPath" is the real path of the directory (resolving any symlinks)
+                if (!r.opts.preserve_symlinks) {
+                    if (parent_info.entries.get(base)) |lookup| {
+                        const entry = lookup.entry;
 
-                    var symlink = entry.symlink(rfs);
-                    if (symlink.len > 0) {
-                        if (r.debug_logs) |*logs| {
-                            try logs.addNote(std.fmt.allocPrint(r.allocator, "Resolved symlink \"{s}\" to \"{s}\"", .{ path, symlink }) catch unreachable);
+                        var symlink = entry.symlink(rfs);
+                        if (symlink.len > 0) {
+                            if (r.debug_logs) |*logs| {
+                                try logs.addNote(std.fmt.allocPrint(r.allocator, "Resolved symlink \"{s}\" to \"{s}\"", .{ path, symlink }) catch unreachable);
+                            }
+                            info.abs_real_path = symlink;
+                        } else if (parent_info.abs_real_path.len > 0) {
+                            // this might leak a little i'm not sure
+                            const parts = [_]string{ parent_info.abs_real_path, base };
+                            symlink = r.fs.joinAlloc(r.allocator, &parts) catch unreachable;
+                            if (r.debug_logs) |*logs| {
+                                try logs.addNote(std.fmt.allocPrint(r.allocator, "Resolved symlink \"{s}\" to \"{s}\"", .{ path, symlink }) catch unreachable);
+                            }
+                            info.abs_real_path = symlink;
                         }
-                        info.abs_real_path = symlink;
-                    } else if (parent_info.abs_real_path.len > 0) {
-                        // this might leak a little i'm not sure
-                        const parts = [_]string{ parent_info.abs_real_path, base };
-                        symlink = std.fs.path.join(r.allocator, &parts) catch unreachable;
-                        if (r.debug_logs) |*logs| {
-                            try logs.addNote(std.fmt.allocPrint(r.allocator, "Resolved symlink \"{s}\" to \"{s}\"", .{ path, symlink }) catch unreachable);
-                        }
-                        info.abs_real_path = symlink;
                     }
                 }
             }
@@ -1580,8 +1461,7 @@ pub const Resolver = struct {
 
                 if (info.package_json) |pkg| {
                     if (pkg.browser_map.count() > 0) {
-                        // it has not been written yet, so we reserve the next index
-                        info.enclosing_browser_scope = @intCast(DirInfo.Index, DirInfo.HashMap.instance._data.len);
+                        info.enclosing_browser_scope = result.index;
                     }
 
                     if (r.debug_logs) |*logs| {
@@ -1601,7 +1481,7 @@ pub const Resolver = struct {
                     const entry = lookup.entry;
                     if (entry.kind(rfs) == .file) {
                         const parts = [_]string{ path, "tsconfig.json" };
-                        tsconfig_path = try std.fs.path.join(r.allocator, &parts);
+                        tsconfig_path = try r.fs.joinAlloc(r.allocator, &parts);
                     }
                 }
                 if (tsconfig_path == null) {
@@ -1609,7 +1489,7 @@ pub const Resolver = struct {
                         const entry = lookup.entry;
                         if (entry.kind(rfs) == .file) {
                             const parts = [_]string{ path, "jsconfig.json" };
-                            tsconfig_path = try std.fs.path.join(r.allocator, &parts);
+                            tsconfig_path = try r.fs.joinAlloc(r.allocator, &parts);
                         }
                     }
                 }
@@ -1625,7 +1505,7 @@ pub const Resolver = struct {
 
                     if (err == error.ENOENT) {
                         r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Cannot find tsconfig file \"{s}\"", .{pretty}) catch unreachable;
-                    } else if (err != error.ParseErrorAlreadyLogged) {
+                    } else if (err != error.ParseErrorAlreadyLogged and err != error.IsDir) {
                         r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Cannot read file \"{s}\": {s}", .{ pretty, @errorName(err) }) catch unreachable;
                     }
                     break :brk null;
@@ -1637,7 +1517,6 @@ pub const Resolver = struct {
             info.tsconfig_json = parent.?.tsconfig_json;
         }
 
-        info.entries = entries;
-        return r.dir_cache.put(result.hash, path, info);
+        return info;
     }
 };

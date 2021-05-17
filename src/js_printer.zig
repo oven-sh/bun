@@ -1229,8 +1229,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                             p.options.indent += 1;
                         }
 
-                        var i: usize = 0;
-                        while (i < e.properties.len) : (i += 1) {
+                        for (e.properties) |property, i| {
                             if (i != 0) {
                                 p.print(",");
                                 if (e.is_single_line) {
@@ -1242,7 +1241,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                                 p.printNewline();
                                 p.printIndent();
                             }
-                            p.printProperty(e.properties[i]);
+                            p.printProperty(property);
                         }
 
                         if (!e.is_single_line) {
@@ -1642,6 +1641,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                 p.printExpr(item.value.?, .comma, ExprFlag.None());
                 return;
             }
+            const _key = item.key orelse unreachable;
 
             if (item.flags.is_static) {
                 p.print("static");
@@ -1686,7 +1686,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
 
             if (item.flags.is_computed) {
                 p.print("[");
-                p.printExpr(item.key.?, .comma, ExprFlag.None());
+                p.printExpr(_key, .comma, ExprFlag.None());
                 p.print("]");
 
                 if (item.value) |val| {
@@ -1711,12 +1711,12 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                 return;
             }
 
-            switch (item.key.?.data) {
+            switch (_key.data) {
                 .e_private_identifier => |key| {
                     p.printSymbol(key.ref);
                 },
                 .e_string => |key| {
-                    p.addSourceMapping(item.key.?.loc);
+                    p.addSourceMapping(_key.loc);
                     if (key.isUTF8()) {
                         p.printSpaceBeforeIdentifier();
                         p.printIdentifier(key.utf8);
@@ -1786,14 +1786,21 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                             }
                         }
                     } else {
-                        const c = p.bestQuoteCharForString(key.value, false);
-                        p.print(c);
-                        p.printQuotedUTF16(key.value, c);
-                        p.print(c);
+                        if (key.isUTF8()) {
+                            const c = p.bestQuoteCharForString(key.utf8, false);
+                            p.print(c);
+                            p.printIdentifier(key.utf8);
+                            p.print(c);
+                        } else {
+                            const c = p.bestQuoteCharForString(key.value, false);
+                            p.print(c);
+                            p.printQuotedUTF16(key.value, c);
+                            p.print(c);
+                        }
                     }
                 },
                 else => {
-                    p.printExpr(item.key.?, .lowest, ExprFlag{});
+                    p.printExpr(_key, .lowest, ExprFlag{});
                 },
             }
 

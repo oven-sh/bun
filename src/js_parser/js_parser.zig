@@ -533,25 +533,27 @@ pub const SideEffects = enum {
                 equality.ok = equality.equal;
             },
             .e_undefined => |l| {
-                equality.equal = @as(Expr.Tag, right) == Expr.Tag.e_undefined;
-                equality.ok = equality.equal;
+                equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_undefined;
+                equality.equal = equality.ok;
             },
             .e_boolean => |l| {
                 equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_boolean;
-                equality.equal = l.value == right.e_boolean.value;
+                equality.equal = equality.ok and l.value == right.e_boolean.value;
             },
             .e_number => |l| {
                 equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_number;
-                equality.equal = l.value == right.e_number.value;
+                equality.equal = equality.ok and l.value == right.e_number.value;
             },
             .e_big_int => |l| {
                 equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_big_int;
-                equality.equal = strings.eql(l.value, right.e_big_int.value);
+                equality.equal = equality.ok and strings.eql(l.value, right.e_big_int.value);
             },
             .e_string => |l| {
                 equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_string;
-                const r = right.e_string;
-                equality.equal = r.eql(E.String, l);
+                if (equality.ok) {
+                    const r = right.e_string;
+                    equality.equal = r.eql(E.String, l);
+                }
             },
             else => {},
         }
@@ -790,7 +792,7 @@ pub const SideEffects = enum {
                 return Result{ .ok = true, .value = !strings.eqlComptime(e.value, "0"), .side_effects = .no_side_effects };
             },
             .e_string => |e| {
-                return Result{ .ok = true, .value = e.value.len > 0, .side_effects = .no_side_effects };
+                return Result{ .ok = true, .value = std.math.max(e.value.len, e.utf8.len) > 0, .side_effects = .no_side_effects };
             },
             .e_function, .e_arrow, .e_reg_exp => {
                 return Result{ .ok = true, .value = true, .side_effects = .no_side_effects };
@@ -1790,7 +1792,7 @@ pub const P = struct {
             }
             const str = arg.data.e_string;
 
-            const import_record_index = p.addImportRecord(.dynamic, arg.loc, p.lexer.utf16ToString(str.value));
+            const import_record_index = p.addImportRecord(.dynamic, arg.loc, str.string(p.allocator) catch unreachable);
             p.import_records.items[import_record_index].handles_import_errors = (state.is_await_target and p.fn_or_arrow_data_visit.try_body_count != 0) or state.is_then_catch_target;
             p.import_records_for_current_part.append(import_record_index) catch unreachable;
             return p.e(E.Import{
@@ -1892,13 +1894,14 @@ pub const P = struct {
     }
 
     pub fn findSymbol(p: *P, loc: logger.Loc, name: string) !FindSymbolResult {
-        var ref: Ref = Ref{};
+        var ref: Ref = undefined;
         var declare_loc: logger.Loc = undefined;
         var is_inside_with_scope = false;
         var did_forbid_argumen = false;
-        var scope = p.current_scope;
+        var _scope: ?*Scope = p.current_scope;
+        var did_match = false;
 
-        while (true) {
+        while (_scope) |scope| : (_scope = _scope.?.parent) {
 
             // Track if we're inside a "with" statement body
             if (scope.kind == .with) {
@@ -1916,19 +1919,17 @@ pub const P = struct {
             if (scope.members.get(name)) |member| {
                 ref = member.ref;
                 declare_loc = member.loc;
+                did_match = true;
                 break;
             }
+        }
 
-            if (scope.parent) |parent| {
-                scope = parent;
-            } else {
-                // Allocate an "unbound" symbol
-                p.checkForNonBMPCodePoint(loc, name);
-                ref = try p.newSymbol(.unbound, name);
-                declare_loc = loc;
-                try p.module_scope.members.put(name, js_ast.Scope.Member{ .ref = ref, .loc = logger.Loc.Empty });
-                break;
-            }
+        if (!did_match) {
+            // Allocate an "unbound" symbol
+            p.checkForNonBMPCodePoint(loc, name);
+            ref = p.newSymbol(.unbound, name) catch unreachable;
+            declare_loc = loc;
+            p.module_scope.members.put(name, js_ast.Scope.Member{ .ref = ref, .loc = logger.Loc.Empty }) catch unreachable;
         }
 
         // If we had to pass through a "with" statement body to get to the symbol
@@ -1997,9 +1998,12 @@ pub const P = struct {
         // code regions since those will be culled.
         if (!p.is_control_flow_dead) {
             p.symbols.items[ref.inner_index].use_count_estimate += 1;
-            var use = p.symbol_uses.get(ref) orelse Symbol.Use{};
-            use.count_estimate += 1;
-            p.symbol_uses.put(ref, use) catch unreachable;
+            var result = p.symbol_uses.getOrPut(ref) catch unreachable;
+            if (!result.found_existing) {
+                result.entry.value = Symbol.Use{ .count_estimate = 1 };
+            } else {
+                result.entry.value.count_estimate += 1;
+            }
         }
 
         // The correctness of TypeScript-to-JavaScript conversion relies on accurate
@@ -2283,7 +2287,58 @@ pub const P = struct {
                 if (!symbol.isHoisted()) {
                     continue :nextMember;
                 }
+
+                // Check for collisions that would prevent to hoisting "var" symbols up to the enclosing function scope
+                var __scope = scope.parent;
+
+                while (__scope) |_scope| {
+                    // Variable declarations hoisted past a "with" statement may actually end
+                    // up overwriting a property on the target of the "with" statement instead
+                    // of initializing the variable. We must not rename them or we risk
+                    // causing a behavior change.
+                    //
+                    //   var obj = { foo: 1 }
+                    //   with (obj) { var foo = 2 }
+                    //   assert(foo === undefined)
+                    //   assert(obj.foo === 2)
+                    //
+                    if (_scope.kind == .with) {
+                        symbol.must_not_be_renamed = true;
+                    }
+
+                    if (_scope.members.getEntry(symbol.original_name)) |existing_member_entry| {
+                        const existing_member = existing_member_entry.value;
+                        const existing_symbol: Symbol = p.symbols.items[existing_member.ref.inner_index];
+
+                        // We can hoist the symbol from the child scope into the symbol in
+                        // this scope if:
+                        //
+                        //   - The symbol is unbound (i.e. a global variable access)
+                        //   - The symbol is also another hoisted variable
+                        //   - The symbol is a function of any kind and we're in a function or module scope
+                        //
+                        // Is this unbound (i.e. a global access) or also hoisted?
+                        if (existing_symbol.kind == .unbound or existing_symbol.kind == .hoisted or
+                            (Symbol.isKindFunction(existing_symbol.kind) and (_scope.kind == .entry or _scope.kind == .function_body)))
+                        {
+                            // Silently merge this symbol into the existing symbol
+                            symbol.link = existing_member.ref;
+                            _scope.members.put(symbol.original_name, existing_member) catch unreachable;
+                            continue :nextMember;
+                        }
+                    }
+
+                    if (_scope.kindStopsHoisting()) {
+                        _scope.members.put(symbol.original_name, res.value) catch unreachable;
+                        break;
+                    }
+                    __scope = _scope.parent;
+                }
             }
+        }
+
+        for (scope.children.items) |_item, i| {
+            p.hoistSymbols(scope.children.items[i]);
         }
     }
 
@@ -2737,7 +2792,7 @@ pub const P = struct {
             }
 
             var parseStmtOpts = ParseStatementOptions{};
-            p.declareBinding(.hoisted, arg, &parseStmtOpts) catch unreachable;
+            p.declareBinding(.hoisted, &arg, &parseStmtOpts) catch unreachable;
 
             var default_value: ?ExprNodeIndex = null;
             if (!func.flags.has_rest_arg and p.lexer.token == .t_equals) {
@@ -3523,7 +3578,7 @@ pub const P = struct {
                     // jarred: TIL!
                     if (p.lexer.token != .t_open_brace) {
                         try p.lexer.expect(.t_open_paren);
-                        const value = try p.parseBinding();
+                        var value = try p.parseBinding();
 
                         // Skip over types
                         if (p.options.ts and p.lexer.token == .t_colon) {
@@ -3542,7 +3597,7 @@ pub const P = struct {
                             else => {},
                         }
                         stmtOpts = ParseStatementOptions{};
-                        try p.declareBinding(kind, value, &stmtOpts);
+                        try p.declareBinding(kind, &value, &stmtOpts);
                         binding = value;
                     }
 
@@ -4533,6 +4588,8 @@ pub const P = struct {
                 const name = p.lexer.identifier;
                 const loc = p.lexer.loc();
 
+                const e_str = p.lexer.toEString();
+
                 if (!p.lexer.isIdentifierOrKeyword()) {
                     try p.lexer.expect(.t_identifier);
                 }
@@ -4541,7 +4598,7 @@ pub const P = struct {
 
                 const ref = p.storeNameInRef(name) catch unreachable;
 
-                key = p.e(p.lexer.toEString(), loc);
+                key = p.e(e_str, loc);
 
                 if (p.lexer.token != .t_colon and p.lexer.token != .t_open_paren) {
                     const value = p.b(B.Identifier{ .ref = ref }, loc);
@@ -4590,7 +4647,7 @@ pub const P = struct {
 
             var value: ?js_ast.Expr = null;
             var local = try p.parseBinding();
-            p.declareBinding(kind, local, opts) catch unreachable;
+            p.declareBinding(kind, &local, opts) catch unreachable;
 
             // Skip over types
             if (p.options.ts) {
@@ -5097,9 +5154,9 @@ pub const P = struct {
 
         try p.lexer.expect(T.t_equals_greater_than);
 
-        for (args) |arg| {
+        for (args) |*arg| {
             var opts = ParseStatementOptions{};
-            try p.declareBinding(Symbol.Kind.hoisted, arg.binding, &opts);
+            try p.declareBinding(Symbol.Kind.hoisted, &arg.binding, &opts);
         }
 
         // The ability to call "super()" is inherited by arrow functions
@@ -5125,7 +5182,7 @@ pub const P = struct {
         return E.Arrow{ .args = args, .prefer_expr = true, .body = G.FnBody{ .loc = arrow_loc, .stmts = stmts } };
     }
 
-    pub fn declareBinding(p: *P, kind: Symbol.Kind, binding: BindingNodeIndex, opts: *ParseStatementOptions) !void {
+    pub fn declareBinding(p: *P, kind: Symbol.Kind, binding: *BindingNodeIndex, opts: *ParseStatementOptions) !void {
         switch (binding.data) {
             .b_missing => {},
             .b_identifier => |bind| {
@@ -5135,15 +5192,14 @@ pub const P = struct {
             },
 
             .b_array => |bind| {
-                for (bind.items) |item| {
-                    p.declareBinding(kind, item.binding, opts) catch unreachable;
+                for (bind.items) |item, i| {
+                    p.declareBinding(kind, &bind.items[i].binding, opts) catch unreachable;
                 }
             },
 
             .b_object => |bind| {
                 for (bind.properties) |*prop| {
-                    const value = prop.value;
-                    p.declareBinding(kind, value, opts) catch unreachable;
+                    p.declareBinding(kind, &prop.value, opts) catch unreachable;
                 }
             },
 
@@ -5571,7 +5627,7 @@ pub const P = struct {
                     }
                 }
 
-                key = p.e(p.lexer.toEString(), name_range.loc);
+                key = p.e(E.String{ .utf8 = name }, name_range.loc);
 
                 // Parse a shorthand property
                 if (!opts.is_class and kind == .normal and p.lexer.token != .t_colon and p.lexer.token != .t_open_paren and p.lexer.token != .t_less_than and !opts.is_generator and !js_lexer.Keywords.has(name)) {
@@ -5691,7 +5747,7 @@ pub const P = struct {
             if (opts.is_class and !is_computed) {
                 switch (key.data) {
                     .e_string => |str| {
-                        if (!opts.is_static and strings.eqlUtf16("constructor", str.value)) {
+                        if (!opts.is_static and str.eql(string, "constructor")) {
                             if (kind == .get) {
                                 p.log.addRangeError(p.source, key_range, "Class constructor cannot be a getter") catch unreachable;
                             } else if (kind == .set) {
@@ -5703,7 +5759,7 @@ pub const P = struct {
                             } else {
                                 is_constructor = true;
                             }
-                        } else if (opts.is_static and strings.eqlUtf16("prototype", str.value)) {
+                        } else if (opts.is_static and str.eql(string, "prototype")) {
                             p.log.addRangeError(p.source, key_range, "Invalid static method name \"prototype\"") catch unreachable;
                         }
                     },
@@ -5894,7 +5950,7 @@ pub const P = struct {
                 if (opts.ts_decorators.len > 0) {
                     switch ((property.key orelse p.panic("Internal error: Expected property {s} to have a key.", .{property})).data) {
                         .e_string => |str| {
-                            if (strings.eqlUtf16("constructor", str.value)) {
+                            if (str.eql(string, "constructor")) {
                                 p.log.addError(p.source, first_decorator_loc, "TypeScript does not allow decorators on class constructors") catch unreachable;
                             }
                         },
@@ -8586,7 +8642,7 @@ pub const P = struct {
                         in.assign_target,
                         is_delete_target,
                         e_.target,
-                        if (e_.index.data.e_string.isUTF8()) p.lexer.utf16ToString(e_.index.data.e_string.value) else e_.index.data.e_string.utf8,
+                        e_.index.data.e_string.string(p.allocator) catch unreachable,
                         e_.index.loc,
                         is_call_target,
                     )) |val| {
@@ -8598,7 +8654,7 @@ pub const P = struct {
                 // though this is a run-time error, we make it a compile-time error when
                 // bundling because scope hoisting means these will no longer be run-time
                 // errors.
-                if ((in.assign_target != .none or is_delete_target) and @as(Expr.Tag, e_.target.data) == .e_identifier) {
+                if ((in.assign_target != .none or is_delete_target) and @as(Expr.Tag, e_.target.data) == .e_identifier and p.symbols.items[e_.target.data.e_identifier.ref.inner_index].kind == .import) {
                     const r = js_lexer.rangeOfIdentifier(p.source, e_.target.loc);
                     p.log.addRangeErrorFmt(
                         p.source,
@@ -8818,14 +8874,10 @@ pub const P = struct {
 
                 var has_spread = false;
                 var has_proto = false;
-                var i: usize = 0;
-                while (i < e_.properties.len) : (i += 1) {
-                    var property = e_.properties[i];
-
+                for (e_.properties) |*property, i| {
                     if (property.kind != .spread) {
-                        const key = p.visitExpr(property.key orelse Global.panic("Expected property key", .{}));
-                        e_.properties[i].key = key;
-
+                        property.key = p.visitExpr(property.key orelse Global.panic("Expected property key", .{}));
+                        const key = property.key.?;
                         // Forbid duplicate "__proto__" properties according to the specification
                         if (!property.flags.is_computed and !property.flags.was_shorthand and !property.flags.is_method and in.assign_target == .none and key.data.isStringValue() and strings.eqlComptime(
                             // __proto__ is utf8, assume it lives in refs
@@ -8873,9 +8925,6 @@ pub const P = struct {
                             }
                         }
                     }
-
-                    // TODO: can we avoid htis copy
-                    e_.properties[i] = property;
                 }
             },
             .e_import => |e_| {
@@ -9208,7 +9257,7 @@ pub const P = struct {
                 for (ex.properties) |property| {
 
                     // The key must still be evaluated if it's computed or a spread
-                    if (property.kind == .spread or property.flags.is_computed) {
+                    if (property.kind == .spread or property.flags.is_computed or property.flags.is_spread) {
                         return false;
                     }
 
@@ -9554,9 +9603,12 @@ pub const P = struct {
                 if (data.label) |*label| {
                     const name = p.loadNameFromRef(label.ref orelse p.panic("Expected label to have a ref", .{}));
                     const res = p.findLabelSymbol(label.loc, name);
-
-                    label.ref = res.ref;
-                } else if (p.fn_or_arrow_data_visit.is_inside_loop and !p.fn_or_arrow_data_visit.is_inside_switch) {
+                    if (res.found) {
+                        label.ref = res.ref;
+                    } else {
+                        data.label = null;
+                    }
+                } else if (!p.fn_or_arrow_data_visit.is_inside_loop and !p.fn_or_arrow_data_visit.is_inside_switch) {
                     const r = js_lexer.rangeOfIdentifier(p.source, stmt.loc);
                     p.log.addRangeError(p.source, r, "Cannot use \"break\" here") catch unreachable;
                 }
@@ -10289,9 +10341,7 @@ pub const P = struct {
                 }
             },
             .b_object => |bind| {
-                var i: usize = 0;
-                while (i < bind.properties.len) : (i += 1) {
-                    var property = bind.properties[i];
+                for (bind.properties) |*property| {
                     if (!property.flags.is_spread) {
                         property.key = p.visitExpr(property.key);
                     }
@@ -10312,7 +10362,6 @@ pub const P = struct {
                             else => {},
                         }
                     }
-                    bind.properties[i] = property;
                 }
             },
             else => {
@@ -10377,19 +10426,17 @@ pub const P = struct {
 
         var _scope: ?*Scope = p.current_scope;
 
-        while (_scope) |scope| : (_scope = scope.parent) {
-            var label_ref = scope.label_ref orelse continue;
-
-            if (!scope.kindStopsHoisting() or (scope.kind != .label) or !strings.eql(name, p.symbols.items[label_ref.inner_index].original_name)) {
-                continue;
+        while (_scope != null and !_scope.?.kindStopsHoisting()) : (_scope = _scope.?.parent.?) {
+            const scope = _scope orelse unreachable;
+            const label_ref = scope.label_ref orelse continue;
+            if (scope.kind == .label and strings.eql(name, p.symbols.items[label_ref.inner_index].original_name)) {
+                // Track how many times we've referenced this symbol
+                p.recordUsage(label_ref);
+                res.ref = label_ref;
+                res.is_loop = scope.label_stmt_is_loop;
+                res.found = true;
+                return res;
             }
-
-            // Track how many times we've referenced this symbol
-            p.recordUsage(label_ref);
-            res.ref = label_ref;
-            res.is_loop = scope.label_stmt_is_loop;
-            res.found = true;
-            break;
         }
 
         const r = js_lexer.rangeOfIdentifier(p.source, loc);
@@ -10471,12 +10518,7 @@ pub const P = struct {
             if (is_private) {} else if (!property.flags.is_method and !property.flags.is_computed) {
                 if (property.key) |key| {
                     if (@as(Expr.Tag, key.data) == .e_string) {
-                        const str = key.data.e_string;
-                        if (str.isUTF8()) {
-                            name_to_keep = p.lexer.utf16ToString(key.data.e_string.value);
-                        } else {
-                            name_to_keep = str.utf8;
-                        }
+                        name_to_keep = key.data.e_string.string(p.allocator) catch unreachable;
                     }
                 }
             }
@@ -10869,8 +10911,8 @@ pub const P = struct {
             // with no statements
             while (i < parts.len) : (i += 1) {
                 var part = parts[i];
-                _ = p.import_records_for_current_part.toOwnedSlice();
-                _ = p.declared_symbols.toOwnedSlice();
+                p.import_records_for_current_part.shrinkRetainingCapacity(0);
+                p.declared_symbols.shrinkRetainingCapacity(0);
 
                 var result = try ImportScanner.scan(p, part.stmts);
                 kept_import_equals = kept_import_equals or result.kept_import_equals;
@@ -10898,6 +10940,22 @@ pub const P = struct {
         }
 
         parts = parts[0..parts_end];
+        // Do a second pass for exported items now that imported items are filled out
+        for (parts) |part| {
+            for (part.stmts) |stmt| {
+                switch (stmt.data) {
+                    .s_export_clause => |clause| {
+                        for (clause.items) |item| {
+                            if (p.named_imports.getEntry(item.name.ref.?)) |_import| {
+                                _import.value.is_exported = true;
+                            }
+                        }
+                    },
+                    else => {},
+                }
+            }
+        }
+
         // Analyze cross-part dependencies for tree shaking and code splitting
 
         {

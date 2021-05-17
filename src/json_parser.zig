@@ -93,17 +93,7 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
                     return p.e(E.Null{}, loc);
                 },
                 .t_string_literal => {
-                    var str: E.String = undefined;
-                    if (p.lexer.string_literal_is_ascii) {
-                        str = E.String{
-                            .utf8 = p.lexer.string_literal_slice,
-                        };
-                    } else {
-                        const value = p.lexer.stringLiteralUTF16();
-                        str = E.String{
-                            .value = value,
-                        };
-                    }
+                    var str: E.String = p.lexer.toEString();
 
                     try p.lexer.next();
                     return p.e(str, loc);

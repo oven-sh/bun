@@ -19,7 +19,7 @@ pub const Cache = struct {
 
         pub fn init(allocator: *std.mem.Allocator) Set {
             return Set{
-                .js = JavaScript{},
+                .js = JavaScript.init(allocator),
                 .fs = Fs{
                     .mutex = Mutex.init(),
                     .entries = std.StringHashMap(Fs.Entry).init(allocator),
@@ -130,13 +130,14 @@ pub const Cache = struct {
     };
 
     pub const JavaScript = struct {
-        pub const Entry = struct {
-            ast: js_ast.Ast,
-            source: logger.Source,
-            ok: bool,
-            msgs: []logger.Msg,
-        };
+        mutex: Mutex,
+        entries: std.StringHashMap(Result),
+
         pub const Result = js_ast.Result;
+
+        pub fn init(allocator: *std.mem.Allocator) JavaScript {
+            return JavaScript{ .mutex = Mutex.init(), .entries = std.StringHashMap(Result).init(allocator) };
+        }
         // For now, we're not going to cache JavaScript ASTs.
         // It's probably only relevant when bundling for production.
         pub fn parse(
@@ -147,19 +148,31 @@ pub const Cache = struct {
             log: *logger.Log,
             source: *const logger.Source,
         ) anyerror!?js_ast.Ast {
+            cache.mutex.lock();
+            defer cache.mutex.unlock();
+
+            var get_or_put_result = try cache.entries.getOrPut(source.key_path.text);
+
+            if (get_or_put_result.found_existing) {
+                return if (get_or_put_result.entry.value.ok) get_or_put_result.entry.value.ast else null;
+            }
+
             var temp_log = logger.Log.init(allocator);
 
             var parser = js_parser.Parser.init(opts, &temp_log, source, defines, allocator) catch |err| {
                 temp_log.appendTo(log) catch {};
+                get_or_put_result.entry.value = Result{ .ast = undefined, .ok = false };
+
                 return null;
             };
-            const result = parser.parse() catch |err| {
+            get_or_put_result.entry.value = parser.parse() catch |err| {
+                get_or_put_result.entry.value = Result{ .ast = undefined, .ok = false };
                 temp_log.appendTo(log) catch {};
                 return null;
             };
 
             temp_log.appendTo(log) catch {};
-            return if (result.ok) result.ast else null;
+            return if (get_or_put_result.entry.value.ok) get_or_put_result.entry.value.ast else null;
         }
     };
 

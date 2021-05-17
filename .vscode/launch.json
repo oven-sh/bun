@@ -21,14 +21,30 @@
     //     "--resolve=disable",
     //     "--cwd",
     //     "${workspaceFolder}",
-    //     "src/test/fixtures/cannot-assign-to-import-bug.js",
+    //     "/Users/jarredsumner/Code/esdev/src/test/fixtures/exports-bug.js",
     //     "-o",
     //     "out"
     //   ],
     //   "cwd": "${workspaceFolder}",
     //   "console": "internalConsole"
     // }
-
+    // {
+    //   "type": "lldb",
+    //   "request": "launch",
+    //   "name": "Dev Launch",
+    //   "program": "${workspaceFolder}/build/debug/macos-x86_64/esdev",
+    //   "preLaunchTask": "build",
+    //   "args": [
+    //     "--resolve=disable",
+    //     "--cwd",
+    //     "/Users/jarredsumner/Code/esdev/src/test/fixtures/",
+    //     "/Users/jarredsumner/Code/esdev/src/test/fixtures/symbols-bug.js",
+    //     "-o",
+    //     "out"
+    //   ],
+    //   "cwd": "${workspaceFolder}",
+    //   "console": "internalConsole"
+    // }
     {
       "type": "lldb",
       "request": "launch",
@@ -38,14 +54,48 @@
       "args": [
         "--resolve=dev",
         "--cwd",
-        "./src/api/demo",
-        "pages/index.js",
+        "/Users/jarredsumner/Builds/esbuild/bench/three/src/",
+        "./entry.js",
         "-o",
         "out"
       ],
       "cwd": "${workspaceFolder}",
       "console": "internalConsole"
     }
+    // {
+    //   "type": "lldb",
+    //   "request": "launch",
+    //   "name": "Dev Launch",
+    //   "program": "${workspaceFolder}/build/debug/macos-x86_64/esdev",
+    //   "preLaunchTask": "build",
+    //   "args": [
+    //     "--resolve=dev",
+    //     "--cwd",
+    //     "/Users/jarredsumner/Builds/esbuild/bench/three/src/",
+    //     "./entry.js",
+    //     "-o",
+    //     "out"
+    //   ],
+    //   "cwd": "${workspaceFolder}",
+    //   "console": "internalConsole"
+    // }
+    // {
+    //   "type": "lldb",
+    //   "request": "launch",
+    //   "name": "Dev Launch",
+    //   "program": "${workspaceFolder}/build/debug/macos-x86_64/esdev",
+    //   "preLaunchTask": "build",
+    //   "args": [
+    //     "--resolve=dev",
+    //     "--cwd",
+    //     "./src/api/demo",
+    //     "pages/index.js",
+    //     "-o",
+    //     "out"
+    //   ],
+    //   "cwd": "${workspaceFolder}",
+    //   "console": "internalConsole"
+    // }
     // {
     //   "type": "lldb",
     //   "request": "launch",

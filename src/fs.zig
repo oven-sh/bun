@@ -14,10 +14,24 @@ const allocators = @import("./allocators.zig");
 
 threadlocal var scratch_lookup_buffer: [256]u8 = undefined;
 
+pub const Preallocate = struct {
+    pub const Counts = struct {
+        pub const dir_entry: usize = 1024;
+        pub const files: usize = 2048;
+    };
+};
+
 pub const FileSystem = struct {
     allocator: *std.mem.Allocator,
     top_level_dir: string = "/",
     fs: Implementation,
+
+    dirname_store: *DirnameStore,
+    filename_store: *FilenameStore,
+    pub var instance: FileSystem = undefined;
+
+    pub const DirnameStore = allocators.BSSStringList(Preallocate.Counts.dir_entry, 256);
+    pub const FilenameStore = allocators.BSSStringList(Preallocate.Counts.files, 64);
 
     pub const Error = error{
         ENOENT,
@@ -27,21 +41,73 @@ pub const FileSystem = struct {
     };
 
     pub fn init1(allocator: *std.mem.Allocator, top_level_dir: ?string, enable_watcher: bool) !*FileSystem {
-        var files = try allocator.create(FileSystem);
-        files.* = FileSystem{
+        const _top_level_dir = top_level_dir orelse (if (isBrowser) "/project" else try std.process.getCwdAlloc(allocator));
+
+        instance = FileSystem{
             .allocator = allocator,
-            .top_level_dir = top_level_dir orelse (if (isBrowser) "/project" else try std.process.getCwdAlloc(allocator)),
-            .fs = Implementation.init(allocator, enable_watcher),
+            .top_level_dir = _top_level_dir,
+            .fs = Implementation.init(allocator, _top_level_dir, enable_watcher),
             // .stats = std.StringHashMap(Stat).init(allocator),
+            .dirname_store = DirnameStore.init(allocator),
+            .filename_store = FilenameStore.init(allocator),
         };
 
-        return files;
+        instance.fs.parent_fs = &instance;
+        _ = DirEntry.EntryStore.init(allocator);
+        return &instance;
     }
 
     pub const DirEntry = struct {
-        pub const EntryMap = std.StringArrayHashMap(*Entry);
+        pub const EntryMap = std.StringHashMap(EntryStore.ListIndex);
+        pub const EntryStore = allocators.BSSList(Entry, Preallocate.Counts.files);
         dir: string,
         data: EntryMap,
+
+        pub fn addEntry(dir: *DirEntry, entry: std.fs.Dir.Entry) !void {
+            var _kind: Entry.Kind = undefined;
+            switch (entry.kind) {
+                .Directory => {
+                    _kind = Entry.Kind.dir;
+                },
+                .SymLink => {
+                    // This might be wrong!
+                    _kind = Entry.Kind.file;
+                },
+                .File => {
+                    _kind = Entry.Kind.file;
+                },
+                else => {
+                    return;
+                },
+            }
+            // entry.name only lives for the duration of the iteration
+            var name = FileSystem.FilenameStore.editableSlice(try FileSystem.FilenameStore.instance.append(entry.name));
+
+            for (entry.name) |c, i| {
+                name[i] = std.ascii.toLower(c);
+            }
+
+            var symlink: []u8 = "";
+
+            if (entry.kind == std.fs.Dir.Entry.Kind.SymLink) {
+                symlink = name;
+            }
+            const index = try EntryStore.instance.append(Entry{
+                .base = name,
+                .dir = dir.dir,
+                .mutex = Mutex.init(),
+                // Call "stat" lazily for performance. The "@material-ui/icons" package
+                // contains a directory with over 11,000 entries in it and running "stat"
+                // for each entry was a big performance issue for that package.
+                .need_stat = entry.kind == .SymLink,
+                .cache = Entry.Cache{
+                    .symlink = symlink,
+                    .kind = _kind,
+                },
+            });
+
+            try dir.data.put(name, index);
+        }
 
         pub fn updateDir(i: *DirEntry, dir: string) void {
             var iter = i.data.iterator();
@@ -67,9 +133,11 @@ pub const FileSystem = struct {
         pub fn deinit(d: *DirEntry) void {
             d.data.allocator.free(d.dir);
 
-            for (d.data.items()) |item| {
-                item.value.deinit(d.data.allocator);
+            var iter = d.data.iterator();
+            while (iter.next()) |file_entry| {
+                EntryStore.instance.at(file_entry.value).?.deinit(d.data.allocator);
             }
+
             d.data.deinit();
         }
 
@@ -83,7 +151,8 @@ pub const FileSystem = struct {
                 end = i;
             }
             const query = scratch_lookup_buffer[0 .. end + 1];
-            const result = entry.data.get(query) orelse return null;
+            const result_index = entry.data.get(query) orelse return null;
+            const result = EntryStore.instance.at(result_index) orelse return null;
             if (!strings.eql(result.base, query)) {
                 return Entry.Lookup{ .entry = result, .diff_case = Entry.Lookup.DifferentCase{
                     .dir = entry.dir,
@@ -132,8 +201,8 @@ pub const FileSystem = struct {
         };
 
         pub fn kind(entry: *Entry, fs: *Implementation) Kind {
-            entry.mutex.lock();
-            defer entry.mutex.unlock();
+            // entry.mutex.lock();
+            // defer entry.mutex.unlock();
             if (entry.need_stat) {
                 entry.need_stat = false;
                 entry.cache = fs.kind(entry.dir, entry.base) catch unreachable;
@@ -142,8 +211,8 @@ pub const FileSystem = struct {
         }
 
         pub fn symlink(entry: *Entry, fs: *Implementation) string {
-            entry.mutex.lock();
-            defer entry.mutex.unlock();
+            // entry.mutex.lock();
+            // defer entry.mutex.unlock();
             if (entry.need_stat) {
                 entry.need_stat = false;
                 entry.cache = fs.kind(entry.dir, entry.base) catch unreachable;
@@ -189,11 +258,14 @@ pub const FileSystem = struct {
         limiter: Limiter,
         watcher: ?std.StringHashMap(WatchData) = null,
         watcher_mutex: Mutex = Mutex.init(),
+        cwd: string,
+        parent_fs: *FileSystem = undefined,
 
-        pub fn init(allocator: *std.mem.Allocator, enable_watcher: bool) RealFS {
+        pub fn init(allocator: *std.mem.Allocator, cwd: string, enable_watcher: bool) RealFS {
             return RealFS{
                 .entries = EntriesOption.Map.init(allocator),
                 .allocator = allocator,
+                .cwd = cwd,
                 .limiter = Limiter.init(allocator),
                 .watcher = if (enable_watcher) std.StringHashMap(WatchData).init(allocator) else null,
             };
@@ -306,7 +378,7 @@ pub const FileSystem = struct {
             // This custom map implementation:
             // - Preallocates a fixed amount of directory name space
             // - Doesn't store directory names which don't exist.
-            pub const Map = allocators.BSSMap(EntriesOption, 1024, true, 128);
+            pub const Map = allocators.BSSMap(EntriesOption, Preallocate.Counts.dir_entry, false, 128);
         };
 
         // Limit the number of files open simultaneously to avoid ulimit issues
@@ -337,7 +409,7 @@ pub const FileSystem = struct {
         };
 
         pub fn openDir(fs: *RealFS, unsafe_dir_string: string) std.fs.File.OpenError!std.fs.Dir {
-            return try std.fs.openDirAbsolute(unsafe_dir_string, std.fs.Dir.OpenDirOptions{ .iterate = true, .access_sub_paths = true });
+            return try std.fs.openDirAbsolute(unsafe_dir_string, std.fs.Dir.OpenDirOptions{ .iterate = true, .access_sub_paths = true, .no_follow = true });
         }
 
         fn readdir(
@@ -349,48 +421,10 @@ pub const FileSystem = struct {
             defer fs.limiter.after();
 
             var iter: std.fs.Dir.Iterator = handle.iterate();
-            var dir = DirEntry.init("", fs.allocator);
+            var dir = DirEntry.init(_dir, fs.allocator);
             errdefer dir.deinit();
             while (try iter.next()) |_entry| {
-                const entry: std.fs.Dir.Entry = _entry;
-                var _kind: Entry.Kind = undefined;
-                switch (entry.kind) {
-                    .Directory => {
-                        _kind = Entry.Kind.dir;
-                    },
-                    .SymLink => {
-                        // This might be wrong!
-                        _kind = Entry.Kind.file;
-                    },
-                    .File => {
-                        _kind = Entry.Kind.file;
-                    },
-                    else => {
-                        continue;
-                    },
-                }
-
-                // entry.name only lives for the duration of the iteration
-                var name = try fs.allocator.alloc(u8, entry.name.len);
-                for (entry.name) |c, i| {
-                    name[i] = std.ascii.toLower(c);
-                }
-                var entry_ptr = try fs.allocator.create(Entry);
-                entry_ptr.* = Entry{
-                    .base = name,
-                    .dir = "",
-                    .mutex = Mutex.init(),
-                    // Call "stat" lazily for performance. The "@material-ui/icons" package
-                    // contains a directory with over 11,000 entries in it and running "stat"
-                    // for each entry was a big performance issue for that package.
-                    .need_stat = true,
-                    .cache = Entry.Cache{
-                        .symlink = if (entry.kind == std.fs.Dir.Entry.Kind.SymLink) (try fs.allocator.dupe(u8, name)) else "",
-                        .kind = _kind,
-                    },
-                };
-
-                try dir.data.put(name, entry_ptr);
+                try dir.addEntry(_entry);
             }
 
             return dir;
@@ -407,7 +441,7 @@ pub const FileSystem = struct {
                 fs.entries_mutex.lock();
                 defer fs.entries_mutex.unlock();
                 var get_or_put_result = try fs.entries.getOrPut(dir);
-                var opt = try fs.entries.put(null, false, &get_or_put_result, EntriesOption{
+                var opt = try fs.entries.put(&get_or_put_result, EntriesOption{
                     .err = DirEntry.Err{ .original_err = err, .canonical_error = err },
                 });
 
@@ -422,7 +456,8 @@ pub const FileSystem = struct {
 
         threadlocal var temp_entries_option: EntriesOption = undefined;
 
-        pub fn readDirectory(fs: *RealFS, dir: string, _handle: ?std.fs.Dir, recursive: bool) !*EntriesOption {
+        pub fn readDirectory(fs: *RealFS, _dir: string, _handle: ?std.fs.Dir, recursive: bool) !*EntriesOption {
+            var dir = _dir;
             var cache_result: ?allocators.Result = null;
 
             if (!fs.do_not_cache_entries) {
@@ -446,6 +481,11 @@ pub const FileSystem = struct {
                 }
             }
 
+            // if we get this far, it's a real directory, so we can just store the dir name.
+            if (_handle == null) {
+                dir = try FilenameStore.instance.append(_dir);
+            }
+
             // Cache miss: read the directory entries
             const entries = fs.readdir(
                 dir,
@@ -454,21 +494,22 @@ pub const FileSystem = struct {
                 return fs.readDirectoryError(dir, err) catch unreachable;
             };
 
-            if (fs.watcher) |*watcher| {
-                fs.watcher_mutex.lock();
-                defer fs.watcher_mutex.unlock();
-                var _entries = entries.data.items();
-                const names = try fs.allocator.alloc([]const u8, _entries.len);
-                for (_entries) |entry, i| {
-                    names[i] = try fs.allocator.dupe(u8, entry.key);
-                }
-                strings.sortAsc(names);
+            // if (fs.watcher) |*watcher| {
+            //     fs.watcher_mutex.lock();
+            //     defer fs.watcher_mutex.unlock();
+            //     var _entries = watcher.iterator();
+            //     const names = try fs.allocator.alloc([]const u8, _entries.len);
+            //     for (_entries) |entry, i| {
+            //         names[i] = try fs.allocator.dupe(u8, entry.key);
+            //     }
+            //     strings.sortAsc(names);
 
-                try watcher.put(
-                    try fs.allocator.dupe(u8, dir),
-                    WatchData{ .dir_entries = names, .state = .dir_has_entries },
-                );
-            }
+            //     try watcher.put(
+            //         try fs.allocator.dupe(u8, dir),
+            //         WatchData{ .dir_entries = names, .state = .dir_has_entries },
+            //     );
+            // }
+
             if (!fs.do_not_cache_entries) {
                 fs.entries_mutex.lock();
                 defer fs.entries_mutex.unlock();
@@ -476,14 +517,10 @@ pub const FileSystem = struct {
                     .entries = entries,
                 };
 
-                var entries_ptr = try fs.entries.put(dir, true, &cache_result.?, result);
-                const dir_key = fs.entries.keyAtIndex(cache_result.?.index) orelse unreachable;
-                entries_ptr.entries.updateDir(dir_key);
-                return entries_ptr;
+                return try fs.entries.put(&cache_result.?, result);
             }
 
             temp_entries_option = EntriesOption{ .entries = entries };
-            temp_entries_option.entries.updateDir(try fs.allocator.dupe(u8, dir));
 
             return &temp_entries_option;
         }
@@ -532,8 +569,7 @@ pub const FileSystem = struct {
         pub fn kind(fs: *RealFS, _dir: string, base: string) !Entry.Cache {
             var dir = _dir;
             var combo = [2]string{ dir, base };
-            var entry_path = try std.fs.path.join(fs.allocator, &combo);
-            defer fs.allocator.free(entry_path);
+            var entry_path = path_handler.normalizeAndJoinString(fs.cwd, &combo, .auto);
 
             fs.limiter.before();
             defer fs.limiter.after();
@@ -544,7 +580,7 @@ pub const FileSystem = struct {
 
             var _kind = stat.kind;
             var cache = Entry.Cache{ .kind = Entry.Kind.file, .symlink = "" };
-            var symlink: []u8 = &([_]u8{});
+            var symlink: []const u8 = "";
             if (_kind == .SymLink) {
                 // windows has a max filepath of 255 chars
                 // we give it a little longer for other platforms
@@ -554,15 +590,13 @@ pub const FileSystem = struct {
                 var links_walked: u8 = 0;
 
                 while (links_walked < 255) : (links_walked += 1) {
-                    var link = try std.os.readlink(symlink, out_slice);
+                    var link: string = try std.os.readlink(symlink, out_slice);
 
                     if (!std.fs.path.isAbsolute(link)) {
                         combo[0] = dir;
                         combo[1] = link;
-                        if (link.ptr != &out_buffer) {
-                            fs.allocator.free(link);
-                        }
-                        link = std.fs.path.join(fs.allocator, &combo) catch return cache;
+
+                        link = path_handler.normalizeAndJoinStringBuf(fs.cwd, out_slice, &combo, .auto);
                     }
                     // TODO: do we need to clean the path?
                     symlink = link;
@@ -590,7 +624,9 @@ pub const FileSystem = struct {
             } else {
                 cache.kind = .file;
             }
-            cache.symlink = symlink;
+            if (symlink.len > 0) {
+                cache.symlink = try fs.allocator.dupe(u8, symlink);
+            }
 
             return cache;
         }

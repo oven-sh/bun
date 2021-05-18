@@ -180,7 +180,7 @@ pub const Define = struct {
                     var list = try std.ArrayList(DotDefine).initCapacity(allocator, entry.value.len + 1);
                     list.appendSliceAssumeCapacity(entry.value);
                     list.appendAssumeCapacity(DotDefine{
-                        .parts = global[0 .. global.len - 1],
+                        .parts = global[0..global.len],
                         .data = value_define,
                     });
 
@@ -188,7 +188,7 @@ pub const Define = struct {
                 } else {
                     var list = try std.ArrayList(DotDefine).initCapacity(allocator, 1);
                     list.appendAssumeCapacity(DotDefine{
-                        .parts = global[0 .. global.len - 1],
+                        .parts = global[0..global.len],
                         .data = value_define,
                     });
 
@@ -223,13 +223,13 @@ pub const Define = struct {
                     const tail = user_define.key[last_dot + 1 .. user_define.key.len];
                     const remainder = user_define.key[0..last_dot];
                     const count = std.mem.count(u8, remainder, ".") + 1;
-                    var parts = try allocator.alloc(string, count);
+                    var parts = try allocator.alloc(string, count + 1);
                     var splitter = std.mem.split(remainder, ".");
                     var i: usize = 0;
                     while (splitter.next()) |split| : (i += 1) {
                         parts[i] = split;
                     }
-
+                    parts[i] = tail;
                     var didFind = false;
                     var initial_values: []DotDefine = &([_]DotDefine{});
 

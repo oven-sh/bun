@@ -9759,14 +9759,14 @@ pub const P = struct {
                 }
 
                 // // trim empty statements
-                // if (data.stmts.len == 0) {
-                //     stmts.append(Stmt{ .data = Prefill.Data.SEmpty, .loc = stmt.loc }) catch unreachable;
-                //     return;
-                // } else if (data.stmts.len == 1 and !statementCaresAboutScope(data.stmts[0])) {
-                //     // Unwrap blocks containing a single statement
-                //     stmts.append(data.stmts[0]) catch unreachable;
-                //     return;
-                // }
+                if (data.stmts.len == 0) {
+                    stmts.append(Stmt{ .data = Prefill.Data.SEmpty, .loc = stmt.loc }) catch unreachable;
+                    return;
+                } else if (data.stmts.len == 1 and !statementCaresAboutScope(data.stmts[0])) {
+                    // Unwrap blocks containing a single statement
+                    stmts.append(data.stmts[0]) catch unreachable;
+                    return;
+                }
                 stmts.append(stmt.*) catch unreachable;
                 return;
             },
@@ -9809,6 +9809,7 @@ pub const P = struct {
                         data.no = p.visitSingleStmt(no, .none);
                     }
 
+                    // Trim unnecessary "else" clauses
                     if (data.no != null and @as(Stmt.Tag, data.no.?.data) == .s_empty) {
                         data.no = null;
                     }
@@ -10279,9 +10280,14 @@ pub const P = struct {
         switch (expr.data) {
             .e_dot => |ex| {
                 if (parts.len > 1) {
+                    if (ex.optional_chain != null) {
+                        return false;
+                    }
+
                     // Intermediates must be dot expressions
                     const last = parts.len - 1;
-                    return strings.eql(parts[last], ex.name) and ex.optional_chain == null and p.isDotDefineMatch(ex.target, parts[0..last]);
+                    const is_tail_match = strings.eql(parts[last], ex.name);
+                    return is_tail_match and p.isDotDefineMatch(ex.target, parts[0..last]);
                 }
             },
             .e_import_meta => |ex| {

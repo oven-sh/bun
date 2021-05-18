@@ -28,7 +28,7 @@ pub const SideEffectsData = struct {
 };
 
 pub const DirInfo = struct {
-    pub const Index = u32;
+    pub const Index = allocators.IndexType;
 
     // These objects are immutable, so we can just point to the parent directory
     // and avoid having to lock the cache again
@@ -39,11 +39,23 @@ pub const DirInfo = struct {
     enclosing_browser_scope: Index = allocators.NotFound,
 
     abs_path: string = "",
-    entries: Fs.FileSystem.DirEntry = undefined,
+    entries: Index = undefined,
     has_node_modules: bool = false, // Is there a "node_modules" subdirectory?
     package_json: ?*PackageJSON = null, // Is there a "package.json" file?
     tsconfig_json: ?*TSConfigJSON = null, // Is there a "tsconfig.json" file in this directory or a parent directory?
     abs_real_path: string = "", // If non-empty, this is the real absolute path resolving any symlinks
+
+    pub fn getEntries(dirinfo: *DirInfo) ?*Fs.FileSystem.DirEntry {
+        var entries_ptr = Fs.FileSystem.instance.fs.entries.atIndex(dirinfo.entries) orelse return null;
+        switch (entries_ptr.*) {
+            .entries => |entr| {
+                return &entries_ptr.entries;
+            },
+            .err => {
+                return null;
+            },
+        }
+    }
 
     pub fn getParent(i: *DirInfo) ?*DirInfo {
         return HashMap.instance.atIndex(i.parent);
@@ -57,7 +69,7 @@ pub const DirInfo = struct {
     // 2. Don't expect a provided key to exist after it's queried
     // 3. Store whether a directory has been queried and whether that query was successful.
     // 4. Allocate onto the https://en.wikipedia.org/wiki/.bss#BSS_in_C instead of the heap, so we can avoid memory leaks
-    pub const HashMap = allocators.BSSMap(DirInfo, 1024, true, 128);
+    pub const HashMap = allocators.BSSMap(DirInfo, Fs.Preallocate.Counts.dir_entry, false, 128);
 };
 pub const TemporaryBuffer = struct {
     pub threadlocal var ExtensionPathBuf = std.mem.zeroes([512]u8);
@@ -73,6 +85,7 @@ pub const Resolver = struct {
     allocator: *std.mem.Allocator,
 
     debug_logs: ?DebugLogs = null,
+    elapsed: i128 = 0, // tracing
 
     caches: cache.Cache.Set,
 
@@ -291,8 +304,17 @@ pub const Resolver = struct {
             }
         }
     }
+    var tracing_start: i128 = if (enableTracing) 0 else undefined;
 
     pub fn resolve(r: *Resolver, source_dir: string, import_path: string, kind: ast.ImportKind) !?Result {
+        if (enableTracing) {
+            tracing_start = std.time.nanoTimestamp();
+        }
+        defer {
+            if (enableTracing) {
+                r.elapsed += std.time.nanoTimestamp() - tracing_start;
+            }
+        }
         if (r.log.level == .verbose) {
             if (r.debug_logs != null) {
                 r.debug_logs.?.deinit();
@@ -740,34 +762,210 @@ pub const Resolver = struct {
         return path[0] != '/' and !strings.startsWith(path, "./") and !strings.startsWith(path, "../") and !strings.eql(path, ".") and !strings.eql(path, "..");
     }
 
+    pub const DirEntryResolveQueueItem = struct { result: allocators.Result, unsafe_path: string };
+    threadlocal var _dir_entry_paths_to_resolve: [256]DirEntryResolveQueueItem = undefined;
+    threadlocal var _open_dirs: [256]std.fs.Dir = undefined;
+
     fn dirInfoCached(r: *Resolver, path: string) !?*DirInfo {
-        var dir_info_entry = try r.dir_cache.getOrPut(path);
-
-        var ptr = try r.dirInfoCachedGetOrPut(path, &dir_info_entry);
-        return ptr;
-    }
-
-    fn dirInfoCachedGetOrPut(r: *Resolver, path: string, dir_info_entry: *allocators.Result) !?*DirInfo {
-        switch (dir_info_entry.status) {
-            .unknown => {
-                return try r.dirInfoUncached(path, dir_info_entry);
-            },
-            .not_found => {
-                return null;
-            },
-            .exists => {
-                return r.dir_cache.atIndex(dir_info_entry.index);
-            },
+        const top_result = try r.dir_cache.getOrPut(path);
+        if (top_result.status != .unknown) {
+            return r.dir_cache.atIndex(top_result.index);
         }
-        // if (__entry.found_existing) {
-        //     return if (__entry.entry.value == DirInfo.NotFound) null else __entry.entry.value;
-        // }
 
-        // __entry.entry.value = DirInfo.NotFound;
+        var i: i32 = 1;
+        _dir_entry_paths_to_resolve[0] = (DirEntryResolveQueueItem{ .result = top_result, .unsafe_path = path });
+        var top = path;
+        var top_parent: allocators.Result = allocators.Result{
+            .index = allocators.NotFound,
+            .hash = 0,
+            .status = .not_found,
+        };
+        const root_path = if (isWindows) std.fs.path.diskDesignator(path) else "/";
 
-        // try r.dirInfoUncached(path);
-        // const entry = r.dir_cache.get(path) orelse unreachable;
-        // return if (__entry.entry.value == DirInfo.NotFound) null else entry;
+        while (std.fs.path.dirname(top)) |_top| {
+            var result = try r.dir_cache.getOrPut(_top);
+            if (result.status != .unknown) {
+                top_parent = result;
+                break;
+            }
+            _dir_entry_paths_to_resolve[@intCast(usize, i)] = DirEntryResolveQueueItem{
+                .unsafe_path = _top,
+                .result = result,
+            };
+            i += 1;
+            top = _top;
+        }
+
+        if (std.fs.path.dirname(top) == null and !strings.eql(top, root_path)) {
+            var result = try r.dir_cache.getOrPut(root_path);
+            if (result.status != .unknown) {
+                top_parent = result;
+            } else {
+                _dir_entry_paths_to_resolve[@intCast(usize, i)] = DirEntryResolveQueueItem{
+                    .unsafe_path = root_path,
+                    .result = result,
+                };
+                i += 1;
+                top = root_path;
+            }
+        }
+
+        var queue_slice: []DirEntryResolveQueueItem = _dir_entry_paths_to_resolve[0..@intCast(usize, i)];
+        std.debug.assert(queue_slice.len > 0);
+        var open_dir_count: usize = 0;
+
+        // When this function halts, any item not processed means it's not found.
+        defer {
+
+            // Anything
+            if (open_dir_count > 0) {
+                var open_dirs: []std.fs.Dir = _open_dirs[0..open_dir_count];
+                for (open_dirs) |*open_dir| {
+                    open_dir.close();
+                }
+            }
+        }
+
+        var rfs: *Fs.FileSystem.RealFS = &r.fs.fs;
+
+        rfs.entries_mutex.lock();
+        defer rfs.entries_mutex.unlock();
+
+        // We want to walk in a straight line from the topmost directory to the desired directory
+        // For each directory we visit, we get the entries, but not traverse into child directories
+        // (unless those child directores are in the queue)
+        // Going top-down rather than bottom-up should have best performance because we can use
+        // the file handle from the parent directory to open the child directory
+        // It's important that we walk in precisely a straight line
+        // For example
+        // "/home/jarred/Code/node_modules/react/cjs/react.development.js"
+        //       ^
+        // If we start there, we will traverse all of /home/jarred, including e.g. /home/jarred/Downloads
+        // which is completely irrelevant.
+
+        // After much experimentation, fts_open is not the fastest way. fts actually just uses readdir!!
+        var _safe_path: ?string = null;
+
+        // Start at the top.
+        while (queue_slice.len > 0) {
+            var queue_top = queue_slice[queue_slice.len - 1];
+            defer top_parent = queue_top.result;
+            queue_slice.len -= 1;
+
+            var _open_dir: anyerror!std.fs.Dir = undefined;
+            if (open_dir_count > 0) {
+                _open_dir = _open_dirs[open_dir_count - 1].openDir(std.fs.path.basename(queue_top.unsafe_path), .{ .iterate = true });
+            } else {
+                _open_dir = std.fs.openDirAbsolute(queue_top.unsafe_path, .{ .iterate = true });
+            }
+
+            const open_dir = _open_dir catch |err| {
+                switch (err) {
+                    error.EACCESS => {},
+
+                    // Ignore "ENOTDIR" here so that calling "ReadDirectory" on a file behaves
+                    // as if there is nothing there at all instead of causing an error due to
+                    // the directory actually being a file. This is a workaround for situations
+                    // where people try to import from a path containing a file as a parent
+                    // directory. The "pnpm" package manager generates a faulty "NODE_PATH"
+                    // list which contains such paths and treating them as missing means we just
+                    // ignore them during path resolution.
+                    error.ENOENT,
+                    error.ENOTDIR,
+                    error.IsDir,
+                    error.NotDir,
+                    error.FileNotFound,
+                    => {
+                        return null;
+                    },
+
+                    else => {
+                        var cached_dir_entry_result = rfs.entries.getOrPut(queue_top.unsafe_path) catch unreachable;
+                        r.dir_cache.markNotFound(queue_top.result);
+                        rfs.entries.markNotFound(cached_dir_entry_result);
+                        const pretty = r.prettyPath(Path.init(queue_top.unsafe_path));
+
+                        r.log.addErrorFmt(
+                            null,
+                            logger.Loc{},
+                            r.allocator,
+                            "Cannot read directory \"{s}\": {s}",
+                            .{
+                                pretty,
+                                @errorName(err),
+                            },
+                        ) catch {};
+                    },
+                }
+
+                return null;
+            };
+
+            // these objects mostly just wrap the file descriptor, so it's fine to keep it.
+            _open_dirs[open_dir_count] = open_dir;
+            open_dir_count += 1;
+
+            if (_safe_path == null) {
+                // Now that we've opened the topmost directory successfully, it's reasonable to store the slice.
+                _safe_path = try r.fs.dirname_store.append(path);
+            }
+            const safe_path = _safe_path.?;
+
+            var dir_path_i = std.mem.indexOf(u8, safe_path, queue_top.unsafe_path) orelse unreachable;
+            const dir_path = safe_path[dir_path_i .. dir_path_i + queue_top.unsafe_path.len];
+
+            var dir_iterator = open_dir.iterate();
+
+            var cached_dir_entry_result = rfs.entries.getOrPut(dir_path) catch unreachable;
+
+            var dir_entries_option: *Fs.FileSystem.RealFS.EntriesOption = undefined;
+            var has_dir_entry_result: bool = false;
+
+            if (rfs.entries.atIndex(cached_dir_entry_result.index)) |cached_entry| {
+                if (std.meta.activeTag(cached_entry.*) == .entries) {
+                    dir_entries_option = cached_entry;
+                }
+            }
+
+            if (!has_dir_entry_result) {
+                dir_entries_option = try rfs.entries.put(&cached_dir_entry_result, .{
+                    .entries = Fs.FileSystem.DirEntry.init(dir_path, r.fs.allocator),
+                });
+                has_dir_entry_result = true;
+            }
+
+            while (try dir_iterator.next()) |_value| {
+                const value: std.fs.Dir.Entry = _value;
+                dir_entries_option.entries.addEntry(value) catch unreachable;
+            }
+
+            const dir_info = try r.dirInfoUncached(
+                dir_path,
+                dir_entries_option,
+                queue_top.result,
+                cached_dir_entry_result.index,
+                r.dir_cache.atIndex(top_parent.index),
+                top_parent.index,
+            );
+
+            var dir_info_ptr = try r.dir_cache.put(&queue_top.result, dir_info);
+
+            if (queue_slice.len == 0) {
+                return dir_info_ptr;
+
+                // Is the directory we're searching for actually a file?
+            } else if (queue_slice.len == 1) {
+                // const next_in_queue = queue_slice[0];
+                // const next_basename = std.fs.path.basename(next_in_queue.unsafe_path);
+                // if (dir_info_ptr.getEntries()) |entries| {
+                //     if (entries.get(next_basename) != null) {
+                //         return null;
+                //     }
+                // }
+            }
+        }
+
+        unreachable;
     }
 
     pub const MatchResult = struct {
@@ -1024,15 +1222,17 @@ pub const Resolver = struct {
             base[0.."index".len].* = "index".*;
             std.mem.copy(u8, base["index".len..base.len], ext);
 
-            if (dir_info.entries.get(base)) |lookup| {
-                if (lookup.entry.kind(rfs) == .file) {
-                    const parts = [_]string{ path, base };
-                    const out_buf = r.fs.joinAlloc(r.allocator, &parts) catch unreachable;
-                    if (r.debug_logs) |*debug| {
-                        debug.addNoteFmt("Found file: \"{s}\"", .{out_buf}) catch unreachable;
-                    }
+            if (dir_info.getEntries()) |entries| {
+                if (entries.get(base)) |lookup| {
+                    if (lookup.entry.kind(rfs) == .file) {
+                        const parts = [_]string{ path, base };
+                        const out_buf = r.fs.joinAlloc(r.allocator, &parts) catch unreachable;
+                        if (r.debug_logs) |*debug| {
+                            debug.addNoteFmt("Found file: \"{s}\"", .{out_buf}) catch unreachable;
+                        }
 
-                    return MatchResult{ .path_pair = .{ .primary = Path.init(out_buf) }, .diff_case = lookup.diff_case };
+                        return MatchResult{ .path_pair = .{ .primary = Path.init(out_buf) }, .diff_case = lookup.diff_case };
+                    }
                 }
             }
 
@@ -1324,113 +1524,46 @@ pub const Resolver = struct {
         return null;
     }
 
-    fn dirInfoUncached(r: *Resolver, unsafe_path: string, result: *allocators.Result) anyerror!?*DirInfo {
+    fn dirInfoUncached(
+        r: *Resolver,
+        path: string,
+        _entries: *Fs.FileSystem.RealFS.EntriesOption,
+        _result: allocators.Result,
+        dir_entry_index: allocators.IndexType,
+        parent: ?*DirInfo,
+        parent_index: allocators.IndexType,
+    ) anyerror!DirInfo {
+        var result = _result;
+
         var rfs: *Fs.FileSystem.RealFS = &r.fs.fs;
-        var parent: ?*DirInfo = null;
+        var entries = _entries.entries;
 
-        var is_root = false;
-        const parent_dir = (std.fs.path.dirname(unsafe_path) orelse parent_dir_handle: {
-            is_root = true;
-            break :parent_dir_handle "/";
-        });
-
-        var parent_result: allocators.Result = allocators.Result{
-            .hash = std.math.maxInt(u64),
-            .index = allocators.NotFound,
-            .status = .unknown,
+        var info = DirInfo{
+            .abs_path = path,
+            .parent = parent_index,
+            .entries = dir_entry_index,
         };
-        if (!is_root and !strings.eql(parent_dir, unsafe_path)) {
-            parent = r.dirInfoCached(parent_dir) catch null;
-
-            if (parent != null) {
-                parent_result = try r.dir_cache.getOrPut(parent_dir);
-            }
-        }
-
-        var entries: Fs.FileSystem.DirEntry = Fs.FileSystem.DirEntry.empty(unsafe_path, r.allocator);
-
-        // List the directories
-        if (!is_root) {
-            var _entries: *Fs.FileSystem.RealFS.EntriesOption = undefined;
-
-            _entries = try rfs.readDirectory(unsafe_path, null, true);
-
-            if (std.meta.activeTag(_entries.*) == .err) {
-                // Just pretend this directory is empty if we can't access it. This is the
-                // case on Unix for directories that only have the execute permission bit
-                // set. It means we will just pass through the empty directory and
-                // continue to check the directories above it, which is now node behaves.
-                switch (_entries.err.original_err) {
-                    error.EACCESS => {
-                        entries = Fs.FileSystem.DirEntry.empty(unsafe_path, r.allocator);
-                    },
-
-                    // Ignore "ENOTDIR" here so that calling "ReadDirectory" on a file behaves
-                    // as if there is nothing there at all instead of causing an error due to
-                    // the directory actually being a file. This is a workaround for situations
-                    // where people try to import from a path containing a file as a parent
-                    // directory. The "pnpm" package manager generates a faulty "NODE_PATH"
-                    // list which contains such paths and treating them as missing means we just
-                    // ignore them during path resolution.
-                    error.ENOENT,
-                    error.ENOTDIR,
-                    error.IsDir,
-                    => {
-                        entries = Fs.FileSystem.DirEntry.empty(unsafe_path, r.allocator);
-                    },
-                    else => {
-                        const pretty = r.prettyPath(Path.init(unsafe_path));
-                        result.status = .not_found;
-                        r.log.addErrorFmt(
-                            null,
-                            logger.Loc{},
-                            r.allocator,
-                            "Cannot read directory \"{s}\": {s}",
-                            .{
-                                pretty,
-                                @errorName(_entries.err.original_err),
-                            },
-                        ) catch {};
-                        r.dir_cache.markNotFound(result.*);
-                        return null;
-                    },
-                }
-            } else {
-                entries = _entries.entries;
-            }
-        }
-
-        var info = dir_info_getter: {
-            var _info = DirInfo{
-                .abs_path = "",
-                .parent = parent_result.index,
-                .entries = entries,
-            };
-            result.status = .exists;
-            var __info = try r.dir_cache.put(unsafe_path, true, result, _info);
-            __info.abs_path = r.dir_cache.keyAtIndex(result.index).?;
-            break :dir_info_getter __info;
-        };
-
-        const path = info.abs_path;
 
         // A "node_modules" directory isn't allowed to directly contain another "node_modules" directory
         var base = std.fs.path.basename(path);
+        // if (entries != null) {
         if (!strings.eqlComptime(base, "node_modules")) {
             if (entries.get("node_modules")) |entry| {
                 // the catch might be wrong!
                 info.has_node_modules = (entry.entry.kind(rfs)) == .dir;
             }
         }
+        // }
 
-        if (parent_result.status != .unknown) {
+        if (parent != null) {
+
             // Propagate the browser scope into child directories
-            if (parent) |parent_info| {
-                info.enclosing_browser_scope = parent_info.enclosing_browser_scope;
+            info.enclosing_browser_scope = parent.?.enclosing_browser_scope;
 
-                // Make sure "absRealPath" is the real path of the directory (resolving any symlinks)
-                if (!r.opts.preserve_symlinks) {
-                    if (parent_info.entries.get(base)) |lookup| {
+            // Make sure "absRealPath" is the real path of the directory (resolving any symlinks)
+            if (!r.opts.preserve_symlinks) {
+                if (parent.?.getEntries()) |parent_entries| {
+                    if (parent_entries.get(base)) |lookup| {
                         const entry = lookup.entry;
 
                         var symlink = entry.symlink(rfs);
@@ -1439,9 +1572,9 @@ pub const Resolver = struct {
                                 try logs.addNote(std.fmt.allocPrint(r.allocator, "Resolved symlink \"{s}\" to \"{s}\"", .{ path, symlink }) catch unreachable);
                             }
                             info.abs_real_path = symlink;
-                        } else if (parent_info.abs_real_path.len > 0) {
+                        } else if (parent.?.abs_real_path.len > 0) {
                             // this might leak a little i'm not sure
-                            const parts = [_]string{ parent_info.abs_real_path, base };
+                            const parts = [_]string{ parent.?.abs_real_path, base };
                             symlink = r.fs.joinAlloc(r.allocator, &parts) catch unreachable;
                             if (r.debug_logs) |*logs| {
                                 try logs.addNote(std.fmt.allocPrint(r.allocator, "Resolved symlink \"{s}\" to \"{s}\"", .{ path, symlink }) catch unreachable);

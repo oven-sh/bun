@@ -1,6 +1,7 @@
 const std = @import("std");
 pub usingnamespace @import("strings.zig");
 
+pub const C = @import("c.zig");
 pub const BuildTarget = enum { native, wasm, wasi };
 pub const build_target: BuildTarget = comptime {
     if (std.Target.current.isWasm() and std.Target.current.getOsTag() == .wasi) {
@@ -16,6 +17,9 @@ pub const isWasm = build_target == .wasm;
 pub const isNative = build_target == .native;
 pub const isWasi = build_target == .wasi;
 pub const isBrowser = !isWasi and isWasm;
+pub const isWindows = std.Target.current.os.tag == .windows;
+
+pub const enableTracing = true;
 
 pub const isDebug = std.builtin.Mode.Debug == std.builtin.mode;
 

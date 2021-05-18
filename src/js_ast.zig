@@ -318,7 +318,7 @@ pub const G = struct {
     pub const Comment = struct { loc: logger.Loc, text: string };
 
     pub const Property = struct {
-        ts_decorators: ExprNodeList = &([_]Expr{}),
+        ts_decorators: ExprNodeList = &([_]ExprNodeIndex{}),
         // Key is optional for spread
         key: ?ExprNodeIndex = null,
 

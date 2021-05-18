@@ -4,7 +4,7 @@
     {
       "type": "lldb",
       "request": "launch",
-      "name": "Launch",
+      "name": "Test",
       "program": "${workspaceFolder}/zig-out/bin/test",
       "preLaunchTask": "test",
       "args": ["/usr/local/bin/zig"],
@@ -59,7 +59,7 @@
         "-o",
         "out"
       ],
-      "cwd": "${workspaceFolder}",
+      "cwd": "/Users/jarredsumner/Builds/esbuild/bench/three/src",
       "console": "internalConsole"
     }
     // {

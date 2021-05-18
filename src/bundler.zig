@@ -34,7 +34,7 @@ pub const Bundler = struct {
     output_files: std.ArrayList(options.OutputFile),
     resolve_results: *ResolveResults,
     resolve_queue: std.fifo.LinearFifo(Resolver.Resolver.Result, std.fifo.LinearFifoBufferType.Dynamic),
-
+    elapsed: i128 = 0,
     // to_bundle:
 
     // thread_pool: *ThreadPool,
@@ -139,8 +139,16 @@ pub const Bundler = struct {
 
         ast: js_ast.Ast,
     };
-
+    pub var tracing_start: i128 = if (enableTracing) 0 else undefined;
     pub fn parse(bundler: *Bundler, path: Fs.Path) ?ParseResult {
+        if (enableTracing) {
+            tracing_start = std.time.nanoTimestamp();
+        }
+        defer {
+            if (enableTracing) {
+                bundler.elapsed += std.time.nanoTimestamp() - tracing_start;
+            }
+        }
         var result: ParseResult = undefined;
         const loader: options.Loader = bundler.options.loaders.get(path.name.ext) orelse .file;
         const entry = bundler.resolver.caches.fs.readFile(bundler.fs, path.text) catch return null;
@@ -272,6 +280,13 @@ pub const Bundler = struct {
                 }
             },
             else => Global.panic("Unsupported resolve mode: {s}", .{@tagName(bundler.options.resolve_mode)}),
+        }
+
+        if (enableTracing) {
+            Output.print(
+                "\n---Tracing---\nResolve time:      {d}\nParsing time:      {d}\n---Tracing--\n\n",
+                .{ bundler.resolver.elapsed, bundler.elapsed },
+            );
         }
 
         return try options.TransformResult.init(bundler.output_files.toOwnedSlice(), log, allocator);

@@ -2656,11 +2656,10 @@ pub const P = struct {
         if (name) |*name_| {
             const kind = if (is_generator or is_async) Symbol.Kind.generator_or_async_function else Symbol.Kind.hoisted_function;
             name_.ref = try p.declareSymbol(kind, name_.loc, nameText);
+            func.name = name_.*;
         }
-        func.name = name;
 
         func.flags.has_if_scope = hasIfScope;
-
         func.flags.is_export = opts.is_export;
 
         // Balance the fake block scope introduced above
@@ -4692,9 +4691,9 @@ pub const P = struct {
 
     pub fn parseExportClause(p: *P) !ExportClauseResult {
         var items = List(js_ast.ClauseItem).initCapacity(p.allocator, 1) catch unreachable;
-        var first_keyword_item_loc = logger.Loc{};
         try p.lexer.expect(.t_open_brace);
         var is_single_line = !p.lexer.has_newline_before;
+        var first_non_identifier_loc = logger.Loc{ .start = 0 };
 
         while (p.lexer.token != .t_close_brace) {
             var alias = try p.parseClauseAlias("export");
@@ -4716,16 +4715,9 @@ pub const P = struct {
             //   // This is a syntax error
             //   export { default }
             //
-            if (p.lexer.token != .t_identifier) {
-                if (!p.lexer.isIdentifierOrKeyword()) {
-                    try p.lexer.expect(.t_identifier);
-                }
-                if (first_keyword_item_loc.start < 0) {
-                    first_keyword_item_loc = p.lexer.loc();
-                }
+            if (p.lexer.token != .t_identifier and first_non_identifier_loc.start == 0) {
+                first_non_identifier_loc = p.lexer.loc();
             }
-
-            p.checkForNonBMPCodePoint(alias_loc, alias);
             try p.lexer.next();
 
             if (p.lexer.isContextualKeyword("as")) {
@@ -4764,13 +4756,13 @@ pub const P = struct {
 
         // Throw an error here if we found a keyword earlier and this isn't an
         // "export from" statement after all
-        if (first_keyword_item_loc.start > -1 and !p.lexer.isContextualKeyword("from")) {
-            const r = js_lexer.rangeOfIdentifier(p.source, first_keyword_item_loc);
+        if (first_non_identifier_loc.start != 0 and !p.lexer.isContextualKeyword("from")) {
+            const r = js_lexer.rangeOfIdentifier(p.source, first_non_identifier_loc);
             try p.lexer.addRangeError(r, "Expected identifier but found \"{s}\"", .{p.source.textForRange(r)}, true);
         }
 
         return ExportClauseResult{
-            .clauses = items.toOwnedSlice(),
+            .clauses = items.items,
             .is_single_line = is_single_line,
         };
     }
@@ -4793,7 +4785,8 @@ pub const P = struct {
     // TODO:
     pub fn checkForNonBMPCodePoint(p: *P, loc: logger.Loc, name: string) void {}
 
-    pub fn parseStmtsUpTo(p: *P, eend: js_lexer.T, opts: *ParseStatementOptions) ![]Stmt {
+    pub fn parseStmtsUpTo(p: *P, eend: js_lexer.T, _opts: *ParseStatementOptions) ![]Stmt {
+        var opts = _opts.*;
         var stmts = StmtList.init(p.allocator);
 
         var returnWithoutSemicolonStart: i32 = -1;
@@ -4811,7 +4804,8 @@ pub const P = struct {
                 break;
             }
 
-            var stmt = try p.parseStmt(opts);
+            var current_opts = opts;
+            var stmt = try p.parseStmt(&current_opts);
 
             // Skip TypeScript types entirely
             if (p.options.ts) {

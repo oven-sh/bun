@@ -34,7 +34,7 @@ pub const Ref = packed struct {
         .source_index = std.math.maxInt(Ref.Int),
     };
     pub fn toInt(int: anytype) Int {
-        return std.math.lossyCast(Ref.Int, int);
+        return @intCast(Int, int);
     }
     pub fn isNull(self: *const Ref) bool {
         return self.source_index == std.math.maxInt(Ref.Int) and self.inner_index == std.math.maxInt(Ref.Int);

@@ -37,8 +37,8 @@
       "args": [
         "--resolve=disable",
         "--cwd",
-        "/Users/jarredsumner/Code/esdev/src/test/fixtures/",
-        "in-keyword.js"
+        "/Users/jarredsumner/Code/esdev/src/test/fixtures",
+        "duplicate-exports-bug.js"
       ],
       "cwd": "${workspaceFolder}",
       "console": "internalConsole"

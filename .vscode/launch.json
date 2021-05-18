@@ -38,7 +38,7 @@
         "--resolve=disable",
         "--cwd",
         "/Users/jarredsumner/Code/esdev/src/test/fixtures",
-        "duplicate-exports-bug.js"
+        "label-continue-break-bug.js"
       ],
       "cwd": "${workspaceFolder}",
       "console": "internalConsole"

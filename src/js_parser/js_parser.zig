@@ -1491,7 +1491,7 @@ const ParseStatementOptions = struct {
     is_name_optional: bool = false, // For "export default" pseudo-statements,
     is_typescript_declare: bool = false,
 
-    pub fn hasNoDecorators(self: *ParseStatementOptions) bool {
+    pub fn hasDecorators(self: *ParseStatementOptions) bool {
         const decs = self.ts_decorators orelse return false;
         return decs.values.len > 0;
     }
@@ -4057,7 +4057,7 @@ pub const P = struct {
                 if (is_identifier) {
                     switch (expr.data) {
                         .e_identifier => |ident| {
-                            if (p.lexer.token == .t_colon and opts.hasNoDecorators()) {
+                            if (p.lexer.token == .t_colon and !opts.hasDecorators()) {
                                 _ = try p.pushScopeForParsePass(.label, loc);
                                 defer p.popScope();
 

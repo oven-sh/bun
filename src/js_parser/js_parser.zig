@@ -3738,7 +3738,7 @@ pub const P = struct {
                 if (p.lexer.token == .t_in) {
                     try p.forbidInitializers(decls, "in", false);
                     try p.lexer.next();
-                    const value = try p.parseExpr(.comma);
+                    const value = try p.parseExpr(.lowest);
                     try p.lexer.expect(.t_close_paren);
                     var stmtOpts = ParseStatementOptions{};
                     const body = try p.parseStmt(&stmtOpts);
@@ -4431,6 +4431,7 @@ pub const P = struct {
                 // "in" expressions are allowed
                 var old_allow_in = p.allow_in;
                 p.allow_in = true;
+
                 while (p.lexer.token != .t_close_bracket) {
                     if (p.lexer.token == .t_comma) {
                         items.append(js_ast.ArrayBinding{
@@ -4478,6 +4479,7 @@ pub const P = struct {
                         is_single_line = false;
                     }
                 }
+
                 p.allow_in = old_allow_in;
 
                 if (p.lexer.has_newline_before) {
@@ -6870,12 +6872,14 @@ pub const P = struct {
 
                 // Arrow functions aren't allowed in the middle of expressions
                 if (level.gt(.assign)) {
+                    // Allow "in" inside parentheses
                     const oldAllowIn = p.allow_in;
                     p.allow_in = true;
 
                     var value = try p.parseExpr(Level.lowest);
                     p.markExprAsParenthesized(&value);
                     try p.lexer.expect(.t_close_paren);
+
                     p.allow_in = oldAllowIn;
                     return value;
                 }
@@ -6897,6 +6901,21 @@ pub const P = struct {
             .t_this => {
                 try p.lexer.next();
                 return Expr{ .data = Prefill.Data.This, .loc = loc };
+            },
+            .t_private_identifier => {
+                if (!p.allow_private_identifiers or !p.allow_in) {
+                    try p.lexer.unexpected();
+                }
+
+                const name = p.lexer.identifier;
+                try p.lexer.next();
+
+                // Check for "#foo in bar"
+                if (p.lexer.token != .t_in) {
+                    try p.lexer.expected(.t_in);
+                }
+
+                return p.e(E.PrivateIdentifier{ .ref = try p.storeNameInRef(name) }, loc);
             },
             .t_identifier => {
                 const name = p.lexer.identifier;
@@ -7237,7 +7256,10 @@ pub const P = struct {
                 try p.lexer.expect(.t_close_bracket);
                 p.allow_in = old_allow_in;
 
-                if (p.willNeedBindingPattern()) {} else if (errors.isEmpty()) {
+                // Is this a binding pattern?
+                if (p.willNeedBindingPattern()) {
+                    // noop
+                } else if (errors.isEmpty()) {
                     // Is this an expression?
                     p.logExprErrors(&self_errors);
                 } else {
@@ -11070,6 +11092,10 @@ pub const P = struct {
 
         var _parser = try allocator.create(P);
         _parser.* = P{
+            // This must default to true or else parsing "in" won't work right.
+            // It will fail for the case in the "in-keyword.js" file
+            .allow_in = true,
+
             .symbol_uses = SymbolUseMap.init(allocator),
             .call_target = nullExprData,
             .delete_target = nullExprData,

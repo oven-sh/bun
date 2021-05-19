@@ -191,7 +191,7 @@ pub const Lexer = struct {
         }
     }
 
-    pub fn decodeEscapeSequences(lexer: *LexerType, start: usize, text: string, buf: anytype) !void {
+    pub fn decodeEscapeSequences(lexer: *LexerType, start: usize, text: string, comptime buf_type: type, buf: anytype) !void {
         var iter = CodepointIterator{ .bytes = text[start..], .i = 0 };
         const start_length = buf.items.len;
         while (iter.nextCodepoint()) |c| {
@@ -266,26 +266,61 @@ pub const Lexer = struct {
                             var value: CodePoint = 0;
                             var c3: CodePoint = 0;
                             var width3: u3 = 0;
-                            comptime var j: usize = 0;
-                            inline while (j < 2) : (j += 1) {
-                                c3 = iter.nextCodepoint() orelse return lexer.syntaxError();
-                                width3 = iter.width;
-                                switch (c3) {
-                                    '0'...'9' => {
-                                        value = value * 16 | (c3 - '0');
-                                    },
-                                    'a'...'f' => {
-                                        value = value * 16 | (c3 + 10 - 'a');
-                                    },
-                                    'A'...'F' => {
-                                        value = value * 16 | (c3 + 10 - 'A');
-                                    },
-                                    else => {
-                                        lexer.end = start + iter.i - width3;
-                                        return lexer.syntaxError();
-                                    },
-                                }
+
+                            c3 = iter.nextCodepoint() orelse return lexer.syntaxError();
+                            width3 = iter.width;
+                            switch (c3) {
+                                '0'...'9' => {
+                                    value = value * 16 | (c3 - '0');
+                                },
+                                'a'...'f' => {
+                                    value = value * 16 | (c3 + 10 - 'a');
+                                },
+                                'A'...'F' => {
+                                    value = value * 16 | (c3 + 10 - 'A');
+                                },
+                                else => {
+                                    lexer.end = start + iter.i - width3;
+                                    return lexer.syntaxError();
+                                },
                             }
+
+                            c3 = iter.nextCodepoint() orelse return lexer.syntaxError();
+                            width3 = iter.width;
+                            switch (c3) {
+                                '0'...'9' => {
+                                    value = value * 16 | (c3 - '0');
+                                },
+                                'a'...'f' => {
+                                    value = value * 16 | (c3 + 10 - 'a');
+                                },
+                                'A'...'F' => {
+                                    value = value * 16 | (c3 + 10 - 'A');
+                                },
+                                else => {
+                                    lexer.end = start + iter.i - width3;
+                                    return lexer.syntaxError();
+                                },
+                            }
+
+                            c3 = iter.nextCodepoint() orelse return lexer.syntaxError();
+                            width3 = iter.width;
+                            switch (c3) {
+                                '0'...'9' => {
+                                    value = value * 16 | (c3 - '0');
+                                },
+                                'a'...'f' => {
+                                    value = value * 16 | (c3 + 10 - 'a');
+                                },
+                                'A'...'F' => {
+                                    value = value * 16 | (c3 + 10 - 'A');
+                                },
+                                else => {
+                                    lexer.end = start + iter.i - width3;
+                                    return lexer.syntaxError();
+                                },
+                            }
+
                             iter.c = value;
                         },
                         'u' => {
@@ -353,8 +388,9 @@ pub const Lexer = struct {
                                 // fixed-length
                             } else {
                                 // Fixed-length
-                                comptime var j: usize = 0;
-                                inline while (j < 4) : (j += 1) {
+                                // comptime var j: usize = 0;
+                                var j: usize = 0;
+                                while (j < 4) : (j += 1) {
                                     switch (c3) {
                                         '0'...'9' => {
                                             value = value * 16 | (c3 - '0');
@@ -538,7 +574,8 @@ pub const Lexer = struct {
         lexer.string_literal_buffer.shrinkRetainingCapacity(0);
         if (string_literal_details.needs_slow_path) {
             lexer.string_literal_buffer.ensureUnusedCapacity(lexer.string_literal_slice.len) catch unreachable;
-            try lexer.decodeEscapeSequences(0, lexer.string_literal_slice, &lexer.string_literal_buffer);
+            try lexer.decodeEscapeSequences(0, lexer.string_literal_slice, @TypeOf(lexer.string_literal_buffer), &lexer.string_literal_buffer);
+            lexer.string_literal = lexer.string_literal_buffer.items;
         }
 
         if (quote == '\'' and lexer.json_options != null) {
@@ -593,7 +630,7 @@ pub const Lexer = struct {
 
     pub const IdentifierKind = enum { normal, private };
     pub const ScanResult = struct { token: T, contents: string };
-    threadlocal var small_escape_sequence_buffer: [4096]u16 = undefined;
+    var small_escape_sequence_buffer: [4096]u16 = undefined;
     const FakeArrayList16 = struct {
         items: []u16,
         i: usize = 0,
@@ -618,7 +655,7 @@ pub const Lexer = struct {
 
     // This is an edge case that doesn't really exist in the wild, so it doesn't
     // need to be as fast as possible.
-    pub fn scanIdentifierWithEscapes(lexer: *LexerType, comptime kind: IdentifierKind) !ScanResult {
+    pub fn scanIdentifierWithEscapes(lexer: *LexerType, comptime kind: IdentifierKind) anyerror!ScanResult {
         var result = ScanResult{ .token = .t_end_of_file, .contents = "" };
         // First pass: scan over the identifier to see how long it is
         while (true) {
@@ -647,16 +684,39 @@ pub const Lexer = struct {
                     try lexer.step();
                 } else {
                     // Fixed-length
-                    comptime var j: usize = 0;
-                    inline while (j < 4) : (j += 1) {
-                        switch (lexer.code_point) {
-                            '0'...'9', 'a'...'f', 'A'...'F' => {
-                                try lexer.step();
-                            },
-                            else => {
-                                try lexer.syntaxError();
-                            },
-                        }
+                    // comptime var j: usize = 0;
+
+                    switch (lexer.code_point) {
+                        '0'...'9', 'a'...'f', 'A'...'F' => {
+                            try lexer.step();
+                        },
+                        else => {
+                            try lexer.syntaxError();
+                        },
+                    }
+                    switch (lexer.code_point) {
+                        '0'...'9', 'a'...'f', 'A'...'F' => {
+                            try lexer.step();
+                        },
+                        else => {
+                            try lexer.syntaxError();
+                        },
+                    }
+                    switch (lexer.code_point) {
+                        '0'...'9', 'a'...'f', 'A'...'F' => {
+                            try lexer.step();
+                        },
+                        else => {
+                            try lexer.syntaxError();
+                        },
+                    }
+                    switch (lexer.code_point) {
+                        '0'...'9', 'a'...'f', 'A'...'F' => {
+                            try lexer.step();
+                        },
+                        else => {
+                            try lexer.syntaxError();
+                        },
                     }
                 }
                 continue;
@@ -672,7 +732,7 @@ pub const Lexer = struct {
         var original_text = lexer.raw();
         if (original_text.len < 1024) {
             var buf = FakeArrayList16{ .items = &small_escape_sequence_buffer, .i = 0 };
-            try lexer.decodeEscapeSequences(lexer.start, original_text, &buf);
+            try lexer.decodeEscapeSequences(lexer.start, original_text, FakeArrayList16, &buf);
             result.contents = lexer.utf16ToString(buf.items[0..buf.i]);
         } else {
             if (!large_escape_sequence_list_loaded) {
@@ -681,7 +741,7 @@ pub const Lexer = struct {
             }
 
             large_escape_sequence_list.shrinkRetainingCapacity(0);
-            try lexer.decodeEscapeSequences(lexer.start, original_text, &large_escape_sequence_list);
+            try lexer.decodeEscapeSequences(lexer.start, original_text, std.ArrayList(u16), &large_escape_sequence_list);
             result.contents = lexer.utf16ToString(large_escape_sequence_list.items);
         }
 

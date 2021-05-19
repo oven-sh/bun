@@ -630,7 +630,7 @@ pub const Lexer = struct {
 
     pub const IdentifierKind = enum { normal, private };
     pub const ScanResult = struct { token: T, contents: string };
-    var small_escape_sequence_buffer: [4096]u16 = undefined;
+    threadlocal var small_escape_sequence_buffer: [4096]u16 = undefined;
     const FakeArrayList16 = struct {
         items: []u16,
         i: usize = 0,

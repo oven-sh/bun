@@ -22,6 +22,7 @@ pub const isWindows = std.Target.current.os.tag == .windows;
 pub const enableTracing = true;
 
 pub const isDebug = std.builtin.Mode.Debug == std.builtin.mode;
+pub const isTest = std.builtin.is_test;
 
 pub const Output = struct {
     var source: *Source = undefined;

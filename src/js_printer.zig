@@ -199,24 +199,54 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.js.appendChar(str) catch unreachable;
                 },
                 string => {
+                    if (isDebug or isTest) {
+                        if (str[0] == 0 or (str[0] == '\\' and str[1] == '0')) {
+                            Global.panic("Attempted to print null char", .{});
+                        }
+                    }
                     p.js.append(str) catch unreachable;
                 },
                 u8 => {
+                    if (isDebug or isTest) {
+                        if (str == 0) {
+                            Global.panic("Attempted to print null char", .{});
+                        }
+                    }
                     p.js.appendChar(str) catch unreachable;
                 },
                 u16 => {
+                    if (isDebug or isTest) {
+                        if (str == 0) {
+                            Global.panic("Attempted to print null char", .{});
+                        }
+                    }
                     p.js.appendChar(@intCast(u8, str)) catch unreachable;
                 },
                 u21 => {
+                    if (isDebug or isTest) {
+                        if (str == 0) {
+                            Global.panic("Attempted to print null char", .{});
+                        }
+                    }
                     p.js.appendChar(@intCast(u8, str)) catch unreachable;
                 },
                 else => {
+                    if (isDebug or isTest) {
+                        if (str[0] == 0 or (str[0] == '\\' and str[1] == '0')) {
+                            Global.panic("Attempted to print null char", .{});
+                        }
+                    }
                     p.js.append(@as(string, str)) catch unreachable;
                 },
             }
         }
 
         pub fn unsafePrint(p: *Printer, str: string) void {
+            if (isDebug or isTest) {
+                if (str[0] == 0 or (str[0] == '\\' and str[1] == '0')) {
+                    Global.panic("Attempted to print null char", .{});
+                }
+            }
             p.js.appendAssumeCapacity(str);
         }
 

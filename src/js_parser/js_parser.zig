@@ -520,6 +520,155 @@ pub const SideEffects = enum {
         }
     }
 
+    pub fn simpifyUnusedExpr(p: *P, expr: Expr) ?Expr {
+        switch (expr.data) {
+            .e_null, .e_undefined, .e_missing, .e_boolean, .e_number, .e_big_int, .e_string, .e_this, .e_reg_exp, .e_function, .e_arrow, .e_import_meta => {
+                return null;
+            },
+
+            .e_dot => |dot| {
+                if (dot.can_be_removed_if_unused) {
+                    return null;
+                }
+            },
+            .e_identifier => |ident| {
+                if (ident.must_keep_due_to_with_stmt) {
+                    return expr;
+                }
+
+                if (ident.can_be_removed_if_unused or p.symbols.items[ident.ref.inner_index].kind != .unbound) {
+                    return null;
+                }
+            },
+            .e_if => |__if__| {
+                __if__.yes = simpifyUnusedExpr(p, __if__.yes) orelse __if__.yes.toEmpty();
+                __if__.no = simpifyUnusedExpr(p, __if__.no) orelse __if__.no.toEmpty();
+
+                // "foo() ? 1 : 2" => "foo()"
+                if (__if__.yes.isEmpty() and __if__.no.isEmpty()) {
+                    return simpifyUnusedExpr(p, __if__.test_);
+                }
+            },
+
+            .e_call => |call| {
+                // A call that has been marked "__PURE__" can be removed if all arguments
+                // can be removed. The annotation causes us to ignore the target.
+                if (call.can_be_unwrapped_if_unused) {
+                    return Expr.joinAllWithComma(call.args, p.allocator);
+                }
+            },
+
+            .e_binary => |bin| {
+                switch (bin.op) {
+                    // We can simplify "==" and "!=" even though they can call "toString" and/or
+                    // "valueOf" if we can statically determine that the types of both sides are
+                    // primitives. In that case there won't be any chance for user-defined
+                    // "toString" and/or "valueOf" to be called.
+                    .bin_loose_eq, .bin_loose_ne => {
+                        if (isPrimitiveWithSideEffects(bin.left.data) and isPrimitiveWithSideEffects(bin.right.data)) {
+                            return Expr.joinWithComma(simpifyUnusedExpr(p, bin.left) orelse bin.left.toEmpty(), simpifyUnusedExpr(p, bin.right) orelse bin.right.toEmpty(), p.allocator);
+                        }
+                    },
+                    else => {},
+                }
+            },
+
+            .e_new => |call| {
+                // A constructor call that has been marked "__PURE__" can be removed if all arguments
+                // can be removed. The annotation causes us to ignore the target.
+                if (call.can_be_unwrapped_if_unused) {
+                    return Expr.joinAllWithComma(call.args, p.allocator);
+                }
+            },
+            else => {},
+        }
+
+        return expr;
+    }
+
+    // If this is in a dead branch, then we want to trim as much dead code as we
+    // can. Everything can be trimmed except for hoisted declarations ("var" and
+    // "function"), which affect the parent scope. For example:
+    //
+    //   function foo() {
+    //     if (false) { var x; }
+    //     x = 1;
+    //   }
+    //
+    // We can't trim the entire branch as dead or calling foo() will incorrectly
+    // assign to a global variable instead.
+
+    // The main goal here is to trim conditionals
+    pub fn shouldKeepStmtInDeadControlFlow(stmt: Stmt) bool {
+        switch (stmt.data) {
+            .s_empty, .s_expr, .s_throw, .s_return, .s_break, .s_continue, .s_class, .s_debugger => {
+                // Omit these statements entirely
+                return false;
+            },
+
+            .s_local => |local| {
+                return local.kind != .k_var;
+                // if (local.kind != .k_var) {
+                //     // Omit these statements entirely
+                //     return false;
+                // }
+            },
+
+            .s_block => |block| {
+                for (block.stmts) |child| {
+                    if (shouldKeepStmtInDeadControlFlow(child)) {
+                        return true;
+                    }
+                }
+
+                return false;
+            },
+
+            .s_if => |_if_| {
+                if (shouldKeepStmtInDeadControlFlow(_if_.yes)) {
+                    return true;
+                }
+
+                const no = _if_.no orelse return false;
+
+                return shouldKeepStmtInDeadControlFlow(no);
+            },
+
+            .s_while => |__while__| {
+                return shouldKeepStmtInDeadControlFlow(__while__.body);
+            },
+
+            .s_do_while => |__while__| {
+                return shouldKeepStmtInDeadControlFlow(__while__.body);
+            },
+
+            .s_for => |__for__| {
+                if (__for__.init) |init_| {
+                    if (shouldKeepStmtInDeadControlFlow(init_)) {
+                        return true;
+                    }
+                }
+
+                return shouldKeepStmtInDeadControlFlow(__for__.body);
+            },
+
+            .s_for_in => |__for__| {
+                return shouldKeepStmtInDeadControlFlow(__for__.init) or shouldKeepStmtInDeadControlFlow(__for__.body);
+            },
+
+            .s_for_of => |__for__| {
+                return shouldKeepStmtInDeadControlFlow(__for__.init) or shouldKeepStmtInDeadControlFlow(__for__.body);
+            },
+
+            .s_label => |label| {
+                return shouldKeepStmtInDeadControlFlow(label.stmt);
+            },
+            else => {
+                return true;
+            },
+        }
+    }
+
     pub const Equality = struct { equal: bool = false, ok: bool = false };
 
     // Returns "equal, ok". If "ok" is false, then nothing is known about the two
@@ -642,9 +791,10 @@ pub const SideEffects = enum {
                     .bin_comma => {
                         return isPrimitiveWithSideEffects(e.right.data);
                     },
+                    else => {},
                 }
             },
-            .e_if => {
+            .e_if => |e| {
                 return isPrimitiveWithSideEffects(e.yes.data) and isPrimitiveWithSideEffects(e.no.data);
             },
             else => {},
@@ -1283,6 +1433,14 @@ pub const Parser = struct {
         var result: js_ast.Result = undefined;
 
         if (self.p) |p| {
+
+            // Consume a leading hashbang comment
+            var hashbang: string = "";
+            if (p.lexer.token == .t_hashbang) {
+                hashbang = p.lexer.identifier;
+                try p.lexer.next();
+            }
+
             // Parse the file in the first pass, but do not bind symbols
             var opts = ParseStatementOptions{ .is_module_scope = true };
             debugl("<p.parseStmtsUpTo>");
@@ -1499,8 +1657,8 @@ const ParseStatementOptions = struct {
 
 var e_missing_data = E.Missing{};
 var s_missing = S.Empty{};
-var nullExprData = Expr.Data{ .e_missing = &e_missing_data };
-var nullStmtData = Stmt.Data{ .s_empty = &s_missing };
+var nullExprData = Expr.Data{ .e_missing = e_missing_data };
+var nullStmtData = Stmt.Data{ .s_empty = s_missing };
 pub const Prefill = struct {
     pub const StringLiteral = struct {
         pub var Key = [3]u16{ 'k', 'e', 'y' };
@@ -1523,10 +1681,10 @@ pub const Prefill = struct {
         pub var BMissing = B{ .b_missing = &BMissing_ };
         pub var BMissing_ = B.Missing{};
 
-        pub var EMissing = Expr.Data{ .e_missing = &EMissing_ };
+        pub var EMissing = Expr.Data{ .e_missing = EMissing_ };
         pub var EMissing_ = E.Missing{};
 
-        pub var SEmpty = Stmt.Data{ .s_empty = &SEmpty_ };
+        pub var SEmpty = Stmt.Data{ .s_empty = SEmpty_ };
         pub var SEmpty_ = S.Empty{};
 
         pub var Filename = Expr.Data{ .e_string = &Prefill.String.Filename };
@@ -4032,7 +4190,7 @@ pub const P = struct {
                 const name = p.lexer.identifier;
                 var emiss = E.Missing{};
                 // Parse either an async function, an async expression, or a normal expression
-                var expr: Expr = Expr{ .loc = loc, .data = Expr.Data{ .e_missing = &emiss } };
+                var expr: Expr = Expr{ .loc = loc, .data = Expr.Data{ .e_missing = emiss } };
                 if (is_identifier and strings.eqlComptime(p.lexer.raw(), "async")) {
                     var async_range = p.lexer.range();
                     try p.lexer.next();
@@ -4589,7 +4747,7 @@ pub const P = struct {
                 const name = p.lexer.identifier;
                 const loc = p.lexer.loc();
 
-                const e_str = p.lexer.toEString();
+                const e_str = E.String{ .utf8 = name };
 
                 if (!p.lexer.isIdentifierOrKeyword()) {
                     try p.lexer.expect(.t_identifier);
@@ -7262,7 +7420,7 @@ pub const P = struct {
                 }
                 return p.e(E.Array{
                     .items = items.toOwnedSlice(),
-                    .comma_after_spread = comma_after_spread,
+                    .comma_after_spread = comma_after_spread.toNullable(),
                     .is_single_line = is_single_line,
                 }, loc);
             },
@@ -7325,7 +7483,7 @@ pub const P = struct {
                 }
                 return p.e(E.Object{
                     .properties = properties.toOwnedSlice(),
-                    .comma_after_spread = comma_after_spread,
+                    .comma_after_spread = comma_after_spread.toNullable(),
                     .is_single_line = is_single_line,
                 }, loc);
             },
@@ -9707,11 +9865,8 @@ pub const P = struct {
             .s_expr => |data| {
                 p.stmt_expr_value = data.value.data;
                 data.value = p.visitExpr(data.value);
-
-                // TODO:
-                // if (p.options.mangle_syntax) {
-
-                // }
+                // simplify unused
+                data.value = SideEffects.simpifyUnusedExpr(p, data.value) orelse data.value.toEmpty();
             },
             .s_throw => |data| {
                 data.value = p.visitExpr(data.value);
@@ -10622,9 +10777,10 @@ pub const P = struct {
         // Save the current control-flow liveness. This represents if we are
         // currently inside an "if (false) { ... }" block.
         var old_is_control_flow_dead = p.is_control_flow_dead;
+        defer p.is_control_flow_dead = old_is_control_flow_dead;
 
         // visit all statements first
-        var visited = List(Stmt).init(p.allocator);
+        var visited = try List(Stmt).initCapacity(p.allocator, stmts.items.len);
         var before = List(Stmt).init(p.allocator);
         var after = List(Stmt).init(p.allocator);
         defer before.deinit();
@@ -10657,8 +10813,21 @@ pub const P = struct {
             try p.visitAndAppendStmt(list, stmt);
         }
 
-        p.is_control_flow_dead = old_is_control_flow_dead;
-        try stmts.resize(visited.items.len + before.items.len + after.items.len);
+        var visited_count = visited.items.len;
+        if (p.is_control_flow_dead) {
+            var end: usize = 0;
+            for (visited.items) |item, i| {
+                if (!SideEffects.shouldKeepStmtInDeadControlFlow(item)) {
+                    continue;
+                }
+
+                visited.items[end] = item;
+                end += 1;
+            }
+            visited_count = end;
+        }
+
+        try stmts.resize(visited_count + before.items.len + after.items.len);
         var i: usize = 0;
 
         for (before.items) |item| {
@@ -10666,7 +10835,8 @@ pub const P = struct {
             i += 1;
         }
 
-        for (visited.items) |item| {
+        const visited_slice = visited.items[0..visited_count];
+        for (visited_slice) |item| {
             stmts.items[i] = item;
             i += 1;
         }

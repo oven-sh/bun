@@ -201,7 +201,7 @@ pub const StrictModeReservedWords = std.ComptimeStringMap(bool, .{
     .{ "yield", true },
 });
 
-pub const CodePoint = i22;
+pub const CodePoint = i32;
 
 pub const PropertyModifierKeyword = enum {
     p_abstract,

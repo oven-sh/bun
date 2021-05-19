@@ -1058,14 +1058,18 @@ pub const Stmt = struct {
     }
 
     pub fn empty() Stmt {
-        return Stmt.init(&Stmt.None, logger.Loc.Empty);
+        return Stmt.init(Stmt.None, logger.Loc.Empty);
     }
 
     var None = S.Empty{};
 
     pub fn init(origData: anytype, loc: logger.Loc) Stmt {
-        if (@typeInfo(@TypeOf(origData)) != .Pointer) {
+        if (@typeInfo(@TypeOf(origData)) != .Pointer and @TypeOf(origData) != S.Empty) {
             @compileError("Stmt.init needs a pointer.");
+        }
+
+        if (@TypeOf(origData) == S.Empty) {
+            return Stmt{ .loc = loc, .data = Data{ .s_empty = S.Empty{} } };
         }
 
         switch (@TypeOf(origData.*)) {
@@ -1210,7 +1214,7 @@ pub const Stmt = struct {
                 return Stmt.comptime_alloc(allocator, "s_do_while", S.DoWhile, origData, loc);
             },
             S.Empty => {
-                return Stmt.comptime_alloc(allocator, "s_empty", S.Empty, origData, loc);
+                return Stmt{ .loc = loc, .data = Data{ .s_empty = S.Empty{} } };
             },
             S.Enum => {
                 return Stmt.comptime_alloc(allocator, "s_enum", S.Enum, origData, loc);
@@ -1336,7 +1340,7 @@ pub const Stmt = struct {
         s_debugger: *S.Debugger,
         s_directive: *S.Directive,
         s_do_while: *S.DoWhile,
-        s_empty: *S.Empty,
+        s_empty: S.Empty,
         s_enum: *S.Enum,
         s_export_clause: *S.ExportClause,
         s_export_default: *S.ExportDefault,
@@ -1382,7 +1386,12 @@ pub const Stmt = struct {
 pub const Expr = struct {
     loc: logger.Loc,
     data: Data,
-
+    pub fn toEmpty(expr: *Expr) Expr {
+        return Expr{ .data = .{ .e_missing = E.Missing{} }, .loc = expr.loc };
+    }
+    pub fn isEmpty(expr: *Expr) bool {
+        return std.meta.activeTag(expr.data) == .e_missing;
+    }
     pub const Query = struct { expr: Expr, loc: logger.Loc };
 
     pub fn getProperty(expr: *const Expr, name: string) ?Query {
@@ -1829,9 +1838,7 @@ pub const Expr = struct {
                 return Expr{ .loc = loc, .data = Data{ .e_jsx_element = dat } };
             },
             E.Missing => {
-                var dat = allocator.create(E.Missing) catch unreachable;
-                dat.* = st;
-                return Expr{ .loc = loc, .data = Data{ .e_missing = dat } };
+                return Expr{ .loc = loc, .data = Data{ .e_missing = E.Missing{} } };
             },
             E.Number => {
                 var dat = allocator.create(E.Number) catch unreachable;
@@ -2460,7 +2467,7 @@ pub const Expr = struct {
         e_import_identifier: *E.ImportIdentifier,
         e_private_identifier: *E.PrivateIdentifier,
         e_jsx_element: *E.JSXElement,
-        e_missing: *E.Missing,
+        e_missing: E.Missing,
         e_number: *E.Number,
         e_big_int: *E.BigInt,
         e_object: *E.Object,

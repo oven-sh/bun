@@ -30,8 +30,12 @@ pub const Kind = enum {
 pub const Loc = packed struct {
     start: i32 = -1,
 
+    pub fn toNullable(loc: *Loc) ?Loc {
+        return if (loc.start == -1) null else loc.*;
+    }
+
     // TODO: remove this stupidity
-    pub fn toUsize(self: *Loc) usize {
+    pub fn toUsize(self: *const Loc) usize {
         return @intCast(usize, self.start);
     }
 

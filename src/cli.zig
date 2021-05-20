@@ -1,5 +1,6 @@
 usingnamespace @import("global.zig");
 
+usingnamespace @import("./http.zig");
 const std = @import("std");
 const lex = @import("js_lexer.zig");
 const logger = @import("logger.zig");
@@ -282,6 +283,7 @@ pub const Cli = struct {
         var log = logger.Log.init(allocator);
         var panicker = MainPanicHandler.init(&log);
         MainPanicHandler.Singleton = &panicker;
+        try Server.start(allocator);
 
         const args = try Arguments.parse(alloc.static, stdout, stderr);
         var result: options.TransformResult = undefined;

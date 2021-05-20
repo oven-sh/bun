@@ -195,7 +195,7 @@ pub const Cli = struct {
                     else => {
                         diag.name.long = "--resolve";
                         diag.arg = _resolve;
-                        try diag.report(stderr.writer(), error.InvalidPlatform);
+                        try diag.report(stderr.writer(), error.InvalidResolveOption);
                         std.process.exit(1);
                     },
                 }

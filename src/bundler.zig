@@ -20,7 +20,7 @@ const sync = @import("sync.zig");
 const ThreadPool = sync.ThreadPool;
 const ThreadSafeHashMap = @import("./thread_safe_hash_map.zig");
 const ImportRecord = @import("./import_record.zig").ImportRecord;
-// pub const
+const allocators = @import("./allocators.zig");
 // const BundleMap =
 const ResolveResults = ThreadSafeHashMap.ThreadSafeStringHashMap(Resolver.Resolver.Result);
 pub const Bundler = struct {
@@ -35,6 +35,12 @@ pub const Bundler = struct {
     resolve_results: *ResolveResults,
     resolve_queue: std.fifo.LinearFifo(Resolver.Resolver.Result, std.fifo.LinearFifoBufferType.Dynamic),
     elapsed: i128 = 0,
+    needs_runtime: bool = false,
+
+    runtime_output_path: Fs.Path = undefined,
+
+    pub const RuntimeCode = @embedFile("./runtime.js");
+
     // to_bundle:
 
     // thread_pool: *ThreadPool,
@@ -46,6 +52,8 @@ pub const Bundler = struct {
     ) !Bundler {
         var fs = try Fs.FileSystem.init1(allocator, opts.absolute_working_dir, opts.watch orelse false);
         const bundle_options = try options.BundleOptions.fromApi(allocator, fs, log, opts);
+
+        relative_paths_list = ImportPathsList.init(allocator);
         // var pool = try allocator.create(ThreadPool);
         // try pool.init(ThreadPool.InitConfig{
         //     .allocator = allocator,
@@ -64,26 +72,75 @@ pub const Bundler = struct {
         };
     }
 
-    pub fn processImportRecord(bundler: *Bundler, source_dir: string, import_record: *ImportRecord) !void {
-        var resolve_result = (bundler.resolver.resolve(source_dir, import_record.path.text, import_record.kind) catch null) orelse return;
+    const ImportPathsList = allocators.BSSStringList(2048, 256);
+    var relative_paths_list: *ImportPathsList = undefined;
+    threadlocal var relative_path_allocator: std.heap.FixedBufferAllocator = undefined;
+    threadlocal var relative_path_allocator_buf: [4096]u8 = undefined;
+    threadlocal var relative_path_allocator_buf_loaded: bool = false;
 
-        if (!bundler.resolve_results.contains(resolve_result.path_pair.primary.text)) {
-            try bundler.resolve_results.put(resolve_result.path_pair.primary.text, resolve_result);
-            try bundler.resolve_queue.writeItem(resolve_result);
+    pub fn generateImportPath(bundler: *Bundler, source_dir: string, source_path: string) !Fs.Path {
+        if (!relative_path_allocator_buf_loaded) {
+            relative_path_allocator_buf_loaded = true;
+            relative_path_allocator = std.heap.FixedBufferAllocator.init(&relative_path_allocator_buf);
         }
+        defer relative_path_allocator.reset();
 
-        if (!strings.eql(import_record.path.text, resolve_result.path_pair.primary.text)) {
-            import_record.path = Fs.Path.init(resolve_result.path_pair.primary.text);
+        switch (bundler.options.import_path_format) {
+            .relative => {
+                const relative_path_temp = try std.fs.path.relative(&relative_path_allocator.allocator, source_dir, source_path);
+                const relative_path = try relative_paths_list.append(relative_path_temp);
+
+                return Fs.Path.init(relative_path);
+            },
+            .absolute_url => {
+                if (!relative_path_allocator_buf_loaded) {
+                    relative_path_allocator_buf_loaded = true;
+                    relative_path_allocator = std.heap.FixedBufferAllocator.init(&relative_path_allocator_buf);
+                }
+                const relative_path_temp = try std.fs.path.relative(&relative_path_allocator.allocator, bundler.fs.top_level_dir, source_path);
+                const relative_path = try relative_paths_list.append(try std.fmt.allocPrint(&relative_path_allocator.allocator, "{s}{s}", .{ bundler.options.public_url, relative_path_temp }));
+
+                return Fs.Path.init(relative_path);
+            },
         }
     }
 
-    pub fn buildWithResolveResult(bundler: *Bundler, resolve_result: Resolver.Resolver.Result) !void {
+    pub fn processImportRecord(bundler: *Bundler, source_dir: string, import_record: *ImportRecord) !void {
+        var resolve_result = (bundler.resolver.resolve(source_dir, import_record.path.text, import_record.kind) catch null) orelse return;
+
+        // extremely naive.
+        resolve_result.is_from_node_modules = strings.contains(resolve_result.path_pair.primary.text, "/node_modules");
+
+        if (resolve_result.shouldAssumeCommonJS()) {
+            import_record.wrap_with_to_module = true;
+            if (!bundler.needs_runtime) {
+                bundler.runtime_output_path = Fs.Path.init(try std.fmt.allocPrint(bundler.allocator, "{s}/__runtime.js", .{bundler.fs.top_level_dir}));
+            }
+            bundler.needs_runtime = true;
+        }
+
+        // lazy means:
+        // Run the resolver
+        // Don't parse/print automatically.
+        if (bundler.options.resolve_mode != .lazy) {
+            if (!bundler.resolve_results.contains(resolve_result.path_pair.primary.text)) {
+                try bundler.resolve_results.put(resolve_result.path_pair.primary.text, resolve_result);
+                try bundler.resolve_queue.writeItem(resolve_result);
+            }
+        }
+
+        if (!strings.eql(import_record.path.text, resolve_result.path_pair.primary.text)) {
+            import_record.path = try bundler.generateImportPath(source_dir, resolve_result.path_pair.primary.text);
+        }
+    }
+
+    pub fn buildWithResolveResult(bundler: *Bundler, resolve_result: Resolver.Resolver.Result) !?options.OutputFile {
         if (resolve_result.is_external) {
-            return;
+            return null;
         }
 
         // Step 1. Parse & scan
-        const result = bundler.parse(resolve_result.path_pair.primary) orelse return;
+        const result = bundler.parse(resolve_result.path_pair.primary) orelse return null;
 
         switch (result.loader) {
             .jsx, .js, .ts, .tsx => {
@@ -99,7 +156,7 @@ pub const Bundler = struct {
             else => {},
         }
 
-        try bundler.print(
+        return try bundler.print(
             result,
         );
     }
@@ -107,7 +164,7 @@ pub const Bundler = struct {
     pub fn print(
         bundler: *Bundler,
         result: ParseResult,
-    ) !void {
+    ) !options.OutputFile {
         var allocator = bundler.allocator;
         const relative_path = try std.fs.path.relative(bundler.allocator, bundler.fs.top_level_dir, result.source.path.text);
         var out_parts = [_]string{ bundler.options.output_dir, relative_path };
@@ -124,13 +181,13 @@ pub const Bundler = struct {
             js_ast.Symbol.Map.initList(symbols),
             &result.source,
             false,
-            js_printer.Options{ .to_module_ref = ast.module_ref orelse js_ast.Ref{ .inner_index = 0 } },
+            js_printer.Options{ .to_module_ref = Ref.RuntimeRef },
             &_linker,
         );
-        try bundler.output_files.append(options.OutputFile{
+        return options.OutputFile{
             .path = out_path,
             .contents = print_result.js,
-        });
+        };
     }
 
     pub const ParseResult = struct {
@@ -190,6 +247,24 @@ pub const Bundler = struct {
         }
 
         return null;
+    }
+
+    pub fn buildFile(
+        bundler: *Bundler,
+        allocator: *std.mem.Allocator,
+        relative_path: string,
+    ) !options.TransformResult {
+        var log = logger.Log.init(bundler.allocator);
+        var original_resolver_logger = bundler.resolver.log;
+        var original_bundler_logger = bundler.log;
+        defer bundler.log = original_bundler_logger;
+        defer bundler.resolver.log = original_resolver_logger;
+        bundler.log = log;
+        bundler.resolver.log = log;
+        const resolved = try bundler.resolver.resolve(bundler.fs.top_level_dir, relative_path, .entry_point);
+        const output_file = try bundler.buildWithResolveResult(resolved);
+        var output_files = try allocator.alloc(options.OutputFile, 1);
+        return try options.TransformResult.init(output_files, log, allocator);
     }
 
     pub fn bundle(
@@ -263,7 +338,11 @@ pub const Bundler = struct {
             }
             try bundler.resolve_results.put(key, result);
             entry_points[entry_point_i] = result;
-            Output.print("Resolved {s} => {s}", .{ entry, result.path_pair.primary.text });
+
+            if (isDebug) {
+                Output.print("Resolved {s} => {s}", .{ entry, result.path_pair.primary.text });
+            }
+
             entry_point_i += 1;
             bundler.resolve_queue.writeItem(result) catch unreachable;
         }
@@ -276,11 +355,18 @@ pub const Bundler = struct {
         switch (bundler.options.resolve_mode) {
             .lazy, .dev, .bundle => {
                 while (bundler.resolve_queue.readItem()) |item| {
-                    bundler.buildWithResolveResult(item) catch continue;
+                    const output_file = bundler.buildWithResolveResult(item) catch continue orelse continue;
+                    bundler.output_files.append(output_file) catch unreachable;
                 }
             },
             else => Global.panic("Unsupported resolve mode: {s}", .{@tagName(bundler.options.resolve_mode)}),
         }
+
+        // if (bundler.needs_runtime) {
+        //     try bundler.output_files.append(options.OutputFile{
+
+        //     });
+        // }
 
         if (enableTracing) {
             Output.print(

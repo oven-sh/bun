@@ -250,6 +250,13 @@ pub const Resolver = struct {
 
         debug_meta: ?DebugMeta = null,
 
+        // Most NPM modules are CommonJS
+        // If unspecified, assume CommonJS.
+        // If internal app code, assume ESM. Since this is designed for ESM.`
+        pub fn shouldAssumeCommonJS(r: *Result) bool {
+            return r.is_from_node_modules and r.module_type != .esm;
+        }
+
         pub const DebugMeta = struct {
             notes: std.ArrayList(logger.Data),
             suggestion_text: string = "",
@@ -416,7 +423,11 @@ pub const Resolver = struct {
                 if (dir_info.tsconfig_json) |tsconfig| {
                     if (tsconfig.paths.count() > 0) {
                         if (r.matchTSConfigPaths(tsconfig, import_path, kind)) |res| {
-                            return Result{ .path_pair = res.path_pair, .diff_case = res.diff_case };
+                            return Result{
+                                .path_pair = res.path_pair,
+                                .diff_case = res.diff_case,
+                                .is_from_node_modules = res.is_node_module,
+                            };
                         }
                     }
                 }
@@ -439,7 +450,7 @@ pub const Resolver = struct {
 
             // Run node's resolution rules (e.g. adding ".js")
             if (r.loadAsFileOrDirectory(import_path, kind)) |entry| {
-                return Result{ .path_pair = entry.path_pair, .diff_case = entry.diff_case };
+                return Result{ .path_pair = entry.path_pair, .diff_case = entry.diff_case, .is_from_node_modules = entry.is_node_module };
             }
 
             return null;
@@ -490,7 +501,12 @@ pub const Resolver = struct {
                             }
 
                             if (r.resolveWithoutRemapping(import_dir_info, remap, kind)) |_result| {
-                                result = Result{ .path_pair = _result.path_pair, .diff_case = _result.diff_case };
+                                result = Result{
+                                    .path_pair = _result.path_pair,
+                                    .diff_case = _result.diff_case,
+                                    .is_from_node_modules = _result.is_node_module,
+                                    .module_type = pkg.module_type,
+                                };
                                 check_relative = false;
                                 check_package = false;
                             }
@@ -502,7 +518,11 @@ pub const Resolver = struct {
             if (check_relative) {
                 if (r.loadAsFileOrDirectory(abs_path, kind)) |res| {
                     check_package = false;
-                    result = Result{ .path_pair = res.path_pair, .diff_case = res.diff_case };
+                    result = Result{
+                        .path_pair = res.path_pair,
+                        .diff_case = res.diff_case,
+                        .is_from_node_modules = res.is_node_module,
+                    };
                 } else if (!check_package) {
                     return null;
                 }
@@ -565,7 +585,11 @@ pub const Resolver = struct {
             }
 
             if (r.resolveWithoutRemapping(source_dir_info, import_path, kind)) |res| {
-                result = Result{ .path_pair = res.path_pair, .diff_case = res.diff_case };
+                result = Result{
+                    .path_pair = res.path_pair,
+                    .diff_case = res.diff_case,
+                    .is_from_node_modules = res.is_node_module,
+                };
             } else {
                 // Note: node's "self references" are not currently supported
                 return null;
@@ -579,11 +603,13 @@ pub const Resolver = struct {
             const dir_info = base_dir_info.getEnclosingBrowserScope() orelse continue;
             const pkg_json = dir_info.package_json orelse continue;
             const rel_path = std.fs.path.relative(r.allocator, pkg_json.source.key_path.text, path.text) catch continue;
+            result.module_type = pkg_json.module_type;
             if (r.checkBrowserMap(pkg_json, rel_path)) |remapped| {
                 if (remapped.len == 0) {
                     r.allocator.free(rel_path);
                     path.is_disabled = true;
                 } else if (r.resolveWithoutRemapping(dir_info, remapped, kind)) |remapped_result| {
+                    result.is_from_node_modules = remapped_result.is_node_module;
                     switch (iter.index) {
                         0 => {
                             result.path_pair.primary = remapped_result.path_pair.primary;

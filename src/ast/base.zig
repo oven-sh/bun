@@ -33,6 +33,10 @@ pub const Ref = packed struct {
         .inner_index = std.math.maxInt(Ref.Int),
         .source_index = std.math.maxInt(Ref.Int),
     };
+    pub const RuntimeRef = Ref{
+        .inner_index = std.math.maxInt(Ref.Int),
+        .source_index = std.math.maxInt(Ref.Int) - 1,
+    };
     pub fn toInt(int: anytype) Int {
         return @intCast(Int, int);
     }

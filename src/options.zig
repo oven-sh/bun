@@ -283,7 +283,7 @@ pub const BundleOptions = struct {
     jsx: JSX.Pragma = JSX.Pragma{},
     react_fast_refresh: bool = false,
     inject: ?[]string = null,
-    public_url: string = "/",
+    public_url: string = "",
     output_dir: string = "",
     write: bool = false,
     preserve_symlinks: bool = false,
@@ -295,6 +295,12 @@ pub const BundleOptions = struct {
     external: ExternalModules = ExternalModules{},
     entry_points: []const string,
     extension_order: []const string = &Defaults.ExtensionOrder,
+    import_path_format: ImportPathFormat = ImportPathFormat.relative,
+
+    pub const ImportPathFormat = enum {
+        relative,
+        absolute_url,
+    };
 
     pub const Defaults = struct {
         pub var ExtensionOrder = [_]string{ ".tsx", ".ts", ".jsx", ".js", ".json" };
@@ -350,6 +356,11 @@ pub const BundleOptions = struct {
             .entry_points = transform.entry_points,
         };
 
+        if (transform.public_url) |public_url| {
+            opts.import_path_format = ImportPathFormat.absolute_url;
+            opts.public_url = public_url;
+        }
+
         if (transform.jsx) |jsx| {
             opts.jsx = try JSX.Pragma.fromApi(jsx, allocator);
         }
@@ -380,7 +391,7 @@ pub const TransformOptions = struct {
     jsx: ?JSX.Pragma,
     react_fast_refresh: bool = false,
     inject: ?[]string = null,
-    public_url: string = "/",
+    public_url: string = "",
     preserve_symlinks: bool = false,
     entry_point: Fs.File,
     resolve_paths: bool = false,

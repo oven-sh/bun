@@ -1425,6 +1425,8 @@ pub const Parser = struct {
         }
     };
 
+    var runtime_import_names = []string{ "__markAsModule", "__commonJS", "__reExport", "__toModule" };
+
     pub fn parse(self: *Parser) !js_ast.Result {
         if (self.p == null) {
             self.p = try P.init(self.allocator, self.log, self.source, self.define, self.lexer, self.options);
@@ -1696,6 +1698,10 @@ pub const Prefill = struct {
         pub var JSXFilename = "__jsxFilename";
         pub var JSXDevelopmentImportName = "jsxDEV";
         pub var JSXImportName = "jsx";
+        pub var MarkAsModule = "__markAsModule";
+        pub var CommonJS = "__commonJS";
+        pub var ReExport = "__reExport";
+        pub var ToModule = "__toModule";
     };
 };
 
@@ -9110,8 +9116,6 @@ pub const P = struct {
 
                 e_.expr = p.visitExpr(e_.expr);
                 return p.import_transposer.maybeTransposeIf(e_.expr, state);
-
-                // TODO: maybeTransposeIfExprChain
             },
             .e_call => |e_| {
                 p.call_target = e_.target.data;
@@ -11228,11 +11232,11 @@ pub const P = struct {
         return js_ast.Ast{
             .parts = parts,
             .module_scope = p.module_scope.*,
-            .symbols = p.symbols.toOwnedSlice(),
+            .symbols = p.symbols.items,
             .exports_ref = p.exports_ref,
             .wrapper_ref = wrapper,
-            .import_records = p.import_records.toOwnedSlice(),
-            .export_star_import_records = p.export_star_import_records.toOwnedSlice(),
+            .import_records = p.import_records.items,
+            .export_star_import_records = p.export_star_import_records.items,
             .top_level_symbol_to_parts = p.top_level_symbol_to_parts,
             .approximate_line_count = p.lexer.approximate_newline_count + 1,
             .exports_kind = exports_kind,

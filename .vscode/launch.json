@@ -28,21 +28,21 @@
     //   "cwd": "${workspaceFolder}",
     //   "console": "internalConsole"
     // }
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "Dev Launch",
-      "program": "${workspaceFolder}/build/debug/macos-x86_64/esdev",
-      "preLaunchTask": "build",
-      "args": [
-        "--resolve=disable",
-        "--cwd",
-        "/Users/jarredsumner/Code/esdev/src/test/fixtures",
-        "defines.js"
-      ],
-      "cwd": "${workspaceFolder}",
-      "console": "internalConsole"
-    }
+    // {
+    //   "type": "lldb",
+    //   "request": "launch",
+    //   "name": "Dev Launch",
+    //   "program": "${workspaceFolder}/build/debug/macos-x86_64/esdev",
+    //   "preLaunchTask": "build",
+    //   "args": [
+    //     "--resolve=disable",
+    //     "--cwd",
+    //     "/Users/jarredsumner/Code/esdev/src/test/fixtures",
+    //     "escape-chars.js"
+    //   ],
+    //   "cwd": "${workspaceFolder}",
+    //   "console": "internalConsole"
+    // }
     // {
     //   "type": "lldb",
     //   "request": "launch",
@@ -77,23 +77,24 @@
     //   "cwd": "${workspaceFolder}",
     //   "console": "internalConsole"
     // }
-    // {
-    //   "type": "lldb",
-    //   "request": "launch",
-    //   "name": "Dev Launch",
-    //   "program": "${workspaceFolder}/build/debug/macos-x86_64/esdev",
-    //   "preLaunchTask": "build",
-    //   "args": [
-    //     "--resolve=dev",
-    //     "--cwd",
-    //     "./src/api/demo",
-    //     "pages/index.js",
-    //     "-o",
-    //     "out"
-    //   ],
-    //   "cwd": "${workspaceFolder}",
-    //   "console": "internalConsole"
-    // }
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Dev Launch",
+      "program": "${workspaceFolder}/build/debug/macos-x86_64/esdev",
+      "preLaunchTask": "build",
+      "args": [
+        "--resolve=dev",
+        "--cwd",
+        "./src/api/demo",
+        "pages/index.jsx",
+        "-o",
+        "out",
+        "--public-url=https://hello.com/"
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "internalConsole"
+    }
     // {
     //   "type": "lldb",
     //   "request": "launch",

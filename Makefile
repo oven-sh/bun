@@ -8,6 +8,9 @@ api:
 speedy-prod-native-macos: 
 	zig build -Drelease-fast -Dtarget=x86_64-macos-gnu
 
+speedy-prod-native-macos-lib: 
+	zig build lib -Drelease-fast -Dtarget=x86_64-macos-gnu
+
 speedy-m1:
 	zig build -Drelease-fast -Dtarget=aarch64-macos-gnu
 

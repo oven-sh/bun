@@ -3,6 +3,9 @@ usingnamespace @import("global.zig");
 const std = @import("std");
 const logger = @import("logger.zig");
 
+// This is...poorly named
+// It does not rename
+// It merely names
 pub const Renamer = struct {
     symbols: js_ast.Symbol.Map,
     source: *const logger.Source,

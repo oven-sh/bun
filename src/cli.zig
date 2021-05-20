@@ -283,9 +283,9 @@ pub const Cli = struct {
         var log = logger.Log.init(allocator);
         var panicker = MainPanicHandler.init(&log);
         MainPanicHandler.Singleton = &panicker;
-        try Server.start(allocator);
 
-        const args = try Arguments.parse(alloc.static, stdout, stderr);
+        var args = try Arguments.parse(alloc.static, stdout, stderr);
+        try Server.start(allocator, &args);
         var result: options.TransformResult = undefined;
         switch (args.resolve orelse Api.ResolveMode.dev) {
             Api.ResolveMode.disable => {

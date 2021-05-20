@@ -1,5 +1,15 @@
 const std = @import("std");
 
+pub fn addPicoHTTP(step: *std.build.LibExeObjStep, comptime dir: []const u8) void {
+    step.addCSourceFile(dir ++ "/picohttpparser/picohttpparser.c", &[_][]const u8{});
+    step.addIncludeDir(dir ++ "/picohttpparser");
+
+    step.addPackage(.{
+        .name = "picohttp",
+        .path = dir ++ "/picohttp.zig",
+    });
+}
+
 pub fn build(b: *std.build.Builder) void {
     // Standard target options allows the person running `zig build` to choose
     // what target to build for. Here we do not override the defaults, which
@@ -97,6 +107,7 @@ pub fn build(b: *std.build.Builder) void {
 
     if (!target.getCpuArch().isWasm()) {
         exe.addLibPath("/usr/local/lib");
+        addPicoHTTP(exe, "src/deps");
     }
 
     exe.install();

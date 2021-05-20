@@ -1,3 +1,6 @@
 # [submodule "src/deps/zig-clap"]
 # 	path = src/deps/zig-clap
 # 	url = https://github.com/Hejsil/zig-clap
+[submodule "src/deps/picohttpparser"]
+	path = src/deps/picohttpparser
+	url = https://github.com/h2o/picohttpparser/

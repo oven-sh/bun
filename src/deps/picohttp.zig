@@ -7,16 +7,6 @@ const fmt = std.fmt;
 
 const assert = std.debug.assert;
 
-pub fn addTo(step: *std.build.LibExeObjStep, comptime dir: []const u8) void {
-    step.addCSourceFile(dir ++ "/lib/picohttpparser.c", &[_][]const u8{});
-    step.addIncludeDir(dir ++ "/lib");
-
-    step.addPackage(.{
-        .name = "picohttp",
-        .path = dir ++ "/picohttp.zig",
-    });
-}
-
 pub const Header = struct {
     name: []const u8,
     value: []const u8,
@@ -40,58 +30,10 @@ pub const Header = struct {
 };
 
 pub const Request = struct {
-    method_: []const u8,
-    method: Method,
+    method: []const u8,
     path: []const u8,
     minor_version: usize,
     headers: []const Header,
-
-    pub const Method = enum {
-        GET,
-        HEAD,
-        PATCH,
-        PUT,
-        POST,
-        OPTIONS,
-        CONNECT,
-        TRACE,
-
-        pub fn which(str: []const u8) ?Method {
-            if (str.len < 3) {
-                return null;
-            }
-
-            switch (Match.match(str[0..2])) {
-                Match.case("GE"), Match.case("ge") => {
-                    return .GET;
-                },
-                Match.case("HE"), Match.case("he") => {
-                    return .HEAD;
-                },
-                Match.case("PA"), Match.case("pa") => {
-                    return .PATCH;
-                },
-                Match.case("PO"), Match.case("po") => {
-                    return .POST;
-                },
-                Match.case("PU"), Match.case("pu") => {
-                    return .PUT;
-                },
-                Match.case("OP"), Match.case("op") => {
-                    return .OPTIONS;
-                },
-                Match.case("CO"), Match.case("co") => {
-                    return .CONNECT;
-                },
-                Match.case("TR"), Match.case("tr") => {
-                    return .TRACE;
-                },
-                else => {
-                    return null;
-                },
-            }
-        }
-    };
 
     pub fn parse(buf: []const u8, src: []Header) !Request {
         var method: []const u8 = undefined;
@@ -116,8 +58,7 @@ pub const Request = struct {
             -1 => error.BadRequest,
             -2 => error.ShortRead,
             else => |bytes_read| Request{
-                .method_ = method,
-                .method = Request.Method.which(method) orelse return error.InvalidMethod,
+                .method = method,
                 .path = path,
                 .minor_version = @intCast(usize, minor_version),
                 .headers = src[0..num_headers],

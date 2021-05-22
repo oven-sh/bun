@@ -21,6 +21,43 @@ const ThreadPool = sync.ThreadPool;
 const ThreadSafeHashMap = @import("./thread_safe_hash_map.zig");
 const ImportRecord = @import("./import_record.zig").ImportRecord;
 const allocators = @import("./allocators.zig");
+const MimeType = @import("./http/mime_type.zig");
+
+pub const ServeResult = struct {
+    errors: []logger.Msg = &([_]logger.Msg),
+    warnings: []logger.Msg = &([_]logger.Msg),
+    output: Output,
+    status: Status,
+
+    mime_type: MimeType,
+
+    pub const Status = enum {
+        success,
+        build_failed,
+        not_found,
+        permission_error,
+    };
+
+    // Either we:
+    // - send pre-buffered asset body
+    // - stream a file from the file system
+    pub const Output = union(Tag) {
+        file: File,
+        build: options.OutputFile,
+        none: u0,
+
+        pub const Tag = enum {
+            file,
+            build,
+            none,
+        };
+
+        pub const File = struct {
+            absolute_path: string,
+        };
+    };
+};
+
 // const BundleMap =
 const ResolveResults = ThreadSafeHashMap.ThreadSafeStringHashMap(Resolver.Resolver.Result);
 pub const Bundler = struct {
@@ -50,7 +87,7 @@ pub const Bundler = struct {
         log: *logger.Log,
         opts: Api.TransformOptions,
     ) !Bundler {
-        var fs = try Fs.FileSystem.init1(allocator, opts.absolute_working_dir, opts.watch orelse false);
+        var fs = try Fs.FileSystem.init1(allocator, opts.absolute_working_dir, opts.serve orelse false);
         const bundle_options = try options.BundleOptions.fromApi(allocator, fs, log, opts);
 
         relative_paths_list = ImportPathsList.init(allocator);
@@ -140,7 +177,7 @@ pub const Bundler = struct {
         }
 
         // Step 1. Parse & scan
-        const result = bundler.parse(resolve_result.path_pair.primary) orelse return null;
+        const result = bundler.parse(resolve_result.path_pair.primary, bundler.options.loaders.get(resolve_result.path_pair.primary.text) orelse .file) orelse return null;
 
         switch (result.loader) {
             .jsx, .js, .ts, .tsx => {
@@ -197,7 +234,7 @@ pub const Bundler = struct {
         ast: js_ast.Ast,
     };
     pub var tracing_start: i128 = if (enableTracing) 0 else undefined;
-    pub fn parse(bundler: *Bundler, path: Fs.Path) ?ParseResult {
+    pub fn parse(bundler: *Bundler, path: Fs.Path, loader: options.Loader) ?ParseResult {
         if (enableTracing) {
             tracing_start = std.time.nanoTimestamp();
         }
@@ -207,7 +244,6 @@ pub const Bundler = struct {
             }
         }
         var result: ParseResult = undefined;
-        const loader: options.Loader = bundler.options.loaders.get(path.name.ext) orelse .file;
         const entry = bundler.resolver.caches.fs.readFile(bundler.fs, path.text) catch return null;
         const source = logger.Source.initFile(Fs.File{ .path = path, .contents = entry.contents }, bundler.allocator) catch return null;
 
@@ -249,22 +285,48 @@ pub const Bundler = struct {
         return null;
     }
 
+    pub fn buildServeResultOutput(bundler: *Bundler, resolve: Resolver.Resolver.Result, loader: options.Loader) !ServeResult.Output {
+        switch (loader) {
+            .js, .jsx, .ts, .tsx, .json => {
+                return ServeResult.Output{ .built = bundler.buildWithResolveResult(resolve) orelse error.BuildFailed };
+            },
+            else => {
+                return ServeResult.Output{ .file = ServeResult.Output.File{ .absolute_path = resolve.path_pair.primary.text } };
+            },
+        }
+    }
+
+    // We try to be mostly stateless when serving
+    // This means we need a slightly different resolver setup
+    // Essentially:
     pub fn buildFile(
         bundler: *Bundler,
+        log: *logger.Log,
         allocator: *std.mem.Allocator,
         relative_path: string,
-    ) !options.TransformResult {
-        var log = logger.Log.init(bundler.allocator);
+        extension: string,
+    ) !ServeResult {
         var original_resolver_logger = bundler.resolver.log;
         var original_bundler_logger = bundler.log;
         defer bundler.log = original_bundler_logger;
         defer bundler.resolver.log = original_resolver_logger;
         bundler.log = log;
         bundler.resolver.log = log;
-        const resolved = try bundler.resolver.resolve(bundler.fs.top_level_dir, relative_path, .entry_point);
-        const output_file = try bundler.buildWithResolveResult(resolved);
-        var output_files = try allocator.alloc(options.OutputFile, 1);
-        return try options.TransformResult.init(output_files, log, allocator);
+
+        var needs_resolve = false;
+
+        // is it missing an extension?
+        // it either:
+        // - needs to be resolved
+        // - is html
+        // We should first check if it's html.
+        if (extension.len == 0) {}
+
+        const initial_loader = bundler.options.loaders.get(extension);
+
+        const resolved = try bundler.resolver.resolve(bundler.fs.top_level_dir, relative_path, .entry_point) orelse {};
+
+        const loader = bundler.options.loaders.get(resolved.path_pair.primary.text) orelse .file;
     }
 
     pub fn bundle(
@@ -432,8 +494,7 @@ pub const Transformer = struct {
         var output_i: usize = 0;
         var chosen_alloc: *std.mem.Allocator = allocator;
         var arena: std.heap.ArenaAllocator = undefined;
-        const watch = opts.watch orelse false;
-        const use_arenas = opts.entry_points.len > 8 or watch;
+        const use_arenas = opts.entry_points.len > 8;
 
         for (opts.entry_points) |entry_point, i| {
             if (use_arenas) {

@@ -228,13 +228,17 @@ function decodeTransformOptions(bb) {
       break;
 
     case 18:
-      result["watch"] = !!bb.readByte();
+      result["serve"] = !!bb.readByte();
       break;
 
     case 19:
       var length = bb.readVarUint();
       var values = result["extension_order"] = Array(length);
       for (var i = 0; i < length; i++) values[i] = bb.readString();
+      break;
+
+    case 20:
+      result["public_dir"] = bb.readString();
       break;
 
     default:
@@ -393,7 +397,7 @@ if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value)
 bb.writeByte(encoded);
   }
 
-  var value = message["watch"];
+  var value = message["serve"];
   if (value != null) {
     bb.writeByte(18);
     bb.writeByte(value);
@@ -408,6 +412,12 @@ bb.writeByte(encoded);
       value = values[i];
       bb.writeString(value);
     }
+  }
+
+  var value = message["public_dir"];
+  if (value != null) {
+    bb.writeByte(20);
+    bb.writeString(value);
   }
   bb.writeByte(0);
 

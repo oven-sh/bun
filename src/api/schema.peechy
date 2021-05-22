@@ -49,6 +49,7 @@ message TransformOptions {
   string public_url = 4;
   string absolute_working_dir = 5;
 
+
   string[] define_keys = 6;
   string[] define_values = 7;
 
@@ -68,9 +69,11 @@ message TransformOptions {
   string[] main_fields = 16;
   Platform platform = 17;
 
-  bool watch = 18;
+  bool serve = 18;
 
   string[] extension_order = 19;
+
+  string public_dir = 20;
 }
 
 struct FileHandle {

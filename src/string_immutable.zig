@@ -97,33 +97,61 @@ pub fn eql(self: string, other: anytype) bool {
 }
 // I have not actually verified that this makes it faster
 // It's probably like 0.0001ms faster
-pub fn eqlComptime(self: string, comptime alt: string) bool {
-    comptime var matcher_size: usize = 0;
-
+pub fn eqlComptime(self: string, comptime alt: anytype) bool {
     switch (comptime alt.len) {
         0 => {
             @compileError("Invalid size passed to eqlComptime");
         },
-        1...4 => {
-            matcher_size = 4;
+        1...3 => {
+            if (alt.len != self.len) {
+                return false;
+            }
+
+            inline for (alt) |c, i| {
+                if (self[i] != c) return false;
+            }
+            return true;
         },
-        5...8 => {
-            matcher_size = 8;
+        4 => {
+            comptime const check = std.mem.readIntNative(u32, alt[0..alt.len]);
+            return self.len == alt.len and std.mem.readIntNative(u32, self[0..4]) == check;
         },
-        8...12 => {
-            comptime const FirstMatcher = ExactSizeMatcher(8);
-            comptime const SecondMatcher = ExactSizeMatcher(4);
-            comptime const first = FirstMatcher.case(alt[0..8]);
-            comptime const second = SecondMatcher.case(alt[8..alt.len]);
-            return (self.len == alt.len) and first == FirstMatcher.hashUnsafe(self[0..8]) and second == SecondMatcher.match(self[8..self.len]);
+        5...7 => {
+            comptime const check = std.mem.readIntNative(u32, alt[0..4]);
+            if (self.len != alt.len or std.mem.readIntNative(u32, self[0..4]) != check) {
+                return false;
+            }
+            const remainder = self[4..];
+            inline for (alt[4..]) |c, i| {
+                if (remainder[i] != c) return false;
+            }
+            return true;
+        },
+        8 => {
+            comptime const check = std.mem.readIntNative(u64, alt[0..alt.len]);
+            return self.len == alt.len and std.mem.readIntNative(u64, self[0..8]) == check;
+        },
+        9...11 => {
+            comptime const first = std.mem.readIntNative(u64, alt[0..8]);
+
+            if (self.len != alt.len or first != std.mem.readIntNative(u64, self[0..8])) {
+                return false;
+            }
+
+            inline for (alt[8..]) |c, i| {
+                if (self[i + 8] != c) return false;
+            }
+            return true;
+        },
+        12 => {
+            comptime const first = std.mem.readIntNative(u64, alt[0..8]);
+            comptime const second = std.mem.readIntNative(u32, alt[8..12]);
+            return (self.len == alt.len) and first == std.mem.readIntNative(u64, self[0..8]) and second == std.mem.readIntNative(u32, self[8..12]);
         },
         else => {
             @compileError(alt ++ " is too long.");
         },
     }
-    comptime const Matcher = ExactSizeMatcher(matcher_size);
-    comptime const alt_hash = Matcher.case(alt);
-    return Matcher.match(self) == alt_hash;
 }
 
 pub fn append(allocator: *std.mem.Allocator, self: string, other: string) !string {

@@ -200,11 +200,14 @@ pub const Api = struct {
         /// platform
         platform: ?Platform = null,
 
-        /// watch
-        watch: ?bool = null,
+        /// serve
+        serve: ?bool = null,
 
         /// extension_order
         extension_order: []const []const u8,
+
+        /// public_dir
+        public_dir: ?[]const u8 = null,
 
         pub fn decode(allocator: *std.mem.Allocator, reader: anytype) anyerror!TransformOptions {
             var obj = std.mem.zeroes(TransformOptions);
@@ -381,7 +384,7 @@ pub const Api = struct {
                         result.platform = try reader.readEnum(Platform, .Little);
                     },
                     18 => {
-                        result.watch = (try reader.readByte()) == @as(u8, 1);
+                        result.serve = (try reader.readByte()) == @as(u8, 1);
                     },
                     19 => {
                         {
@@ -397,6 +400,13 @@ pub const Api = struct {
                                 _ = try reader.readAll(result.extension_order[j].?);
                             }
                         }
+                    },
+                    20 => {
+                        length = try reader.readIntNative(u32);
+                        if ((result.public_dir orelse &([_]u8{})).len != length) {
+                            result.public_dir = try allocator.alloc(u8, length);
+                        }
+                        _ = try reader.readAll(result.public_dir.?);
                     },
                     else => {
                         return error.InvalidMessage;
@@ -559,9 +569,9 @@ pub const Api = struct {
                 try writer.writeIntNative(@TypeOf(@enumToInt(result.platform orelse unreachable)), @enumToInt(result.platform orelse unreachable));
             }
 
-            if (result.watch) |watch| {
+            if (result.serve) |serve| {
                 try writer.writeByte(18);
-                try writer.writeByte(@boolToInt(watch));
+                try writer.writeByte(@boolToInt(serve));
             }
 
             if (result.extension_order) |extension_order| {
@@ -575,6 +585,12 @@ pub const Api = struct {
                         try writer.writeAll(std.mem.sliceAsBytes(extension_order[j]));
                     }
                 }
+            }
+
+            if (result.public_dir) |public_dir| {
+                try writer.writeByte(20);
+                try writer.writeIntNative(u32, @intCast(u32, public_dir.len));
+                try writer.writeAll(std.mem.sliceAsBytes(public_dir));
             }
             try writer.writeByte(0);
             return;

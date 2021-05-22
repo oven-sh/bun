@@ -15,6 +15,7 @@ usingnamespace @import("ast/base.zig");
 usingnamespace @import("defines.zig");
 const panicky = @import("panic_handler.zig");
 const Api = @import("api/schema.zig").Api;
+const resolve_path = @import("./resolver/resolve_path.zig");
 
 const clap = @import("clap");
 
@@ -114,6 +115,8 @@ pub const Cli = struct {
                 clap.parseParam("-i, --inject <STR>...        Inject module at the top of every file") catch unreachable,
                 clap.parseParam("--cwd <STR>                  Absolute path to resolve entry points from. Defaults to cwd") catch unreachable,
                 clap.parseParam("--public-url <STR>           Rewrite import paths to start with --public-url. Useful for web browsers.") catch unreachable,
+                clap.parseParam("--serve                      Start a local dev server. This also sets resolve to \"lazy\".") catch unreachable,
+                clap.parseParam("--public-dir <STR>           Top-level directory for .html files, fonts, images, or anything external. Only relevant with --serve. Defaults to \"<cwd>/public\", to match create-react-app and Next.js") catch unreachable,
                 clap.parseParam("--jsx-factory <STR>          Changes the function called when compiling JSX elements using the classic JSX runtime") catch unreachable,
                 clap.parseParam("--jsx-fragment <STR>         Changes the function called when compiling JSX fragments using the classic JSX runtime") catch unreachable,
                 clap.parseParam("--jsx-import-source <STR>    Declares the module specifier to be used for importing the jsx and jsxs factory functions. Default: \"react\"") catch unreachable,
@@ -154,6 +157,8 @@ pub const Cli = struct {
             var entry_points = args.positionals();
             var inject = args.options("--inject");
             var output_dir = args.option("--outdir");
+            const serve = args.flag("--serve");
+
             var write = entry_points.len > 1 or output_dir != null;
             if (write and output_dir == null) {
                 var _paths = [_]string{ cwd, "out" };
@@ -259,7 +264,9 @@ pub const Cli = struct {
                 .define_values = define_values,
                 .loader_keys = loader_keys,
                 .loader_values = loader_values,
+                .public_dir = if (args.option("--public-dir")) |public_dir| allocator.dupe(u8, public_dir) catch unreachable else null,
                 .write = write,
+                .serve = serve,
                 .inject = inject,
                 .entry_points = entry_points,
                 .extension_order = args.options("--extension-order"),
@@ -285,7 +292,12 @@ pub const Cli = struct {
         MainPanicHandler.Singleton = &panicker;
 
         var args = try Arguments.parse(alloc.static, stdout, stderr);
-        try Server.start(allocator, &args);
+
+        if (args.serve orelse false) {
+            try Server.start(allocator, &args);
+            return;
+        }
+
         var result: options.TransformResult = undefined;
         switch (args.resolve orelse Api.ResolveMode.dev) {
             Api.ResolveMode.disable => {

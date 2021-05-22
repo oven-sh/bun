@@ -284,7 +284,10 @@ pub const BundleOptions = struct {
     react_fast_refresh: bool = false,
     inject: ?[]string = null,
     public_url: string = "",
+    public_dir: string = "public",
+    public_dir_enabled: bool = true,
     output_dir: string = "",
+    public_dir_handle: ?std.fs.Dir = null,
     write: bool = false,
     preserve_symlinks: bool = false,
     resolve_mode: api.Api.ResolveMode,
@@ -376,6 +379,59 @@ pub const BundleOptions = struct {
 
         if (transform.main_fields.len > 0) {
             opts.main_fields = transform.main_fields;
+        }
+
+        if (transform.serve orelse false) {
+            opts.resolve_mode = .lazy;
+            var _dirs = [_]string{transform.public_dir orelse opts.public_dir};
+            opts.public_dir = try fs.joinAlloc(allocator, &_dirs);
+            opts.public_dir_handle = std.fs.openDirAbsolute(opts.public_dir, .{ .iterate = true }) catch |err| brk: {
+                var did_warn = false;
+                switch (err) {
+                    error.FileNotFound => {
+                        // Be nice.
+                        // Check "static" since sometimes people use that instead.
+                        // Don't switch to it, but just tell "hey try --public-dir=static" next time
+                        if (transform.public_dir == null or transform.public_dir.?.len == 0) {
+                            _dirs[0] = "static";
+                            const check_static = try fs.joinAlloc(allocator, &_dirs);
+                            defer allocator.free(check_static);
+
+                            std.fs.accessAbsolute(check_static, .{}) catch {
+                                Output.printError("warn: \"public\" folder missing. If there are external assets used in your project, pass --public-dir=\"public-folder-name\"", .{});
+                                did_warn = true;
+                            };
+                        }
+
+                        if (!did_warn) {
+                            Output.printError("warn: \"public\" folder missing. If you want to use \"static\" as the public folder, pass --public-dir=\"static\".", .{});
+                        }
+                        opts.public_dir_enabled = false;
+                    },
+                    error.AccessDenied => {
+                        Output.printError(
+                            "error: access denied when trying to open public_dir: \"{s}\".\nPlease re-open Speedy with access to this folder or pass a different folder via \"--public-dir\". Note: --public-dir is relative to --cwd (or the process' current working directory).\n\nThe public folder is where static assets such as images, fonts, and .html files go.",
+                            .{opts.public_dir},
+                        );
+                        std.process.exit(1);
+                    },
+                    else => {
+                        Output.printError(
+                            "error: \"{s}\" when accessing public folder: \"{s}\"",
+                            .{ @errorName(err), opts.public_dir },
+                        );
+                        std.process.exit(1);
+                    },
+                }
+
+                break :brk null;
+            };
+
+            // Windows has weird locking rules for files
+            // so it's a bad idea to keep a file handle open for a long time on Windows.
+            if (isWindows and opts.public_dir_handle != null) {
+                opts.public_dir_handle.?.close();
+            }
         }
 
         return opts;

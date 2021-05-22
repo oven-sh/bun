@@ -1,13 +1,9 @@
 const std = @import("std");
+const resolve_path = @import("./src/resolver/resolve_path.zig");
 
-pub fn addPicoHTTP(step: *std.build.LibExeObjStep, comptime dir: []const u8) void {
-    step.addCSourceFile(dir ++ "/picohttpparser/picohttpparser.c", &[_][]const u8{});
-    step.addIncludeDir(dir ++ "/picohttpparser");
-
-    step.addPackage(.{
-        .name = "picohttp",
-        .path = dir ++ "/picohttp.zig",
-    });
+pub fn addPicoHTTP(step: *std.build.LibExeObjStep, dir: []const u8) void {
+    step.addCSourceFile("src/deps/picohttpparser.c", &[_][]const u8{});
+    step.addIncludeDir("src/deps");
 }
 
 pub fn build(b: *std.build.Builder) void {
@@ -84,6 +80,8 @@ pub fn build(b: *std.build.Builder) void {
         exe = b.addExecutable("esdev", "src/main.zig");
         exe.linkLibC();
     }
+    // exe.setLibCFile("libc.txt");
+    exe.linkLibC();
 
     exe.addPackage(.{
         .name = "clap",
@@ -105,9 +103,19 @@ pub fn build(b: *std.build.Builder) void {
     exe.setBuildMode(mode);
     b.install_path = output_dir;
 
+    // exe.want_lto = true;
     if (!target.getCpuArch().isWasm()) {
-        exe.addLibPath("/usr/local/lib");
-        addPicoHTTP(exe, "src/deps");
+        // exe.addLibPath("/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/lib");
+        // exe.addIncludeDir("/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/");
+
+        const env = std.process.getEnvMap(std.heap.c_allocator) catch unreachable;
+
+        // if (env.get("SDKROOT")) |sdkroot| {
+        //     const joined = resolve_path.normalizeAndJoin2(cwd, .auto, sdkroot, "usr/include");
+        //     const sys = std.heap.c_allocator.dupe(u8, joined) catch unreachable;
+        //     exe.addSystemIncludeDir(sys);
+        // }
+        addPicoHTTP(exe, cwd);
     }
 
     exe.install();

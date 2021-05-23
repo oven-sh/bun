@@ -121,26 +121,31 @@ pub const Server = struct {
 
             _ = writer.write("\r\n") catch 0;
 
-            _ = try ctx.conn.client.write(writer.getWritten(), SOCKET_FLAGS);
+            _ = try ctx.writeSocket(writer.getWritten(), SOCKET_FLAGS);
+        }
+
+        pub fn writeSocket(ctx: *RequestContext, buf: anytype, flags: anytype) !usize {
+            ctx.conn.client.setWriteBufferSize(@intCast(u32, buf.len)) catch {};
+            return ctx.conn.client.write(buf, SOCKET_FLAGS);
         }
 
         pub fn writeBodyBuf(ctx: *RequestContext, body: []const u8) void {
-            _ = ctx.conn.client.write(body, SOCKET_FLAGS) catch 0;
+            _ = ctx.writeSocket(body, SOCKET_FLAGS) catch 0;
         }
 
         pub fn writeStatus(ctx: *RequestContext, comptime code: HTTPStatusCode) !void {
-            _ = try ctx.conn.client.write(comptime printStatusLine(code), SOCKET_FLAGS);
+            _ = try ctx.writeSocket(comptime printStatusLine(code), SOCKET_FLAGS);
             ctx.status = code;
         }
 
         pub fn init(req: Request, allocator: *std.mem.Allocator, conn: *tcp.Connection, bundler_: *Bundler) !RequestContext {
             return RequestContext{
                 .request = req,
-                .conn = conn,
                 .allocator = allocator,
                 .bundler = bundler_,
                 .url = URLPath.parse(req.path),
                 .log = logger.Log.init(allocator),
+                .conn = conn,
                 .method = Method.which(req.method) orelse return error.InvalidMethod,
             };
         }
@@ -285,7 +290,7 @@ pub const Server = struct {
                             ctx.writeStatus(200) catch {};
                             try ctx.prepareToSendBody(file_read, false);
                             if (!send_body) return;
-                            _ = try ctx.conn.client.write(file_slice, SOCKET_FLAGS);
+                            _ = try ctx.writeSocket(file_slice, SOCKET_FLAGS);
                         },
                         else => {
                             var chunk_written: usize = 0;
@@ -300,7 +305,7 @@ pub const Server = struct {
                                 // Read from the file until we reach either end of file or the max chunk size
                                 chunk_written = handle.read(file_chunk_slice) catch |err| {
                                     if (pushed_chunk_count > 0) {
-                                        _ = try ctx.conn.client.write("0\r\n\r\n", SOCKET_FLAGS);
+                                        _ = try ctx.writeSocket("0\r\n\r\n", SOCKET_FLAGS);
                                     }
                                     return ctx.sendInternalError(err);
                                 };
@@ -315,7 +320,7 @@ pub const Server = struct {
 
                                         return;
                                     }
-                                    _ = try ctx.conn.client.write("0\r\n\r\n", SOCKET_FLAGS);
+                                    _ = try ctx.writeSocket("0\r\n\r\n", SOCKET_FLAGS);
                                     break;
                                     // final chunk
                                 } else if (chunk_written < file_chunk_size - 1) {
@@ -329,9 +334,9 @@ pub const Server = struct {
                                         ctx.prepareToSendBody(0, true) catch {};
                                         if (!send_body) return;
                                     }
-                                    _ = try ctx.conn.client.write(size_slice, SOCKET_FLAGS);
-                                    _ = try ctx.conn.client.write(file_chunk_slice[0..chunk_written], SOCKET_FLAGS);
-                                    _ = try ctx.conn.client.write(trailing_newline_slice, SOCKET_FLAGS);
+                                    _ = try ctx.writeSocket(size_slice, SOCKET_FLAGS);
+                                    _ = try ctx.writeSocket(file_chunk_slice[0..chunk_written], SOCKET_FLAGS);
+                                    _ = try ctx.writeSocket(trailing_newline_slice, SOCKET_FLAGS);
                                     break;
                                     // full chunk
                                 } else {
@@ -347,7 +352,7 @@ pub const Server = struct {
                                     remainder_slice[0] = '\r';
                                     remainder_slice[1] = '\n';
 
-                                    _ = try ctx.conn.client.write(&file_chunk_buf, SOCKET_FLAGS);
+                                    _ = try ctx.writeSocket(&file_chunk_buf, SOCKET_FLAGS);
                                 }
                             }
                         },
@@ -383,7 +388,7 @@ pub const Server = struct {
                     ctx.writeStatus(200) catch {};
                     try ctx.prepareToSendBody(output.contents.len, false);
                     if (!send_body) return;
-                    _ = try ctx.conn.client.write(output.contents, SOCKET_FLAGS);
+                    _ = try ctx.writeSocket(output.contents, SOCKET_FLAGS);
                 },
             }
 

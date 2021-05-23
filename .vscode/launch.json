@@ -90,7 +90,8 @@
         "pages/index.jsx",
         "-o",
         "out",
-        "--public-url=https://hello.com/"
+        "--public-url=https://hello.com/",
+        "--serve"
       ],
       "cwd": "${workspaceFolder}",
       "console": "internalConsole"

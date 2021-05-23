@@ -1,6 +1,8 @@
 const std = @import("std");
 
 pub fn ExactSizeMatcher(comptime max_bytes: usize) type {
+    const a: u32 = 1000;
+
     switch (max_bytes) {
         1, 2, 4, 8, 12 => {},
         else => {
@@ -42,7 +44,7 @@ pub fn ExactSizeMatcher(comptime max_bytes: usize) type {
             } else if (str.len == max_bytes) {
                 return std.mem.readIntNative(T, str[0..str.len]);
             } else {
-                @compileError("str is " ++ str.len ++ " bytes but expected " ++ max_bytes ++ " bytes");
+                @compileError("str: \"" ++ str ++ "\" too long");
             }
         }
 

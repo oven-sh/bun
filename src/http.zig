@@ -3,6 +3,7 @@ const std = @import("std");
 usingnamespace @import("global.zig");
 const Api = @import("./api/schema.zig").Api;
 const bundler = @import("bundler.zig");
+const logger = @import("logger.zig");
 
 const tcp = std.x.net.tcp;
 const ip = std.x.net.ip;
@@ -12,13 +13,15 @@ const IPv6 = std.x.os.IPv6;
 const Socket = std.x.os.Socket;
 const os = std.os;
 
-const picohttp = @import("./deps/picohttp.zig");
+const picohttp = @import("picohttp");
 const Header = picohttp.Header;
 const Request = picohttp.Request;
 const Response = picohttp.Response;
 const Headers = picohttp.Headers;
 const MimeType = @import("http/mime_type.zig");
 const Bundler = bundler.Bundler;
+
+const SOCKET_FLAGS = os.SOCK_CLOEXEC;
 
 // This is a tiny HTTP server.
 // It needs to support:
@@ -33,19 +36,25 @@ const Bundler = bundler.Bundler;
 //      - Parsing time
 //      - IO read time
 pub const Server = struct {
-    options: *Api.TransformOptions,
+    log: logger.Log,
     allocator: *std.mem.Allocator,
+    bundler: Bundler,
 
     threadlocal var req_headers_buf: [100]picohttp.Header = undefined;
     threadlocal var res_headers_buf: [100]picohttp.Header = undefined;
 
+    pub const foo = true;
+    const HTTPStatusCode = u9;
     pub const RequestContext = struct {
         request: Request,
         method: Method,
         url: URLPath,
         conn: *tcp.Connection,
+        allocator: *std.mem.Allocator,
+        log: logger.Log,
         bundler: *Bundler,
-        status: ?u5 = null,
+        keep_alive: bool = true,
+        status: ?HTTPStatusCode = null,
         has_written_last_header: bool = false,
 
         res_headers_count: usize = 0,
@@ -53,15 +62,16 @@ pub const Server = struct {
         pub const bundle_prefix = "__speedy";
 
         pub fn header(ctx: *RequestContext, comptime name: anytype) ?Header {
-            for (ctx.request.headers) |header| {
-                if (strings.eql(header.name, name)) {
-                    return header;
+            for (ctx.request.headers) |head| {
+                if (strings.eqlComptime(head.name, name)) {
+                    return head;
                 }
             }
+
             return null;
         }
 
-        pub fn printStatusLine(comptime code: u9) ![]u8 {
+        pub fn printStatusLine(comptime code: HTTPStatusCode) []const u8 {
             const status_text = switch (code) {
                 200...299 => "OK",
                 300...399 => "=>",
@@ -70,7 +80,7 @@ pub const Server = struct {
                 else => @compileError("Invalid code passed to printStatusLine"),
             };
 
-            return try std.fmt.comptimePrint("HTTP/1.1 {s} \r\n", .{ code, status_text });
+            return std.fmt.comptimePrint("HTTP/1.1 {d} {s}\r\n", .{ code, status_text });
         }
 
         pub fn prepareToSendBody(
@@ -78,26 +88,59 @@ pub const Server = struct {
             length: usize,
             comptime chunked: bool,
         ) !void {
-            if (isDebug or isTest) {
-                std.debug.assert(!ctx.has_written_last_header);
-                ctx.has_written_last_header = true;
+            defer {
+                if (isDebug or isTest) {
+                    std.debug.assert(!ctx.has_written_last_header);
+                    ctx.has_written_last_header = true;
+                }
             }
 
-            if (chunked) {}
+            if (chunked) {
+                ctx.appendHeader("Transfer-Encoding", "Chunked");
+            } else {
+                const length_str = try ctx.allocator.alloc(u8, 64);
+                ctx.appendHeader("Content-Length", length_str[0..std.fmt.formatIntBuf(length_str, length, 10, true, .{})]);
+            }
+
+            try ctx.flushHeaders();
         }
 
-        pub fn writeBodyBuf(ctx: *RequestContext) void {}
+        threadlocal var resp_header_out_buf: [4096]u8 = undefined;
+        pub fn flushHeaders(ctx: *RequestContext) !void {
+            if (ctx.res_headers_count == 0) return;
 
-        pub fn writeStatus(ctx: *RequestContext, comptime code: u9) !void {
-            _ = try ctx.conn.client.write(comptime printStatusLine(code), os.SOCK_CLOEXEC);
+            const headers: []picohttp.Header = res_headers_buf[0..ctx.res_headers_count];
+            defer ctx.res_headers_count = 0;
+            var writer = std.io.fixedBufferStream(&resp_header_out_buf);
+            for (headers) |head| {
+                _ = writer.write(head.name) catch 0;
+                _ = writer.write(": ") catch 0;
+                _ = writer.write(head.value) catch 0;
+                _ = writer.write("\r\n") catch 0;
+            }
+
+            _ = writer.write("\r\n") catch 0;
+
+            _ = try ctx.conn.client.write(writer.getWritten(), SOCKET_FLAGS);
         }
 
-        pub fn init(req: Request, conn: *tcp.Connection, bundler: *Bundler) !RequestContext {
+        pub fn writeBodyBuf(ctx: *RequestContext, body: []const u8) void {
+            _ = ctx.conn.client.write(body, SOCKET_FLAGS) catch 0;
+        }
+
+        pub fn writeStatus(ctx: *RequestContext, comptime code: HTTPStatusCode) !void {
+            _ = try ctx.conn.client.write(comptime printStatusLine(code), SOCKET_FLAGS);
+            ctx.status = code;
+        }
+
+        pub fn init(req: Request, allocator: *std.mem.Allocator, conn: *tcp.Connection, bundler_: *Bundler) !RequestContext {
             return RequestContext{
-                .request = request,
+                .request = req,
                 .conn = conn,
-                .bundler = bundler,
+                .allocator = allocator,
+                .bundler = bundler_,
                 .url = URLPath.parse(req.path),
+                .log = logger.Log.init(allocator),
                 .method = Method.which(req.method) orelse return error.InvalidMethod,
             };
         }
@@ -108,9 +151,16 @@ pub const Server = struct {
 
         pub fn sendInternalError(ctx: *RequestContext, err: anytype) void {
             ctx.writeStatus(500) catch {};
-            const printed = std.fmt.bufPrint(&error_buf, "Error: {s}", .{@errorName(err)}) catch {};
+            const printed = std.fmt.bufPrint(&error_buf, "Error: {s}", .{@errorName(err)}) catch |err2| brk: {
+                if (isDebug or isTest) {
+                    Global.panic("error while printing error: {s}", .{@errorName(err2)});
+                }
+
+                break :brk "Internal error";
+            };
+
             ctx.prepareToSendBody(printed.len, false) catch {};
-            ctx.writeBodyBuf(&printed) catch {};
+            ctx.writeBodyBuf(printed);
         }
 
         threadlocal var error_buf: [4096]u8 = undefined;
@@ -118,29 +168,229 @@ pub const Server = struct {
         pub fn appendHeader(ctx: *RequestContext, comptime key: string, value: string) void {
             if (isDebug or isTest) std.debug.assert(!ctx.has_written_last_header);
             if (isDebug or isTest) std.debug.assert(ctx.res_headers_count < res_headers_buf.len);
-            res_headers_buf[ctx.res_headers_count] = Header{ .key = key, .value = value };
+            res_headers_buf[ctx.res_headers_count] = Header{ .name = key, .value = value };
             ctx.res_headers_count += 1;
+        }
+        const file_chunk_size = 16384;
+        const chunk_preamble_len: usize = brk: {
+            var buf: [64]u8 = undefined;
+            break :brk std.fmt.bufPrintIntToSlice(&buf, file_chunk_size, 16, true, .{}).len;
+        };
+
+        threadlocal var file_chunk_buf: [chunk_preamble_len + 2 + file_chunk_size]u8 = undefined;
+        threadlocal var symlink_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        threadlocal var weak_etag_buffer: [100]u8 = undefined;
+        threadlocal var weak_etag_tmp_buffer: [100]u8 = undefined;
+
+        pub fn done(ctx: *RequestContext) void {
+            ctx.conn.deinit();
         }
 
         pub fn handleGet(ctx: *RequestContext) !void {
-            const result = ctx.bundler.buildFile(req.allocator, req.url) catch |err| {
-                ctx.sendInternalError(err);
-                return;
-            };
+            const result = try ctx.bundler.buildFile(&ctx.log, ctx.allocator, ctx.url.path, ctx.url.extname);
 
-            if (result.output.len == 0) {
-                return ctx.sendNotFound();
+            ctx.appendHeader("Content-Type", result.mime_type.value);
+            if (ctx.keep_alive) {
+                ctx.appendHeader("Connection", "keep-alive");
             }
 
-            const file = result.output;
+            const send_body = ctx.method == .GET;
 
-            const mime_type = MimeType.byExtension(std.fs.path.extension(file));
-            ctx.appendHeader("Content-Type", mime_type.value);
+            switch (result.value) {
+                .none => {
+                    unreachable;
+                },
+                .file => |file| {
+                    defer file.handle.close();
+                    var do_extra_close = false;
+                    var handle = file.handle;
 
-            return ctx.writeResult(result, mime_type);
+                    var real_path = file.absolute_path;
+
+                    // Assume "stat" is lying to us.
+                    // Don't write a 2xx status until we've successfully read at least 1 byte
+                    var stat = try handle.stat();
+                    switch (stat.kind) {
+                        .Directory,
+                        .NamedPipe,
+                        .UnixDomainSocket,
+                        .Whiteout,
+                        .BlockDevice,
+                        .CharacterDevice,
+                        => {
+                            ctx.log.addErrorFmt(null, logger.Loc.Empty, ctx.allocator, "Bad file type: {s}", .{@tagName(stat.kind)}) catch {};
+                            ctx.writeStatus(400) catch {};
+                            return;
+                        },
+                        .SymLink => {
+                            const real_file_path = try std.fs.realpath(file.absolute_path, &symlink_buffer);
+                            real_path = real_file_path;
+                            handle = try std.fs.openFileAbsolute(real_file_path, .{});
+                            stat = try handle.stat();
+                            do_extra_close = true;
+                        },
+                        else => {},
+                    }
+                    defer {
+                        if (do_extra_close) {
+                            handle.close();
+                        }
+                    }
+                    var file_chunk_slice = file_chunk_buf[chunk_preamble_len .. file_chunk_buf.len - 3];
+
+                    if (result.mime_type.category != .html) {
+                        // hash(absolute_file_path, size, mtime)
+                        var weak_etag = std.hash.Wyhash.init(1);
+                        weak_etag_buffer[0] = 'W';
+                        weak_etag_buffer[1] = '/';
+                        weak_etag.update(real_path);
+                        std.mem.writeIntNative(u64, weak_etag_tmp_buffer[0..8], stat.size);
+                        weak_etag.update(weak_etag_tmp_buffer[0..8]);
+                        std.mem.writeIntNative(i128, weak_etag_tmp_buffer[0..16], stat.mtime);
+                        weak_etag.update(weak_etag_tmp_buffer[0..16]);
+                        const etag_content_slice = std.fmt.bufPrintIntToSlice(weak_etag_buffer[2..], weak_etag.final(), 16, true, .{});
+                        const complete_weak_etag = weak_etag_buffer[0 .. etag_content_slice.len + 2];
+
+                        ctx.appendHeader("ETag", complete_weak_etag);
+
+                        if (ctx.header("If-None-Match")) |etag_header| {
+                            if (strings.eql(complete_weak_etag, etag_header.value)) {
+                                ctx.writeStatus(304) catch {};
+                                ctx.flushHeaders() catch {};
+                                ctx.done();
+                                return;
+                            }
+                        }
+                    } else {
+                        ctx.appendHeader("Cache-Control", "no-cache");
+                    }
+
+                    switch (stat.size) {
+                        0 => {
+                            ctx.writeStatus(204) catch {};
+                            ctx.done();
+                            return;
+                        },
+                        1...file_chunk_size - 1 => {
+                            defer ctx.done();
+
+                            // always report by amount we actually read instead of stat-reported read
+                            const file_read = try handle.read(file_chunk_slice);
+                            if (file_read == 0) {
+                                ctx.writeStatus(204) catch {};
+                                return;
+                            }
+
+                            const file_slice = file_chunk_slice[0..file_read];
+                            ctx.writeStatus(200) catch {};
+                            try ctx.prepareToSendBody(file_read, false);
+                            if (!send_body) return;
+                            _ = try ctx.conn.client.write(file_slice, SOCKET_FLAGS);
+                        },
+                        else => {
+                            var chunk_written: usize = 0;
+                            var size_slice = file_chunk_buf[0..chunk_preamble_len];
+                            var trailing_newline_slice = file_chunk_buf[file_chunk_buf.len - 3 ..];
+                            trailing_newline_slice[0] = '\r';
+                            trailing_newline_slice[1] = '\n';
+                            var pushed_chunk_count: usize = 0;
+                            while (true) : (pushed_chunk_count += 1) {
+                                defer chunk_written = 0;
+
+                                // Read from the file until we reach either end of file or the max chunk size
+                                chunk_written = handle.read(file_chunk_slice) catch |err| {
+                                    if (pushed_chunk_count > 0) {
+                                        _ = try ctx.conn.client.write("0\r\n\r\n", SOCKET_FLAGS);
+                                    }
+                                    return ctx.sendInternalError(err);
+                                };
+
+                                // empty chunk
+                                if (chunk_written == 0) {
+                                    defer ctx.done();
+                                    if (pushed_chunk_count == 0) {
+                                        ctx.writeStatus(204) catch {};
+                                        ctx.flushHeaders() catch {};
+                                        if (!send_body) return;
+
+                                        return;
+                                    }
+                                    _ = try ctx.conn.client.write("0\r\n\r\n", SOCKET_FLAGS);
+                                    break;
+                                    // final chunk
+                                } else if (chunk_written < file_chunk_size - 1) {
+                                    defer ctx.done();
+                                    var hex_size_slice = std.fmt.bufPrintIntToSlice(size_slice, chunk_written, 16, true, .{});
+                                    var remainder_slice = file_chunk_buf[hex_size_slice.len..size_slice.len];
+                                    remainder_slice[0] = '\r';
+                                    remainder_slice[1] = '\n';
+                                    if (pushed_chunk_count == 0) {
+                                        ctx.writeStatus(200) catch {};
+                                        ctx.prepareToSendBody(0, true) catch {};
+                                        if (!send_body) return;
+                                    }
+                                    _ = try ctx.conn.client.write(size_slice, SOCKET_FLAGS);
+                                    _ = try ctx.conn.client.write(file_chunk_slice[0..chunk_written], SOCKET_FLAGS);
+                                    _ = try ctx.conn.client.write(trailing_newline_slice, SOCKET_FLAGS);
+                                    break;
+                                    // full chunk
+                                } else {
+                                    if (pushed_chunk_count == 0) {
+                                        ctx.writeStatus(200) catch {};
+
+                                        ctx.prepareToSendBody(0, true) catch {};
+                                        if (!send_body) return;
+                                    }
+
+                                    var hex_size_slice = std.fmt.bufPrintIntToSlice(size_slice, chunk_written, 16, true, .{});
+                                    var remainder_slice = file_chunk_buf[hex_size_slice.len..size_slice.len];
+                                    remainder_slice[0] = '\r';
+                                    remainder_slice[1] = '\n';
+
+                                    _ = try ctx.conn.client.write(&file_chunk_buf, SOCKET_FLAGS);
+                                }
+                            }
+                        },
+                    }
+                },
+                .build => |output| {
+                    defer ctx.done();
+                    defer ctx.bundler.allocator.free(output.contents);
+                    if (FeatureFlags.strong_etags_for_built_files) {
+                        const strong_etag = std.hash.Wyhash.hash(1, output.contents);
+                        const strong_etag_buf = try ctx.allocator.alloc(u8, 8);
+                        std.mem.writeIntSliceNative(u64, strong_etag_buf, strong_etag);
+                        ctx.appendHeader("ETag", strong_etag_buf);
+
+                        if (ctx.header("If-None-Match")) |etag_header| {
+                            if (etag_header.value.len == 8) {
+                                const string_etag_as_u64 = std.mem.readIntSliceNative(u64, etag_header.value);
+                                if (string_etag_as_u64 == strong_etag) {
+                                    ctx.writeStatus(304) catch {};
+                                    ctx.flushHeaders() catch {};
+                                    return;
+                                }
+                            }
+                        }
+                    }
+
+                    if (output.contents.len == 0) {
+                        ctx.writeStatus(204) catch {};
+                        ctx.flushHeaders() catch {};
+                        return;
+                    }
+
+                    ctx.writeStatus(200) catch {};
+                    try ctx.prepareToSendBody(output.contents.len, false);
+                    if (!send_body) return;
+                    _ = try ctx.conn.client.write(output.contents, SOCKET_FLAGS);
+                },
+            }
+
+            // If we get this far, it means
         }
 
-        pub fn handle(ctx: *RequestContext) !void {
+        pub fn handleRequest(ctx: *RequestContext) !void {
             switch (ctx.method) {
                 .GET, .HEAD, .OPTIONS => {
                     return ctx.handleGet();
@@ -167,7 +417,7 @@ pub const Server = struct {
                 }
                 const Match = strings.ExactSizeMatcher(2);
                 // we already did the length check
-                switch (Match.hashUnsafe(str[0..2])) {
+                switch (Match.match(str[0..2])) {
                     Match.case("GE"), Match.case("ge") => {
                         return .GET;
                     },
@@ -207,13 +457,13 @@ pub const Server = struct {
         query_string: string = "",
 
         // This does one pass over the URL path instead of like 4
-        pub fn parse(raw_path: string) PathParser {
+        pub fn parse(raw_path: string) URLPath {
             var question_mark_i: i16 = -1;
             var period_i: i16 = -1;
             var first_segment_end: i16 = std.math.maxInt(i16);
             var last_slash: i16 = -1;
 
-            var i: i16 = raw_path.len - 1;
+            var i: i16 = @intCast(i16, raw_path.len) - 1;
             while (i >= 0) : (i -= 1) {
                 const c = raw_path[@intCast(usize, i)];
 
@@ -249,29 +499,29 @@ pub const Server = struct {
             const extname = brk: {
                 if (question_mark_i > -1 and period_i > -1) {
                     period_i += 1;
-                    break :brk raw_path[period_i..question_mark_i];
+                    break :brk raw_path[@intCast(usize, period_i)..@intCast(usize, question_mark_i)];
                 } else if (period_i > -1) {
                     period_i += 1;
-                    break :brk raw_path[period_i..];
+                    break :brk raw_path[@intCast(usize, period_i)..];
                 } else {
-                    break :brk [_]u8{};
+                    break :brk &([_]u8{});
                 }
             };
 
-            const path = raw_path[0..@intCast(usize, std.math.max(question_mark_i, raw_path.len))];
-            const first_segment = raw_path[0..std.math.min(@intCast(usize, first_segment_end), raw_path.len)];
+            const path = if (question_mark_i < 0) raw_path[1..] else raw_path[1..@intCast(usize, question_mark_i)];
+            const first_segment = raw_path[1..std.math.min(@intCast(usize, first_segment_end), raw_path.len)];
 
             return URLPath{
                 .extname = extname,
                 .first_segment = first_segment,
-                .path = path,
-                .query_string = if (question_mark_i > -1) raw_path[question_mark_i..raw_path.len] else "",
+                .path = if (raw_path.len == 1) "." else path,
+                .query_string = if (question_mark_i > -1) raw_path[@intCast(usize, question_mark_i)..@intCast(usize, raw_path.len)] else "",
             };
         }
     };
 
     fn run(server: *Server) !void {
-        const listener = try tcp.Listener.init(.ip, os.SOCK_CLOEXEC);
+        const listener = try tcp.Listener.init(.ip, SOCKET_FLAGS);
         defer listener.deinit();
 
         listener.setReuseAddress(true) catch {};
@@ -282,50 +532,83 @@ pub const Server = struct {
 
         try listener.bind(ip.Address.initIPv4(IPv4.unspecified, 9000));
         try listener.listen(128);
+        const addr = try listener.getLocalAddress();
+
+        Output.println("Started Speedy at http://{s}", .{addr});
 
         // try listener.set(true);
 
         while (true) {
-            var conn = try listener.accept(os.SOCK_CLOEXEC);
+            var conn = try listener.accept(SOCKET_FLAGS);
+            conn.client.setNoDelay(true) catch {};
+            conn.client.setQuickACK(true) catch {};
+            // conn.client.setLinger(1) catch {};
+
             server.handleConnection(&conn);
+            conn.client.getError() catch |err| {
+                conn.client.deinit();
+            };
         }
     }
 
-    pub fn sendError(server: *Server, request: *Request, conn: *tcp.Connection, code: u9, msg: string) !void {
+    pub fn sendError(server: *Server, request: *Request, conn: *tcp.Connection, code: HTTPStatusCode, msg: string) !void {
         try server.writeStatus(code, connection);
-        conn.deinit();
     }
 
     pub fn handleConnection(server: *Server, conn: *tcp.Connection) void {
         errdefer conn.deinit();
         // https://stackoverflow.com/questions/686217/maximum-on-http-header-values
         var req_buf: [std.mem.page_size]u8 = undefined;
-        var read_size = conn.client.read(&req_buf, os.SOCK_CLOEXEC) catch |err| {
+        var read_size = conn.client.read(&req_buf, SOCKET_FLAGS) catch |err| {
             return;
         };
         var req = picohttp.Request.parse(req_buf[0..read_size], &req_headers_buf) catch |err| {
-            Output.printError("ERR: {s}", .{@errorName(err)});
+            Output.printErrorln("ERR: {s}", .{@errorName(err)});
 
             return;
         };
 
-        var req_ctx = RequestContext.init(req, conn) catch |err| {
-            Output.printError("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
+        var request_arena = std.heap.ArenaAllocator.init(server.allocator);
+        defer request_arena.deinit();
+
+        var req_ctx = RequestContext.init(req, &request_arena.allocator, conn, &server.bundler) catch |err| {
+            Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
             conn.deinit();
             return;
         };
 
-        req_ctx.handle() catch |err| {
-            Output.printError("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
-            conn.deinit();
-            return;
+        if (req_ctx.header("Connection")) |connection| {
+            req_ctx.keep_alive = strings.eqlInsensitive(connection.value, "keep-alive");
+        }
+
+        conn.client.setKeepAlive(req_ctx.keep_alive) catch {};
+
+        req_ctx.handleRequest() catch |err| {
+            switch (err) {
+                error.NotFound => {
+                    req_ctx.sendNotFound() catch {};
+                },
+                else => {
+                    Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
+                    conn.deinit();
+                    return;
+                },
+            }
         };
 
-        Output.print("{d} – {s} {s}", .{ req_ctx.status orelse 500, @tagName(req.method), req.path });
+        const status = req_ctx.status orelse @intCast(HTTPStatusCode, 500);
+
+        Output.println("{d} – {s} {s}", .{ status, @tagName(req_ctx.method), req.path });
     }
 
-    pub fn start(allocator: *std.mem.Allocator, options: *Api.TransformOptions) !void {
-        var server = Server{ .options = options, .allocator = allocator };
+    pub fn start(allocator: *std.mem.Allocator, options: Api.TransformOptions) !void {
+        var log = logger.Log.init(allocator);
+        var server = Server{
+            .allocator = allocator,
+            .log = log,
+            .bundler = undefined,
+        };
+        server.bundler = try Bundler.init(allocator, &server.log, options);
 
         try server.run();
     }

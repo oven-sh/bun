@@ -102,7 +102,7 @@ pub const Platform = enum {
     neutral,
 
     const MAIN_FIELD_NAMES = [_]string{ "browser", "module", "main" };
-    pub const DefaultMainFields: std.EnumArray(Platform, []const string) = comptime {
+    pub const DefaultMainFields: std.EnumArray(Platform, []const string) = {
         var array = std.EnumArray(Platform, []const string).initUndefined();
 
         // Note that this means if a package specifies "module" and "main", the ES6
@@ -331,7 +331,7 @@ pub const BundleOptions = struct {
         }
 
         var loaders = try stringHashMapFromArrays(std.StringHashMap(Loader), allocator, transform.loader_keys, loader_values);
-        comptime const default_loader_ext = [_]string{ ".jsx", ".json", ".js", ".mjs", ".css", ".ts", ".tsx" };
+        const default_loader_ext = [_]string{ ".jsx", ".json", ".js", ".mjs", ".css", ".ts", ".tsx" };
         inline for (default_loader_ext) |ext| {
             if (!loaders.contains(ext)) {
                 try loaders.put(ext, defaultLoaders.get(ext).?);

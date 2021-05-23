@@ -3060,7 +3060,7 @@ pub const P = struct {
         notimpl();
     }
 
-    pub const TypescriptIdentifier = enum {
+    pub const TypescriptIdentifier = struct {
         pub const Map = std.ComptimeStringMap(Kind, .{
             .{ "unique", .unique },
             .{ "abstract", .abstract },
@@ -4957,7 +4957,7 @@ pub const P = struct {
         opts.lexical_decl = .allow_all;
         var isDirectivePrologue = true;
 
-        run: while (true) {
+        while (true) {
             for (p.lexer.comments_to_preserve_before.items) |comment| {
                 try stmts.append(p.s(S.Comment{
                     .text = comment.text,
@@ -11265,6 +11265,7 @@ pub const P = struct {
         scope_order.appendAssumeCapacity(ScopeOrder{ .loc = locModuleScope, .scope = scope });
 
         var _parser = try allocator.create(P);
+
         _parser.* = P{
             // This must default to true or else parsing "in" won't work right.
             // It will fail for the case in the "in-keyword.js" file

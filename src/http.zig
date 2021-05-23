@@ -170,6 +170,18 @@ pub const Server = struct {
 
         threadlocal var error_buf: [4096]u8 = undefined;
 
+        pub fn sendNotModified(ctx: *RequestContext) void {
+            ctx.writeStatus(304) catch {};
+            ctx.flushHeaders() catch {};
+            ctx.done();
+        }
+
+        pub fn sendNoContent(ctx: *RequestContext) void {
+            ctx.writeStatus(204) catch {};
+            ctx.flushHeaders() catch {};
+            ctx.done();
+        }
+
         pub fn appendHeader(ctx: *RequestContext, comptime key: string, value: string) void {
             if (isDebug or isTest) std.debug.assert(!ctx.has_written_last_header);
             if (isDebug or isTest) std.debug.assert(ctx.res_headers_count < res_headers_buf.len);
@@ -189,6 +201,11 @@ pub const Server = struct {
 
         pub fn done(ctx: *RequestContext) void {
             ctx.conn.deinit();
+        }
+
+        pub fn sendBadRequest(ctx: *RequestContext) void {
+            ctx.writeStatus(400) catch {};
+            ctx.done();
         }
 
         pub fn handleGet(ctx: *RequestContext) !void {
@@ -224,7 +241,7 @@ pub const Server = struct {
                         .CharacterDevice,
                         => {
                             ctx.log.addErrorFmt(null, logger.Loc.Empty, ctx.allocator, "Bad file type: {s}", .{@tagName(stat.kind)}) catch {};
-                            ctx.writeStatus(400) catch {};
+                            ctx.sendBadRequest();
                             return;
                         },
                         .SymLink => {
@@ -260,9 +277,7 @@ pub const Server = struct {
 
                         if (ctx.header("If-None-Match")) |etag_header| {
                             if (strings.eql(complete_weak_etag, etag_header.value)) {
-                                ctx.writeStatus(304) catch {};
-                                ctx.flushHeaders() catch {};
-                                ctx.done();
+                                ctx.sendNotModified();
                                 return;
                             }
                         }
@@ -272,8 +287,7 @@ pub const Server = struct {
 
                     switch (stat.size) {
                         0 => {
-                            ctx.writeStatus(204) catch {};
-                            ctx.done();
+                            ctx.sendNoContent();
                             return;
                         },
                         1...file_chunk_size - 1 => {
@@ -282,8 +296,7 @@ pub const Server = struct {
                             // always report by amount we actually read instead of stat-reported read
                             const file_read = try handle.read(file_chunk_slice);
                             if (file_read == 0) {
-                                ctx.writeStatus(204) catch {};
-                                return;
+                                return ctx.sendNoContent();
                             }
 
                             const file_slice = file_chunk_slice[0..file_read];
@@ -314,11 +327,7 @@ pub const Server = struct {
                                 if (chunk_written == 0) {
                                     defer ctx.done();
                                     if (pushed_chunk_count == 0) {
-                                        ctx.writeStatus(204) catch {};
-                                        ctx.flushHeaders() catch {};
-                                        if (!send_body) return;
-
-                                        return;
+                                        return ctx.sendNoContent();
                                     }
                                     _ = try ctx.writeSocket("0\r\n\r\n", SOCKET_FLAGS);
                                     break;
@@ -371,8 +380,7 @@ pub const Server = struct {
                             if (etag_header.value.len == 8) {
                                 const string_etag_as_u64 = std.mem.readIntSliceNative(u64, etag_header.value);
                                 if (string_etag_as_u64 == strong_etag) {
-                                    ctx.writeStatus(304) catch {};
-                                    ctx.flushHeaders() catch {};
+                                    ctx.sendNotModified();
                                     return;
                                 }
                             }
@@ -380,9 +388,7 @@ pub const Server = struct {
                     }
 
                     if (output.contents.len == 0) {
-                        ctx.writeStatus(204) catch {};
-                        ctx.flushHeaders() catch {};
-                        return;
+                        return ctx.sendNoContent();
                     }
 
                     ctx.writeStatus(200) catch {};

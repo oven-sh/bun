@@ -2,7 +2,14 @@ const std = @import("std");
 const resolve_path = @import("./src/resolver/resolve_path.zig");
 
 pub fn addPicoHTTP(step: *std.build.LibExeObjStep, dir: []const u8) void {
-    step.addCSourceFile("src/deps/picohttpparser.c", &[_][]const u8{});
+    const picohttp = step.addPackage(.{
+        .name = "picohttp",
+        .path = "src/deps/picohttp.zig",
+    });
+
+    step.addObjectFile(
+        "src/deps/picohttpparser.o",
+    );
     step.addIncludeDir("src/deps");
 }
 

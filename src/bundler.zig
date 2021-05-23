@@ -22,26 +22,17 @@ const ThreadSafeHashMap = @import("./thread_safe_hash_map.zig");
 const ImportRecord = @import("./import_record.zig").ImportRecord;
 const allocators = @import("./allocators.zig");
 const MimeType = @import("./http/mime_type.zig");
+const resolve_path = @import("./resolver/resolve_path.zig");
 
 pub const ServeResult = struct {
-    errors: []logger.Msg = &([_]logger.Msg),
-    warnings: []logger.Msg = &([_]logger.Msg),
-    output: Output,
-    status: Status,
+    value: Value,
 
     mime_type: MimeType,
-
-    pub const Status = enum {
-        success,
-        build_failed,
-        not_found,
-        permission_error,
-    };
 
     // Either we:
     // - send pre-buffered asset body
     // - stream a file from the file system
-    pub const Output = union(Tag) {
+    pub const Value = union(Tag) {
         file: File,
         build: options.OutputFile,
         none: u0,
@@ -54,6 +45,7 @@ pub const ServeResult = struct {
 
         pub const File = struct {
             absolute_path: string,
+            handle: std.fs.File,
         };
     };
 };
@@ -296,6 +288,8 @@ pub const Bundler = struct {
         }
     }
 
+    threadlocal var tmp_buildfile_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+
     // We try to be mostly stateless when serving
     // This means we need a slightly different resolver setup
     // Essentially:
@@ -308,25 +302,111 @@ pub const Bundler = struct {
     ) !ServeResult {
         var original_resolver_logger = bundler.resolver.log;
         var original_bundler_logger = bundler.log;
+
         defer bundler.log = original_bundler_logger;
         defer bundler.resolver.log = original_resolver_logger;
         bundler.log = log;
         bundler.resolver.log = log;
 
-        var needs_resolve = false;
+        // Resolving a public file has special behavior
+        if (bundler.options.public_dir_enabled) {
+            // On Windows, we don't keep the directory handle open forever because Windows doesn't like that.
+            const public_dir: std.fs.Dir = bundler.options.public_dir_handle orelse std.fs.openDirAbsolute(resolve_path.normalizeAndJoin(
+                bundler.fs.top_level_dir,
+                .auto,
+                bundler.options.public_dir,
+            ), .{}) catch |err| {
+                log.addErrorFmt(null, logger.Loc.Empty, allocator, "Opening public directory failed: {s}", .{@errorName(err)}) catch unreachable;
+                bundler.options.public_dir_enabled = false;
+                return error.PublicDirError;
+            };
 
-        // is it missing an extension?
-        // it either:
-        // - needs to be resolved
-        // - is html
-        // We should first check if it's html.
-        if (extension.len == 0) {}
+            var relative_unrooted_path: []u8 = resolve_path.normalizeString(relative_path, false, .auto);
+
+            var _file: ?std.fs.File = null;
+
+            // Is it the index file?
+            if (relative_unrooted_path.len == 1 and relative_unrooted_path[0] == '.') {
+                // std.mem.copy(u8, &tmp_buildfile_buf, relative_unrooted_path);
+                // std.mem.copy(u8, tmp_buildfile_buf[relative_unrooted_path.len..], "/"
+                // Search for /index.html
+                if (public_dir.openFile("index.html", .{})) |file| {
+                    std.mem.copy(u8, relative_unrooted_path, "index.html");
+                    relative_unrooted_path = relative_unrooted_path[0.."index.html".len];
+                    _file = file;
+                } else |err| {}
+                // Okay is it actually a full path?
+            } else {
+                if (public_dir.openFile(relative_unrooted_path, .{})) |file| {
+                    _file = file;
+                } else |err| {}
+            }
+
+            // Try some weird stuff.
+            while (_file == null and relative_unrooted_path.len > 1) {
+                // When no extension is provided, it might be html
+                if (extension.len == 0) {
+                    std.mem.copy(u8, &tmp_buildfile_buf, relative_unrooted_path[0..relative_unrooted_path.len]);
+                    std.mem.copy(u8, tmp_buildfile_buf[relative_unrooted_path.len..], ".html");
+
+                    if (public_dir.openFile(tmp_buildfile_buf[0 .. relative_unrooted_path.len + ".html".len], .{})) |file| {
+                        _file = file;
+                        break;
+                    } else |err| {}
+
+                    var _path: []u8 = undefined;
+                    if (relative_unrooted_path[relative_unrooted_path.len - 1] == '/') {
+                        std.mem.copy(u8, &tmp_buildfile_buf, relative_unrooted_path[0 .. relative_unrooted_path.len - 1]);
+                        std.mem.copy(u8, tmp_buildfile_buf[relative_unrooted_path.len - 1 ..], "/index.html");
+                        _path = tmp_buildfile_buf[0 .. relative_unrooted_path.len - 1 + "/index.html".len];
+                    } else {
+                        std.mem.copy(u8, &tmp_buildfile_buf, relative_unrooted_path[0..relative_unrooted_path.len]);
+                        std.mem.copy(u8, tmp_buildfile_buf[relative_unrooted_path.len..], "/index.html");
+
+                        _path = tmp_buildfile_buf[0 .. relative_unrooted_path.len + "/index.html".len];
+                    }
+
+                    if (public_dir.openFile(_path, .{})) |file| {
+                        const __path = _path;
+                        relative_unrooted_path = __path;
+                        _file = file;
+                        break;
+                    } else |err| {}
+                }
+
+                break;
+            }
+
+            if (_file) |file| {
+                const _parts = [_]string{ bundler.options.public_dir, relative_unrooted_path };
+                return ServeResult{
+                    .value = ServeResult.Value{ .file = .{
+                        .absolute_path = try bundler.fs.joinAlloc(allocator, &_parts),
+                        .handle = file,
+                    } },
+                    .mime_type = MimeType.byExtension(extension),
+                };
+            }
+        }
 
         const initial_loader = bundler.options.loaders.get(extension);
 
-        const resolved = try bundler.resolver.resolve(bundler.fs.top_level_dir, relative_path, .entry_point) orelse {};
+        const resolved = (try bundler.resolver.resolve(bundler.fs.top_level_dir, relative_path, .entry_point)) orelse return error.NotFound;
 
-        const loader = bundler.options.loaders.get(resolved.path_pair.primary.text) orelse .file;
+        const output = switch (bundler.options.loaders.get(resolved.path_pair.primary.text) orelse .file) {
+            .js, .jsx, .ts, .tsx, .json => ServeResult.Value{
+                .build = (try bundler.buildWithResolveResult(resolved)) orelse return error.BuildFailed,
+            },
+            else => ServeResult.Value{ .file = ServeResult.Value.File{
+                .absolute_path = resolved.path_pair.primary.text,
+                .handle = try std.fs.openFileAbsolute(resolved.path_pair.primary.text, .{ .read = true, .write = false }),
+            } },
+        };
+
+        return ServeResult{
+            .value = output,
+            .mime_type = MimeType.byExtension(extension),
+        };
     }
 
     pub fn bundle(

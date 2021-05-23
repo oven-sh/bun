@@ -6,6 +6,7 @@ api:
 
 
 speedy-prod-native-macos: 
+	cd src/deps; clang -c picohttpparser.c; cd ../../
 	zig build -Drelease-fast -Dtarget=x86_64-macos-gnu
 
 speedy-prod-native-macos-lib: 

@@ -19,6 +19,10 @@ pub const isWasi = build_target == .wasi;
 pub const isBrowser = !isWasi and isWasm;
 pub const isWindows = std.Target.current.os.tag == .windows;
 
+pub const FeatureFlags = struct {
+    pub const strong_etags_for_built_files = true;
+};
+
 pub const enableTracing = true;
 
 pub const isDebug = std.builtin.Mode.Debug == std.builtin.mode;
@@ -27,7 +31,7 @@ pub const isTest = std.builtin.is_test;
 pub const Output = struct {
     var source: *Source = undefined;
     pub const Source = struct {
-        const StreamType = comptime {
+        const StreamType = {
             if (isWasm) {
                 return std.io.FixedBufferStream([]u8);
             } else {
@@ -62,6 +66,14 @@ pub const Output = struct {
         }
     }
 
+    pub fn println(comptime fmt: string, args: anytype) void {
+        if (fmt[fmt.len - 1] != '\n') {
+            return print(fmt ++ "\n", args);
+        }
+
+        return print(fmt, args);
+    }
+
     pub fn print(comptime fmt: string, args: anytype) void {
         if (isWasm) {
             source.stream.seekTo(0) catch return;
@@ -72,6 +84,15 @@ pub const Output = struct {
             std.fmt.format(source.stream.writer(), fmt, args) catch unreachable;
         }
     }
+
+    pub fn printErrorln(comptime fmt: string, args: anytype) void {
+        if (fmt[fmt.len - 1] != '\n') {
+            return printError(fmt ++ "\n", args);
+        }
+
+        return printError(fmt, args);
+    }
+
     pub fn printError(comptime fmt: string, args: anytype) void {
         if (isWasm) {
             source.error_stream.seekTo(0) catch return;

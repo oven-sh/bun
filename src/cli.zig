@@ -294,7 +294,7 @@ pub const Cli = struct {
         var args = try Arguments.parse(alloc.static, stdout, stderr);
 
         if (args.serve orelse false) {
-            try Server.start(allocator, &args);
+            try Server.start(allocator, args);
             return;
         }
 

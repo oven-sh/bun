@@ -760,7 +760,9 @@ test "PathName.init" {
         &file,
     );
 
-    std.testing.expectEqualStrings(res.dir, "/root/directory");
-    std.testing.expectEqualStrings(res.base, "file");
-    std.testing.expectEqualStrings(res.ext, ".ext");
+    try std.testing.expectEqualStrings(res.dir, "/root/directory");
+    try std.testing.expectEqualStrings(res.base, "file");
+    try std.testing.expectEqualStrings(res.ext, ".ext");
 }
+
+test {}

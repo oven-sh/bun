@@ -311,12 +311,9 @@ pub const Bundler = struct {
         // Resolving a public file has special behavior
         if (bundler.options.public_dir_enabled) {
             // On Windows, we don't keep the directory handle open forever because Windows doesn't like that.
-            const public_dir: std.fs.Dir = bundler.options.public_dir_handle orelse std.fs.openDirAbsolute(resolve_path.normalizeAndJoin(
-                bundler.fs.top_level_dir,
-                .auto,
-                bundler.options.public_dir,
-            ), .{}) catch |err| {
+            const public_dir: std.fs.Dir = bundler.options.public_dir_handle orelse std.fs.openDirAbsolute(bundler.options.public_dir, .{}) catch |err| {
                 log.addErrorFmt(null, logger.Loc.Empty, allocator, "Opening public directory failed: {s}", .{@errorName(err)}) catch unreachable;
+                Output.printErrorln("Opening public directory failed: {s}", .{@errorName(err)});
                 bundler.options.public_dir_enabled = false;
                 return error.PublicDirError;
             };

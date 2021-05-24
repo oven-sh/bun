@@ -180,8 +180,8 @@ pub const Cli = struct {
             var react_fast_refresh = args.flag("--react-fast-refresh");
             var main_fields = args.options("--main-fields");
 
-            comptime const PlatformMatcher = strings.ExactSizeMatcher(8);
-            comptime const ResoveMatcher = strings.ExactSizeMatcher(8);
+            const PlatformMatcher = strings.ExactSizeMatcher(8);
+            const ResoveMatcher = strings.ExactSizeMatcher(8);
 
             var resolve = Api.ResolveMode.lazy;
             if (args.option("--resolve")) |_resolve| {
@@ -295,6 +295,7 @@ pub const Cli = struct {
 
         if (args.serve orelse false) {
             try Server.start(allocator, args);
+
             return;
         }
 

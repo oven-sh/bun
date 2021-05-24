@@ -387,7 +387,7 @@ pub fn sortDesc(in: []string) void {
 test "join" {
     var string_list = &[_]string{ "abc", "def", "123", "hello" };
     const list = try join(string_list, "-", std.heap.page_allocator);
-    std.testing.expectEqualStrings("abc-def-123-hello", list);
+    try std.testing.expectEqualStrings("abc-def-123-hello", list);
 }
 
 test "sortAsc" {
@@ -397,7 +397,7 @@ test "sortAsc" {
     sortAsc(&string_list);
     var string_join = try join(&string_list, "-", std.heap.page_allocator);
 
-    std.testing.expectEqualStrings(sorted_join, string_join);
+    try std.testing.expectEqualStrings(sorted_join, string_join);
 }
 
 test "sortDesc" {
@@ -407,7 +407,7 @@ test "sortDesc" {
     sortDesc(&string_list);
     var string_join = try join(&string_list, "-", std.heap.page_allocator);
 
-    std.testing.expectEqualStrings(sorted_join, string_join);
+    try std.testing.expectEqualStrings(sorted_join, string_join);
 }
 
 pub usingnamespace @import("exact_size_matcher.zig");

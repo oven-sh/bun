@@ -82,7 +82,7 @@
       "request": "launch",
       "name": "Dev Launch",
       "program": "${workspaceFolder}/build/debug/macos-x86_64/esdev",
-      "preLaunchTask": "build",
+      // "preLaunchTask": "build",
       "args": [
         "--resolve=dev",
         "--cwd",

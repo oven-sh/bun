@@ -21,7 +21,7 @@ pub const isWindows = std.Target.current.os.tag == .windows;
 
 pub const FeatureFlags = struct {
     pub const strong_etags_for_built_files = true;
-
+    pub const keep_alive = true;
     pub const use_std_path_relative = false;
 };
 

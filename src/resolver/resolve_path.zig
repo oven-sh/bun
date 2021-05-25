@@ -1,13 +1,352 @@
 const tester = @import("../test/tester.zig");
 
+const FeatureFlags = @import("../global.zig").FeatureFlags;
 const std = @import("std");
 
 threadlocal var parser_join_input_buffer: [1024]u8 = undefined;
 threadlocal var parser_buffer: [1024]u8 = undefined;
 
+inline fn nqlAtIndex(comptime string_count: comptime_int, index: usize, strings: []const []const u8) bool {
+    comptime var string_index = 1;
+
+    inline while (string_index < string_count) : (string_index += 1) {
+        if (strings[0][index] != strings[string_index][index]) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+// TODO: is it faster to determine longest_common_separator in the while loop
+// or as an extra step at the end?
+// only boether to check if this function appears in benchmarking
+pub fn longestCommonPathGeneric(strings: []const []const u8, comptime separator: u8, comptime isPathSeparator: anytype) []const u8 {
+    var min_length: usize = std.math.maxInt(usize);
+    for (strings) |str| {
+        min_length = std.math.min(str.len, min_length);
+    }
+
+    var last_common_separator_is_at_end = false;
+
+    var index: usize = 0;
+    var last_common_separator: usize = 0;
+
+    // try to use an unrolled version of this loop
+    switch (strings.len) {
+        0 => {
+            return "";
+        },
+        1 => {
+            return strings[0];
+        },
+        2 => {
+            while (index < min_length) : (index += 1) {
+                if (strings[0][index] != strings[1][index]) {
+                    break;
+                }
+                if (@call(.{ .modifier = .always_inline }, isPathSeparator, .{strings[0][index]})) {
+                    last_common_separator = index;
+                }
+            }
+        },
+        3 => {
+            while (index < min_length) : (index += 1) {
+                if (nqlAtIndex(3, index, strings)) {
+                    break;
+                }
+                if (@call(.{ .modifier = .always_inline }, isPathSeparator, .{strings[0][index]})) {
+                    last_common_separator = index;
+                }
+            }
+        },
+        4 => {
+            while (index < min_length) : (index += 1) {
+                if (nqlAtIndex(4, index, strings)) {
+                    break;
+                }
+                if (@call(.{ .modifier = .always_inline }, isPathSeparator, .{strings[0][index]})) {
+                    last_common_separator = index;
+                }
+            }
+        },
+        5 => {
+            while (index < min_length) : (index += 1) {
+                if (nqlAtIndex(5, index, strings)) {
+                    break;
+                }
+                if (@call(.{ .modifier = .always_inline }, isPathSeparator, .{strings[0][index]})) {
+                    last_common_separator = index;
+                }
+            }
+        },
+        6 => {
+            while (index < min_length) : (index += 1) {
+                if (nqlAtIndex(6, index, strings)) {
+                    break;
+                }
+                if (@call(.{ .modifier = .always_inline }, isPathSeparator, .{strings[0][index]})) {
+                    last_common_separator = index;
+                }
+            }
+        },
+        7 => {
+            while (index < min_length) : (index += 1) {
+                if (nqlAtIndex(7, index, strings)) {
+                    break;
+                }
+                if (@call(.{ .modifier = .always_inline }, isPathSeparator, .{strings[0][index]})) {
+                    last_common_separator = index;
+                }
+            }
+        },
+        8 => {
+            while (index < min_length) : (index += 1) {
+                if (nqlAtIndex(8, index, strings)) {
+                    break;
+                }
+                if (@call(.{ .modifier = .always_inline }, isPathSeparator, .{strings[0][index]})) {
+                    last_common_separator = index;
+                }
+            }
+        },
+        else => {
+            var string_index: usize = 1;
+            while (index < min_length) : (index += 1) {
+                while (string_index < strings.len) : (string_index += 1) {
+                    if (strings[0][index] != strings[index][string_index]) {
+                        break;
+                    }
+                }
+                if (@call(.{ .modifier = .always_inline }, isPathSeparator, .{strings[0][index]})) {
+                    last_common_separator = index;
+                }
+            }
+        },
+    }
+
+    if (index == 0) {
+        return &([_]u8{separator});
+    }
+
+    // The above won't work for a case like this:
+    // /app/public/index.js
+    // /app/public
+    // It will return:
+    // /app/
+    // It should return:
+    // /app/public/
+    // To detect /app/public is actually a folder, we do one more loop through the strings
+    // and say, "do one of you have a path separator after what we thought was the end?"
+    for (strings) |str| {
+        if (str.len > index) {
+            if (@call(.{ .modifier = .always_inline }, isPathSeparator, .{str[index]})) {
+                return str[0 .. index + 2];
+            }
+        }
+    }
+
+    return strings[0][0 .. last_common_separator + 1];
+}
+
+pub fn longestCommonPath(strings: []const []const u8) []const u8 {
+    return longestCommonPathGeneric(strings, '/', isSepAny);
+}
+
+pub fn longestCommonPathWindows(strings: []const []const u8) []const u8 {
+    return longestCommonPathGeneric(strings, std.fs.path.sep_windows, isSepWin32);
+}
+
+pub fn longestCommonPathPosix(strings: []const []const u8) []const u8 {
+    return longestCommonPathGeneric(strings, std.fs.path.sep_posix, isSepPosix);
+}
+
+threadlocal var relative_to_common_path_buf: [4096]u8 = undefined;
+
+/// Find a relative path from a common path
+// Loosely based on Node.js' implementation of path.relative
+// https://github.com/nodejs/node/blob/9a7cbe25de88d87429a69050a1a1971234558d97/lib/path.js#L1250-L1259
+pub fn relativeToCommonPath(
+    _common_path: []const u8,
+    normalized_from: []const u8,
+    normalized_to: []const u8,
+    buf: []u8,
+    comptime separator: u8,
+    comptime always_copy: bool,
+) []const u8 {
+    const common_path = if (_common_path.len > 0 and _common_path[0] == separator) _common_path[1..] else _common_path;
+
+    var shortest = std.math.min(normalized_from.len, normalized_to.len);
+
+    var last_common_separator = std.math.max(common_path.len, 1) - 1;
+
+    if (shortest == common_path.len) {
+        if (normalized_to.len > normalized_from.len) {
+            if (common_path.len == 0) {
+                // We get here if `from` is the root
+                // For example: from='/'; to='/foo'
+                if (always_copy) {
+                    std.mem.copy(u8, buf, normalized_to);
+                    return buf[0..normalized_to.len];
+                } else {
+                    return normalized_to;
+                }
+            }
+
+            if (normalized_to[common_path.len - 1] == separator) {
+                const slice = normalized_to[common_path.len..];
+
+                if (always_copy) {
+
+                    // We get here if `from` is the exact base path for `to`.
+                    // For example: from='/foo/bar'; to='/foo/bar/baz'
+                    std.mem.copy(u8, buf, slice);
+                    return buf[0..slice.len];
+                } else {
+                    return slice;
+                }
+            }
+        }
+
+        if (normalized_from.len > normalized_to.len) {
+            // We get here if `to` is the exact base path for `from`.
+            // For example: from='/foo/bar/baz'; to='/foo/bar'
+            if (normalized_from[common_path.len - 1] == separator) {
+                last_common_separator = common_path.len - 1;
+            } else if (common_path.len == 0) {
+                // We get here if `to` is the root.
+                // For example: from='/foo/bar'; to='/'
+                last_common_separator = 0;
+            }
+        }
+    }
+
+    // Generate the relative path based on the path difference between `to`
+    // and `from`.
+
+    var out_slice: []u8 = buf[0..0];
+
+    if (normalized_from.len > 0) {
+        var i: usize = last_common_separator;
+
+        while (i <= normalized_from.len) : (i += 1) {
+            if (i == normalized_from.len or normalized_from[i] == separator) {
+                if (out_slice.len == 0) {
+                    out_slice = buf[0 .. out_slice.len + 2];
+                    out_slice[0] = '.';
+                    out_slice[1] = '.';
+                } else {
+                    var old_len = out_slice.len;
+                    out_slice = buf[0 .. out_slice.len + 3];
+                    out_slice[old_len] = separator;
+                    old_len += 1;
+                    out_slice[old_len] = '.';
+                    old_len += 1;
+                    out_slice[old_len] = '.';
+                }
+            }
+        }
+    }
+
+    if (normalized_to.len > last_common_separator + 1) {
+        const tail = normalized_to[last_common_separator + 1 ..];
+        const insert_leading_slash = tail[0] != separator;
+
+        if (insert_leading_slash) {
+            buf[out_slice.len] = separator;
+            out_slice = buf[0 .. out_slice.len + 1];
+        }
+
+        // Lastly, append the rest of the destination (`to`) path that comes after
+        // the common path parts.
+        const start = out_slice.len;
+        out_slice = buf[0 .. out_slice.len + tail.len];
+
+        std.mem.copy(u8, out_slice[start..], tail);
+    }
+
+    return buf[0 .. out_slice.len + 1];
+}
+
+pub fn relativeNormalized(from: []const u8, to: []const u8, comptime platform: Platform, comptime always_copy: bool) []const u8 {
+    const two = [_][]const u8{ from, to };
+    const common_path = longestCommonPathGeneric(&two, comptime platform.separator(), platform.isSeparator);
+    return relativeToCommonPath(common_path, from, to, &relative_to_common_path_buf, comptime platform.separator(), always_copy);
+}
+
+threadlocal var relative_from_buf: [4096]u8 = undefined;
+threadlocal var relative_to_buf: [4096]u8 = undefined;
+pub fn relative(from: []const u8, to: []const u8) []const u8 {
+    if (FeatureFlags.use_std_path_relative) {
+        var relative_allocator = std.heap.FixedBufferAllocator.init(&relative_from_buf);
+        return relativeAlloc(&relative_allocator.allocator, from, to) catch unreachable;
+    } else {
+        return relativePlatform(from, to, .auto, false);
+    }
+}
+
+pub fn relativePlatform(from: []const u8, to: []const u8, comptime platform: Platform, comptime always_copy: bool) []const u8 {
+    const normalized_from = normalizeStringBuf(from, &relative_from_buf, true, platform, true);
+    const normalized_to = normalizeStringBuf(to, &relative_to_buf, true, platform, true);
+
+    return relativeNormalized(normalized_from, normalized_to, platform, always_copy);
+}
+
+pub fn relativeAlloc(allocator: *std.mem.Allocator, from: []const u8, to: []const u8) ![]const u8 {
+    if (FeatureFlags.use_std_path_relative) {
+        return try std.fs.path.relative(allocator, from, to);
+    } else {
+        const result = relativePlatform(from, to, Platform.current, false);
+        return try allocator.dupe(u8, result);
+    }
+}
+
+test "relative" {
+    var t = tester.Tester.t(std.heap.c_allocator);
+    defer t.report(@src());
+
+    const strs = [_][]const u8{
+        "/var/boo/foo/",
+        "/var/boo/foo/baz/",
+        "/var/boo/foo/beep/",
+        "/var/boo/foo/beep/bleep",
+        "/bar/baz",
+        "/bar/not-related",
+        "/bar/file.txt",
+    };
+    _ = t.expect("var/foo", try relativeAlloc(std.heap.c_allocator, "/", "/var/foo/"), @src());
+    _ = t.expect("index.js", try relativeAlloc(std.heap.c_allocator, "/app/public/", "/app/public/index.js"), @src());
+    _ = t.expect("..", try relativeAlloc(std.heap.c_allocator, "/app/public/index.js", "/app/public/"), @src());
+    _ = t.expect("../../src/bacon.ts", try relativeAlloc(std.heap.c_allocator, "/app/public/index.html", "/app/src/bacon.ts"), @src());
+}
+
+test "longestCommonPath" {
+    var t = tester.Tester.t(std.heap.c_allocator);
+    defer t.report(@src());
+
+    const strs = [_][]const u8{
+        "/var/boo/foo/",
+        "/var/boo/foo/baz/",
+        "/var/boo/foo/beep/",
+        "/var/boo/foo/beep/bleep",
+        "/bar/baz",
+        "/bar/not-related",
+        "/bar/file.txt",
+    };
+    _ = t.expect("/var/boo/foo/", longestCommonPath(strs[0..2]), @src());
+    _ = t.expect("/var/boo/foo/", longestCommonPath(strs[0..4]), @src());
+    _ = t.expect("/var/boo/foo/beep/", longestCommonPath(strs[2..3]), @src());
+    _ = t.expect("/bar/", longestCommonPath(strs[5..strs.len]), @src());
+    _ = t.expect("/", longestCommonPath(&strs), @src());
+
+    const more = [_][]const u8{ "/app/public/index.html", "/app/public/index.js", "/app/public", "/app/src/bacon.ts" };
+    _ = t.expect("/app/", longestCommonPath(&more), @src());
+    _ = t.expect("/app/public/", longestCommonPath(more[0..2]), @src());
+}
+
 // This function is based on Node.js' path.normalize function.
 // https://github.com/nodejs/node/blob/36bb31be5f0b85a0f6cbcb36b64feb3a12c60984/lib/path.js#L66
-pub fn normalizeStringGeneric(str: []const u8, buf: []u8, comptime allow_above_root: bool, comptime separator: u8, comptime isPathSeparator: anytype, lastIndexOfSeparator: anytype) []u8 {
+pub fn normalizeStringGeneric(str: []const u8, buf: []u8, comptime allow_above_root: bool, comptime separator: u8, comptime isPathSeparator: anytype, lastIndexOfSeparator: anytype, comptime preserve_trailing_slash: bool) []u8 {
     var i: usize = 0;
     var last_segment_length: i32 = 0;
     var last_slash: i32 = -1;
@@ -69,8 +408,9 @@ pub fn normalizeStringGeneric(str: []const u8, buf: []u8, comptime allow_above_r
                     written_len += 1;
                 }
 
-                const slice = str[@intCast(usize, @intCast(usize, last_slash + 1))..i];
-                std.mem.copy(u8, buf[written_len .. written_len + slice.len], slice);
+                const slice = str[@intCast(usize, last_slash + 1)..i];
+                const base = buf[written_len..];
+                std.mem.copy(u8, base[0..slice.len], slice);
                 written_len += slice.len;
                 last_segment_length = @intCast(i32, i) - last_slash - 1;
             }
@@ -84,6 +424,14 @@ pub fn normalizeStringGeneric(str: []const u8, buf: []u8, comptime allow_above_r
         }
     }
 
+    if (preserve_trailing_slash) {
+        // Was there a trailing slash? Let's keep it.
+        if (stop_len == last_slash + 1 and last_segment_length > 0) {
+            buf[written_len] = separator;
+            written_len += 1;
+        }
+    }
+
     return buf[0..written_len];
 }
 
@@ -92,6 +440,19 @@ pub const Platform = enum {
     loose,
     windows,
     posix,
+
+    pub fn separator(comptime platform: Platform) u8 {
+        return comptime switch (platform) {
+            .auto => platform.resolve().separator(),
+            .loose, .posix => std.fs.path.sep_posix,
+            .windows => std.fs.path.sep_windows,
+        };
+    }
+
+    pub const current = switch (std.Target.current.os.tag) {
+        .windows => .windows,
+        else => .posix,
+    };
 
     pub fn isSeparator(comptime _platform: Platform, char: u8) bool {
         const platform = _platform.resolve();
@@ -170,24 +531,39 @@ pub const Platform = enum {
 };
 
 pub fn normalizeString(str: []const u8, comptime allow_above_root: bool, comptime _platform: Platform) []u8 {
-    return normalizeStringBuf(str, &parser_buffer, allow_above_root, _platform);
+    return normalizeStringBuf(str, &parser_buffer, allow_above_root, _platform, false);
 }
 
-pub fn normalizeStringBuf(str: []const u8, buf: []u8, comptime allow_above_root: bool, comptime _platform: Platform) []u8 {
-    comptime const platform = _platform.resolve();
+pub fn normalizeStringBuf(str: []const u8, buf: []u8, comptime allow_above_root: bool, comptime _platform: Platform, comptime preserve_trailing_slash: anytype) []u8 {
+    const platform = _platform.resolve();
 
     switch (platform) {
         .auto => unreachable,
 
         .windows => {
-            return normalizeStringWindowsBuf(str, buf, allow_above_root);
+            return normalizeStringWindowsBuf(
+                str,
+                buf,
+                allow_above_root,
+                preserve_trailing_slash,
+            );
         },
         .posix => {
-            return normalizeStringPosixBuf(str, buf, allow_above_root);
+            return normalizeStringPosixBuf(
+                str,
+                buf,
+                allow_above_root,
+                preserve_trailing_slash,
+            );
         },
 
         .loose => {
-            return normalizeStringLooseBuf(str, buf, allow_above_root);
+            return normalizeStringLooseBuf(
+                str,
+                buf,
+                allow_above_root,
+                preserve_trailing_slash,
+            );
         },
     }
 }
@@ -214,7 +590,12 @@ pub fn normalizeAndJoin(_cwd: []const u8, comptime _platform: Platform, part: an
 // without querying the filesystem
 // This is the equivalent of
 pub fn normalizeAndJoinString(_cwd: []const u8, parts: anytype, comptime _platform: Platform) []const u8 {
-    return normalizeAndJoinStringBuf(_cwd, &parser_join_input_buffer, parts, _platform);
+    return normalizeAndJoinStringBuf(
+        _cwd,
+        &parser_join_input_buffer,
+        parts,
+        _platform,
+    );
 }
 
 pub fn normalizeAndJoinStringBuf(_cwd: []const u8, buf: []u8, parts: anytype, comptime _platform: Platform) []const u8 {
@@ -271,7 +652,7 @@ pub fn normalizeAndJoinStringBuf(_cwd: []const u8, buf: []u8, parts: anytype, co
     }
 
     // One last normalization, to remove any ../ added
-    const result = normalizeStringBuf(buf[0..out], parser_buffer[leading_separator.len..parser_buffer.len], false, _platform);
+    const result = normalizeStringBuf(buf[0..out], parser_buffer[leading_separator.len..parser_buffer.len], false, _platform, false);
     std.mem.copy(u8, buf[0..leading_separator.len], leading_separator);
     std.mem.copy(u8, buf[leading_separator.len .. result.len + leading_separator.len], result);
 
@@ -302,28 +683,81 @@ pub fn lastIndexOfSeparatorLoose(slice: []const u8) ?usize {
     return std.mem.lastIndexOfAny(u8, slice, "/\\");
 }
 
-pub fn normalizeStringPosix(str: []const u8, comptime allow_above_root: bool) []u8 {
-    return normalizeStringGenericBuf(str, &parser_buffer, allow_above_root, std.fs.path.sep_posix, isSepPosix, lastIndexOfSeparatorPosix);
+pub fn normalizeStringPosix(str: []const u8, comptime allow_above_root: bool, comptime preserve_trailing_slash: bool) []u8 {
+    return normalizeStringGenericBuf(
+        str,
+        &parser_buffer,
+        allow_above_root,
+        std.fs.path.sep_posix,
+        isSepPosix,
+        lastIndexOfSeparatorPosix,
+        preserve_trailing_slash,
+    );
 }
 
-pub fn normalizeStringPosixBuf(str: []const u8, buf: []u8, comptime allow_above_root: bool) []u8 {
-    return normalizeStringGeneric(str, buf, allow_above_root, std.fs.path.sep_posix, isSepPosix, lastIndexOfSeparatorPosix);
+pub fn normalizeStringPosixBuf(
+    str: []const u8,
+    buf: []u8,
+    comptime allow_above_root: bool,
+    comptime preserve_trailing_slash: bool,
+) []u8 {
+    return normalizeStringGeneric(
+        str,
+        buf,
+        allow_above_root,
+        std.fs.path.sep_posix,
+        isSepPosix,
+        lastIndexOfSeparatorPosix,
+        preserve_trailing_slash,
+    );
 }
 
-pub fn normalizeStringWindows(str: []const u8, comptime allow_above_root: bool) []u8 {
-    return normalizeStringGenericBuf(str, &parser_buffer, allow_above_root, std.fs.path.sep_windows, isSepWin32, lastIndexOfSeparatorWindows);
+pub fn normalizeStringWindows(str: []const u8, comptime allow_above_root: bool, comptime preserve_trailing_slash: bool) []u8 {
+    return normalizeStringGenericBuf(
+        str,
+        &parser_buffer,
+        allow_above_root,
+        std.fs.path.sep_windows,
+        isSepWin32,
+        lastIndexOfSeparatorWindows,
+        preserve_trailing_slash,
+    );
 }
 
-pub fn normalizeStringWindowsBuf(str: []const u8, buf: []u8, comptime allow_above_root: bool) []u8 {
-    return normalizeStringGeneric(str, buf, allow_above_root, std.fs.path.sep_windows, isSepWin32, lastIndexOfSeparatorWindows);
+pub fn normalizeStringWindowsBuf(str: []const u8, buf: []u8, comptime allow_above_root: bool, comptime preserve_trailing_slash: bool) []u8 {
+    return normalizeStringGeneric(
+        str,
+        buf,
+        allow_above_root,
+        std.fs.path.sep_windows,
+        isSepWin32,
+        lastIndexOfSeparatorWindows,
+        preserve_trailing_slash,
+    );
 }
 
-pub fn normalizeStringLoose(str: []const u8, comptime allow_above_root: bool) []u8 {
-    return normalizeStringGenericBuf(str, &parser_buffer, allow_above_root, std.fs.path.sep_posix, isSepAny, lastIndexOfSeparatorLoose);
+pub fn normalizeStringLoose(str: []const u8, comptime allow_above_root: bool, comptime preserve_trailing_slash: bool) []u8 {
+    return normalizeStringGenericBuf(
+        str,
+        &parser_buffer,
+        allow_above_root,
+        std.fs.path.sep_posix,
+        isSepAny,
+        lastIndexOfSeparatorLoose,
+        preserve_trailing_slash,
+    );
 }
 
-pub fn normalizeStringLooseBuf(str: []const u8, buf: []u8, comptime allow_above_root: bool) []u8 {
-    return normalizeStringGeneric(str, buf, allow_above_root, std.fs.path.sep_posix, isSepAny, lastIndexOfSeparatorLoose);
+pub fn normalizeStringLooseBuf(str: []const u8, buf: []u8, comptime allow_above_root: bool, comptime preserve_trailing_slash: bool) []u8 {
+    return normalizeStringGeneric(
+        str,
+        buf,
+        allow_above_root,
+        std.fs.path.sep_posix,
+        isSepAny,
+        lastIndexOfSeparatorLoose,
+        preserve_trailing_slash,
+    );
 }
 
 test "normalizeAndJoinStringPosix" {

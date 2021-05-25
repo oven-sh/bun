@@ -313,7 +313,7 @@ pub const Resolver = struct {
     }
     var tracing_start: i128 = if (enableTracing) 0 else undefined;
 
-    pub fn resolve(r: *Resolver, source_dir: string, import_path: string, kind: ast.ImportKind) !?Result {
+    pub fn resolve(r: *Resolver, source_dir: string, import_path: string, kind: ast.ImportKind) !Result {
         if (enableTracing) {
             tracing_start = std.time.nanoTimestamp();
         }
@@ -387,7 +387,7 @@ pub const Resolver = struct {
                 debug.addNote("Cannot resolve this path without a directory") catch {};
             }
             r.flushDebugLogs(.fail) catch {};
-            return null;
+            return error.MissingResolveDir;
         }
 
         r.mutex.lock();
@@ -395,7 +395,7 @@ pub const Resolver = struct {
 
         var result = try r.resolveWithoutSymlinks(source_dir, import_path, kind);
 
-        return result;
+        return result orelse error.ModuleNotFound;
     }
 
     pub fn resolveWithoutSymlinks(r: *Resolver, source_dir: string, import_path: string, kind: ast.ImportKind) !?Result {
@@ -487,7 +487,7 @@ pub const Resolver = struct {
                     if (import_dir_info.package_json) |pkg| {
                         const pkg_json_dir = std.fs.path.dirname(pkg.source.key_path.text) orelse unreachable;
 
-                        const rel_path = try std.fs.path.relative(r.allocator, pkg_json_dir, abs_path);
+                        const rel_path = r.fs.relative(pkg_json_dir, abs_path);
                         if (r.checkBrowserMap(pkg, rel_path)) |remap| {
                             // Is the path disabled?
                             if (remap.len == 0) {
@@ -602,11 +602,10 @@ pub const Resolver = struct {
             const base_dir_info = ((r.dirInfoCached(dirname) catch null)) orelse continue;
             const dir_info = base_dir_info.getEnclosingBrowserScope() orelse continue;
             const pkg_json = dir_info.package_json orelse continue;
-            const rel_path = std.fs.path.relative(r.allocator, pkg_json.source.key_path.text, path.text) catch continue;
+            const rel_path = r.fs.relative(pkg_json.source.key_path.text, path.text);
             result.module_type = pkg_json.module_type;
             if (r.checkBrowserMap(pkg_json, rel_path)) |remapped| {
                 if (remapped.len == 0) {
-                    r.allocator.free(rel_path);
                     path.is_disabled = true;
                 } else if (r.resolveWithoutRemapping(dir_info, remapped, kind)) |remapped_result| {
                     result.is_from_node_modules = remapped_result.is_node_module;
@@ -618,12 +617,7 @@ pub const Resolver = struct {
                             result.path_pair.secondary = remapped_result.path_pair.primary;
                         },
                     }
-                } else {
-                    r.allocator.free(rel_path);
-                    return null;
                 }
-            } else {
-                r.allocator.free(rel_path);
             }
         }
 
@@ -1272,7 +1266,7 @@ pub const Resolver = struct {
 
     pub fn loadAsIndexWithBrowserRemapping(r: *Resolver, dir_info: *DirInfo, path: string, extension_order: []const string) ?MatchResult {
         if (dir_info.getEnclosingBrowserScope()) |browser_scope| {
-            comptime const field_rel_path = "index";
+            const field_rel_path = comptime "index";
             if (browser_scope.package_json) |browser_json| {
                 if (r.checkBrowserMap(browser_json, field_rel_path)) |remap| {
                     // Is the path disabled?
@@ -1519,7 +1513,7 @@ pub const Resolver = struct {
                 const segment = base[0..last_dot];
                 std.mem.copy(u8, &TemporaryBuffer.ExtensionPathBuf, segment);
 
-                comptime const exts = [_]string{ ".ts", ".tsx" };
+                const exts = comptime [_]string{ ".ts", ".tsx" };
 
                 for (exts) |ext_to_replace| {
                     var buffer = TemporaryBuffer.ExtensionPathBuf[0 .. segment.len + ext_to_replace.len];

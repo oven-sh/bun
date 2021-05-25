@@ -46,8 +46,7 @@ pub const PackageJSON = struct {
 
     pub fn parse(r: *resolver.Resolver, input_path: string) ?PackageJSON {
         const parts = [_]string{ input_path, "package.json" };
-        const package_json_path = std.fs.path.join(r.allocator, &parts) catch unreachable;
-        errdefer r.allocator.free(package_json_path);
+        const package_json_path = r.fs.join(&parts);
 
         const entry = r.caches.fs.readFile(r.fs, input_path) catch |err| {
             if (err != error.IsDir) {

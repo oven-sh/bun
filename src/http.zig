@@ -26,6 +26,13 @@ const SOCKET_FLAGS = os.SOCK_CLOEXEC;
 threadlocal var req_headers_buf: [100]picohttp.Header = undefined;
 threadlocal var res_headers_buf: [100]picohttp.Header = undefined;
 
+const ENABLE_LOGGER = false;
+pub fn println(comptime fmt: string, args: anytype) void {
+    // if (ENABLE_LOGGER) {
+    Output.println(fmt, args);
+    // }
+}
+
 const HTTPStatusCode = u9;
 
 pub const URLPath = struct {
@@ -157,6 +164,8 @@ pub const RequestContext = struct {
     keep_alive: bool = true,
     status: ?HTTPStatusCode = null,
     has_written_last_header: bool = false,
+    has_called_done: bool = false,
+    mime_type: MimeType = MimeType.other,
 
     res_headers_count: usize = 0,
 
@@ -226,12 +235,21 @@ pub const RequestContext = struct {
     }
 
     pub fn writeSocket(ctx: *RequestContext, buf: anytype, flags: anytype) !usize {
-        ctx.conn.client.setWriteBufferSize(@intCast(u32, buf.len)) catch {};
-        return ctx.conn.client.write(buf, SOCKET_FLAGS);
+        // ctx.conn.client.setWriteBufferSize(@intCast(u32, buf.len)) catch {};
+        const written = ctx.conn.client.write(buf, SOCKET_FLAGS) catch |err| {
+            Output.printError("Write error: {s}", .{@errorName(err)});
+            return err;
+        };
+
+        if (written == 0) {
+            return error.SocketClosed;
+        }
+
+        return written;
     }
 
-    pub fn writeBodyBuf(ctx: *RequestContext, body: []const u8) void {
-        _ = ctx.writeSocket(body, SOCKET_FLAGS) catch 0;
+    pub fn writeBodyBuf(ctx: *RequestContext, body: []const u8) !void {
+        _ = try ctx.writeSocket(body, SOCKET_FLAGS);
     }
 
     pub fn writeStatus(ctx: *RequestContext, comptime code: HTTPStatusCode) !void {
@@ -255,8 +273,8 @@ pub const RequestContext = struct {
         return req.writeStatus(404);
     }
 
-    pub fn sendInternalError(ctx: *RequestContext, err: anytype) void {
-        ctx.writeStatus(500) catch {};
+    pub fn sendInternalError(ctx: *RequestContext, err: anytype) !void {
+        try ctx.writeStatus(500);
         const printed = std.fmt.bufPrint(&error_buf, "Error: {s}", .{@errorName(err)}) catch |err2| brk: {
             if (isDebug or isTest) {
                 Global.panic("error while printing error: {s}", .{@errorName(err2)});
@@ -265,21 +283,21 @@ pub const RequestContext = struct {
             break :brk "Internal error";
         };
 
-        ctx.prepareToSendBody(printed.len, false) catch {};
-        ctx.writeBodyBuf(printed);
+        try ctx.prepareToSendBody(printed.len, false);
+        try ctx.writeBodyBuf(printed);
     }
 
     threadlocal var error_buf: [4096]u8 = undefined;
 
-    pub fn sendNotModified(ctx: *RequestContext) void {
-        ctx.writeStatus(304) catch {};
-        ctx.flushHeaders() catch {};
+    pub fn sendNotModified(ctx: *RequestContext) !void {
+        try ctx.writeStatus(304);
+        try ctx.flushHeaders();
         ctx.done();
     }
 
-    pub fn sendNoContent(ctx: *RequestContext) void {
-        ctx.writeStatus(204) catch {};
-        ctx.flushHeaders() catch {};
+    pub fn sendNoContent(ctx: *RequestContext) !void {
+        try ctx.writeStatus(204);
+        try ctx.flushHeaders();
         ctx.done();
     }
 
@@ -301,17 +319,20 @@ pub const RequestContext = struct {
     threadlocal var weak_etag_tmp_buffer: [100]u8 = undefined;
 
     pub fn done(ctx: *RequestContext) void {
+        std.debug.assert(!ctx.has_called_done);
         ctx.conn.deinit();
+        ctx.has_called_done = true;
     }
 
-    pub fn sendBadRequest(ctx: *RequestContext) void {
-        ctx.writeStatus(400) catch {};
+    pub fn sendBadRequest(ctx: *RequestContext) !void {
+        try ctx.writeStatus(400);
         ctx.done();
     }
 
     pub fn handleGet(ctx: *RequestContext) !void {
         const result = try ctx.bundler.buildFile(&ctx.log, ctx.allocator, ctx.url.path, ctx.url.extname);
 
+        ctx.mime_type = result.mime_type;
         ctx.appendHeader("Content-Type", result.mime_type.value);
         if (ctx.keep_alive) {
             ctx.appendHeader("Connection", "keep-alive");
@@ -342,7 +363,7 @@ pub const RequestContext = struct {
                     .CharacterDevice,
                     => {
                         ctx.log.addErrorFmt(null, logger.Loc.Empty, ctx.allocator, "Bad file type: {s}", .{@tagName(stat.kind)}) catch {};
-                        ctx.sendBadRequest();
+                        try ctx.sendBadRequest();
                         return;
                     },
                     .SymLink => {
@@ -378,7 +399,7 @@ pub const RequestContext = struct {
 
                     if (ctx.header("If-None-Match")) |etag_header| {
                         if (strings.eql(complete_weak_etag, etag_header.value)) {
-                            ctx.sendNotModified();
+                            try ctx.sendNotModified();
                             return;
                         }
                     }
@@ -388,7 +409,7 @@ pub const RequestContext = struct {
 
                 switch (stat.size) {
                     0 => {
-                        ctx.sendNoContent();
+                        try ctx.sendNoContent();
                         return;
                     },
                     1...file_chunk_size - 1 => {
@@ -401,7 +422,7 @@ pub const RequestContext = struct {
                         }
 
                         const file_slice = file_chunk_slice[0..file_read];
-                        ctx.writeStatus(200) catch {};
+                        try ctx.writeStatus(200);
                         try ctx.prepareToSendBody(file_read, false);
                         if (!send_body) return;
                         _ = try ctx.writeSocket(file_slice, SOCKET_FLAGS);
@@ -451,9 +472,9 @@ pub const RequestContext = struct {
                                 // full chunk
                             } else {
                                 if (pushed_chunk_count == 0) {
-                                    ctx.writeStatus(200) catch {};
+                                    try ctx.writeStatus(200);
 
-                                    ctx.prepareToSendBody(0, true) catch {};
+                                    try ctx.prepareToSendBody(0, true);
                                     if (!send_body) return;
                                 }
 
@@ -469,7 +490,6 @@ pub const RequestContext = struct {
                 }
             },
             .build => |output| {
-                defer ctx.done();
                 defer ctx.bundler.allocator.free(output.contents);
                 if (FeatureFlags.strong_etags_for_built_files) {
                     const strong_etag = std.hash.Wyhash.hash(1, output.contents);
@@ -481,7 +501,7 @@ pub const RequestContext = struct {
                         if (etag_header.value.len == 8) {
                             const string_etag_as_u64 = std.mem.readIntSliceNative(u64, etag_header.value);
                             if (string_etag_as_u64 == strong_etag) {
-                                ctx.sendNotModified();
+                                try ctx.sendNotModified();
                                 return;
                             }
                         }
@@ -489,10 +509,11 @@ pub const RequestContext = struct {
                 }
 
                 if (output.contents.len == 0) {
-                    return ctx.sendNoContent();
+                    return try ctx.sendNoContent();
                 }
 
-                ctx.writeStatus(200) catch {};
+                defer ctx.done();
+                try ctx.writeStatus(200);
                 try ctx.prepareToSendBody(output.contents.len, false);
                 if (!send_body) return;
                 _ = try ctx.writeSocket(output.contents, SOCKET_FLAGS);
@@ -531,34 +552,55 @@ pub const Server = struct {
     allocator: *std.mem.Allocator,
     bundler: Bundler,
 
+    pub fn adjustUlimit() !void {
+        var limit = try std.os.getrlimit(.NOFILE);
+        if (limit.cur < limit.max) {
+            var new_limit = std.mem.zeroes(std.os.rlimit);
+            new_limit.cur = limit.max;
+            new_limit.max = limit.max;
+            try std.os.setrlimit(.NOFILE, new_limit);
+        }
+    }
+
+    pub fn onTCPConnection(server: *Server, conn: tcp.Connection) void {
+        conn.client.setNoDelay(true) catch {};
+        conn.client.setQuickACK(true) catch {};
+        conn.client.setLinger(1) catch {};
+
+        server.handleConnection(&conn);
+    }
+
     fn run(server: *Server) !void {
+        adjustUlimit() catch {};
         const listener = try tcp.Listener.init(.ip, SOCKET_FLAGS);
         defer listener.deinit();
 
         listener.setReuseAddress(true) catch {};
         listener.setReusePort(true) catch {};
         listener.setFastOpen(true) catch {};
+        // listener.setNoDelay(true) catch {};
+        // listener.setQuickACK(true) catch {};
 
         // try listener.ack(true);
 
         try listener.bind(ip.Address.initIPv4(IPv4.unspecified, 9000));
-        try listener.listen(128);
+        try listener.listen(1280);
         const addr = try listener.getLocalAddress();
 
         Output.println("Started Speedy at http://{s}", .{addr});
+        // var listener_handle = try std.os.kqueue();
+        // var change_list = std.mem.zeroes([2]os.Kevent);
 
-        // try listener.set(true);
+        // change_list[0].ident = @intCast(usize, listener.socket.fd);
+        // change_list[1].ident = @intCast(usize, listener.socket.fd);
 
+        // var eventlist: [128]os.Kevent = undefined;
         while (true) {
-            var conn = try listener.accept(SOCKET_FLAGS);
-            conn.client.setNoDelay(true) catch {};
-            conn.client.setQuickACK(true) catch {};
-            // conn.client.setLinger(1) catch {};
+            var conn = listener.accept(SOCKET_FLAGS) catch |err| {
+                continue;
+            };
 
             server.handleConnection(&conn);
-            conn.client.getError() catch |err| {
-                conn.client.deinit();
-            };
         }
     }
 
@@ -566,16 +608,24 @@ pub const Server = struct {
         try server.writeStatus(code, connection);
     }
 
+    threadlocal var req_buf: [32_000]u8 = undefined;
+
     pub fn handleConnection(server: *Server, conn: *tcp.Connection) void {
-        errdefer conn.deinit();
+
         // https://stackoverflow.com/questions/686217/maximum-on-http-header-values
-        var req_buf: [std.mem.page_size]u8 = undefined;
         var read_size = conn.client.read(&req_buf, SOCKET_FLAGS) catch |err| {
+            _ = conn.client.write(RequestContext.printStatusLine(400) ++ "\r\n\r\n", SOCKET_FLAGS) catch {};
             return;
         };
-        var req = picohttp.Request.parse(req_buf[0..read_size], &req_headers_buf) catch |err| {
-            Output.printErrorln("ERR: {s}", .{@errorName(err)});
 
+        if (read_size == 0) {
+            // Actually, this was not a request.
+            return;
+        }
+
+        var req = picohttp.Request.parse(req_buf[0..read_size], &req_headers_buf) catch |err| {
+            _ = conn.client.write(RequestContext.printStatusLine(400) ++ "\r\n\r\n", SOCKET_FLAGS) catch {};
+            Output.printErrorln("ERR: {s}", .{@errorName(err)});
             return;
         };
 
@@ -584,7 +634,6 @@ pub const Server = struct {
 
         var req_ctx = RequestContext.init(req, &request_arena.allocator, conn, &server.bundler) catch |err| {
             Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
-            conn.deinit();
             return;
         };
 
@@ -596,12 +645,11 @@ pub const Server = struct {
 
         req_ctx.handleRequest() catch |err| {
             switch (err) {
-                error.NotFound => {
+                error.ModuleNotFound => {
                     req_ctx.sendNotFound() catch {};
                 },
                 else => {
                     Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
-                    conn.deinit();
                     return;
                 },
             }
@@ -609,7 +657,15 @@ pub const Server = struct {
 
         const status = req_ctx.status orelse @intCast(HTTPStatusCode, 500);
 
-        Output.println("{d} – {s} {s}", .{ status, @tagName(req_ctx.method), req.path });
+        if (req_ctx.log.msgs.items.len == 0) {
+            println("{d} – {s} {s} as {s}", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
+        } else {
+            println("{s} {s}", .{ @tagName(req_ctx.method), req.path });
+            for (req_ctx.log.msgs.items) |msg| {
+                msg.writeFormat(Output.errorWriter()) catch continue;
+            }
+            req_ctx.log.deinit();
+        }
     }
 
     pub fn start(allocator: *std.mem.Allocator, options: Api.TransformOptions) !void {

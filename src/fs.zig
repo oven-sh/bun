@@ -41,7 +41,19 @@ pub const FileSystem = struct {
     };
 
     pub fn init1(allocator: *std.mem.Allocator, top_level_dir: ?string, enable_watcher: bool) !*FileSystem {
-        const _top_level_dir = top_level_dir orelse (if (isBrowser) "/project" else try std.process.getCwdAlloc(allocator));
+        var _top_level_dir = top_level_dir orelse (if (isBrowser) "/project/" else try std.process.getCwdAlloc(allocator));
+
+        // Ensure there's a trailing separator in the top level directory
+        // This makes path resolution more reliable
+        if (!std.fs.path.isSep(_top_level_dir[_top_level_dir.len - 1])) {
+            const tld = try allocator.alloc(u8, _top_level_dir.len + 1);
+            std.mem.copy(u8, tld, _top_level_dir);
+            tld[tld.len - 1] = std.fs.path.sep;
+            if (!isBrowser) {
+                allocator.free(_top_level_dir);
+            }
+            _top_level_dir = tld;
+        }
 
         instance = FileSystem{
             .allocator = allocator,
@@ -245,9 +257,52 @@ pub const FileSystem = struct {
         });
     }
 
+    pub fn relative(f: *@This(), from: string, to: string) string {
+        return @call(.{ .modifier = .always_inline }, path_handler.relative, .{
+            from,
+            to,
+        });
+    }
+
+    pub fn relativeAlloc(f: *@This(), allocator: *std.mem.Allocator, from: string, to: string) string {
+        return @call(.{ .modifier = .always_inline }, path_handler.relativeAlloc, .{
+            alloc,
+            from,
+            to,
+        });
+    }
+
+    pub fn relativeTo(f: *@This(), to: string) string {
+        return @call(.{ .modifier = .always_inline }, path_handler.relative, .{
+            f.top_level_dir,
+            to,
+        });
+    }
+
+    pub fn relativeToAlloc(f: *@This(), allocator: *std.mem.Allocator, to: string) string {
+        return @call(.{ .modifier = .always_inline }, path_handler.relativeAlloc, .{
+            allocator,
+            f.top_level_dir,
+            to,
+        });
+    }
+
     pub fn joinAlloc(f: *@This(), allocator: *std.mem.Allocator, parts: anytype) !string {
         const joined = f.join(parts);
         return try allocator.dupe(u8, joined);
+    }
+
+    threadlocal var realpath_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+    pub fn resolveAlloc(f: *@This(), allocator: *std.mem.Allocator, parts: anytype) !string {
+        const joined = f.join(parts);
+
+        const realpath = try std.fs.realpath(joined, (&realpath_buffer));
+
+        return try allocator.dupe(u8, realpath);
+    }
+
+    pub fn resolvePath(f: *@This(), part: string) ![]u8 {
+        return try std.fs.realpath(part, (&realpath_buffer).ptr);
     }
 
     pub const RealFS = struct {
@@ -639,7 +694,7 @@ pub const FileSystem = struct {
         // doNotCacheEntries bool
     };
 
-    pub const Implementation = comptime {
+    pub const Implementation = {
         switch (build_target) {
             .wasi, .native => return RealFS,
             .wasm => return WasmFS,
@@ -740,6 +795,10 @@ pub const Path = struct {
 
     pub fn init(text: string) Path {
         return Path{ .pretty = text, .text = text, .namespace = "file", .name = PathName.init(text) };
+    }
+
+    pub fn initWithPretty(text: string, pretty: string) Path {
+        return Path{ .pretty = pretty, .text = text, .namespace = "file", .name = PathName.init(text) };
     }
 
     pub fn initWithNamespace(text: string, namespace: string) Path {

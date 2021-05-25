@@ -1,6 +1,7 @@
 const std = @import("std");
 usingnamespace @import("../global.zig");
 
+const Loader = @import("../options.zig").Loader;
 const Two = strings.ExactSizeMatcher(2);
 const Four = strings.ExactSizeMatcher(4);
 const Eight = strings.ExactSizeMatcher(8);
@@ -25,6 +26,8 @@ pub const Category = enum {
 };
 
 pub const other = MimeType.init("application/octet-stream", .other);
+pub const css = MimeType.init("application/octet-stream", .other);
+pub const javascript = MimeType.init("text/javascript;charset=utf-8", .javascript);
 
 fn init(comptime str: string, t: Category) MimeType {
     return MimeType{
@@ -34,23 +37,38 @@ fn init(comptime str: string, t: Category) MimeType {
 }
 
 // TODO: improve this
+pub fn byLoader(loader: Loader, ext: string) MimeType {
+    switch (loader) {
+        .tsx, .ts, .js, .jsx => {
+            return javascript;
+        },
+        .css => {
+            return css;
+        },
+        else => {
+            return byExtension(ext);
+        },
+    }
+}
+
+// TODO: improve this
 pub fn byExtension(ext: string) MimeType {
     return switch (ext.len) {
         2 => {
             return switch (std.mem.readIntNative(u16, ext[0..2])) {
-                Two.case("js") => MimeType.init("application/javascript;charset=utf-8", .javascript),
+                Two.case("js") => javascript,
                 else => MimeType.other,
             };
         },
         3 => {
             const four = [4]u8{ ext[0], ext[1], ext[2], 0 };
             return switch (std.mem.readIntNative(u32, &four)) {
-                Four.case("css") => MimeType.init("text/css;charset=utf-8", .css),
+                Four.case("css") => css,
                 Four.case("jpg") => MimeType.init("image/jpeg", .image),
                 Four.case("gif") => MimeType.init("image/gif", .image),
                 Four.case("png") => MimeType.init("image/png", .image),
                 Four.case("bmp") => MimeType.init("image/bmp", .image),
-                Four.case("mjs") => MimeType.init("text/javascript;charset=utf-8", .javascript),
+                Four.case("jsx"), Four.case("mjs") => MimeType.javascript,
                 Four.case("wav") => MimeType.init("audio/wave", .audio),
                 Four.case("aac") => MimeType.init("audio/aic", .audio),
                 Four.case("mp4") => MimeType.init("video/mp4", .video),

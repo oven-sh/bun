@@ -28,6 +28,7 @@ pub const Category = enum {
 pub const other = MimeType.init("application/octet-stream", .other);
 pub const css = MimeType.init("application/octet-stream", .other);
 pub const javascript = MimeType.init("text/javascript;charset=utf-8", .javascript);
+pub const ico = MimeType.init("image/vnd.microsoft.icon", .image);
 
 fn init(comptime str: string, t: Category) MimeType {
     return MimeType{
@@ -78,7 +79,7 @@ pub fn byExtension(ext: string) MimeType {
                 Four.case("txt") => MimeType.init("text/plain", .other),
                 Four.case("ttf") => MimeType.init("font/ttf", .font),
                 Four.case("otf") => MimeType.init("font/otf", .font),
-                Four.case("ico") => MimeType.init("image/vnd.microsoft.icon", .image),
+                Four.case("ico") => ico,
                 Four.case("mp3") => MimeType.init("audio/mpeg", .video),
                 Four.case("svg") => MimeType.init("image/svg+xml", .image),
                 Four.case("csv") => MimeType.init("text/csv", .other),

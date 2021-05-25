@@ -316,6 +316,7 @@ pub const RequestContext = struct {
     threadlocal var file_chunk_buf: [chunk_preamble_len + 2 + file_chunk_size]u8 = undefined;
     threadlocal var symlink_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
     threadlocal var weak_etag_buffer: [100]u8 = undefined;
+    threadlocal var strong_etag_buffer: [100]u8 = undefined;
     threadlocal var weak_etag_tmp_buffer: [100]u8 = undefined;
 
     pub fn done(ctx: *RequestContext) void {
@@ -493,17 +494,15 @@ pub const RequestContext = struct {
                 defer ctx.bundler.allocator.free(output.contents);
                 if (FeatureFlags.strong_etags_for_built_files) {
                     const strong_etag = std.hash.Wyhash.hash(1, output.contents);
-                    const strong_etag_buf = try ctx.allocator.alloc(u8, 8);
-                    std.mem.writeIntSliceNative(u64, strong_etag_buf, strong_etag);
-                    ctx.appendHeader("ETag", strong_etag_buf);
+
+                    const etag_content_slice = std.fmt.bufPrintIntToSlice(strong_etag_buffer[0..49], strong_etag, 16, true, .{});
+
+                    ctx.appendHeader("ETag", etag_content_slice);
 
                     if (ctx.header("If-None-Match")) |etag_header| {
-                        if (etag_header.value.len == 8) {
-                            const string_etag_as_u64 = std.mem.readIntSliceNative(u64, etag_header.value);
-                            if (string_etag_as_u64 == strong_etag) {
-                                try ctx.sendNotModified();
-                                return;
-                            }
+                        if (std.mem.eql(u8, etag_content_slice, etag_header.value)) {
+                            try ctx.sendNotModified();
+                            return;
                         }
                     }
                 }
@@ -625,6 +624,7 @@ pub const Server = struct {
 
         var req = picohttp.Request.parse(req_buf[0..read_size], &req_headers_buf) catch |err| {
             _ = conn.client.write(RequestContext.printStatusLine(400) ++ "\r\n\r\n", SOCKET_FLAGS) catch {};
+            conn.client.deinit();
             Output.printErrorln("ERR: {s}", .{@errorName(err)});
             return;
         };
@@ -634,14 +634,19 @@ pub const Server = struct {
 
         var req_ctx = RequestContext.init(req, &request_arena.allocator, conn, &server.bundler) catch |err| {
             Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
+            conn.client.deinit();
             return;
         };
 
-        if (req_ctx.header("Connection")) |connection| {
-            req_ctx.keep_alive = strings.eqlInsensitive(connection.value, "keep-alive");
-        }
+        if (FeatureFlags.keep_alive) {
+            if (req_ctx.header("Connection")) |connection| {
+                req_ctx.keep_alive = strings.eqlInsensitive(connection.value, "keep-alive");
+            }
 
-        conn.client.setKeepAlive(req_ctx.keep_alive) catch {};
+            conn.client.setKeepAlive(req_ctx.keep_alive) catch {};
+        } else {
+            req_ctx.keep_alive = false;
+        }
 
         req_ctx.handleRequest() catch |err| {
             switch (err) {

@@ -116,8 +116,7 @@ pub const Bundler = struct {
 
         switch (bundler.options.import_path_format) {
             .relative => {
-                const relative_path_temp = try std.fs.path.relative(&relative_path_allocator.allocator, source_dir, source_path);
-                const relative_path = try relative_paths_list.append(relative_path_temp);
+                const relative_path = try relative_paths_list.append(bundler.fs.relativeTo(source_path));
 
                 return Fs.Path.init(relative_path);
             },
@@ -126,16 +125,26 @@ pub const Bundler = struct {
                     relative_path_allocator_buf_loaded = true;
                     relative_path_allocator = std.heap.FixedBufferAllocator.init(&relative_path_allocator_buf);
                 }
-                const relative_path_temp = try std.fs.path.relative(&relative_path_allocator.allocator, bundler.fs.top_level_dir, source_path);
-                const relative_path = try relative_paths_list.append(try std.fmt.allocPrint(&relative_path_allocator.allocator, "{s}{s}", .{ bundler.options.public_url, relative_path_temp }));
 
-                return Fs.Path.init(relative_path);
+                const relative_path = try relative_paths_list.append(bundler.fs.relativeTo(source_path));
+                const absolute_url = try relative_paths_list.append(
+                    try std.fmt.allocPrint(
+                        &relative_path_allocator.allocator,
+                        "{s}{s}",
+                        .{
+                            bundler.options.public_url,
+                            relative_path,
+                        },
+                    ),
+                );
+
+                return Fs.Path.initWithPretty(absolute_url, relative_path);
             },
         }
     }
 
     pub fn processImportRecord(bundler: *Bundler, source_dir: string, import_record: *ImportRecord) !void {
-        var resolve_result = (bundler.resolver.resolve(source_dir, import_record.path.text, import_record.kind) catch null) orelse return;
+        var resolve_result = try bundler.resolver.resolve(source_dir, import_record.path.text, import_record.kind);
 
         // extremely naive.
         resolve_result.is_from_node_modules = strings.contains(resolve_result.path_pair.primary.text, "/node_modules");
@@ -169,7 +178,11 @@ pub const Bundler = struct {
         }
 
         // Step 1. Parse & scan
-        const result = bundler.parse(resolve_result.path_pair.primary, bundler.options.loaders.get(resolve_result.path_pair.primary.text) orelse .file) orelse return null;
+        const loader = bundler.options.loaders.get(resolve_result.path_pair.primary.name.ext) orelse .file;
+        var file_path = resolve_result.path_pair.primary;
+        file_path.pretty = relative_paths_list.append(bundler.fs.relativeTo(file_path.text)) catch unreachable;
+
+        var result = bundler.parse(file_path, loader) orelse return null;
 
         switch (result.loader) {
             .jsx, .js, .ts, .tsx => {
@@ -177,9 +190,34 @@ pub const Bundler = struct {
 
                 for (ast.import_records) |*import_record| {
                     bundler.processImportRecord(
-                        std.fs.path.dirname(resolve_result.path_pair.primary.text) orelse resolve_result.path_pair.primary.text,
+                        std.fs.path.dirname(file_path.text) orelse file_path.text,
                         import_record,
-                    ) catch continue;
+                    ) catch |err| {
+                        switch (err) {
+                            error.ModuleNotFound => {
+                                if (Resolver.Resolver.isPackagePath(import_record.path.text)) {
+                                    try bundler.log.addRangeErrorFmt(
+                                        &result.source,
+                                        import_record.range,
+                                        bundler.allocator,
+                                        "Could not resolve: \"{s}\". Maybe you need to run \"npm install\" (or yarn/pnpm)?",
+                                        .{import_record.path.text},
+                                    );
+                                } else {
+                                    try bundler.log.addRangeErrorFmt(
+                                        &result.source,
+                                        import_record.range,
+                                        bundler.allocator,
+                                        "Could not resolve: \"{s}\" relative to \"{s}\"",
+                                        .{ import_record.path.text, bundler.fs.relativeTo(result.source.key_path.text) },
+                                    );
+                                }
+                            },
+                            else => {
+                                continue;
+                            },
+                        }
+                    };
                 }
             },
             else => {},
@@ -195,9 +233,9 @@ pub const Bundler = struct {
         result: ParseResult,
     ) !options.OutputFile {
         var allocator = bundler.allocator;
-        const relative_path = try std.fs.path.relative(bundler.allocator, bundler.fs.top_level_dir, result.source.path.text);
+        const relative_path = bundler.fs.relativeTo(result.source.path.text);
         var out_parts = [_]string{ bundler.options.output_dir, relative_path };
-        const out_path = try std.fs.path.join(bundler.allocator, &out_parts);
+        const out_path = try bundler.fs.joinAlloc(bundler.allocator, &out_parts);
 
         const ast = result.ast;
 
@@ -386,11 +424,18 @@ pub const Bundler = struct {
             }
         }
 
-        const initial_loader = bundler.options.loaders.get(extension);
+        // We make some things faster in theory by using absolute paths instead of relative paths
+        const absolute_path = resolve_path.normalizeAndJoinStringBuf(
+            bundler.fs.top_level_dir,
+            &tmp_buildfile_buf,
+            &([_][]const u8{relative_path}),
+            .auto,
+        );
 
-        const resolved = (try bundler.resolver.resolve(bundler.fs.top_level_dir, relative_path, .entry_point)) orelse return error.NotFound;
+        const resolved = (try bundler.resolver.resolve(bundler.fs.top_level_dir, absolute_path, .entry_point));
 
-        const output = switch (bundler.options.loaders.get(resolved.path_pair.primary.text) orelse .file) {
+        const loader = bundler.options.loaders.get(resolved.path_pair.primary.name.ext) orelse .file;
+        const output = switch (loader) {
             .js, .jsx, .ts, .tsx, .json => ServeResult.Value{
                 .build = (try bundler.buildWithResolveResult(resolved)) orelse return error.BuildFailed,
             },
@@ -402,7 +447,7 @@ pub const Bundler = struct {
 
         return ServeResult{
             .value = output,
-            .mime_type = MimeType.byExtension(extension),
+            .mime_type = MimeType.byLoader(loader, resolved.path_pair.primary.name.ext),
         };
     }
 
@@ -470,7 +515,7 @@ pub const Bundler = struct {
 
             const result = bundler.resolver.resolve(bundler.fs.top_level_dir, entry, .entry_point) catch {
                 continue;
-            } orelse continue;
+            };
             const key = result.path_pair.primary.text;
             if (bundler.resolve_results.contains(key)) {
                 continue;
@@ -620,10 +665,9 @@ pub const Transformer = struct {
             var _source = &source;
             const res = _transform(chosen_alloc, allocator, __log, parser_opts, loader, define, _source) catch continue;
 
-            const relative_path = try std.fs.path.relative(chosen_alloc, cwd, absolutePath);
-            var out_parts = [_]string{ output_dir, relative_path };
-            const out_path = try std.fs.path.join(allocator, &out_parts);
-            try output_files.append(options.OutputFile{ .path = out_path, .contents = res.js });
+            const relative_path = resolve_path.relative(cwd, absolutePath);
+            const out_path = resolve_path.normalizeAndJoin2(cwd, .auto, absolutePath, relative_path);
+            try output_files.append(options.OutputFile{ .path = allocator.dupe(u8, out_path) catch continue, .contents = res.js });
         }
 
         return try options.TransformResult.init(output_files.toOwnedSlice(), log, allocator);

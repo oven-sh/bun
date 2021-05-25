@@ -85,7 +85,7 @@ pub const Tester = struct {
         fail,
     };
 
-    pub fn expect(tester: *Tester, expected: string, result: string, src: std.builtin.SourceLocation) callconv(.Inline) bool {
+    pub inline fn expect(tester: *Tester, expected: string, result: string, src: std.builtin.SourceLocation) bool {
         var expectation = Expectation.init(expected, result, src);
         switch (expectation.evaluate_outcome()) {
             .pass => {
@@ -137,12 +137,12 @@ pub const Tester = struct {
             .pass => {
                 std.fmt.format(stderr.writer(), "{s}All {d} expectations passed.{s}\n", .{ GREEN, tester.pass.items.len, GREEN }) catch unreachable;
                 std.fmt.format(stderr.writer(), RESET, .{}) catch unreachable;
-                std.testing.expect(true);
+                std.testing.expect(true) catch std.debug.panic("Test failure", .{});
             },
             .fail => {
                 std.fmt.format(stderr.writer(), "{s}All {d} expectations failed.{s}\n\n", .{ RED, tester.fail.items.len, RED }) catch unreachable;
                 std.fmt.format(stderr.writer(), RESET, .{}) catch unreachable;
-                std.testing.expect(false);
+                std.testing.expect(false) catch std.debug.panic("Test failure", .{});
             },
             .some_fail => {
                 std.fmt.format(stderr.writer(), "{s}{d} failed{s} and {s}{d} passed{s} of {d} expectations{s}\n\n", .{
@@ -156,7 +156,7 @@ pub const Tester = struct {
                     RESET,
                 }) catch unreachable;
                 std.fmt.format(stderr.writer(), RESET, .{}) catch unreachable;
-                std.testing.expect(false);
+                std.testing.expect(false) catch std.debug.panic("Test failure", .{});
             },
         }
     }

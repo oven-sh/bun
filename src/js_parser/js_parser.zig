@@ -11244,6 +11244,7 @@ pub const P = struct {
                 // without initializers are initialized to undefined.
                 var next_numeric_value: f64 = 0.0;
                 var has_numeric_value = true;
+
                 var value_exprs = List(Expr).initCapacity(p.allocator, data.values.len) catch unreachable;
 
                 // Track values so they can be used by constant folding. We need to follow
@@ -11257,27 +11258,27 @@ pub const P = struct {
                 // that's what the TypeScript compiler does.
                 const old_should_fold_numeric_constants = p.should_fold_numeric_constants;
                 p.should_fold_numeric_constants = true;
-                defer p.should_fold_numeric_constants = old_should_fold_numeric_constants;
                 for (data.values) |*enum_value| {
                     // gotta allocate here so it lives after this function stack frame goes poof
                     const name = enum_value.name;
                     var assign_target: Expr = Expr{ .loc = logger.Loc.Empty, .data = Prefill.Data.EMissing };
-                    var enum_value_type: EnumValueType = EnumValueType.unknown;
+                    var has_string_value = false;
+
                     if (enum_value.value != null) {
                         enum_value.value = p.visitExpr(enum_value.value.?);
                         switch (enum_value.value.?.data) {
                             .e_number => |num| {
                                 // prob never allocates in practice
                                 values_so_far.put(name.string(p.allocator) catch unreachable, num.value) catch unreachable;
-                                enum_value_type = .numeric;
+                                has_numeric_value = true;
                                 next_numeric_value = num.value + 1.0;
                             },
                             .e_string => |str| {
-                                enum_value_type = .string;
+                                has_string_value = true;
                             },
                             else => {},
                         }
-                    } else if (enum_value_type == .numeric) {
+                    } else if (has_numeric_value) {
                         enum_value.value = p.e(E.Number{ .value = next_numeric_value }, enum_value.loc);
                         values_so_far.put(name.string(p.allocator) catch unreachable, next_numeric_value) catch unreachable;
                         next_numeric_value += 1;
@@ -11300,24 +11301,31 @@ pub const P = struct {
                     p.recordUsage(data.arg);
 
                     // String-valued enums do not form a two-way map
-                    if (enum_value_type == .string) {
+                    if (has_string_value) {
                         value_exprs.append(assign_target) catch unreachable;
                     } else {
                         // "Enum[assignTarget] = 'Name'"
-                        value_exprs.append(Expr.assign(p.e(E.Index{
-                            .target = p.e(
-                                E.Identifier{ .ref = data.arg },
-                                enum_value.loc,
+                        value_exprs.append(
+                            Expr.assign(
+                                p.e(E.Index{
+                                    .target = p.e(
+                                        E.Identifier{ .ref = data.arg },
+                                        enum_value.loc,
+                                    ),
+                                    .index = assign_target,
+                                }, enum_value.loc),
+                                p.e(enum_value.name, enum_value.loc),
+                                p.allocator,
                             ),
-                            .index = assign_target,
-                        }, enum_value.loc), p.e(enum_value.name, enum_value.loc), p.allocator)) catch unreachable;
+                        ) catch unreachable;
                     }
+                    p.recordUsage(data.arg);
                 }
-                p.recordUsage(data.arg);
+
+                p.should_fold_numeric_constants = old_should_fold_numeric_constants;
 
                 var value_stmts = List(Stmt).initCapacity(p.allocator, value_exprs.items.len) catch unreachable;
                 // Generate statements from expressions
-
                 for (value_exprs.items) |expr| {
                     value_stmts.appendAssumeCapacity(p.s(S.SExpr{ .value = expr }, expr.loc));
                 }

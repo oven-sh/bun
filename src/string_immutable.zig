@@ -29,6 +29,13 @@ pub fn indexOf(self: string, str: u8) ?usize {
     return std.mem.indexOf(u8, self, str);
 }
 
+pub fn cat(allocator: *std.mem.Allocator, first: string, second: string) !string {
+    var out = try allocator.alloc(u8, first.len + second.len);
+    std.mem.copy(u8, out, first);
+    std.mem.copy(u8, out[first.len..], second);
+    return out;
+}
+
 pub fn startsWith(self: string, str: string) bool {
     if (str.len > self.len) {
         return false;
@@ -105,7 +112,11 @@ pub fn eqlComptime(self: string, comptime alt: anytype) bool {
         0 => {
             @compileError("Invalid size passed to eqlComptime");
         },
-        1...3 => {
+        2 => {
+            const check = std.mem.readIntNative(u16, alt[0..alt.len]);
+            return self.len == alt.len and std.mem.readIntNative(u16, self[0..2]) == check;
+        },
+        1, 3 => {
             if (alt.len != self.len) {
                 return false;
             }
@@ -119,7 +130,14 @@ pub fn eqlComptime(self: string, comptime alt: anytype) bool {
             const check = std.mem.readIntNative(u32, alt[0..alt.len]);
             return self.len == alt.len and std.mem.readIntNative(u32, self[0..4]) == check;
         },
-        5...7 => {
+        6 => {
+            const first = std.mem.readIntNative(u32, alt[0..4]);
+            const second = std.mem.readIntNative(u16, alt[4..6]);
+
+            return self.len == alt.len and first == std.mem.readIntNative(u32, self[0..4]) and
+                second == std.mem.readIntNative(u16, self[4..6]);
+        },
+        5, 7 => {
             const check = std.mem.readIntNative(u32, alt[0..4]);
             if (self.len != alt.len or std.mem.readIntNative(u32, self[0..4]) != check) {
                 return false;

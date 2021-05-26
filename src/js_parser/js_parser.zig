@@ -2796,7 +2796,7 @@ pub const P = struct {
         });
 
         // Don't output anything if it's just a forward declaration of a function
-        if (opts.is_typescript_declare or func.body == null) {
+        if (opts.is_typescript_declare or func.flags.is_forward_declaration) {
             p.popAndDiscardScope(scopeIndex);
 
             // Balance the fake block scope introduced above
@@ -2865,6 +2865,7 @@ pub const P = struct {
 
         var func = G.Fn{
             .name = name,
+
             .flags = Flags.Function{
                 .has_rest_arg = false,
                 .is_async = opts.allow_await == .allow_expr,
@@ -3020,6 +3021,7 @@ pub const P = struct {
         // "function foo(): any;"
         if (opts.allow_missing_body_for_type_script and p.lexer.token != .t_open_brace) {
             try p.lexer.expectOrInsertSemicolon();
+            func.flags.is_forward_declaration = true;
             return func;
         }
         var tempOpts = opts;
@@ -5076,11 +5078,11 @@ pub const P = struct {
         const name_loc = p.lexer.loc();
         const name_text = p.lexer.identifier;
         try p.lexer.next();
+
         var name = LocRef{ .loc = name_loc, .ref = null };
-
         const scope_index = try p.pushScopeForParsePass(.entry, loc);
-        const old_has_non_local_export_declare_inside_namespace = p.has_non_local_export_declare_inside_namespace;
 
+        const old_has_non_local_export_declare_inside_namespace = p.has_non_local_export_declare_inside_namespace;
         p.has_non_local_export_declare_inside_namespace = false;
 
         var stmts: List(Stmt) = List(Stmt).init(p.allocator);
@@ -5136,7 +5138,7 @@ pub const P = struct {
         // "export declare" statements as non-empty even though "declare"
         // statements are only type annotations. We cannot omit the namespace
         // in that case. See https://github.com/evanw/esbuild/issues/1158.
-        if (stmts.items.len == import_equal_count and !has_non_local_export_declare_inside_namespace or opts.is_typescript_declare) {
+        if ((stmts.items.len == import_equal_count and !has_non_local_export_declare_inside_namespace) or opts.is_typescript_declare) {
             p.popAndDiscardScope(scope_index);
             if (opts.is_module_scope) {
                 p.local_type_names.put(name_text, true) catch unreachable;
@@ -6976,7 +6978,7 @@ pub const P = struct {
             });
 
             // "class Foo { foo(): void; foo(): void {} }"
-            if (func.body == null) {
+            if (func.flags.is_forward_declaration) {
                 // Skip this property entirely
                 p.popAndDiscardScope(scope_index);
                 return null;
@@ -9142,7 +9144,11 @@ pub const P = struct {
                     }
                 },
                 .s_expr => |st| {
-                    if (st.does_not_affect_tree_shaking) {} else if (!p.exprCanBeRemovedIfUnused(st.value)) {
+                    if (st.does_not_affect_tree_shaking) {
+                        // Expressions marked with this are automatically generated and have
+                        // no side effects by construction.
+                        break;
+                    } else if (!p.exprCanBeRemovedIfUnused(st.value)) {
                         return false;
                     }
                 },
@@ -9227,7 +9233,8 @@ pub const P = struct {
         return p.visitExprInOut(expr, ExprIn{});
     }
 
-    pub fn visitFunc(p: *P, func: *G.Fn, open_parens_loc: logger.Loc) void {
+    pub fn visitFunc(p: *P, _func: G.Fn, open_parens_loc: logger.Loc) G.Fn {
+        var func = _func;
         const old_fn_or_arrow_data = p.fn_or_arrow_data_visit;
         const old_fn_only_data = p.fn_only_data_visit;
         p.fn_or_arrow_data_visit = FnOrArrowDataVisit{ .is_async = func.flags.is_async };
@@ -9243,28 +9250,30 @@ pub const P = struct {
             }
         }
 
+        const body = func.body;
+
         p.pushScopeForVisitPass(.function_args, open_parens_loc) catch unreachable;
         p.visitArgs(
             func.args,
             VisitArgsOpts{
                 .has_rest_arg = func.flags.has_rest_arg,
-                .body = func.body.?.stmts,
+                .body = body.stmts,
                 .is_unique_formal_parameters = true,
             },
         );
 
-        assert(func.body != null);
-        p.pushScopeForVisitPass(.function_body, func.body.?.loc) catch unreachable;
-        var stmts = List(Stmt).fromOwnedSlice(p.allocator, func.body.?.stmts);
-        var temp_opts = PrependTempRefsOpts{ .kind = StmtsKind.fn_body, .fn_body_loc = func.body.?.loc };
+        p.pushScopeForVisitPass(.function_body, body.loc) catch unreachable;
+        var stmts = List(Stmt).fromOwnedSlice(p.allocator, body.stmts);
+        var temp_opts = PrependTempRefsOpts{ .kind = StmtsKind.fn_body, .fn_body_loc = body.loc };
         p.visitStmtsAndPrependTempRefs(&stmts, &temp_opts) catch unreachable;
-        func.body.?.stmts = stmts.toOwnedSlice();
+        func.body = G.FnBody{ .stmts = stmts.toOwnedSlice(), .loc = body.loc };
 
         p.popScope();
         p.popScope();
 
         p.fn_or_arrow_data_visit = old_fn_or_arrow_data;
         p.fn_only_data_visit = old_fn_only_data;
+        return func;
     }
 
     pub fn maybeKeepExprSymbolName(p: *P, expr: Expr, original_name: string, was_anonymous_named_expr: bool) Expr {
@@ -10266,7 +10275,7 @@ pub const P = struct {
                 p.fn_or_arrow_data_visit = old_fn_or_arrow_data;
             },
             .e_function => |e_| {
-                p.visitFunc(&e_.func, expr.loc);
+                e_.func = p.visitFunc(e_.func, expr.loc);
                 if (e_.func.name) |name| {
                     return p.keepExprSymbolName(expr, p.symbols.items[name.ref.?.inner_index].original_name);
                 }
@@ -10796,7 +10805,7 @@ pub const P = struct {
                                     name = "default";
                                 }
 
-                                p.visitFunc(&func.func, func.func.open_parens_loc);
+                                func.func = p.visitFunc(func.func, func.func.open_parens_loc);
                                 stmts.append(stmt.*) catch unreachable;
 
                                 // if (func.func.name != null and func.func.name.?.ref != null) {
@@ -11161,10 +11170,12 @@ pub const P = struct {
 
             },
             .s_function => |data| {
-                p.visitFunc(&data.func, data.func.open_parens_loc);
+                data.func = p.visitFunc(data.func, data.func.open_parens_loc);
 
                 // Handle exporting this function from a namespace
                 if (data.func.flags.is_export and p.enclosing_namespace_arg_ref != null) {
+                    data.func.flags.is_export = false;
+
                     const enclosing_namespace_arg_ref = p.enclosing_namespace_arg_ref orelse unreachable;
                     stmts.ensureUnusedCapacity(3) catch unreachable;
                     stmts.appendAssumeCapacity(stmt.*);
@@ -11320,6 +11331,7 @@ pub const P = struct {
                     data.arg,
                     value_stmts.toOwnedSlice(),
                 );
+                return;
             },
             .s_namespace => |data| {
                 p.recordDeclaredSymbol(data.name.ref.?) catch unreachable;
@@ -11342,15 +11354,13 @@ pub const P = struct {
                 var prepend_temp_refs = PrependTempRefsOpts{ .kind = StmtsKind.fn_body };
                 var prepend_list = List(Stmt).fromOwnedSlice(p.allocator, data.stmts);
 
-                {
-                    const old_enclosing_namespace_arg_ref = p.enclosing_namespace_arg_ref;
-                    p.enclosing_namespace_arg_ref = data.arg;
-                    defer p.enclosing_namespace_arg_ref = old_enclosing_namespace_arg_ref;
-                    p.pushScopeForVisitPass(.entry, stmt.loc) catch unreachable;
-                    defer p.popScope();
-                    p.recordDeclaredSymbol(data.arg) catch unreachable;
-                    p.visitStmtsAndPrependTempRefs(&prepend_list, &prepend_temp_refs) catch unreachable;
-                }
+                const old_enclosing_namespace_arg_ref = p.enclosing_namespace_arg_ref;
+                p.enclosing_namespace_arg_ref = data.arg;
+                p.pushScopeForVisitPass(.entry, stmt.loc) catch unreachable;
+                p.recordDeclaredSymbol(data.arg) catch unreachable;
+                p.visitStmtsAndPrependTempRefs(&prepend_list, &prepend_temp_refs) catch unreachable;
+                p.popScope();
+                p.enclosing_namespace_arg_ref = old_enclosing_namespace_arg_ref;
 
                 try p.generateClosureForTypeScriptNamespaceOrEnum(
                     stmts,
@@ -11359,7 +11369,7 @@ pub const P = struct {
                     data.name.loc,
                     data.name.ref.?,
                     data.arg,
-                    prepend_list.toOwnedSlice(),
+                    prepend_list.items,
                 );
                 return;
             },
@@ -11373,7 +11383,31 @@ pub const P = struct {
     }
 
     pub fn markExportedDeclsInsideNamespace(p: *P, ns_ref: Ref, decls: []G.Decl) void {
-        notimpl();
+        for (decls) |decl| {
+            p.markExportedBindingInsideNamespace(ns_ref, decl.binding);
+        }
+    }
+
+    pub fn markExportedBindingInsideNamespace(p: *P, ref: Ref, binding: BindingNodeIndex) void {
+        switch (binding.data) {
+            .b_missing => {},
+            .b_identifier => |ident| {
+                p.is_exported_inside_namespace.put(ident.ref, ref) catch unreachable;
+            },
+            .b_array => |array| {
+                for (array.items) |item| {
+                    p.markExportedBindingInsideNamespace(ref, item.binding);
+                }
+            },
+            .b_object => |obj| {
+                for (obj.properties) |item| {
+                    p.markExportedBindingInsideNamespace(ref, item.value);
+                }
+            },
+            else => {
+                Global.panic("Unexpected binding type in namespace. This is a bug. {s}", .{binding});
+            },
+        }
     }
 
     pub fn generateClosureForTypeScriptNamespaceOrEnum(
@@ -11501,33 +11535,38 @@ pub const P = struct {
         func_args[0] = .{ .binding = p.b(B.Identifier{ .ref = arg_ref }, name_loc) };
         var args_list = p.allocator.alloc(ExprNodeIndex, 1) catch unreachable;
         args_list[0] = arg_expr;
-        stmts.append(
-            p.s(
-                S.SExpr{
-                    .value = p.e(
-                        E.Call{
-                            .target = p.e(
-                                E.Function{
-                                    .func = G.Fn{
-                                        .args = func_args,
-                                        .name = null,
-                                        .open_parens_loc = logger.Loc.Empty,
-                                        .body = G.FnBody{
-                                            .loc = stmt_loc,
-                                            .stmts = stmts_inside_closure,
-                                        },
-                                    },
-                                },
-                                stmt_loc,
-                            ),
-                            .args = args_list,
-                        },
-                        stmt_loc,
-                    ),
-                },
-                stmt_loc,
-            ),
-        ) catch unreachable;
+        const func = G.Fn{
+            .args = func_args,
+            .name = null,
+            .open_parens_loc = stmt_loc,
+            .body = G.FnBody{
+                .loc = stmt_loc,
+                .stmts = try p.allocator.dupe(StmtNodeIndex, stmts_inside_closure),
+            },
+        };
+        const target = p.e(
+            E.Function{
+                .func = func,
+            },
+            stmt_loc,
+        );
+
+        const call = p.e(
+            E.Call{
+                .target = target,
+                .args = args_list,
+            },
+            stmt_loc,
+        );
+
+        const closure = p.s(
+            S.SExpr{
+                .value = call,
+            },
+            stmt_loc,
+        );
+
+        stmts.append(closure) catch unreachable;
     }
 
     pub fn lowerClass(p: *P, stmtorexpr: js_ast.StmtOrExpr, ref: Ref) []Stmt {

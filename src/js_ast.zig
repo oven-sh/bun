@@ -83,6 +83,8 @@ pub const Flags = struct {
         has_rest_arg: bool = false,
         has_if_scope: bool = false,
 
+        is_forward_declaration: bool = false,
+
         // This is true if the function is a method
         is_unique_formal_parameters: bool = false,
 
@@ -355,7 +357,9 @@ pub const G = struct {
         name: ?LocRef,
         open_parens_loc: logger.Loc,
         args: []Arg = &([_]Arg{}),
-        body: ?FnBody = null,
+        // This was originally nullable, but doing so I believe caused a miscompilation
+        // Specifically, the body was always null.
+        body: FnBody = FnBody{ .loc = logger.Loc.Empty, .stmts = &([_]StmtNodeIndex{}) },
         arguments_ref: ?Ref = null,
 
         flags: Flags.Function = Flags.Function.None,

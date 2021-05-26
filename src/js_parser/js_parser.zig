@@ -2772,7 +2772,7 @@ pub const P = struct {
 
         // Even anonymous functions can have TypeScript type parameters
         if (p.options.ts) {
-            p.skipTypescriptTypeParameters();
+            try p.skipTypeScriptTypeParameters();
         }
 
         // Introduce a fake block scope for function declarations inside if statements
@@ -2888,7 +2888,7 @@ pub const P = struct {
                 try p.lexer.next();
                 if (p.lexer.token == T.t_colon) {
                     try p.lexer.next();
-                    p.skipTypescriptType(js_ast.Op.Level.lowest);
+                    try p.skipTypeScriptType(js_ast.Op.Level.lowest);
                 }
                 if (p.lexer.token != T.t_comma) {
                     break;
@@ -2950,7 +2950,7 @@ pub const P = struct {
                 // "function foo(a: any) {}"
                 if (p.lexer.token == .t_colon) {
                     try p.lexer.next();
-                    p.skipTypescriptType(.lowest);
+                    try p.skipTypeScriptType(.lowest);
                 }
             }
 
@@ -3010,7 +3010,7 @@ pub const P = struct {
         // "function foo(): any {}"
         if (p.options.ts and p.lexer.token == .t_colon) {
             try p.lexer.next();
-            p.skipTypescriptReturnType();
+            try p.skipTypescriptReturnType();
         }
 
         // "function foo(): any;"
@@ -3027,8 +3027,8 @@ pub const P = struct {
     // pub fn parseBinding(p: *P)
 
     // TODO:
-    pub fn skipTypescriptReturnType(p: *P) void {
-        notimpl();
+    pub fn skipTypescriptReturnType(p: *P) anyerror!void {
+        try p.skipTypeScriptTypeWithOpts(.lowest, .{ .is_return_type = true });
     }
 
     // TODO:
@@ -3055,55 +3055,683 @@ pub const P = struct {
         return decorators.toOwnedSlice();
     }
 
-    // TODO:
-    pub fn skipTypescriptType(p: *P, level: js_ast.Op.Level) void {
-        notimpl();
-    }
+    pub const TypeScript = struct {
+        // This function is taken from the official TypeScript compiler source code:
+        // https://github.com/microsoft/TypeScript/blob/master/src/compiler/parser.ts
+        pub fn canFollowTypeArgumentsInExpression(p: *P) bool {
+            switch (p.lexer.token) {
+                // These are the only tokens can legally follow a type argument list. So we
+                // definitely want to treat them as type arg lists.
+                .t_open_paren, // foo<x>(
+                .t_no_substitution_template_literal, // foo<T> `...`
+                // foo<T> `...${100}...`
+                .t_template_head,
+                => {
+                    return true;
+                },
+                // These cases can't legally follow a type arg list. However, they're not
+                // legal expressions either. The user is probably in the middle of a
+                // generic type. So treat it as such.
+                .t_dot, // foo<x>.
+                .t_close_paren, // foo<x>)
+                .t_close_bracket, // foo<x>]
+                .t_colon, // foo<x>:
+                .t_semicolon, // foo<x>;
+                .t_question, // foo<x>?
+                .t_equals_equals, // foo<x> ==
+                .t_equals_equals_equals, // foo<x> ===
+                .t_exclamation_equals, // foo<x> !=
+                .t_exclamation_equals_equals, // foo<x> !==
+                .t_ampersand_ampersand, // foo<x> &&
+                .t_bar_bar, // foo<x> ||
+                .t_question_question, // foo<x> ??
+                .t_caret, // foo<x> ^
+                .t_ampersand, // foo<x> &
+                .t_bar, // foo<x> |
+                .t_close_brace, // foo<x> }
+                .t_end_of_file, // foo<x>
+                => {
+                    return true;
+                },
 
-    pub const TypescriptIdentifier = struct {
-        pub const Map = std.ComptimeStringMap(Kind, .{
-            .{ "unique", .unique },
-            .{ "abstract", .abstract },
-            .{ "asserts", .asserts },
-            .{ "keyof", .prefix },
-            .{ "readonly", .prefix },
-            .{ "infer", .prefix },
-            .{ "any", .primitive },
-            .{ "never", .primitive },
-            .{ "unknown", .primitive },
-            .{ "undefined", .primitive },
-            .{ "object", .primitive },
-            .{ "number", .primitive },
-            .{ "string", .primitive },
-            .{ "boolean", .primitive },
-            .{ "bigint", .primitive },
-            .{ "symbol", .primitive },
-        });
-        pub const Kind = enum {
-            normal,
-            unique,
-            abstract,
-            asserts,
-            prefix,
-            primitive,
+                // We don't want to treat these as type arguments. Otherwise we'll parse
+                // this as an invocation expression. Instead, we want to parse out the
+                // expression in isolation from the type arguments.
+                .t_comma, // foo<x>,
+                .t_open_brace, // foo<x> {
+                => {
+                    return false;
+                },
+                else => {
+                    // Anything else treat as an expression
+                    return false;
+                },
+            }
+        }
+        pub const Identifier = struct {
+            pub const StmtIdentifier = enum {
+                s_type,
+
+                s_namespace,
+
+                s_abstract,
+
+                s_module,
+
+                s_interface,
+
+                s_declare,
+            };
+            pub fn forStr(str: string) ?StmtIdentifier {
+                switch (str.len) {
+                    "type".len => {
+                        return if (std.mem.readIntNative(u32, str[0..4]) == std.mem.readIntNative(u32, "type")) .s_type else null;
+                    },
+                    "interface".len => {
+                        if (strings.eqlComptime(str, "interface")) {
+                            return .s_interface;
+                        } else if (strings.eqlComptime(str, "namespace")) {
+                            return .s_namespace;
+                        } else {
+                            return null;
+                        }
+                    },
+                    "abstract".len => {
+                        if (strings.eqlComptime(str, "abstract")) {
+                            return .s_abstract;
+                        } else {
+                            return null;
+                        }
+                    },
+                    "declare".len => {
+                        if (strings.eqlComptime(str, "declare")) {
+                            return .s_declare;
+                        } else {
+                            return null;
+                        }
+                    },
+                    "module".len => {
+                        if (strings.eqlComptime(str, "module")) {
+                            return .s_module;
+                        } else {
+                            return null;
+                        }
+                    },
+                    else => {
+                        return null;
+                    },
+                }
+            }
+            pub const IMap = std.ComptimeStringMap(Kind, .{
+                .{ "unique", .unique },
+                .{ "abstract", .abstract },
+                .{ "asserts", .asserts },
+                .{ "keyof", .prefix },
+                .{ "readonly", .prefix },
+                .{ "infer", .prefix },
+                .{ "any", .primitive },
+                .{ "never", .primitive },
+                .{ "unknown", .primitive },
+                .{ "undefined", .primitive },
+                .{ "object", .primitive },
+                .{ "number", .primitive },
+                .{ "string", .primitive },
+                .{ "boolean", .primitive },
+                .{ "bigint", .primitive },
+                .{ "symbol", .primitive },
+            });
+            pub const Kind = enum {
+                normal,
+                unique,
+                abstract,
+                asserts,
+                prefix,
+                primitive,
+            };
+        };
+
+        pub const SkipTypeOptions = struct {
+            is_return_type: bool = false,
         };
     };
 
-    pub fn skipTypeScriptBinding(p: *P) !void {
+    pub fn skipTypeScriptType(p: *P, level: js_ast.Op.Level) anyerror!void {
+        try p.skipTypeScriptTypeWithOpts(level, .{});
+    }
+
+    pub fn skipTypeScriptBinding(p: *P) anyerror!void {
         switch (p.lexer.token) {
-            .t_identifier, .t_this => {},
-            .t_open_bracket => {},
-            .t_open_brace => {},
+            .t_identifier, .t_this => {
+                try p.lexer.next();
+            },
+            .t_open_bracket => {
+                try p.lexer.next();
+
+                // "[, , a]"
+
+                while (p.lexer.token == .t_comma) {
+                    try p.lexer.next();
+                }
+                // "[a, b]"
+                while (p.lexer.token != .t_close_bracket) {
+                    try p.skipTypeScriptBinding();
+
+                    if (p.lexer.token != .t_comma) {
+                        break;
+                    }
+                    try p.lexer.next();
+                }
+
+                try p.lexer.expect(.t_close_bracket);
+            },
+            .t_open_brace => {
+                try p.lexer.next();
+
+                while (p.lexer.token != .t_close_brace) {
+                    var found_identifier = false;
+
+                    switch (p.lexer.token) {
+                        .t_identifier => {
+                            found_identifier = true;
+                            try p.lexer.next();
+                        },
+
+                        // "{1: y}"
+                        // "{'x': y}"
+                        .t_string_literal, .t_numeric_literal => {
+                            try p.lexer.next();
+                        },
+
+                        else => {
+                            if (p.lexer.isIdentifierOrKeyword()) {
+                                // "{if: x}"
+                                try p.lexer.next();
+                            } else {
+                                try p.lexer.unexpected();
+                            }
+                        },
+                    }
+
+                    if (p.lexer.token == .t_colon or !found_identifier) {
+                        try p.lexer.expect(.t_colon);
+                        try p.skipTypeScriptBinding();
+                    }
+
+                    if (p.lexer.token != .t_comma) {
+                        break;
+                    }
+
+                    try p.lexer.next();
+                }
+
+                try p.lexer.expect(.t_close_brace);
+            },
+            else => {
+                try p.lexer.unexpected();
+            },
         }
     }
 
-    pub fn skipTypescriptTypeWithOptions(p: *P, level: js_ast.Op.Level) void {
-        notimpl();
+    pub fn skipTypescriptFnArgs(p: *P) anyerror!void {
+        try p.lexer.expect(.t_open_paren);
+
+        while (p.lexer.token != .t_close_paren) {
+            // "(...a)"
+            if (p.lexer.token == .t_dot_dot_dot) {
+                try p.lexer.next();
+            }
+
+            try p.skipTypeScriptBinding();
+
+            // "(a?)"
+            if (p.lexer.token == .t_question) {
+                try p.lexer.next();
+            }
+
+            // "(a: any)"
+            if (p.lexer.token == .t_colon) {
+                try p.lexer.next();
+                try p.skipTypeScriptType(.lowest);
+            }
+
+            // "(a, b)"
+            if (p.lexer.token != .t_comma) {
+                break;
+            }
+
+            try p.lexer.next();
+        }
+
+        try p.lexer.expect(.t_close_paren);
     }
 
-    // TODO:
-    pub fn skipTypescriptTypeParameters(p: *P) void {
-        notimpl();
+    // This is a spot where the TypeScript grammar is highly ambiguous. Here are
+    // some cases that are valid:
+    //
+    //     let x = (y: any): (() => {}) => { };
+    //     let x = (y: any): () => {} => { };
+    //     let x = (y: any): (y) => {} => { };
+    //     let x = (y: any): (y[]) => {};
+    //     let x = (y: any): (a | b) => {};
+    //
+    // Here are some cases that aren't valid:
+    //
+    //     let x = (y: any): (y) => {};
+    //     let x = (y: any): (y) => {return 0};
+    //     let x = (y: any): asserts y is (y) => {};
+    //
+    pub fn skipTypeScriptParenOrFnType(p: *P) anyerror!void {
+        if (p.trySkipTypeScriptArrowArgsWithBacktracking()) {
+            try p.skipTypescriptReturnType();
+        } else {
+            try p.lexer.expect(.t_open_paren);
+            try p.skipTypeScriptType(.lowest);
+            try p.lexer.expect(.t_close_paren);
+        }
+    }
+
+    pub fn skipTypeScriptTypeWithOpts(p: *P, level: js_ast.Op.Level, opts: TypeScript.SkipTypeOptions) anyerror!void {
+        while (true) {
+            switch (p.lexer.token) {
+                .t_numeric_literal,
+                .t_big_integer_literal,
+                .t_string_literal,
+                .t_no_substitution_template_literal,
+                .t_true,
+                .t_false,
+                .t_null,
+                .t_void,
+                .t_const,
+                => {
+                    try p.lexer.next();
+                },
+
+                .t_this => {
+                    try p.lexer.next();
+
+                    // "function check(): this is boolean"
+                    if (p.lexer.isContextualKeyword("is") and !p.lexer.has_newline_before) {
+                        try p.lexer.next();
+                        try p.skipTypeScriptType(.lowest);
+                        return;
+                    }
+                },
+                .t_minus => {
+                    // "-123"
+                    // "-123n"
+
+                    try p.lexer.next();
+
+                    if (p.lexer.token == .t_big_integer_literal) {
+                        try p.lexer.next();
+                    } else {
+                        try p.lexer.expect(.t_numeric_literal);
+                    }
+                },
+                .t_ampersand, .t_bar => {
+                    // Support things like "type Foo = | A | B" and "type Foo = & A & B"
+                    try p.lexer.next();
+                    continue;
+                },
+                .t_import => {
+                    // "import('fs')"
+                    try p.lexer.next();
+                    try p.lexer.expect(.t_open_paren);
+                    try p.lexer.expect(.t_string_literal);
+                    try p.lexer.expect(.t_close_paren);
+                },
+                .t_new => {
+                    // "new () => Foo"
+                    // "new <T>() => Foo<T>"
+                    try p.lexer.next();
+                    try p.skipTypeScriptTypeParameters();
+                    try p.skipTypeScriptParenOrFnType();
+                },
+                .t_less_than => {
+                    // "<T>() => Foo<T>"
+                    try p.skipTypeScriptTypeParameters();
+                    try p.skipTypeScriptParenOrFnType();
+                },
+                .t_open_paren => {
+                    // "(number | string)"
+                    try p.skipTypeScriptParenOrFnType();
+                },
+                .t_identifier => {
+                    const kind = TypeScript.Identifier.IMap.get(p.lexer.identifier) orelse .normal;
+
+                    if (kind == .prefix) {
+                        try p.lexer.next();
+                        try p.skipTypeScriptType(.prefix);
+                        break;
+                    }
+
+                    var check_type_parameters = true;
+
+                    switch (kind) {
+                        .unique => {
+                            try p.lexer.next();
+
+                            // "let foo: unique symbol"
+
+                            if (p.lexer.isContextualKeyword("symbol")) {
+                                try p.lexer.next();
+                                break;
+                            }
+                        },
+                        .abstract => {
+                            try p.lexer.next();
+
+                            // "let foo: abstract new () => {}" added in TypeScript 4.2
+                            if (p.lexer.token == .t_new) {
+                                continue;
+                            }
+                        },
+                        .asserts => {
+                            try p.lexer.next();
+
+                            // "function assert(x: boolean): asserts x"
+                            // "function assert(x: boolean): asserts x is boolean"
+
+                            if (opts.is_return_type and !p.lexer.has_newline_before and (p.lexer.token == .t_identifier or p.lexer.token == .t_this)) {
+                                try p.lexer.next();
+                            }
+                        },
+                        .primitive => {
+                            try p.lexer.next();
+                            check_type_parameters = false;
+                        },
+                        else => {
+                            try p.lexer.next();
+                        },
+                    }
+
+                    // "function assert(x: any): x is boolean"
+
+                    if (p.lexer.isContextualKeyword("is") and !p.lexer.has_newline_before) {
+                        try p.lexer.next();
+                        try p.skipTypeScriptType(.lowest);
+                        return;
+                    }
+
+                    // "let foo: any \n <number>foo" must not become a single type
+                    if (check_type_parameters and !p.lexer.has_newline_before) {
+                        _ = try p.skipTypeScriptTypeArguments(false);
+                    }
+                },
+                .t_typeof => {
+                    try p.lexer.next();
+                    if (p.lexer.token == .t_import) {
+                        // "typeof import('fs')"
+                        continue;
+                    } else {
+                        // "typeof x"
+                        // "typeof x.y"
+
+                        while (true) {
+                            if (!p.lexer.isIdentifierOrKeyword()) {
+                                try p.lexer.expected(.t_identifier);
+                            }
+
+                            try p.lexer.next();
+                            if (p.lexer.token != .t_dot) {
+                                break;
+                            }
+
+                            try p.lexer.next();
+                        }
+                    }
+                },
+                .t_open_bracket => {
+                    // "[number, string]"
+                    // "[first: number, second: string]"
+                    try p.lexer.next();
+
+                    while (p.lexer.token != .t_close_bracket) {
+                        if (p.lexer.token == .t_dot_dot_dot) {
+                            try p.lexer.next();
+                        }
+                        try p.skipTypeScriptType(.lowest);
+                        if (p.lexer.token == .t_question) {
+                            try p.lexer.next();
+                        }
+                        if (p.lexer.token == .t_colon) {
+                            try p.lexer.next();
+                            try p.skipTypeScriptType(.lowest);
+                        }
+                        if (p.lexer.token != .t_comma) {
+                            break;
+                        }
+                        try p.lexer.next();
+                    }
+                    try p.lexer.expect(.t_close_bracket);
+                },
+                .t_open_brace => {
+                    try p.skipTypeScriptObjectType();
+                },
+                .t_template_head => {
+                    // "`${'a' | 'b'}-${'c' | 'd'}`"
+
+                    while (true) {
+                        try p.lexer.next();
+                        try p.skipTypeScriptType(.lowest);
+                        try p.lexer.rescanCloseBraceAsTemplateToken();
+
+                        if (p.lexer.token == .t_template_tail) {
+                            try p.lexer.next();
+                            break;
+                        }
+                    }
+                },
+
+                else => {
+                    try p.lexer.unexpected();
+                },
+            }
+            break;
+        }
+
+        while (true) {
+            switch (p.lexer.token) {
+                .t_bar => {
+                    if (level.gte(.bitwise_or)) {
+                        return;
+                    }
+                    try p.lexer.next();
+                    try p.skipTypeScriptType(.bitwise_or);
+                },
+                .t_ampersand => {
+                    if (level.gte(.bitwise_and)) {
+                        return;
+                    }
+
+                    try p.lexer.next();
+                    try p.skipTypeScriptType(.bitwise_and);
+                },
+                .t_exclamation => {
+                    // A postfix "!" is allowed in JSDoc types in TypeScript, which are only
+                    // present in comments. While it's not valid in a non-comment position,
+                    // it's still parsed and turned into a soft error by the TypeScript
+                    // compiler. It turns out parsing this is important for correctness for
+                    // "as" casts because the "!" token must still be consumed.
+                    if (p.lexer.has_newline_before) {
+                        return;
+                    }
+
+                    try p.lexer.next();
+                },
+                .t_dot => {
+                    try p.lexer.next();
+                    if (!p.lexer.isIdentifierOrKeyword()) {
+                        try p.lexer.expect(.t_identifier);
+                    }
+                    try p.lexer.next();
+                    _ = try p.skipTypeScriptTypeArguments(false);
+                },
+                .t_open_bracket => {
+                    // "{ ['x']: string \n ['y']: string }" must not become a single type
+                    if (p.lexer.has_newline_before) {
+                        return;
+                    }
+                    try p.lexer.next();
+                    if (p.lexer.token != .t_close_bracket) {
+                        try p.skipTypeScriptType(.lowest);
+                    }
+                    try p.lexer.expect(.t_close_bracket);
+                },
+                .t_extends => {
+                    // "{ x: number \n extends: boolean }" must not become a single type
+                    if (p.lexer.has_newline_before or level.gte(.conditional)) {
+                        return;
+                    }
+
+                    try p.lexer.next();
+
+                    // The type following "extends" is not permitted to be another conditional type
+                    try p.skipTypeScriptType(.conditional);
+                    try p.lexer.expect(.t_question);
+                    try p.skipTypeScriptType(.lowest);
+                    try p.lexer.expect(.t_colon);
+                    try p.skipTypeScriptType(.lowest);
+                },
+                else => {
+                    return;
+                },
+            }
+        }
+    }
+    pub fn skipTypeScriptObjectType(p: *P) anyerror!void {
+        try p.lexer.expect(.t_open_brace);
+
+        while (p.lexer.token != .t_close_brace) {
+            // "{ -readonly [K in keyof T]: T[K] }"
+            // "{ +readonly [K in keyof T]: T[K] }"
+            if (p.lexer.token == .t_plus or p.lexer.token == .t_minus) {
+                try p.lexer.next();
+            }
+
+            // Skip over modifiers and the property identifier
+            var found_key = false;
+            while (p.lexer.isIdentifierOrKeyword() or p.lexer.token == .t_string_literal or p.lexer.token == .t_numeric_literal) {
+                try p.lexer.next();
+                found_key = true;
+            }
+
+            if (p.lexer.token == .t_open_bracket) {
+                // Index signature or computed property
+                try p.lexer.next();
+                try p.skipTypeScriptType(.lowest);
+
+                // "{ [key: string]: number }"
+                // "{ readonly [K in keyof T]: T[K] }"
+                switch (p.lexer.token) {
+                    .t_colon => {
+                        try p.lexer.next();
+                        try p.skipTypeScriptType(.lowest);
+                    },
+                    .t_in => {
+                        try p.lexer.next();
+                        try p.skipTypeScriptType(.lowest);
+                        if (p.lexer.isContextualKeyword("as")) {
+                            // "{ [K in keyof T as `get-${K}`]: T[K] }"
+                            try p.lexer.next();
+                            try p.skipTypeScriptType(.lowest);
+                        }
+                    },
+                    else => {},
+                }
+
+                try p.lexer.expect(.t_close_bracket);
+
+                // "{ [K in keyof T]+?: T[K] }"
+                // "{ [K in keyof T]-?: T[K] }"
+                switch (p.lexer.token) {
+                    .t_plus, .t_minus => {
+                        try p.lexer.next();
+                    },
+                    else => {},
+                }
+
+                found_key = true;
+            }
+
+            // "?" indicates an optional property
+            // "!" indicates an initialization assertion
+            if (found_key and (p.lexer.token == .t_question or p.lexer.token == .t_exclamation)) {
+                try p.lexer.next();
+            }
+
+            // Type parameters come right after the optional mark
+            try p.skipTypeScriptTypeParameters();
+
+            switch (p.lexer.token) {
+                .t_colon => {
+                    // Regular property
+                    if (!found_key) {
+                        try p.lexer.expect(.t_identifier);
+                    }
+
+                    try p.lexer.next();
+                    try p.skipTypeScriptType(.lowest);
+                },
+                .t_open_paren => {
+                    // Method signature
+                    try p.skipTypescriptFnArgs();
+
+                    if (p.lexer.token == .t_colon) {
+                        try p.lexer.next();
+                        try p.skipTypescriptReturnType();
+                    }
+                },
+                else => {
+                    if (!found_key) {
+                        try p.lexer.unexpected();
+                    }
+                },
+            }
+            switch (p.lexer.token) {
+                .t_close_brace => {},
+                .t_comma, .t_semicolon => {
+                    try p.lexer.next();
+                },
+                else => {
+                    if (!p.lexer.has_newline_before) {
+                        try p.lexer.unexpected();
+                    }
+                },
+            }
+        }
+        try p.lexer.expect(.t_close_brace);
+    }
+
+    // This is the type parameter declarations that go with other symbol
+    // declarations (class, function, type, etc.)
+    pub fn skipTypeScriptTypeParameters(p: *P) anyerror!void {
+        if (p.lexer.token == .t_less_than) {
+            try p.lexer.next();
+
+            while (true) {
+                try p.lexer.expect(.t_identifier);
+                // "class Foo<T extends number> {}"
+                if (p.lexer.token == .t_extends) {
+                    try p.lexer.next();
+                    try p.skipTypeScriptType(.lowest);
+                }
+                // "class Foo<T = void> {}"
+                if (p.lexer.token == .t_equals) {
+                    try p.lexer.next();
+                    try p.skipTypeScriptType(.lowest);
+                }
+
+                if (p.lexer.token != .t_comma) {
+                    break;
+                }
+                try p.lexer.next();
+                if (p.lexer.token == .t_greater_than) {
+                    break;
+                }
+            }
+            try p.lexer.expectGreaterThan(false);
+        }
     }
 
     fn createDefaultName(p: *P, loc: logger.Loc) !js_ast.LocRef {
@@ -3174,7 +3802,7 @@ pub const P = struct {
 
         // Even anonymous classes can have TypeScript type parameters
         if (p.options.ts) {
-            p.skipTypescriptTypeParameters();
+            try p.skipTypeScriptTypeParameters();
         }
         var class_opts = ParseClassOptions{
             .allow_ts_decorators = true,
@@ -3286,29 +3914,47 @@ pub const P = struct {
                         }
 
                         if (p.options.ts) {
-                            notimpl();
-
-                            // switch (p.lexer.identifier) {
-                            //     "type" => {
-                            //         // "export type foo = ..."
-                            //         const typeRange = p.lexer.range();
-                            //         if (p.lexer.has_newline_before) {
-                            //             p.lexer.addError(p.source, typeRange.end(), "Unexpected newline after \"type\"");
-                            //             return;
-                            //         }
-
-                            //     },
-                            // }
+                            if (TypeScript.Identifier.forStr(p.lexer.identifier)) |ident| {
+                                switch (ident) {
+                                    .s_type => {
+                                        // "export type foo = ..."
+                                        const type_range = p.lexer.range();
+                                        try p.lexer.next();
+                                        if (p.lexer.has_newline_before) {
+                                            try p.log.addErrorFmt(p.source, type_range.end(), p.allocator, "Unexpected newline after \"type\"", .{});
+                                            return error.SynaxError;
+                                        }
+                                        var skipper = ParseStatementOptions{ .is_module_scope = opts.is_module_scope, .is_export = true };
+                                        try p.skipTypeScriptTypeStmt(&skipper);
+                                        return p.s(S.TypeScript{}, loc);
+                                    },
+                                    .s_namespace, .s_abstract, .s_module, .s_interface => {
+                                        // "export namespace Foo {}"
+                                        // "export abstract class Foo {}"
+                                        // "export module Foo {}"
+                                        // "export interface Foo {}"
+                                        opts.is_export = true;
+                                        return try p.parseStmt(opts);
+                                    },
+                                    .s_declare => {
+                                        // "export declare class Foo {}"
+                                        opts.is_export = true;
+                                        opts.lexical_decl = .allow_all;
+                                        opts.is_typescript_declare = true;
+                                        return try p.parseStmt(opts);
+                                    },
+                                }
+                            }
                         }
 
                         try p.lexer.unexpected();
-                        lexerpanic();
+                        return error.SyntaxError;
                     },
 
                     T.t_default => {
                         if (!opts.is_module_scope and (!opts.is_namespace_scope or !opts.is_typescript_declare)) {
                             try p.lexer.unexpected();
-                            lexerpanic();
+                            return error.SyntaxError;
                         }
 
                         var defaultLoc = p.lexer.loc();
@@ -3571,6 +4217,9 @@ pub const P = struct {
                     return p.parseStmt(opts);
                 }
                 // notimpl();
+
+                try p.lexer.unexpected();
+                return error.SyntaxError;
             },
             .t_class => {
                 if (opts.lexical_decl != .allow_all) {
@@ -3746,7 +4395,7 @@ pub const P = struct {
                         // Skip over types
                         if (p.options.ts and p.lexer.token == .t_colon) {
                             try p.lexer.expect(.t_colon);
-                            p.skipTypescriptType(.lowest);
+                            try p.skipTypeScriptType(.lowest);
                         }
 
                         try p.lexer.expect(.t_close_paren);
@@ -4251,7 +4900,7 @@ pub const P = struct {
                                     if (p.lexer.token == .t_identifier and !p.lexer.has_newline_before) {
                                         // "type Foo = any"
                                         var stmtOpts = ParseStatementOptions{ .is_module_scope = opts.is_module_scope };
-                                        p.skipTypescriptTypeStmt(&stmtOpts);
+                                        try p.skipTypeScriptTypeStmt(&stmtOpts);
                                         return p.s(S.TypeScript{}, loc);
                                     }
                                 },
@@ -4263,14 +4912,14 @@ pub const P = struct {
                                     if (((opts.is_module_scope or opts.is_namespace_scope) and (p.lexer.token == .t_identifier or
                                         (p.lexer.token == .t_string_literal and opts.is_typescript_declare))))
                                     {
-                                        return p.parseTypescriptNamespaceTmt(loc, opts);
+                                        return p.parseTypeScriptNamespaceStmt(loc, opts);
                                     }
                                 },
                                 .ts_stmt_interface => {
                                     // "interface Foo {}"
                                     var stmtOpts = ParseStatementOptions{ .is_module_scope = opts.is_module_scope };
 
-                                    p.skipTypeScriptInterfaceStmt(&stmtOpts);
+                                    try p.skipTypeScriptInterfaceStmt(&stmtOpts);
                                     return p.s(S.TypeScript{}, loc);
                                 },
                                 .ts_stmt_abstract => {
@@ -4393,20 +5042,229 @@ pub const P = struct {
         p.scopes_in_order.shrinkRetainingCapacity(scope_index);
     }
 
-    pub fn skipTypescriptTypeStmt(p: *P, opts: *ParseStatementOptions) void {
-        notimpl();
+    pub fn skipTypeScriptTypeStmt(p: *P, opts: *ParseStatementOptions) anyerror!void {
+        if (opts.is_export and p.lexer.token == .t_open_brace) {
+            // "export type {foo}"
+            // "export type {foo} from 'bar'"
+            _ = try p.parseExportClause();
+            if (p.lexer.isContextualKeyword("from")) {
+                try p.lexer.next();
+                _ = try p.parsePath();
+            }
+            try p.lexer.expectOrInsertSemicolon();
+            return;
+        }
+
+        const name = p.lexer.identifier;
+        try p.lexer.expectOrInsertSemicolon();
+
+        if (opts.is_module_scope) {
+            p.local_type_names.put(name, true) catch unreachable;
+        }
+
+        try p.skipTypeScriptTypeParameters();
+        try p.lexer.expect(.t_equals);
+        try p.skipTypeScriptType(.lowest);
+        try p.lexer.expectOrInsertSemicolon();
     }
 
-    pub fn parseTypescriptNamespaceTmt(p: *P, loc: logger.Loc, opts: *ParseStatementOptions) Stmt {
-        notimpl();
+    pub fn parseTypeScriptNamespaceStmt(p: *P, loc: logger.Loc, opts: *ParseStatementOptions) anyerror!Stmt {
+        // "namespace foo {}";
+        const name_loc = p.lexer.loc();
+        const name_text = p.lexer.identifier;
+        try p.lexer.next();
+        var name = LocRef{ .loc = name_loc, .ref = null };
+
+        const scope_index = try p.pushScopeForParsePass(.entry, loc);
+        const old_has_non_local_export_declare_inside_namespace = p.has_non_local_export_declare_inside_namespace;
+
+        p.has_non_local_export_declare_inside_namespace = false;
+
+        var stmts: List(Stmt) = List(Stmt).init(p.allocator);
+
+        if (p.lexer.token == .t_dot) {
+            const dot_loc = p.lexer.loc();
+            try p.lexer.next();
+
+            var _opts = ParseStatementOptions{
+                .is_export = true,
+                .is_namespace_scope = true,
+                .is_typescript_declare = opts.is_typescript_declare,
+            };
+            stmts.append(try p.parseTypeScriptNamespaceStmt(dot_loc, &_opts)) catch unreachable;
+        } else if (opts.is_typescript_declare and p.lexer.token != .t_open_brace) {
+            try p.lexer.expectOrInsertSemicolon();
+        } else {
+            try p.lexer.expect(.t_open_brace);
+            var _opts = ParseStatementOptions{
+                .is_namespace_scope = true,
+                .is_typescript_declare = opts.is_typescript_declare,
+            };
+            stmts = List(Stmt).fromOwnedSlice(p.allocator, try p.parseStmtsUpTo(.t_close_brace, &_opts));
+            try p.lexer.next();
+        }
+        const has_non_local_export_declare_inside_namespace = p.has_non_local_export_declare_inside_namespace;
+        p.has_non_local_export_declare_inside_namespace = old_has_non_local_export_declare_inside_namespace;
+
+        // Import assignments may be only used in type expressions, not value
+        // expressions. If this is the case, the TypeScript compiler removes
+        // them entirely from the output. That can cause the namespace itself
+        // to be considered empty and thus be removed.
+        var import_equal_count: usize = 0;
+        const _stmts: []Stmt = stmts.items;
+        for (_stmts) |stmt| {
+            switch (stmt.data) {
+                .s_local => |local| {
+                    if (local.was_ts_import_equals and !local.is_export) {
+                        import_equal_count += 1;
+                    }
+                },
+                else => {},
+            }
+        }
+
+        // TypeScript omits namespaces without values. These namespaces
+        // are only allowed to be used in type expressions. They are
+        // allowed to be exported, but can also only be used in type
+        // expressions when imported. So we shouldn't count them as a
+        // real export either.
+        //
+        // TypeScript also strangely counts namespaces containing only
+        // "export declare" statements as non-empty even though "declare"
+        // statements are only type annotations. We cannot omit the namespace
+        // in that case. See https://github.com/evanw/esbuild/issues/1158.
+        if (stmts.items.len == import_equal_count and !has_non_local_export_declare_inside_namespace or opts.is_typescript_declare) {
+            p.popAndDiscardScope(scope_index);
+            if (opts.is_module_scope) {
+                p.local_type_names.put(name_text, true) catch unreachable;
+            }
+            return p.s(S.TypeScript{}, loc);
+        }
+
+        var arg_ref: ?Ref = null;
+        if (!opts.is_typescript_declare) {
+            // Avoid a collision with the namespace closure argument variable if the
+            // namespace exports a symbol with the same name as the namespace itself:
+            //
+            //   namespace foo {
+            //     export let foo = 123
+            //     console.log(foo)
+            //   }
+            //
+            // TypeScript generates the following code in this case:
+            //
+            //   var foo;
+            //   (function (foo_1) {
+            //     foo_1.foo = 123;
+            //     console.log(foo_1.foo);
+            //   })(foo || (foo = {}));
+            //
+            if (p.current_scope.members.contains(name_text)) {
+                // Add a "_" to make tests easier to read, since non-bundler tests don't
+                // run the renamer. For external-facing things the renamer will avoid
+                // collisions automatically so this isn't important for correctness.
+                arg_ref = p.newSymbol(.hoisted, strings.cat(p.allocator, "_", name_text) catch unreachable) catch unreachable;
+                p.current_scope.generated.append(arg_ref.?) catch unreachable;
+            } else {
+                arg_ref = p.newSymbol(.hoisted, name_text) catch unreachable;
+            }
+        }
+        p.popScope();
+
+        if (!opts.is_typescript_declare) {
+            name.ref = p.declareSymbol(.ts_namespace, name_loc, name_text) catch unreachable;
+        }
+
+        return p.s(
+            S.Namespace{ .name = name, .arg = arg_ref orelse Ref.None, .stmts = stmts.toOwnedSlice(), .is_export = opts.is_export },
+            loc,
+        );
     }
 
-    pub fn skipTypeScriptInterfaceStmt(p: *P, opts: *ParseStatementOptions) void {
-        notimpl();
+    pub fn skipTypeScriptInterfaceStmt(p: *P, opts: *ParseStatementOptions) !void {
+        const name = p.lexer.identifier;
+        try p.lexer.expect(.t_identifier);
+
+        if (opts.is_module_scope) {
+            p.local_type_names.put(name, true) catch unreachable;
+        }
+
+        try p.skipTypeScriptTypeParameters();
+
+        if (p.lexer.token == .t_extends) {
+            try p.lexer.next();
+
+            while (true) {
+                try p.skipTypeScriptType(.lowest);
+                if (p.lexer.token != .t_comma) {
+                    break;
+                }
+                try p.lexer.next();
+            }
+        }
+
+        if (p.lexer.isContextualKeyword("implements")) {
+            try p.lexer.next();
+            while (true) {
+                try p.skipTypeScriptType(.lowest);
+                if (p.lexer.token != .t_comma) {
+                    break;
+                }
+                try p.lexer.next();
+            }
+        }
+
+        try p.skipTypeScriptObjectType();
     }
 
-    pub fn parseTypeScriptImportEqualsStmt(p: *P, loc: logger.Loc, opts: *ParseStatementOptions, default_name_loc: logger.Loc, default_name: string) Stmt {
-        notimpl();
+    // This assumes the caller has already parsed the "import" token
+
+    pub fn parseTypeScriptImportEqualsStmt(p: *P, loc: logger.Loc, opts: *ParseStatementOptions, default_name_loc: logger.Loc, default_name: string) anyerror!Stmt {
+        try p.lexer.expect(.t_equals);
+
+        const kind = S.Local.Kind.k_const;
+        const name = p.lexer.identifier;
+        var value = p.e(E.Identifier{ .ref = p.storeNameInRef(name) catch unreachable }, p.lexer.loc());
+        try p.lexer.expect(.t_identifier);
+
+        if (strings.eqlComptime(name, "require") and p.lexer.token == .t_open_paren) {
+            // "import ns = require('x')"
+            try p.lexer.next();
+            const path = p.e(p.lexer.toEString(), p.lexer.loc());
+            try p.lexer.expect(.t_string_literal);
+            try p.lexer.expect(.t_close_paren);
+            const args = p.allocator.alloc(ExprNodeIndex, 1) catch unreachable;
+            args[0] = path;
+            var call_ptr = p.allocator.create(E.Call) catch unreachable;
+            call_ptr.* = E.Call{ .target = value, .args = args };
+            value.data = .{ .e_call = call_ptr };
+        } else {
+            // "import Foo = Bar"
+            // "import Foo = Bar.Baz"
+            while (p.lexer.token == .t_dot) {
+                try p.lexer.next();
+                var dot = p.allocator.create(E.Dot) catch unreachable;
+                dot.* = E.Dot{ .target = value, .name = p.lexer.identifier, .name_loc = p.lexer.loc() };
+                value.data = .{ .e_dot = dot };
+                try p.lexer.expect(.t_identifier);
+            }
+        }
+
+        try p.lexer.expectOrInsertSemicolon();
+
+        if (opts.is_typescript_declare) {
+            // "import type foo = require('bar');"
+            // "import type foo = bar.baz;"
+            return p.s(S.TypeScript{}, loc);
+        }
+
+        const ref = p.declareSymbol(.cconst, default_name_loc, default_name) catch unreachable;
+        var decls = p.allocator.alloc(Decl, 1) catch unreachable;
+        decls[0] = Decl{
+            .binding = p.b(B.Identifier{ .ref = ref }, default_name_loc),
+            .value = value,
+        };
+        return p.s(S.Local{ .kind = kind, .decls = decls, .is_export = opts.is_export, .was_ts_import_equals = true }, loc);
     }
 
     pub fn parseClauseAlias(p: *P, kind: string) !string {
@@ -4825,7 +5683,7 @@ pub const P = struct {
                 // "let foo: number"
                 if (is_definite_assignment_assertion or p.lexer.token == .t_colon) {
                     try p.lexer.expect(.t_colon);
-                    p.skipTypescriptType(.lowest);
+                    try p.skipTypeScriptType(.lowest);
                 }
             }
 
@@ -4848,9 +5706,116 @@ pub const P = struct {
         return decls.items;
     }
 
-    pub fn parseTypescriptEnumStmt(p: *P, loc: logger.Loc, opts: *ParseStatementOptions) Stmt {
-        notimpl();
-        // return Stmt.empty();
+    pub fn parseTypescriptEnumStmt(p: *P, loc: logger.Loc, opts: *ParseStatementOptions) anyerror!Stmt {
+        try p.lexer.expect(.t_enum);
+        const name_loc = p.lexer.loc();
+        const name_text = p.lexer.identifier;
+        try p.lexer.expect(.t_identifier);
+        var name = LocRef{ .loc = name_loc, .ref = Ref.None };
+        var arg_ref = Ref.None;
+        if (!opts.is_typescript_declare) {
+            name.ref = try p.declareSymbol(.ts_enum, name_loc, name_text);
+            _ = try p.pushScopeForParsePass(.entry, loc);
+        }
+
+        try p.lexer.expect(.t_open_brace);
+
+        var values = std.ArrayList(js_ast.EnumValue).init(p.allocator);
+        while (p.lexer.token != .t_close_brace) {
+            var value = js_ast.EnumValue{ .loc = p.lexer.loc(), .ref = Ref.None, .name = undefined, .value = null };
+            var needs_symbol = false;
+
+            // Parse the name
+            if (p.lexer.token == .t_string_literal) {
+                value.name = p.lexer.toEString();
+            } else if (p.lexer.isIdentifierOrKeyword()) {
+                value.name = E.String{ .utf8 = p.lexer.identifier };
+                needs_symbol = true;
+            } else {
+                try p.lexer.expect(.t_identifier);
+            }
+            try p.lexer.next();
+
+            // Identifiers can be referenced by other values
+
+            if (!opts.is_typescript_declare and needs_symbol) {
+                value.ref = try p.declareSymbol(.other, value.loc, try value.name.string(p.allocator));
+            }
+
+            // Parse the initializer
+            if (p.lexer.token == .t_equals) {
+                try p.lexer.next();
+                value.value = try p.parseExpr(.comma);
+            }
+
+            values.append(value) catch unreachable;
+
+            if (p.lexer.token != .t_comma and p.lexer.token != .t_semicolon) {
+                break;
+            }
+
+            try p.lexer.next();
+        }
+
+        if (!opts.is_typescript_declare) {
+            // Avoid a collision with the enum closure argument variable if the
+            // enum exports a symbol with the same name as the enum itself:
+            //
+            //   enum foo {
+            //     foo = 123,
+            //     bar = foo,
+            //   }
+            //
+            // TypeScript generates the following code in this case:
+            //
+            //   var foo;
+            //   (function (foo) {
+            //     foo[foo["foo"] = 123] = "foo";
+            //     foo[foo["bar"] = 123] = "bar";
+            //   })(foo || (foo = {}));
+            //
+            // Whereas in this case:
+            //
+            //   enum foo {
+            //     bar = foo as any,
+            //   }
+            //
+            // TypeScript generates the following code:
+            //
+            //   var foo;
+            //   (function (foo) {
+            //     foo[foo["bar"] = foo] = "bar";
+            //   })(foo || (foo = {}));
+            //
+            if (p.current_scope.members.contains(name_text)) {
+                // Add a "_" to make tests easier to read, since non-bundler tests don't
+                // run the renamer. For external-facing things the renamer will avoid
+                // collisions automatically so this isn't important for correctness.
+                arg_ref = p.newSymbol(.hoisted, strings.cat(p.allocator, "+", name_text) catch unreachable) catch unreachable;
+                p.current_scope.generated.append(arg_ref) catch unreachable;
+            } else {
+                arg_ref = p.declareSymbol(.hoisted, name_loc, name_text) catch unreachable;
+            }
+
+            p.popScope();
+        }
+
+        try p.lexer.expect(.t_close_brace);
+
+        if (opts.is_typescript_declare) {
+            if (opts.is_namespace_scope and opts.is_export) {
+                p.has_non_local_export_declare_inside_namespace = true;
+            }
+
+            return p.s(S.TypeScript{}, loc);
+        }
+
+        return p.s(S.Enum{
+            .name = name,
+            .arg = arg_ref,
+            .values = values.toOwnedSlice(),
+            .is_export = opts.is_export,
+        }, loc);
     }
 
     pub fn parseExportClause(p: *P) !ExportClauseResult {
@@ -5266,7 +6231,7 @@ pub const P = struct {
 
         // Even anonymous functions can have TypeScript type parameters
         if (p.options.ts) {
-            p.skipTypescriptTypeParameters();
+            try p.skipTypeScriptTypeParameters();
         }
 
         var func = try p.parseFn(name, FnOrArrowDataParse{
@@ -5374,14 +6339,14 @@ pub const P = struct {
     // It also swallows errors, but I think that's correct here.
     // We can handle errors via the log.
     // We'll have to deal with @wasmHeapGrow or whatever that thing is.
-    pub fn mm(self: *P, comptime ast_object_type: type, instance: anytype) callconv(.Inline) *ast_object_type {
+    pub inline fn mm(self: *P, comptime ast_object_type: type, instance: anytype) *ast_object_type {
         var obj = self.allocator.create(ast_object_type) catch unreachable;
         obj.* = instance;
         return obj;
     }
 
     // mmmm memmory allocation
-    pub fn m(self: *P, kind: anytype) callconv(.Inline) *@TypeOf(kind) {
+    pub inline fn m(self: *P, kind: anytype) *@TypeOf(kind) {
         return self.mm(@TypeOf(kind), kind);
     }
 
@@ -5496,8 +6461,61 @@ pub const P = struct {
         );
     }
 
-    pub fn trySkipTypeScriptTypeParametersThenOpenParenWithBacktracking(self: *P) bool {
-        notimpl();
+    pub const Backtracking = struct {
+        pub fn lexerBacktracker(p: *P, func: anytype) bool {
+            var old_lexer = p.lexer;
+            p.lexer.is_log_disabled = true;
+            defer p.lexer.is_log_disabled = old_lexer.is_log_disabled;
+
+            // Implement backtracking by restoring the lexer's memory to its original state
+            const needs_reset = scope: {
+                func(p) catch break :scope true;
+                break :scope false;
+            };
+
+            if (needs_reset) {
+                p.lexer = old_lexer;
+            }
+
+            return !needs_reset;
+        }
+
+        pub fn skipTypeScriptTypeParametersThenOpenParenWithBacktracking(p: *P) anyerror!void {
+            try p.skipTypeScriptTypeParameters();
+            if (p.lexer.token != .t_open_paren) {
+                try p.lexer.unexpected();
+            }
+        }
+
+        pub fn skipTypeScriptArrowArgsWithBacktracking(p: *P) anyerror!void {
+            try p.skipTypescriptFnArgs();
+            try p.lexer.expect(.t_equals_greater_than);
+        }
+
+        pub fn skipTypeScriptTypeArgumentsWithBacktracking(p: *P) anyerror!void {
+            _ = try p.skipTypeScriptTypeArguments(false);
+
+            // Check the token after this and backtrack if it's the wrong one
+            if (!TypeScript.canFollowTypeArgumentsInExpression(p)) {
+                try p.lexer.unexpected();
+            }
+        }
+    };
+
+    pub fn trySkipTypeScriptTypeParametersThenOpenParenWithBacktracking(p: *P) bool {
+        return Backtracking.lexerBacktracker(p, Backtracking.skipTypeScriptTypeParametersThenOpenParenWithBacktracking);
+    }
+
+    pub fn trySkipTypeScriptTypeArgumentsWithBacktracking(p: *P) bool {
+        return Backtracking.lexerBacktracker(p, Backtracking.skipTypeScriptTypeArgumentsWithBacktracking);
+    }
+
+    pub fn trySkipTypeScriptArrowReturnTypeWithBacktracking(p: *P) bool {
+        return Backtracking.lexerBacktracker(p, Backtracking.skipTypeScriptArrowReturnTypeWithBacktracking);
+    }
+
+    pub fn trySkipTypeScriptArrowArgsWithBacktracking(p: *P) bool {
+        return Backtracking.lexerBacktracker(p, Backtracking.skipTypeScriptArrowArgsWithBacktracking);
     }
 
     pub fn parseExprOrBindings(p: *P, level: Level, errors: ?*DeferredErrors) anyerror!Expr {
@@ -5693,10 +6711,10 @@ pub const P = struct {
                     switch (expr.data) {
                         .e_identifier => |ident| {
                             try p.lexer.next();
-                            p.skipTypescriptType(.lowest);
+                            try p.skipTypeScriptType(.lowest);
                             try p.lexer.expect(.t_close_bracket);
                             try p.lexer.expect(.t_colon);
-                            p.skipTypescriptType(.lowest);
+                            try p.skipTypeScriptType(.lowest);
                             try p.lexer.expectOrInsertSemicolon();
 
                             // Skip this property entirely
@@ -5829,7 +6847,7 @@ pub const P = struct {
 
             // "class X { foo?<T>(): T }"
             // "const x = { foo<T>(): T {} }"
-            p.skipTypescriptTypeParameters();
+            try p.skipTypeScriptTypeParameters();
         }
 
         // Parse a class field with an optional initial value
@@ -5852,7 +6870,7 @@ pub const P = struct {
             // Skip over types
             if (p.options.ts and p.lexer.token == .t_colon) {
                 try p.lexer.next();
-                p.skipTypescriptType(.lowest);
+                try p.skipTypeScriptType(.lowest);
             }
 
             if (p.lexer.token == .t_equals) {
@@ -6056,7 +7074,7 @@ pub const P = struct {
             // does and it probably doesn't have that high of a performance overhead
             // because "extends" clauses aren't that frequent, so it should be ok.
             if (p.options.ts) {
-                p.skipTypeScriptTypeArguments(false); // isInsideJSXElement
+                _ = try p.skipTypeScriptTypeArguments(false); // isInsideJSXElement
             }
         }
 
@@ -6064,7 +7082,7 @@ pub const P = struct {
             try p.lexer.next();
 
             while (true) {
-                p.skipTypescriptType(.lowest);
+                try p.skipTypeScriptType(.lowest);
                 if (p.lexer.token != .t_comma) {
                     break;
                 }
@@ -6141,8 +7159,27 @@ pub const P = struct {
         };
     }
 
-    pub fn skipTypeScriptTypeArguments(p: *P, isInsideJSXElement: bool) void {
-        notimpl();
+    pub fn skipTypeScriptTypeArguments(p: *P, isInsideJSXElement: bool) anyerror!bool {
+        switch (p.lexer.token) {
+            .t_less_than, .t_less_than_equals, .t_less_than_less_than, .t_less_than_less_than_equals => {},
+            else => {
+                return false;
+            },
+        }
+
+        try p.lexer.expectLessThan(false);
+
+        while (true) {
+            try p.skipTypeScriptType(.lowest);
+            if (p.lexer.token != .t_comma) {
+                break;
+            }
+            try p.lexer.next();
+        }
+
+        // This type argument list must end with a ">"
+        try p.lexer.expectGreaterThan(true);
+        return true;
     }
 
     pub fn parseTemplateParts(p: *P, include_raw: bool) anyerror!TemplatePartTuple {
@@ -6365,7 +7402,7 @@ pub const P = struct {
                                 try p.lexer.expected(.t_identifier);
                             }
 
-                            p.skipTypeScriptTypeArguments(false);
+                            _ = try p.skipTypeScriptTypeArguments(false);
                             if (p.lexer.token != .t_open_paren) {
                                 try p.lexer.expected(.t_open_paren);
                             }
@@ -6957,7 +7994,7 @@ pub const P = struct {
                     // Handle the TypeScript "as" operator
                     if (p.options.ts and level.lt(.compare) and !p.lexer.has_newline_before and p.lexer.isContextualKeyword("as")) {
                         try p.lexer.next();
-                        p.skipTypescriptType(.lowest);
+                        try p.skipTypeScriptType(.lowest);
 
                         // These tokens are not allowed to follow a cast expression. This isn't
                         // an outright error because it may be on a new line, in which case it's
@@ -7322,7 +8359,7 @@ pub const P = struct {
 
                 // Even anonymous classes can have TypeScript type parameters
                 if (p.options.ts) {
-                    p.skipTypescriptTypeParameters();
+                    try p.skipTypeScriptTypeParameters();
                 }
 
                 const class = try p.parseClass(classKeyword, name, ParseClassOptions{});
@@ -7547,7 +8584,7 @@ pub const P = struct {
                     p.lexer = oldLexer;
 
                     if (is_ts_arrow_fn) {
-                        p.skipTypescriptTypeParameters();
+                        try p.skipTypeScriptTypeParameters();
                         try p.lexer.expect(.t_open_paren);
                         return p.parseParenExpr(loc, level, ParenExprOpts{ .force_arrow_fn = true }) catch unreachable;
                     }
@@ -7578,7 +8615,7 @@ pub const P = struct {
 
                     // "<T>x"
                     try p.lexer.next();
-                    p.skipTypescriptType(.lowest);
+                    try p.skipTypeScriptType(.lowest);
                     try p.lexer.expectGreaterThan(false);
                     return p.parsePrefix(level, errors, flags);
                 }
@@ -7748,7 +8785,7 @@ pub const P = struct {
         // The tag may have TypeScript type arguments: "<Foo<T>/>"
         if (p.options.ts) {
             // Pass a flag to the type argument skipper because we need to call
-            p.skipTypeScriptTypeArguments(true);
+            _ = try p.skipTypeScriptTypeArguments(true);
         }
 
         var previous_string_with_backslash_loc = logger.Loc{};
@@ -7959,10 +8996,6 @@ pub const P = struct {
         }
     }
 
-    pub fn trySkipTypeScriptTypeArgumentsWithBacktracking(p: *P) bool {
-        notimpl();
-        // return false;
-    }
     pub fn parsePrefix(p: *P, level: Level, errors: ?*DeferredErrors, flags: Expr.EFlags) anyerror!Expr {
         return try p._parsePrefix(level, errors orelse &DeferredErrors.None, flags);
     }
@@ -10188,14 +11221,15 @@ pub const P = struct {
                 defer p.should_fold_numeric_constants = old_should_fold_numeric_constants;
                 for (data.values) |*enum_value| {
                     // gotta allocate here so it lives after this function stack frame goes poof
-                    const name = p.lexer.utf16ToString(enum_value.name);
+                    const name = enum_value.name;
                     var assign_target: Expr = Expr{ .loc = logger.Loc.Empty, .data = Prefill.Data.EMissing };
                     var enum_value_type: EnumValueType = EnumValueType.unknown;
                     if (enum_value.value != null) {
                         enum_value.value = p.visitExpr(enum_value.value.?);
                         switch (enum_value.value.?.data) {
                             .e_number => |num| {
-                                values_so_far.put(name, num.value) catch unreachable;
+                                // prob never allocates in practice
+                                values_so_far.put(name.string(p.allocator) catch unreachable, num.value) catch unreachable;
                                 enum_value_type = .numeric;
                                 next_numeric_value = num.value + 1.0;
                             },
@@ -10206,7 +11240,7 @@ pub const P = struct {
                         }
                     } else if (enum_value_type == .numeric) {
                         enum_value.value = p.e(E.Number{ .value = next_numeric_value }, enum_value.loc);
-                        values_so_far.put(name, next_numeric_value) catch unreachable;
+                        values_so_far.put(name.string(p.allocator) catch unreachable, next_numeric_value) catch unreachable;
                         next_numeric_value += 1;
                     } else {
                         enum_value.value = p.e(E.Undefined{}, enum_value.loc);
@@ -10219,7 +11253,7 @@ pub const P = struct {
                             enum_value.loc,
                         ),
                         .index = p.e(
-                            E.String{ .value = enum_value.name },
+                            enum_value.name,
                             enum_value.loc,
                         ),
                     }, enum_value.loc), enum_value.value orelse unreachable, p.allocator);
@@ -10237,7 +11271,7 @@ pub const P = struct {
                                 enum_value.loc,
                             ),
                             .index = assign_target,
-                        }, enum_value.loc), p.e(E.String{ .value = enum_value.name }, enum_value.loc), p.allocator)) catch unreachable;
+                        }, enum_value.loc), p.e(enum_value.name, enum_value.loc), p.allocator)) catch unreachable;
                     }
                 }
                 p.recordUsage(data.arg);
@@ -10249,7 +11283,7 @@ pub const P = struct {
                     value_stmts.appendAssumeCapacity(p.s(S.SExpr{ .value = expr }, expr.loc));
                 }
                 value_exprs.deinit();
-                p.generateClosureForTypescriptNameSpaceOrEnum(
+                try p.generateClosureForTypeScriptNamespaceOrEnum(
                     stmts,
                     stmt.loc,
                     data.is_export,
@@ -10258,7 +11292,6 @@ pub const P = struct {
                     data.arg,
                     value_stmts.toOwnedSlice(),
                 );
-                return;
             },
             .s_namespace => |data| {
                 p.recordDeclaredSymbol(data.name.ref.?) catch unreachable;
@@ -10291,7 +11324,7 @@ pub const P = struct {
                     p.visitStmtsAndPrependTempRefs(&prepend_list, &prepend_temp_refs) catch unreachable;
                 }
 
-                p.generateClosureForTypescriptNameSpaceOrEnum(
+                try p.generateClosureForTypeScriptNamespaceOrEnum(
                     stmts,
                     stmt.loc,
                     data.is_export,
@@ -10315,17 +11348,158 @@ pub const P = struct {
         notimpl();
     }
 
-    pub fn generateClosureForTypescriptNameSpaceOrEnum(
+    pub fn generateClosureForTypeScriptNamespaceOrEnum(
         p: *P,
         stmts: *List(Stmt),
         stmt_loc: logger.Loc,
         is_export: bool,
         name_loc: logger.Loc,
-        name_ref: Ref,
+        _name_ref: Ref,
         arg_ref: Ref,
         stmts_inside_closure: []Stmt,
-    ) void {
-        notimpl();
+    ) anyerror!void {
+        var name_ref = _name_ref;
+        // Follow the link chain in case symbols were merged
+        var symbol: Symbol = p.symbols.items[name_ref.inner_index];
+        while (symbol.link != null) {
+            const link = symbol.link orelse unreachable;
+            name_ref = link;
+            symbol = p.symbols.items[name_ref.inner_index];
+        }
+
+        // Make sure to only emit a variable once for a given namespace, since there
+        // can be multiple namespace blocks for the same namespace
+
+        if (symbol.kind == .ts_namespace or symbol.kind == .ts_enum and !p.emitted_namespace_vars.contains(name_ref)) {
+            p.emitted_namespace_vars.put(name_ref, true) catch unreachable;
+
+            var decls = p.allocator.alloc(G.Decl, 1) catch unreachable;
+            decls[0] = G.Decl{ .binding = p.b(B.Identifier{ .ref = name_ref }, name_loc) };
+
+            if (p.enclosing_namespace_arg_ref == null) {
+                // Top-level namespace
+                stmts.append(
+                    p.s(
+                        S.Local{
+                            .kind = .k_var,
+                            .decls = decls,
+                            .is_export = is_export,
+                        },
+                        stmt_loc,
+                    ),
+                ) catch unreachable;
+            } else {
+                // Nested namespace
+                stmts.append(
+                    p.s(
+                        S.Local{
+                            .kind = .k_let,
+                            .decls = decls,
+                            .is_export = is_export,
+                        },
+                        stmt_loc,
+                    ),
+                ) catch unreachable;
+            }
+        }
+
+        var arg_expr: Expr = undefined;
+
+        if (is_export and p.enclosing_namespace_arg_ref != null) {
+            const namespace = p.enclosing_namespace_arg_ref.?;
+            // "name = enclosing.name || (enclosing.name = {})"
+            const name = p.symbols.items[name_ref.inner_index].original_name;
+            arg_expr = Expr.assign(
+                p.e(
+                    E.Identifier{ .ref = name_ref },
+                    name_loc,
+                ),
+                p.e(
+                    E.Binary{
+                        .op = .bin_logical_or,
+                        .left = p.e(
+                            E.Dot{
+                                .target = p.e(
+                                    E.Identifier{ .ref = namespace },
+                                    name_loc,
+                                ),
+                                .name = name,
+                                .name_loc = name_loc,
+                            },
+                            name_loc,
+                        ),
+                        .right = Expr.assign(
+                            p.e(
+                                E.Dot{
+                                    .target = p.e(
+                                        E.Identifier{ .ref = namespace },
+                                        name_loc,
+                                    ),
+                                    .name = name,
+                                    .name_loc = name_loc,
+                                },
+                                name_loc,
+                            ),
+                            p.e(E.Object{}, name_loc),
+                            p.allocator,
+                        ),
+                    },
+                    name_loc,
+                ),
+                p.allocator,
+            );
+            p.recordUsage(namespace);
+            p.recordUsage(namespace);
+            p.recordUsage(name_ref);
+        } else {
+            // "name || (name = {})"
+            arg_expr = p.e(E.Binary{
+                .op = .bin_logical_or,
+                .left = p.e(E.Identifier{ .ref = name_ref }, name_loc),
+                .right = Expr.assign(
+                    p.e(E.Identifier{ .ref = name_ref }, name_loc),
+                    p.e(
+                        E.Object{},
+                        name_loc,
+                    ),
+                    p.allocator,
+                ),
+            }, name_loc);
+            p.recordUsage(name_ref);
+            p.recordUsage(name_ref);
+        }
+
+        var func_args = p.allocator.alloc(G.Arg, 1) catch unreachable;
+        func_args[0] = .{ .binding = p.b(B.Identifier{ .ref = arg_ref }, name_loc) };
+        var args_list = p.allocator.alloc(ExprNodeIndex, 1) catch unreachable;
+        args_list[0] = arg_expr;
+        stmts.append(
+            p.s(
+                S.SExpr{
+                    .value = p.e(
+                        E.Call{
+                            .target = p.e(
+                                E.Function{
+                                    .func = G.Fn{
+                                        .args = func_args,
+                                        .name = null,
+                                        .open_parens_loc = logger.Loc.Empty,
+                                        .body = G.FnBody{
+                                            .loc = stmt_loc,
+                                            .stmts = stmts_inside_closure,
+                                        },
+                                    },
+                                },
+                                stmt_loc,
+                            ),
+                            .args = args_list,
+                        },
+                        stmt_loc,
+                    ),
+                },
+                stmt_loc,
+            ),
+        ) catch unreachable;
     }
 
     pub fn lowerClass(p: *P, stmtorexpr: js_ast.StmtOrExpr, ref: Ref) []Stmt {
@@ -10920,7 +12094,7 @@ pub const P = struct {
             if (p.options.ts and p.lexer.token == .t_colon) {
                 type_colon_range = p.lexer.range();
                 try p.lexer.next();
-                p.skipTypescriptType(.lowest);
+                try p.skipTypeScriptType(.lowest);
             }
 
             // There may be a "=" after the type (but not after an "as" cast)

@@ -69,7 +69,6 @@ pub const Lexer = struct {
     comments_to_preserve_before: std.ArrayList(js_ast.G.Comment),
     all_original_comments: ?[]js_ast.G.Comment = null,
     code_point: CodePoint = -1,
-
     identifier: []const u8 = "",
     jsx_factory_pragma_comment: ?js_ast.Span = null,
     jsx_fragment_pragma_comment: ?js_ast.Span = null,
@@ -78,13 +77,49 @@ pub const Lexer = struct {
     rescan_close_brace_as_template_token: bool = false,
     prev_error_loc: logger.Loc = logger.Loc.Empty,
     allocator: *std.mem.Allocator,
-
     /// In JavaScript, strings are stored as UTF-16, but nearly every string is ascii.
     /// This means, usually, we can skip UTF8 -> UTF16 conversions.
     string_literal_buffer: std.ArrayList(u16),
     string_literal_slice: string = "",
     string_literal: JavascriptString,
     string_literal_is_ascii: bool = false,
+
+    pub fn clone(self: *const LexerType) LexerType {
+        return LexerType{
+            .log = self.log,
+            .json_options = self.json_options,
+            .for_global_name = self.for_global_name,
+            .source = self.source,
+            .current = self.current,
+            .start = self.start,
+            .end = self.end,
+            .did_panic = self.did_panic,
+            .approximate_newline_count = self.approximate_newline_count,
+            .legacy_octal_loc = self.legacy_octal_loc,
+            .previous_backslash_quote_in_jsx = self.previous_backslash_quote_in_jsx,
+            .token = self.token,
+            .has_newline_before = self.has_newline_before,
+            .has_pure_comment_before = self.has_pure_comment_before,
+            .preserve_all_comments_before = self.preserve_all_comments_before,
+            .is_legacy_octal_literal = self.is_legacy_octal_literal,
+            .is_log_disabled = self.is_log_disabled,
+            .comments_to_preserve_before = self.comments_to_preserve_before,
+            .all_original_comments = self.all_original_comments,
+            .code_point = self.code_point,
+            .identifier = self.identifier,
+            .jsx_factory_pragma_comment = self.jsx_factory_pragma_comment,
+            .jsx_fragment_pragma_comment = self.jsx_fragment_pragma_comment,
+            .source_mapping_url = self.source_mapping_url,
+            .number = self.number,
+            .rescan_close_brace_as_template_token = self.rescan_close_brace_as_template_token,
+            .prev_error_loc = self.prev_error_loc,
+            .allocator = self.allocator,
+            .string_literal_buffer = self.string_literal_buffer,
+            .string_literal_slice = self.string_literal_slice,
+            .string_literal = self.string_literal,
+            .string_literal_is_ascii = self.string_literal_is_ascii,
+        };
+    }
 
     pub fn loc(self: *LexerType) logger.Loc {
         return logger.usize2Loc(self.start);

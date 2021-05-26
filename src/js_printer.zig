@@ -426,7 +426,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
         pub fn printFunc(p: *Printer, func: G.Fn) void {
             p.printFnArgs(func.args, func.flags.has_rest_arg, false);
             p.printSpace();
-            p.printBlock(func.body.?.loc, func.body.?.stmts);
+            p.printBlock(func.body.loc, func.body.stmts);
         }
         pub fn printClass(p: *Printer, class: G.Class) void {
             if (class.extends) |extends| {
@@ -1648,9 +1648,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
             }
         }
 
-        pub fn printDotThenSuffix(
+        pub inline fn printDotThenSuffix(
             p: *Printer,
-        ) callconv(.Inline) void {
+        ) void {
             p.print(")");
         }
 

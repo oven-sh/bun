@@ -1417,11 +1417,13 @@ pub const Parser = struct {
         trim_unused_imports: bool = true,
 
         pub fn init(jsx: options.JSX.Pragma, loader: options.Loader) Options {
-            return Options{
+            var opts = Options{
                 .ts = loader.isTypeScript(),
 
                 .jsx = jsx,
             };
+            opts.jsx.parse = loader.isJSX();
+            return opts;
         }
     };
 
@@ -2914,31 +2916,33 @@ pub const P = struct {
             var text = p.lexer.identifier;
             var arg = try p.parseBinding();
 
-            if (p.options.ts and is_identifier and opts.is_constructor) {
-                // Skip over TypeScript accessibility modifiers, which turn this argument
-                // into a class field when used inside a class constructor. This is known
-                // as a "parameter property" in TypeScript.
-                while (true) {
-                    switch (p.lexer.token) {
-                        .t_identifier, .t_open_brace, .t_open_bracket => {
-                            if (!js_lexer.TypeScriptAccessibilityModifier.has(p.lexer.identifier)) {
+            if (p.options.ts) {
+                if (is_identifier and opts.is_constructor) {
+                    // Skip over TypeScript accessibility modifiers, which turn this argument
+                    // into a class field when used inside a class constructor. This is known
+                    // as a "parameter property" in TypeScript.
+                    while (true) {
+                        switch (p.lexer.token) {
+                            .t_identifier, .t_open_brace, .t_open_bracket => {
+                                if (!js_lexer.TypeScriptAccessibilityModifier.has(p.lexer.identifier)) {
+                                    break;
+                                }
+
+                                is_typescript_ctor_field = true;
+
+                                // TypeScript requires an identifier binding
+                                if (p.lexer.token != .t_identifier) {
+                                    try p.lexer.expect(.t_identifier);
+                                }
+                                text = p.lexer.identifier;
+
+                                // Re-parse the binding (the current binding is the TypeScript keyword)
+                                arg = try p.parseBinding();
+                            },
+                            else => {
                                 break;
-                            }
-
-                            is_typescript_ctor_field = true;
-
-                            // TypeScript requires an identifier binding
-                            if (p.lexer.token != .t_identifier) {
-                                try p.lexer.expect(.t_identifier);
-                            }
-                            text = p.lexer.identifier;
-
-                            // Re-parse the binding (the current binding is the TypeScript keyword)
-                            arg = try p.parseBinding();
-                        },
-                        else => {
-                            break;
-                        },
+                            },
+                        }
                     }
                 }
 
@@ -3026,12 +3030,10 @@ pub const P = struct {
 
     // pub fn parseBinding(p: *P)
 
-    // TODO:
     pub fn skipTypescriptReturnType(p: *P) anyerror!void {
         try p.skipTypeScriptTypeWithOpts(.lowest, .{ .is_return_type = true });
     }
 
-    // TODO:
     pub fn parseTypeScriptDecorators(p: *P) ![]ExprNodeIndex {
         if (!p.options.ts) {
             return &([_]ExprNodeIndex{});
@@ -3359,7 +3361,6 @@ pub const P = struct {
                 .t_minus => {
                     // "-123"
                     // "-123n"
-
                     try p.lexer.next();
 
                     if (p.lexer.token == .t_big_integer_literal) {
@@ -3812,8 +3813,8 @@ pub const P = struct {
             class_opts.ts_decorators = dec.values;
         }
 
-        var scope_index = p.pushScopeForParsePass(.class_name, loc) catch unreachable;
-        var class = try p.parseClass(class_keyword, name, class_opts);
+        const scope_index = p.pushScopeForParsePass(.class_name, loc) catch unreachable;
+        const class = try p.parseClass(class_keyword, name, class_opts);
 
         if (opts.is_typescript_declare) {
             p.popAndDiscardScope(scope_index);
@@ -4707,8 +4708,10 @@ pub const P = struct {
                             }
 
                             // Parse TypeScript import assignment statements
-                            p.es6_import_keyword = previous_import_keyword; // This wasn't an ESM import statement after all;
-                            return p.parseTypeScriptImportEqualsStmt(loc, opts, logger.Loc.Empty, default_name);
+                            if (p.lexer.token == .t_equals or opts.is_export or (opts.is_namespace_scope and !opts.is_typescript_declare)) {
+                                p.es6_import_keyword = previous_import_keyword; // This wasn't an ESM import statement after all;
+                                return p.parseTypeScriptImportEqualsStmt(loc, opts, logger.Loc.Empty, default_name);
+                            }
                         }
 
                         if (p.lexer.token == .t_comma) {
@@ -5056,7 +5059,7 @@ pub const P = struct {
         }
 
         const name = p.lexer.identifier;
-        try p.lexer.expectOrInsertSemicolon();
+        try p.lexer.expect(.t_identifier);
 
         if (opts.is_module_scope) {
             p.local_type_names.put(name, true) catch unreachable;
@@ -6463,27 +6466,31 @@ pub const P = struct {
 
     pub const Backtracking = struct {
         pub fn lexerBacktracker(p: *P, func: anytype) bool {
-            var old_lexer = p.lexer;
+            var old_lexer = p.lexer.clone();
             p.lexer.is_log_disabled = true;
             defer p.lexer.is_log_disabled = old_lexer.is_log_disabled;
-
-            // Implement backtracking by restoring the lexer's memory to its original state
-            const needs_reset = scope: {
-                func(p) catch break :scope true;
-                break :scope false;
+            var backtrack = false;
+            func(p) catch |err| {
+                switch (err) {
+                    error.Backtrack => {
+                        backtrack = true;
+                    },
+                    else => {},
+                }
             };
 
-            if (needs_reset) {
+            if (backtrack) {
                 p.lexer = old_lexer;
             }
 
-            return !needs_reset;
+            return !backtrack;
         }
 
         pub fn skipTypeScriptTypeParametersThenOpenParenWithBacktracking(p: *P) anyerror!void {
             try p.skipTypeScriptTypeParameters();
             if (p.lexer.token != .t_open_paren) {
-                try p.lexer.unexpected();
+                // try p.lexer.unexpected();
+                return error.Backtrack;
             }
         }
 
@@ -6497,7 +6504,18 @@ pub const P = struct {
 
             // Check the token after this and backtrack if it's the wrong one
             if (!TypeScript.canFollowTypeArgumentsInExpression(p)) {
-                try p.lexer.unexpected();
+                // try p.lexer.unexpected();
+                return error.Backtrack;
+            }
+        }
+
+        pub fn skipTypeScriptArrowReturnTypeWithBacktracking(p: *P) anyerror!void {
+            try p.lexer.expect(.t_colon);
+            try p.skipTypescriptReturnType();
+            // Check the token after this and backtrack if it's the wrong one
+            if (p.lexer.token != .t_equals_greater_than) {
+                // try p.lexer.unexpected();
+                return error.Backtrack;
             }
         }
     };
@@ -7159,7 +7177,7 @@ pub const P = struct {
         };
     }
 
-    pub fn skipTypeScriptTypeArguments(p: *P, isInsideJSXElement: bool) anyerror!bool {
+    pub fn skipTypeScriptTypeArguments(p: *P, comptime isInsideJSXElement: bool) anyerror!bool {
         switch (p.lexer.token) {
             .t_less_than, .t_less_than_equals, .t_less_than_less_than, .t_less_than_less_than_equals => {},
             else => {
@@ -7178,7 +7196,7 @@ pub const P = struct {
         }
 
         // This type argument list must end with a ">"
-        try p.lexer.expectGreaterThan(true);
+        try p.lexer.expectGreaterThan(isInsideJSXElement);
         return true;
     }
 
@@ -8371,6 +8389,16 @@ pub const P = struct {
                 try p.lexer.next();
 
                 // Special-case the weird "new.target" expression here
+                if (p.lexer.token == .t_dot) {
+                    try p.lexer.next();
+                    if (p.lexer.token != .t_identifier or !strings.eqlComptime(p.lexer.raw(), "target")) {
+                        try p.lexer.unexpected();
+                    }
+
+                    const r = logger.Range{ .loc = loc, .len = p.lexer.range().end().start - loc.start };
+                    try p.lexer.next();
+                    return p.e(E.NewTarget{}, loc);
+                }
 
                 const target = try p.parseExprWithFlags(.member, flags);
                 var args: []Expr = &([_]Expr{});
@@ -12167,7 +12195,7 @@ pub const P = struct {
             // attempt to convert the expressions to bindings first before deciding
             // whether this is an arrow function, and only pick an arrow function if
             // there were no conversion errors.
-            if (p.lexer.token == .t_equals_greater_than or (invalidLog.items.len == 0 and p.trySkipTypeScriptTypeParametersThenOpenParenWithBacktracking()) or opts.force_arrow_fn) {
+            if (p.lexer.token == .t_equals_greater_than or (invalidLog.items.len == 0 and p.trySkipTypeScriptArrowReturnTypeWithBacktracking()) or opts.force_arrow_fn) {
                 p.maybeCommaSpreadError(comma_after_spread);
                 p.logArrowArgErrors(&arrowArgErrors);
 

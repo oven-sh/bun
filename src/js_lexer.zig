@@ -867,7 +867,7 @@ pub const Lexer = struct {
         }
     }
 
-    pub fn expectLessThan(lexer: *LexerType, is_inside_jsx_element: bool) !void {
+    pub fn expectLessThan(lexer: *LexerType, comptime is_inside_jsx_element: bool) !void {
         switch (lexer.token) {
             .t_less_than => {
                 if (is_inside_jsx_element) {
@@ -895,7 +895,7 @@ pub const Lexer = struct {
         }
     }
 
-    pub fn expectGreaterThan(lexer: *LexerType, is_inside_jsx_element: bool) !void {
+    pub fn expectGreaterThan(lexer: *LexerType, comptime is_inside_jsx_element: bool) !void {
         switch (lexer.token) {
             .t_greater_than => {
                 if (is_inside_jsx_element) {
@@ -904,20 +904,27 @@ pub const Lexer = struct {
                     try lexer.next();
                 }
             },
+            .t_greater_than_greater_than => {
+                lexer.token = .t_greater_than;
+                lexer.start += 1;
+            },
+
+            .t_greater_than_greater_than_greater_than => {
+                lexer.token = .t_greater_than_greater_than;
+                lexer.start += 1;
+            },
+
             .t_greater_than_equals => {
                 lexer.token = .t_equals;
                 lexer.start += 1;
                 try lexer.maybeExpandEquals();
             },
-            .t_greater_than_greater_than => {
-                lexer.token = .t_greater_than;
-                lexer.start += 1;
-            },
+
             .t_greater_than_greater_than_equals => {
                 lexer.token = .t_greater_than_greater_than;
                 lexer.start += 1;
             },
-            .t_greater_than_greater_than_greater_than => {
+            .t_greater_than_greater_than_greater_than_equals => {
                 lexer.token = .t_greater_than_greater_than_equals;
                 lexer.start += 1;
             },

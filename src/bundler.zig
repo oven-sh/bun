@@ -702,6 +702,10 @@ pub const Transformer = struct {
                 var parser = try js_parser.Parser.init(opts, log, source, define, allocator);
                 var res = try parser.parse();
                 ast = res.ast;
+
+                if (FeatureFlags.print_ast) {
+                    try ast.toJSON(allocator, std.io.getStdErr().writer());
+                }
             },
             else => {
                 Global.panic("Unsupported loader: {s} for path: {s}", .{ loader, source.path.text });

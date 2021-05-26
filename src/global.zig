@@ -23,6 +23,7 @@ pub const FeatureFlags = struct {
     pub const strong_etags_for_built_files = true;
     pub const keep_alive = true;
     pub const use_std_path_relative = false;
+    pub const print_ast = false;
 };
 
 pub const enableTracing = true;

@@ -494,7 +494,6 @@ pub const RequestContext = struct {
                 defer ctx.bundler.allocator.free(output.contents);
                 if (FeatureFlags.strong_etags_for_built_files) {
                     const strong_etag = std.hash.Wyhash.hash(1, output.contents);
-
                     const etag_content_slice = std.fmt.bufPrintIntToSlice(strong_etag_buffer[0..49], strong_etag, 16, true, .{});
 
                     ctx.appendHeader("ETag", etag_content_slice);

@@ -65,6 +65,7 @@ pub const Lexer = struct {
     has_pure_comment_before: bool = false,
     preserve_all_comments_before: bool = false,
     is_legacy_octal_literal: bool = false,
+    is_log_disabled: bool = false,
     comments_to_preserve_before: std.ArrayList(js_ast.G.Comment),
     all_original_comments: ?[]js_ast.G.Comment = null,
     code_point: CodePoint = -1,
@@ -89,7 +90,7 @@ pub const Lexer = struct {
         return logger.usize2Loc(self.start);
     }
 
-    fn nextCodepointSlice(it: *LexerType) callconv(.Inline) !?[]const u8 {
+    inline fn nextCodepointSlice(it: *LexerType) !?[]const u8 {
         if (it.current >= it.source.contents.len) {
             // without this line, strings cut off one before the last characte
             it.end = it.current;
@@ -114,6 +115,7 @@ pub const Lexer = struct {
     }
 
     pub fn addError(self: *LexerType, _loc: usize, comptime format: []const u8, args: anytype, panic: bool) void {
+        if (self.is_log_disabled) return;
         var __loc = logger.usize2Loc(_loc);
         if (__loc.eql(self.prev_error_loc)) {
             return;
@@ -126,6 +128,7 @@ pub const Lexer = struct {
     }
 
     pub fn addRangeError(self: *LexerType, r: logger.Range, comptime format: []const u8, args: anytype, panic: bool) !void {
+        if (self.is_log_disabled) return;
         if (self.prev_error_loc.eql(r.loc)) {
             return;
         }
@@ -151,7 +154,7 @@ pub const Lexer = struct {
         return @intCast(CodePoint, a) == self.code_point;
     }
 
-    fn nextCodepoint(it: *LexerType) callconv(.Inline) !CodePoint {
+    inline fn nextCodepoint(it: *LexerType) !CodePoint {
         const slice = (try it.nextCodepointSlice()) orelse return @as(CodePoint, -1);
 
         switch (slice.len) {
@@ -892,7 +895,7 @@ pub const Lexer = struct {
     pub fn next(lexer: *LexerType) !void {
         lexer.has_newline_before = lexer.end == 0;
 
-        lex: while (true) {
+        while (true) {
             lexer.start = lexer.end;
             lexer.token = T.t_end_of_file;
 
@@ -2714,7 +2717,7 @@ pub fn rangeOfIdentifier(source: *const Source, loc: logger.Loc) logger.Range {
     return r;
 }
 
-fn float64(num: anytype) callconv(.Inline) f64 {
+inline fn float64(num: anytype) f64 {
     return @intToFloat(f64, num);
 }
 

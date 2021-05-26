@@ -42,7 +42,7 @@ pub const ExprNodeList = []Expr;
 pub const StmtNodeList = []Stmt;
 pub const BindingNodeList = []Binding;
 
-pub const ImportItemStatus = packed enum {
+pub const ImportItemStatus = enum {
     none,
 
     // The linker doesn't report import/export mismatch errors
@@ -1177,13 +1177,13 @@ pub const Stmt = struct {
             },
         }
     }
-    fn comptime_alloc(allocator: *std.mem.Allocator, comptime tag_name: string, comptime typename: type, origData: anytype, loc: logger.Loc) callconv(.Inline) Stmt {
+    inline fn comptime_alloc(allocator: *std.mem.Allocator, comptime tag_name: string, comptime typename: type, origData: anytype, loc: logger.Loc) Stmt {
         var st = allocator.create(typename) catch unreachable;
         st.* = origData;
         return Stmt{ .loc = loc, .data = @unionInit(Data, tag_name, st) };
     }
 
-    fn comptime_init(comptime tag_name: string, comptime typename: type, origData: anytype, loc: logger.Loc) callconv(.Inline) Stmt {
+    inline fn comptime_init(comptime tag_name: string, comptime typename: type, origData: anytype, loc: logger.Loc) Stmt {
         return Stmt{ .loc = loc, .data = @unionInit(Data, tag_name, origData) };
     }
 
@@ -2347,7 +2347,7 @@ pub const Expr = struct {
             .right = b,
         }, a.loc);
     }
-    pub fn at(expr: *Expr, t: anytype, allocator: *std.mem.Allocator) callconv(.Inline) Expr {
+    pub inline fn at(expr: *Expr, t: anytype, allocator: *std.mem.Allocator) Expr {
         return alloc(allocator, t, expr.loc);
     }
 
@@ -2499,7 +2499,7 @@ pub const Expr = struct {
 
             return false;
         }
-        pub fn isStringValue(self: Data) callconv(.Inline) bool {
+        pub inline fn isStringValue(self: Data) bool {
             return @as(Expr.Tag, self) == .e_string;
         }
     };
@@ -2508,7 +2508,7 @@ pub const Expr = struct {
 pub const EnumValue = struct {
     loc: logger.Loc,
     ref: Ref,
-    name: JavascriptString,
+    name: E.String,
     value: ?ExprNodeIndex,
 };
 
@@ -2856,8 +2856,8 @@ pub const Op = struct {
         return try std.json.stringify(self.text, opts, o);
     }
 
-    pub const TableType: std.EnumArray(Op.Code, Op);
-    pub const Table = comptime {
+    pub const TableType: std.EnumArray(Op.Code, Op) = undefined;
+    pub const Table = {
         var table = std.EnumArray(Op.Code, Op).initUndefined();
 
         // Prefix

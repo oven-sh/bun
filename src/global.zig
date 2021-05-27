@@ -22,8 +22,13 @@ pub const isWindows = std.Target.current.os.tag == .windows;
 pub const FeatureFlags = struct {
     pub const strong_etags_for_built_files = true;
     pub const keep_alive = true;
+
+    // it just doesn't work well.
     pub const use_std_path_relative = false;
+    pub const use_std_path_join = false;
+
     pub const print_ast = false;
+    pub const disable_printing_null = false;
 };
 
 pub const enableTracing = true;
@@ -60,6 +65,10 @@ pub const Output = struct {
 
     pub fn errorWriter() @typeInfo(@TypeOf(Source.StreamType.writer)).Fn.return_type.? {
         return source.error_stream.writer();
+    }
+
+    pub fn writer() @typeInfo(@TypeOf(Source.StreamType.writer)).Fn.return_type.? {
+        return source.stream.writer();
     }
 
     pub fn printErrorable(comptime fmt: string, args: anytype) !void {

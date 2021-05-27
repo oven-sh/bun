@@ -246,12 +246,20 @@ pub const FileSystem = struct {
 
     // }
     pub fn normalize(f: *@This(), str: string) string {
-        return @call(.{ .modifier = .always_inline }, path_handler.normalizeAndJoin, .{ f.top_level_dir, .auto, str });
+        return @call(.{ .modifier = .always_inline }, path_handler.normalizeString, .{ str, true, .auto });
     }
 
     pub fn join(f: *@This(), parts: anytype) string {
-        return @call(.{ .modifier = .always_inline }, path_handler.normalizeAndJoinString, .{
-            f.top_level_dir,
+        return @call(.{ .modifier = .always_inline }, path_handler.joinStringBuf, .{
+            &join_buf,
+            parts,
+            .auto,
+        });
+    }
+
+    pub fn joinBuf(f: *@This(), parts: anytype, buf: []u8) string {
+        return @call(.{ .modifier = .always_inline }, path_handler.joinStringBuf, .{
+            buf,
             parts,
             .auto,
         });
@@ -279,12 +287,40 @@ pub const FileSystem = struct {
         });
     }
 
+    pub fn relativeFrom(f: *@This(), from: string) string {
+        return @call(.{ .modifier = .always_inline }, path_handler.relative, .{
+            from,
+            f.top_level_dir,
+        });
+    }
+
     pub fn relativeToAlloc(f: *@This(), allocator: *std.mem.Allocator, to: string) string {
         return @call(.{ .modifier = .always_inline }, path_handler.relativeAlloc, .{
             allocator,
             f.top_level_dir,
             to,
         });
+    }
+
+    pub fn absAlloc(f: *@This(), allocator: *std.mem.Allocator, parts: anytype) !string {
+        const joined = path_handler.joinAbsString(
+            f.top_level_dir,
+            parts,
+            .auto,
+        );
+        return try allocator.dupe(u8, joined);
+    }
+
+    pub fn abs(f: *@This(), parts: anytype) string {
+        return path_handler.joinAbsString(
+            f.top_level_dir,
+            parts,
+            .auto,
+        );
+    }
+
+    pub fn absBuf(f: *@This(), parts: anytype, buf: []u8) string {
+        return path_handler.joinAbsStringBuf(f.top_level_dir, buf, parts, .auto);
     }
 
     pub fn joinAlloc(f: *@This(), allocator: *std.mem.Allocator, parts: anytype) !string {
@@ -315,12 +351,30 @@ pub const FileSystem = struct {
         watcher_mutex: Mutex = Mutex.init(),
         cwd: string,
         parent_fs: *FileSystem = undefined,
+        file_limit: usize = 32,
+        file_quota: usize = 32,
+
+        // Always try to max out how many files we can keep open
+        pub fn adjustUlimit() usize {
+            var limit = std.os.getrlimit(.NOFILE) catch return 32;
+            if (limit.cur < limit.max) {
+                var new_limit = std.mem.zeroes(std.os.rlimit);
+                new_limit.cur = limit.max;
+                new_limit.max = limit.max;
+                std.os.setrlimit(.NOFILE, new_limit) catch return limit.cur;
+                return new_limit.cur;
+            }
+            return limit.cur;
+        }
 
         pub fn init(allocator: *std.mem.Allocator, cwd: string, enable_watcher: bool) RealFS {
+            const file_limit = adjustUlimit();
             return RealFS{
                 .entries = EntriesOption.Map.init(allocator),
                 .allocator = allocator,
                 .cwd = cwd,
+                .file_limit = file_limit,
+                .file_quota = file_limit,
                 .limiter = Limiter.init(allocator),
                 .watcher = if (enable_watcher) std.StringHashMap(WatchData).init(allocator) else null,
             };
@@ -624,7 +678,7 @@ pub const FileSystem = struct {
         pub fn kind(fs: *RealFS, _dir: string, base: string) !Entry.Cache {
             var dir = _dir;
             var combo = [2]string{ dir, base };
-            var entry_path = path_handler.normalizeAndJoinString(fs.cwd, &combo, .auto);
+            var entry_path = path_handler.joinAbsString(fs.cwd, &combo, .auto);
 
             fs.limiter.before();
             defer fs.limiter.after();
@@ -651,7 +705,7 @@ pub const FileSystem = struct {
                         combo[0] = dir;
                         combo[1] = link;
 
-                        link = path_handler.normalizeAndJoinStringBuf(fs.cwd, out_slice, &combo, .auto);
+                        link = path_handler.joinAbsStringBuf(fs.cwd, out_slice, &combo, .auto);
                     }
                     // TODO: do we need to clean the path?
                     symlink = link;
@@ -748,6 +802,7 @@ pub const PathName = struct {
         var base = path;
         var ext = path;
         var dir = path;
+        var is_absolute = true;
 
         var _i = strings.lastIndexOfChar(path, '/');
         while (_i) |i| {
@@ -755,6 +810,7 @@ pub const PathName = struct {
             if (i + 1 != path.len) {
                 base = path[i + 1 ..];
                 dir = path[0..i];
+                is_absolute = false;
                 break;
             }
 
@@ -769,6 +825,10 @@ pub const PathName = struct {
         if (_dot) |dot| {
             ext = base[dot..];
             base = base[0..dot];
+        }
+
+        if (is_absolute) {
+            dir = &([_]u8{});
         }
 
         return PathName{

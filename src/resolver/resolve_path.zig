@@ -139,7 +139,7 @@ pub fn longestCommonPathGeneric(strings: []const []const u8, comptime separator:
     // To detect /app/public is actually a folder, we do one more loop through the strings
     // and say, "do one of you have a path separator after what we thought was the end?"
     for (strings) |str| {
-        if (str.len > index) {
+        if (str.len > index + 1) {
             if (@call(.{ .modifier = .always_inline }, isPathSeparator, .{str[index]})) {
                 return str[0 .. index + 2];
             }
@@ -572,25 +572,25 @@ pub fn normalizeStringAlloc(allocator: *std.mem.Allocator, str: []const u8, comp
     return try allocator.dupe(u8, normalizeString(str, allow_above_root, _platform));
 }
 
-pub fn normalizeAndJoin2(_cwd: []const u8, comptime _platform: Platform, part: anytype, part2: anytype) []const u8 {
+pub fn joinAbs2(_cwd: []const u8, comptime _platform: Platform, part: anytype, part2: anytype) []const u8 {
     const parts = [_][]const u8{ part, part2 };
-    const slice = normalizeAndJoinString(_cwd, &parts, _platform);
+    const slice = joinAbsString(_cwd, &parts, _platform);
     return slice;
 }
 
-pub fn normalizeAndJoin(_cwd: []const u8, comptime _platform: Platform, part: anytype) []const u8 {
+pub fn joinAbs(_cwd: []const u8, comptime _platform: Platform, part: anytype) []const u8 {
     const parts = [_][]const u8{
         part,
     };
-    const slice = normalizeAndJoinString(_cwd, &parts, _platform);
+    const slice = joinAbsString(_cwd, &parts, _platform);
     return slice;
 }
 
 // Convert parts of potentially invalid file paths into a single valid filpeath
 // without querying the filesystem
 // This is the equivalent of
-pub fn normalizeAndJoinString(_cwd: []const u8, parts: anytype, comptime _platform: Platform) []const u8 {
-    return normalizeAndJoinStringBuf(
+pub fn joinAbsString(_cwd: []const u8, parts: anytype, comptime _platform: Platform) []const u8 {
+    return joinAbsStringBuf(
         _cwd,
         &parser_join_input_buffer,
         parts,
@@ -598,7 +598,60 @@ pub fn normalizeAndJoinString(_cwd: []const u8, parts: anytype, comptime _platfo
     );
 }
 
-pub fn normalizeAndJoinStringBuf(_cwd: []const u8, buf: []u8, parts: anytype, comptime _platform: Platform) []const u8 {
+pub fn joinStringBuf(buf: []u8, _parts: anytype, comptime _platform: Platform) []const u8 {
+    if (FeatureFlags.use_std_path_join) {
+        var alloc = std.heap.FixedBufferAllocator.init(buf);
+        return std.fs.path.join(&alloc.allocator, _parts) catch unreachable;
+    }
+
+    if (_parts.len == 0) {
+        return _cwd;
+    }
+
+    var parts = _parts;
+
+    var written: usize = 0;
+    const platform = comptime _platform.resolve();
+
+    for (_parts) |part| {
+        if (part.len == 0 or (part.len == 1 and part[1] == '.')) {
+            continue;
+        }
+
+        if (!platform.isSeparator(part[part.len - 1])) {
+            parser_join_input_buffer[written] = platform.separator();
+            written += 1;
+        }
+
+        std.mem.copy(
+            u8,
+            parser_join_input_buffer[written..],
+            part,
+        );
+        written += part.len;
+    }
+
+    // Preserve leading separator
+    if (_parts[0][0] == _platform.separator()) {
+        const out = switch (platform) {
+            .loose => normalizeStringLooseBuf(parser_join_input_buffer[0..written], buf[1..], false, false),
+            .windows => normalizeStringWindows(parser_join_input_buffer[0..written], buf[1..], false, false),
+            else => normalizeStringPosixBuf(parser_join_input_buffer[0..written], buf[1..], false, false),
+        };
+        buf[0] = _platform.separator();
+
+        return buf[0 .. out.len + 1];
+    } else {
+        return switch (platform) {
+            .loose => normalizeStringLooseBuf(parser_join_input_buffer[0..written], buf[0..], false, false),
+            .windows => normalizeStringWindows(parser_join_input_buffer[0..written], buf[0..], false, false),
+            else => normalizeStringPosixBuf(parser_join_input_buffer[0..written], buf[0..], false, false),
+        };
+    }
+}
+
+pub fn joinAbsStringBuf(_cwd: []const u8, buf: []u8, _parts: anytype, comptime _platform: Platform) []const u8 {
+    var parts: []const []const u8 = _parts;
     if (parts.len == 0) {
         return _cwd;
     }
@@ -615,22 +668,41 @@ pub fn normalizeAndJoinStringBuf(_cwd: []const u8, buf: []u8, parts: anytype, co
     // Windows leading separators can be a lot of things...
     // So we need to do this instead of just checking the first char.
     var leading_separator: []const u8 = "";
-    if (_platform.leadingSeparatorIndex(parts[0])) |leading_separator_i| {
-        leading_separator = parts[0][0 .. leading_separator_i + 1];
-        ignore_cwd = true;
+
+    var start_part: i32 = -1;
+    for (parts) |part, i| {
+        if (part.len > 0) {
+            if (_platform.leadingSeparatorIndex(parts[i])) |leading_separator_i| {
+                leading_separator = parts[i][0 .. leading_separator_i + 1];
+                start_part = @intCast(i32, i);
+            }
+        }
+    }
+    var start: []const u8 = "";
+
+    // Handle joining absolute strings
+    // Any string which starts with a leading separator is considered absolute
+    if (start_part > -1) {
+        const start_part_i = @intCast(usize, start_part);
+        start = parts[start_part_i];
+        if (parts.len > start_part_i + 1) {
+            parts = parts[start_part_i + 1 ..];
+        } else {
+            parts = &([_][]const u8{});
+        }
+    } else {
+        leading_separator = cwd[0 .. 1 + (_platform.leadingSeparatorIndex(_cwd) orelse unreachable)]; // cwd must be absolute
+        start = _cwd;
     }
 
-    if (!ignore_cwd) {
-        leading_separator = cwd[0 .. 1 + (_platform.leadingSeparatorIndex(_cwd) orelse unreachable)]; // cwd must be absolute
-        cwd = _cwd[leading_separator.len..cwd.len];
-        out = cwd.len;
-        std.debug.assert(out < buf.len);
-        std.mem.copy(u8, buf[0..out], cwd);
-    }
+    out = start.len;
+    std.debug.assert(out < buf.len);
+    std.mem.copy(u8, buf[0..out], start);
 
     for (parts) |part, i| {
-        // This never returns leading separators.
-        var normalized_part = normalizeString(part, true, _platform);
+        // Do not normalize here
+        // It will break stuff!
+        var normalized_part = part;
         if (normalized_part.len == 0) {
             continue;
         }
@@ -645,10 +717,10 @@ pub fn normalizeAndJoinStringBuf(_cwd: []const u8, buf: []u8, parts: anytype, co
 
         out += 1;
 
-        const start = out;
+        const offset = out;
         out += normalized_part.len;
         std.debug.assert(out < buf.len);
-        std.mem.copy(u8, buf[start..out], normalized_part);
+        std.mem.copy(u8, buf[offset..out], normalized_part);
     }
 
     // One last normalization, to remove any ../ added
@@ -760,7 +832,7 @@ pub fn normalizeStringLooseBuf(str: []const u8, buf: []u8, comptime allow_above_
     );
 }
 
-test "normalizeAndJoinStringPosix" {
+test "joinAbsStringPosix" {
     var t = tester.Tester.t(std.heap.c_allocator);
     defer t.report(@src());
     const string = []const u8;
@@ -768,45 +840,51 @@ test "normalizeAndJoinStringPosix" {
 
     _ = t.expect(
         "/Users/jarredsumner/Code/app/foo/bar/file.js",
-        normalizeAndJoinString(cwd, [_]string{ "foo", "bar", "file.js" }, .posix),
+        joinAbsString(cwd, [_]string{ "foo", "bar", "file.js" }, .posix),
         @src(),
     );
     _ = t.expect(
         "/Users/jarredsumner/Code/app/foo/file.js",
-        normalizeAndJoinString(cwd, [_]string{ "foo", "bar", "../file.js" }, .posix),
+        joinAbsString(cwd, [_]string{ "foo", "bar", "../file.js" }, .posix),
         @src(),
     );
     _ = t.expect(
         "/Users/jarredsumner/Code/app/foo/file.js",
-        normalizeAndJoinString(cwd, [_]string{ "foo", "./bar", "../file.js" }, .posix),
+        joinAbsString(cwd, [_]string{ "foo", "./bar", "../file.js" }, .posix),
         @src(),
     );
 
     _ = t.expect(
         "/Users/jarredsumner/Code/app/foo/file.js",
-        normalizeAndJoinString(cwd, [_]string{ "././././foo", "././././bar././././", "../file.js" }, .posix),
+        joinAbsString(cwd, [_]string{ "", "../../file.js" }, .posix),
+        @src(),
+    );
+
+    _ = t.expect(
+        "/Users/jarredsumner/Code/app/foo/file.js",
+        joinAbsString(cwd, [_]string{ "././././foo", "././././bar././././", "../file.js" }, .posix),
         @src(),
     );
     _ = t.expect(
         "/Code/app/foo/file.js",
-        normalizeAndJoinString(cwd, [_]string{ "/Code/app", "././././foo", "././././bar././././", "../file.js" }, .posix),
+        joinAbsString(cwd, [_]string{ "/Code/app", "././././foo", "././././bar././././", "../file.js" }, .posix),
         @src(),
     );
 
     _ = t.expect(
         "/Code/app/foo/file.js",
-        normalizeAndJoinString(cwd, [_]string{ "/Code/app", "././././foo", ".", "././././bar././././", ".", "../file.js" }, .posix),
+        joinAbsString(cwd, [_]string{ "/Code/app", "././././foo", ".", "././././bar././././", ".", "../file.js" }, .posix),
         @src(),
     );
 
     _ = t.expect(
         "/Code/app/file.js",
-        normalizeAndJoinString(cwd, [_]string{ "/Code/app", "././././foo", "..", "././././bar././././", ".", "../file.js" }, .posix),
+        joinAbsString(cwd, [_]string{ "/Code/app", "././././foo", "..", "././././bar././././", ".", "../file.js" }, .posix),
         @src(),
     );
 }
 
-test "normalizeAndJoinStringLoose" {
+test "joinAbsStringLoose" {
     var t = tester.Tester.t(std.heap.c_allocator);
     defer t.report(@src());
     const string = []const u8;
@@ -814,81 +892,81 @@ test "normalizeAndJoinStringLoose" {
 
     _ = t.expect(
         "/Users/jarredsumner/Code/app/foo/bar/file.js",
-        normalizeAndJoinString(cwd, [_]string{ "foo", "bar", "file.js" }, .loose),
+        joinAbsString(cwd, [_]string{ "foo", "bar", "file.js" }, .loose),
         @src(),
     );
     _ = t.expect(
         "/Users/jarredsumner/Code/app/foo/file.js",
-        normalizeAndJoinString(cwd, [_]string{ "foo", "bar", "../file.js" }, .loose),
+        joinAbsString(cwd, [_]string{ "foo", "bar", "../file.js" }, .loose),
         @src(),
     );
     _ = t.expect(
         "/Users/jarredsumner/Code/app/foo/file.js",
-        normalizeAndJoinString(cwd, [_]string{ "foo", "./bar", "../file.js" }, .loose),
+        joinAbsString(cwd, [_]string{ "foo", "./bar", "../file.js" }, .loose),
         @src(),
     );
 
     _ = t.expect(
         "/Users/jarredsumner/Code/app/foo/file.js",
-        normalizeAndJoinString(cwd, [_]string{ "././././foo", "././././bar././././", "../file.js" }, .loose),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Code/app/foo/file.js",
-        normalizeAndJoinString(cwd, [_]string{ "/Code/app", "././././foo", "././././bar././././", "../file.js" }, .loose),
+        joinAbsString(cwd, [_]string{ "././././foo", "././././bar././././", "../file.js" }, .loose),
         @src(),
     );
 
     _ = t.expect(
         "/Code/app/foo/file.js",
-        normalizeAndJoinString(cwd, [_]string{ "/Code/app", "././././foo", ".", "././././bar././././", ".", "../file.js" }, .loose),
+        joinAbsString(cwd, [_]string{ "/Code/app", "././././foo", "././././bar././././", "../file.js" }, .loose),
+        @src(),
+    );
+
+    _ = t.expect(
+        "/Code/app/foo/file.js",
+        joinAbsString(cwd, [_]string{ "/Code/app", "././././foo", ".", "././././bar././././", ".", "../file.js" }, .loose),
         @src(),
     );
 
     _ = t.expect(
         "/Code/app/file.js",
-        normalizeAndJoinString(cwd, [_]string{ "/Code/app", "././././foo", "..", "././././bar././././", ".", "../file.js" }, .loose),
+        joinAbsString(cwd, [_]string{ "/Code/app", "././././foo", "..", "././././bar././././", ".", "../file.js" }, .loose),
         @src(),
     );
 
     _ = t.expect(
         "/Users/jarredsumner/Code/app/foo/bar/file.js",
-        normalizeAndJoinString(cwd, [_]string{ "foo", "bar", "file.js" }, .loose),
+        joinAbsString(cwd, [_]string{ "foo", "bar", "file.js" }, .loose),
         @src(),
     );
     _ = t.expect(
         "/Users/jarredsumner/Code/app/foo/file.js",
-        normalizeAndJoinString(cwd, [_]string{ "foo", "bar", "../file.js" }, .loose),
+        joinAbsString(cwd, [_]string{ "foo", "bar", "../file.js" }, .loose),
         @src(),
     );
     _ = t.expect(
         "/Users/jarredsumner/Code/app/foo/file.js",
-        normalizeAndJoinString(cwd, [_]string{ "foo", "./bar", "../file.js" }, .loose),
+        joinAbsString(cwd, [_]string{ "foo", "./bar", "../file.js" }, .loose),
         @src(),
     );
 
     _ = t.expect(
         "/Users/jarredsumner/Code/app/foo/file.js",
-        normalizeAndJoinString(cwd, [_]string{ ".\\.\\.\\.\\foo", "././././bar././././", "..\\file.js" }, .loose),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Code/app/foo/file.js",
-        normalizeAndJoinString(cwd, [_]string{ "/Code/app", "././././foo", "././././bar././././", "../file.js" }, .loose),
+        joinAbsString(cwd, [_]string{ ".\\.\\.\\.\\foo", "././././bar././././", "..\\file.js" }, .loose),
         @src(),
     );
 
     _ = t.expect(
         "/Code/app/foo/file.js",
-        normalizeAndJoinString(cwd, [_]string{ "/Code/app", "././././foo", ".", "././././bar././././", ".", "../file.js" }, .loose),
+        joinAbsString(cwd, [_]string{ "/Code/app", "././././foo", "././././bar././././", "../file.js" }, .loose),
+        @src(),
+    );
+
+    _ = t.expect(
+        "/Code/app/foo/file.js",
+        joinAbsString(cwd, [_]string{ "/Code/app", "././././foo", ".", "././././bar././././", ".", "../file.js" }, .loose),
         @src(),
     );
 
     _ = t.expect(
         "/Code/app/file.js",
-        normalizeAndJoinString(cwd, [_]string{ "/Code/app", "././././foo", "..", "././././bar././././", ".", "../file.js" }, .loose),
+        joinAbsString(cwd, [_]string{ "/Code/app", "././././foo", "..", "././././bar././././", ".", "../file.js" }, .loose),
         @src(),
     );
 }

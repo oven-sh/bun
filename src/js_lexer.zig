@@ -1504,7 +1504,9 @@ pub const Lexer = struct {
     }
 
     pub fn expected(self: *LexerType, token: T) !void {
-        if (tokenToString.get(token).len > 0) {
+        if (self.is_log_disabled) {
+            return error.Backtrack;
+        } else if (tokenToString.get(token).len > 0) {
             try self.expectedString(tokenToString.get(token));
         } else {
             try self.unexpected();

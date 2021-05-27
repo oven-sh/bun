@@ -330,7 +330,13 @@ pub const Cli = struct {
                 const do_we_need_to_close = open_file_limit > result.output_files.len * 2;
                 did_write = true;
                 var root_dir = try std.fs.openDirAbsolute(result.outbase, std.fs.Dir.OpenDirOptions{});
-                defer root_dir.close();
+
+                defer {
+                    if (do_we_need_to_close) {
+                        root_dir.close();
+                    }
+                }
+
                 for (result.output_files) |f| {
                     var fp = f.path;
                     if (fp[0] == std.fs.path.sep) {

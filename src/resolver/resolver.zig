@@ -466,7 +466,7 @@ pub const Resolver = struct {
 
         if (check_relative) {
             const parts = [_]string{ source_dir, import_path };
-            const abs_path = r.fs.joinBuf(&parts, &relative_abs_path_buf);
+            const abs_path = r.fs.absBuf(&parts, &relative_abs_path_buf);
 
             if (r.opts.external.abs_paths.count() > 0 and r.opts.external.abs_paths.exists(abs_path)) {
                 // If the string literal in the source text is an absolute path and has
@@ -478,7 +478,7 @@ pub const Resolver = struct {
                 }
 
                 return Result{
-                    .path_pair = .{ .primary = Path.init(abs_path) },
+                    .path_pair = .{ .primary = Path.init(r.fs.filename_store.append(abs_path) catch unreachable) },
                     .is_external = true,
                 };
             }
@@ -493,7 +493,7 @@ pub const Resolver = struct {
                         if (r.checkBrowserMap(pkg, rel_path)) |remap| {
                             // Is the path disabled?
                             if (remap.len == 0) {
-                                var _path = Path.init(abs_path);
+                                var _path = Path.init(r.fs.filename_store.append(abs_path) catch unreachable);
                                 _path.is_disabled = true;
                                 return Result{
                                     .path_pair = PathPair{
@@ -661,7 +661,7 @@ pub const Resolver = struct {
             if (tsconfig.hasBaseURL()) {
                 const base = tsconfig.base_url;
                 const paths = [_]string{ base, import_path };
-                const abs = r.fs.joinBuf(&paths, &load_as_file_or_directory_via_tsconfig_base_path);
+                const abs = r.fs.absBuf(&paths, &load_as_file_or_directory_via_tsconfig_base_path);
 
                 if (r.loadAsFileOrDirectory(abs, kind)) |res| {
                     return res;
@@ -676,7 +676,7 @@ pub const Resolver = struct {
             // don't ever want to search for "node_modules/node_modules"
             if (dir_info.has_node_modules) {
                 var _paths = [_]string{ dir_info.abs_path, "node_modules", import_path };
-                const abs_path = r.fs.join(&_paths);
+                const abs_path = r.fs.abs(&_paths);
                 if (r.debug_logs) |*debug| {
                     debug.addNoteFmt("Checking for a package in the directory \"{s}\"", .{abs_path}) catch {};
                 }
@@ -704,7 +704,7 @@ pub const Resolver = struct {
             return r.loadNodeModules(import_path, kind, source_dir_info);
         } else {
             const paths = [_]string{ source_dir_info.abs_path, import_path };
-            var resolved = r.fs.joinBuf(&paths, &resolve_without_remapping_buf);
+            var resolved = r.fs.absBuf(&paths, &resolve_without_remapping_buf);
             return r.loadAsFileOrDirectory(resolved, kind);
         }
     }
@@ -727,7 +727,7 @@ pub const Resolver = struct {
             //     //     // Skip "node_modules" folders
             //     //     if (!strings.eql(std.fs.path.basename(current), "node_modules")) {
             //     //         var paths1 = [_]string{ current, "node_modules", extends };
-            //     //         var join1 = r.fs.joinAlloc(ctx.r.allocator, &paths1) catch unreachable;
+            //     //         var join1 = r.fs.absAlloc(ctx.r.allocator, &paths1) catch unreachable;
             //     //         const res = ctx.r.parseTSConfig(join1, ctx.visited) catch |err| {
             //     //             if (err == error.ENOENT) {
             //     //                 continue;
@@ -760,14 +760,14 @@ pub const Resolver = struct {
             // this might leak
             if (!std.fs.path.isAbsolute(result.base_url)) {
                 const paths = [_]string{ file_dir, result.base_url };
-                result.base_url = r.fs.filename_store.append(r.fs.joinBuf(&paths, &tsconfig_base_url_buf)) catch unreachable;
+                result.base_url = r.fs.filename_store.append(r.fs.absBuf(&paths, &tsconfig_base_url_buf)) catch unreachable;
             }
         }
 
         if (result.paths.count() > 0 and (result.base_url_for_paths.len == 0 or !std.fs.path.isAbsolute(result.base_url_for_paths))) {
             // this might leak
             const paths = [_]string{ file_dir, result.base_url };
-            result.base_url_for_paths = r.fs.filename_store.append(r.fs.joinBuf(&paths, &tsconfig_base_url_buf)) catch unreachable;
+            result.base_url_for_paths = r.fs.filename_store.append(r.fs.absBuf(&paths, &tsconfig_base_url_buf)) catch unreachable;
         }
 
         return result;
@@ -1035,7 +1035,7 @@ pub const Resolver = struct {
 
                         if (!std.fs.path.isAbsolute(absolute_original_path)) {
                             const parts = [_]string{ abs_base_url, original_path };
-                            absolute_original_path = r.fs.joinAlloc(r.allocator, &parts) catch unreachable;
+                            absolute_original_path = r.fs.absAlloc(r.allocator, &parts) catch unreachable;
                             was_alloc = true;
                         }
 
@@ -1119,7 +1119,7 @@ pub const Resolver = struct {
                 var did_allocate = false;
                 if (!std.fs.path.isAbsolute(region)) {
                     var paths = [_]string{ abs_base_url, original_path };
-                    absolute_original_path = r.fs.joinAlloc(r.allocator, &paths) catch unreachable;
+                    absolute_original_path = r.fs.absAlloc(r.allocator, &paths) catch unreachable;
                     did_allocate = true;
                 } else {
                     absolute_original_path = std.mem.dupe(r.allocator, u8, region) catch unreachable;
@@ -1214,7 +1214,7 @@ pub const Resolver = struct {
                     // Is the path disabled?
                     if (remap.len == 0) {
                         const paths = [_]string{ path, field_rel_path };
-                        const new_path = r.fs.joinAlloc(r.allocator, &paths) catch unreachable;
+                        const new_path = r.fs.absAlloc(r.allocator, &paths) catch unreachable;
                         var _path = Path.init(new_path);
                         _path.is_disabled = true;
                         return MatchResult{
@@ -1229,7 +1229,7 @@ pub const Resolver = struct {
             }
         }
         const _paths = [_]string{ field_rel_path, path };
-        const field_abs_path = r.fs.joinAlloc(r.allocator, &_paths) catch unreachable;
+        const field_abs_path = r.fs.absAlloc(r.allocator, &_paths) catch unreachable;
 
         const field_dir_info = (r.dirInfoCached(field_abs_path) catch null) orelse {
             r.allocator.free(field_abs_path);
@@ -1254,7 +1254,7 @@ pub const Resolver = struct {
                 if (entries.get(base)) |lookup| {
                     if (lookup.entry.kind(rfs) == .file) {
                         const parts = [_]string{ path, base };
-                        const out_buf = r.fs.joinAlloc(r.allocator, &parts) catch unreachable;
+                        const out_buf = r.fs.absAlloc(r.allocator, &parts) catch unreachable;
                         if (r.debug_logs) |*debug| {
                             debug.addNoteFmt("Found file: \"{s}\"", .{out_buf}) catch unreachable;
                         }
@@ -1281,7 +1281,7 @@ pub const Resolver = struct {
                     // This doesn't really make sense to me.
                     if (remap.len == 0) {
                         const paths = [_]string{ path, field_rel_path };
-                        const new_path = r.fs.joinAlloc(r.allocator, &paths) catch unreachable;
+                        const new_path = r.fs.absAlloc(r.allocator, &paths) catch unreachable;
                         var _path = Path.init(new_path);
                         _path.is_disabled = true;
                         return MatchResult{
@@ -1292,7 +1292,7 @@ pub const Resolver = struct {
                     }
 
                     const new_paths = [_]string{ path, remap };
-                    const remapped_abs = r.fs.joinAlloc(r.allocator, &new_paths) catch unreachable;
+                    const remapped_abs = r.fs.absAlloc(r.allocator, &new_paths) catch unreachable;
 
                     // Is this a file
                     if (r.loadAsFile(remapped_abs, extension_order)) |file_result| {
@@ -1646,7 +1646,7 @@ pub const Resolver = struct {
                     if (entry.kind(rfs) == .file) {
                         const parts = [_]string{ path, "tsconfig.json" };
 
-                        tsconfig_path = r.fs.joinBuf(&parts, &dir_info_uncached_filename_buf);
+                        tsconfig_path = r.fs.absBuf(&parts, &dir_info_uncached_filename_buf);
                     }
                 }
                 if (tsconfig_path == null) {
@@ -1654,7 +1654,7 @@ pub const Resolver = struct {
                         const entry = lookup.entry;
                         if (entry.kind(rfs) == .file) {
                             const parts = [_]string{ path, "jsconfig.json" };
-                            tsconfig_path = r.fs.joinBuf(&parts, &dir_info_uncached_filename_buf);
+                            tsconfig_path = r.fs.absBuf(&parts, &dir_info_uncached_filename_buf);
                         }
                     }
                 }

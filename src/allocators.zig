@@ -105,7 +105,7 @@ pub fn hash_eqlFn(a: HashKeyType, b: HashKeyType) bool {
     return a == b;
 }
 
-pub const ItemStatus = packed enum(u3) {
+pub const ItemStatus = enum(u3) {
     unknown,
     exists,
     not_found,
@@ -589,6 +589,6 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, store_keys: boo
     };
 }
 
-fn constStrToU8(s: []const u8) []u8 {
+pub fn constStrToU8(s: []const u8) []u8 {
     return @intToPtr([*]u8, @ptrToInt(s.ptr))[0..s.len];
 }

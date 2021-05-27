@@ -322,18 +322,41 @@ pub const Cli = struct {
 
         if (args.write) |write| {
             if (write) {
+                var open_file_limit: usize = 32;
+
+                if (std.os.getrlimit(.NOFILE)) |limit| {
+                    open_file_limit = limit.cur;
+                } else |err| {}
+                const do_we_need_to_close = open_file_limit > result.output_files.len * 2;
                 did_write = true;
-                var root_dir = try std.fs.openDirAbsolute(args.absolute_working_dir.?, std.fs.Dir.OpenDirOptions{});
+                var root_dir = try std.fs.openDirAbsolute(result.outbase, std.fs.Dir.OpenDirOptions{});
                 defer root_dir.close();
                 for (result.output_files) |f| {
-                    try root_dir.makePath(std.fs.path.dirname(f.path) orelse unreachable);
+                    var fp = f.path;
+                    if (fp[0] == std.fs.path.sep) {
+                        fp = fp[1..];
+                    }
 
-                    var _handle = try std.fs.createFileAbsolute(f.path, std.fs.File.CreateFlags{
+                    var _handle = root_dir.createFile(fp, std.fs.File.CreateFlags{
                         .truncate = true,
-                    });
+                    }) catch |err| brk: {
+                        // Only bother to create the directory if there's an error because that's probably why it errored
+                        if (std.fs.path.dirname(fp)) |dirname| {
+                            root_dir.makePath(dirname) catch {};
+                        }
+
+                        // Then, retry!
+                        break :brk (root_dir.createFile(fp, std.fs.File.CreateFlags{
+                            .truncate = true,
+                        }) catch |err2| return err2);
+                    };
                     try _handle.seekTo(0);
 
-                    defer _handle.close();
+                    defer {
+                        if (do_we_need_to_close) {
+                            _handle.close();
+                        }
+                    }
 
                     try _handle.writeAll(f.contents);
                 }

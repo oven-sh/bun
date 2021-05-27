@@ -192,6 +192,10 @@ pub const Range = packed struct {
     len: i32 = 0,
     pub const None = Range{ .loc = Loc.Empty, .len = 0 };
 
+    pub fn isEmpty(r: *const Range) bool {
+        return r.len == 0 and r.loc.start == Loc.Empty.start;
+    }
+
     pub fn end(self: *const Range) Loc {
         return Loc{ .start = self.loc.start + self.len };
     }

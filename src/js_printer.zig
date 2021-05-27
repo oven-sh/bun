@@ -199,15 +199,16 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.js.appendChar(str) catch unreachable;
                 },
                 string => {
-                    if (isDebug or isTest) {
-                        if (str[0] == 0 or (str[0] == '\\' and str[1] == '0')) {
+                    if (FeatureFlags.disable_printing_null) {
+                        if (str.len > 0 and str[0] == 0 or (str[0] == '\\' and str[1] == '0')) {
                             Global.panic("Attempted to print null char", .{});
                         }
                     }
+
                     p.js.append(str) catch unreachable;
                 },
                 u8 => {
-                    if (isDebug or isTest) {
+                    if (FeatureFlags.disable_printing_null) {
                         if (str == 0) {
                             Global.panic("Attempted to print null char", .{});
                         }
@@ -215,7 +216,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.js.appendChar(str) catch unreachable;
                 },
                 u16 => {
-                    if (isDebug or isTest) {
+                    if (FeatureFlags.disable_printing_null) {
                         if (str == 0) {
                             Global.panic("Attempted to print null char", .{});
                         }
@@ -223,7 +224,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.js.appendChar(@intCast(u8, str)) catch unreachable;
                 },
                 u21 => {
-                    if (isDebug or isTest) {
+                    if (FeatureFlags.disable_printing_null) {
                         if (str == 0) {
                             Global.panic("Attempted to print null char", .{});
                         }
@@ -231,7 +232,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.js.appendChar(@intCast(u8, str)) catch unreachable;
                 },
                 else => {
-                    if (isDebug or isTest) {
+                    if (FeatureFlags.disable_printing_null) {
                         if (str[0] == 0 or (str[0] == '\\' and str[1] == '0')) {
                             Global.panic("Attempted to print null char", .{});
                         }
@@ -242,7 +243,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
         }
 
         pub fn unsafePrint(p: *Printer, str: string) void {
-            if (isDebug or isTest) {
+            if (FeatureFlags.disable_printing_null) {
                 if (str[0] == 0 or (str[0] == '\\' and str[1] == '0')) {
                     Global.panic("Attempted to print null char", .{});
                 }
@@ -571,7 +572,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     },
                     // "\\"
                     92 => {
-                        e.print("\\");
+                        e.print("\\\\");
                     },
                     '\'' => {
                         if (quote == '\'') {
@@ -591,7 +592,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                             e.print("\\");
                         }
 
-                        e.print('`');
+                        e.print("`");
                     },
                     '$' => {
                         if (quote == '`' and i < n and text[i] == '{') {
@@ -682,6 +683,8 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
         pub fn isUnboundEvalIdentifier(p: *Printer, value: Expr) bool {
             switch (value.data) {
                 .e_identifier => |ident| {
+                    if (ident.ref.is_source_contents_slice) return false;
+
                     const symbol = p.symbols.get(p.symbols.follow(ident.ref)) orelse return false;
                     return symbol.kind == .unbound and strings.eqlComptime(symbol.original_name, "eval");
                 },
@@ -1316,20 +1319,24 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     }
 
                     p.print("`");
-                    if (e.tag != null) {
-                        p.print(e.head_raw);
-                    } else {
-                        p.printQuotedUTF16(e.head, '`');
+                    if (e.head.isPresent()) {
+                        if (e.tag != null) {
+                            p.print(e.head.utf8);
+                        } else {
+                            p.printString(e.head, '`');
+                        }
                     }
 
                     for (e.parts) |part| {
                         p.print("${");
                         p.printExpr(part.value, .lowest, ExprFlag.None());
                         p.print("}");
-                        if (e.tag != null) {
-                            p.print(part.tail_raw);
-                        } else {
-                            p.printQuotedUTF16(part.tail, '`');
+                        if (part.tail.isPresent()) {
+                            if (e.tag != null) {
+                                p.print(part.tail.utf8);
+                            } else {
+                                p.printString(part.tail, '`');
+                            }
                         }
                     }
                     p.print("`");
@@ -2623,7 +2630,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.printSemicolonAfterStatement();
                 },
                 else => {
-                    Global.panic("Unexpected statement of type {s}", .{@TypeOf(stmt)});
+                    Global.panic("Unexpected {s}", .{stmt.data});
                 },
             }
         }

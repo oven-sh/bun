@@ -3274,7 +3274,7 @@ pub const P = struct {
                 try p.lexer.expect(.t_close_brace);
             },
             else => {
-                try p.lexer.unexpected();
+                // try p.lexer.unexpected();
                 return error.Backtrack;
             },
         }
@@ -6489,7 +6489,7 @@ pub const P = struct {
     }
 
     pub const Backtracking = struct {
-        pub fn lexerBacktracker(p: *P, func: anytype) bool {
+        pub inline fn lexerBacktracker(p: *P, func: anytype) bool {
             var old_lexer = std.mem.toBytes(p.lexer);
             const old_log_disabled = p.lexer.is_log_disabled;
             p.lexer.is_log_disabled = true;

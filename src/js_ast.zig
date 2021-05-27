@@ -42,7 +42,7 @@ pub const ExprNodeList = []Expr;
 pub const StmtNodeList = []Stmt;
 pub const BindingNodeList = []Binding;
 
-pub const ImportItemStatus = enum {
+pub const ImportItemStatus = enum(u2) {
     none,
 
     // The linker doesn't report import/export mismatch errors
@@ -52,7 +52,7 @@ pub const ImportItemStatus = enum {
     missing,
 };
 
-pub const AssignTarget = enum {
+pub const AssignTarget = enum(u2) {
     none,
     replace, // "a = b"
     update, // "a += b"
@@ -65,8 +65,6 @@ pub const Flags = struct {
         is_key_before_rest: bool = false,
     };
 
-    // Instead of 5 bytes for booleans, we can store it in 5 bits
-    // It will still round up to 1 byte. But that's 4 bytes less!
     pub const Property = packed struct {
         is_computed: bool = false,
         is_method: bool = false,
@@ -177,7 +175,7 @@ pub const Binding = struct {
         }
     }
 
-    pub const Tag = packed enum {
+    pub const Tag = enum(u5) {
         b_identifier,
         b_array,
         b_property,
@@ -340,7 +338,7 @@ pub const G = struct {
         kind: Kind = Kind.normal,
         flags: Flags.Property = Flags.Property.None,
 
-        pub const Kind = packed enum {
+        pub const Kind = enum(u2) {
             normal,
             get,
             set,
@@ -678,7 +676,7 @@ pub const E = struct {
         op: Op.Code,
     };
 
-    pub const Boolean = struct { value: bool };
+    pub const Boolean = packed struct { value: bool };
     pub const Super = struct {};
     pub const Null = struct {};
     pub const This = struct {};
@@ -1024,7 +1022,7 @@ pub const E = struct {
         no: ExprNodeIndex,
     };
 
-    pub const Require = struct {
+    pub const Require = packed struct {
         import_record_index: u32 = 0,
     };
 
@@ -1305,7 +1303,7 @@ pub const Stmt = struct {
         }
     }
 
-    pub const Tag = packed enum {
+    pub const Tag = enum(u6) {
         s_block,
         s_break,
         s_class,
@@ -1927,7 +1925,7 @@ pub const Expr = struct {
         }
     }
 
-    pub const Tag = packed enum {
+    pub const Tag = enum(u6) {
         e_array,
         e_unary,
         e_binary,
@@ -1963,7 +1961,6 @@ pub const Expr = struct {
         e_import,
         e_this,
         e_class,
-
         e_require,
 
         pub fn isArray(self: Tag) bool {
@@ -2676,7 +2673,7 @@ pub const S = struct {
         // statements where the import is never used.
         was_ts_import_equals: bool = false,
 
-        pub const Kind = enum {
+        pub const Kind = enum(u2) {
             k_var,
             k_let,
             k_const,

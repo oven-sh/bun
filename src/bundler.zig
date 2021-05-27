@@ -191,7 +191,6 @@ pub const Bundler = struct {
         const loader = bundler.options.loaders.get(resolve_result.path_pair.primary.name.ext) orelse .file;
         var file_path = resolve_result.path_pair.primary;
         file_path.pretty = relative_paths_list.append(bundler.fs.relativeTo(file_path.text)) catch unreachable;
-
         var result = bundler.parse(file_path, loader) orelse return null;
 
         switch (result.loader) {
@@ -206,20 +205,32 @@ pub const Bundler = struct {
                         switch (err) {
                             error.ModuleNotFound => {
                                 if (Resolver.Resolver.isPackagePath(import_record.path.text)) {
-                                    try bundler.log.addRangeErrorFmt(
-                                        &result.source,
-                                        import_record.range,
-                                        bundler.allocator,
-                                        "Could not resolve: \"{s}\". Maybe you need to run \"npm install\" (or yarn/pnpm)?",
-                                        .{import_record.path.text},
-                                    );
+                                    if (bundler.options.platform != .node and options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
+                                        try bundler.log.addRangeErrorFmt(
+                                            &result.source,
+                                            import_record.range,
+                                            bundler.allocator,
+                                            "Could not resolve: \"{s}\". Try setting --platform=\"node\"",
+                                            .{import_record.path.text},
+                                        );
+                                    } else {
+                                        try bundler.log.addRangeErrorFmt(
+                                            &result.source,
+                                            import_record.range,
+                                            bundler.allocator,
+                                            "Could not resolve: \"{s}\". Maybe you need to \"npm install\" (or yarn/pnpm)?",
+                                            .{import_record.path.text},
+                                        );
+                                    }
                                 } else {
                                     try bundler.log.addRangeErrorFmt(
                                         &result.source,
                                         import_record.range,
                                         bundler.allocator,
-                                        "Could not resolve: \"{s}\" relative to \"{s}\"",
-                                        .{ import_record.path.text, bundler.fs.relativeTo(result.source.key_path.text) },
+                                        "Could not resolve: \"{s}\"",
+                                        .{
+                                            import_record.path.text,
+                                        },
                                     );
                                 }
                             },

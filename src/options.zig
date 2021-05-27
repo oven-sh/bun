@@ -43,12 +43,26 @@ pub const ExternalModules = struct {
         suffix: string,
     };
 
-    pub fn init(allocator: *std.mem.Allocator, fs: *Fs.FileSystem.Implementation, cwd: string, externals: []const string, log: *logger.Log) ExternalModules {
+    pub fn init(
+        allocator: *std.mem.Allocator,
+        fs: *Fs.FileSystem.Implementation,
+        cwd: string,
+        externals: []const string,
+        log: *logger.Log,
+        platform: Platform,
+    ) ExternalModules {
         var result = ExternalModules{
             .node_modules = std.BufSet.init(allocator),
             .abs_paths = std.BufSet.init(allocator),
             .patterns = &([_]WildcardPattern{}),
         };
+
+        if (platform == .node) {
+            // TODO: fix this stupid copy
+            for (NodeBuiltinPatterns) |pattern| {
+                result.node_modules.put(pattern) catch unreachable;
+            }
+        }
 
         if (externals.len == 0) {
             return result;
@@ -83,6 +97,65 @@ pub const ExternalModules = struct {
 
         return result;
     }
+
+    pub const NodeBuiltinPatterns = [_]string{
+        "_http_agent",
+        "_http_client",
+        "_http_common",
+        "_http_incoming",
+        "_http_outgoing",
+        "_http_server",
+        "_stream_duplex",
+        "_stream_passthrough",
+        "_stream_readable",
+        "_stream_transform",
+        "_stream_wrap",
+        "_stream_writable",
+        "_tls_common",
+        "_tls_wrap",
+        "assert",
+        "async_hooks",
+        "buffer",
+        "child_process",
+        "cluster",
+        "console",
+        "constants",
+        "crypto",
+        "dgram",
+        "diagnostics_channel",
+        "dns",
+        "domain",
+        "events",
+        "fs",
+        "http",
+        "http2",
+        "https",
+        "inspector",
+        "module",
+        "net",
+        "os",
+        "path",
+        "perf_hooks",
+        "process",
+        "punycode",
+        "querystring",
+        "readline",
+        "repl",
+        "stream",
+        "string_decoder",
+        "sys",
+        "timers",
+        "tls",
+        "trace_events",
+        "tty",
+        "url",
+        "util",
+        "v8",
+        "vm",
+        "wasi",
+        "worker_threads",
+        "zlib",
+    };
 };
 
 pub const ModuleType = enum {
@@ -100,6 +173,47 @@ pub const Platform = enum {
     node,
     browser,
     neutral,
+
+    pub const Extensions = struct {
+        pub const In = struct {
+            pub const JavaScript = [_]string{ ".js", ".ts", ".tsx", ".jsx", ".json" };
+        };
+        pub const Out = struct {
+            pub const JavaScript = [_]string{
+                ".js",
+                ".mjs",
+            };
+        };
+    };
+
+    pub fn outExtensions(platform: Platform, allocator: *std.mem.Allocator) std.StringHashMap(string) {
+        var exts = std.StringHashMap(string).init(allocator);
+
+        const js = Extensions.Out.JavaScript[0];
+        const mjs = Extensions.Out.JavaScript[1];
+
+        if (platform == .node) {
+            for (Extensions.In.JavaScript) |ext| {
+                exts.put(ext, mjs) catch unreachable;
+            }
+        } else {
+            exts.put(mjs, js) catch unreachable;
+        }
+
+        for (Extensions.In.JavaScript) |ext| {
+            exts.put(ext, js) catch unreachable;
+        }
+
+        return exts;
+    }
+
+    pub fn from(plat: ?api.Api.Platform) Platform {
+        return switch (plat orelse api.Api.Platform._none) {
+            .node => .node,
+            .browser => .browser,
+            else => .browser,
+        };
+    }
 
     const MAIN_FIELD_NAMES = [_]string{ "browser", "module", "main" };
     pub const DefaultMainFields: std.EnumArray(Platform, []const string) = {
@@ -298,11 +412,16 @@ pub const BundleOptions = struct {
     external: ExternalModules = ExternalModules{},
     entry_points: []const string,
     extension_order: []const string = &Defaults.ExtensionOrder,
+    out_extensions: std.StringHashMap(string),
     import_path_format: ImportPathFormat = ImportPathFormat.relative,
 
     pub const ImportPathFormat = enum {
         relative,
+        // omit file extension for Node.js packages
+        relative_nodejs,
         absolute_url,
+        // omit file extension
+        absolute_path,
     };
 
     pub const Defaults = struct {
@@ -354,9 +473,11 @@ pub const BundleOptions = struct {
             ),
             .loaders = loaders,
             .output_dir = try fs.joinAlloc(allocator, &output_dir_parts),
+            .platform = Platform.from(transform.platform),
             .write = transform.write orelse false,
-            .external = ExternalModules.init(allocator, &fs.fs, fs.top_level_dir, transform.external, log),
+            .external = undefined,
             .entry_points = transform.entry_points,
+            .out_extensions = undefined,
         };
 
         if (transform.public_url) |public_url| {
@@ -377,14 +498,21 @@ pub const BundleOptions = struct {
             opts.main_fields = Platform.DefaultMainFields.get(opts.platform);
         }
 
+        if (opts.platform == .node) {
+            opts.import_path_format = .relative_nodejs;
+        }
+
         if (transform.main_fields.len > 0) {
             opts.main_fields = transform.main_fields;
         }
 
+        opts.external = ExternalModules.init(allocator, &fs.fs, fs.top_level_dir, transform.external, log, opts.platform);
+        opts.out_extensions = opts.platform.outExtensions(allocator);
+
         if (transform.serve orelse false) {
             opts.resolve_mode = .lazy;
             var _dirs = [_]string{transform.public_dir orelse opts.public_dir};
-            opts.public_dir = try fs.joinAlloc(allocator, &_dirs);
+            opts.public_dir = try fs.absAlloc(allocator, &_dirs);
             opts.public_dir_handle = std.fs.openDirAbsolute(opts.public_dir, .{ .iterate = true }) catch |err| brk: {
                 var did_warn = false;
                 switch (err) {
@@ -501,7 +629,9 @@ pub const TransformResult = struct {
     errors: []logger.Msg = &([_]logger.Msg{}),
     warnings: []logger.Msg = &([_]logger.Msg{}),
     output_files: []OutputFile = &([_]OutputFile{}),
+    outbase: string,
     pub fn init(
+        outbase: string,
         output_files: []OutputFile,
         log: *logger.Log,
         allocator: *std.mem.Allocator,
@@ -521,6 +651,7 @@ pub const TransformResult = struct {
         }
 
         return TransformResult{
+            .outbase = outbase,
             .output_files = output_files,
             .errors = errors.toOwnedSlice(),
             .warnings = warnings.toOwnedSlice(),

@@ -143,6 +143,7 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
                     var is_single_line = !p.lexer.has_newline_before;
                     var properties = std.ArrayList(G.Property).init(p.allocator);
                     var duplicates = std.BufSet.init(p.allocator);
+                    defer duplicates.deinit();
 
                     while (p.lexer.token != .t_close_brace) {
                         if (properties.items.len > 0) {
@@ -197,7 +198,7 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
                 },
                 else => {
                     try p.lexer.unexpected();
-                    return p.e(E.Missing{}, loc);
+                    return error.ParserError;
                 },
             }
         }

@@ -313,6 +313,8 @@ pub const Resolver = struct {
     }
     var tracing_start: i128 = if (enableTracing) 0 else undefined;
 
+    threadlocal var relative_abs_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+
     pub fn resolve(r: *Resolver, source_dir: string, import_path: string, kind: ast.ImportKind) !Result {
         if (enableTracing) {
             tracing_start = std.time.nanoTimestamp();
@@ -464,7 +466,7 @@ pub const Resolver = struct {
 
         if (check_relative) {
             const parts = [_]string{ source_dir, import_path };
-            const abs_path = r.fs.join(&parts);
+            const abs_path = r.fs.joinBuf(&parts, &relative_abs_path_buf);
 
             if (r.opts.external.abs_paths.count() > 0 and r.opts.external.abs_paths.exists(abs_path)) {
                 // If the string literal in the source text is an absolute path and has
@@ -629,6 +631,9 @@ pub const Resolver = struct {
         res.is_node_module = true;
         return res;
     }
+
+    threadlocal var load_as_file_or_directory_via_tsconfig_base_path: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+
     pub fn _loadNodeModules(r: *Resolver, import_path: string, kind: ast.ImportKind, _dir_info: *DirInfo) ?MatchResult {
         var dir_info = _dir_info;
         if (r.debug_logs) |*debug| {
@@ -653,9 +658,10 @@ pub const Resolver = struct {
             }
 
             // Try looking up the path relative to the base URL
-            if (tsconfig.base_url) |base| {
+            if (tsconfig.hasBaseURL()) {
+                const base = tsconfig.base_url;
                 const paths = [_]string{ base, import_path };
-                const abs = r.fs.join(paths);
+                const abs = r.fs.joinBuf(&paths, &load_as_file_or_directory_via_tsconfig_base_path);
 
                 if (r.loadAsFileOrDirectory(abs, kind)) |res| {
                     return res;
@@ -692,12 +698,13 @@ pub const Resolver = struct {
         return null;
     }
 
+    threadlocal var resolve_without_remapping_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
     pub fn resolveWithoutRemapping(r: *Resolver, source_dir_info: *DirInfo, import_path: string, kind: ast.ImportKind) ?MatchResult {
         if (isPackagePath(import_path)) {
             return r.loadNodeModules(import_path, kind, source_dir_info);
         } else {
             const paths = [_]string{ source_dir_info.abs_path, import_path };
-            var resolved = r.fs.join(&paths);
+            var resolved = r.fs.joinBuf(&paths, &resolve_without_remapping_buf);
             return r.loadAsFileOrDirectory(resolved, kind);
         }
     }
@@ -735,6 +742,7 @@ pub const Resolver = struct {
         }
     };
 
+    threadlocal var tsconfig_base_url_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
     pub fn parseTSConfig(r: *Resolver, file: string, visited: *StringBoolMap) !?*TSConfigJSON {
         if (visited.contains(file)) {
             return error.ParseErrorImportCycle;
@@ -748,18 +756,18 @@ pub const Resolver = struct {
 
         var result = (try TSConfigJSON.parse(r.allocator, r.log, source, &r.caches.json)) orelse return null;
 
-        if (result.base_url) |base| {
+        if (result.hasBaseURL()) {
             // this might leak
-            if (!std.fs.path.isAbsolute(base)) {
-                const paths = [_]string{ file_dir, base };
-                result.base_url = r.fs.joinAlloc(r.allocator, &paths) catch unreachable;
+            if (!std.fs.path.isAbsolute(result.base_url)) {
+                const paths = [_]string{ file_dir, result.base_url };
+                result.base_url = r.fs.filename_store.append(r.fs.joinBuf(&paths, &tsconfig_base_url_buf)) catch unreachable;
             }
         }
 
         if (result.paths.count() > 0 and (result.base_url_for_paths.len == 0 or !std.fs.path.isAbsolute(result.base_url_for_paths))) {
             // this might leak
-            const paths = [_]string{ file_dir, result.base_url.? };
-            result.base_url_for_paths = r.fs.joinAlloc(r.allocator, &paths) catch unreachable;
+            const paths = [_]string{ file_dir, result.base_url };
+            result.base_url_for_paths = r.fs.filename_store.append(r.fs.joinBuf(&paths, &tsconfig_base_url_buf)) catch unreachable;
         }
 
         return result;
@@ -1006,8 +1014,8 @@ pub const Resolver = struct {
         // The explicit base URL should take precedence over the implicit base URL
         // if present. This matters when a tsconfig.json file overrides "baseUrl"
         // from another extended tsconfig.json file but doesn't override "paths".
-        if (tsconfig.base_url) |base| {
-            abs_base_url = base;
+        if (tsconfig.hasBaseURL()) {
+            abs_base_url = tsconfig.base_url;
         }
 
         if (r.debug_logs) |*debug| {
@@ -1460,7 +1468,8 @@ pub const Resolver = struct {
                     debug.addNoteFmt("Found file \"{s}\" ", .{base}) catch {};
                 }
                 const abs_path_parts = [_]string{ query.entry.dir, query.entry.base };
-                const abs_path = r.fs.joinAlloc(r.allocator, &abs_path_parts) catch unreachable;
+                const abs_path = r.fs.filename_store.append(r.fs.joinBuf(&abs_path_parts, &TemporaryBuffer.ExtensionPathBuf)) catch unreachable;
+
                 return LoadResult{ .path = abs_path, .diff_case = query.diff_case };
             }
         }
@@ -1485,7 +1494,7 @@ pub const Resolver = struct {
 
                     // now that we've found it, we allocate it.
                     return LoadResult{
-                        .path = rfs.allocator.dupe(u8, buffer) catch unreachable,
+                        .path = r.fs.filename_store.append(buffer) catch unreachable,
                         .diff_case = query.diff_case,
                     };
                 }
@@ -1526,7 +1535,7 @@ pub const Resolver = struct {
                             }
 
                             return LoadResult{
-                                .path = rfs.allocator.dupe(u8, buffer) catch unreachable,
+                                .path = r.fs.filename_store.append(buffer) catch unreachable,
                                 .diff_case = query.diff_case,
                             };
                         }
@@ -1544,6 +1553,7 @@ pub const Resolver = struct {
         return null;
     }
 
+    threadlocal var dir_info_uncached_filename_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
     fn dirInfoUncached(
         r: *Resolver,
         path: string,
@@ -1595,7 +1605,8 @@ pub const Resolver = struct {
                         } else if (parent.?.abs_real_path.len > 0) {
                             // this might leak a little i'm not sure
                             const parts = [_]string{ parent.?.abs_real_path, base };
-                            symlink = r.fs.joinAlloc(r.allocator, &parts) catch unreachable;
+                            symlink = r.fs.filename_store.append(r.fs.joinBuf(&parts, &dir_info_uncached_filename_buf)) catch unreachable;
+
                             if (r.debug_logs) |*logs| {
                                 try logs.addNote(std.fmt.allocPrint(r.allocator, "Resolved symlink \"{s}\" to \"{s}\"", .{ path, symlink }) catch unreachable);
                             }
@@ -1634,7 +1645,8 @@ pub const Resolver = struct {
                     const entry = lookup.entry;
                     if (entry.kind(rfs) == .file) {
                         const parts = [_]string{ path, "tsconfig.json" };
-                        tsconfig_path = try r.fs.joinAlloc(r.allocator, &parts);
+
+                        tsconfig_path = r.fs.joinBuf(&parts, &dir_info_uncached_filename_buf);
                     }
                 }
                 if (tsconfig_path == null) {
@@ -1642,7 +1654,7 @@ pub const Resolver = struct {
                         const entry = lookup.entry;
                         if (entry.kind(rfs) == .file) {
                             const parts = [_]string{ path, "jsconfig.json" };
-                            tsconfig_path = try r.fs.joinAlloc(r.allocator, &parts);
+                            tsconfig_path = r.fs.joinBuf(&parts, &dir_info_uncached_filename_buf);
                         }
                     }
                 }

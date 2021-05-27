@@ -6690,7 +6690,7 @@ pub const P = struct {
         }
     }
 
-    pub fn parseYieldExpr(p: *P, loc: logger.Loc) Expr {
+    pub fn parseYieldExpr(p: *P, loc: logger.Loc) !ExprNodeIndex {
         // Parse a yield-from expression, which yields from an iterator
         const isStar = p.lexer.token == T.t_asterisk;
 
@@ -8211,21 +8211,15 @@ pub const P = struct {
                                 if (AsyncPrefixExpression.find(raw) != .is_yield) {
                                     p.log.addRangeError(p.source, name_range, "The keyword \"yield\" cannot be escaped") catch unreachable;
                                 } else {
-                                    if (level.gte(.assign)) {
+                                    if (level.gt(.assign)) {
                                         p.log.addRangeError(p.source, name_range, "Cannot use a \"yield\" here without parentheses") catch unreachable;
                                     }
-                                    const value = try p.parseExpr(.prefix);
 
                                     if (p.fn_or_arrow_data_parse.track_arrow_arg_errors) {
                                         p.fn_or_arrow_data_parse.arrow_arg_errors.invalid_expr_yield = name_range;
                                     }
 
-                                    if (p.lexer.token == T.t_asterisk_asterisk) {
-                                        try p.lexer.unexpected();
-                                        return error.SyntaxError;
-                                    }
-
-                                    return p.e(E.Yield{ .value = value }, loc);
+                                    return p.parseYieldExpr(loc);
                                 }
                             },
                             // .allow_ident => {

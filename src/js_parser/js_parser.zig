@@ -479,11 +479,11 @@ pub const ImportScanner = struct {
     }
 };
 
-pub const SideEffects = enum {
+pub const SideEffects = enum(u2) {
     could_have_side_effects,
     no_side_effects,
 
-    pub const Result = struct {
+    pub const Result = packed struct {
         side_effects: SideEffects,
         ok: bool = false,
         value: bool = false,
@@ -669,7 +669,7 @@ pub const SideEffects = enum {
         }
     }
 
-    pub const Equality = struct { equal: bool = false, ok: bool = false };
+    pub const Equality = packed struct { equal: bool = false, ok: bool = false };
 
     // Returns "equal, ok". If "ok" is false, then nothing is known about the two
     // values. If "ok" is true, the equality or inequality of the two values is
@@ -1013,7 +1013,7 @@ const FunctionKind = enum { stmt, expr };
 
 const EightLetterMatcher = strings.ExactSizeMatcher(8);
 
-const AsyncPrefixExpression = enum {
+const AsyncPrefixExpression = enum(u4) {
     none,
     is_yield,
     is_async,
@@ -1042,7 +1042,7 @@ const AsyncPrefixExpression = enum {
     }
 };
 
-const IdentifierOpts = struct {
+const IdentifierOpts = packed struct {
     assign_target: js_ast.AssignTarget = js_ast.AssignTarget.none,
     is_delete_target: bool = false,
     was_originally_identifier: bool = false,
@@ -1080,7 +1080,7 @@ fn statementCaresAboutScope(stmt: Stmt) bool {
     }
 }
 
-const ExprIn = struct {
+const ExprIn = packed struct {
     // This tells us if there are optional chain expressions (EDot, EIndex, or
     // ECall) that are chained on to this expression. Because of the way the AST
     // works, chaining expressions on to this expression means they are our
@@ -1236,19 +1236,14 @@ const ScopeOrder = struct {
     loc: logger.Loc,
     scope: *js_ast.Scope,
 };
-const EnumValueType = enum {
-    unknown,
-    string,
-    numeric,
-};
 
-const ParenExprOpts = struct {
+const ParenExprOpts = packed struct {
     async_range: logger.Range = logger.Range.None,
     is_async: bool = false,
     force_arrow_fn: bool = false,
 };
 
-const AwaitOrYield = enum {
+const AwaitOrYield = enum(u3) {
     allow_ident,
     allow_expr,
     forbid_all,
@@ -1257,15 +1252,18 @@ const AwaitOrYield = enum {
 // This is function-specific information used during parsing. It is saved and
 // restored on the call stack around code that parses nested functions and
 // arrow expressions.
-const FnOrArrowDataParse = struct {
-    async_range: ?logger.Range = null,
+const FnOrArrowDataParse = packed struct {
+    async_range: logger.Range = logger.Range.None,
     allow_await: AwaitOrYield = AwaitOrYield.allow_ident,
     allow_yield: AwaitOrYield = AwaitOrYield.allow_ident,
     allow_super_call: bool = false,
     is_top_level: bool = false,
     is_constructor: bool = false,
     is_typescript_declare: bool = false,
-    arrow_arg_errors: ?DeferredArrowArgErrors = null,
+
+    has_async_range: bool = false,
+    arrow_arg_errors: DeferredArrowArgErrors = DeferredArrowArgErrors{},
+    track_arrow_arg_errors: bool = false,
 
     // In TypeScript, forward declarations of functions have no bodies
     allow_missing_body_for_type_script: bool = false,
@@ -1281,8 +1279,8 @@ const FnOrArrowDataParse = struct {
 // This is function-specific information used during visiting. It is saved and
 // restored on the call stack around code that parses nested functions and
 // arrow expressions.
-const FnOrArrowDataVisit = struct {
-    super_index_ref: ?*js_ast.Ref = null,
+const FnOrArrowDataVisit = packed struct {
+    // super_index_ref: ?*js_ast.Ref = null,
 
     is_arrow: bool = false,
     is_async: bool = false,
@@ -2788,7 +2786,8 @@ pub const P = struct {
 
         var scopeIndex = try p.pushScopeForParsePass(js_ast.Scope.Kind.function_args, p.lexer.loc());
         var func = try p.parseFn(name, FnOrArrowDataParse{
-            .async_range = asyncRange,
+            .async_range = asyncRange orelse logger.Range.None,
+            .has_async_range = asyncRange != null,
             .allow_await = if (is_async) AwaitOrYield.allow_expr else AwaitOrYield.allow_ident,
             .allow_yield = if (is_generator) AwaitOrYield.allow_expr else AwaitOrYield.allow_ident,
             .is_typescript_declare = opts.is_typescript_declare,
@@ -2880,10 +2879,10 @@ pub const P = struct {
         try p.lexer.expect(T.t_open_paren);
 
         // Await and yield are not allowed in function arguments
-        var old_fn_or_arrow_data = opts;
+        var old_fn_or_arrow_data = std.mem.toBytes(p.fn_or_arrow_data_parse);
+
         p.fn_or_arrow_data_parse.allow_await = if (opts.allow_await == .allow_expr) AwaitOrYield.forbid_all else AwaitOrYield.allow_ident;
         p.fn_or_arrow_data_parse.allow_yield = if (opts.allow_yield == .allow_expr) AwaitOrYield.forbid_all else AwaitOrYield.allow_ident;
-
         // If "super()" is allowed in the body, it's allowed in the arguments
         p.fn_or_arrow_data_parse.allow_super_call = opts.allow_super_call;
         var args = List(G.Arg).init(p.allocator);
@@ -3012,7 +3011,7 @@ pub const P = struct {
         }
 
         try p.lexer.expect(.t_close_paren);
-        p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
+        p.fn_or_arrow_data_parse = std.mem.bytesToValue(@TypeOf(p.fn_or_arrow_data_parse), &old_fn_or_arrow_data);
 
         // "function foo(): any {}"
         if (p.options.ts and p.lexer.token == .t_colon) {
@@ -3254,7 +3253,7 @@ pub const P = struct {
                                 try p.lexer.next();
                             } else {
                                 try p.lexer.unexpected();
-                                return error.SyntaxError;
+                                return error.Backtrack;
                             }
                         },
                     }
@@ -3275,7 +3274,7 @@ pub const P = struct {
             },
             else => {
                 try p.lexer.unexpected();
-                return error.SyntaxError;
+                return error.Backtrack;
             },
         }
     }
@@ -3532,7 +3531,7 @@ pub const P = struct {
 
                 else => {
                     try p.lexer.unexpected();
-                    return error.SyntaxError;
+                    return error.Backtrack;
                 },
             }
             break;
@@ -4872,6 +4871,7 @@ pub const P = struct {
                     try p.lexer.next();
                     if (p.lexer.token == .t_function and !p.lexer.has_newline_before) {
                         try p.lexer.next();
+
                         return try p.parseFnStmt(async_range.loc, opts, async_range);
                     }
 
@@ -5706,6 +5706,11 @@ pub const P = struct {
                     try p.lexer.expect(.t_colon);
                     try p.skipTypeScriptType(.lowest);
                 }
+
+                // If we end with a .t_close_paren, that's a bug. It means we aren't following the last parenthese
+                if (isDebug) {
+                    std.debug.assert(p.lexer.token != .t_close_paren);
+                }
             }
 
             if (p.lexer.token == .t_equals) {
@@ -6484,9 +6489,11 @@ pub const P = struct {
 
     pub const Backtracking = struct {
         pub fn lexerBacktracker(p: *P, func: anytype) bool {
-            var old_lexer = p.lexer.clone();
+            var old_lexer = std.mem.toBytes(p.lexer);
+            const old_log_disabled = p.lexer.is_log_disabled;
             p.lexer.is_log_disabled = true;
-            defer p.lexer.is_log_disabled = old_lexer.is_log_disabled;
+
+            defer p.lexer.is_log_disabled = old_log_disabled;
             var backtrack = false;
             func(p) catch |err| {
                 switch (err) {
@@ -6498,7 +6505,7 @@ pub const P = struct {
             };
 
             if (backtrack) {
-                p.lexer = old_lexer;
+                p.lexer = std.mem.bytesToValue(@TypeOf(p.lexer), &old_lexer);
             }
 
             return !backtrack;
@@ -6514,7 +6521,9 @@ pub const P = struct {
 
         pub fn skipTypeScriptArrowArgsWithBacktracking(p: *P) anyerror!void {
             try p.skipTypescriptFnArgs();
-            try p.lexer.expect(.t_equals_greater_than);
+            p.lexer.expect(.t_equals_greater_than) catch |err| {
+                return error.Backtrack;
+            };
         }
 
         pub fn skipTypeScriptTypeArgumentsWithBacktracking(p: *P) anyerror!void {
@@ -6528,7 +6537,9 @@ pub const P = struct {
         }
 
         pub fn skipTypeScriptArrowReturnTypeWithBacktracking(p: *P) anyerror!void {
-            try p.lexer.expect(.t_colon);
+            p.lexer.expect(.t_colon) catch |err| {
+                return error.Backtrack;
+            };
             try p.skipTypescriptReturnType();
             // Check the token after this and backtrack if it's the wrong one
             if (p.lexer.token != .t_equals_greater_than) {
@@ -6985,6 +6996,7 @@ pub const P = struct {
 
             var func = try p.parseFn(null, FnOrArrowDataParse{
                 .async_range = opts.async_range,
+                .has_async_range = !opts.async_range.isEmpty(),
                 .allow_await = if (opts.is_async) AwaitOrYield.allow_expr else AwaitOrYield.allow_ident,
                 .allow_yield = if (opts.is_generator) AwaitOrYield.allow_expr else AwaitOrYield.allow_ident,
                 .allow_super_call = opts.class_has_extends and is_constructor,
@@ -8173,8 +8185,8 @@ pub const P = struct {
                                         p.top_level_await_keyword = name_range;
                                     }
 
-                                    if (p.fn_or_arrow_data_parse.arrow_arg_errors) |*args| {
-                                        args.invalid_expr_await = name_range;
+                                    if (p.fn_or_arrow_data_parse.track_arrow_arg_errors) {
+                                        p.fn_or_arrow_data_parse.arrow_arg_errors.invalid_expr_await = name_range;
                                     }
 
                                     const value = try p.parseExpr(.prefix);
@@ -8204,8 +8216,8 @@ pub const P = struct {
                                     }
                                     const value = try p.parseExpr(.prefix);
 
-                                    if (p.fn_or_arrow_data_parse.arrow_arg_errors) |*args| {
-                                        args.invalid_expr_yield = name_range;
+                                    if (p.fn_or_arrow_data_parse.track_arrow_arg_errors) {
+                                        p.fn_or_arrow_data_parse.arrow_arg_errors.invalid_expr_yield = name_range;
                                     }
 
                                     if (p.lexer.token == T.t_asterisk_asterisk) {
@@ -9260,8 +9272,8 @@ pub const P = struct {
 
     pub fn visitFunc(p: *P, _func: G.Fn, open_parens_loc: logger.Loc) G.Fn {
         var func = _func;
-        const old_fn_or_arrow_data = p.fn_or_arrow_data_visit;
-        const old_fn_only_data = p.fn_only_data_visit;
+        const old_fn_or_arrow_data = std.mem.toBytes(p.fn_or_arrow_data_visit);
+        const old_fn_only_data = std.mem.toBytes(p.fn_only_data_visit);
         p.fn_or_arrow_data_visit = FnOrArrowDataVisit{ .is_async = func.flags.is_async };
         p.fn_only_data_visit = FnOnlyDataVisit{ .is_this_nested = true, .arguments_ref = func.arguments_ref };
 
@@ -9296,8 +9308,8 @@ pub const P = struct {
         p.popScope();
         p.popScope();
 
-        p.fn_or_arrow_data_visit = old_fn_or_arrow_data;
-        p.fn_only_data_visit = old_fn_only_data;
+        p.fn_or_arrow_data_visit = std.mem.bytesToValue(@TypeOf(p.fn_or_arrow_data_visit), &old_fn_or_arrow_data);
+        p.fn_only_data_visit = std.mem.bytesToValue(@TypeOf(p.fn_only_data_visit), &old_fn_only_data);
         return func;
     }
 
@@ -12168,6 +12180,7 @@ pub const P = struct {
         // Forbid "await" and "yield", but only for arrow functions
         var old_fn_or_arrow_data = p.fn_or_arrow_data_parse;
         p.fn_or_arrow_data_parse.arrow_arg_errors = arrowArgErrors;
+        p.fn_or_arrow_data_parse.track_arrow_arg_errors = true;
 
         // Scan over the comma-separated arguments or expressions
         while (p.lexer.token != .t_close_paren) {
@@ -12616,7 +12629,7 @@ pub const P = struct {
 //   // This is an error
 //   function* foo() { (x = yield y) => {} }
 //
-const DeferredArrowArgErrors = struct {
+const DeferredArrowArgErrors = packed struct {
     invalid_expr_await: logger.Range = logger.Range.None,
     invalid_expr_yield: logger.Range = logger.Range.None,
 };

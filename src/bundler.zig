@@ -94,7 +94,7 @@ pub const Bundler = struct {
             .resolver = Resolver.Resolver.init1(allocator, log, fs, bundle_options),
             .log = log,
             // .thread_pool = pool,
-            .result = options.TransformResult{},
+            .result = options.TransformResult{ .outbase = bundle_options.output_dir },
             .resolve_results = try ResolveResults.init(allocator),
             .resolve_queue = std.fifo.LinearFifo(Resolver.Resolver.Result, std.fifo.LinearFifoBufferType.Dynamic).init(allocator),
             .output_files = std.ArrayList(options.OutputFile).init(allocator),
@@ -114,32 +114,42 @@ pub const Bundler = struct {
         }
         defer relative_path_allocator.reset();
 
+        var pretty = try relative_paths_list.append(bundler.fs.relativeTo(source_path));
+        var pathname = Fs.PathName.init(pretty);
+        var absolute_pathname = Fs.PathName.init(source_path);
+
+        if (bundler.options.out_extensions.get(absolute_pathname.ext)) |ext| {
+            absolute_pathname.ext = ext;
+        }
+
         switch (bundler.options.import_path_format) {
             .relative => {
-                const relative_path = try relative_paths_list.append(bundler.fs.relativeTo(source_path));
-
-                return Fs.Path.init(relative_path);
+                return Fs.Path.initWithPretty(pretty, pretty);
             },
-            .absolute_url => {
-                if (!relative_path_allocator_buf_loaded) {
-                    relative_path_allocator_buf_loaded = true;
-                    relative_path_allocator = std.heap.FixedBufferAllocator.init(&relative_path_allocator_buf);
-                }
+            .relative_nodejs => {
+                var path = Fs.Path.initWithPretty(pretty, pretty);
+                path.text = path.text[0 .. path.text.len - path.name.ext.len];
+                return path;
+            },
 
-                const relative_path = try relative_paths_list.append(bundler.fs.relativeTo(source_path));
+            .absolute_url => {
                 const absolute_url = try relative_paths_list.append(
                     try std.fmt.allocPrint(
                         &relative_path_allocator.allocator,
-                        "{s}{s}",
+                        "{s}{s}{s}{s}",
                         .{
                             bundler.options.public_url,
-                            relative_path,
+                            pathname.dir,
+                            pathname.base,
+                            absolute_pathname.ext,
                         },
                     ),
                 );
 
-                return Fs.Path.initWithPretty(absolute_url, relative_path);
+                return Fs.Path.initWithPretty(absolute_url, pretty);
             },
+
+            else => unreachable,
         }
     }
 
@@ -233,9 +243,21 @@ pub const Bundler = struct {
         result: ParseResult,
     ) !options.OutputFile {
         var allocator = bundler.allocator;
-        const relative_path = bundler.fs.relativeTo(result.source.path.text);
-        var out_parts = [_]string{ bundler.options.output_dir, relative_path };
-        const out_path = try bundler.fs.joinAlloc(bundler.allocator, &out_parts);
+        var parts = &([_]string{result.source.path.text});
+        var abs_path = bundler.fs.abs(parts);
+        var rel_path = bundler.fs.relativeTo(abs_path);
+        var pathname = Fs.PathName.init(rel_path);
+
+        if (bundler.options.out_extensions.get(pathname.ext)) |ext| {
+            pathname.ext = ext;
+        }
+
+        var stack_fallback = std.heap.stackFallback(1024, bundler.allocator);
+
+        var stack = stack_fallback.get();
+        var _out_path = std.fmt.allocPrint(stack, "{s}{s}{s}{s}", .{ pathname.dir, std.fs.path.sep_str, pathname.base, pathname.ext }) catch unreachable;
+        defer stack.free(_out_path);
+        var out_path = bundler.fs.filename_store.append(_out_path) catch unreachable;
 
         const ast = result.ast;
 
@@ -295,13 +317,13 @@ pub const Bundler = struct {
                     .value = js_ast.StmtOrExpr{ .expr = expr },
                     .default_name = js_ast.LocRef{ .loc = logger.Loc{}, .ref = Ref{} },
                 }, logger.Loc{ .start = 0 });
-
-                var part = js_ast.Part{
-                    .stmts = &([_]js_ast.Stmt{stmt}),
-                };
+                var stmts = bundler.allocator.alloc(js_ast.Stmt, 1) catch unreachable;
+                stmts[0] = stmt;
+                var parts = bundler.allocator.alloc(js_ast.Part, 1) catch unreachable;
+                parts[0] = js_ast.Part{ .stmts = stmts };
 
                 return ParseResult{
-                    .ast = js_ast.Ast.initTest(&([_]js_ast.Part{part})),
+                    .ast = js_ast.Ast.initTest(parts),
                     .source = source,
                     .loader = loader,
                 };
@@ -425,7 +447,7 @@ pub const Bundler = struct {
         }
 
         // We make some things faster in theory by using absolute paths instead of relative paths
-        const absolute_path = resolve_path.normalizeAndJoinStringBuf(
+        const absolute_path = resolve_path.joinAbsStringBuf(
             bundler.fs.top_level_dir,
             &tmp_buildfile_buf,
             &([_][]const u8{relative_path}),
@@ -513,7 +535,8 @@ pub const Bundler = struct {
                 entry = __entry;
             }
 
-            const result = bundler.resolver.resolve(bundler.fs.top_level_dir, entry, .entry_point) catch {
+            const result = bundler.resolver.resolve(bundler.fs.top_level_dir, entry, .entry_point) catch |err| {
+                Output.printError("Error resolving \"{s}\": {s}\n", .{ entry, @errorName(err) });
                 continue;
             };
             const key = result.path_pair.primary.text;
@@ -531,11 +554,6 @@ pub const Bundler = struct {
             bundler.resolve_queue.writeItem(result) catch unreachable;
         }
 
-        if (isDebug) {
-            for (log.msgs.items) |msg| {
-                try msg.writeFormat(std.io.getStdOut().writer());
-            }
-        }
         switch (bundler.options.resolve_mode) {
             .lazy, .dev, .bundle => {
                 while (bundler.resolve_queue.readItem()) |item| {
@@ -545,6 +563,12 @@ pub const Bundler = struct {
             },
             else => Global.panic("Unsupported resolve mode: {s}", .{@tagName(bundler.options.resolve_mode)}),
         }
+
+        // if (log.level == .verbose) {
+        //     for (log.msgs.items) |msg| {
+        //         try msg.writeFormat(std.io.getStdOut().writer());
+        //     }
+        // }
 
         // if (bundler.needs_runtime) {
         //     try bundler.output_files.append(options.OutputFile{
@@ -559,7 +583,7 @@ pub const Bundler = struct {
             );
         }
 
-        return try options.TransformResult.init(bundler.output_files.toOwnedSlice(), log, allocator);
+        return try options.TransformResult.init(try allocator.dupe(u8, bundler.result.outbase), bundler.output_files.toOwnedSlice(), log, allocator);
     }
 };
 
@@ -666,11 +690,11 @@ pub const Transformer = struct {
             const res = _transform(chosen_alloc, allocator, __log, parser_opts, loader, define, _source) catch continue;
 
             const relative_path = resolve_path.relative(cwd, absolutePath);
-            const out_path = resolve_path.normalizeAndJoin2(cwd, .auto, absolutePath, relative_path);
+            const out_path = resolve_path.joinAbs2(cwd, .auto, absolutePath, relative_path);
             try output_files.append(options.OutputFile{ .path = allocator.dupe(u8, out_path) catch continue, .contents = res.js });
         }
 
-        return try options.TransformResult.init(output_files.toOwnedSlice(), log, allocator);
+        return try options.TransformResult.init(output_dir, output_files.toOwnedSlice(), log, allocator);
     }
 
     pub fn _transform(
@@ -691,12 +715,12 @@ pub const Transformer = struct {
                     .value = js_ast.StmtOrExpr{ .expr = expr },
                     .default_name = js_ast.LocRef{ .loc = logger.Loc{}, .ref = Ref{} },
                 }, logger.Loc{ .start = 0 });
+                var stmts = try allocator.alloc(js_ast.Stmt, 1);
+                stmts[0] = stmt;
+                var parts = try allocator.alloc(js_ast.Part, 1);
+                parts[0] = js_ast.Part{ .stmts = stmts };
 
-                var part = js_ast.Part{
-                    .stmts = &([_]js_ast.Stmt{stmt}),
-                };
-
-                ast = js_ast.Ast.initTest(&([_]js_ast.Part{part}));
+                ast = js_ast.Ast.initTest(parts);
             },
             .jsx, .tsx, .ts, .js => {
                 var parser = try js_parser.Parser.init(opts, log, source, define, allocator);

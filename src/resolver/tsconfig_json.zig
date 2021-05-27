@@ -16,7 +16,7 @@ pub const TSConfigJSON = struct {
     abs_path: string,
 
     // The absolute path of "compilerOptions.baseUrl"
-    base_url: ?string = null,
+    base_url: string = "",
 
     // This is used if "Paths" is non-nil. It's equal to "BaseURL" except if
     // "BaseURL" is missing, in which case it is as if "BaseURL" was ".". This
@@ -38,6 +38,10 @@ pub const TSConfigJSON = struct {
     use_define_for_class_fields: ?bool = null,
 
     preserve_imports_not_used_as_values: bool = false,
+
+    pub fn hasBaseURL(tsconfig: *TSConfigJSON) bool {
+        return tsconfig.base_url.len > 0;
+    }
 
     pub const ImportsNotUsedAsValue = enum {
         preserve,
@@ -83,13 +87,13 @@ pub const TSConfigJSON = struct {
             //     }
             // }
         }
+        var has_base_url = false;
 
         // Parse "compilerOptions"
         if (json.getProperty("compilerOptions")) |compiler_opts| {
-            var has_base_url = false;
+
             // Parse "baseUrl"
             if (compiler_opts.expr.getProperty("baseUrl")) |base_url_prop| {
-                // maybe we should add a warning when it exists but the value is an array or osmething invalid?
                 if ((base_url_prop.expr.getString(allocator))) |base_url| {
                     result.base_url = base_url;
                     has_base_url = true;
@@ -144,7 +148,7 @@ pub const TSConfigJSON = struct {
             if (compiler_opts.expr.getProperty("paths")) |paths_prop| {
                 switch (paths_prop.expr.data) {
                     .e_object => |paths| {
-                        result.base_url_for_paths = result.base_url orelse ".";
+                        result.base_url_for_paths = result.base_url;
                         result.paths = PathsMap.init(allocator);
                         for (paths.properties) |property| {
                             const key_prop = property.key orelse continue;
@@ -230,8 +234,16 @@ pub const TSConfigJSON = struct {
             }
         }
 
+        if (isDebug and has_base_url) {
+            std.debug.assert(result.base_url.len > 0);
+        }
+
         var _result = allocator.create(TSConfigJSON) catch unreachable;
         _result.* = result;
+
+        if (isDebug and has_base_url) {
+            std.debug.assert(_result.base_url.len > 0);
+        }
         return _result;
     }
 

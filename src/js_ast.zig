@@ -912,6 +912,14 @@ pub const E = struct {
             return s.utf8.len > 0;
         }
 
+        pub fn isBlank(s: *const String) bool {
+            return std.math.max(s.utf8.len, s.value.len) == 0;
+        }
+
+        pub fn isPresent(s: *const String) bool {
+            return std.math.max(s.utf8.len, s.value.len) > 0;
+        }
+
         pub fn eql(s: *const String, comptime _t: type, other: anytype) bool {
             if (s.isUTF8()) {
                 switch (_t) {
@@ -981,14 +989,12 @@ pub const E = struct {
     pub const TemplatePart = struct {
         value: ExprNodeIndex,
         tail_loc: logger.Loc,
-        tail: JavascriptString,
-        tail_raw: string,
+        tail: E.String,
     };
 
     pub const Template = struct {
         tag: ?ExprNodeIndex = null,
-        head: JavascriptString,
-        head_raw: string, // This is only filled out for tagged template literals
+        head: E.String,
         parts: []TemplatePart = &([_]TemplatePart{}),
         legacy_octal_loc: logger.Loc = logger.Loc.Empty,
     };
@@ -2985,7 +2991,7 @@ pub const Ast = struct {
         };
     }
 
-    pub fn toJSON(self: *Ast, allocator: *std.mem.Allocator, stream: anytype) !void {
+    pub fn toJSON(self: *const Ast, allocator: *std.mem.Allocator, stream: anytype) !void {
         const opts = std.json.StringifyOptions{ .whitespace = std.json.StringifyOptions.Whitespace{
             .separator = true,
         } };

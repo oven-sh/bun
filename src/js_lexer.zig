@@ -295,6 +295,7 @@ pub const Lexer = struct {
                         '8', '9' => {
                             try lexer.addUnsupportedSyntaxError("Legacy octal literals are not supported.");
                         },
+                        // 2-digit hexadecimal
                         'x' => {
                             if (lexer.json_options != null) {
                                 lexer.end = start + iter.i - width2;
@@ -304,24 +305,6 @@ pub const Lexer = struct {
                             var value: CodePoint = 0;
                             var c3: CodePoint = 0;
                             var width3: u3 = 0;
-
-                            c3 = iter.nextCodepoint() orelse return lexer.syntaxError();
-                            width3 = iter.width;
-                            switch (c3) {
-                                '0'...'9' => {
-                                    value = value * 16 | (c3 - '0');
-                                },
-                                'a'...'f' => {
-                                    value = value * 16 | (c3 + 10 - 'a');
-                                },
-                                'A'...'F' => {
-                                    value = value * 16 | (c3 + 10 - 'A');
-                                },
-                                else => {
-                                    lexer.end = start + iter.i - width3;
-                                    return lexer.syntaxError();
-                                },
-                            }
 
                             c3 = iter.nextCodepoint() orelse return lexer.syntaxError();
                             width3 = iter.width;

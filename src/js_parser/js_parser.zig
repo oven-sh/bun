@@ -1345,6 +1345,7 @@ const DeferredErrors = struct {
     invalid_expr_default_value: ?logger.Range = null,
     invalid_expr_after_question: ?logger.Range = null,
     array_spread_feature: ?logger.Range = null,
+    is_disabled: bool = false,
 
     pub fn isEmpty(self: *DeferredErrors) bool {
         return self.invalid_expr_default_value == null and self.invalid_expr_after_question == null and self.array_spread_feature == null;
@@ -1368,6 +1369,7 @@ const DeferredErrors = struct {
         .invalid_expr_default_value = null,
         .invalid_expr_after_question = null,
         .array_spread_feature = null,
+        .is_disabled = true,
     };
 };
 
@@ -2620,12 +2622,12 @@ pub const P = struct {
                 var is_spread = true;
                 for (ex.items) |_, i| {
                     var item = ex.items[i];
-                    var _expr = expr;
+                    var _expr = item;
                     if (@as(Expr.Tag, item.data) == .e_spread) {
                         is_spread = true;
                         item = item.data.e_spread.value;
                     }
-                    const res = p.convertExprToBindingAndInitializer(&_expr, invalid_loc, is_spread);
+                    const res = p.convertExprToBindingAndInitializer(&item, invalid_loc, is_spread);
                     items.append(js_ast.ArrayBinding{ .binding = res.binding orelse unreachable, .default_value = res.override_expr }) catch unreachable;
                 }
 
@@ -3252,6 +3254,7 @@ pub const P = struct {
                                 try p.lexer.next();
                             } else {
                                 try p.lexer.unexpected();
+                                return error.SyntaxError;
                             }
                         },
                     }
@@ -3272,6 +3275,7 @@ pub const P = struct {
             },
             else => {
                 try p.lexer.unexpected();
+                return error.SyntaxError;
             },
         }
     }
@@ -3528,6 +3532,7 @@ pub const P = struct {
 
                 else => {
                     try p.lexer.unexpected();
+                    return error.SyntaxError;
                 },
             }
             break;
@@ -3688,6 +3693,7 @@ pub const P = struct {
                 else => {
                     if (!found_key) {
                         try p.lexer.unexpected();
+                        return error.SyntaxError;
                     }
                 },
             }
@@ -3699,6 +3705,7 @@ pub const P = struct {
                 else => {
                     if (!p.lexer.has_newline_before) {
                         try p.lexer.unexpected();
+                        return error.SyntaxError;
                     }
                 },
             }
@@ -3794,6 +3801,7 @@ pub const P = struct {
             var name_text = p.lexer.identifier;
             if (is_strict_modereserved_word) {
                 try p.lexer.unexpected();
+                return error.SyntaxError;
             }
 
             try p.lexer.expect(.t_identifier);
@@ -3849,6 +3857,7 @@ pub const P = struct {
                     p.es6_export_keyword = p.lexer.range();
                 } else if (!opts.is_namespace_scope) {
                     try p.lexer.unexpected();
+                    return error.SyntaxError;
                 }
                 try p.lexer.next();
 
@@ -3877,11 +3886,13 @@ pub const P = struct {
                         }
 
                         try p.lexer.unexpected();
+                        return error.SyntaxError;
                     },
 
                     T.t_enum => {
                         if (!p.options.ts) {
                             try p.lexer.unexpected();
+                            return error.SyntaxError;
                         }
 
                         opts.is_export = true;
@@ -4095,6 +4106,7 @@ pub const P = struct {
                     T.t_asterisk => {
                         if (!opts.is_module_scope and !(opts.is_namespace_scope or !opts.is_typescript_declare)) {
                             try p.lexer.unexpected();
+                            return error.SyntaxError;
                         }
 
                         try p.lexer.next();
@@ -4138,6 +4150,7 @@ pub const P = struct {
                     T.t_open_brace => {
                         if (!opts.is_module_scope and !(opts.is_namespace_scope or !opts.is_typescript_declare)) {
                             try p.lexer.unexpected();
+                            return error.SyntaxError;
                         }
 
                         const export_clause = try p.parseExportClause();
@@ -4164,11 +4177,11 @@ pub const P = struct {
                             return p.s(S.ExportEquals{ .value = value }, loc);
                         }
                         try p.lexer.unexpected();
-                        return Stmt.empty();
+                        return error.SyntaxError;
                     },
                     else => {
                         try p.lexer.unexpected();
-                        return Stmt.empty();
+                        return error.SyntaxError;
                     },
                 }
             },
@@ -4180,6 +4193,7 @@ pub const P = struct {
             .t_enum => {
                 if (!p.options.ts) {
                     try p.lexer.unexpected();
+                    return error.SyntaxError;
                 }
                 return p.parseTypescriptEnumStmt(loc, opts);
             },
@@ -4537,6 +4551,7 @@ pub const P = struct {
                             try p.lexer.expectedString("\"of\"");
                         } else {
                             try p.lexer.unexpected();
+                            return error.SyntaxError;
                         }
                     }
 
@@ -4621,7 +4636,7 @@ pub const P = struct {
                         // "import 'path'"
                         if (!opts.is_module_scope and (!opts.is_namespace_scope or !opts.is_typescript_declare)) {
                             try p.lexer.unexpected();
-                            fail();
+                            return error.SyntaxError;
                         }
                         was_originally_bare_import = true;
                     },
@@ -4629,7 +4644,7 @@ pub const P = struct {
                         // "import * as ns from 'path'"
                         if (!opts.is_module_scope and (!opts.is_namespace_scope or !opts.is_typescript_declare)) {
                             try p.lexer.unexpected();
-                            fail();
+                            return error.SyntaxError;
                         }
 
                         try p.lexer.next();
@@ -4646,7 +4661,7 @@ pub const P = struct {
                         // "import {item1, item2} from 'path'"
                         if (!opts.is_module_scope and (!opts.is_namespace_scope or !opts.is_typescript_declare)) {
                             try p.lexer.unexpected();
-                            fail();
+                            return error.SyntaxError;
                         }
                         var importClause = try p.parseImportClause();
                         stmt = S.Import{
@@ -4662,7 +4677,7 @@ pub const P = struct {
                         // "import foo = bar"
                         if (!opts.is_module_scope and (!opts.is_namespace_scope)) {
                             try p.lexer.unexpected();
-                            fail();
+                            return error.SyntaxError;
                         }
 
                         const default_name = p.lexer.identifier;
@@ -4736,6 +4751,7 @@ pub const P = struct {
                                 },
                                 else => {
                                     try p.lexer.unexpected();
+                                    return error.SyntaxError;
                                 },
                             }
                         }
@@ -4744,7 +4760,7 @@ pub const P = struct {
                     },
                     else => {
                         try p.lexer.unexpected();
-                        fail();
+                        return error.SyntaxError;
                     },
                 }
 
@@ -6491,7 +6507,7 @@ pub const P = struct {
         pub fn skipTypeScriptTypeParametersThenOpenParenWithBacktracking(p: *P) anyerror!void {
             try p.skipTypeScriptTypeParameters();
             if (p.lexer.token != .t_open_paren) {
-                // try p.lexer.unexpected();
+                // try p.lexer.unexpected(); return error.SyntaxError;
                 return error.Backtrack;
             }
         }
@@ -6506,7 +6522,7 @@ pub const P = struct {
 
             // Check the token after this and backtrack if it's the wrong one
             if (!TypeScript.canFollowTypeArgumentsInExpression(p)) {
-                // try p.lexer.unexpected();
+                // try p.lexer.unexpected(); return error.SyntaxError;
                 return error.Backtrack;
             }
         }
@@ -6516,7 +6532,7 @@ pub const P = struct {
             try p.skipTypescriptReturnType();
             // Check the token after this and backtrack if it's the wrong one
             if (p.lexer.token != .t_equals_greater_than) {
-                // try p.lexer.unexpected();
+                // try p.lexer.unexpected(); return error.SyntaxError;
                 return error.Backtrack;
             }
         }
@@ -6670,6 +6686,7 @@ pub const P = struct {
         if (isStar) {
             if (p.lexer.has_newline_before) {
                 try p.lexer.unexpected();
+                return error.SyntaxError;
             }
             try p.lexer.next();
         }
@@ -6750,6 +6767,7 @@ pub const P = struct {
             .t_asterisk => {
                 if (kind != .normal or opts.is_generator) {
                     try p.lexer.unexpected();
+                    return error.SyntaxError;
                 }
 
                 try p.lexer.next();
@@ -7215,20 +7233,12 @@ pub const P = struct {
             var tail_loc = p.lexer.loc();
             try p.lexer.rescanCloseBraceAsTemplateToken();
 
-            var tail = p.lexer.stringLiteralUTF16();
-            var tail_raw: string = "";
-
-            if (include_raw) {
-                tail_raw = p.lexer.rawTemplateContents();
-            } else if (p.lexer.legacy_octal_loc.start > tail_loc.start) {
-                legacy_octal_loc = p.lexer.legacy_octal_loc;
-            }
+            var tail = p.lexer.toEString();
 
             parts.append(E.TemplatePart{
                 .value = value,
                 .tail_loc = tail_loc,
                 .tail = tail,
-                .tail_raw = tail_raw,
             }) catch unreachable;
 
             if (p.lexer.token == .t_template_tail) {
@@ -7482,13 +7492,11 @@ pub const P = struct {
                         p.log.addRangeError(p.source, p.lexer.range(), "Template literals cannot have an optional chain as a tag") catch unreachable;
                     }
                     // p.markSyntaxFeature(compat.TemplateLiteral, p.lexer.Range());
-                    const head = p.lexer.stringLiteralUTF16();
-                    const head_raw = p.lexer.rawTemplateContents();
+                    const head = p.lexer.toEString();
                     try p.lexer.next();
                     left = p.e(E.Template{
                         .tag = left,
                         .head = head,
-                        .head_raw = head_raw,
                         .legacy_octal_loc = logger.Loc.Empty,
                     }, left.loc);
                 },
@@ -7497,12 +7505,10 @@ pub const P = struct {
                         p.log.addRangeError(p.source, p.lexer.range(), "Template literals cannot have an optional chain as a tag") catch unreachable;
                     }
                     // p.markSyntaxFeature(compat.TemplateLiteral, p.lexer.Range());
-                    const head = p.lexer.stringLiteralUTF16();
-                    const head_raw = p.lexer.rawTemplateContents();
+                    const head = p.lexer.toEString();
                     const partsGroup = try p.parseTemplateParts(true);
-                    try p.lexer.next();
                     const tag = left;
-                    left = p.e(E.Template{ .tag = tag, .head = head, .head_raw = head_raw, .parts = partsGroup.@"0" }, left.loc);
+                    left = p.e(E.Template{ .tag = tag, .head = head, .parts = partsGroup.@"0" }, left.loc);
                 },
                 .t_open_bracket => {
                     // When parsing a decorator, ignore EIndex expressions since they may be
@@ -7564,8 +7570,9 @@ pub const P = struct {
                     if (p.options.ts and left.loc.start == p.latest_arrow_arg_loc.start and (p.lexer.token == .t_colon or
                         p.lexer.token == .t_close_paren or p.lexer.token == .t_comma))
                     {
-                        if (errors.isEmpty()) {
+                        if (errors.is_disabled) {
                             try p.lexer.unexpected();
+                            return error.SyntaxError;
                         }
                         errors.invalid_expr_after_question = p.lexer.range();
                         return left;
@@ -7596,6 +7603,7 @@ pub const P = struct {
 
                     if (!p.options.ts) {
                         try p.lexer.unexpected();
+                        return error.SyntaxError;
                     }
 
                     if (level.gte(.postfix)) {
@@ -7861,6 +7869,7 @@ pub const P = struct {
                     // Prevent "||" inside "??" from the right
                     if (level.eql(.nullish_coalescing)) {
                         try p.lexer.unexpected();
+                        return error.SyntaxError;
                     }
 
                     try p.lexer.next();
@@ -7872,6 +7881,7 @@ pub const P = struct {
 
                         if (p.lexer.token == .t_question_question) {
                             try p.lexer.unexpected();
+                            return error.SyntaxError;
                         }
                     }
                 },
@@ -7891,6 +7901,7 @@ pub const P = struct {
                     // Prevent "&&" inside "??" from the right
                     if (level.eql(.nullish_coalescing)) {
                         try p.lexer.unexpected();
+                        return error.SyntaxError;
                     }
 
                     try p.lexer.next();
@@ -7902,6 +7913,7 @@ pub const P = struct {
 
                         if (p.lexer.token == .t_question_question) {
                             try p.lexer.unexpected();
+                            return error.SyntaxError;
                         }
                     }
                 },
@@ -8099,7 +8111,7 @@ pub const P = struct {
                     return value;
                 }
 
-                return p.parseParenExpr(loc, level, ParenExprOpts{}) catch unreachable;
+                return p.parseParenExpr(loc, level, ParenExprOpts{});
             },
             .t_false => {
                 try p.lexer.next();
@@ -8120,6 +8132,7 @@ pub const P = struct {
             .t_private_identifier => {
                 if (!p.allow_private_identifiers or !p.allow_in) {
                     try p.lexer.unexpected();
+                    return error.SyntaxError;
                 }
 
                 const name = p.lexer.identifier;
@@ -8143,7 +8156,7 @@ pub const P = struct {
                 switch (AsyncPrefixExpression.find(name)) {
                     .is_async => {
                         if ((raw.ptr == name.ptr and raw.len == name.len) or AsyncPrefixExpression.find(raw) == .is_async) {
-                            return p.parseAsyncPrefixExpr(name_range, level) catch unreachable;
+                            return try p.parseAsyncPrefixExpr(name_range, level);
                         }
                     },
 
@@ -8167,6 +8180,7 @@ pub const P = struct {
                                     const value = try p.parseExpr(.prefix);
                                     if (p.lexer.token == T.t_asterisk_asterisk) {
                                         try p.lexer.unexpected();
+                                        return error.SyntaxError;
                                     }
 
                                     return p.e(E.Await{ .value = value }, loc);
@@ -8196,6 +8210,7 @@ pub const P = struct {
 
                                     if (p.lexer.token == T.t_asterisk_asterisk) {
                                         try p.lexer.unexpected();
+                                        return error.SyntaxError;
                                     }
 
                                     return p.e(E.Yield{ .value = value }, loc);
@@ -8245,8 +8260,7 @@ pub const P = struct {
             },
             .t_template_head => {
                 var legacy_octal_loc = logger.Loc.Empty;
-                var head = p.lexer.stringLiteralUTF16();
-                var head_raw = p.lexer.raw();
+                var head = p.lexer.toEString();
                 if (p.lexer.legacy_octal_loc.start > loc.start) {
                     legacy_octal_loc = p.lexer.legacy_octal_loc;
                 }
@@ -8260,7 +8274,11 @@ pub const P = struct {
                 // Check if TemplateLiteral is unsupported. We don't care for this product.`
                 // if ()
 
-                return p.e(E.Template{ .head = head, .parts = parts, .legacy_octal_loc = legacy_octal_loc, .head_raw = head_raw }, loc);
+                return p.e(E.Template{
+                    .head = head,
+                    .parts = parts,
+                    .legacy_octal_loc = legacy_octal_loc,
+                }, loc);
             },
             .t_numeric_literal => {
                 const value = p.e(E.Number{ .value = p.lexer.number }, loc);
@@ -8285,6 +8303,7 @@ pub const P = struct {
                 const value = try p.parseExpr(.prefix);
                 if (p.lexer.token == .t_asterisk_asterisk) {
                     try p.lexer.unexpected();
+                    return error.SyntaxError;
                 }
 
                 return p.e(E.Unary{
@@ -8297,6 +8316,7 @@ pub const P = struct {
                 const value = try p.parseExpr(.prefix);
                 if (p.lexer.token == .t_asterisk_asterisk) {
                     try p.lexer.unexpected();
+                    return error.SyntaxError;
                 }
 
                 return p.e(E.Unary{ .op = .un_typeof, .value = value }, loc);
@@ -8306,6 +8326,7 @@ pub const P = struct {
                 const value = try p.parseExpr(.prefix);
                 if (p.lexer.token == .t_asterisk_asterisk) {
                     try p.lexer.unexpected();
+                    return error.SyntaxError;
                 }
                 // TODO: add error deleting private identifier
                 // const private = value.data.e_private_identifier;
@@ -8321,6 +8342,7 @@ pub const P = struct {
                 const value = try p.parseExpr(.prefix);
                 if (p.lexer.token == .t_asterisk_asterisk) {
                     try p.lexer.unexpected();
+                    return error.SyntaxError;
                 }
 
                 return p.e(E.Unary{ .op = .un_pos, .value = value }, loc);
@@ -8330,6 +8352,7 @@ pub const P = struct {
                 const value = try p.parseExpr(.prefix);
                 if (p.lexer.token == .t_asterisk_asterisk) {
                     try p.lexer.unexpected();
+                    return error.SyntaxError;
                 }
 
                 return p.e(E.Unary{ .op = .un_neg, .value = value }, loc);
@@ -8339,6 +8362,7 @@ pub const P = struct {
                 const value = try p.parseExpr(.prefix);
                 if (p.lexer.token == .t_asterisk_asterisk) {
                     try p.lexer.unexpected();
+                    return error.SyntaxError;
                 }
 
                 return p.e(E.Unary{ .op = .un_cpl, .value = value }, loc);
@@ -8348,6 +8372,7 @@ pub const P = struct {
                 const value = try p.parseExpr(.prefix);
                 if (p.lexer.token == .t_asterisk_asterisk) {
                     try p.lexer.unexpected();
+                    return error.SyntaxError;
                 }
 
                 return p.e(E.Unary{ .op = .un_not, .value = value }, loc);
@@ -8395,6 +8420,7 @@ pub const P = struct {
                     try p.lexer.next();
                     if (p.lexer.token != .t_identifier or !strings.eqlComptime(p.lexer.raw(), "target")) {
                         try p.lexer.unexpected();
+                        return error.SyntaxError;
                     }
 
                     const r = logger.Range{ .loc = loc, .len = p.lexer.range().end().start - loc.start };
@@ -8484,7 +8510,7 @@ pub const P = struct {
                 // Is this a binding pattern?
                 if (p.willNeedBindingPattern()) {
                     // noop
-                } else if (errors.isEmpty()) {
+                } else if (errors.is_disabled) {
                     // Is this an expression?
                     p.logExprErrors(&self_errors);
                 } else {
@@ -8547,7 +8573,7 @@ pub const P = struct {
                 try p.lexer.expect(.t_close_brace);
                 p.allow_in = old_allow_in;
 
-                if (p.willNeedBindingPattern()) {} else if (errors.isEmpty()) {
+                if (p.willNeedBindingPattern()) {} else if (!errors.is_disabled) {
                     // Is this an expression?
                     p.logExprErrors(&self_errors);
                 } else {
@@ -8651,7 +8677,7 @@ pub const P = struct {
                 }
 
                 try p.lexer.unexpected();
-                return Expr{ .data = Prefill.Data.EMissing, .loc = logger.Loc.Empty };
+                return error.SyntaxError;
             },
             .t_import => {
                 try p.lexer.next();
@@ -8659,11 +8685,10 @@ pub const P = struct {
             },
             else => {
                 try p.lexer.unexpected();
-                return Expr{ .data = Prefill.Data.EMissing, .loc = logger.Loc.Empty };
+                return error.SyntaxError;
             },
         }
-
-        return Expr{ .data = Prefill.Data.EMissing, .loc = logger.Loc.Empty };
+        return error.SyntaxError;
     }
 
     // esbuild's version of this function is much more complicated.
@@ -9000,7 +9025,7 @@ pub const P = struct {
                 },
                 else => {
                     try p.lexer.unexpected();
-                    p.panic("", .{});
+                    return error.SyntaxError;
                 },
             }
         }
@@ -11286,7 +11311,6 @@ pub const P = struct {
                         enum_value.value = p.e(E.Undefined{}, enum_value.loc);
                     }
                     // "Enum['Name'] = value"
-
                     assign_target = Expr.assign(p.e(E.Index{
                         .target = p.e(
                             E.Identifier{ .ref = data.arg },
@@ -12120,7 +12144,7 @@ pub const P = struct {
     }
 
     // This assumes that the open parenthesis has already been parsed by the caller
-    pub fn parseParenExpr(p: *P, loc: logger.Loc, level: Level, opts: ParenExprOpts) !Expr {
+    pub fn parseParenExpr(p: *P, loc: logger.Loc, level: Level, opts: ParenExprOpts) anyerror!Expr {
         var items_list = List(Expr).init(p.allocator);
         var errors = DeferredErrors{};
         var arrowArgErrors = DeferredArrowArgErrors{};
@@ -12208,6 +12232,7 @@ pub const P = struct {
             // Arrow functions are not allowed inside certain expressions
             if (level.gt(.assign)) {
                 try p.lexer.unexpected();
+                return error.SyntaxError;
             }
 
             var invalidLog = List(logger.Loc).init(p.allocator);
@@ -12272,7 +12297,7 @@ pub const P = struct {
         // If this isn't an arrow function, then types aren't allowed
         if (type_colon_range.len > 0) {
             try p.log.addRangeError(p.source, type_colon_range, "Unexpected \":\"");
-            return error.ParseError;
+            return error.SyntaxError;
         }
 
         // Are these arguments for a call to a function named "async"?
@@ -12287,7 +12312,7 @@ pub const P = struct {
             p.logExprErrors(&errors);
             if (spread_range.len > 0) {
                 try p.log.addRangeError(p.source, type_colon_range, "Unexpected \"...\"");
-                return error.ParseError;
+                return error.SyntaxError;
             }
 
             var value = Expr.joinAllWithComma(items, p.allocator);
@@ -12297,7 +12322,7 @@ pub const P = struct {
 
         // Indicate that we expected an arrow function
         try p.lexer.expected(.t_equals_greater_than);
-        return error.ParseError;
+        return error.SyntaxError;
     }
 
     // This code is tricky.

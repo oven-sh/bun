@@ -2681,15 +2681,16 @@ pub const P = struct {
         return null;
     }
 
-    pub fn convertExprToBindingAndInitializer(p: *P, expr: *ExprNodeIndex, invalid_log: *LocList, is_spread: bool) ExprBindingTuple {
+    pub fn convertExprToBindingAndInitializer(p: *P, _expr: *ExprNodeIndex, invalid_log: *LocList, is_spread: bool) ExprBindingTuple {
         var initializer: ?ExprNodeIndex = null;
+        var expr = _expr;
         var override: ?ExprNodeIndex = null;
         // zig syntax is sometimes painful
         switch (expr.*.data) {
             .e_binary => |bin| {
                 if (bin.op == .bin_assign) {
                     initializer = bin.right;
-                    override = bin.left;
+                    expr = &bin.left;
                 }
             },
             else => {},
@@ -6322,11 +6323,11 @@ pub const P = struct {
         _ = try p.pushScopeForParsePass(Scope.Kind.function_body, arrow_loc);
         defer p.popScope();
 
-        var old_fn_or_arrow_data = p.fn_or_arrow_data_parse;
+        var old_fn_or_arrow_data = std.mem.toBytes(p.fn_or_arrow_data_parse);
 
         p.fn_or_arrow_data_parse = data.*;
         var expr = try p.parseExpr(Level.comma);
-        p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
+        p.fn_or_arrow_data_parse = std.mem.bytesToValue(@TypeOf(p.fn_or_arrow_data_parse), &old_fn_or_arrow_data);
 
         var stmts = try p.allocator.alloc(Stmt, 1);
         stmts[0] = p.s(S.Return{ .value = expr }, expr.loc);
@@ -8626,7 +8627,7 @@ pub const P = struct {
                 //     <A>(x) => {}
                 //     <A = B>(x) => {}
                 if (p.options.ts and p.options.jsx.parse) {
-                    var oldLexer = p.lexer;
+                    var oldLexer = std.mem.toBytes(p.lexer);
 
                     try p.lexer.next();
                     // Look ahead to see if this should be an arrow function instead
@@ -8643,7 +8644,7 @@ pub const P = struct {
                     }
 
                     // Restore the lexer
-                    p.lexer = oldLexer;
+                    p.lexer = std.mem.bytesToValue(@TypeOf(p.lexer), &oldLexer);
 
                     if (is_ts_arrow_fn) {
                         try p.skipTypeScriptTypeParameters();
@@ -10271,7 +10272,7 @@ pub const P = struct {
                 }
             },
             .e_arrow => |e_| {
-                const old_fn_or_arrow_data = p.fn_or_arrow_data_visit;
+                const old_fn_or_arrow_data = std.mem.toBytes(p.fn_or_arrow_data_visit);
                 p.fn_or_arrow_data_visit = FnOrArrowDataVisit{
                     .is_arrow = true,
                     .is_async = e_.is_async,
@@ -10303,7 +10304,7 @@ pub const P = struct {
                 p.popScope();
 
                 p.fn_only_data_visit.is_inside_async_arrow_fn = old_inside_async_arrow_fn;
-                p.fn_or_arrow_data_visit = old_fn_or_arrow_data;
+                p.fn_or_arrow_data_visit = std.mem.bytesToValue(@TypeOf(p.fn_or_arrow_data_visit), &old_fn_or_arrow_data);
             },
             .e_function => |e_| {
                 e_.func = p.visitFunc(e_.func, expr.loc);
@@ -12172,7 +12173,7 @@ pub const P = struct {
         p.allow_in = true;
 
         // Forbid "await" and "yield", but only for arrow functions
-        var old_fn_or_arrow_data = p.fn_or_arrow_data_parse;
+        var old_fn_or_arrow_data = std.mem.toBytes(p.fn_or_arrow_data_parse);
         p.fn_or_arrow_data_parse.arrow_arg_errors = arrowArgErrors;
         p.fn_or_arrow_data_parse.track_arrow_arg_errors = true;
 
@@ -12232,7 +12233,7 @@ pub const P = struct {
         p.allow_in = oldAllowIn;
 
         // Also restore "await" and "yield" expression errors
-        p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
+        p.fn_or_arrow_data_parse = std.mem.bytesToValue(@TypeOf(p.fn_or_arrow_data_parse), &old_fn_or_arrow_data);
 
         // Are these arguments to an arrow function?
         if (p.lexer.token == .t_equals_greater_than or opts.force_arrow_fn or (p.options.ts and p.lexer.token == .t_colon)) {

@@ -495,11 +495,12 @@ pub const Lexer = struct {
             switch (lexer.code_point) {
                 '\\' => {
                     try lexer.step();
-                    // Skip slow path for \n in a string literal
-                    // This is pretty common, shows up in e.g. React
-                    // Example code: array.split("\n")
-                    // We don't need to decode as UTF16 for that. We know it's just a newline char.
-                    needs_slow_path = lexer.code_point != 'n';
+
+                    // Skip slow path for a handful of common escaped characters that don't need UTf16 handling
+                    needs_slow_path = switch (lexer.code_point) {
+                        'n', '`', '\'', '0', '"' => false,
+                        else => true,
+                    };
 
                     // Handle Windows CRLF
                     if (lexer.code_point == '\r' and lexer.json_options != null) {

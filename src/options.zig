@@ -43,6 +43,10 @@ pub const ExternalModules = struct {
         suffix: string,
     };
 
+    pub fn isNodeBuiltin(str: string) bool {
+        return NodeBuiltinsMap.has(str);
+    }
+
     pub fn init(
         allocator: *std.mem.Allocator,
         fs: *Fs.FileSystem.Implementation,
@@ -156,6 +160,65 @@ pub const ExternalModules = struct {
         "worker_threads",
         "zlib",
     };
+
+    pub const NodeBuiltinsMap = std.ComptimeStringMap(bool, .{
+        .{ "_http_agent", true },
+        .{ "_http_client", true },
+        .{ "_http_common", true },
+        .{ "_http_incoming", true },
+        .{ "_http_outgoing", true },
+        .{ "_http_server", true },
+        .{ "_stream_duplex", true },
+        .{ "_stream_passthrough", true },
+        .{ "_stream_readable", true },
+        .{ "_stream_transform", true },
+        .{ "_stream_wrap", true },
+        .{ "_stream_writable", true },
+        .{ "_tls_common", true },
+        .{ "_tls_wrap", true },
+        .{ "assert", true },
+        .{ "async_hooks", true },
+        .{ "buffer", true },
+        .{ "child_process", true },
+        .{ "cluster", true },
+        .{ "console", true },
+        .{ "constants", true },
+        .{ "crypto", true },
+        .{ "dgram", true },
+        .{ "diagnostics_channel", true },
+        .{ "dns", true },
+        .{ "domain", true },
+        .{ "events", true },
+        .{ "fs", true },
+        .{ "http", true },
+        .{ "http2", true },
+        .{ "https", true },
+        .{ "inspector", true },
+        .{ "module", true },
+        .{ "net", true },
+        .{ "os", true },
+        .{ "path", true },
+        .{ "perf_hooks", true },
+        .{ "process", true },
+        .{ "punycode", true },
+        .{ "querystring", true },
+        .{ "readline", true },
+        .{ "repl", true },
+        .{ "stream", true },
+        .{ "string_decoder", true },
+        .{ "sys", true },
+        .{ "timers", true },
+        .{ "tls", true },
+        .{ "trace_events", true },
+        .{ "tty", true },
+        .{ "url", true },
+        .{ "util", true },
+        .{ "v8", true },
+        .{ "vm", true },
+        .{ "wasi", true },
+        .{ "worker_threads", true },
+        .{ "zlib", true },
+    });
 };
 
 pub const ModuleType = enum {
@@ -472,7 +535,7 @@ pub const BundleOptions = struct {
                 resolved_defines,
             ),
             .loaders = loaders,
-            .output_dir = try fs.joinAlloc(allocator, &output_dir_parts),
+            .output_dir = try fs.absAlloc(allocator, &output_dir_parts),
             .platform = Platform.from(transform.platform),
             .write = transform.write orelse false,
             .external = undefined,

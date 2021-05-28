@@ -387,8 +387,10 @@ pub const Cli = struct {
             }
         }
 
-        Output.println("Expr count: {d}", .{js_ast.Expr.icount});
-        Output.println("Stmt count: {d}", .{js_ast.Stmt.icount});
+        if (isDebug) {
+            Output.println("Expr count: {d}", .{js_ast.Expr.icount});
+            Output.println("Stmt count: {d}", .{js_ast.Stmt.icount});
+        }
 
         if (!did_write) {
             for (result.output_files) |file, i| {

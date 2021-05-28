@@ -352,6 +352,125 @@ pub fn BSSStringList(comptime count: usize, comptime item_length: usize) type {
     };
 }
 
+pub fn TBSSStringList(comptime count: usize, comptime item_length: usize) type {
+    const max_index = count - 1;
+    const ValueType = []const u8;
+
+    return struct {
+        const Allocator = std.mem.Allocator;
+        const Self = @This();
+
+        pub threadlocal var slice_buf: [count][]const u8 = undefined;
+        pub threadlocal var slice_buf_used: u16 = 0;
+        pub threadlocal var backing_buf: [count * item_length]u8 = undefined;
+        pub threadlocal var backing_buf_used: u64 = undefined;
+        pub threadlocal var instance: Self = undefined;
+        pub const ListIndex = packed struct {
+            index: u31,
+            is_overflowing: bool = false,
+        };
+        overflow_list: std.ArrayListUnmanaged(ValueType),
+        allocator: *Allocator,
+
+        pub fn init(allocator: *std.mem.Allocator) *Self {
+            instance = Self{
+                .allocator = allocator,
+                .overflow_list = std.ArrayListUnmanaged(ValueType){},
+            };
+
+            return &instance;
+        }
+
+        pub fn isOverflowing() bool {
+            return slice_buf_used >= @as(u16, count);
+        }
+
+        pub fn at(self: *const Self, index: IndexType) ?ValueType {
+            if (index.index == NotFound.index or index.index == Unassigned.index) return null;
+
+            if (index.is_overflowing) {
+                return &self.overflow_list.items[index.index];
+            } else {
+                return &slice_buf[index.index];
+            }
+        }
+
+        pub fn exists(self: *Self, value: ValueType) bool {
+            return isSliceInBuffer(value, slice_buf);
+        }
+
+        pub fn editableSlice(slice: []const u8) []u8 {
+            return constStrToU8(slice);
+        }
+
+        pub fn append(self: *Self, _value: anytype) ![]const u8 {
+            var value = _value;
+            if (value.len + backing_buf_used < backing_buf.len - 1) {
+                const start = backing_buf_used;
+                backing_buf_used += value.len;
+                std.mem.copy(u8, backing_buf[start..backing_buf_used], _value);
+                value = backing_buf[start..backing_buf_used];
+            } else {
+                value = try self.allocator.dupe(u8, _value);
+            }
+
+            var result = ListIndex{ .index = std.math.maxInt(u31), .is_overflowing = slice_buf_used > max_index };
+
+            if (result.is_overflowing) {
+                result.index = @intCast(u31, self.overflow_list.items.len);
+            } else {
+                result.index = slice_buf_used;
+                slice_buf_used += 1;
+                if (slice_buf_used >= max_index) {
+                    self.overflow_list = try @TypeOf(self.overflow_list).initCapacity(self.allocator, count);
+                }
+            }
+
+            if (result.is_overflowing) {
+                if (self.overflow_list.items.len == result.index) {
+                    const real_index = self.overflow_list.items.len;
+                    try self.overflow_list.append(self.allocator, value);
+                } else {
+                    self.overflow_list.items[result.index] = value;
+                }
+
+                return self.overflow_list.items[result.index];
+            } else {
+                slice_buf[result.index] = value;
+
+                return slice_buf[result.index];
+            }
+        }
+
+        pub fn remove(self: *Self, index: ListIndex) void {
+            @compileError("Not implemented yet.");
+            // switch (index) {
+            //     Unassigned.index => {
+            //         self.index.remove(_key);
+            //     },
+            //     NotFound.index => {
+            //         self.index.remove(_key);
+            //     },
+            //     0...max_index => {
+            //         if (hasDeinit(ValueType)) {
+            //             slice_buf[index].deinit();
+            //         }
+            //         slice_buf[index] = undefined;
+            //     },
+            //     else => {
+            //         const i = index - count;
+            //         if (hasDeinit(ValueType)) {
+            //             self.overflow_list.items[i].deinit();
+            //         }
+            //         self.overflow_list.items[index - count] = undefined;
+            //     },
+            // }
+
+            // return index;
+        }
+    };
+}
+
 pub fn BSSMap(comptime ValueType: type, comptime count: anytype, store_keys: bool, estimated_key_length: usize) type {
     const max_index = count - 1;
     const BSSMapType = struct {

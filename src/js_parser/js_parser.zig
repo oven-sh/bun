@@ -10816,9 +10816,9 @@ pub const P = struct {
 
     pub fn ignoreUsage(p: *P, ref: Ref) void {
         if (!p.is_control_flow_dead) {
-            p.symbols.items[ref.inner_index].use_count_estimate = std.math.max(p.symbols.items[ref.inner_index].use_count_estimate - 1, 0);
+            p.symbols.items[ref.inner_index].use_count_estimate = std.math.max(p.symbols.items[ref.inner_index].use_count_estimate, 1) - 1;
             var use = p.symbol_uses.get(ref) orelse p.panic("Expected symbol_uses to exist {s}\n{s}", .{ ref, p.symbol_uses });
-            use.count_estimate = std.math.max(use.count_estimate - 1, 0);
+            use.count_estimate = std.math.max(use.count_estimate, 1) - 1;
             if (use.count_estimate == 0) {
                 _ = p.symbol_uses.remove(ref);
             } else {

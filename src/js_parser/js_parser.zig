@@ -18,7 +18,9 @@ pub fn ExpressionTransposer(comptime ctx: type, visitor: fn (ptr: *ctx, arg: Exp
 
         pub fn maybeTransposeIf(self: *@This(), arg: Expr, state: anytype) Expr {
             switch (arg.data) {
-                .e_if => |ex| {
+                .e_if => {
+                    const ex = arg.getIf();
+
                     ex.yes = self.maybeTransposeIf(ex.yes, state);
                     ex.no = self.maybeTransposeIf(ex.no, state);
                     return arg;
@@ -407,7 +409,7 @@ pub const ImportScanner = struct {
                         if (decl.value) |val| {
                             while (true) {
                                 if (@as(Expr.Tag, val.data) == .e_dot) {
-                                    value = val.data.e_dot.target;
+                                    value = val.getDot().target;
                                 } else {
                                     break;
                                 }
@@ -419,7 +421,7 @@ pub const ImportScanner = struct {
                             if (@as(Expr.Tag, val.data) == .e_identifier) {
                                 // Is this import statement unused?
                                 if (@as(Binding.Tag, decl.binding.data) == .b_identifier and p.symbols.items[decl.binding.data.b_identifier.ref.inner_index].use_count_estimate == 0) {
-                                    p.ignoreUsage(val.data.e_identifier.ref);
+                                    p.ignoreUsage(val.getIdentifier().ref);
 
                                     scanner.removed_import_equals = true;
                                     continue;
@@ -507,16 +509,20 @@ pub const SideEffects = enum(u2) {
 
     pub fn toNumber(data: Expr.Data) ?f64 {
         switch (data) {
-            .e_null => |e| {
+            .e_null => {
                 return 0;
             },
-            .e_undefined => |e| {
+            .e_undefined => {
                 return std.math.nan_f64;
             },
-            .e_boolean => |e| {
+            .e_boolean => {
+                const e = Expr.Data.Store.Boolean.at(data.e_boolean);
+
                 return if (e.value) 1.0 else 0.0;
             },
-            .e_number => |e| {
+            .e_number => {
+                const e = Expr.Data.Store.Number.at(data.e_number);
+
                 return e.value;
             },
             else => {},
@@ -542,12 +548,14 @@ pub const SideEffects = enum(u2) {
                 return null;
             },
 
-            .e_dot => |dot| {
-                if (dot.can_be_removed_if_unused) {
+            .e_dot => {
+                if (expr.getDot().can_be_removed_if_unused) {
                     return null;
                 }
             },
-            .e_identifier => |ident| {
+            .e_identifier => {
+                const ident = expr.getIdentifier();
+
                 if (ident.must_keep_due_to_with_stmt) {
                     return expr;
                 }
@@ -556,7 +564,8 @@ pub const SideEffects = enum(u2) {
                     return null;
                 }
             },
-            .e_if => |__if__| {
+            .e_if => {
+                const __if__ = expr.getIf();
                 __if__.yes = simpifyUnusedExpr(p, __if__.yes) orelse __if__.yes.toEmpty();
                 __if__.no = simpifyUnusedExpr(p, __if__.no) orelse __if__.no.toEmpty();
 
@@ -566,7 +575,9 @@ pub const SideEffects = enum(u2) {
                 }
             },
 
-            .e_call => |call| {
+            .e_call => {
+                const call = expr.getCall();
+
                 // A call that has been marked "__PURE__" can be removed if all arguments
                 // can be removed. The annotation causes us to ignore the target.
                 if (call.can_be_unwrapped_if_unused) {
@@ -574,7 +585,8 @@ pub const SideEffects = enum(u2) {
                 }
             },
 
-            .e_binary => |bin| {
+            .e_binary => {
+                const bin = expr.getBinary();
                 switch (bin.op) {
                     // We can simplify "==" and "!=" even though they can call "toString" and/or
                     // "valueOf" if we can statically determine that the types of both sides are
@@ -589,7 +601,8 @@ pub const SideEffects = enum(u2) {
                 }
             },
 
-            .e_new => |call| {
+            .e_new => {
+                const call = expr.getNew();
                 // A constructor call that has been marked "__PURE__" can be removed if all arguments
                 // can be removed. The annotation causes us to ignore the target.
                 if (call.can_be_unwrapped_if_unused) {
@@ -702,30 +715,41 @@ pub const SideEffects = enum(u2) {
     pub fn eql(left: Expr.Data, right: Expr.Data, p: *P) Equality {
         var equality = Equality{};
         switch (left) {
-            .e_null => |l| {
+            .e_null => {
                 equality.equal = @as(Expr.Tag, right) == Expr.Tag.e_null;
                 equality.ok = equality.equal;
             },
-            .e_undefined => |l| {
+            .e_undefined => {
                 equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_undefined;
                 equality.equal = equality.ok;
             },
-            .e_boolean => |l| {
+            .e_boolean => {
+                const l = Expr.Data.Store.Boolean.at(left.e_boolean);
+                const r = Expr.Data.Store.Boolean.at(right.e_boolean);
+
                 equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_boolean;
-                equality.equal = equality.ok and l.value == right.e_boolean.value;
+                equality.equal = equality.ok and l.value == r.value;
             },
-            .e_number => |l| {
+            .e_number => {
+                const l = Expr.Data.Store.Number.at(left.e_number);
+                const r = Expr.Data.Store.Number.at(right.e_number);
+
                 equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_number;
-                equality.equal = equality.ok and l.value == right.e_number.value;
+                equality.equal = equality.ok and l.value == r.value;
             },
-            .e_big_int => |l| {
+            .e_big_int => {
+                const l = Expr.Data.Store.BigInt.at(left.e_big_int);
+                const r = Expr.Data.Store.BigInt.at(right.e_big_int);
+
                 equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_big_int;
-                equality.equal = equality.ok and strings.eql(l.value, right.e_big_int.value);
+                equality.equal = equality.ok and strings.eql(l.value, r.value);
             },
-            .e_string => |l| {
+            .e_string => {
+                const l = Expr.Data.Store.String.at(left.e_string);
+                const r = Expr.Data.Store.String.at(right.e_string);
+
                 equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_string;
                 if (equality.ok) {
-                    const r = right.e_string;
                     equality.equal = r.eql(E.String, l);
                 }
             },
@@ -743,7 +767,8 @@ pub const SideEffects = enum(u2) {
             .e_null, .e_undefined, .e_boolean, .e_number, .e_big_int, .e_string => {
                 return true;
             },
-            .e_unary => |e| {
+            .e_unary => {
+                const e = Expr.Data.Store.Unary.at(data.e_unary);
                 switch (e.op) {
                     // number or bigint
                     .un_pos,
@@ -766,7 +791,8 @@ pub const SideEffects = enum(u2) {
                     else => {},
                 }
             },
-            .e_binary => |e| {
+            .e_binary => {
+                const e = Expr.Data.Store.Binary.at(data.e_binary);
                 switch (e.op) {
                     // boolean
                     .bin_lt,
@@ -819,7 +845,8 @@ pub const SideEffects = enum(u2) {
                     else => {},
                 }
             },
-            .e_if => |e| {
+            .e_if => {
+                const e = Expr.Data.Store.If.at(data.e_if);
                 return isPrimitiveWithSideEffects(e.yes.data) and isPrimitiveWithSideEffects(e.no.data);
             },
             else => {},
@@ -875,7 +902,8 @@ pub const SideEffects = enum(u2) {
                 return Result{ .value = true, .side_effects = .could_have_side_effects, .ok = true };
             },
 
-            .e_unary => |e| {
+            .e_unary => {
+                const e = Expr.Data.Store.Unary.at(exp.e_unary);
                 switch (e.op) {
                     // Always number or bigint
                     .un_pos, .un_neg, .un_cpl, .un_pre_dec, .un_pre_inc, .un_post_dec, .un_post_inc => {
@@ -894,7 +922,8 @@ pub const SideEffects = enum(u2) {
                 }
             },
 
-            .e_binary => |e| {
+            .e_binary => {
+                const e = Expr.Data.Store.Binary.at(exp.e_binary);
                 switch (e.op) {
                     // always string or number or bigint
                     .bin_add,
@@ -957,16 +986,20 @@ pub const SideEffects = enum(u2) {
             .e_null, .e_undefined => {
                 return Result{ .ok = true, .value = false, .side_effects = .no_side_effects };
             },
-            .e_boolean => |e| {
+            .e_boolean => {
+                const e = Expr.Data.Store.Boolean.at(exp.e_boolean);
                 return Result{ .ok = true, .value = e.value, .side_effects = .no_side_effects };
             },
-            .e_number => |e| {
+            .e_number => {
+                const e = Expr.Data.Store.Number.at(exp.e_number);
                 return Result{ .ok = true, .value = e.value != 0.0 and !std.math.isNan(e.value), .side_effects = .no_side_effects };
             },
-            .e_big_int => |e| {
+            .e_big_int => {
+                const e = Expr.Data.Store.BigInt.at(exp.e_big_int);
                 return Result{ .ok = true, .value = !strings.eqlComptime(e.value, "0"), .side_effects = .no_side_effects };
             },
-            .e_string => |e| {
+            .e_string => {
+                const e = Expr.Data.Store.String.at(exp.e_string);
                 return Result{ .ok = true, .value = std.math.max(e.value.len, e.utf8.len) > 0, .side_effects = .no_side_effects };
             },
             .e_function, .e_arrow, .e_reg_exp => {
@@ -975,7 +1008,8 @@ pub const SideEffects = enum(u2) {
             .e_object, .e_array, .e_class => {
                 return Result{ .ok = true, .value = true, .side_effects = .could_have_side_effects };
             },
-            .e_unary => |e_| {
+            .e_unary => {
+                const e_ = Expr.Data.Store.Unary.at(exp.e_unary);
                 switch (e_.op) {
                     .un_void => {
                         return Result{ .ok = true, .value = false, .side_effects = .could_have_side_effects };
@@ -995,7 +1029,8 @@ pub const SideEffects = enum(u2) {
                     else => {},
                 }
             },
-            .e_binary => |e_| {
+            .e_binary => {
+                const e_ = Expr.Data.Store.Binary.at(exp.e_binary);
                 switch (e_.op) {
                     .bin_logical_or => {
                         // "anything || truthy" is truthy
@@ -1683,7 +1718,7 @@ pub const Prefill = struct {
         pub var Filename = Expr.Data{ .e_string = &Prefill.String.Filename };
         pub var LineNumber = Expr.Data{ .e_string = &Prefill.String.LineNumber };
         pub var ColumnNumber = Expr.Data{ .e_string = &Prefill.String.ColumnNumber };
-        pub var This = Expr.Data{ .e_this = &Prefill.Value.EThis };
+        pub var This = Expr.Data{ .e_this = E.This{} };
     };
     pub const Runtime = struct {
         pub var JSXFilename = "__jsxFilename";
@@ -1696,12 +1731,12 @@ pub const Prefill = struct {
     };
 };
 
-var keyExprData = Expr.Data{ .e_string = &Prefill.String.Key };
-var jsxChildrenKeyData = Expr.Data{ .e_string = &Prefill.String.Children };
+// var keyExprData = Expr.Data{ .e_string = Prefill.String.Key };
+// var jsxChildrenKeyData = Expr.Data{ .e_string = Prefill.String.Children };
 var nullExprValueData = E.Null{};
 var falseExprValueData = E.Boolean{ .value = false };
-var nullValueExpr = Expr.Data{ .e_null = &nullExprValueData };
-var falseValueExpr = Expr.Data{ .e_boolean = &falseExprValueData };
+var nullValueExpr = Expr.Data{ .e_null = nullExprValueData };
+var falseValueExpr = Expr.Data{ .e_boolean = falseExprValueData };
 
 // P is for Parser!
 // public only because of Binding.ToExpr
@@ -1947,13 +1982,13 @@ pub const P = struct {
             }
             const str = arg.data.e_string;
 
-            const import_record_index = p.addImportRecord(.dynamic, arg.loc, str.string(p.allocator) catch unreachable);
+            const import_record_index = p.addImportRecord(.dynamic, arg.loc, arg.getString().string(p.allocator) catch unreachable);
             p.import_records.items[import_record_index].handles_import_errors = (state.is_await_target and p.fn_or_arrow_data_visit.try_body_count != 0) or state.is_then_catch_target;
             p.import_records_for_current_part.append(import_record_index) catch unreachable;
             return p.e(E.Import{
                 .expr = arg,
                 .import_record_index = Ref.toInt(import_record_index),
-                // .leading_interior_comments = arg.data.e_string.
+                // .leading_interior_comments = arg.getString().
             }, state.loc);
         }
 
@@ -1973,7 +2008,9 @@ pub const P = struct {
 
     pub fn transposeRequire(p: *P, arg: Expr, transpose_state: anytype) Expr {
         switch (arg.data) {
-            .e_string => |str| {
+            .e_string => {
+                const str = arg.getString();
+
                 // Ignore calls to require() if the control flow is provably dead here.
                 // We don't want to spend time scanning the required files if they will
                 // never be used.
@@ -2592,10 +2629,14 @@ pub const P = struct {
             .e_missing => {
                 return null;
             },
-            .e_identifier => |ex| {
+            .e_identifier => {
+                const ex = expr.getIdentifier();
+
                 return p.b(B.Identifier{ .ref = ex.ref }, expr.loc);
             },
-            .e_array => |ex| {
+            .e_array => {
+                const ex = expr.getArray();
+
                 if (ex.comma_after_spread) |spread| {
                     invalid_loc.append(spread) catch unreachable;
                 }
@@ -2612,7 +2653,7 @@ pub const P = struct {
                     var _expr = item;
                     if (@as(Expr.Tag, item.data) == .e_spread) {
                         is_spread = true;
-                        item = item.data.e_spread.value;
+                        item = item.getSpread().value;
                     }
                     const res = p.convertExprToBindingAndInitializer(&item, invalid_loc, is_spread);
                     items.append(js_ast.ArrayBinding{ .binding = res.binding orelse unreachable, .default_value = res.override_expr }) catch unreachable;
@@ -2624,7 +2665,9 @@ pub const P = struct {
                     .is_single_line = ex.is_single_line,
                 }, expr.loc);
             },
-            .e_object => |ex| {
+            .e_object => {
+                const ex = expr.getObject();
+
                 if (ex.comma_after_spread) |sp| {
                     invalid_loc.append(sp) catch unreachable;
                 }
@@ -2676,7 +2719,9 @@ pub const P = struct {
         var override: ?ExprNodeIndex = null;
         // zig syntax is sometimes painful
         switch (expr.*.data) {
-            .e_binary => |bin| {
+            .e_binary => {
+                const bin = expr.getBinary();
+
                 if (bin.op == .bin_assign) {
                     initializer = bin.right;
                     expr = &bin.left;
@@ -4050,7 +4095,9 @@ pub const P = struct {
                         // Handle the default export of an abstract class in TypeScript
                         if (p.options.ts and is_identifier and (p.lexer.token == .t_class or opts.ts_decorators != null) and strings.eqlComptime(name, "abstract")) {
                             switch (expr.data) {
-                                .e_identifier => |ident| {
+                                .e_identifier => {
+                                    var ident = expr.getIdentifier();
+
                                     var stmtOpts = ParseStatementOptions{
                                         .ts_decorators = opts.ts_decorators,
                                         .is_name_optional = true,
@@ -4880,7 +4927,9 @@ pub const P = struct {
                 }
                 if (is_identifier) {
                     switch (expr.data) {
-                        .e_identifier => |ident| {
+                        .e_identifier => {
+                            var ident = expr.getIdentifier();
+
                             if (p.lexer.token == .t_colon and !opts.hasDecorators()) {
                                 _ = try p.pushScopeForParsePass(.label, loc);
                                 defer p.popScope();
@@ -5244,22 +5293,20 @@ pub const P = struct {
         if (strings.eqlComptime(name, "require") and p.lexer.token == .t_open_paren) {
             // "import ns = require('x')"
             try p.lexer.next();
-            const path = p.e(p.lexer.toEString(), p.lexer.loc());
+            var path = p.e(p.lexer.toEString(), p.lexer.loc());
             try p.lexer.expect(.t_string_literal);
             try p.lexer.expect(.t_close_paren);
             const args = p.allocator.alloc(ExprNodeIndex, 1) catch unreachable;
             args[0] = path;
-            var call_ptr = p.allocator.create(E.Call) catch unreachable;
-            call_ptr.* = E.Call{ .target = value, .args = args };
-            value.data = .{ .e_call = call_ptr };
+            value.data = .{ .e_call = Expr.Data.Store.Call.append(E.Call{ .target = value, .args = args }) };
         } else {
             // "import Foo = Bar"
             // "import Foo = Bar.Baz"
             while (p.lexer.token == .t_dot) {
                 try p.lexer.next();
-                var dot = p.allocator.create(E.Dot) catch unreachable;
-                dot.* = E.Dot{ .target = value, .name = p.lexer.identifier, .name_loc = p.lexer.loc() };
-                value.data = .{ .e_dot = dot };
+                value.data = .{ .e_dot = Expr.Data.Store.Dot.append(
+                    E.Dot{ .target = value, .name = p.lexer.identifier, .name_loc = p.lexer.loc() },
+                ) };
                 try p.lexer.expect(.t_identifier);
             }
         }
@@ -5969,9 +6016,11 @@ pub const P = struct {
             if (isDirectivePrologue) {
                 isDirectivePrologue = false;
                 switch (stmt.data) {
-                    .s_expr => |expr| {
-                        switch (stmt.getExpr().value.data) {
-                            .e_string => |str| {
+                    .s_expr => {
+                        const expr = stmt.getExpr();
+                        switch (expr.value.data) {
+                            .e_string => {
+                                const str = expr.value.getString();
                                 if (!str.prefer_template) {
                                     // stmt.data = Stmt.Data{
                                     //     .s_directive = p.m(S.Directive{
@@ -6584,10 +6633,14 @@ pub const P = struct {
         if (had_pure_comment_before and level.lt(.call)) {
             expr = try p.parseSuffix(expr, @intToEnum(Level, @enumToInt(Level.call) - 1), errors, flags);
             switch (expr.data) {
-                .e_call => |ex| {
+                .e_call => {
+                    const ex = expr.getCall();
+
                     ex.can_be_unwrapped_if_unused = true;
                 },
-                .e_new => |ex| {
+                .e_new => {
+                    const ex = expr.getNew();
+
                     ex.can_be_unwrapped_if_unused = true;
                 },
                 else => {},
@@ -6673,10 +6726,14 @@ pub const P = struct {
 
     pub fn markExprAsParenthesized(p: *P, expr: *Expr) void {
         switch (expr.data) {
-            .e_array => |ex| {
+            .e_array => {
+                const ex = expr.getArray();
+
                 ex.is_parenthesized = true;
             },
-            .e_object => |ex| {
+            .e_object => {
+                const ex = expr.getObject();
+
                 ex.is_parenthesized = true;
             },
             else => {
@@ -6752,7 +6809,9 @@ pub const P = struct {
                 // Handle index signatures
                 if (p.options.ts and p.lexer.token == .t_colon and wasIdentifier and opts.is_class) {
                     switch (expr.data) {
-                        .e_identifier => |ident| {
+                        .e_identifier => {
+                            var ident = expr.getIdentifier();
+
                             try p.lexer.next();
                             try p.skipTypeScriptType(.lowest);
                             try p.lexer.expect(.t_close_bracket);
@@ -6901,7 +6960,9 @@ pub const P = struct {
             // Forbid the names "constructor" and "prototype" in some cases
             if (!is_computed) {
                 switch (key.data) {
-                    .e_string => |str| {
+                    .e_string => {
+                        const str = key.getString();
+
                         if (str.eql(string, "constructor") or (opts.is_static and str.eql(string, "prototype"))) {
                             // TODO: fmt error message to include string value.
                             p.log.addRangeError(p.source, key_range, "Invalid field name") catch unreachable;
@@ -6924,7 +6985,9 @@ pub const P = struct {
 
             // Special-case private identifiers
             switch (key.data) {
-                .e_private_identifier => |private| {
+                .e_private_identifier => {
+                    const private = key.getPrivateIdentifier();
+
                     const name = p.loadNameFromRef(private.ref);
                     if (strings.eqlComptime(name, "#constructor")) {
                         p.log.addRangeError(p.source, key_range, "Invalid field name \"#constructor\"") catch unreachable;
@@ -6968,7 +7031,9 @@ pub const P = struct {
             // Forbid the names "constructor" and "prototype" in some cases
             if (opts.is_class and !is_computed) {
                 switch (key.data) {
-                    .e_string => |str| {
+                    .e_string => {
+                        const str = key.getString();
+
                         if (!opts.is_static and str.eql(string, "constructor")) {
                             if (kind == .get) {
                                 p.log.addRangeError(p.source, key_range, "Class constructor cannot be a getter") catch unreachable;
@@ -7035,7 +7100,9 @@ pub const P = struct {
 
             // Special-case private identifiers
             switch (key.data) {
-                .e_private_identifier => |private| {
+                .e_private_identifier => {
+                    const private = key.getPrivateIdentifier();
+
                     var declare: Symbol.Kind = undefined;
                     var suffix: string = "";
                     switch (kind) {
@@ -7172,7 +7239,9 @@ pub const P = struct {
                 // Forbid decorators on class constructors
                 if (opts.ts_decorators.len > 0) {
                     switch ((property.key orelse p.panic("Internal error: Expected property {s} to have a key.", .{property})).data) {
-                        .e_string => |str| {
+                        .e_string => {
+                            const str = property.key.?.getString();
+
                             if (str.eql(string, "constructor")) {
                                 p.log.addError(p.source, first_decorator_loc, "TypeScript does not allow decorators on class constructors") catch unreachable;
                             }
@@ -7996,7 +8065,9 @@ pub const P = struct {
 
                     // Warn about "!a in b" instead of "!(a in b)"
                     switch (left.data) {
-                        .e_unary => |unary| {
+                        .e_unary => {
+                            const unary = expr.getUnary();
+
                             if (unary.op == .un_not) {
                                 // TODO:
                                 // p.log.addRangeWarning(source: ?Source, r: Range, text: string)
@@ -8017,7 +8088,9 @@ pub const P = struct {
                     // example of code with this problem: https://github.com/mrdoob/three.js/pull/11182.
                     if (!p.options.suppress_warnings_about_weird_code) {
                         switch (left.data) {
-                            .e_unary => |unary| {
+                            .e_unary => {
+                                const unary = expr.getUnary();
+
                                 if (unary.op == .un_not) {
                                     // TODO:
                                     // p.log.addRangeWarning(source: ?Source, r: Range, text: string)
@@ -9212,7 +9285,7 @@ pub const P = struct {
                                 // These never have side effects
                                 .s_function => {},
                                 .s_class => {
-                                    if (!p.classCanBeRemovedIfUnused(&stmt.getClass().class)) {
+                                    if (!p.classCanBeRemovedIfUnused(&s2.getClass().class)) {
                                         return false;
                                     }
                                 },
@@ -9346,14 +9419,18 @@ pub const P = struct {
         // Output.print("\nVisit: {s} - {d}\n", .{ @tagName(expr.data), expr.loc.start });
         switch (expr.data) {
             .e_null, .e_super, .e_boolean, .e_big_int, .e_reg_exp, .e_new_target, .e_undefined => {},
-            .e_string => |e_| {
+            .e_string => {
+                const e_ = expr.getString();
+
                 // If you're using this, you're probably not using 0-prefixed legacy octal notation
                 // if e.LegacyOctalLoc.Start > 0 {
             },
-            .e_number => |e_| {
+            .e_number => {
+                const e_ = expr.getNumber();
+
                 // idc about legacy octal loc
             },
-            .e_this => |e_| {
+            .e_this => {
                 if (p.valueForThis(expr.loc)) |exp| {
                     return exp;
                 }
@@ -9365,8 +9442,8 @@ pub const P = struct {
                 // }
             },
 
-            .e_import_meta => |exp| {
-                const is_delete_target = std.meta.activeTag(p.delete_target) == .e_import_meta and exp == p.delete_target.e_import_meta;
+            .e_import_meta => {
+                const is_delete_target = std.meta.activeTag(p.delete_target) == .e_import_meta and &expr.data.e_import_meta == &p.delete_target.e_import_meta;
 
                 if (p.define.dots.get("meta")) |meta| {
                     for (meta) |define| {
@@ -9382,11 +9459,15 @@ pub const P = struct {
                     return p.e(E.Identifier{ .ref = p.import_meta_ref }, expr.loc);
                 }
             },
-            .e_spread => |exp| {
+            .e_spread => {
+                const exp = expr.getSpread();
+
                 exp.value = p.visitExpr(exp.value);
             },
-            .e_identifier => |e_| {
-                const is_delete_target = @as(Expr.Tag, p.delete_target) == .e_identifier and e_ == p.delete_target.e_identifier;
+            .e_identifier => {
+                const e_ = expr.getIdentifier();
+
+                const is_delete_target = @as(Expr.Tag, p.delete_target) == .e_identifier and expr.data.e_identifier.index == p.delete_target.e_identifier.index;
 
                 const name = p.loadNameFromRef(e_.ref);
                 if (p.isStrictMode() and js_lexer.StrictModeReservedWords.has(name)) {
@@ -9437,10 +9518,14 @@ pub const P = struct {
                     .was_originally_identifier = true,
                 });
             },
-            .e_private_identifier => |e_| {
+            .e_private_identifier => {
+                const e_ = expr.getPrivateIdentifier();
+
                 p.panic("Unexpected private identifier. This is an internal error - not your fault.", .{});
             },
-            .e_jsx_element => |e_| {
+            .e_jsx_element => {
+                const e_ = expr.getJsxElement();
+
                 const tag = tagger: {
                     if (e_.tag) |_tag| {
                         break :tagger p.visitExpr(_tag);
@@ -9475,7 +9560,7 @@ pub const P = struct {
                         if (e_.properties.len > 0) {
                             if (e_.key) |key| {
                                 var props = List(G.Property).fromOwnedSlice(p.allocator, e_.properties);
-                                props.append(G.Property{ .key = Expr{ .loc = key.loc, .data = keyExprData }, .value = key }) catch unreachable;
+                                // props.append(G.Property{ .key = Expr{ .loc = key.loc, .data = keyExprData }, .value = key }) catch unreachable;
                                 args[0] = p.e(E.Object{ .properties = props.toOwnedSlice() }, expr.loc);
                             } else {
                                 args[0] = p.e(E.Object{ .properties = e_.properties }, expr.loc);
@@ -9513,7 +9598,7 @@ pub const P = struct {
                         for (e_.children) |child, i| {
                             e_.children[i] = p.visitExpr(child);
                         }
-                        const children_key = Expr{ .data = jsxChildrenKeyData, .loc = expr.loc };
+                        const children_key = p.e(E.String{ .utf8 = "key" }, expr.loc);
 
                         if (e_.children.len == 1) {
                             props.append(G.Property{
@@ -9540,29 +9625,29 @@ pub const P = struct {
                         }
 
                         if (p.options.jsx.development) {
-                            args[3] = Expr{ .loc = expr.loc, .data = falseValueExpr };
+                            // args[3] = Expr{ .loc = expr.loc, .data = falseValueExpr };
                             // placeholder src prop for now
-                            var source = p.allocator.alloc(G.Property, 3) catch unreachable;
-                            p.recordUsage(p.jsx_filename_ref);
-                            source[0] = G.Property{
-                                .key = Expr{ .loc = expr.loc, .data = Prefill.Data.Filename },
-                                .value = p.e(E.Identifier{ .ref = p.jsx_filename_ref }, expr.loc),
-                            };
+                            // var source = p.allocator.alloc(G.Property, 3) catch unreachable;
+                            // p.recordUsage(p.jsx_filename_ref);
+                            // source[0] = G.Property{
+                            //     .key = Expr{ .loc = expr.loc, .data = Prefill.Data.Filename },
+                            //     .value = p.e(E.Identifier{ .ref = p.jsx_filename_ref }, expr.loc),
+                            // };
 
-                            source[1] = G.Property{
-                                .key = Expr{ .loc = expr.loc, .data = Prefill.Data.LineNumber },
-                                .value = p.e(E.Number{ .value = @intToFloat(f64, expr.loc.start) }, expr.loc),
-                            };
+                            // source[1] = G.Property{
+                            //     .key = Expr{ .loc = expr.loc, .data = Prefill.Data.LineNumber },
+                            //     .value = p.e(E.Number{ .value = @intToFloat(f64, expr.loc.start) }, expr.loc),
+                            // };
 
-                            source[2] = G.Property{
-                                .key = Expr{ .loc = expr.loc, .data = Prefill.Data.ColumnNumber },
-                                .value = p.e(E.Number{ .value = @intToFloat(f64, expr.loc.start) }, expr.loc),
-                            };
+                            // source[2] = G.Property{
+                            //     .key = Expr{ .loc = expr.loc, .data = Prefill.Data.ColumnNumber },
+                            //     .value = p.e(E.Number{ .value = @intToFloat(f64, expr.loc.start) }, expr.loc),
+                            // };
 
-                            args[4] = p.e(E.Object{
-                                .properties = source,
-                            }, expr.loc);
-                            args[5] = Expr{ .data = Prefill.Data.This, .loc = expr.loc };
+                            // args[4] = p.e(E.Object{
+                            //     .properties = source,
+                            // }, expr.loc);
+                            // args[5] = Expr{ .data = Prefill.Data.This, .loc = expr.loc };
                         }
 
                         return p.e(E.Call{
@@ -9577,7 +9662,9 @@ pub const P = struct {
                 }
             },
 
-            .e_template => |e_| {
+            .e_template => {
+                const e_ = expr.getTemplate();
+
                 if (e_.tag) |tag| {
                     e_.tag = p.visitExpr(tag);
                 }
@@ -9588,10 +9675,14 @@ pub const P = struct {
                 }
             },
 
-            .e_binary => |e_| {
+            .e_binary => {
+                const e_ = expr.getBinary();
+
                 switch (e_.left.data) {
                     // Special-case private identifiers
-                    .e_private_identifier => |private| {
+                    .e_private_identifier => {
+                        const private = expr.getPrivateIdentifier();
+
                         if (e_.op == .bin_in) {
                             const name = p.loadNameFromRef(private.ref);
                             const result = p.findSymbol(e_.left.loc, name) catch unreachable;
@@ -9612,8 +9703,8 @@ pub const P = struct {
                     else => {},
                 }
 
-                const is_call_target = @as(Expr.Tag, p.call_target) == .e_binary and e_ == p.call_target.e_binary;
-                const is_stmt_expr = @as(Expr.Tag, p.stmt_expr_value) == .e_binary and e_ == p.stmt_expr_value.e_binary;
+                const is_call_target = @as(Expr.Tag, p.call_target) == .e_binary and expr.data.e_binary.index == p.call_target.e_binary.index;
+                const is_stmt_expr = @as(Expr.Tag, p.stmt_expr_value) == .e_binary and expr.data.e_binary.index == p.stmt_expr_value.e_binary.index;
                 const was_anonymous_named_expr = p.isAnonymousNamedExpr(e_.right);
 
                 e_.left = p.visitExprInOut(e_.left, ExprIn{
@@ -9861,7 +9952,7 @@ pub const P = struct {
 
                         // Optionally preserve the name
                         if (@as(Expr.Tag, e_.left.data) == .e_identifier) {
-                            e_.right = p.maybeKeepExprSymbolName(e_.right, p.symbols.items[e_.left.data.e_identifier.ref.inner_index].original_name, was_anonymous_named_expr);
+                            e_.right = p.maybeKeepExprSymbolName(e_.right, p.symbols.items[e_.left.getIdentifier().ref.inner_index].original_name, was_anonymous_named_expr);
                         }
                     },
                     .bin_add_assign => {
@@ -9912,9 +10003,11 @@ pub const P = struct {
                     else => {},
                 }
             },
-            .e_index => |e_| {
-                const is_call_target = std.meta.activeTag(p.call_target) == .e_index and e_ == p.call_target.e_index;
-                const is_delete_target = std.meta.activeTag(p.delete_target) == .e_index and e_ == p.delete_target.e_index;
+            .e_index => {
+                const e_ = expr.getIndex();
+
+                const is_call_target = std.meta.activeTag(p.call_target) == .e_index and expr.data.e_index.index == p.call_target.e_index.index;
+                const is_delete_target = std.meta.activeTag(p.delete_target) == .e_index and expr.data.e_index.index == p.delete_target.e_index.index;
 
                 const target = p.visitExprInOut(e_.target, ExprIn{
                     // this is awkward due to a zig compiler bug
@@ -9928,7 +10021,7 @@ pub const P = struct {
                         in.assign_target,
                         is_delete_target,
                         e_.target,
-                        e_.index.data.e_string.string(p.allocator) catch unreachable,
+                        e_.index.getString().string(p.allocator) catch unreachable,
                         e_.index.loc,
                         is_call_target,
                     )) |val| {
@@ -9940,20 +10033,22 @@ pub const P = struct {
                 // though this is a run-time error, we make it a compile-time error when
                 // bundling because scope hoisting means these will no longer be run-time
                 // errors.
-                if ((in.assign_target != .none or is_delete_target) and @as(Expr.Tag, e_.target.data) == .e_identifier and p.symbols.items[e_.target.data.e_identifier.ref.inner_index].kind == .import) {
+                if ((in.assign_target != .none or is_delete_target) and @as(Expr.Tag, e_.target.data) == .e_identifier and p.symbols.items[e_.target.getIdentifier().ref.inner_index].kind == .import) {
                     const r = js_lexer.rangeOfIdentifier(p.source, e_.target.loc);
                     p.log.addRangeErrorFmt(
                         p.source,
                         r,
                         p.allocator,
                         "Cannot assign to property on import \"{s}\"",
-                        .{p.symbols.items[e_.target.data.e_identifier.ref.inner_index].original_name},
+                        .{p.symbols.items[e_.target.getIdentifier().ref.inner_index].original_name},
                     ) catch unreachable;
                 }
 
                 return p.e(e_, expr.loc);
             },
-            .e_unary => |e_| {
+            .e_unary => {
+                const e_ = expr.getUnary();
+
                 switch (e_.op) {
                     .un_typeof => {
                         e_.value = p.visitExprInOut(e_.value, ExprIn{ .assign_target = e_.op.unaryAssignTarget() });
@@ -10017,9 +10112,11 @@ pub const P = struct {
                     },
                 }
             },
-            .e_dot => |e_| {
-                const is_delete_target = @as(Expr.Tag, p.delete_target) == .e_dot and e_ == p.delete_target.e_dot;
-                const is_call_target = @as(Expr.Tag, p.call_target) == .e_dot and e_ == p.call_target.e_dot;
+            .e_dot => {
+                const e_ = expr.getDot();
+
+                const is_delete_target = @as(Expr.Tag, p.delete_target) == .e_dot and expr.data.e_dot.index == p.delete_target.e_dot.index;
+                const is_call_target = @as(Expr.Tag, p.call_target) == .e_dot and expr.data.e_dot.index == p.call_target.e_dot.index;
 
                 if (p.define.dots.get(e_.name)) |parts| {
                     for (parts) |define| {
@@ -10045,7 +10142,7 @@ pub const P = struct {
                 }
 
                 // Track ".then().catch()" chains
-                if (is_call_target and @as(Expr.Tag, p.then_catch_chain.next_target) == .e_dot and p.then_catch_chain.next_target.e_dot == e_) {
+                if (is_call_target and @as(Expr.Tag, p.then_catch_chain.next_target) == .e_dot and p.then_catch_chain.next_target.e_dot.index == expr.data.e_dot.index) {
                     if (strings.eqlComptime(e_.name, "catch")) {
                         p.then_catch_chain = ThenCatchChain{
                             .next_target = e_.target.data,
@@ -10074,8 +10171,10 @@ pub const P = struct {
                     }
                 }
             },
-            .e_if => |e_| {
-                const is_call_target = @as(Expr.Data, p.call_target) == .e_if and e_ == p.call_target.e_if;
+            .e_if => {
+                const e_ = expr.getIf();
+
+                const is_call_target = @as(Expr.Data, p.call_target) == .e_if and expr.data.e_if.index == p.call_target.e_if.index;
 
                 e_.test_ = p.visitExpr(e_.test_);
 
@@ -10103,16 +10202,22 @@ pub const P = struct {
                     }
                 }
             },
-            .e_await => |e_| {
+            .e_await => {
+                const e_ = expr.getAwait();
+
                 p.await_target = e_.value.data;
                 e_.value = p.visitExpr(e_.value);
             },
-            .e_yield => |e_| {
+            .e_yield => {
+                const e_ = expr.getYield();
+
                 if (e_.value) |val| {
                     e_.value = p.visitExpr(val);
                 }
             },
-            .e_array => |e_| {
+            .e_array => {
+                const e_ = expr.getArray();
+
                 if (in.assign_target != .none) {
                     if (e_.comma_after_spread) |spread| {
                         p.log.addRangeError(p.source, logger.Range{ .loc = spread, .len = 1 }, "Unexpected \",\" after rest pattern") catch unreachable;
@@ -10126,10 +10231,14 @@ pub const P = struct {
                     const data = item.data;
                     switch (data) {
                         .e_missing => {},
-                        .e_spread => |spread| {
+                        .e_spread => {
+                            const spread = item.getSpread();
+
                             spread.value = p.visitExprInOut(spread.value, ExprIn{ .assign_target = in.assign_target });
                         },
-                        .e_binary => |e2| {
+                        .e_binary => {
+                            const e2 = item.getBinary();
+
                             if (in.assign_target != .none and e2.op == .bin_assign) {
                                 const was_anonymous_named_expr = p.isAnonymousNamedExpr(e2.right);
                                 e2.left = p.visitExprInOut(e2.left, ExprIn{ .assign_target = .replace });
@@ -10138,7 +10247,7 @@ pub const P = struct {
                                 if (@as(Expr.Tag, e2.left.data) == .e_identifier) {
                                     e2.right = p.maybeKeepExprSymbolName(
                                         e2.right,
-                                        p.symbols.items[e2.left.data.e_identifier.ref.inner_index].original_name,
+                                        p.symbols.items[e2.left.getIdentifier().ref.inner_index].original_name,
                                         was_anonymous_named_expr,
                                     );
                                 }
@@ -10153,7 +10262,9 @@ pub const P = struct {
                     e_.items[i] = item;
                 }
             },
-            .e_object => |e_| {
+            .e_object => {
+                const e_ = expr.getObject();
+
                 if (in.assign_target != .none) {
                     p.maybeCommaSpreadError(e_.comma_after_spread);
                 }
@@ -10167,7 +10278,7 @@ pub const P = struct {
                         // Forbid duplicate "__proto__" properties according to the specification
                         if (!property.flags.is_computed and !property.flags.was_shorthand and !property.flags.is_method and in.assign_target == .none and key.data.isStringValue() and strings.eqlComptime(
                             // __proto__ is utf8, assume it lives in refs
-                            key.data.e_string.utf8,
+                            key.getString().utf8,
                             "__proto__",
                         )) {
                             if (has_proto) {
@@ -10183,7 +10294,9 @@ pub const P = struct {
                     // Extract the initializer for expressions like "({ a: b = c } = d)"
                     if (in.assign_target != .none and property.initializer != null and property.value != null) {
                         switch (property.value.?.data) {
-                            .e_binary => |bin| {
+                            .e_binary => {
+                                const bin = property.value.?.getBinary();
+
                                 if (bin.op == .bin_assign) {
                                     property.initializer = bin.right;
                                     property.value = bin.left;
@@ -10205,7 +10318,7 @@ pub const P = struct {
                             if (@as(Expr.Tag, val.data) == .e_identifier) {
                                 property.initializer = p.maybeKeepExprSymbolName(
                                     property.initializer orelse unreachable,
-                                    p.symbols.items[val.data.e_identifier.ref.inner_index].original_name,
+                                    p.symbols.items[val.getIdentifier().ref.inner_index].original_name,
                                     was_anonymous_named_expr,
                                 );
                             }
@@ -10213,30 +10326,34 @@ pub const P = struct {
                     }
                 }
             },
-            .e_import => |e_| {
+            .e_import => {
+                const e_ = expr.getImport();
+
                 const state = TransposeState{
-                    .is_await_target = if (p.await_target != null) p.await_target.?.e_import == e_ else false,
-                    .is_then_catch_target = e_ == p.then_catch_chain.next_target.e_import and p.then_catch_chain.has_catch,
+                    .is_await_target = if (p.await_target != null) p.await_target.?.e_import.eql(expr.data.e_index) else false,
+                    .is_then_catch_target = expr.data.e_import.eql(p.then_catch_chain.next_target.e_import) and p.then_catch_chain.has_catch,
                     .loc = e_.expr.loc,
                 };
 
                 e_.expr = p.visitExpr(e_.expr);
                 return p.import_transposer.maybeTransposeIf(e_.expr, state);
             },
-            .e_call => |e_| {
+            .e_call => {
+                const e_ = expr.getCall();
+
                 p.call_target = e_.target.data;
 
                 p.then_catch_chain = ThenCatchChain{
                     .next_target = e_.target.data,
                     .has_multiple_args = e_.args.len >= 2,
-                    .has_catch = @as(Expr.Tag, p.then_catch_chain.next_target) == .e_call and p.then_catch_chain.next_target.e_call == e_ and p.then_catch_chain.has_catch,
+                    .has_catch = @as(Expr.Tag, p.then_catch_chain.next_target) == .e_call and p.then_catch_chain.next_target.e_call.eql(expr.data.e_call) and p.then_catch_chain.has_catch,
                 };
 
                 // Prepare to recognize "require.resolve()" calls
                 // const could_be_require_resolve = (e_.args.len == 1 and @as(
                 //     Expr.Tag,
                 //     e_.target.data,
-                // ) == .e_dot and e_.target.data.e_dot.optional_chain == null and strings.eql(
+                // ) == .e_dot and e_.target.getDot().optional_chain == null and strings.eql(
                 //     e_.target.dat.e_dot.name,
                 //     "resolve",
                 // ));
@@ -10252,7 +10369,7 @@ pub const P = struct {
                     has_spread = has_spread or @as(Expr.Tag, e_.args[i].data) == .e_spread;
                 }
 
-                if (e_.optional_chain == null and @as(Expr.Tag, e_.target.data) == .e_identifier and e_.target.data.e_identifier.ref.eql(p.require_ref)) {
+                if (e_.optional_chain == null and @as(Expr.Tag, e_.target.data) == .e_identifier and e_.target.getIdentifier().ref.eql(p.require_ref)) {
                     // Heuristic: omit warnings inside try/catch blocks because presumably
                     // the try/catch statement is there to handle the potential run-time
                     // error from the unbundled require() call failing.
@@ -10266,7 +10383,9 @@ pub const P = struct {
 
                 return expr;
             },
-            .e_new => |e_| {
+            .e_new => {
+                const e_ = expr.getNew();
+
                 e_.target = p.visitExpr(e_.target);
                 // p.warnA
 
@@ -10275,7 +10394,9 @@ pub const P = struct {
                     e_.args[i] = p.visitExpr(e_.args[i]);
                 }
             },
-            .e_arrow => |e_| {
+            .e_arrow => {
+                const e_ = expr.getArrow();
+
                 const old_fn_or_arrow_data = std.mem.toBytes(p.fn_or_arrow_data_visit);
                 p.fn_or_arrow_data_visit = FnOrArrowDataVisit{
                     .is_arrow = true,
@@ -10310,13 +10431,17 @@ pub const P = struct {
                 p.fn_only_data_visit.is_inside_async_arrow_fn = old_inside_async_arrow_fn;
                 p.fn_or_arrow_data_visit = std.mem.bytesToValue(@TypeOf(p.fn_or_arrow_data_visit), &old_fn_or_arrow_data);
             },
-            .e_function => |e_| {
+            .e_function => {
+                const e_ = expr.getFunction();
+
                 e_.func = p.visitFunc(e_.func, expr.loc);
                 if (e_.func.name) |name| {
                     return p.keepExprSymbolName(expr, p.symbols.items[name.ref.?.inner_index].original_name);
                 }
             },
-            .e_class => |e_| {
+            .e_class => {
+                const e_ = expr.getClass();
+
                 // This might be wrong.
                 _ = p.visitClass(expr.loc, e_);
             },
@@ -10387,7 +10512,7 @@ pub const P = struct {
 
         // var value = p.callRuntime(_value.loc, "ℹ", p.expr_list.items[start..p.expr_list.items.len]);
         // // Make sure tree shaking removes this if the function is never used
-        // value.data.e_call.can_be_unwrapped_if_unused = true;
+        // value.getCall().can_be_unwrapped_if_unused = true;
         // return value;
     }
 
@@ -10473,13 +10598,19 @@ pub const P = struct {
                 return true;
             },
 
-            .e_dot => |ex| {
+            .e_dot => {
+                const ex = expr.getDot();
+
                 return ex.can_be_removed_if_unused;
             },
-            .e_class => |ex| {
+            .e_class => {
+                const ex = expr.getClass();
+
                 return p.classCanBeRemovedIfUnused(ex);
             },
-            .e_identifier => |ex| {
+            .e_identifier => {
+                const ex = expr.getIdentifier();
+
                 if (ex.must_keep_due_to_with_stmt) {
                     return false;
                 }
@@ -10507,7 +10638,9 @@ pub const P = struct {
                     return true;
                 }
             },
-            .e_import_identifier => |ex| {
+            .e_import_identifier => {
+                const ex = expr.getImportIdentifier();
+
                 // References to an ES6 import item are always side-effect free in an
                 // ECMAScript environment.
                 //
@@ -10526,10 +10659,14 @@ pub const P = struct {
                 // references as being side-effect free.
                 return true;
             },
-            .e_if => |ex| {
+            .e_if => {
+                const ex = expr.getIf();
+
                 return p.exprCanBeRemovedIfUnused(ex.test_) and p.exprCanBeRemovedIfUnused(ex.yes) and p.exprCanBeRemovedIfUnused(ex.no);
             },
-            .e_array => |ex| {
+            .e_array => {
+                const ex = expr.getArray();
+
                 for (ex.items) |item| {
                     if (!p.exprCanBeRemovedIfUnused(item)) {
                         return false;
@@ -10538,7 +10675,9 @@ pub const P = struct {
 
                 return true;
             },
-            .e_object => |ex| {
+            .e_object => {
+                const ex = expr.getObject();
+
                 for (ex.properties) |property| {
 
                     // The key must still be evaluated if it's computed or a spread
@@ -10554,7 +10693,9 @@ pub const P = struct {
                 }
                 return true;
             },
-            .e_call => |ex| {
+            .e_call => {
+                const ex = expr.getCall();
+
                 // A call that has been marked "__PURE__" can be removed if all arguments
                 // can be removed. The annotation causes us to ignore the target.
                 if (ex.can_be_unwrapped_if_unused) {
@@ -10567,7 +10708,9 @@ pub const P = struct {
 
                 return true;
             },
-            .e_new => |ex| {
+            .e_new => {
+                const ex = expr.getNew();
+
                 // A call that has been marked "__PURE__" can be removed if all arguments
                 // can be removed. The annotation causes us to ignore the target.
                 if (ex.can_be_unwrapped_if_unused) {
@@ -10580,7 +10723,9 @@ pub const P = struct {
 
                 return true;
             },
-            .e_unary => |ex| {
+            .e_unary => {
+                const ex = expr.getUnary();
+
                 switch (ex.op) {
                     .un_typeof, .un_void, .un_not => {
                         return p.exprCanBeRemovedIfUnused(ex.value);
@@ -10588,7 +10733,9 @@ pub const P = struct {
                     else => {},
                 }
             },
-            .e_binary => |ex| {
+            .e_binary => {
+                const ex = expr.getBinary();
+
                 switch (ex.op) {
                     .bin_strict_eq, .bin_strict_ne, .bin_comma, .bin_logical_or, .bin_logical_and, .bin_nullish_coalescing => {
                         return p.exprCanBeRemovedIfUnused(ex.left) and p.exprCanBeRemovedIfUnused(ex.right);
@@ -10620,7 +10767,7 @@ pub const P = struct {
         is_call_target: bool,
     ) ?Expr {
         if (@as(Expr.Tag, target.data) == .e_identifier) {
-            const id = target.data.e_identifier;
+            const id = target.getIdentifier();
 
             // Rewrite property accesses on explicit namespace imports as an identifier.
             // This lets us replace them easily in the printer to rebind them to
@@ -10830,7 +10977,9 @@ pub const P = struct {
                         // Discard type-only export default statements
                         if (p.options.ts) {
                             switch (expr.data) {
-                                .e_identifier => |ident| {
+                                .e_identifier => {
+                                    var ident = expr.getIdentifier();
+
                                     const symbol = p.symbols.items[ident.ref.inner_index];
                                     if (symbol.kind == .unbound) {
                                         if (p.local_type_names.get(symbol.original_name)) |local_type| {
@@ -11362,13 +11511,17 @@ pub const P = struct {
                     if (enum_value.value != null) {
                         enum_value.value = p.visitExpr(enum_value.value.?);
                         switch (enum_value.value.?.data) {
-                            .e_number => |num| {
+                            .e_number => {
+                                const num = assign_target.getNumber();
+
                                 // prob never allocates in practice
                                 values_so_far.put(name.string(p.allocator) catch unreachable, num.value) catch unreachable;
                                 has_numeric_value = true;
                                 next_numeric_value = num.value + 1.0;
                             },
-                            .e_string => |str| {
+                            .e_string => {
+                                const str = assign_target.getString();
+
                                 has_string_value = true;
                             },
                             else => {},
@@ -11751,10 +11904,14 @@ pub const P = struct {
             .e_arrow => {
                 return true;
             },
-            .e_function => |func| {
+            .e_function => {
+                const func = expr.getFunction();
+
                 return func.func.name == null;
             },
-            .e_class => |class| {
+            .e_class => {
+                const class = expr.getClass();
+
                 return class.class_name == null;
             },
             else => {
@@ -11765,7 +11922,9 @@ pub const P = struct {
 
     pub fn valueForDefine(p: *P, loc: logger.Loc, assign_target: js_ast.AssignTarget, is_delete_target: bool, define_data: *const DefineData) Expr {
         switch (define_data.value) {
-            .e_identifier => |ident| {
+            .e_identifier => {
+                var ident = Expr.Data.Store.Identifier.at(define_data.value.e_identifier);
+
                 return p.handleIdentifier(
                     loc,
                     ident,
@@ -11788,7 +11947,9 @@ pub const P = struct {
 
     pub fn isDotDefineMatch(p: *P, expr: Expr, parts: []const string) bool {
         switch (expr.data) {
-            .e_dot => |ex| {
+            .e_dot => {
+                const ex = expr.getDot();
+
                 if (parts.len > 1) {
                     if (ex.optional_chain != null) {
                         return false;
@@ -11800,10 +11961,12 @@ pub const P = struct {
                     return is_tail_match and p.isDotDefineMatch(ex.target, parts[0..last]);
                 }
             },
-            .e_import_meta => |ex| {
+            .e_import_meta => {
                 return parts.len == 2 and strings.eqlComptime(parts[0], "import") and strings.eqlComptime(parts[1], "meta");
             },
-            .e_identifier => |ex| {
+            .e_identifier => {
+                const ex = expr.getIdentifier();
+
                 // The last expression must be an identifier
                 if (parts.len == 1) {
                     const name = p.loadNameFromRef(ex.ref);
@@ -12027,7 +12190,7 @@ pub const P = struct {
             // Special-case EPrivateIdentifier to allow it here
 
             if (is_private) {
-                p.recordDeclaredSymbol(property.key.?.data.e_private_identifier.ref) catch unreachable;
+                p.recordDeclaredSymbol(property.key.?.getPrivateIdentifier().ref) catch unreachable;
             } else if (property.key) |key| {
                 class.properties[i].key = p.visitExpr(key);
             }
@@ -12050,7 +12213,7 @@ pub const P = struct {
             if (is_private) {} else if (!property.flags.is_method and !property.flags.is_computed) {
                 if (property.key) |key| {
                     if (@as(Expr.Tag, key.data) == .e_string) {
-                        name_to_keep = key.data.e_string.string(p.allocator) catch unreachable;
+                        name_to_keep = key.getString().string(p.allocator) catch unreachable;
                     }
                 }
             }
@@ -12327,7 +12490,9 @@ pub const P = struct {
             while (i < items.len) : (i += 1) {
                 var is_spread = false;
                 switch (items[i].data) {
-                    .e_spread => |v| {
+                    .e_spread => {
+                        const v = items[i].getSpread();
+
                         is_spread = true;
                         items[i] = v.value;
                     },
@@ -12604,6 +12769,7 @@ pub const P = struct {
 
     pub fn init(allocator: *std.mem.Allocator, log: *logger.Log, source: *const logger.Source, define: *Define, lexer: js_lexer.Lexer, opts: Parser.Options) !*P {
         Stmt.Data.Store.create(allocator);
+        Expr.Data.Store.create(allocator);
 
         var scope_order = try ScopeOrderList.initCapacity(allocator, 1);
         var scope = try allocator.create(Scope);

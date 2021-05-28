@@ -682,7 +682,8 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
 
         pub fn isUnboundEvalIdentifier(p: *Printer, value: Expr) bool {
             switch (value.data) {
-                .e_identifier => |ident| {
+                .e_identifier => {
+                    const ident = value.getIdentifier();
                     if (ident.ref.is_source_contents_slice) return false;
 
                     const symbol = p.symbols.get(p.symbols.follow(ident.ref)) orelse return false;
@@ -838,37 +839,41 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
             defer debugl("</printExpr>");
 
             switch (expr.data) {
-                .e_missing => |e| {},
-                .e_undefined => |e| {
+                .e_missing => {},
+                .e_undefined => {
                     p.printSpaceBeforeIdentifier();
 
                     p.printUndefined(level);
                 },
-                .e_super => |e| {
+                .e_super => {
                     p.printSpaceBeforeIdentifier();
                     p.print("super");
                 },
-                .e_null => |e| {
+                .e_null => {
                     p.printSpaceBeforeIdentifier();
                     p.print("null");
                 },
-                .e_this => |e| {
+                .e_this => {
                     p.printSpaceBeforeIdentifier();
                     p.print("this");
                 },
-                .e_spread => |e| {
+                .e_spread => {
+                    const e = expr.getSpread();
+
                     p.print("...");
                     p.printExpr(e.value, .comma, ExprFlag.None());
                 },
-                .e_new_target => |e| {
+                .e_new_target => {
                     p.printSpaceBeforeIdentifier();
                     p.print("new.target");
                 },
-                .e_import_meta => |e| {
+                .e_import_meta => {
                     p.printSpaceBeforeIdentifier();
                     p.print("import.meta");
                 },
-                .e_new => |e| {
+                .e_new => {
+                    const e = expr.getNew();
+
                     const has_pure_comment = e.can_be_unwrapped_if_unused;
                     const wrap = level.gte(.call) or (has_pure_comment and level.gte(.postfix));
 
@@ -908,7 +913,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         p.print(")");
                     }
                 },
-                .e_call => |e| {
+                .e_call => {
+                    const e = expr.getCall();
+
                     var wrap = level.gte(.new) or flags.forbid_call;
                     var target_flags = ExprFlag.None();
                     if (e.optional_chain == null) {
@@ -964,10 +971,14 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         p.print(")");
                     }
                 },
-                .e_require => |e| {
+                .e_require => {
+                    const e = expr.getRequire();
+
                     p.printRequireOrImportExpr(e.import_record_index, &([_]G.Comment{}), level, flags);
                 },
-                .e_require_or_require_resolve => |e| {
+                .e_require_or_require_resolve => {
+                    const e = expr.getRequireOrRequireResolve();
+
                     const wrap = level.gte(.new) or flags.forbid_call;
                     if (wrap) {
                         p.print("(");
@@ -992,7 +1003,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         p.print(")");
                     }
                 },
-                .e_import => |e| {
+                .e_import => {
+                    const e = expr.getImport();
+
                     // Handle non-string expressions
                     if (Ref.isSourceIndexNull(e.import_record_index)) {
                         const wrap = level.gte(.new) or flags.forbid_call;
@@ -1024,7 +1037,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         p.printRequireOrImportExpr(e.import_record_index, e.leading_interior_comments, level, flags);
                     }
                 },
-                .e_dot => |e| {
+                .e_dot => {
+                    const e = expr.getDot();
+
                     var wrap = false;
                     if (e.optional_chain == null) {
                         flags.has_non_optional_chain_parent = false;
@@ -1063,7 +1078,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         p.print(")");
                     }
                 },
-                .e_index => |e| {
+                .e_index => {
+                    const e = expr.getIndex();
+
                     var wrap = false;
                     if (e.optional_chain == null) {
                         flags.has_non_optional_chain_parent = false;
@@ -1086,7 +1103,8 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     }
 
                     switch (e.index.data) {
-                        .e_private_identifier => |priv| {
+                        .e_private_identifier => {
+                            const priv = e.index.getPrivateIdentifier();
                             if (is_optional_chain_start) {
                                 p.print(".");
                             }
@@ -1104,7 +1122,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         p.print(")");
                     }
                 },
-                .e_if => |e| {
+                .e_if => {
+                    const e = expr.getIf();
+
                     const wrap = level.gte(.conditional);
                     if (wrap) {
                         p.print("(");
@@ -1123,7 +1143,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         p.print(")");
                     }
                 },
-                .e_arrow => |e| {
+                .e_arrow => {
+                    const e = expr.getArrow();
+
                     const wrap = level.gte(.assign);
 
                     if (wrap) {
@@ -1163,7 +1185,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         p.print(")");
                     }
                 },
-                .e_function => |e| {
+                .e_function => {
+                    const e = expr.getFunction();
+
                     const n = p.js.lenI();
                     var wrap = p.stmt_start == n or p.export_default_start == n;
 
@@ -1190,7 +1214,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         p.print(")");
                     }
                 },
-                .e_class => |e| {
+                .e_class => {
+                    const e = expr.getClass();
+
                     const n = p.js.lenI();
                     var wrap = p.stmt_start == n or p.export_default_start == n;
                     if (wrap) {
@@ -1208,7 +1234,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         p.print(")");
                     }
                 },
-                .e_array => |e| {
+                .e_array => {
+                    const e = expr.getArray();
+
                     p.print("[");
                     if (e.items.len > 0) {
                         if (!e.is_single_line) {
@@ -1249,7 +1277,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
 
                     p.print("]");
                 },
-                .e_object => |e| {
+                .e_object => {
+                    const e = expr.getObject();
+
                     const n = p.js.lenI();
                     const wrap = p.stmt_start == n or p.arrow_expr_start == n;
 
@@ -1288,11 +1318,15 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         p.print(")");
                     }
                 },
-                .e_boolean => |e| {
+                .e_boolean => {
+                    const e = expr.getBoolean();
+
                     p.printSpaceBeforeIdentifier();
                     p.print(if (e.value) "true" else "false");
                 },
-                .e_string => |e| {
+                .e_string => {
+                    const e = expr.getString();
+
                     // If this was originally a template literal, print it as one as long as we're not minifying
                     if (e.prefer_template) {
                         p.print("`");
@@ -1306,7 +1340,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.printString(e.*, c);
                     p.print(c);
                 },
-                .e_template => |e| {
+                .e_template => {
+                    const e = expr.getTemplate();
+
                     if (e.tag) |tag| {
                         // Optional chains are forbidden in template tags
                         if (expr.isOptionalChain()) {
@@ -1341,7 +1377,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     }
                     p.print("`");
                 },
-                .e_reg_exp => |e| {
+                .e_reg_exp => {
+                    const e = expr.getRegExp();
+
                     const n = p.js.len();
 
                     // Avoid forming a single-line comment
@@ -1354,12 +1392,16 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     // Need a space before the next identifier to avoid it turning into flags
                     p.prev_reg_exp_end = p.js.lenI();
                 },
-                .e_big_int => |e| {
+                .e_big_int => {
+                    const e = expr.getBigInt();
+
                     p.printSpaceBeforeIdentifier();
                     p.print(e.value);
                     p.print('n');
                 },
-                .e_number => |e| {
+                .e_number => {
+                    const e = expr.getNumber();
+
                     const value = e.value;
                     const absValue = std.math.fabs(value);
 
@@ -1399,7 +1441,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         p.prev_num_end = p.js.lenI();
                     }
                 },
-                .e_identifier => |e| {
+                .e_identifier => {
+                    const e = expr.getIdentifier();
+
                     const name = p.renamer.nameForSymbol(e.ref);
                     const wrap = p.js.lenI() == p.for_of_init_start and strings.eqlComptime(name, "let");
 
@@ -1414,7 +1458,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         p.print(")");
                     }
                 },
-                .e_import_identifier => |e| {
+                .e_import_identifier => {
+                    const e = expr.getImportIdentifier();
+
                     // Potentially use a property access instead of an identifier
                     const ref = p.symbols.follow(e.ref);
                     var didPrint = false;
@@ -1427,7 +1473,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                             var wrap = false;
 
                             if (p.call_target) |target| {
-                                wrap = e.was_originally_identifier and target.e_import_identifier == e;
+                                wrap = e.was_originally_identifier and target.e_import_identifier.index == expr.data.e_import_identifier.index;
                             }
 
                             if (wrap) {
@@ -1456,7 +1502,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         p.printSymbol(e.ref);
                     }
                 },
-                .e_await => |e| {
+                .e_await => {
+                    const e = expr.getAwait();
+
                     const wrap = level.gte(.prefix);
 
                     if (wrap) {
@@ -1472,7 +1520,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         p.print(")");
                     }
                 },
-                .e_yield => |e| {
+                .e_yield => {
+                    const e = expr.getYield();
+
                     const wrap = level.gte(.assign);
                     if (wrap) {
                         p.print("(");
@@ -1493,7 +1543,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         p.print(")");
                     }
                 },
-                .e_unary => |e| {
+                .e_unary => {
+                    const e = expr.getUnary();
+
                     const entry: Op = Op.Table.get(e.op);
                     const wrap = level.gte(entry.level);
 
@@ -1524,7 +1576,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         p.print(")");
                     }
                 },
-                .e_binary => |e| {
+                .e_binary => {
+                    const e = expr.getBinary();
+
                     const entry: Op = Op.Table.get(e.op);
                     var wrap = level.gte(entry.level) or (e.op == Op.Code.bin_in and flags.forbid_in);
 
@@ -1559,7 +1613,8 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         // "??" can't directly contain "||" or "&&" without being wrapped in parentheses
                         .bin_nullish_coalescing => {
                             switch (e.left.data) {
-                                .e_binary => |left| {
+                                .e_binary => {
+                                    const left = e.left.getBinary();
                                     switch (left.op) {
                                         .bin_logical_and, .bin_logical_or => {
                                             left_level = .prefix;
@@ -1571,7 +1626,8 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                             }
 
                             switch (e.right.data) {
-                                .e_binary => |right| {
+                                .e_binary => {
+                                    const right = e.right.getBinary();
                                     switch (right.op) {
                                         .bin_logical_and, .bin_logical_or => {
                                             right_level = .prefix;
@@ -1585,7 +1641,8 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         // "**" can't contain certain unary expressions
                         .bin_pow => {
                             switch (e.left.data) {
-                                .e_unary => |left| {
+                                .e_unary => {
+                                    const left = e.left.getUnary();
                                     if (left.op.unaryAssignTarget() == .none) {
                                         left_level = .call;
                                     }
@@ -1601,7 +1658,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
 
                     // Special-case "#foo in bar"
                     if (e.op == .bin_in and @as(Expr.Tag, e.left.data) == .e_private_identifier) {
-                        p.printSymbol(e.left.data.e_private_identifier.ref);
+                        p.printSymbol(e.left.getPrivateIdentifier().ref);
                     } else {
                         flags.forbid_in = true;
                         p.printExpr(e.left, left_level, flags);
@@ -1701,7 +1758,8 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
 
             if (item.value) |val| {
                 switch (val.data) {
-                    .e_function => |func| {
+                    .e_function => {
+                        const func = val.getFunction();
                         if (item.flags.is_method) {
                             if (func.func.flags.is_async) {
                                 p.printSpaceBeforeIdentifier();
@@ -1728,7 +1786,8 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
 
                 if (item.value) |val| {
                     switch (val.data) {
-                        .e_function => |func| {
+                        .e_function => {
+                            const func = val.getFunction();
                             if (item.flags.is_method) {
                                 p.printFunc(func.func);
                                 return;
@@ -1749,10 +1808,11 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
             }
 
             switch (_key.data) {
-                .e_private_identifier => |key| {
-                    p.printSymbol(key.ref);
+                .e_private_identifier => {
+                    p.printSymbol(_key.getPrivateIdentifier().ref);
                 },
-                .e_string => |key| {
+                .e_string => {
+                    const key = _key.getString();
                     p.addSourceMapping(_key.loc);
                     if (key.isUTF8()) {
                         p.printSpaceBeforeIdentifier();
@@ -1761,7 +1821,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         // Use a shorthand property if the names are the same
                         if (item.value) |val| {
                             switch (val.data) {
-                                .e_identifier => |e| {
+                                .e_identifier => {
+                                    const e = val.getIdentifier();
+
                                     // TODO: is needing to check item.flags.was_shorthand a bug?
                                     // esbuild doesn't have to do that...
                                     // maybe it's a symptom of some other underlying issue
@@ -1774,7 +1836,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                                     }
                                     // if (strings) {}
                                 },
-                                .e_import_identifier => |e| {
+                                .e_import_identifier => {
+                                    const e = val.getImportIdentifier();
+
                                     const ref = p.symbols.follow(e.ref);
                                     if (p.symbols.get(ref)) |symbol| {
                                         if (symbol.namespace_alias == null and strings.eql(key.utf8, p.renamer.nameForSymbol(e.ref))) {
@@ -1795,7 +1859,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         // Use a shorthand property if the names are the same
                         if (item.value) |val| {
                             switch (val.data) {
-                                .e_identifier => |e| {
+                                .e_identifier => {
+                                    const e = val.getIdentifier();
+
                                     // TODO: is needing to check item.flags.was_shorthand a bug?
                                     // esbuild doesn't have to do that...
                                     // maybe it's a symptom of some other underlying issue
@@ -1808,7 +1874,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                                     }
                                     // if (strings) {}
                                 },
-                                .e_import_identifier => |e| {
+                                .e_import_identifier => {
+                                    const e = val.getImportIdentifier();
+
                                     const ref = p.symbols.follow(e.ref);
                                     if (p.symbols.get(ref)) |symbol| {
                                         if (symbol.namespace_alias == null and strings.utf16EqlString(key.value, p.renamer.nameForSymbol(e.ref))) {
@@ -1843,8 +1911,8 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
 
             if (item.kind != .normal) {
                 switch (item.value.?.data) {
-                    .e_function => |func| {
-                        p.printFunc(func.func);
+                    .e_function => {
+                        p.printFunc(item.value.?.getFunction().func);
                         return;
                     },
                     else => {},
@@ -1853,7 +1921,8 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
 
             if (item.value) |val| {
                 switch (val.data) {
-                    .e_function => |f| {
+                    .e_function => {
+                        const f = val.getFunction();
                         if (item.flags.is_method) {
                             p.printFunc(f.func);
 
@@ -1979,7 +2048,8 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                                 }
 
                                 switch (property.key.data) {
-                                    .e_string => |str| {
+                                    .e_string => {
+                                        const str = property.key.getString();
                                         if (str.isUTF8()) {
                                             p.addSourceMapping(property.key.loc);
                                             p.printSpaceBeforeIdentifier();

@@ -247,7 +247,10 @@ pub const Bundler = struct {
         const output_file = try bundler.print(
             result,
         );
+
         js_ast.Stmt.Data.Store.reset();
+        js_ast.Expr.Data.Store.reset();
+
         return output_file;
     }
 
@@ -286,6 +289,7 @@ pub const Bundler = struct {
             js_printer.Options{ .to_module_ref = Ref.RuntimeRef },
             &_linker,
         );
+        // allocator.free(result.source.contents);
 
         return options.OutputFile{
             .path = out_path,

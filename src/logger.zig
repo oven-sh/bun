@@ -373,8 +373,8 @@ pub const Log = struct {
     }
 };
 
-pub fn usize2Loc(loc: usize) Loc {
-    return Loc{ .start = std.math.lossyCast(i32, loc) };
+pub inline fn usize2Loc(loc: usize) Loc {
+    return Loc{ .start = @intCast(i32, loc) };
 }
 
 pub const Source = struct {

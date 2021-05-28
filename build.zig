@@ -118,7 +118,7 @@ pub fn build(b: *std.build.Builder) void {
         const env = std.process.getEnvMap(std.heap.c_allocator) catch unreachable;
 
         // if (env.get("SDKROOT")) |sdkroot| {
-        //     const joined = resolve_path.normalizeAndJoin2(cwd, .auto, sdkroot, "usr/include");
+        //     const joined = resolve_path.joinAbs2(cwd, .auto, sdkroot, "usr/include");
         //     const sys = std.heap.c_allocator.dupe(u8, joined) catch unreachable;
         //     exe.addSystemIncludeDir(sys);
         // }

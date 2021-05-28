@@ -6,6 +6,7 @@ usingnamespace @import("global.zig");
 usingnamespace @import("ast/base.zig");
 
 const ImportRecord = @import("import_record.zig").ImportRecord;
+const allocators = @import("allocators.zig");
 
 // There are three types.
 // 1. Expr (expression)
@@ -1071,6 +1072,106 @@ pub const Stmt = struct {
 
     var None = S.Empty{};
 
+    pub inline fn getBlock(self: *const @This()) *S.Block {
+        return Data.Store.Block.at(self.data.s_block);
+    }
+    pub inline fn getBreak(self: *const @This()) *S.Break {
+        return Data.Store.Break.at(self.data.s_break);
+    }
+    pub inline fn getClass(self: *const @This()) *S.Class {
+        return Data.Store.Class.at(self.data.s_class);
+    }
+    pub inline fn getComment(self: *const @This()) *S.Comment {
+        return Data.Store.Comment.at(self.data.s_comment);
+    }
+    pub inline fn getContinue(self: *const @This()) *S.Continue {
+        return Data.Store.Continue.at(self.data.s_continue);
+    }
+    pub inline fn getDebugger(self: *const @This()) S.Debugger {
+        return S.Debugger{};
+    }
+    pub inline fn getDirective(self: *const @This()) *S.Directive {
+        return Data.Store.Directive.at(self.data.s_directive);
+    }
+    pub inline fn getDoWhile(self: *const @This()) *S.DoWhile {
+        return Data.Store.DoWhile.at(self.data.s_do_while);
+    }
+    pub inline fn getEmpty(self: *const @This()) S.Empty {
+        return S.Empty{};
+    }
+    pub inline fn getEnum(self: *const @This()) *S.Enum {
+        return Data.Store.Enum.at(self.data.s_enum);
+    }
+    pub inline fn getExportClause(self: *const @This()) *S.ExportClause {
+        return Data.Store.ExportClause.at(self.data.s_export_clause);
+    }
+    pub inline fn getExportDefault(self: *const @This()) *S.ExportDefault {
+        return Data.Store.ExportDefault.at(self.data.s_export_default);
+    }
+    pub inline fn getExportEquals(self: *const @This()) *S.ExportEquals {
+        return Data.Store.ExportEquals.at(self.data.s_export_equals);
+    }
+    pub inline fn getExportFrom(self: *const @This()) *S.ExportFrom {
+        return Data.Store.ExportFrom.at(self.data.s_export_from);
+    }
+    pub inline fn getExportStar(self: *const @This()) *S.ExportStar {
+        return Data.Store.ExportStar.at(self.data.s_export_star);
+    }
+    pub inline fn getExpr(self: *const @This()) *S.SExpr {
+        return Data.Store.SExpr.at(self.data.s_expr);
+    }
+    pub inline fn getForIn(self: *const @This()) *S.ForIn {
+        return Data.Store.ForIn.at(self.data.s_for_in);
+    }
+    pub inline fn getForOf(self: *const @This()) *S.ForOf {
+        return Data.Store.ForOf.at(self.data.s_for_of);
+    }
+    pub inline fn getFor(self: *const @This()) *S.For {
+        return Data.Store.For.at(self.data.s_for);
+    }
+    pub inline fn getFunction(self: *const @This()) *S.Function {
+        return Data.Store.Function.at(self.data.s_function);
+    }
+    pub inline fn getIf(self: *const @This()) *S.If {
+        return Data.Store.If.at(self.data.s_if);
+    }
+    pub inline fn getImport(self: *const @This()) *S.Import {
+        return Data.Store.Import.at(self.data.s_import);
+    }
+    pub inline fn getLabel(self: *const @This()) *S.Label {
+        return Data.Store.Label.at(self.data.s_label);
+    }
+    pub inline fn getLazyExport(self: *const @This()) *S.LazyExport {
+        return Data.Store.LazyExport.at(self.data.s_lazy_export);
+    }
+    pub inline fn getLocal(self: *const @This()) *S.Local {
+        return Data.Store.Local.at(self.data.s_local);
+    }
+    pub inline fn getNamespace(self: *const @This()) *S.Namespace {
+        return Data.Store.Namespace.at(self.data.s_namespace);
+    }
+    pub inline fn getReturn(self: *const @This()) *S.Return {
+        return Data.Store.Return.at(self.data.s_return);
+    }
+    pub inline fn getSwitch(self: *const @This()) *S.Switch {
+        return Data.Store.Switch.at(self.data.s_switch);
+    }
+    pub inline fn getThrow(self: *const @This()) *S.Throw {
+        return Data.Store.Throw.at(self.data.s_throw);
+    }
+    pub inline fn getTry(self: *const @This()) *S.Try {
+        return Data.Store.Try.at(self.data.s_try);
+    }
+    pub inline fn getTypeScript(self: *const @This()) S.TypeScript {
+        return S.TypeScript{};
+    }
+    pub inline fn getWhile(self: *const @This()) *S.While {
+        return Data.Store.While.at(self.data.s_while);
+    }
+    pub inline fn getWith(self: *const @This()) *S.With {
+        return Data.Store.With.at(self.data.s_with);
+    }
+
     pub fn init(origData: anytype, loc: logger.Loc) Stmt {
         if (@typeInfo(@TypeOf(origData)) != .Pointer and @TypeOf(origData) != S.Empty) {
             @compileError("Stmt.init needs a pointer.");
@@ -1186,9 +1287,7 @@ pub const Stmt = struct {
         }
     }
     inline fn comptime_alloc(allocator: *std.mem.Allocator, comptime tag_name: string, comptime typename: type, origData: anytype, loc: logger.Loc) Stmt {
-        var st = allocator.create(typename) catch unreachable;
-        st.* = origData;
-        return Stmt{ .loc = loc, .data = @unionInit(Data, tag_name, st) };
+        return Stmt{ .loc = loc, .data = @unionInit(Data, tag_name, Data.Store.append(typename, origData)) };
     }
 
     inline fn comptime_init(comptime tag_name: string, comptime typename: type, origData: anytype, loc: logger.Loc) Stmt {
@@ -1213,7 +1312,7 @@ pub const Stmt = struct {
                 return Stmt.comptime_alloc(allocator, "s_continue", S.Continue, origData, loc);
             },
             S.Debugger => {
-                return Stmt.comptime_alloc(allocator, "s_debugger", S.Debugger, origData, loc);
+                return Stmt{ .loc = loc, .data = .{ .s_debugger = origData } };
             },
             S.Directive => {
                 return Stmt.comptime_alloc(allocator, "s_directive", S.Directive, origData, loc);
@@ -1288,7 +1387,7 @@ pub const Stmt = struct {
                 return Stmt.comptime_alloc(allocator, "s_try", S.Try, origData, loc);
             },
             S.TypeScript => {
-                return Stmt.comptime_alloc(allocator, "s_type_script", S.TypeScript, origData, loc);
+                return Stmt{ .loc = loc, .data = Data{ .s_type_script = S.TypeScript{} } };
             },
             S.While => {
                 return Stmt.comptime_alloc(allocator, "s_while", S.While, origData, loc);
@@ -1340,39 +1439,469 @@ pub const Stmt = struct {
     };
 
     pub const Data = union(Tag) {
-        s_block: *S.Block,
-        s_break: *S.Break,
-        s_class: *S.Class,
-        s_comment: *S.Comment,
-        s_continue: *S.Continue,
-        s_debugger: *S.Debugger,
-        s_directive: *S.Directive,
-        s_do_while: *S.DoWhile,
-        s_empty: S.Empty,
-        s_enum: *S.Enum,
-        s_export_clause: *S.ExportClause,
-        s_export_default: *S.ExportDefault,
-        s_export_equals: *S.ExportEquals,
-        s_export_from: *S.ExportFrom,
-        s_export_star: *S.ExportStar,
-        s_expr: *S.SExpr,
-        s_for_in: *S.ForIn,
-        s_for_of: *S.ForOf,
-        s_for: *S.For,
-        s_function: *S.Function,
-        s_if: *S.If,
-        s_import: *S.Import,
-        s_label: *S.Label,
-        s_lazy_export: *S.LazyExport,
-        s_local: *S.Local,
-        s_namespace: *S.Namespace,
-        s_return: *S.Return,
-        s_switch: *S.Switch,
-        s_throw: *S.Throw,
-        s_try: *S.Try,
-        s_type_script: *S.TypeScript,
-        s_while: *S.While,
-        s_with: *S.With,
+        s_block: Store.ListIndex,
+        s_break: Store.ListIndex,
+        s_class: Store.ListIndex,
+        s_comment: Store.ListIndex,
+        s_continue: Store.ListIndex,
+        s_debugger: S.Debugger,
+        s_directive: Store.ListIndex,
+        s_do_while: Store.ListIndex,
+        s_empty: S.Empty, // special case, its a zero value type
+        s_enum: Store.ListIndex,
+        s_export_clause: Store.ListIndex,
+        s_export_default: Store.ListIndex,
+        s_export_equals: Store.ListIndex,
+        s_export_from: Store.ListIndex,
+        s_export_star: Store.ListIndex,
+        s_expr: Store.ListIndex,
+        s_for_in: Store.ListIndex,
+        s_for_of: Store.ListIndex,
+        s_for: Store.ListIndex,
+        s_function: Store.ListIndex,
+        s_if: Store.ListIndex,
+        s_import: Store.ListIndex,
+        s_label: Store.ListIndex,
+        s_lazy_export: Store.ListIndex,
+        s_local: Store.ListIndex,
+        s_namespace: Store.ListIndex,
+        s_return: Store.ListIndex,
+        s_switch: Store.ListIndex,
+        s_throw: Store.ListIndex,
+        s_try: Store.ListIndex,
+        s_type_script: S.TypeScript,
+        s_while: Store.ListIndex,
+        s_with: Store.ListIndex,
+
+        pub const Store = struct {
+            pub const ListIndex = packed struct {
+                index: u31,
+                is_overflowing: bool = false,
+            };
+
+            pub const Block = NewStore(S.Block);
+            pub const Break = NewStore(S.Break);
+            pub const Class = NewStore(S.Class);
+            pub const Comment = NewStore(S.Comment);
+            pub const Continue = NewStore(S.Continue);
+            pub const Directive = NewStore(S.Directive);
+            pub const DoWhile = NewStore(S.DoWhile);
+            pub const Enum = NewStore(S.Enum);
+            pub const ExportClause = NewStore(S.ExportClause);
+            pub const ExportDefault = NewStore(S.ExportDefault);
+            pub const ExportEquals = NewStore(S.ExportEquals);
+            pub const ExportFrom = NewStore(S.ExportFrom);
+            pub const ExportStar = NewStore(S.ExportStar);
+            pub const SExpr = NewStore(S.SExpr);
+            pub const ForIn = NewStore(S.ForIn);
+            pub const ForOf = NewStore(S.ForOf);
+            pub const For = NewStore(S.For);
+            pub const Function = NewStore(S.Function);
+            pub const If = NewStore(S.If);
+            pub const Import = NewStore(S.Import);
+            pub const Label = NewStore(S.Label);
+            pub const LazyExport = NewStore(S.LazyExport);
+            pub const Local = NewStore(S.Local);
+            pub const Namespace = NewStore(S.Namespace);
+            pub const Return = NewStore(S.Return);
+            pub const Switch = NewStore(S.Switch);
+            pub const Throw = NewStore(S.Throw);
+            pub const Try = NewStore(S.Try);
+            pub const TypeScript = NewStore(S.TypeScript);
+            pub const While = NewStore(S.While);
+            pub const With = NewStore(S.With);
+
+            threadlocal var has_inited = false;
+            pub fn create(allocator: *std.mem.Allocator) void {
+                if (has_inited) {
+                    return;
+                }
+
+                has_inited = true;
+                _ = Block.init(allocator);
+                _ = Break.init(allocator);
+                _ = Class.init(allocator);
+                _ = Comment.init(allocator);
+                _ = Continue.init(allocator);
+                _ = Directive.init(allocator);
+                _ = DoWhile.init(allocator);
+                _ = Enum.init(allocator);
+                _ = ExportClause.init(allocator);
+                _ = ExportDefault.init(allocator);
+                _ = ExportEquals.init(allocator);
+                _ = ExportFrom.init(allocator);
+                _ = ExportStar.init(allocator);
+                _ = SExpr.init(allocator);
+                _ = ForIn.init(allocator);
+                _ = ForOf.init(allocator);
+                _ = For.init(allocator);
+                _ = Function.init(allocator);
+                _ = If.init(allocator);
+                _ = Import.init(allocator);
+                _ = Label.init(allocator);
+                _ = LazyExport.init(allocator);
+                _ = Local.init(allocator);
+                _ = Namespace.init(allocator);
+                _ = Return.init(allocator);
+                _ = Switch.init(allocator);
+                _ = Throw.init(allocator);
+                _ = Try.init(allocator);
+                _ = While.init(allocator);
+                _ = With.init(allocator);
+            }
+
+            pub fn reset() void {
+                Block.reset();
+                Break.reset();
+                Class.reset();
+                Comment.reset();
+                Continue.reset();
+                Directive.reset();
+                DoWhile.reset();
+                Enum.reset();
+                ExportClause.reset();
+                ExportDefault.reset();
+                ExportEquals.reset();
+                ExportFrom.reset();
+                ExportStar.reset();
+                SExpr.reset();
+                ForIn.reset();
+                ForOf.reset();
+                For.reset();
+                Function.reset();
+                If.reset();
+                Import.reset();
+                Label.reset();
+                LazyExport.reset();
+                Local.reset();
+                Namespace.reset();
+                Return.reset();
+                Switch.reset();
+                Throw.reset();
+                Try.reset();
+                While.reset();
+                With.reset();
+            }
+
+            pub fn append(comptime ValueType: type, value: anytype) ListIndex {
+                switch (comptime ValueType) {
+                    S.Block => {
+                        return Block.append(value);
+                    },
+                    S.Break => {
+                        return Break.append(value);
+                    },
+                    S.Class => {
+                        return Class.append(value);
+                    },
+                    S.Comment => {
+                        return Comment.append(value);
+                    },
+                    S.Continue => {
+                        return Continue.append(value);
+                    },
+
+                    S.Directive => {
+                        return Directive.append(value);
+                    },
+                    S.DoWhile => {
+                        return DoWhile.append(value);
+                    },
+                    S.Empty => {
+                        return Empty.append(value);
+                    },
+                    S.Enum => {
+                        return Enum.append(value);
+                    },
+                    S.ExportClause => {
+                        return ExportClause.append(value);
+                    },
+                    S.ExportDefault => {
+                        return ExportDefault.append(value);
+                    },
+                    S.ExportEquals => {
+                        return ExportEquals.append(value);
+                    },
+                    S.ExportFrom => {
+                        return ExportFrom.append(value);
+                    },
+                    S.ExportStar => {
+                        return ExportStar.append(value);
+                    },
+                    S.SExpr => {
+                        return SExpr.append(value);
+                    },
+                    S.ForIn => {
+                        return ForIn.append(value);
+                    },
+                    S.ForOf => {
+                        return ForOf.append(value);
+                    },
+                    S.For => {
+                        return For.append(value);
+                    },
+                    S.Function => {
+                        return Function.append(value);
+                    },
+                    S.If => {
+                        return If.append(value);
+                    },
+                    S.Import => {
+                        return Import.append(value);
+                    },
+                    S.Label => {
+                        return Label.append(value);
+                    },
+                    S.LazyExport => {
+                        return LazyExport.append(value);
+                    },
+                    S.Local => {
+                        return Local.append(value);
+                    },
+                    S.Namespace => {
+                        return Namespace.append(value);
+                    },
+                    S.Return => {
+                        return Return.append(value);
+                    },
+                    S.Switch => {
+                        return Switch.append(value);
+                    },
+                    S.Throw => {
+                        return Throw.append(value);
+                    },
+                    S.Try => {
+                        return Try.append(value);
+                    },
+
+                    S.While => {
+                        return While.append(value);
+                    },
+                    S.With => {
+                        return With.append(value);
+                    },
+                    else => {
+                        @compileError("Invalid type passed to Stmt.Data.set " ++ @typeName(ValueType));
+                    },
+                }
+            }
+
+            pub fn NewStore(comptime ValueType: type) type {
+                const count = 1024;
+                const max_index = count - 1;
+                const list_count = count;
+                return struct {
+                    pub threadlocal var backing_buf: [count]ValueType = undefined;
+                    pub threadlocal var backing_buf_used: u16 = 0;
+                    const Allocator = std.mem.Allocator;
+                    const Self = @This();
+                    const NotFound = allocators.NotFound;
+                    const Unassigned = allocators.Unassigned;
+
+                    overflow_list: std.ArrayListUnmanaged(ValueType),
+                    allocator: *Allocator,
+
+                    pub threadlocal var instance: Self = undefined;
+                    pub threadlocal var self: *Self = undefined;
+
+                    pub fn reset() void {
+                        backing_buf_used = 0;
+                        self.overflow_list.shrinkRetainingCapacity(0);
+                    }
+
+                    pub fn init(allocator: *std.mem.Allocator) *Self {
+                        instance = Self{
+                            .allocator = allocator,
+                            .overflow_list = std.ArrayListUnmanaged(ValueType){},
+                        };
+
+                        self = &instance;
+                        return self;
+                    }
+
+                    pub fn isOverflowing() bool {
+                        return backing_buf_used >= @as(u16, count);
+                    }
+
+                    pub fn at(index: ListIndex) *ValueType {
+                        std.debug.assert(index.index != NotFound.index and index.index != Unassigned.index);
+
+                        if (index.is_overflowing) {
+                            return &self.overflow_list.items[index.index];
+                        } else {
+                            return &backing_buf[index.index];
+                        }
+                    }
+
+                    pub fn exists(value: ValueType) bool {
+                        return isSliceInBuffer(value, backing_buf);
+                    }
+
+                    pub fn append(value: ValueType) ListIndex {
+                        var result = ListIndex{ .index = std.math.maxInt(u31), .is_overflowing = backing_buf_used > max_index };
+                        if (result.is_overflowing) {
+                            result.index = @intCast(u31, self.overflow_list.items.len);
+                            self.overflow_list.append(self.allocator, value) catch unreachable;
+                        } else {
+                            result.index = backing_buf_used;
+                            backing_buf[result.index] = value;
+                            backing_buf_used += 1;
+                            if (backing_buf_used >= max_index) {
+                                self.overflow_list = @TypeOf(self.overflow_list).initCapacity(self.allocator, count) catch unreachable;
+                            }
+                        }
+
+                        return result;
+                    }
+
+                    pub fn update(result: *ListIndex, value: ValueType) !*ValueType {
+                        if (result.index.index == NotFound.index or result.index.index == Unassigned.index) {
+                            result.index.is_overflowing = backing_buf_used > max_index;
+                            if (result.index.is_overflowing) {
+                                result.index.index = @intCast(u31, self.overflow_list.items.len);
+                            } else {
+                                result.index.index = backing_buf_used;
+                                backing_buf_used += 1;
+                                if (backing_buf_used >= max_index) {
+                                    self.overflow_list = try @TypeOf(self.overflow_list).initCapacity(self.allocator, count);
+                                }
+                            }
+                        }
+
+                        if (result.index.is_overflowing) {
+                            if (self.overflow_list.items.len == result.index.index) {
+                                const real_index = self.overflow_list.items.len;
+                                try self.overflow_list.append(self.allocator, value);
+                            } else {
+                                self.overflow_list.items[result.index.index] = value;
+                            }
+
+                            return &self.overflow_list.items[result.index.index];
+                        } else {
+                            backing_buf[result.index.index] = value;
+
+                            return &backing_buf[result.index.index];
+                        }
+                    }
+                };
+            }
+        };
+
+        pub inline fn set(data: *Data, value: anytype) void {
+            const ValueType = @TypeOf(value);
+            if (@typeInfo(ValueType) == .Pointer) {
+                data.setValue(@TypeOf(value.*), value.*);
+            } else {
+                data.setValue(@TypeOf(value), value);
+            }
+        }
+
+        pub inline fn setValue(data: *Data, comptime ValueType: type, value: ValueType) void {
+            switch (comptime ValueType) {
+                S.Block => {
+                    data.s_block = Block.append(value);
+                },
+                S.Break => {
+                    data.s_break = Break.append(value);
+                },
+                S.Class => {
+                    data.s_class = Class.append(value);
+                },
+                S.Comment => {
+                    data.s_comment = Comment.append(value);
+                },
+                S.Continue => {
+                    data.s_continue = Continue.append(value);
+                },
+                S.Debugger => {
+                    data.s_debugger = Debugger.append(value);
+                },
+                S.Directive => {
+                    data.s_directive = Directive.append(value);
+                },
+                S.DoWhile => {
+                    data.s_do_while = DoWhile.append(value);
+                },
+                S.Empty => {
+                    data.s_empty = Empty.append(value);
+                },
+                S.Enum => {
+                    data.s_enum = Enum.append(value);
+                },
+                S.ExportClause => {
+                    data.s_export_clause = ExportClause.append(value);
+                },
+                S.ExportDefault => {
+                    data.s_export_default = ExportDefault.append(value);
+                },
+                S.ExportEquals => {
+                    data.s_export_equals = ExportEquals.append(value);
+                },
+                S.ExportFrom => {
+                    data.s_export_from = ExportFrom.append(value);
+                },
+                S.ExportStar => {
+                    data.s_export_star = ExportStar.append(value);
+                },
+                S.SExpr => {
+                    data.s_s_expr = SExpr.append(value);
+                },
+                S.ForIn => {
+                    data.s_for_in = ForIn.append(value);
+                },
+                S.ForOf => {
+                    data.s_for_of = ForOf.append(value);
+                },
+                S.For => {
+                    data.s_for = For.append(value);
+                },
+                S.Function => {
+                    data.s_function = Function.append(value);
+                },
+                S.If => {
+                    data.s_if = If.append(value);
+                },
+                S.Import => {
+                    data.s_import = Import.append(value);
+                },
+                S.Label => {
+                    data.s_label = Label.append(value);
+                },
+                S.LazyExport => {
+                    data.s_lazy_export = LazyExport.append(value);
+                },
+                S.Local => {
+                    data.s_local = Local.append(value);
+                },
+                S.Namespace => {
+                    data.s_namespace = Namespace.append(value);
+                },
+                S.Return => {
+                    data.s_return = Return.append(value);
+                },
+                S.Switch => {
+                    data.s_switch = Switch.append(value);
+                },
+                S.Throw => {
+                    data.s_throw = Throw.append(value);
+                },
+                S.Try => {
+                    data.s_try = Try.append(value);
+                },
+                S.TypeScript => {
+                    data.s_type_script = value;
+                },
+                S.While => {
+                    data.s_while = While.append(value);
+                },
+                S.With => {
+                    data.s_with = With.append(value);
+                },
+                else => {
+                    @compileError("Invalid type passed to Stmt.Data.set " ++ @typeName(ValueType));
+                },
+            }
+        }
     };
 
     pub fn caresAboutScope(self: *Stmt) bool {

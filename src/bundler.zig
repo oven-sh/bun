@@ -244,9 +244,11 @@ pub const Bundler = struct {
             else => {},
         }
 
-        return try bundler.print(
+        const output_file = try bundler.print(
             result,
         );
+        js_ast.Stmt.Data.Store.reset();
+        return output_file;
     }
 
     pub fn print(
@@ -284,6 +286,7 @@ pub const Bundler = struct {
             js_printer.Options{ .to_module_ref = Ref.RuntimeRef },
             &_linker,
         );
+
         return options.OutputFile{
             .path = out_path,
             .contents = print_result.js,

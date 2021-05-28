@@ -319,7 +319,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
             switch (stmt.data) {
                 .s_block => |block| {
                     p.printSpace();
-                    p.printBlock(stmt.loc, block.stmts);
+                    p.printBlock(stmt.loc, stmt.getBlock().stmts);
                     p.printNewline();
                 },
                 else => {
@@ -1144,8 +1144,8 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     var wasPrinted = false;
                     if (e.body.stmts.len == 1 and e.prefer_expr) {
                         switch (e.body.stmts[0].data) {
-                            .s_return => |ret| {
-                                if (ret.value) |val| {
+                            .s_return => {
+                                if (e.body.stmts[0].getReturn().value) |val| {
                                     p.arrow_expr_start = p.js.lenI();
                                     p.printExpr(val, .comma, ExprFlag.None());
                                     wasPrinted = true;
@@ -2060,12 +2060,14 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
             p.comptime_flush();
 
             p.addSourceMapping(stmt.loc);
-
             switch (stmt.data) {
-                .s_comment => |s| {
+                .s_comment => |s_list_index| {
+                    const s = stmt.getComment();
                     p.printIndentedComment(s.text);
                 },
-                .s_function => |s| {
+                .s_function => |s_list_index| {
+                    const s = stmt.getFunction();
+
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     if (s.func.flags.is_export) {
@@ -2086,7 +2088,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.printFunc(s.func);
                     p.printNewline();
                 },
-                .s_class => |s| {
+                .s_class => |s_list_index| {
+                    const s = stmt.getClass();
+
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     if (s.is_export) {
@@ -2097,12 +2101,14 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.printClass(s.class);
                     p.printNewline();
                 },
-                .s_empty => |s| {
+                .s_empty => |s_list_index| {
                     p.printIndent();
                     p.print(";");
                     p.printNewline();
                 },
-                .s_export_default => |s| {
+                .s_export_default => |s_list_index| {
+                    const s = stmt.getExportDefault();
+
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.print("export default");
@@ -2119,7 +2125,8 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         },
                         .stmt => |s2| {
                             switch (s2.data) {
-                                .s_function => |func| {
+                                .s_function => {
+                                    const func = s2.getFunction();
                                     p.printSpaceBeforeIdentifier();
                                     if (func.func.flags.is_async) {
                                         p.print("async ");
@@ -2138,7 +2145,8 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                                     p.printFunc(func.func);
                                     p.printNewline();
                                 },
-                                .s_class => |class| {
+                                .s_class => {
+                                    const class = s2.getClass();
                                     p.printSpaceBeforeIdentifier();
                                     if (class.class.class_name) |name| {
                                         p.print("class ");
@@ -2156,7 +2164,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         },
                     }
                 },
-                .s_export_star => |s| {
+                .s_export_star => |s_list_index| {
+                    const s = stmt.getExportStar();
+
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.print("export");
@@ -2175,7 +2185,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.printQuotedUTF8(p.import_records[s.import_record_index].path.text, false);
                     p.printSemicolonAfterStatement();
                 },
-                .s_export_clause => |s| {
+                .s_export_clause => |s_list_index| {
+                    const s = stmt.getExportClause();
+
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.print("export");
@@ -2218,7 +2230,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.print("}");
                     p.printSemicolonAfterStatement();
                 },
-                .s_export_from => |s| {
+                .s_export_from => |s_list_index| {
+                    const s = stmt.getExportFrom();
+
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.print("export");
@@ -2266,7 +2280,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.printQuotedUTF8(p.import_records[s.import_record_index].path.text, false);
                     p.printSemicolonAfterStatement();
                 },
-                .s_local => |s| {
+                .s_local => |s_list_index| {
+                    const s = stmt.getLocal();
+
                     switch (s.kind) {
                         .k_const => {
                             p.printDeclStmt(s.is_export, "const", s.decls);
@@ -2279,18 +2295,22 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         },
                     }
                 },
-                .s_if => |s| {
+                .s_if => |s_list_index| {
+                    const s = stmt.getIf();
+
                     p.printIndent();
                     p.printIf(s);
                 },
-                .s_do_while => |s| {
+                .s_do_while => |s_list_index| {
+                    const s = stmt.getDoWhile();
+
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.print("do");
                     switch (s.body.data) {
-                        .s_block => |block| {
+                        .s_block => {
                             p.printSpace();
-                            p.printBlock(s.body.loc, block.stmts);
+                            p.printBlock(s.body.loc, s.body.getBlock().stmts);
                             p.printSpace();
                         },
                         else => {
@@ -2310,7 +2330,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.print(")");
                     p.printSemicolonAfterStatement();
                 },
-                .s_for_in => |s| {
+                .s_for_in => |s_list_index| {
+                    const s = stmt.getForIn();
+
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.print("for");
@@ -2325,7 +2347,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.print(")");
                     p.printBody(s.body);
                 },
-                .s_for_of => |s| {
+                .s_for_of => |s_list_index| {
+                    const s = stmt.getForOf();
+
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.print("for");
@@ -2344,7 +2368,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.print(")");
                     p.printBody(s.body);
                 },
-                .s_while => |s| {
+                .s_while => |s_list_index| {
+                    const s = stmt.getWhile();
+
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.print("while");
@@ -2354,7 +2380,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.print(")");
                     p.printBody(s.body);
                 },
-                .s_with => |s| {
+                .s_with => |s_list_index| {
+                    const s = stmt.getWith();
+
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.print("with");
@@ -2364,13 +2392,17 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.print(")");
                     p.printBody(s.body);
                 },
-                .s_label => |s| {
+                .s_label => |s_list_index| {
+                    const s = stmt.getLabel();
+
                     p.printIndent();
                     p.printSymbol(s.name.ref orelse Global.panic("Internal error: expected label to have a name {s}", .{s}));
                     p.print(":");
                     p.printBody(s.stmt);
                 },
-                .s_try => |s| {
+                .s_try => |s_list_index| {
+                    const s = stmt.getTry();
+
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.print("try");
@@ -2399,7 +2431,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
 
                     p.printNewline();
                 },
-                .s_for => |s| {
+                .s_for => |s_list_index| {
+                    const s = stmt.getFor();
+
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.print("for");
@@ -2426,7 +2460,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.print(")");
                     p.printBody(s.body);
                 },
-                .s_switch => |s| {
+                .s_switch => |s_list_index| {
+                    const s = stmt.getSwitch();
+
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.print("switch");
@@ -2459,7 +2495,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                             switch (c.body[0].data) {
                                 .s_block => |block| {
                                     p.printSpace();
-                                    p.printBlock(c.body[0].loc, block.stmts);
+                                    p.printBlock(c.body[0].loc, c.body[0].getBlock().stmts);
                                     p.printNewline();
                                     continue;
                                 },
@@ -2482,7 +2518,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.printNewline();
                     p.needs_semicolon = false;
                 },
-                .s_import => |s| {
+                .s_import => |s_list_index| {
+                    const s = stmt.getImport();
+
                     var item_count: usize = 0;
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
@@ -2562,18 +2600,24 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.printQuotedUTF8(p.import_records[s.import_record_index].path.text, false);
                     p.printSemicolonAfterStatement();
                 },
-                .s_block => |s| {
+                .s_block => |s_list_index| {
+                    const s = stmt.getBlock();
+
                     p.printIndent();
                     p.printBlock(stmt.loc, s.stmts);
                     p.printNewline();
                 },
-                .s_debugger => |s| {
+                .s_debugger => |s_list_index| {
+                    const s = stmt.getDebugger();
+
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.print("debugger");
                     p.printSemicolonAfterStatement();
                 },
-                .s_directive => |s| {
+                .s_directive => |s_list_index| {
+                    const s = stmt.getDirective();
+
                     const c = p.bestQuoteCharForString(s.value, false);
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
@@ -2582,7 +2626,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.print(c);
                     p.printSemicolonAfterStatement();
                 },
-                .s_break => |s| {
+                .s_break => |s_list_index| {
+                    const s = stmt.getBreak();
+
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.print("break");
@@ -2593,7 +2639,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
 
                     p.printSemicolonAfterStatement();
                 },
-                .s_continue => |s| {
+                .s_continue => |s_list_index| {
+                    const s = stmt.getContinue();
+
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.print("continue");
@@ -2604,7 +2652,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     }
                     p.printSemicolonAfterStatement();
                 },
-                .s_return => |s| {
+                .s_return => |s_list_index| {
+                    const s = stmt.getReturn();
+
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.print("return");
@@ -2615,7 +2665,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     }
                     p.printSemicolonAfterStatement();
                 },
-                .s_throw => |s| {
+                .s_throw => |s_list_index| {
+                    const s = stmt.getThrow();
+
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.print("throw");
@@ -2623,7 +2675,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.printExpr(s.value, .lowest, ExprFlag.None());
                     p.printSemicolonAfterStatement();
                 },
-                .s_expr => |s| {
+                .s_expr => |s_list_index| {
+                    const s = stmt.getExpr();
+
                     p.printIndent();
                     p.stmt_start = p.js.lenI();
                     p.printExpr(s.value, .lowest, ExprFlag.ExprResultIsUnused());
@@ -2637,14 +2691,18 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
 
         pub fn printForLoopInit(p: *Printer, initSt: Stmt) void {
             switch (initSt.data) {
-                .s_expr => |s| {
+                .s_expr => |s_list_index| {
+                    const s = initSt.getExpr();
+
                     p.printExpr(
                         s.value,
                         .lowest,
                         ExprFlag{ .forbid_in = true, .expr_result_is_unused = true },
                     );
                 },
-                .s_local => |s| {
+                .s_local => |s_list_index| {
+                    const s = initSt.getLocal();
+
                     switch (s.kind) {
                         .k_var => {
                             p.printDecls("var", s.decls, ExprFlag{ .forbid_in = true });
@@ -2673,7 +2731,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
             switch (s.yes.data) {
                 .s_block => |block| {
                     p.printSpace();
-                    p.printBlock(s.yes.loc, block.stmts);
+                    p.printBlock(s.yes.loc, s.yes.getBlock().stmts);
 
                     if (s.no != null) {
                         p.printSpace();
@@ -2721,11 +2779,11 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                 switch (no_block.data) {
                     .s_block => |no| {
                         p.printSpace();
-                        p.printBlock(no_block.loc, no.stmts);
+                        p.printBlock(no_block.loc, no_block.getBlock().stmts);
                         p.printNewline();
                     },
                     .s_if => |no| {
-                        p.printIf(no);
+                        p.printIf(no_block.getIf());
                     },
                     else => {
                         p.printNewline();
@@ -2737,32 +2795,31 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
             }
         }
 
-        pub fn wrapToAvoidAmbiguousElse(_s: *const Stmt.Data) bool {
-            var s = _s;
-
+        pub fn wrapToAvoidAmbiguousElse(s_: *const Stmt.Data) bool {
+            var s = s_;
             while (true) {
                 switch (s.*) {
-                    .s_if => |*current| {
-                        if (current.*.no) |*no| {
+                    .s_if => |index| {
+                        if (Stmt.Data.Store.If.at(index).no) |*no| {
                             s = &no.data;
                         } else {
                             return true;
                         }
                     },
                     .s_for => |current| {
-                        s = &current.body.data;
+                        s = &Stmt.Data.Store.For.at(current).body.data;
                     },
                     .s_for_in => |current| {
-                        s = &current.body.data;
+                        s = &Stmt.Data.Store.ForIn.at(current).body.data;
                     },
                     .s_for_of => |current| {
-                        s = &current.body.data;
+                        s = &Stmt.Data.Store.ForOf.at(current).body.data;
                     },
                     .s_while => |current| {
-                        s = &current.body.data;
+                        s = &Stmt.Data.Store.While.at(current).body.data;
                     },
                     .s_with => |current| {
-                        s = &current.body.data;
+                        s = &Stmt.Data.Store.With.at(current).body.data;
                     },
                     else => {
                         return false;

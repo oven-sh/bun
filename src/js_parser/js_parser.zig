@@ -53,7 +53,9 @@ pub const ImportScanner = struct {
             // zls needs the hint, it seems.
             const stmt: Stmt = _stmt;
             switch (stmt.data) {
-                .s_import => |st| {
+                .s_import => {
+                    var st = stmt.getImport();
+
                     var record: ImportRecord = p.import_records.items[st.import_record_index];
 
                     // The official TypeScript compiler always removes unused imported
@@ -364,7 +366,9 @@ pub const ImportScanner = struct {
                         }
                     }
                 },
-                .s_function => |st| {
+                .s_function => {
+                    var st = stmt.getFunction();
+
                     if (st.func.flags.is_export) {
                         if (st.func.name) |name| {
                             try p.recordExport(name.loc, p.symbols.items[name.ref.?.inner_index].original_name, name.ref.?);
@@ -373,7 +377,9 @@ pub const ImportScanner = struct {
                         }
                     }
                 },
-                .s_class => |st| {
+                .s_class => {
+                    var st = stmt.getClass();
+
                     if (st.is_export) {
                         if (st.class.class_name) |name| {
                             try p.recordExport(name.loc, p.symbols.items[name.ref.?.inner_index].original_name, name.ref.?);
@@ -382,7 +388,9 @@ pub const ImportScanner = struct {
                         }
                     }
                 },
-                .s_local => |st| {
+                .s_local => {
+                    var st = stmt.getLocal();
+
                     if (st.is_export) {
                         for (st.decls) |decl| {
                             p.recordExportedBinding(decl.binding);
@@ -422,15 +430,21 @@ pub const ImportScanner = struct {
                         }
                     }
                 },
-                .s_export_default => |st| {
+                .s_export_default => {
+                    var st = stmt.getExportDefault();
+
                     try p.recordExport(st.default_name.loc, "default", st.default_name.ref.?);
                 },
-                .s_export_clause => |st| {
+                .s_export_clause => {
+                    var st = stmt.getExportClause();
+
                     for (st.items) |item| {
                         try p.recordExport(item.alias_loc, item.alias, item.name.ref.?);
                     }
                 },
-                .s_export_star => |st| {
+                .s_export_star => {
+                    var st = stmt.getExportStar();
+
                     try p.import_records_for_current_part.append(st.import_record_index);
 
                     if (st.alias) |alias| {
@@ -449,7 +463,9 @@ pub const ImportScanner = struct {
                         try p.export_star_import_records.append(st.import_record_index);
                     }
                 },
-                .s_export_from => |st| {
+                .s_export_from => {
+                    var st = stmt.getExportFrom();
+
                     try p.import_records_for_current_part.append(st.import_record_index);
 
                     for (st.items) |item| {
@@ -606,7 +622,9 @@ pub const SideEffects = enum(u2) {
                 return false;
             },
 
-            .s_local => |local| {
+            .s_local => |local__| {
+                var local = stmt.getLocal();
+
                 return local.kind != .k_var;
                 // if (local.kind != .k_var) {
                 //     // Omit these statements entirely
@@ -614,8 +632,8 @@ pub const SideEffects = enum(u2) {
                 // }
             },
 
-            .s_block => |block| {
-                for (block.stmts) |child| {
+            .s_block => {
+                for (stmt.getBlock().stmts) |child| {
                     if (shouldKeepStmtInDeadControlFlow(child)) {
                         return true;
                     }
@@ -624,7 +642,8 @@ pub const SideEffects = enum(u2) {
                 return false;
             },
 
-            .s_if => |_if_| {
+            .s_if => {
+                const _if_ = stmt.getIf();
                 if (shouldKeepStmtInDeadControlFlow(_if_.yes)) {
                     return true;
                 }
@@ -634,15 +653,16 @@ pub const SideEffects = enum(u2) {
                 return shouldKeepStmtInDeadControlFlow(no);
             },
 
-            .s_while => |__while__| {
-                return shouldKeepStmtInDeadControlFlow(__while__.body);
+            .s_while => {
+                return shouldKeepStmtInDeadControlFlow(stmt.getWhile().body);
             },
 
-            .s_do_while => |__while__| {
-                return shouldKeepStmtInDeadControlFlow(__while__.body);
+            .s_do_while => {
+                return shouldKeepStmtInDeadControlFlow(stmt.getDoWhile().body);
             },
 
-            .s_for => |__for__| {
+            .s_for => {
+                const __for__ = stmt.getFor();
                 if (__for__.init) |init_| {
                     if (shouldKeepStmtInDeadControlFlow(init_)) {
                         return true;
@@ -652,15 +672,20 @@ pub const SideEffects = enum(u2) {
                 return shouldKeepStmtInDeadControlFlow(__for__.body);
             },
 
-            .s_for_in => |__for__| {
+            .s_for_in => {
+                const __for__ = stmt.getForIn();
                 return shouldKeepStmtInDeadControlFlow(__for__.init) or shouldKeepStmtInDeadControlFlow(__for__.body);
             },
 
-            .s_for_of => |__for__| {
+            .s_for_of => {
+                const __for__ = stmt.getForOf();
+
                 return shouldKeepStmtInDeadControlFlow(__for__.init) or shouldKeepStmtInDeadControlFlow(__for__.body);
             },
 
-            .s_label => |label| {
+            .s_label => {
+                const label = stmt.getLabel();
+
                 return shouldKeepStmtInDeadControlFlow(label.stmt);
             },
             else => {
@@ -1071,8 +1096,8 @@ fn statementCaresAboutScope(stmt: Stmt) bool {
         => {
             return false;
         },
-        .s_local => |s| {
-            return s.kind != .k_var;
+        .s_local => {
+            return stmt.getLocal().kind != .k_var;
         },
         else => {
             return true;
@@ -1525,42 +1550,6 @@ pub const Parser = struct {
                 }
             }
 
-            // for (stmts) |stmt| {
-            //     var _stmts = ([_]Stmt{stmt});
-
-            //     switch (stmt.data) {
-            //         // Split up top-level multi-declaration variable statements
-
-            //         .s_local => |local| {
-            //             for (local.decls) |decl| {
-            //                 var decls = try p.allocator.alloc(Decl, 1);
-            //                 var clone = S.Local{
-            //                     .kind = local.kind,
-            //                     .decls = decls,
-            //                     .is_export = local.is_export,
-            //                     .was_ts_import_equals = local.was_ts_import_equals,
-            //                 };
-            //                 _stmts[0] = p.s(clone, stmt.loc);
-
-            //                 try p.appendPart(&parts, &_stmts);
-            //             }
-            //         },
-            //         // Move imports (and import-like exports) to the top of the file to
-            //         // ensure that if they are converted to a require() call, the effects
-            //         // will take place before any other statements are evaluated.
-            //         .s_import, .s_export_from, .s_export_star => {
-            //             try p.appendPart(&before, &_stmts);
-            //         },
-
-            //         .s_export_equals => {
-            //             try p.appendPart(&after, &_stmts);
-            //         },
-            //         else => {
-            //             try p.appendPart(&parts, &_stmts);
-            //         },
-            //     }
-            // }
-            // p.popScope();
             var parts_slice: []js_ast.Part = &([_]js_ast.Part{});
 
             if (before.items.len > 0 or after.items.len > 0) {
@@ -3997,7 +3986,7 @@ pub const P = struct {
                                     return stmt;
                                 }
 
-                                if (stmt.data.s_function.func.name) |name| {
+                                if (stmt.getFunction().func.name) |name| {
                                     defaultName = js_ast.LocRef{ .loc = defaultLoc, .ref = name.ref };
                                 } else {
                                     defaultName = try p.createDefaultName(defaultLoc);
@@ -4033,12 +4022,12 @@ pub const P = struct {
                                     },
 
                                     .s_function => |func_container| {
-                                        if (func_container.func.name) |name| {
+                                        if (stmt.getFunction().func.name) |name| {
                                             break :default_name_getter LocRef{ .loc = defaultLoc, .ref = name.ref };
                                         } else {}
                                     },
                                     .s_class => |class| {
-                                        if (class.class.class_name) |name| {
+                                        if (stmt.getClass().class.class_name) |name| {
                                             break :default_name_getter LocRef{ .loc = defaultLoc, .ref = name.ref };
                                         } else {}
                                     },
@@ -4077,12 +4066,12 @@ pub const P = struct {
                                             },
 
                                             .s_function => |func_container| {
-                                                if (func_container.func.name) |_name| {
+                                                if (stmt.getFunction().func.name) |_name| {
                                                     break :default_name_getter LocRef{ .loc = defaultLoc, .ref = _name.ref };
                                                 } else {}
                                             },
                                             .s_class => |class| {
-                                                if (class.class.class_name) |_name| {
+                                                if (stmt.getClass().class.class_name) |_name| {
                                                     break :default_name_getter LocRef{ .loc = defaultLoc, .ref = _name.ref };
                                                 } else {}
                                             },
@@ -4578,8 +4567,8 @@ pub const P = struct {
                 // Only require "const" statement initializers when we know we're a normal for loop
                 if (init_) |init_stmt| {
                     switch (init_stmt.data) {
-                        .s_local => |local| {
-                            if (local.kind == .k_const) {
+                        .s_local => {
+                            if (init_stmt.getLocal().kind == .k_const) {
                                 try p.requireInitializers(decls);
                             }
                         },
@@ -5006,7 +4995,8 @@ pub const P = struct {
                                     if (opts.is_namespace_scope and opts.is_export) {
                                         var decls: []G.Decl = &([_]G.Decl{});
                                         switch (stmt.data) {
-                                            .s_local => |local| {
+                                            .s_local => {
+                                                const local = stmt.getLocal();
                                                 var _decls = try List(G.Decl).initCapacity(p.allocator, local.decls.len);
                                                 for (local.decls) |decl| {
                                                     try extractDeclsForBinding(decl.binding, &_decls);
@@ -5136,7 +5126,9 @@ pub const P = struct {
         const _stmts: []Stmt = stmts.items;
         for (_stmts) |stmt| {
             switch (stmt.data) {
-                .s_local => |local| {
+                .s_local => |local__| {
+                    var local = stmt.getLocal();
+
                     if (local.was_ts_import_equals and !local.is_export) {
                         import_equal_count += 1;
                     }
@@ -5978,15 +5970,15 @@ pub const P = struct {
                 isDirectivePrologue = false;
                 switch (stmt.data) {
                     .s_expr => |expr| {
-                        switch (expr.value.data) {
+                        switch (stmt.getExpr().value.data) {
                             .e_string => |str| {
                                 if (!str.prefer_template) {
-                                    stmt.data = Stmt.Data{
-                                        .s_directive = p.m(S.Directive{
-                                            .value = str.value,
-                                            // .legacy_octal_loc = str.legacy_octal_loc,
-                                        }),
-                                    };
+                                    // stmt.data = Stmt.Data{
+                                    //     .s_directive = p.m(S.Directive{
+                                    //         .value = str.value,
+                                    //         // .legacy_octal_loc = str.legacy_octal_loc,
+                                    //     }),
+                                    // };
                                     isDirectivePrologue = true;
 
                                     if (strings.eqlUtf16("use strict", str.value)) {
@@ -6011,7 +6003,9 @@ pub const P = struct {
             if (!p.options.suppress_warnings_about_weird_code) {
                 var needsCheck = true;
                 switch (stmt.data) {
-                    .s_return => |ret| {
+                    .s_return => |retu| {
+                        const ret = stmt.getReturn();
+
                         if (ret.value == null and !p.latest_return_had_semicolon) {
                             returnWithoutSemicolonStart = stmt.loc.start;
                             needsCheck = false;
@@ -9169,13 +9163,19 @@ pub const P = struct {
                 // check if the imported file is marked as "sideEffects: false" before we
                 // can remove a SImport statement. Otherwise the import must be kept for
                 // its side effects.
-                .s_import => |st| {},
-                .s_class => |st| {
+                .s_import => {
+                    var st = stmt.getImport();
+                },
+                .s_class => {
+                    var st = stmt.getClass();
+
                     if (!p.classCanBeRemovedIfUnused(&st.class)) {
                         return false;
                     }
                 },
-                .s_expr => |st| {
+                .s_expr => {
+                    var st = stmt.getExpr();
+
                     if (st.does_not_affect_tree_shaking) {
                         // Expressions marked with this are automatically generated and have
                         // no side effects by construction.
@@ -9184,7 +9184,9 @@ pub const P = struct {
                         return false;
                     }
                 },
-                .s_local => |st| {
+                .s_local => {
+                    var st = stmt.getLocal();
+
                     for (st.decls) |decl| {
                         if (!p.bindingCanBeRemovedIfUnused(decl.binding)) {
                             return false;
@@ -9201,14 +9203,16 @@ pub const P = struct {
                 // Exports are tracked separately, so this isn't necessary
                 .s_export_clause, .s_export_from => {},
 
-                .s_export_default => |st| {
+                .s_export_default => {
+                    var st = stmt.getExportDefault();
+
                     switch (st.value) {
                         .stmt => |s2| {
                             switch (s2.data) {
                                 // These never have side effects
                                 .s_function => {},
-                                .s_class => |class| {
-                                    if (!p.classCanBeRemovedIfUnused(&class.class)) {
+                                .s_class => {
+                                    if (!p.classCanBeRemovedIfUnused(&stmt.getClass().class)) {
                                         return false;
                                     }
                                 },
@@ -10393,7 +10397,8 @@ pub const P = struct {
                 .s_comment => {
                     continue;
                 },
-                .s_directive => |dir| {
+                .s_directive => {
+                    const dir = stmt.getDirective();
                     if (strings.utf16EqlString(dir.value, "use strict")) {
                         return stmt.loc;
                     }
@@ -10704,17 +10709,23 @@ pub const P = struct {
             // These don't contain anything to traverse
 
             .s_debugger, .s_empty, .s_comment => {},
-            .s_type_script => |data| {
+            .s_type_script => {
+                var data = stmt.getTypeScript();
+
                 // Erase TypeScript constructs from the output completely
                 return;
             },
-            .s_directive => |data| {
+            .s_directive => {
+                var data = stmt.getDirective();
+
                 //         	if p.isStrictMode() && s.LegacyOctalLoc.Start > 0 {
                 // 	p.markStrictModeFeature(legacyOctalEscape, p.source.RangeOfLegacyOctalEscape(s.LegacyOctalLoc), "")
                 // }
                 return;
             },
-            .s_import => |data| {
+            .s_import => {
+                var data = stmt.getImport();
+
                 try p.recordDeclaredSymbol(data.namespace_ref);
 
                 if (data.default_name) |default_name| {
@@ -10727,7 +10738,9 @@ pub const P = struct {
                     }
                 }
             },
-            .s_export_clause => |data| {
+            .s_export_clause => {
+                var data = stmt.getExportClause();
+
                 // "export {foo}"
                 var end: usize = 0;
                 for (data.items) |*item| {
@@ -10755,7 +10768,9 @@ pub const P = struct {
                 // jarred: does that mean we can remove them here, since we're not bundling for production?
                 data.items = data.items[0..end];
             },
-            .s_export_from => |data| {
+            .s_export_from => {
+                var data = stmt.getExportFrom();
+
                 // "export {foo} from 'path'"
                 const name = p.loadNameFromRef(data.namespace_ref);
                 data.namespace_ref = try p.newSymbol(.other, name);
@@ -10771,7 +10786,9 @@ pub const P = struct {
                     item.name.ref = ref;
                 }
             },
-            .s_export_star => |data| {
+            .s_export_star => {
+                var data = stmt.getExportStar();
+
                 // "export {foo} from 'path'"
                 const name = p.loadNameFromRef(data.namespace_ref);
                 data.namespace_ref = try p.newSymbol(.other, name);
@@ -10795,7 +10812,9 @@ pub const P = struct {
                     stmts.appendAssumeCapacity(p.s(S.ExportClause{ .items = items.toOwnedSlice(), .is_single_line = true }, stmt.loc));
                 }
             },
-            .s_export_default => |data| {
+            .s_export_default => {
+                var data = stmt.getExportDefault();
+
                 if (data.default_name.ref) |ref| {
                     try p.recordDeclaredSymbol(ref);
                 }
@@ -10828,7 +10847,8 @@ pub const P = struct {
 
                     .stmt => |s2| {
                         switch (s2.data) {
-                            .s_function => |func| {
+                            .s_function => {
+                                var func = s2.getFunction();
                                 var name: string = "";
                                 if (func.func.name) |func_loc| {
                                     name = p.loadNameFromRef(func_loc.ref.?);
@@ -10846,7 +10866,8 @@ pub const P = struct {
                                 // prevent doubling export default function name
                                 return;
                             },
-                            .s_class => |class| {
+                            .s_class => {
+                                var class = s2.getClass();
                                 var shadow_ref = p.visitClass(s2.loc, &class.class);
                                 stmts.appendSlice(p.lowerClass(js_ast.StmtOrExpr{ .stmt = stmt.* }, shadow_ref)) catch unreachable;
                                 return;
@@ -10856,7 +10877,9 @@ pub const P = struct {
                     },
                 }
             },
-            .s_export_equals => |data| {
+            .s_export_equals => {
+                var data = stmt.getExportEquals();
+
                 // "module.exports = value"
                 stmts.append(
                     Expr.assignStmt(
@@ -10879,7 +10902,9 @@ pub const P = struct {
                 ) catch unreachable;
                 p.recordUsage(p.module_ref);
             },
-            .s_break => |data| {
+            .s_break => {
+                var data = stmt.getBreak();
+
                 if (data.label) |*label| {
                     const name = p.loadNameFromRef(label.ref orelse p.panic("Expected label to have a ref", .{}));
                     const res = p.findLabelSymbol(label.loc, name);
@@ -10893,7 +10918,9 @@ pub const P = struct {
                     p.log.addRangeError(p.source, r, "Cannot use \"break\" here") catch unreachable;
                 }
             },
-            .s_continue => |data| {
+            .s_continue => {
+                var data = stmt.getContinue();
+
                 if (data.label) |*label| {
                     const name = p.loadNameFromRef(label.ref orelse p.panic("Expected continue label to have a ref", .{}));
                     const res = p.findLabelSymbol(label.loc, name);
@@ -10907,7 +10934,9 @@ pub const P = struct {
                     p.log.addRangeError(p.source, r, "Cannot use \"continue\" here") catch unreachable;
                 }
             },
-            .s_label => |data| {
+            .s_label => {
+                var data = stmt.getLabel();
+
                 p.pushScopeForVisitPass(.label, stmt.loc) catch unreachable;
                 const name = p.loadNameFromRef(data.name.ref orelse unreachable);
                 const ref = p.newSymbol(.label, name) catch unreachable;
@@ -10923,7 +10952,9 @@ pub const P = struct {
                 data.stmt = p.visitSingleStmt(data.stmt, StmtsKind.none);
                 p.popScope();
             },
-            .s_local => |data| {
+            .s_local => {
+                var data = stmt.getLocal();
+
                 for (data.decls) |*d| {
                     p.visitBinding(d.binding, null);
 
@@ -10968,16 +10999,22 @@ pub const P = struct {
                 // TODO: do we need to relocate vars? I don't think so.
                 if (data.kind == .k_var) {}
             },
-            .s_expr => |data| {
+            .s_expr => {
+                var data = stmt.getExpr();
+
                 p.stmt_expr_value = data.value.data;
                 data.value = p.visitExpr(data.value);
                 // simplify unused
                 data.value = SideEffects.simpifyUnusedExpr(p, data.value) orelse data.value.toEmpty();
             },
-            .s_throw => |data| {
+            .s_throw => {
+                var data = stmt.getThrow();
+
                 data.value = p.visitExpr(data.value);
             },
-            .s_return => |data| {
+            .s_return => {
+                var data = stmt.getReturn();
+
                 // Forbid top-level return inside modules with ECMAScript-style exports
                 if (p.fn_or_arrow_data_visit.is_outside_fn_or_arrow) {
                     const where = where: {
@@ -11005,7 +11042,9 @@ pub const P = struct {
                     }
                 }
             },
-            .s_block => |data| {
+            .s_block => {
+                var data = stmt.getBlock();
+
                 {
                     p.pushScopeForVisitPass(.block, stmt.loc) catch unreachable;
 
@@ -11031,22 +11070,30 @@ pub const P = struct {
                 stmts.append(stmt.*) catch unreachable;
                 return;
             },
-            .s_with => |data| {
+            .s_with => {
+                var data = stmt.getWith();
+
                 notimpl();
             },
-            .s_while => |data| {
+            .s_while => {
+                var data = stmt.getWhile();
+
                 data.test_ = p.visitExpr(data.test_);
                 data.body = p.visitLoopBody(data.body);
 
                 // TODO: simplify boolean expression
             },
-            .s_do_while => |data| {
+            .s_do_while => {
+                var data = stmt.getDoWhile();
+
                 data.test_ = p.visitExpr(data.test_);
                 data.body = p.visitLoopBody(data.body);
 
                 // TODO: simplify boolean expression
             },
-            .s_if => |data| {
+            .s_if => {
+                var data = stmt.getIf();
+
                 data.test_ = p.visitExpr(data.test_);
 
                 const effects = SideEffects.toBoolean(data.test_.data);
@@ -11076,7 +11123,9 @@ pub const P = struct {
                     }
                 }
             },
-            .s_for => |data| {
+            .s_for => {
+                var data = stmt.getFor();
+
                 {
                     p.pushScopeForVisitPass(.block, stmt.loc) catch unreachable;
 
@@ -11100,7 +11149,9 @@ pub const P = struct {
                 // TODO: Potentially relocate "var" declarations to the top level
 
             },
-            .s_for_in => |data| {
+            .s_for_in => {
+                var data = stmt.getForIn();
+
                 {
                     p.pushScopeForVisitPass(.block, stmt.loc) catch unreachable;
                     defer p.popScope();
@@ -11125,7 +11176,9 @@ pub const P = struct {
                     // }
                 }
             },
-            .s_for_of => |data| {
+            .s_for_of => {
+                var data = stmt.getForOf();
+
                 p.pushScopeForVisitPass(.block, stmt.loc) catch unreachable;
                 defer p.popScope();
                 _ = p.visitForLoopInit(data.init, true);
@@ -11142,7 +11195,9 @@ pub const P = struct {
 
                 // p.lowerObjectRestInForLoopInit(s.Init, &s.Body)
             },
-            .s_try => |data| {
+            .s_try => {
+                var data = stmt.getTry();
+
                 p.pushScopeForVisitPass(.block, stmt.loc) catch unreachable;
                 {
                     var _stmts = List(Stmt).fromOwnedSlice(p.allocator, data.body);
@@ -11176,7 +11231,9 @@ pub const P = struct {
                     p.popScope();
                 }
             },
-            .s_switch => |data| {
+            .s_switch => {
+                var data = stmt.getSwitch();
+
                 data.test_ = p.visitExpr(data.test_);
                 {
                     p.pushScopeForVisitPass(.block, data.body_loc) catch unreachable;
@@ -11201,7 +11258,9 @@ pub const P = struct {
                 // TODO: duplicate case checker
 
             },
-            .s_function => |data| {
+            .s_function => {
+                var data = stmt.getFunction();
+
                 data.func = p.visitFunc(data.func, data.func.open_parens_loc);
 
                 // Handle exporting this function from a namespace
@@ -11232,7 +11291,9 @@ pub const P = struct {
                 // );
                 return;
             },
-            .s_class => |data| {
+            .s_class => {
+                var data = stmt.getClass();
+
                 const shadow_ref = p.visitClass(stmt.loc, &data.class);
 
                 // Remove the export flag inside a namespace
@@ -11255,7 +11316,9 @@ pub const P = struct {
 
                 return;
             },
-            .s_enum => |data| {
+            .s_enum => {
+                var data = stmt.getEnum();
+
                 p.recordDeclaredSymbol(data.name.ref.?) catch unreachable;
                 p.pushScopeForVisitPass(.entry, stmt.loc) catch unreachable;
                 defer p.popScope();
@@ -11372,7 +11435,9 @@ pub const P = struct {
                 );
                 return;
             },
-            .s_namespace => |data| {
+            .s_namespace => {
+                var data = stmt.getNamespace();
+
                 p.recordDeclaredSymbol(data.name.ref.?) catch unreachable;
 
                 // Scan ahead for any variables inside this namespace. This must be done
@@ -11381,7 +11446,9 @@ pub const P = struct {
                 // We need to convert the uses into property accesses on the namespace.
                 for (data.stmts) |child_stmt| {
                     switch (child_stmt.data) {
-                        .s_local => |local| {
+                        .s_local => |local__| {
+                            var local = stmt.getLocal();
+
                             if (local.is_export) {
                                 p.markExportedDeclsInsideNamespace(data.arg, local.decls);
                             }
@@ -11625,12 +11692,16 @@ pub const P = struct {
 
     pub fn visitForLoopInit(p: *P, stmt: Stmt, is_in_or_of: bool) Stmt {
         switch (stmt.data) {
-            .s_expr => |st| {
+            .s_expr => {
+                var st = stmt.getExpr();
+
                 const assign_target = if (is_in_or_of) js_ast.AssignTarget.replace else js_ast.AssignTarget.none;
                 p.stmt_expr_value = st.value.data;
                 st.value = p.visitExprInOut(st.value, ExprIn{ .assign_target = assign_target });
             },
-            .s_local => |st| {
+            .s_local => {
+                var st = stmt.getLocal();
+
                 for (st.decls) |*dec| {
                     p.visitBinding(dec.binding, null);
                     if (dec.value) |val| {
@@ -11843,8 +11914,8 @@ pub const P = struct {
     pub fn visitSingleStmt(p: *P, stmt: Stmt, kind: StmtsKind) Stmt {
         const has_if_scope = has_if: {
             switch (stmt.data) {
-                .s_function => |func| {
-                    break :has_if func.func.flags.has_if_scope;
+                .s_function => {
+                    break :has_if stmt.getFunction().func.flags.has_if_scope;
                 },
                 else => {
                     break :has_if false;
@@ -11874,7 +11945,7 @@ pub const P = struct {
             return Stmt{ .data = Prefill.Data.SEmpty, .loc = loc };
         }
 
-        if (stmts.len == 1 and std.meta.activeTag(stmts[0].data) != .s_local or (std.meta.activeTag(stmts[0].data) == .s_local and stmts[0].data.s_local.kind == S.Local.Kind.k_var)) {
+        if (stmts.len == 1 and std.meta.activeTag(stmts[0].data) != .s_local or (std.meta.activeTag(stmts[0].data) == .s_local and stmts[0].getLocal().kind == S.Local.Kind.k_var)) {
             // "let" and "const" must be put in a block when in a single-statement context
             return stmts[0];
         }
@@ -12080,7 +12151,8 @@ pub const P = struct {
                         // moves this statement to the end when it generates code.
                         break :list_getter &after;
                     },
-                    .s_function => |data| {
+                    .s_function => {
+                        var data = stmt.getFunction();
                         // Manually hoist block-level function declarations to preserve semantics.
                         // This is only done for function declarations that are not generators
                         // or async functions, since this is a backwards-compatibility hack from
@@ -12422,8 +12494,8 @@ pub const P = struct {
         for (parts) |part| {
             for (part.stmts) |stmt| {
                 switch (stmt.data) {
-                    .s_export_clause => |clause| {
-                        for (clause.items) |item| {
+                    .s_export_clause => {
+                        for (stmt.getExportClause().items) |item| {
                             if (p.named_imports.getEntry(item.name.ref.?)) |_import| {
                                 _import.value.is_exported = true;
                             }
@@ -12531,6 +12603,8 @@ pub const P = struct {
     }
 
     pub fn init(allocator: *std.mem.Allocator, log: *logger.Log, source: *const logger.Source, define: *Define, lexer: js_lexer.Lexer, opts: Parser.Options) !*P {
+        Stmt.Data.Store.create(allocator);
+
         var scope_order = try ScopeOrderList.initCapacity(allocator, 1);
         var scope = try allocator.create(Scope);
         scope.* = Scope{

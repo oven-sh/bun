@@ -5857,7 +5857,7 @@ pub const P = struct {
                 // Add a "_" to make tests easier to read, since non-bundler tests don't
                 // run the renamer. For external-facing things the renamer will avoid
                 // collisions automatically so this isn't important for correctness.
-                arg_ref = p.newSymbol(.hoisted, strings.cat(p.allocator, "+", name_text) catch unreachable) catch unreachable;
+                arg_ref = p.newSymbol(.hoisted, strings.cat(p.allocator, "_", name_text) catch unreachable) catch unreachable;
                 p.current_scope.generated.append(arg_ref) catch unreachable;
             } else {
                 arg_ref = p.declareSymbol(.hoisted, name_loc, name_text) catch unreachable;

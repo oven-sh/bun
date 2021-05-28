@@ -79,8 +79,8 @@ pub const PackageJSON = struct {
             .main_fields = MainFieldMap.init(r.allocator),
         };
 
-        if (json.getProperty("type")) |type_json| {
-            if (type_json.expr.getString(r.allocator)) |type_str| {
+        if (json.asProperty("type")) |type_json| {
+            if (type_json.expr.asString(r.allocator)) |type_str| {
                 switch (options.ModuleType.List.get(type_str) orelse options.ModuleType.unknown) {
                     .cjs => {
                         package_json.module_type = .cjs;
@@ -105,10 +105,10 @@ pub const PackageJSON = struct {
 
         // Read the "main" fields
         for (r.opts.main_fields) |main| {
-            if (json.getProperty(main)) |main_json| {
+            if (json.asProperty(main)) |main_json| {
                 const expr: js_ast.Expr = main_json.expr;
 
-                if ((expr.getString(r.allocator))) |str| {
+                if ((expr.asString(r.allocator))) |str| {
                     if (str.len > 0) {
                         package_json.main_fields.put(main, str) catch unreachable;
                     }
@@ -129,14 +129,15 @@ pub const PackageJSON = struct {
             //     "./dist/index.node.esm.js": "./dist/index.browser.esm.js"
             //   },
             //
-            if (json.getProperty("browser")) |browser_prop| {
+            if (json.asProperty("browser")) |browser_prop| {
                 switch (browser_prop.expr.data) {
-                    .e_object => |obj| {
+                    .e_object => {
+                        const obj = browser_prop.expr.getObject();
                         // The value is an object
 
                         // Remap all files in the browser field
                         for (obj.properties) |prop| {
-                            var _key_str = (prop.key orelse continue).getString(r.allocator) orelse continue;
+                            var _key_str = (prop.key orelse continue).asString(r.allocator) orelse continue;
                             const value: js_ast.Expr = prop.value orelse continue;
 
                             // Normalize the path so we can compare against it without getting
@@ -151,11 +152,13 @@ pub const PackageJSON = struct {
                             const key = r.allocator.dupe(u8, r.fs.normalize(_key_str)) catch unreachable;
 
                             switch (value.data) {
-                                .e_string => |str| {
+                                .e_string => {
+                                    const str = value.getString();
                                     // If this is a string, it's a replacement package
                                     package_json.browser_map.put(key, str.string(r.allocator) catch unreachable) catch unreachable;
                                 },
-                                .e_boolean => |boolean| {
+                                .e_boolean => {
+                                    const boolean = value.getBoolean();
                                     if (!boolean.value) {
                                         package_json.browser_map.put(key, "") catch unreachable;
                                     }

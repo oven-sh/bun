@@ -74,9 +74,9 @@ pub const TSConfigJSON = struct {
 
         var result: TSConfigJSON = TSConfigJSON{ .abs_path = source.key_path.text, .paths = PathsMap.init(allocator) };
         errdefer allocator.free(result.paths);
-        if (json.getProperty("extends")) |extends_value| {
+        if (json.asProperty("extends")) |extends_value| {
             log.addWarning(&source, extends_value.loc, "\"extends\" is not implemented yet") catch unreachable;
-            // if ((extends_value.expr.getString(allocator) catch null)) |str| {
+            // if ((extends_value.expr.asString(allocator) catch null)) |str| {
             //     if (extends(str, source.rangeOfString(extends_value.loc))) |base| {
             //         result.jsx = base.jsx;
             //         result.base_url_for_paths = base.base_url_for_paths;
@@ -90,48 +90,48 @@ pub const TSConfigJSON = struct {
         var has_base_url = false;
 
         // Parse "compilerOptions"
-        if (json.getProperty("compilerOptions")) |compiler_opts| {
+        if (json.asProperty("compilerOptions")) |compiler_opts| {
 
             // Parse "baseUrl"
-            if (compiler_opts.expr.getProperty("baseUrl")) |base_url_prop| {
-                if ((base_url_prop.expr.getString(allocator))) |base_url| {
+            if (compiler_opts.expr.asProperty("baseUrl")) |base_url_prop| {
+                if ((base_url_prop.expr.asString(allocator))) |base_url| {
                     result.base_url = base_url;
                     has_base_url = true;
                 }
             }
 
             // Parse "jsxFactory"
-            if (compiler_opts.expr.getProperty("jsxFactory")) |jsx_prop| {
-                if (jsx_prop.expr.getString(allocator)) |str| {
+            if (compiler_opts.expr.asProperty("jsxFactory")) |jsx_prop| {
+                if (jsx_prop.expr.asString(allocator)) |str| {
                     result.jsx.factory = try parseMemberExpressionForJSX(log, &source, jsx_prop.loc, str, allocator);
                 }
             }
 
             // Parse "jsxFragmentFactory"
-            if (compiler_opts.expr.getProperty("jsxFactory")) |jsx_prop| {
-                if (jsx_prop.expr.getString(allocator)) |str| {
+            if (compiler_opts.expr.asProperty("jsxFactory")) |jsx_prop| {
+                if (jsx_prop.expr.asString(allocator)) |str| {
                     result.jsx.fragment = try parseMemberExpressionForJSX(log, &source, jsx_prop.loc, str, allocator);
                 }
             }
 
             // Parse "jsxImportSource"
-            if (compiler_opts.expr.getProperty("jsxImportSource")) |jsx_prop| {
-                if (jsx_prop.expr.getString(allocator)) |str| {
+            if (compiler_opts.expr.asProperty("jsxImportSource")) |jsx_prop| {
+                if (jsx_prop.expr.asString(allocator)) |str| {
                     result.jsx.import_source = str;
                 }
             }
 
             // Parse "useDefineForClassFields"
-            if (compiler_opts.expr.getProperty("useDefineForClassFields")) |use_define_value_prop| {
-                if (use_define_value_prop.expr.getBool()) |val| {
+            if (compiler_opts.expr.asProperty("useDefineForClassFields")) |use_define_value_prop| {
+                if (use_define_value_prop.expr.asBool()) |val| {
                     result.use_define_for_class_fields = val;
                 }
             }
 
             // Parse "importsNotUsedAsValues"
-            if (compiler_opts.expr.getProperty("importsNotUsedAsValues")) |jsx_prop| {
+            if (compiler_opts.expr.asProperty("importsNotUsedAsValues")) |jsx_prop| {
                 // This should never allocate since it will be utf8
-                if ((jsx_prop.expr.getString(allocator))) |str| {
+                if ((jsx_prop.expr.asString(allocator))) |str| {
                     switch (ImportsNotUsedAsValue.List.get(str) orelse ImportsNotUsedAsValue.invalid) {
                         .preserve, .err => {
                             result.preserve_imports_not_used_as_values = true;
@@ -145,14 +145,15 @@ pub const TSConfigJSON = struct {
             }
 
             // Parse "paths"
-            if (compiler_opts.expr.getProperty("paths")) |paths_prop| {
+            if (compiler_opts.expr.asProperty("paths")) |paths_prop| {
                 switch (paths_prop.expr.data) {
-                    .e_object => |paths| {
+                    .e_object => {
+                        var paths = paths_prop.expr.getObject();
                         result.base_url_for_paths = result.base_url;
                         result.paths = PathsMap.init(allocator);
                         for (paths.properties) |property| {
                             const key_prop = property.key orelse continue;
-                            const key = (key_prop.getString(allocator)) orelse continue;
+                            const key = (key_prop.asString(allocator)) orelse continue;
 
                             if (!TSConfigJSON.isValidTSConfigPathNoBaseURLPattern(key, log, &source, allocator, key_prop.loc)) {
                                 continue;
@@ -182,13 +183,15 @@ pub const TSConfigJSON = struct {
                             // Matching "folder1/file2" should first check "projectRoot/folder1/file2"
                             // and then, if that didn't work, also check "projectRoot/generated/folder1/file2".
                             switch (value_prop.data) {
-                                .e_array => |array| {
+                                .e_array => {
+                                    const array = value_prop.getArray();
+
                                     if (array.items.len > 0) {
                                         var values = allocator.alloc(string, array.items.len) catch unreachable;
                                         errdefer allocator.free(values);
                                         var count: usize = 0;
                                         for (array.items) |expr| {
-                                            if ((expr.getString(allocator))) |str| {
+                                            if ((expr.asString(allocator))) |str| {
                                                 if (TSConfigJSON.isValidTSConfigPathPattern(
                                                     str,
                                                     log,

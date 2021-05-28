@@ -30,3 +30,5 @@ cover
 coverage
 coverv
 *.trace
+bench
+github

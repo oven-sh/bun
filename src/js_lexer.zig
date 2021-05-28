@@ -126,9 +126,13 @@ pub const Lexer = struct {
     }
 
     inline fn nextCodepointSlice(it: *LexerType) !?[]const u8 {
+        @setRuntimeSafety(false);
+
         if (it.current >= it.source.contents.len) {
             // without this line, strings cut off one before the last characte
             it.end = it.current;
+            @setRuntimeSafety(false);
+
             return null;
         }
 
@@ -234,7 +238,7 @@ pub const Lexer = struct {
         const start_length = buf.items.len;
         while (iter.nextCodepoint()) |c| {
             const width = iter.width;
-
+            @setRuntimeSafety(false);
             switch (c) {
                 '\r' => {
                     // From the specification:
@@ -257,6 +261,8 @@ pub const Lexer = struct {
                 },
 
                 '\\' => {
+                    @setRuntimeSafety(false);
+
                     const c2 = iter.nextCodepoint() orelse return;
                     const width2 = iter.width;
                     switch (c2) {
@@ -492,6 +498,8 @@ pub const Lexer = struct {
         var needs_slow_path = false;
         var suffix_len: u3 = 1;
         stringLiteral: while (true) {
+            @setRuntimeSafety(false);
+
             switch (lexer.code_point) {
                 '\\' => {
                     try lexer.step();
@@ -924,6 +932,7 @@ pub const Lexer = struct {
         while (true) {
             lexer.start = lexer.end;
             lexer.token = T.t_end_of_file;
+            @setRuntimeSafety(false);
 
             switch (lexer.code_point) {
                 -1 => {
@@ -931,10 +940,14 @@ pub const Lexer = struct {
                 },
 
                 '#' => {
+                    @setRuntimeSafety(false);
+
                     if (lexer.start == 0 and lexer.source.contents[1] == '!') {
                         // "#!/usr/bin/env node"
                         lexer.token = .t_hashbang;
                         hashbang: while (true) {
+                            @setRuntimeSafety(false);
+
                             try lexer.step();
                             switch (lexer.code_point) {
                                 '\r', '\n', 0x2028, 0x2029 => {
@@ -950,10 +963,14 @@ pub const Lexer = struct {
                     } else {
                         try lexer.step();
                         if (lexer.code_point == '\\') {
+                            @setRuntimeSafety(false);
+
                             const scan_result = try lexer.scanIdentifierWithEscapes(.private);
                             lexer.identifier = scan_result.contents;
                             lexer.token = T.t_private_identifier;
                         } else {
+                            @setRuntimeSafety(false);
+
                             if (!isIdentifierStart(lexer.code_point)) {
                                 try lexer.syntaxError();
                             }
@@ -2529,6 +2546,8 @@ pub fn isIdentifierStart(codepoint: CodePoint) bool {
     }
 }
 pub fn isIdentifierContinue(codepoint: CodePoint) bool {
+    @setRuntimeSafety(false);
+
     switch (codepoint) {
         '_', '$', '0'...'9', 'a'...'z', 'A'...'Z' => {
             return true;
@@ -2612,6 +2631,8 @@ pub fn isIdentifierUTF16(text: JavascriptString) bool {
 
     var i: usize = 0;
     while (i < n) : (i += 1) {
+        @setRuntimeSafety(false);
+
         var r1 = @intCast(i32, text[i]);
         if (r1 >= 0xD800 and r1 <= 0xDBFF and i + 1 < n) {
             const r2 = @intCast(i32, text[i + 1]);
@@ -2654,6 +2675,7 @@ pub const CodepointIterator = struct {
     pub fn nextCodepoint(it: *CodepointIterator) ?CodePoint {
         const slice = it.nextCodepointSlice() orelse return null;
         it.width = @intCast(u3, slice.len);
+        @setRuntimeSafety(false);
 
         it.c = switch (it.width) {
             1 => @intCast(CodePoint, slice[0]),
@@ -2707,6 +2729,8 @@ pub fn rangeOfIdentifier(source: *const Source, loc: logger.Loc) logger.Range {
         defer r.len = @intCast(i32, iter.i);
         while (iter.nextCodepoint()) |code_point| {
             if (code_point == '\\') {
+                @setRuntimeSafety(false);
+
                 // Search for the end of the identifier
 
                 // Skip over bracketed unicode escapes such as "\u{10000}"

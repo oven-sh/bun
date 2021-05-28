@@ -6022,12 +6022,6 @@ pub const P = struct {
                             .e_string => {
                                 const str = expr.value.getString();
                                 if (!str.prefer_template) {
-                                    // stmt.data = Stmt.Data{
-                                    //     .s_directive = p.m(S.Directive{
-                                    //         .value = str.value,
-                                    //         // .legacy_octal_loc = str.legacy_octal_loc,
-                                    //     }),
-                                    // };
                                     isDirectivePrologue = true;
 
                                     if (strings.eqlUtf16("use strict", str.value)) {
@@ -7296,12 +7290,11 @@ pub const P = struct {
         return true;
     }
 
-    pub fn parseTemplateParts(p: *P, include_raw: bool) anyerror!TemplatePartTuple {
+    pub fn parseTemplateParts(p: *P, include_raw: bool) ![]E.TemplatePart {
         var parts = List(E.TemplatePart).initCapacity(p.allocator, 1) catch unreachable;
         // Allow "in" inside template literals
         var oldAllowIn = p.allow_in;
         p.allow_in = true;
-        var legacy_octal_loc = logger.Loc.Empty;
 
         parseTemplatePart: while (true) {
             try p.lexer.next();
@@ -7326,16 +7319,12 @@ pub const P = struct {
 
         p.allow_in = oldAllowIn;
 
-        return TemplatePartTuple{ .@"0" = parts.toOwnedSlice(), .@"1" = legacy_octal_loc };
+        return parts.toOwnedSlice();
     }
 
     // This assumes the caller has already checked for TStringLiteral or TNoSubstitutionTemplateLiteral
     pub fn parseStringLiteral(p: *P) anyerror!Expr {
-        var legacy_octal_loc: logger.Loc = logger.Loc.Empty;
-        var loc = p.lexer.loc();
-        if (p.lexer.legacy_octal_loc.start > loc.start) {
-            legacy_octal_loc = p.lexer.legacy_octal_loc;
-        }
+        const loc = p.lexer.loc();
         var str = p.lexer.toEString();
         str.prefer_template = p.lexer.token == .t_no_substitution_template_literal;
 
@@ -7573,7 +7562,6 @@ pub const P = struct {
                     left = p.e(E.Template{
                         .tag = left,
                         .head = head,
-                        .legacy_octal_loc = logger.Loc.Empty,
                     }, left.loc);
                 },
                 .t_template_head => {
@@ -7584,7 +7572,7 @@ pub const P = struct {
                     const head = p.lexer.toEString();
                     const partsGroup = try p.parseTemplateParts(true);
                     const tag = left;
-                    left = p.e(E.Template{ .tag = tag, .head = head, .parts = partsGroup.@"0" }, left.loc);
+                    left = p.e(E.Template{ .tag = tag, .head = head, .parts = partsGroup }, left.loc);
                 },
                 .t_open_bracket => {
                     // When parsing a decorator, ignore EIndex expressions since they may be
@@ -8333,25 +8321,16 @@ pub const P = struct {
                 return try p.parseStringLiteral();
             },
             .t_template_head => {
-                var legacy_octal_loc = logger.Loc.Empty;
                 var head = p.lexer.toEString();
-                if (p.lexer.legacy_octal_loc.start > loc.start) {
-                    legacy_octal_loc = p.lexer.legacy_octal_loc;
-                }
 
-                var resp = try p.parseTemplateParts(false);
-                const parts: []E.TemplatePart = resp.@"0";
-                const tail_legacy_octal_loc: logger.Loc = resp.@"1";
-                if (tail_legacy_octal_loc.start > 0) {
-                    legacy_octal_loc = tail_legacy_octal_loc;
-                }
+                const parts = try p.parseTemplateParts(false);
+
                 // Check if TemplateLiteral is unsupported. We don't care for this product.`
                 // if ()
 
                 return p.e(E.Template{
                     .head = head,
                     .parts = parts,
-                    .legacy_octal_loc = legacy_octal_loc,
                 }, loc);
             },
             .t_numeric_literal => {

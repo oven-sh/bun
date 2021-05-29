@@ -424,7 +424,7 @@ pub const Cli = struct {
         const duration = std.time.nanoTimestamp() - start_time;
 
         if (did_write and duration < @as(i128, @as(i128, std.time.ns_per_s) * @as(i128, 2))) {
-            var elapsed = @divExact(duration, @as(i128, std.time.ns_per_ms));
+            var elapsed = @divTrunc(duration, @as(i128, std.time.ns_per_ms));
             try writer.print("\nCompleted in {d}ms", .{elapsed});
         }
 

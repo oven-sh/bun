@@ -27,6 +27,10 @@ pub const Ref = packed struct {
     inner_index: Int = 0,
     is_source_contents_slice: bool = false,
 
+    pub fn hash(key: Ref) u64 {
+        @compileError("Dont call");
+    }
+
     // 2 bits of padding for whatever is the parent
     pub const Int = u30;
     pub const None = Ref{
@@ -70,11 +74,11 @@ pub const RequireOrImportMeta = struct {
     exports_ref: Ref = Ref.None,
     is_wrapper_async: bool = false,
 };
-pub fn debug(comptime fmt: []const u8, args: anytype) callconv(.Inline) void {
+pub inline fn debug(comptime fmt: []const u8, args: anytype) void {
     // Output.print(fmt, args);
 }
-pub fn debugl(
+pub inline fn debugl(
     comptime fmt: []const u8,
-) callconv(.Inline) void {
+) void {
     // Output.print("{s}\n", .{fmt});
 }

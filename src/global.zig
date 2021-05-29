@@ -29,6 +29,8 @@ pub const FeatureFlags = struct {
 
     pub const print_ast = false;
     pub const disable_printing_null = false;
+
+    pub const store_file_descriptors = !isWindows and !isBrowser;
 };
 
 pub const enableTracing = true;
@@ -135,3 +137,10 @@ pub const Global = struct {
         Global.panic("Not implemented yet!!!!!", .{});
     }
 };
+
+pub const FileDescriptorType = if (isBrowser) u0 else std.os.fd_t;
+
+// When we are on a computer with an absurdly high number of max open file handles
+// such is often the case with macOS
+// As a useful optimization, we can store file descriptors and just keep them open...forever
+pub const StoredFileDescriptorType = if (isWindows or isBrowser) u0 else std.os.fd_t;

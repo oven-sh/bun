@@ -45,7 +45,19 @@ pub const DirInfo = struct {
     tsconfig_json: ?*TSConfigJSON = null, // Is there a "tsconfig.json" file in this directory or a parent directory?
     abs_real_path: string = "", // If non-empty, this is the real absolute path resolving any symlinks
 
-    pub fn getEntries(dirinfo: *DirInfo) ?*Fs.FileSystem.DirEntry {
+    pub fn getFileDescriptor(dirinfo: *const DirInfo) StoredFileDescriptorType {
+        if (!FeatureFlags.store_file_descriptors) {
+            return 0;
+        }
+
+        if (dirinfo.getEntries()) |entries| {
+            return entries.fd;
+        } else {
+            return 0;
+        }
+    }
+
+    pub fn getEntries(dirinfo: *const DirInfo) ?*Fs.FileSystem.DirEntry {
         var entries_ptr = Fs.FileSystem.instance.fs.entries.atIndex(dirinfo.entries) orelse return null;
         switch (entries_ptr.*) {
             .entries => |entr| {
@@ -57,10 +69,10 @@ pub const DirInfo = struct {
         }
     }
 
-    pub fn getParent(i: *DirInfo) ?*DirInfo {
+    pub fn getParent(i: *const DirInfo) ?*DirInfo {
         return HashMap.instance.atIndex(i.parent);
     }
-    pub fn getEnclosingBrowserScope(i: *DirInfo) ?*DirInfo {
+    pub fn getEnclosingBrowserScope(i: *const DirInfo) ?*DirInfo {
         return HashMap.instance.atIndex(i.enclosing_browser_scope);
     }
 
@@ -250,6 +262,9 @@ pub const Resolver = struct {
 
         debug_meta: ?DebugMeta = null,
 
+        dirname_fd: StoredFileDescriptorType = 0,
+        file_fd: StoredFileDescriptorType = 0,
+
         // Most NPM modules are CommonJS
         // If unspecified, assume CommonJS.
         // If internal app code, assume ESM. Since this is designed for ESM.`
@@ -428,6 +443,7 @@ pub const Resolver = struct {
                             return Result{
                                 .path_pair = res.path_pair,
                                 .diff_case = res.diff_case,
+                                .dirname_fd = dir_info.getFileDescriptor(),
                                 .is_from_node_modules = res.is_node_module,
                             };
                         }
@@ -452,7 +468,12 @@ pub const Resolver = struct {
 
             // Run node's resolution rules (e.g. adding ".js")
             if (r.loadAsFileOrDirectory(import_path, kind)) |entry| {
-                return Result{ .path_pair = entry.path_pair, .diff_case = entry.diff_case, .is_from_node_modules = entry.is_node_module };
+                return Result{
+                    .dirname_fd = entry.dirname_fd,
+                    .path_pair = entry.path_pair,
+                    .diff_case = entry.diff_case,
+                    .is_from_node_modules = entry.is_node_module,
+                };
             }
 
             return null;
@@ -508,6 +529,7 @@ pub const Resolver = struct {
                                     .diff_case = _result.diff_case,
                                     .is_from_node_modules = _result.is_node_module,
                                     .module_type = pkg.module_type,
+                                    .dirname_fd = _result.dirname_fd,
                                 };
                                 check_relative = false;
                                 check_package = false;
@@ -524,6 +546,7 @@ pub const Resolver = struct {
                         .path_pair = res.path_pair,
                         .diff_case = res.diff_case,
                         .is_from_node_modules = res.is_node_module,
+                        .dirname_fd = res.dirname_fd,
                     };
                 } else if (!check_package) {
                     return null;
@@ -569,6 +592,7 @@ pub const Resolver = struct {
                                 }
                                 return Result{
                                     .path_pair = pair,
+                                    .dirname_fd = node_module.dirname_fd,
                                     .diff_case = node_module.diff_case,
                                     .is_from_node_modules = true,
                                 };
@@ -591,6 +615,7 @@ pub const Resolver = struct {
                     .path_pair = res.path_pair,
                     .diff_case = res.diff_case,
                     .is_from_node_modules = res.is_node_module,
+                    .dirname_fd = res.dirname_fd,
                 };
             } else {
                 // Note: node's "self references" are not currently supported
@@ -611,9 +636,11 @@ pub const Resolver = struct {
                     path.is_disabled = true;
                 } else if (r.resolveWithoutRemapping(dir_info, remapped, kind)) |remapped_result| {
                     result.is_from_node_modules = remapped_result.is_node_module;
+
                     switch (iter.index) {
                         0 => {
                             result.path_pair.primary = remapped_result.path_pair.primary;
+                            result.dirname_fd = remapped_result.dirname_fd;
                         },
                         else => {
                             result.path_pair.secondary = remapped_result.path_pair.primary;
@@ -728,7 +755,7 @@ pub const Resolver = struct {
             //     //     if (!strings.eql(std.fs.path.basename(current), "node_modules")) {
             //     //         var paths1 = [_]string{ current, "node_modules", extends };
             //     //         var join1 = r.fs.absAlloc(ctx.r.allocator, &paths1) catch unreachable;
-            //     //         const res = ctx.r.parseTSConfig(join1, ctx.visited) catch |err| {
+            //     //         const res = ctx.r.parseTSConfig(join1, ctx.1) catch |err| {
             //     //             if (err == error.ENOENT) {
             //     //                 continue;
             //     //             } else if (err == error.ParseErrorImportCycle) {} else if (err != error.ParseErrorAlreadyLogged) {}
@@ -743,12 +770,16 @@ pub const Resolver = struct {
     };
 
     threadlocal var tsconfig_base_url_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-    pub fn parseTSConfig(r: *Resolver, file: string, visited: *StringBoolMap) !?*TSConfigJSON {
-        if (visited.contains(file)) {
-            return error.ParseErrorImportCycle;
-        }
-        visited.put(file, true) catch unreachable;
-        const entry = try r.caches.fs.readFile(r.fs, file);
+    pub fn parseTSConfig(
+        r: *Resolver,
+        file: string,
+        dirname_fd: StoredFileDescriptorType,
+    ) !?*TSConfigJSON {
+        const entry = try r.caches.fs.readFile(
+            r.fs,
+            file,
+            dirname_fd,
+        );
         const key_path = Path.init(file);
 
         const source = logger.Source.initPathString(key_path.text, entry.contents);
@@ -778,8 +809,8 @@ pub const Resolver = struct {
         return path.text;
     }
 
-    pub fn parsePackageJSON(r: *Resolver, file: string) !?*PackageJSON {
-        const pkg = PackageJSON.parse(r, file) orelse return null;
+    pub fn parsePackageJSON(r: *Resolver, file: string, dirname_fd: StoredFileDescriptorType) !?*PackageJSON {
+        const pkg = PackageJSON.parse(r, file, dirname_fd) orelse return null;
         var _pkg = try r.allocator.create(PackageJSON);
         _pkg.* = pkg;
         return _pkg;
@@ -846,7 +877,7 @@ pub const Resolver = struct {
         defer {
 
             // Anything
-            if (open_dir_count > 0) {
+            if (open_dir_count > 0 and r.fs.fs.needToCloseFiles()) {
                 var open_dirs: []std.fs.Dir = _open_dirs[0..open_dir_count];
                 for (open_dirs) |*open_dir| {
                     open_dir.close();
@@ -928,7 +959,7 @@ pub const Resolver = struct {
 
                 return null;
             };
-
+            Fs.FileSystem.setMaxFd(open_dir.fd);
             // these objects mostly just wrap the file descriptor, so it's fine to keep it.
             _open_dirs[open_dir_count] = open_dir;
             open_dir_count += 1;
@@ -959,6 +990,12 @@ pub const Resolver = struct {
                 dir_entries_option = try rfs.entries.put(&cached_dir_entry_result, .{
                     .entries = Fs.FileSystem.DirEntry.init(dir_path, r.fs.allocator),
                 });
+
+                if (FeatureFlags.store_file_descriptors) {
+                    Fs.FileSystem.setMaxFd(open_dir.fd);
+                    dir_entries_option.entries.fd = open_dir.fd;
+                }
+
                 has_dir_entry_result = true;
             }
 
@@ -974,6 +1011,7 @@ pub const Resolver = struct {
                 cached_dir_entry_result.index,
                 r.dir_cache.atIndex(top_parent.index),
                 top_parent.index,
+                open_dir.fd,
             );
 
             var dir_info_ptr = try r.dir_cache.put(&queue_top.result, dir_info);
@@ -998,6 +1036,8 @@ pub const Resolver = struct {
 
     pub const MatchResult = struct {
         path_pair: PathPair,
+        dirname_fd: StoredFileDescriptorType = 0,
+        file_fd: StoredFileDescriptorType = 0,
         is_node_module: bool = false,
         diff_case: ?Fs.FileSystem.Entry.Lookup.DifferentCase = null,
     };
@@ -1137,6 +1177,7 @@ pub const Resolver = struct {
     pub const LoadResult = struct {
         path: string,
         diff_case: ?Fs.FileSystem.Entry.Lookup.DifferentCase,
+        dirname_fd: StoredFileDescriptorType = 0,
     };
 
     pub fn checkBrowserMap(r: *Resolver, pkg: *PackageJSON, input_path: string) ?string {
@@ -1259,7 +1300,11 @@ pub const Resolver = struct {
                             debug.addNoteFmt("Found file: \"{s}\"", .{out_buf}) catch unreachable;
                         }
 
-                        return MatchResult{ .path_pair = .{ .primary = Path.init(out_buf) }, .diff_case = lookup.diff_case };
+                        return MatchResult{
+                            .path_pair = .{ .primary = Path.init(out_buf) },
+                            .diff_case = lookup.diff_case,
+                            .dirname_fd = dir_info.getFileDescriptor(),
+                        };
                     }
                 }
             }
@@ -1296,7 +1341,7 @@ pub const Resolver = struct {
 
                     // Is this a file
                     if (r.loadAsFile(remapped_abs, extension_order)) |file_result| {
-                        return MatchResult{ .path_pair = .{ .primary = Path.init(file_result.path) }, .diff_case = file_result.diff_case };
+                        return MatchResult{ .dirname_fd = file_result.dirname_fd, .path_pair = .{ .primary = Path.init(file_result.path) }, .diff_case = file_result.diff_case };
                     }
 
                     // Is it a directory with an index?
@@ -1319,7 +1364,11 @@ pub const Resolver = struct {
 
         // Is this a file?
         if (r.loadAsFile(path, extension_order)) |file| {
-            return MatchResult{ .path_pair = .{ .primary = Path.init(file.path) }, .diff_case = file.diff_case };
+            return MatchResult{
+                .path_pair = .{ .primary = Path.init(file.path) },
+                .diff_case = file.diff_case,
+                .dirname_fd = file.dirname_fd,
+            };
         }
 
         // Is this a directory?
@@ -1396,6 +1445,7 @@ pub const Resolver = struct {
                                         .secondary = _result.path_pair.primary,
                                     },
                                     .diff_case = auto_main_result.diff_case,
+                                    .dirname_fd = auto_main_result.dirname_fd,
                                 };
                             } else {
                                 if (r.debug_logs) |*debug| {
@@ -1453,7 +1503,7 @@ pub const Resolver = struct {
             return null;
         }
 
-        var entries = dir_entry.entries;
+        const entries = dir_entry.entries;
 
         const base = std.fs.path.basename(path);
 
@@ -1470,7 +1520,11 @@ pub const Resolver = struct {
                 const abs_path_parts = [_]string{ query.entry.dir, query.entry.base };
                 const abs_path = r.fs.filename_store.append(r.fs.joinBuf(&abs_path_parts, &TemporaryBuffer.ExtensionPathBuf)) catch unreachable;
 
-                return LoadResult{ .path = abs_path, .diff_case = query.diff_case };
+                return LoadResult{
+                    .path = abs_path,
+                    .diff_case = query.diff_case,
+                    .dirname_fd = entries.fd,
+                };
             }
         }
 
@@ -1496,6 +1550,7 @@ pub const Resolver = struct {
                     return LoadResult{
                         .path = r.fs.filename_store.append(buffer) catch unreachable,
                         .diff_case = query.diff_case,
+                        .dirname_fd = entries.fd,
                     };
                 }
             }
@@ -1537,6 +1592,7 @@ pub const Resolver = struct {
                             return LoadResult{
                                 .path = r.fs.filename_store.append(buffer) catch unreachable,
                                 .diff_case = query.diff_case,
+                                .dirname_fd = entries.fd,
                             };
                         }
                     }
@@ -1562,6 +1618,7 @@ pub const Resolver = struct {
         dir_entry_index: allocators.IndexType,
         parent: ?*DirInfo,
         parent_index: allocators.IndexType,
+        fd: FileDescriptorType,
     ) anyerror!DirInfo {
         var result = _result;
 
@@ -1621,7 +1678,7 @@ pub const Resolver = struct {
         if (entries.get("package.json")) |lookup| {
             const entry = lookup.entry;
             if (entry.kind(rfs) == .file) {
-                info.package_json = r.parsePackageJSON(path) catch null;
+                info.package_json = r.parsePackageJSON(path, if (FeatureFlags.store_file_descriptors) fd else 0) catch null;
 
                 if (info.package_json) |pkg| {
                     if (pkg.browser_map.count() > 0) {
@@ -1663,9 +1720,10 @@ pub const Resolver = struct {
             }
 
             if (tsconfig_path) |tsconfigpath| {
-                var visited = std.StringHashMap(bool).init(r.allocator);
-                defer visited.deinit();
-                info.tsconfig_json = r.parseTSConfig(tsconfigpath, &visited) catch |err| brk: {
+                info.tsconfig_json = r.parseTSConfig(
+                    tsconfigpath,
+                    if (FeatureFlags.store_file_descriptors) fd else 0,
+                ) catch |err| brk: {
                     const pretty = r.prettyPath(Path.init(tsconfigpath));
 
                     if (err == error.ENOENT) {

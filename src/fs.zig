@@ -28,6 +28,17 @@ pub const FileSystem = struct {
 
     dirname_store: *DirnameStore,
     filename_store: *FilenameStore,
+
+    pub var max_fd: FileDescriptorType = 0;
+
+    pub inline fn setMaxFd(fd: anytype) void {
+        if (!FeatureFlags.store_file_descriptors) {
+            return;
+        }
+
+        max_fd = std.math.max(fd, max_fd);
+    }
+
     pub var instance: FileSystem = undefined;
 
     pub const DirnameStore = allocators.BSSStringList(Preallocate.Counts.dir_entry, 256);
@@ -73,6 +84,7 @@ pub const FileSystem = struct {
         pub const EntryMap = std.StringHashMap(EntryStore.ListIndex);
         pub const EntryStore = allocators.BSSList(Entry, Preallocate.Counts.files);
         dir: string,
+        fd: StoredFileDescriptorType = 0,
         data: EntryMap,
 
         pub fn addEntry(dir: *DirEntry, entry: std.fs.Dir.Entry) !void {
@@ -153,7 +165,7 @@ pub const FileSystem = struct {
             d.data.deinit();
         }
 
-        pub fn get(entry: *DirEntry, _query: string) ?Entry.Lookup {
+        pub fn get(entry: *const DirEntry, _query: string) ?Entry.Lookup {
             if (_query.len == 0) return null;
 
             var end: usize = 0;
@@ -354,6 +366,17 @@ pub const FileSystem = struct {
         file_limit: usize = 32,
         file_quota: usize = 32,
 
+        pub fn needToCloseFiles(rfs: *const RealFS) bool {
+            // On Windows, we must always close open file handles
+            // Windows locks files
+            if (!FeatureFlags.store_file_descriptors) {
+                return true;
+            }
+
+            // If we're not near the max amount of open files, don't worry about it.
+            return !(rfs.file_limit > 254 and rfs.file_limit > (FileSystem.max_fd + 1) * 2);
+        }
+
         // Always try to max out how many files we can keep open
         pub fn adjustUlimit() usize {
             var limit = std.os.getrlimit(.NOFILE) catch return 32;
@@ -375,7 +398,7 @@ pub const FileSystem = struct {
                 .cwd = cwd,
                 .file_limit = file_limit,
                 .file_quota = file_limit,
-                .limiter = Limiter.init(allocator),
+                .limiter = Limiter.init(allocator, file_limit),
                 .watcher = if (enable_watcher) std.StringHashMap(WatchData).init(allocator) else null,
             };
         }
@@ -389,9 +412,7 @@ pub const FileSystem = struct {
             mtime: i128 = 0,
             mode: std.fs.File.Mode = 0,
 
-            pub fn generate(fs: *RealFS, path: string) anyerror!ModKey {
-                var file = try std.fs.openFileAbsolute(path, std.fs.File.OpenFlags{ .read = true });
-                defer file.close();
+            pub fn generate(fs: *RealFS, path: string, file: std.fs.File) anyerror!ModKey {
                 const stat = try file.stat();
 
                 const seconds = @divTrunc(stat.mtime, @as(@TypeOf(stat.mtime), std.time.ns_per_s));
@@ -437,11 +458,8 @@ pub const FileSystem = struct {
             }
         }
 
-        pub fn modKey(fs: *RealFS, path: string) anyerror!ModKey {
-            fs.limiter.before();
-            defer fs.limiter.after();
-
-            const key = ModKey.generate(fs, path) catch |err| {
+        pub fn modKeyWithFile(fs: *RealFS, path: string, file: anytype) anyerror!ModKey {
+            const key = ModKey.generate(fs, path, file) catch |err| {
                 fs.modKeyError(path, err);
                 return err;
             };
@@ -455,6 +473,18 @@ pub const FileSystem = struct {
             }
 
             return key;
+        }
+
+        pub fn modKey(fs: *RealFS, path: string) anyerror!ModKey {
+            fs.limiter.before();
+            defer fs.limiter.after();
+            var file = try std.fs.openFileAbsolute(path, std.fs.File.OpenFlags{ .read = true });
+            defer {
+                if (fs.needToCloseFiles()) {
+                    file.close();
+                }
+            }
+            return try fs.modKeyWithFile(path, file);
         }
 
         pub const WatchData = struct {
@@ -493,9 +523,9 @@ pub const FileSystem = struct {
         // Limit the number of files open simultaneously to avoid ulimit issues
         pub const Limiter = struct {
             semaphore: Semaphore,
-            pub fn init(allocator: *std.mem.Allocator) Limiter {
+            pub fn init(allocator: *std.mem.Allocator, limit: usize) Limiter {
                 return Limiter{
-                    .semaphore = Semaphore.init(32),
+                    .semaphore = Semaphore.init(limit),
                     // .counter = std.atomic.Int(u8).init(0),
                     // .lock = std.Thread.Mutex.init(),
                 };
@@ -532,6 +562,12 @@ pub const FileSystem = struct {
             var iter: std.fs.Dir.Iterator = handle.iterate();
             var dir = DirEntry.init(_dir, fs.allocator);
             errdefer dir.deinit();
+
+            if (FeatureFlags.store_file_descriptors) {
+                FileSystem.setMaxFd(handle.fd);
+                dir.fd = handle.fd;
+            }
+
             while (try iter.next()) |_entry| {
                 try dir.addEntry(_entry);
             }
@@ -585,7 +621,7 @@ pub const FileSystem = struct {
             var handle = _handle orelse try fs.openDir(dir);
 
             defer {
-                if (_handle == null) {
+                if (_handle == null and fs.needToCloseFiles()) {
                     handle.close();
                 }
             }
@@ -596,7 +632,7 @@ pub const FileSystem = struct {
             }
 
             // Cache miss: read the directory entries
-            const entries = fs.readdir(
+            var entries = fs.readdir(
                 dir,
                 handle,
             ) catch |err| {
@@ -643,15 +679,8 @@ pub const FileSystem = struct {
             }
         }
 
-        pub fn readFile(fs: *RealFS, path: string, _size: ?usize) !File {
-            fs.limiter.before();
-            defer fs.limiter.after();
-
-            const file: std.fs.File = std.fs.openFileAbsolute(path, std.fs.File.OpenFlags{ .read = true, .write = false }) catch |err| {
-                fs.readFileError(path, err);
-                return err;
-            };
-            defer file.close();
+        pub fn readFileWithHandle(fs: *RealFS, path: string, _size: ?usize, file: std.fs.File) !File {
+            FileSystem.setMaxFd(file.handle);
 
             // Skip the extra file.stat() call when possible
             var size = _size orelse (file.getEndPos() catch |err| {
@@ -675,6 +704,26 @@ pub const FileSystem = struct {
             return File{ .path = Path.init(path), .contents = file_contents };
         }
 
+        pub fn readFile(
+            fs: *RealFS,
+            path: string,
+            _size: ?usize,
+        ) !File {
+            fs.limiter.before();
+            defer fs.limiter.after();
+            const file: std.fs.File = std.fs.openFileAbsolute(path, std.fs.File.OpenFlags{ .read = true, .write = false }) catch |err| {
+                fs.readFileError(path, err);
+                return err;
+            };
+            defer {
+                if (fs.needToCloseFiles()) {
+                    file.close();
+                }
+            }
+
+            return try fs.readFileWithHandle(path, _size, file);
+        }
+
         pub fn kind(fs: *RealFS, _dir: string, base: string) !Entry.Cache {
             var dir = _dir;
             var combo = [2]string{ dir, base };
@@ -684,7 +733,11 @@ pub const FileSystem = struct {
             defer fs.limiter.after();
 
             const file = try std.fs.openFileAbsolute(entry_path, .{ .read = true, .write = false });
-            defer file.close();
+            defer {
+                if (fs.needToCloseFiles()) {
+                    file.close();
+                }
+            }
             var stat = try file.stat();
 
             var _kind = stat.kind;
@@ -711,6 +764,7 @@ pub const FileSystem = struct {
                     symlink = link;
 
                     const file2 = std.fs.openFileAbsolute(symlink, std.fs.File.OpenFlags{ .read = true, .write = false }) catch return cache;
+                    // These ones we always close
                     defer file2.close();
 
                     const stat2 = file2.stat() catch return cache;
@@ -753,18 +807,6 @@ pub const FileSystem = struct {
             .wasi, .native => return RealFS,
             .wasm => return WasmFS,
         }
-    };
-};
-
-pub const FileSystemEntry = union(FileSystemEntry.Kind) {
-    file: File,
-    directory: Directory,
-    not_found: FileNotFound,
-
-    pub const Kind = enum(u8) {
-        file,
-        directory,
-        not_found,
     };
 };
 

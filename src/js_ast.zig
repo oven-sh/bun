@@ -8,6 +8,10 @@ usingnamespace @import("ast/base.zig");
 const ImportRecord = @import("import_record.zig").ImportRecord;
 const allocators = @import("allocators.zig");
 
+const _hash_map = @import("hash_map.zig");
+const StringHashMap = _hash_map.StringHashMap;
+const AutoHashMap = _hash_map.AutoHashMap;
+
 pub const ListIndex = packed struct {
     index: u31,
     is_overflowing: bool = false,
@@ -1712,7 +1716,7 @@ pub const Stmt = struct {
 
                     pub fn reset() void {
                         backing_buf_used = 0;
-                        self.overflow_list.shrinkRetainingCapacity(0);
+                        self.overflow_list.items.len = 0;
                     }
 
                     pub fn init(allocator: *std.mem.Allocator) *Self {
@@ -1752,42 +1756,12 @@ pub const Stmt = struct {
                             result.index = backing_buf_used;
                             backing_buf[result.index] = value;
                             backing_buf_used += 1;
-                            if (backing_buf_used >= max_index) {
-                                self.overflow_list = @TypeOf(self.overflow_list).initCapacity(self.allocator, count) catch unreachable;
+                            if (backing_buf_used >= max_index and self.overflow_list.capacity == 0) {
+                                self.overflow_list = @TypeOf(self.overflow_list).initCapacity(self.allocator, 1) catch unreachable;
                             }
                         }
 
                         return result;
-                    }
-
-                    pub fn update(result: *ListIndex, value: ValueType) !*ValueType {
-                        if (result.index.index == NotFound.index or result.index.index == Unassigned.index) {
-                            result.index.is_overflowing = backing_buf_used > max_index;
-                            if (result.index.is_overflowing) {
-                                result.index.index = @intCast(u31, self.overflow_list.items.len);
-                            } else {
-                                result.index.index = backing_buf_used;
-                                backing_buf_used += 1;
-                                if (backing_buf_used >= max_index) {
-                                    self.overflow_list = try @TypeOf(self.overflow_list).initCapacity(self.allocator, count);
-                                }
-                            }
-                        }
-
-                        if (result.index.is_overflowing) {
-                            if (self.overflow_list.items.len == result.index.index) {
-                                const real_index = self.overflow_list.items.len;
-                                try self.overflow_list.append(self.allocator, value);
-                            } else {
-                                self.overflow_list.items[result.index.index] = value;
-                            }
-
-                            return &self.overflow_list.items[result.index.index];
-                        } else {
-                            backing_buf[result.index.index] = value;
-
-                            return &backing_buf[result.index.index];
-                        }
                     }
                 };
             }
@@ -3607,42 +3581,13 @@ pub const Expr = struct {
                             result.index = backing_buf_used;
                             backing_buf[result.index] = value;
                             backing_buf_used += 1;
-                            if (backing_buf_used >= max_index) {
-                                self.overflow_list = @TypeOf(self.overflow_list).initCapacity(self.allocator, count) catch unreachable;
+
+                            if (backing_buf_used >= max_index and self.overflow_list.capacity == 0) {
+                                self.overflow_list = @TypeOf(self.overflow_list).initCapacity(self.allocator, 1) catch unreachable;
                             }
                         }
 
                         return result;
-                    }
-
-                    pub fn update(result: *ListIndex, value: ValueType) !*ValueType {
-                        if (result.index.index == NotFound.index or result.index.index == Unassigned.index) {
-                            result.index.is_overflowing = backing_buf_used > max_index;
-                            if (result.index.is_overflowing) {
-                                result.index.index = @intCast(u31, self.overflow_list.items.len);
-                            } else {
-                                result.index.index = backing_buf_used;
-                                backing_buf_used += 1;
-                                if (backing_buf_used >= max_index) {
-                                    self.overflow_list = try @TypeOf(self.overflow_list).initCapacity(self.allocator, count);
-                                }
-                            }
-                        }
-
-                        if (result.index.is_overflowing) {
-                            if (self.overflow_list.items.len == result.index.index) {
-                                const real_index = self.overflow_list.items.len;
-                                try self.overflow_list.append(self.allocator, value);
-                            } else {
-                                self.overflow_list.items[result.index.index] = value;
-                            }
-
-                            return &self.overflow_list.items[result.index.index];
-                        } else {
-                            backing_buf[result.index.index] = value;
-
-                            return &backing_buf[result.index.index];
-                        }
                     }
                 };
             }
@@ -4135,9 +4080,9 @@ pub const Ast = struct {
     // These are used when bundling. They are filled in during the parser pass
     // since we already have to traverse the AST then anyway and the parser pass
     // is conveniently fully parallelized.
-    named_imports: std.AutoHashMap(Ref, NamedImport) = undefined,
-    named_exports: std.StringHashMap(NamedExport) = undefined,
-    top_level_symbol_to_parts: std.AutoHashMap(Ref, std.ArrayList(u32)) = undefined,
+    named_imports: AutoHashMap(Ref, NamedImport) = undefined,
+    named_exports: StringHashMap(NamedExport) = undefined,
+    top_level_symbol_to_parts: AutoHashMap(Ref, std.ArrayList(u32)) = undefined,
     export_star_import_records: []u32 = &([_]u32{}),
 
     pub fn initTest(parts: []Part) Ast {
@@ -4314,7 +4259,7 @@ pub const Part = struct {
     // This is true if this file has been marked as live by the tree shaking
     // algorithm.
     is_live: bool = false,
-    pub const SymbolUseMap = std.AutoHashMap(Ref, Symbol.Use);
+    pub const SymbolUseMap = AutoHashMap(Ref, Symbol.Use);
     pub fn jsonStringify(self: *const Part, options: std.json.StringifyOptions, writer: anytype) !void {
         return std.json.stringify(self.stmts, options, writer);
     }
@@ -4369,7 +4314,7 @@ pub const Scope = struct {
     kind: Kind = Kind.block,
     parent: ?*Scope,
     children: std.ArrayList(*Scope),
-    members: std.StringHashMap(Member),
+    members: StringHashMap(Member),
     generated: std.ArrayList(Ref),
 
     // This is used to store the ref of the label symbol for ScopeLabel scopes.
@@ -4386,7 +4331,7 @@ pub const Scope = struct {
 
     strict_mode: StrictModeKind = StrictModeKind.sloppy_mode,
 
-    pub const Member = struct { ref: Ref, loc: logger.Loc };
+    pub const Member = packed struct { ref: Ref, loc: logger.Loc };
     pub const Kind = enum(u8) {
         block,
         with,

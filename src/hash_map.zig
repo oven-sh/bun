@@ -12,7 +12,7 @@ const mem = std.mem;
 const meta = std.meta;
 const trait = meta.trait;
 const Allocator = mem.Allocator;
-const Wyhash = std.hash.Wyhash;
+const Wyhash = @import("./Wyhash.zig").Wyhash;
 
 pub fn getAutoHashFn(comptime K: type) (fn (K) u64) {
     comptime {
@@ -39,7 +39,12 @@ pub fn getAutoHashFn(comptime K: type) (fn (K) u64) {
     }.hash;
 }
 
+const autoEqlTrait = std.meta.trait.hasFn("eql");
 pub fn getAutoEqlFn(comptime K: type) (fn (K, K) bool) {
+    if (comptime autoEqlTrait(K)) {
+        return @field(K, "eql");
+    }
+
     return struct {
         fn eql(a: K, b: K) bool {
             return meta.eql(a, b);
@@ -64,6 +69,18 @@ pub fn StringHashMapUnmanaged(comptime V: type) type {
     return HashMapUnmanaged([]const u8, V, hashString, eqlString, default_max_load_percentage);
 }
 
+// ❯ hyperfine "./esdev.stringEqlNoPtrCheck --resolve=dev --cwd /Users/jarred/Code/esdev/bench/rome/src entry --platform=node --outdir=/Users/jarred/Code/esdev/bench/rome/src/out --public-url=https://hello.com/" "./esdev-fd-rel-hash --resolve=dev --cwd /Users/jarred/Code/esdev/bench/rome/src entry --platform=node --outdir=/Users/jarred/Code/esdev/bench/rome/src/out --public-url=https://hello.com/" --min-runs=50
+// Benchmark #1: ./esdev.stringEqlNoPtrCheck --resolve=dev --cwd /Users/jarred/Code/esdev/bench/rome/src entry --platform=node --outdir=/Users/jarred/Code/esdev/bench/rome/src/out --public-url=https://hello.com/
+//   Time (mean ± σ):     251.5 ms ±   7.8 ms    [User: 110.0 ms, System: 135.7 ms]
+//   Range (min … max):   239.0 ms … 281.1 ms    50 runs
+
+// Benchmark #2: ./esdev-fd-rel-hash --resolve=dev --cwd /Users/jarred/Code/esdev/bench/rome/src entry --platform=node --outdir=/Users/jarred/Code/esdev/bench/rome/src/out --public-url=https://hello.com/
+//   Time (mean ± σ):     249.3 ms ±   8.3 ms    [User: 110.8 ms, System: 134.0 ms]
+//   Range (min … max):   239.8 ms … 288.7 ms    50 runs
+
+// Summary
+//   './esdev-fd-rel-hash --resolve=dev --cwd /Users/jarred/Code/esdev/bench/rome/src entry --platform=node --outdir=/Users/jarred/Code/esdev/bench/rome/src/out --public-url=https://hello.com/' ran
+//     1.01 ± 0.05 times faster than './esdev.stringEqlNoPtrCheck --resolve=dev --cwd /Users/jarred/Code/esdev/bench/rome/src entry --platform=node --outdir=/Users/jarred/Code/esdev/bench/rome/src/out --public-url=https://hello.com/'
 pub fn eqlString(a: []const u8, b: []const u8) bool {
     return mem.eql(u8, a, b);
 }
@@ -134,7 +151,7 @@ pub fn HashMap(
         }
 
         /// Get an optional pointer to the value associated with key, if present.
-        pub fn getHash(self: Self, key: K) u64 {
+        pub fn getHash(key: K) u64 {
             return hashFn(key);
         }
 
@@ -228,6 +245,10 @@ pub fn HashMap(
 
         pub fn getEntry(self: Self, key: K) ?*Entry {
             return self.unmanaged.getEntry(key);
+        }
+
+        pub fn getEntryWithHash(self: Self, key: K, hash: u64) ?*Entry {
+            return self.unmanaged.getEntryWithHash(key, hash);
         }
 
         pub fn contains(self: Self, key: K) bool {
@@ -550,12 +571,15 @@ pub fn HashMapUnmanaged(
             return result;
         }
 
-        pub fn getEntry(self: Self, key: K) ?*Entry {
+        pub fn getEntryWithHash(self: Self, key: K, hash: u64) ?*Entry {
             if (self.size == 0) {
                 return null;
             }
 
-            const hash = hashFn(key);
+            return @call(.{ .modifier = .always_inline }, _getEntryWithHash, .{ self, key, hash });
+        }
+
+        fn _getEntryWithHash(self: Self, key: K, hash: u64) ?*Entry {
             const mask = self.capacity() - 1;
             const fingerprint = Metadata.takeFingerprint(hash);
             var idx = @truncate(usize, hash & mask);
@@ -573,6 +597,14 @@ pub fn HashMapUnmanaged(
             }
 
             return null;
+        }
+
+        pub fn getEntry(self: Self, key: K) ?*Entry {
+            if (self.size == 0) {
+                return null;
+            }
+
+            return @call(.{ .modifier = .always_inline }, _getEntryWithHash, .{ self, key, hashFn(key) });
         }
 
         /// Insert an entry if the associated key is not already present, otherwise update preexisting value.

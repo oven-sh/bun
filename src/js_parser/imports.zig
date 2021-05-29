@@ -8,7 +8,7 @@ pub const alloc = @import("../alloc.zig");
 pub const js_printer = @import("../js_printer.zig");
 pub const renamer = @import("../renamer.zig");
 pub const fs = @import("../fs.zig");
-
+const _hash_map = @import("../hash_map.zig");
 pub usingnamespace @import("../global.zig");
 pub usingnamespace @import("../ast/base.zig");
 pub usingnamespace js_ast.G;
@@ -38,3 +38,6 @@ pub const Level = js_ast.Op.Level;
 pub const Op = js_ast.Op;
 pub const Scope = js_ast.Scope;
 pub const locModuleScope = logger.Loc{ .start = -100 };
+
+pub const StringHashMap = _hash_map.StringHashMap;
+pub const AutoHashMap = _hash_map.AutoHashMap;

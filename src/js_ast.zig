@@ -4331,7 +4331,10 @@ pub const Scope = struct {
 
     strict_mode: StrictModeKind = StrictModeKind.sloppy_mode,
 
-    pub const Member = packed struct { ref: Ref, loc: logger.Loc };
+    // Do not make this a packed struct
+    // Two hours of debugging time lost to that.
+    pub const Member = struct { ref: Ref, loc: logger.Loc };
+
     pub const Kind = enum(u8) {
         block,
         with,

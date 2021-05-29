@@ -54,14 +54,15 @@ github/rome:
 # This target provides an easy way to verify that the build is correct. Since
 # Rome is self-hosted, we can just run the bundle to build Rome. This makes sure
 # the bundle doesn't crash when run and is a good test of a non-trivial workload.
-bench/rome-verify: | github/rome
+bench-rome-verify: | github/rome
 	mkdir -p bench/rome-verify
 	cp -r github/rome/packages bench/rome-verify/packages
 	cp github/rome/package.json bench/rome-verify/package.json
 
-bench/rome: 
+bench-rome: 
+	rm -rf bench/rome
 	mkdir -p bench/rome
-	cp -r github/rome/packages bench/rome/src
+	cp -r github/rome/packages bench/rome/src/
 	echo "$(ROME_TSCONFIG)" > bench/rome/src/tsconfig.json
 	echo 'import "rome/bin/rome"' > bench/rome/src/entry.ts
 

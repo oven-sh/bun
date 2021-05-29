@@ -57,7 +57,7 @@ pub const Ref = packed struct {
     }
 
     pub fn eql(ref: Ref, b: Ref) bool {
-        return ref.inner_index == b.inner_index and ref.source_index == b.source_index;
+        return std.mem.readIntNative(u64, std.mem.asBytes(&ref)) == std.mem.readIntNative(u64, std.mem.asBytes(&b));
     }
 
     pub fn jsonStringify(self: *const Ref, options: anytype, writer: anytype) !void {

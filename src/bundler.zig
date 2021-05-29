@@ -52,6 +52,7 @@ pub const ServeResult = struct {
 
 // const BundleMap =
 const ResolveResults = ThreadSafeHashMap.ThreadSafeStringHashMap(Resolver.Resolver.Result);
+const ResolveQueue = std.fifo.LinearFifo(Resolver.Resolver.Result, std.fifo.LinearFifoBufferType.Dynamic);
 pub const Bundler = struct {
     options: options.BundleOptions,
     log: *logger.Log,
@@ -62,7 +63,7 @@ pub const Bundler = struct {
     // thread_pool: *ThreadPool,
     output_files: std.ArrayList(options.OutputFile),
     resolve_results: *ResolveResults,
-    resolve_queue: std.fifo.LinearFifo(Resolver.Resolver.Result, std.fifo.LinearFifoBufferType.Dynamic),
+    resolve_queue: ResolveQueue,
     elapsed: i128 = 0,
     needs_runtime: bool = false,
 
@@ -96,7 +97,7 @@ pub const Bundler = struct {
             // .thread_pool = pool,
             .result = options.TransformResult{ .outbase = bundle_options.output_dir },
             .resolve_results = try ResolveResults.init(allocator),
-            .resolve_queue = std.fifo.LinearFifo(Resolver.Resolver.Result, std.fifo.LinearFifoBufferType.Dynamic).init(allocator),
+            .resolve_queue = ResolveQueue.init(allocator),
             .output_files = std.ArrayList(options.OutputFile).init(allocator),
         };
     }
@@ -171,20 +172,32 @@ pub const Bundler = struct {
         // Run the resolver
         // Don't parse/print automatically.
         if (bundler.options.resolve_mode != .lazy) {
-            var hash_key = resolve_result.path_pair.primary.text;
-
-            // Shorter hash key is faster to hash
-            if (strings.startsWith(resolve_result.path_pair.primary.text, bundler.fs.top_level_dir)) {
-                hash_key = resolve_result.path_pair.primary.text[bundler.fs.top_level_dir.len..];
-            }
-
-            if (!bundler.resolve_results.contains(hash_key)) {
-                try bundler.resolve_results.put(hash_key, resolve_result);
-                try bundler.resolve_queue.writeItem(resolve_result);
-            }
+            try bundler.enqueueResolveResult(&resolve_result);
         }
 
         import_record.path = try bundler.generateImportPath(source_dir, resolve_result.path_pair.primary.text);
+    }
+
+    pub fn resolveResultHashKey(bundler: *Bundler, resolve_result: *Resolver.Resolver.Result) string {
+        var hash_key = resolve_result.path_pair.primary.text;
+
+        // Shorter hash key is faster to hash
+        if (strings.startsWith(resolve_result.path_pair.primary.text, bundler.fs.top_level_dir)) {
+            hash_key = resolve_result.path_pair.primary.text[bundler.fs.top_level_dir.len..];
+        }
+
+        return hash_key;
+    }
+
+    pub fn enqueueResolveResult(bundler: *Bundler, resolve_result: *Resolver.Resolver.Result) !void {
+        const hash_key = bundler.resolveResultHashKey(resolve_result);
+
+        const get_or_put_entry = try bundler.resolve_results.backing.getOrPut(hash_key);
+
+        if (!get_or_put_entry.found_existing) {
+            get_or_put_entry.entry.value = resolve_result.*;
+            try bundler.resolve_queue.writeItem(resolve_result.*);
+        }
     }
 
     pub fn buildWithResolveResult(bundler: *Bundler, resolve_result: Resolver.Resolver.Result) !?options.OutputFile {
@@ -608,7 +621,10 @@ pub const Bundler = struct {
         if (enableTracing) {
             Output.print(
                 "\n---Tracing---\nResolve time:      {d}\nParsing time:      {d}\n---Tracing--\n\n",
-                .{ bundler.resolver.elapsed, bundler.elapsed },
+                .{
+                    bundler.resolver.elapsed,
+                    bundler.elapsed,
+                },
             );
         }
 

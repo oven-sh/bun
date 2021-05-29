@@ -2088,7 +2088,7 @@ pub const P = struct {
     pub fn findSymbol(p: *P, loc: logger.Loc, name: string) !FindSymbolResult {
         var declare_loc: logger.Loc = undefined;
         var is_inside_with_scope = false;
-        const hash = p.module_scope.members.getHash(name);
+        const hash = @TypeOf(p.module_scope.members).getHash(name);
 
         const ref: Ref = brk: {
             var _scope: ?*Scope = p.current_scope;
@@ -2486,6 +2486,11 @@ pub const P = struct {
                 // Check for collisions that would prevent to hoisting "var" symbols up to the enclosing function scope
                 var __scope = scope.parent;
 
+                var hash: u64 = undefined;
+                if (__scope) |_scope| {
+                    hash = @TypeOf(_scope.members).getHash(symbol.original_name);
+                }
+
                 while (__scope) |_scope| {
                     // Variable declarations hoisted past a "with" statement may actually end
                     // up overwriting a property on the target of the "with" statement instead
@@ -2501,7 +2506,7 @@ pub const P = struct {
                         symbol.must_not_be_renamed = true;
                     }
 
-                    if (_scope.members.getEntry(symbol.original_name)) |existing_member_entry| {
+                    if (_scope.members.getEntryWithHash(symbol.original_name, hash)) |existing_member_entry| {
                         const existing_member = existing_member_entry.value;
                         const existing_symbol: Symbol = p.symbols.items[existing_member.ref.inner_index];
 
@@ -2518,13 +2523,12 @@ pub const P = struct {
                         {
                             // Silently merge this symbol into the existing symbol
                             symbol.link = existing_member.ref;
-                            _scope.members.put(symbol.original_name, existing_member) catch unreachable;
                             continue :nextMember;
                         }
                     }
 
                     if (_scope.kindStopsHoisting()) {
-                        _scope.members.put(symbol.original_name, res.value) catch unreachable;
+                        _scope.members.putWithHash(symbol.original_name, hash, res.value) catch unreachable;
                         break;
                     }
                     __scope = _scope.parent;

@@ -9,6 +9,7 @@ const Semaphore = sync.Semaphore;
 const path_handler = @import("./resolver/resolve_path.zig");
 
 const allocators = @import("./allocators.zig");
+const hash_map = @import("hash_map.zig");
 
 // pub const FilesystemImplementation = @import("fs_impl.zig");
 
@@ -81,7 +82,7 @@ pub const FileSystem = struct {
     }
 
     pub const DirEntry = struct {
-        pub const EntryMap = std.StringHashMap(EntryStore.ListIndex);
+        pub const EntryMap = hash_map.StringHashMap(EntryStore.ListIndex);
         pub const EntryStore = allocators.BSSList(Entry, Preallocate.Counts.files);
         dir: string,
         fd: StoredFileDescriptorType = 0,
@@ -181,6 +182,27 @@ pub const FileSystem = struct {
                 return Entry.Lookup{ .entry = result, .diff_case = Entry.Lookup.DifferentCase{
                     .dir = entry.dir,
                     .query = _query,
+                    .actual = result.base,
+                } };
+            }
+
+            return Entry.Lookup{ .entry = result, .diff_case = null };
+        }
+
+        pub fn getComptimeQuery(entry: *const DirEntry, comptime query_str: anytype) ?Entry.Lookup {
+            comptime var query: [query_str.len]u8 = undefined;
+            comptime for (query_str) |c, i| {
+                query[i] = std.ascii.toLower(c);
+            };
+
+            const query_hashed = DirEntry.EntryMap.getHash(&query);
+
+            const result_index = entry.data.getWithHash(&query, query_hashed) orelse return null;
+            const result = EntryStore.instance.at(result_index) orelse return null;
+            if (!strings.eql(result.base, query)) {
+                return Entry.Lookup{ .entry = result, .diff_case = Entry.Lookup.DifferentCase{
+                    .dir = entry.dir,
+                    .query = &query,
                     .actual = result.base,
                 } };
             }

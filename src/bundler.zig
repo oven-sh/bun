@@ -171,15 +171,20 @@ pub const Bundler = struct {
         // Run the resolver
         // Don't parse/print automatically.
         if (bundler.options.resolve_mode != .lazy) {
-            if (!bundler.resolve_results.contains(resolve_result.path_pair.primary.text)) {
-                try bundler.resolve_results.put(resolve_result.path_pair.primary.text, resolve_result);
+            var hash_key = resolve_result.path_pair.primary.text;
+
+            // Shorter hash key is faster to hash
+            if (strings.startsWith(resolve_result.path_pair.primary.text, bundler.fs.top_level_dir)) {
+                hash_key = resolve_result.path_pair.primary.text[bundler.fs.top_level_dir.len..];
+            }
+
+            if (!bundler.resolve_results.contains(hash_key)) {
+                try bundler.resolve_results.put(hash_key, resolve_result);
                 try bundler.resolve_queue.writeItem(resolve_result);
             }
         }
 
-        if (!strings.eql(import_record.path.text, resolve_result.path_pair.primary.text)) {
-            import_record.path = try bundler.generateImportPath(source_dir, resolve_result.path_pair.primary.text);
-        }
+        import_record.path = try bundler.generateImportPath(source_dir, resolve_result.path_pair.primary.text);
     }
 
     pub fn buildWithResolveResult(bundler: *Bundler, resolve_result: Resolver.Resolver.Result) !?options.OutputFile {
@@ -190,8 +195,9 @@ pub const Bundler = struct {
         // Step 1. Parse & scan
         const loader = bundler.options.loaders.get(resolve_result.path_pair.primary.name.ext) orelse .file;
         var file_path = resolve_result.path_pair.primary;
+
         file_path.pretty = relative_paths_list.append(bundler.fs.relativeTo(file_path.text)) catch unreachable;
-        var result = bundler.parse(file_path, loader) orelse return null;
+        var result = bundler.parse(file_path, loader, resolve_result.dirname_fd) orelse return null;
 
         switch (result.loader) {
             .jsx, .js, .ts, .tsx => {
@@ -304,7 +310,7 @@ pub const Bundler = struct {
         ast: js_ast.Ast,
     };
     pub var tracing_start: i128 = if (enableTracing) 0 else undefined;
-    pub fn parse(bundler: *Bundler, path: Fs.Path, loader: options.Loader) ?ParseResult {
+    pub fn parse(bundler: *Bundler, path: Fs.Path, loader: options.Loader, dirname_fd: StoredFileDescriptorType) ?ParseResult {
         if (enableTracing) {
             tracing_start = std.time.nanoTimestamp();
         }
@@ -314,7 +320,7 @@ pub const Bundler = struct {
             }
         }
         var result: ParseResult = undefined;
-        const entry = bundler.resolver.caches.fs.readFile(bundler.fs, path.text) catch return null;
+        const entry = bundler.resolver.caches.fs.readFile(bundler.fs, path.text, dirname_fd) catch return null;
         const source = logger.Source.initFile(Fs.File{ .path = path, .contents = entry.contents }, bundler.allocator) catch return null;
 
         switch (loader) {
@@ -498,6 +504,11 @@ pub const Bundler = struct {
     ) !options.TransformResult {
         var bundler = try Bundler.init(allocator, log, opts);
 
+        //  100.00 µs std.fifo.LinearFifo(resolver.resolver.Result,std.fifo.LinearFifoBufferType { .Dynamic = {}}).writeItemAssumeCapacity
+        if (bundler.options.resolve_mode != .lazy) {
+            try bundler.resolve_queue.ensureUnusedCapacity(1000);
+        }
+
         var entry_points = try allocator.alloc(Resolver.Resolver.Result, bundler.options.entry_points.len);
 
         if (isDebug) {
@@ -660,6 +671,11 @@ pub const Transformer = struct {
         var arena: std.heap.ArenaAllocator = undefined;
         const use_arenas = opts.entry_points.len > 8;
 
+        js_ast.Expr.Data.Store.create(allocator);
+        js_ast.Stmt.Data.Store.create(allocator);
+
+        var ulimit: usize = Fs.FileSystem.RealFS.adjustUlimit();
+        var care_about_closing_files = !(FeatureFlags.store_file_descriptors and opts.entry_points.len * 2 < ulimit);
         for (opts.entry_points) |entry_point, i| {
             if (use_arenas) {
                 arena = std.heap.ArenaAllocator.init(allocator);
@@ -674,19 +690,23 @@ pub const Transformer = struct {
 
             var _log = logger.Log.init(allocator);
             var __log = &_log;
-            var paths = [_]string{ cwd, entry_point };
-            const absolutePath = try std.fs.path.resolve(chosen_alloc, &paths);
+            const absolutePath = resolve_path.joinAbs(cwd, .auto, entry_point);
 
             const file = try std.fs.openFileAbsolute(absolutePath, std.fs.File.OpenFlags{ .read = true });
-            defer file.close();
+            defer {
+                if (care_about_closing_files) {
+                    file.close();
+                }
+            }
+
             const stat = try file.stat();
 
+            // 1 byte sentinel
             const code = try file.readToEndAlloc(allocator, stat.size);
             defer {
                 if (_log.msgs.items.len == 0) {
                     allocator.free(code);
                 }
-                chosen_alloc.free(absolutePath);
                 _log.appendTo(log) catch {};
             }
             const _file = Fs.File{ .path = Fs.Path.init(entry_point), .contents = code };
@@ -710,6 +730,8 @@ pub const Transformer = struct {
             const relative_path = resolve_path.relative(cwd, absolutePath);
             const out_path = resolve_path.joinAbs2(cwd, .auto, absolutePath, relative_path);
             try output_files.append(options.OutputFile{ .path = allocator.dupe(u8, out_path) catch continue, .contents = res.js });
+            js_ast.Expr.Data.Store.reset();
+            js_ast.Stmt.Data.Store.reset();
         }
 
         return try options.TransformResult.init(output_dir, output_files.toOwnedSlice(), log, allocator);

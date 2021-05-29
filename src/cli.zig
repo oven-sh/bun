@@ -21,6 +21,8 @@ const clap = @import("clap");
 
 const bundler = @import("bundler.zig");
 
+const fs = @import("fs.zig");
+
 pub fn constStrToU8(s: string) []u8 {
     return @intToPtr([*]u8, @ptrToInt(s.ptr))[0..s.len];
 }
@@ -319,17 +321,19 @@ pub const Cli = struct {
         var did_write = false;
 
         var writer = stdout.writer();
-
+        var open_file_limit: usize = 32;
         if (args.write) |write| {
             if (write) {
-                var open_file_limit: usize = 32;
-
                 if (std.os.getrlimit(.NOFILE)) |limit| {
                     open_file_limit = limit.cur;
                 } else |err| {}
-                const do_we_need_to_close = open_file_limit > result.output_files.len * 2;
+
                 did_write = true;
                 var root_dir = try std.fs.openDirAbsolute(result.outbase, std.fs.Dir.OpenDirOptions{});
+                // On posix, file handles automatically close on process exit by the OS
+                // Closing files shows up in profiling.
+                // So don't do that unless we actually need to.
+                const do_we_need_to_close = !FeatureFlags.store_file_descriptors or (@intCast(usize, root_dir.fd) + open_file_limit) < result.output_files.len;
 
                 defer {
                     if (do_we_need_to_close) {
@@ -390,6 +394,11 @@ pub const Cli = struct {
         if (isDebug) {
             Output.println("Expr count: {d}", .{js_ast.Expr.icount});
             Output.println("Stmt count: {d}", .{js_ast.Stmt.icount});
+
+            Output.println("File Descriptors: {d} / {d}", .{
+                fs.FileSystem.max_fd,
+                open_file_limit,
+            });
         }
 
         if (!did_write) {
@@ -415,8 +424,10 @@ pub const Cli = struct {
         const duration = std.time.nanoTimestamp() - start_time;
 
         if (did_write and duration < @as(i128, @as(i128, std.time.ns_per_s) * @as(i128, 2))) {
-            var elapsed = @divFloor(duration, @as(i128, std.time.ns_per_ms));
+            var elapsed = @divExact(duration, @as(i128, std.time.ns_per_ms));
             try writer.print("\nCompleted in {d}ms", .{elapsed});
         }
+
+        std.os.exit(0);
     }
 };

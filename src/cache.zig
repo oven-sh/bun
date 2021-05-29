@@ -37,6 +37,7 @@ pub const Cache = struct {
 
         pub const Entry = struct {
             contents: string,
+            fd: StoredFileDescriptorType = 0,
             // Null means its not usable
             mod_key: ?fs.FileSystem.Implementation.ModKey = null,
 
@@ -56,7 +57,7 @@ pub const Cache = struct {
             c.entries.deinit();
         }
 
-        pub fn readFile(c: *Fs, _fs: *fs.FileSystem, path: string) !Entry {
+        pub fn readFile(c: *Fs, _fs: *fs.FileSystem, path: string, dirname_fd: StoredFileDescriptorType) !Entry {
             var rfs = _fs.fs;
 
             {
@@ -67,9 +68,23 @@ pub const Cache = struct {
                 }
             }
 
+            var file_handle: std.fs.File = undefined;
+
+            if (FeatureFlags.store_file_descriptors and dirname_fd > 0) {
+                file_handle = try std.fs.Dir.openFile(std.fs.Dir{ .fd = dirname_fd }, std.fs.path.basename(path), .{ .read = true });
+            } else {
+                file_handle = try std.fs.openFileAbsolute(path, .{ .read = true });
+            }
+
+            defer {
+                if (rfs.needToCloseFiles()) {
+                    file_handle.close();
+                }
+            }
+
             // If the file's modification key hasn't changed since it was cached, assume
             // the contents of the file are also the same and skip reading the file.
-            var mod_key: ?fs.FileSystem.Implementation.ModKey = rfs.modKey(path) catch |err| handler: {
+            var mod_key: ?fs.FileSystem.Implementation.ModKey = rfs.modKeyWithFile(path, file_handle) catch |err| handler: {
                 switch (err) {
                     error.FileNotFound, error.AccessDenied => {
                         return err;
@@ -85,14 +100,14 @@ pub const Cache = struct {
 
             var file: fs.File = undefined;
             if (mod_key) |modk| {
-                file = rfs.readFile(path, modk.size) catch |err| {
+                file = rfs.readFileWithHandle(path, modk.size, file_handle) catch |err| {
                     if (isDebug) {
                         Output.printError("{s}: readFile error -- {s}", .{ path, @errorName(err) });
                     }
                     return err;
                 };
             } else {
-                file = rfs.readFile(path, null) catch |err| {
+                file = rfs.readFileWithHandle(path, null, file_handle) catch |err| {
                     if (isDebug) {
                         Output.printError("{s}: readFile error -- {s}", .{ path, @errorName(err) });
                     }
@@ -103,6 +118,7 @@ pub const Cache = struct {
             const entry = Entry{
                 .contents = file.contents,
                 .mod_key = mod_key,
+                .fd = if (FeatureFlags.store_file_descriptors) file_handle.handle else 0,
             };
 
             c.mutex.lock();

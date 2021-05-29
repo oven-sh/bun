@@ -4333,7 +4333,15 @@ pub const Scope = struct {
 
     // Do not make this a packed struct
     // Two hours of debugging time lost to that.
-    pub const Member = struct { ref: Ref, loc: logger.Loc };
+    // It causes a crash due to undefined memory
+    pub const Member = struct {
+        ref: Ref,
+        loc: logger.Loc,
+
+        pub fn eql(a: Member, b: Member) bool {
+            return @call(.{ .modifier = .always_inline }, Ref.eql, .{ a.ref, b.ref }) and a.loc.start == b.loc.start;
+        }
+    };
 
     pub const Kind = enum(u8) {
         block,

@@ -1,9 +1,10 @@
 const std = @import("std");
 const sync = @import("sync.zig");
 usingnamespace @import("global.zig");
+const hash_map = @import("hash_map.zig");
 
 pub fn ThreadSafeStringHashMap(comptime Value: type) type {
-    const HashMapType = std.StringHashMap(Value);
+    const HashMapType = hash_map.StringHashMap(Value);
     return struct {
         backing: HashMapType,
         lock: sync.RwLock,
@@ -22,7 +23,17 @@ pub fn ThreadSafeStringHashMap(comptime Value: type) type {
             return self.backing.get(key);
         }
 
+        pub fn getHash(key: string) u64 {
+            return HashMapType.getHash(key);
+        }
+
         pub fn contains(self: *HashMap, str: string) bool {
+            self.lock.lockShared();
+            defer self.lock.unlockShared();
+            return self.backing.contains(str);
+        }
+
+        pub fn containsHash(self: *HashMap, hash: u64) bool {
             self.lock.lockShared();
             defer self.lock.unlockShared();
             return self.backing.contains(str);
@@ -33,6 +44,12 @@ pub fn ThreadSafeStringHashMap(comptime Value: type) type {
         }
 
         pub fn put(self: *HashMap, key: string, value: Value) !void {
+            self.lock.lock();
+            defer self.lock.unlock();
+            try self.backing.put(key, value);
+        }
+
+        pub fn putWithHash(self: *HashMap, key: string, hash: u64, value: Value) !void {
             self.lock.lock();
             defer self.lock.unlock();
             try self.backing.put(key, value);

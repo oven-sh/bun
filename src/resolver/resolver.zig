@@ -1635,7 +1635,7 @@ pub const Resolver = struct {
         var base = std.fs.path.basename(path);
         // if (entries != null) {
         if (!strings.eqlComptime(base, "node_modules")) {
-            if (entries.get("node_modules")) |entry| {
+            if (entries.getComptimeQuery("node_modules")) |entry| {
                 // the catch might be wrong!
                 info.has_node_modules = (entry.entry.kind(rfs)) == .dir;
             }
@@ -1675,7 +1675,7 @@ pub const Resolver = struct {
         }
 
         // Record if this directory has a package.json file
-        if (entries.get("package.json")) |lookup| {
+        if (entries.getComptimeQuery("package.json")) |lookup| {
             const entry = lookup.entry;
             if (entry.kind(rfs) == .file) {
                 info.package_json = r.parsePackageJSON(path, if (FeatureFlags.store_file_descriptors) fd else 0) catch null;
@@ -1698,7 +1698,7 @@ pub const Resolver = struct {
         {
             var tsconfig_path: ?string = null;
             if (r.opts.tsconfig_override == null) {
-                if (entries.get("tsconfig.json")) |lookup| {
+                if (entries.getComptimeQuery("tsconfig.json")) |lookup| {
                     const entry = lookup.entry;
                     if (entry.kind(rfs) == .file) {
                         const parts = [_]string{ path, "tsconfig.json" };
@@ -1707,7 +1707,7 @@ pub const Resolver = struct {
                     }
                 }
                 if (tsconfig_path == null) {
-                    if (entries.get("jsconfig.json")) |lookup| {
+                    if (entries.getComptimeQuery("jsconfig.json")) |lookup| {
                         const entry = lookup.entry;
                         if (entry.kind(rfs) == .file) {
                             const parts = [_]string{ path, "jsconfig.json" };

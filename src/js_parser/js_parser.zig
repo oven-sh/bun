@@ -1279,15 +1279,15 @@ const SymbolMergeResult = enum {
     become_private_static_get_set_pair,
 };
 
-const Map = std.AutoHashMap;
+const Map = AutoHashMap;
 
 const List = std.ArrayList;
 const LocList = List(logger.Loc);
 const StmtList = List(Stmt);
 
 const SymbolUseMap = Map(js_ast.Ref, js_ast.Symbol.Use);
-const StringRefMap = std.StringHashMap(js_ast.Ref);
-const StringBoolMap = std.StringHashMap(bool);
+const StringRefMap = StringHashMap(js_ast.Ref);
+const StringBoolMap = StringHashMap(bool);
 const RefBoolMap = Map(js_ast.Ref, bool);
 const RefRefMap = Map(js_ast.Ref, js_ast.Ref);
 const ImportRecord = importRecord.ImportRecord;
@@ -1792,7 +1792,7 @@ pub const P = struct {
     should_fold_numeric_constants: bool = false,
     emitted_namespace_vars: RefBoolMap,
     is_exported_inside_namespace: RefRefMap,
-    known_enum_values: Map(js_ast.Ref, std.StringHashMap(f64)),
+    known_enum_values: Map(js_ast.Ref, StringHashMap(f64)),
     local_type_names: StringBoolMap,
 
     // This is the reference to the generated function argument for the namespace,
@@ -1827,10 +1827,10 @@ pub const P = struct {
     es6_import_keyword: logger.Range = logger.Range.None,
     es6_export_keyword: logger.Range = logger.Range.None,
     enclosing_class_keyword: logger.Range = logger.Range.None,
-    import_items_for_namespace: Map(js_ast.Ref, std.StringHashMap(js_ast.LocRef)),
+    import_items_for_namespace: Map(js_ast.Ref, StringHashMap(js_ast.LocRef)),
     is_import_item: RefBoolMap,
     named_imports: Map(js_ast.Ref, js_ast.NamedImport),
-    named_exports: std.StringHashMap(js_ast.NamedExport),
+    named_exports: StringHashMap(js_ast.NamedExport),
     top_level_symbol_to_parts: Map(js_ast.Ref, List(u32)),
     import_namespace_cc_map: Map(ImportNamespaceCallOrConstruct, bool),
 
@@ -2086,43 +2086,44 @@ pub const P = struct {
     }
 
     pub fn findSymbol(p: *P, loc: logger.Loc, name: string) !FindSymbolResult {
-        var ref: Ref = undefined;
         var declare_loc: logger.Loc = undefined;
         var is_inside_with_scope = false;
-        var did_forbid_argumen = false;
-        var _scope: ?*Scope = p.current_scope;
-        var did_match = false;
+        const hash = p.module_scope.members.getHash(name);
 
-        while (_scope) |scope| : (_scope = _scope.?.parent) {
+        const ref: Ref = brk: {
+            var _scope: ?*Scope = p.current_scope;
 
-            // Track if we're inside a "with" statement body
-            if (scope.kind == .with) {
-                is_inside_with_scope = true;
+            var did_forbid_argumen = false;
+
+            while (_scope) |scope| : (_scope = _scope.?.parent) {
+
+                // Track if we're inside a "with" statement body
+                if (scope.kind == .with) {
+                    is_inside_with_scope = true;
+                }
+
+                // Forbid referencing "arguments" inside class bodies
+                if (scope.forbid_arguments and !did_forbid_argumen and strings.eqlComptime(name, "arguments")) {
+                    const r = js_lexer.rangeOfIdentifier(p.source, loc);
+                    p.log.addRangeErrorFmt(p.source, r, p.allocator, "Cannot access \"{s}\" here", .{name}) catch unreachable;
+                    did_forbid_argumen = true;
+                }
+
+                // Is the symbol a member of this scope?
+                if (scope.members.getWithHash(name, hash)) |member| {
+                    declare_loc = member.loc;
+                    break :brk member.ref;
+                }
             }
 
-            // Forbid referencing "arguments" inside class bodies
-            if (scope.forbid_arguments and strings.eql(name, "arguments") and !did_forbid_argumen) {
-                const r = js_lexer.rangeOfIdentifier(p.source, loc);
-                p.log.addRangeErrorFmt(p.source, r, p.allocator, "Cannot access \"{s}\" here", .{name}) catch unreachable;
-                did_forbid_argumen = true;
-            }
-
-            // Is the symbol a member of this scope?
-            if (scope.members.get(name)) |member| {
-                ref = member.ref;
-                declare_loc = member.loc;
-                did_match = true;
-                break;
-            }
-        }
-
-        if (!did_match) {
             // Allocate an "unbound" symbol
             p.checkForNonBMPCodePoint(loc, name);
-            ref = p.newSymbol(.unbound, name) catch unreachable;
+            const _ref = p.newSymbol(.unbound, name) catch unreachable;
             declare_loc = loc;
-            p.module_scope.members.put(name, js_ast.Scope.Member{ .ref = ref, .loc = logger.Loc.Empty }) catch unreachable;
-        }
+            p.module_scope.members.putWithHash(name, hash, js_ast.Scope.Member{ .ref = _ref, .loc = logger.Loc.Empty }) catch unreachable;
+
+            break :brk _ref;
+        };
 
         // If we had to pass through a "with" statement body to get to the symbol
         // declaration, then this reference could potentially also refer to a
@@ -2134,6 +2135,7 @@ pub const P = struct {
 
         // Track how many times we've referenced this symbol
         p.recordUsage(ref);
+
         return FindSymbolResult{
             .ref = ref,
             .declare_loc = declare_loc,
@@ -2189,6 +2191,7 @@ pub const P = struct {
         // during minification. These counts shouldn't include references inside dead
         // code regions since those will be culled.
         if (!p.is_control_flow_dead) {
+            std.debug.assert(p.symbols.items.len > ref.inner_index);
             p.symbols.items[ref.inner_index].use_count_estimate += 1;
             var result = p.symbol_uses.getOrPut(ref) catch unreachable;
             if (!result.found_existing) {
@@ -3791,10 +3794,7 @@ pub const P = struct {
     }
 
     pub fn newSymbol(p: *P, kind: Symbol.Kind, identifier: string) !js_ast.Ref {
-        const ref = js_ast.Ref{
-            .source_index = Ref.toInt(p.source.index),
-            .inner_index = Ref.toInt(p.symbols.items.len),
-        };
+        const inner_index = Ref.toInt(p.symbols.items.len);
         try p.symbols.append(Symbol{
             .kind = kind,
             .original_name = identifier,
@@ -3804,7 +3804,11 @@ pub const P = struct {
         if (p.options.ts) {
             try p.ts_use_counts.append(0);
         }
-        return ref;
+
+        return js_ast.Ref{
+            .source_index = Ref.toInt(p.source.index),
+            .inner_index = inner_index,
+        };
     }
 
     pub fn parseLabelName(p: *P) !?js_ast.LocRef {
@@ -4148,34 +4152,32 @@ pub const P = struct {
                         try p.lexer.next();
                         var namespace_ref: js_ast.Ref = js_ast.Ref.None;
                         var alias: ?js_ast.G.ExportStarAlias = null;
-                        var path_loc: logger.Loc = logger.Loc.Empty;
-                        var path_text: string = "";
+                        var path: ParsedPath = undefined;
 
                         if (p.lexer.isContextualKeyword("as")) {
                             // "export * as ns from 'path'"
-                            const name = p.lexer.identifier;
-                            namespace_ref = p.storeNameInRef(name) catch unreachable;
+                            try p.lexer.next();
+                            const name = try p.parseClauseAlias("export");
+                            namespace_ref = try p.storeNameInRef(name);
                             alias = G.ExportStarAlias{ .loc = p.lexer.loc(), .original_name = name };
-                            if (!p.lexer.isIdentifierOrKeyword()) {
-                                try p.lexer.expect(.t_identifier);
-                            }
-                            p.checkForNonBMPCodePoint((alias orelse unreachable).loc, name);
                             try p.lexer.next();
                             try p.lexer.expectContextualKeyword("from");
-                            const parsedPath = try p.parsePath();
-                            path_loc = parsedPath.loc;
-                            path_text = parsedPath.text;
+                            path = try p.parsePath();
                         } else {
                             // "export * from 'path'"
                             try p.lexer.expectContextualKeyword("from");
-                            const parsedPath = try p.parsePath();
-                            path_loc = parsedPath.loc;
-                            path_text = parsedPath.text;
-                            var path_name = fs.PathName.init(strings.append(p.allocator, path_text, "_star") catch unreachable);
-                            namespace_ref = p.storeNameInRef(path_name.nonUniqueNameString(p.allocator) catch unreachable) catch unreachable;
+                            path = try p.parsePath();
+                            const name = try fs.PathName.init(path.text).nonUniqueNameString(p.allocator);
+                            namespace_ref = try p.storeNameInRef(name);
                         }
 
-                        var import_record_index = p.addImportRecord(ImportKind.stmt, path_loc, path_text);
+                        var import_record_index = p.addImportRecord(
+                            ImportKind.stmt,
+                            path.loc,
+                            path.text,
+                            // TODO: import assertions
+                            // path.assertions
+                        );
                         try p.lexer.expectOrInsertSemicolon();
                         return p.s(S.ExportStar{
                             .namespace_ref = namespace_ref,
@@ -4815,7 +4817,7 @@ pub const P = struct {
                     try scope.generated.append(stmt.namespace_ref);
                 }
 
-                var item_refs = std.StringHashMap(LocRef).init(p.allocator);
+                var item_refs = StringHashMap(LocRef).init(p.allocator);
 
                 // Link the default item to the namespace
                 if (stmt.default_name) |*name_loc| {
@@ -6205,7 +6207,9 @@ pub const P = struct {
         var ref = try p.newSymbol(kind, name);
 
         const scope = p.current_scope;
-        if (scope.members.get(name)) |existing| {
+        var entry = try scope.members.getOrPut(name);
+        if (entry.found_existing) {
+            const existing = entry.entry.value;
             var symbol: Symbol = p.symbols.items[@intCast(usize, existing.ref.inner_index)];
 
             switch (p.canMergeSymbols(scope, symbol.kind, kind)) {
@@ -6236,7 +6240,7 @@ pub const P = struct {
             }
         }
 
-        try scope.members.put(name, js_ast.Scope.Member{ .ref = ref, .loc = loc });
+        entry.entry.value = js_ast.Scope.Member{ .ref = ref, .loc = loc };
         return ref;
     }
 
@@ -9446,7 +9450,7 @@ pub const P = struct {
             .e_identifier => {
                 const e_ = expr.getIdentifier();
 
-                const is_delete_target = @as(Expr.Tag, p.delete_target) == .e_identifier and expr.data.e_identifier.index == p.delete_target.e_identifier.index;
+                const is_delete_target = @as(Expr.Tag, p.delete_target) == .e_identifier and expr.data.e_identifier.eql(p.delete_target.e_identifier);
 
                 const name = p.loadNameFromRef(e_.ref);
                 if (p.isStrictMode() and js_lexer.StrictModeReservedWords.has(name)) {
@@ -9682,8 +9686,8 @@ pub const P = struct {
                     else => {},
                 }
 
-                const is_call_target = @as(Expr.Tag, p.call_target) == .e_binary and expr.data.e_binary.index == p.call_target.e_binary.index;
-                const is_stmt_expr = @as(Expr.Tag, p.stmt_expr_value) == .e_binary and expr.data.e_binary.index == p.stmt_expr_value.e_binary.index;
+                const is_call_target = @as(Expr.Tag, p.call_target) == .e_binary and expr.data.e_binary.eql(p.call_target.e_binary);
+                const is_stmt_expr = @as(Expr.Tag, p.stmt_expr_value) == .e_binary and expr.data.e_binary.eql(p.stmt_expr_value.e_binary);
                 const was_anonymous_named_expr = p.isAnonymousNamedExpr(e_.right);
 
                 e_.left = p.visitExprInOut(e_.left, ExprIn{
@@ -9985,8 +9989,8 @@ pub const P = struct {
             .e_index => {
                 const e_ = expr.getIndex();
 
-                const is_call_target = std.meta.activeTag(p.call_target) == .e_index and expr.data.e_index.index == p.call_target.e_index.index;
-                const is_delete_target = std.meta.activeTag(p.delete_target) == .e_index and expr.data.e_index.index == p.delete_target.e_index.index;
+                const is_call_target = std.meta.activeTag(p.call_target) == .e_index and expr.data.e_index.eql(p.call_target.e_index);
+                const is_delete_target = std.meta.activeTag(p.delete_target) == .e_index and expr.data.e_index.eql(p.delete_target.e_index);
 
                 const target = p.visitExprInOut(e_.target, ExprIn{
                     // this is awkward due to a zig compiler bug
@@ -10094,8 +10098,8 @@ pub const P = struct {
             .e_dot => {
                 const e_ = expr.getDot();
 
-                const is_delete_target = @as(Expr.Tag, p.delete_target) == .e_dot and expr.data.e_dot.index == p.delete_target.e_dot.index;
-                const is_call_target = @as(Expr.Tag, p.call_target) == .e_dot and expr.data.e_dot.index == p.call_target.e_dot.index;
+                const is_delete_target = @as(Expr.Tag, p.delete_target) == .e_dot and expr.data.e_dot.eql(p.delete_target.e_dot);
+                const is_call_target = @as(Expr.Tag, p.call_target) == .e_dot and expr.data.e_dot.eql(p.call_target.e_dot);
 
                 if (p.define.dots.get(e_.name)) |parts| {
                     for (parts) |define| {
@@ -10121,7 +10125,7 @@ pub const P = struct {
                 }
 
                 // Track ".then().catch()" chains
-                if (is_call_target and @as(Expr.Tag, p.then_catch_chain.next_target) == .e_dot and p.then_catch_chain.next_target.e_dot.index == expr.data.e_dot.index) {
+                if (is_call_target and @as(Expr.Tag, p.then_catch_chain.next_target) == .e_dot and p.then_catch_chain.next_target.e_dot.eql(expr.data.e_dot)) {
                     if (strings.eqlComptime(e_.name, "catch")) {
                         p.then_catch_chain = ThenCatchChain{
                             .next_target = e_.target.data,
@@ -10153,7 +10157,7 @@ pub const P = struct {
             .e_if => {
                 const e_ = expr.getIf();
 
-                const is_call_target = @as(Expr.Data, p.call_target) == .e_if and expr.data.e_if.index == p.call_target.e_if.index;
+                const is_call_target = @as(Expr.Data, p.call_target) == .e_if and expr.data.e_if.eql(p.call_target.e_if);
 
                 e_.test_ = p.visitExpr(e_.test_);
 
@@ -11472,7 +11476,7 @@ pub const P = struct {
 
                 // Track values so they can be used by constant folding. We need to follow
                 // links here in case the enum was merged with a preceding namespace
-                var values_so_far = std.StringHashMap(f64).init(p.allocator);
+                var values_so_far = StringHashMap(f64).init(p.allocator);
                 p.known_enum_values.put(data.name.ref orelse p.panic("Expected data.name.ref", .{}), values_so_far) catch unreachable;
                 p.known_enum_values.put(data.arg, values_so_far) catch unreachable;
 
@@ -12672,7 +12676,7 @@ pub const P = struct {
             }
 
             // Each part tracks the other parts it depends on within this file
-            var local_dependencies = std.AutoHashMap(u32, u32).init(p.allocator);
+            var local_dependencies = AutoHashMap(u32, u32).init(p.allocator);
 
             i = 0;
             while (i < parts.len) : (i += 1) {

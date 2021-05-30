@@ -11,14 +11,21 @@ const allocators = @import("allocators.zig");
 const _hash_map = @import("hash_map.zig");
 const StringHashMap = _hash_map.StringHashMap;
 const AutoHashMap = _hash_map.AutoHashMap;
-pub fn NewStore(comptime ValueType: type, comptime count: usize) type {
-    const max_index = count - 1;
-    const list_count = count;
+pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
+    var max_size = 0;
+    var max_align = 1;
+    for (Union) |kind| {
+        max_size = std.math.max(@sizeOf(kind), max_size);
+        max_align = if (@sizeOf(kind) == 0) max_align else std.math.max(@alignOf(kind), max_align);
+    }
+
+    const UnionValueType = [max_size]u8;
+
     return struct {
         const Allocator = std.mem.Allocator;
         const Self = @This();
         const Block = struct {
-            items: [count]ValueType = undefined,
+            items: [count]UnionValueType align(max_align) = undefined,
             used: usize = 0,
             allocator: *std.mem.Allocator,
 
@@ -26,10 +33,10 @@ pub fn NewStore(comptime ValueType: type, comptime count: usize) type {
                 return block.used >= block.items.len;
             }
 
-            pub fn append(block: *Block, value: ValueType) *ValueType {
+            pub fn append(block: *Block, value: anytype) *UnionValueType {
                 std.debug.assert(block.used < count);
                 const index = block.used;
-                block.items[index] = value;
+                std.mem.copy(u8, &block.items[index], value);
 
                 block.used += 1;
                 return &block.items[index];
@@ -63,13 +70,19 @@ pub fn NewStore(comptime ValueType: type, comptime count: usize) type {
             return _self;
         }
 
-        pub fn append(value: ValueType) *ValueType {
-            return _self._append(value);
+        pub fn append(comptime ValueType: type, value: ValueType) *ValueType {
+            return _self._append(ValueType, value);
         }
 
-        fn _append(self: *Self, value: ValueType) *ValueType {
+        fn _append(self: *Self, comptime ValueType: type, value: ValueType) *ValueType {
             if (!self.block.isFull()) {
-                return self.block.append(value);
+                var ptr = self.block.append(std.mem.asBytes(&value));
+                var aligned_slice = @alignCast(@alignOf(ValueType), ptr);
+
+                return @ptrCast(
+                    *ValueType,
+                    aligned_slice,
+                );
             }
 
             if (self.overflow_used >= self.overflow.len or self.overflow[self.overflow_used].isFull()) {
@@ -84,12 +97,17 @@ pub fn NewStore(comptime ValueType: type, comptime count: usize) type {
             }
 
             var block = self.overflow[self.overflow_used];
-            var ptr = block.append(value);
+            var ptr = block.append(std.mem.asBytes(&value));
             if (block.isFull()) {
                 self.overflow_used += 1;
             }
 
-            return ptr;
+            var aligned_slice = @alignCast(@alignOf(ValueType), ptr);
+
+            return @ptrCast(
+                *ValueType,
+                aligned_slice,
+            );
         }
     };
 }
@@ -1563,37 +1581,40 @@ pub const Stmt = struct {
         s_debugger: S.Debugger,
 
         pub const Store = struct {
-            pub const Block = NewStore(S.Block, 24);
-            pub const Break = NewStore(S.Break, 24);
-            pub const Class = NewStore(S.Class, 24);
-            pub const Comment = NewStore(S.Comment, 24);
-            pub const Continue = NewStore(S.Continue, 24);
-            pub const Directive = NewStore(S.Directive, 24);
-            pub const DoWhile = NewStore(S.DoWhile, 24);
-            pub const Enum = NewStore(S.Enum, 24);
-            pub const ExportClause = NewStore(S.ExportClause, 24);
-            pub const ExportDefault = NewStore(S.ExportDefault, 24);
-            pub const ExportEquals = NewStore(S.ExportEquals, 24);
-            pub const ExportFrom = NewStore(S.ExportFrom, 24);
-            pub const ExportStar = NewStore(S.ExportStar, 24);
-            pub const SExpr = NewStore(S.SExpr, 24);
-            pub const ForIn = NewStore(S.ForIn, 24);
-            pub const ForOf = NewStore(S.ForOf, 24);
-            pub const For = NewStore(S.For, 24);
-            pub const Function = NewStore(S.Function, 24);
-            pub const If = NewStore(S.If, 24);
-            pub const Import = NewStore(S.Import, 24);
-            pub const Label = NewStore(S.Label, 24);
-            pub const LazyExport = NewStore(S.LazyExport, 24);
-            pub const Local = NewStore(S.Local, 24);
-            pub const Namespace = NewStore(S.Namespace, 24);
-            pub const Return = NewStore(S.Return, 24);
-            pub const Switch = NewStore(S.Switch, 24);
-            pub const Throw = NewStore(S.Throw, 24);
-            pub const Try = NewStore(S.Try, 24);
-            pub const TypeScript = NewStore(S.TypeScript, 24);
-            pub const While = NewStore(S.While, 24);
-            pub const With = NewStore(S.With, 24);
+            const Union = [_]type{
+                S.Block,
+                S.Break,
+                S.Class,
+                S.Comment,
+                S.Continue,
+                S.Directive,
+                S.DoWhile,
+                S.Enum,
+                S.ExportClause,
+                S.ExportDefault,
+                S.ExportEquals,
+                S.ExportFrom,
+                S.ExportStar,
+                S.SExpr,
+                S.ForIn,
+                S.ForOf,
+                S.For,
+                S.Function,
+                S.If,
+                S.Import,
+                S.Label,
+                S.LazyExport,
+                S.Local,
+                S.Namespace,
+                S.Return,
+                S.Switch,
+                S.Throw,
+                S.Try,
+                S.TypeScript,
+                S.While,
+                S.With,
+            };
+            pub const All = NewBaseStore(Union, 128);
 
             threadlocal var has_inited = false;
             pub fn create(allocator: *std.mem.Allocator) void {
@@ -1602,172 +1623,15 @@ pub const Stmt = struct {
                 }
 
                 has_inited = true;
-                _ = Block.init(allocator);
-                _ = Break.init(allocator);
-                _ = Class.init(allocator);
-                _ = Comment.init(allocator);
-                _ = Continue.init(allocator);
-                _ = Directive.init(allocator);
-                _ = DoWhile.init(allocator);
-                _ = Enum.init(allocator);
-                _ = ExportClause.init(allocator);
-                _ = ExportDefault.init(allocator);
-                _ = ExportEquals.init(allocator);
-                _ = ExportFrom.init(allocator);
-                _ = ExportStar.init(allocator);
-                _ = SExpr.init(allocator);
-                _ = ForIn.init(allocator);
-                _ = ForOf.init(allocator);
-                _ = For.init(allocator);
-                _ = Function.init(allocator);
-                _ = If.init(allocator);
-                _ = Import.init(allocator);
-                _ = Label.init(allocator);
-                _ = LazyExport.init(allocator);
-                _ = Local.init(allocator);
-                _ = Namespace.init(allocator);
-                _ = Return.init(allocator);
-                _ = Switch.init(allocator);
-                _ = Throw.init(allocator);
-                _ = Try.init(allocator);
-                _ = While.init(allocator);
-                _ = With.init(allocator);
+                _ = All.init(allocator);
             }
 
             pub fn reset() void {
-                Block.reset();
-                Break.reset();
-                Class.reset();
-                Comment.reset();
-                Continue.reset();
-                Directive.reset();
-                DoWhile.reset();
-                Enum.reset();
-                ExportClause.reset();
-                ExportDefault.reset();
-                ExportEquals.reset();
-                ExportFrom.reset();
-                ExportStar.reset();
-                SExpr.reset();
-                ForIn.reset();
-                ForOf.reset();
-                For.reset();
-                Function.reset();
-                If.reset();
-                Import.reset();
-                Label.reset();
-                LazyExport.reset();
-                Local.reset();
-                Namespace.reset();
-                Return.reset();
-                Switch.reset();
-                Throw.reset();
-                Try.reset();
-                While.reset();
-                With.reset();
+                All.reset();
             }
 
             pub fn append(comptime ValueType: type, value: anytype) *ValueType {
-                switch (comptime ValueType) {
-                    S.Block => {
-                        return Block.append(value);
-                    },
-                    S.Break => {
-                        return Break.append(value);
-                    },
-                    S.Class => {
-                        return Class.append(value);
-                    },
-                    S.Comment => {
-                        return Comment.append(value);
-                    },
-                    S.Continue => {
-                        return Continue.append(value);
-                    },
-
-                    S.Directive => {
-                        return Directive.append(value);
-                    },
-                    S.DoWhile => {
-                        return DoWhile.append(value);
-                    },
-                    S.Empty => {
-                        return Empty.append(value);
-                    },
-                    S.Enum => {
-                        return Enum.append(value);
-                    },
-                    S.ExportClause => {
-                        return ExportClause.append(value);
-                    },
-                    S.ExportDefault => {
-                        return ExportDefault.append(value);
-                    },
-                    S.ExportEquals => {
-                        return ExportEquals.append(value);
-                    },
-                    S.ExportFrom => {
-                        return ExportFrom.append(value);
-                    },
-                    S.ExportStar => {
-                        return ExportStar.append(value);
-                    },
-                    S.SExpr => {
-                        return SExpr.append(value);
-                    },
-                    S.ForIn => {
-                        return ForIn.append(value);
-                    },
-                    S.ForOf => {
-                        return ForOf.append(value);
-                    },
-                    S.For => {
-                        return For.append(value);
-                    },
-                    S.Function => {
-                        return Function.append(value);
-                    },
-                    S.If => {
-                        return If.append(value);
-                    },
-                    S.Import => {
-                        return Import.append(value);
-                    },
-                    S.Label => {
-                        return Label.append(value);
-                    },
-                    S.LazyExport => {
-                        return LazyExport.append(value);
-                    },
-                    S.Local => {
-                        return Local.append(value);
-                    },
-                    S.Namespace => {
-                        return Namespace.append(value);
-                    },
-                    S.Return => {
-                        return Return.append(value);
-                    },
-                    S.Switch => {
-                        return Switch.append(value);
-                    },
-                    S.Throw => {
-                        return Throw.append(value);
-                    },
-                    S.Try => {
-                        return Try.append(value);
-                    },
-
-                    S.While => {
-                        return While.append(value);
-                    },
-                    S.With => {
-                        return With.append(value);
-                    },
-                    else => {
-                        @compileError("Invalid type passed to Stmt.Data.set " ++ @typeName(ValueType));
-                    },
-                }
+                return All.append(ValueType, value);
             }
         };
 
@@ -2141,7 +2005,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_array = Data.Store.Array.append(st),
+                        .e_array = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2149,7 +2013,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_class = Data.Store.Class.append(st),
+                        .e_class = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2157,7 +2021,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_unary = Data.Store.Unary.append(st),
+                        .e_unary = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2165,7 +2029,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_binary = Data.Store.Binary.append(st),
+                        .e_binary = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2181,7 +2045,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_boolean = Data.Store.Boolean.append(st),
+                        .e_boolean = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2213,7 +2077,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_new = Data.Store.New.append(st),
+                        .e_new = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2229,7 +2093,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_function = Data.Store.Function.append(st),
+                        .e_function = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2237,7 +2101,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_import_meta = Data.Store.ImportMeta.append(st),
+                        .e_import_meta = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2245,7 +2109,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_call = Data.Store.Call.append(st),
+                        .e_call = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2253,7 +2117,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_dot = Data.Store.Dot.append(st),
+                        .e_dot = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2261,7 +2125,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_index = Data.Store.Index.append(st),
+                        .e_index = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2269,7 +2133,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_arrow = Data.Store.Arrow.append(st),
+                        .e_arrow = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2277,7 +2141,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_identifier = Data.Store.Identifier.append(st),
+                        .e_identifier = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2285,7 +2149,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_import_identifier = Data.Store.ImportIdentifier.append(st),
+                        .e_import_identifier = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2293,7 +2157,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_private_identifier = Data.Store.PrivateIdentifier.append(st),
+                        .e_private_identifier = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2301,7 +2165,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_jsx_element = Data.Store.JSXElement.append(st),
+                        .e_jsx_element = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2312,7 +2176,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_number = Data.Store.Number.append(st),
+                        .e_number = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2320,7 +2184,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_big_int = Data.Store.BigInt.append(st),
+                        .e_big_int = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2328,7 +2192,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_object = Data.Store.Object.append(st),
+                        .e_object = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2336,7 +2200,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_spread = Data.Store.Spread.append(st),
+                        .e_spread = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2344,7 +2208,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_string = Data.Store.String.append(st),
+                        .e_string = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2352,7 +2216,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_template_part = Data.Store.TemplatePart.append(st),
+                        .e_template_part = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2360,7 +2224,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_template = Data.Store.Template.append(st),
+                        .e_template = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2368,7 +2232,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_reg_exp = Data.Store.RegExp.append(st),
+                        .e_reg_exp = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2376,7 +2240,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_await = Data.Store.Await.append(st),
+                        .e_await = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2384,7 +2248,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_yield = Data.Store.Yield.append(st),
+                        .e_yield = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2392,7 +2256,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_if = Data.Store.If.append(st),
+                        .e_if = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2400,7 +2264,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_require_or_require_resolve = Data.Store.RequireOrRequireResolve.append(st),
+                        .e_require_or_require_resolve = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2408,7 +2272,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_import = Data.Store.Import.append(st),
+                        .e_import = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2416,7 +2280,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_require = Data.Store.Require.append(st),
+                        .e_require = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2434,7 +2298,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_array = Data.Store.Array.append(st),
+                        .e_array = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2442,7 +2306,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_class = Data.Store.Class.append(st),
+                        .e_class = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2450,7 +2314,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_unary = Data.Store.Unary.append(st),
+                        .e_unary = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2458,7 +2322,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_binary = Data.Store.Binary.append(st),
+                        .e_binary = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2474,7 +2338,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_boolean = Data.Store.Boolean.append(st),
+                        .e_boolean = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2506,7 +2370,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_new = Data.Store.New.append(st),
+                        .e_new = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2520,7 +2384,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_function = Data.Store.Function.append(st),
+                        .e_function = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2536,7 +2400,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_call = Data.Store.Call.append(st),
+                        .e_call = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2544,7 +2408,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_dot = Data.Store.Dot.append(st),
+                        .e_dot = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2552,7 +2416,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_index = Data.Store.Index.append(st),
+                        .e_index = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2560,7 +2424,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_arrow = Data.Store.Arrow.append(st),
+                        .e_arrow = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2568,7 +2432,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_identifier = Data.Store.Identifier.append(st),
+                        .e_identifier = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2576,7 +2440,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_import_identifier = Data.Store.ImportIdentifier.append(st),
+                        .e_import_identifier = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2584,7 +2448,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_private_identifier = Data.Store.PrivateIdentifier.append(st),
+                        .e_private_identifier = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2592,7 +2456,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_jsx_element = Data.Store.JSXElement.append(st),
+                        .e_jsx_element = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2603,7 +2467,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_number = Data.Store.Number.append(st),
+                        .e_number = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2611,7 +2475,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_big_int = Data.Store.BigInt.append(st),
+                        .e_big_int = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2619,7 +2483,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_object = Data.Store.Object.append(st),
+                        .e_object = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2627,7 +2491,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_spread = Data.Store.Spread.append(st),
+                        .e_spread = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2635,7 +2499,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_string = Data.Store.String.append(st),
+                        .e_string = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2643,7 +2507,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_template_part = Data.Store.TemplatePart.append(st),
+                        .e_template_part = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2651,7 +2515,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_template = Data.Store.Template.append(st),
+                        .e_template = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2659,7 +2523,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_reg_exp = Data.Store.RegExp.append(st),
+                        .e_reg_exp = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2667,7 +2531,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_await = Data.Store.Await.append(st),
+                        .e_await = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2675,7 +2539,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_yield = Data.Store.Yield.append(st),
+                        .e_yield = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2683,7 +2547,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_if = Data.Store.If.append(st),
+                        .e_if = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2691,7 +2555,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_require_or_require_resolve = Data.Store.RequireOrRequireResolve.append(st),
+                        .e_require_or_require_resolve = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2699,7 +2563,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_import = Data.Store.Import.append(st),
+                        .e_import = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2707,7 +2571,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_require = Data.Store.Require.append(st),
+                        .e_require = Data.Store.All.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -3296,36 +3160,41 @@ pub const Expr = struct {
             const often = 512;
             const medium = 256;
             const rare = 24;
-            pub const Array = NewStore(E.Array, 128);
-            pub const Unary = NewStore(E.Unary, 128);
-            pub const Binary = NewStore(E.Binary, 128);
-            pub const Class = NewStore(E.Class, 24);
-            pub const Boolean = NewStore(E.Boolean, 512);
-            pub const Super = NewStore(E.Super, 128);
-            pub const New = NewStore(E.New, 128);
-            pub const Function = NewStore(E.Function, 24);
-            pub const Call = NewStore(E.Call, often);
-            pub const Dot = NewStore(E.Dot, often);
-            pub const Index = NewStore(E.Index, 24);
-            pub const Arrow = NewStore(E.Arrow, 24);
-            pub const Identifier = NewStore(E.Identifier, 24);
-            pub const ImportIdentifier = NewStore(E.ImportIdentifier, 24);
-            pub const PrivateIdentifier = NewStore(E.PrivateIdentifier, 24);
-            pub const JSXElement = NewStore(E.JSXElement, 24);
-            pub const Number = NewStore(E.Number, 256);
-            pub const BigInt = NewStore(E.BigInt, 256);
-            pub const Object = NewStore(E.Object, 512);
-            pub const Spread = NewStore(E.Spread, 256);
-            pub const String = NewStore(E.String, 512);
-            pub const TemplatePart = NewStore(E.TemplatePart, 128);
-            pub const Template = NewStore(E.Template, 64);
-            pub const RegExp = NewStore(E.RegExp, 24);
-            pub const Await = NewStore(E.Await, 24);
-            pub const Yield = NewStore(E.Yield, 24);
-            pub const If = NewStore(E.If, 24);
-            pub const Require = NewStore(E.Require, 24);
-            pub const RequireOrRequireResolve = NewStore(E.RequireOrRequireResolve, 24);
-            pub const Import = NewStore(E.Import, 24);
+            pub const All = NewBaseStore(
+                &([_]type{
+                    E.Array,
+                    E.Unary,
+                    E.Binary,
+                    E.Class,
+                    E.Boolean,
+                    E.Super,
+                    E.New,
+                    E.Function,
+                    E.Call,
+                    E.Dot,
+                    E.Index,
+                    E.Arrow,
+                    E.Identifier,
+                    E.ImportIdentifier,
+                    E.PrivateIdentifier,
+                    E.JSXElement,
+                    E.Number,
+                    E.BigInt,
+                    E.Object,
+                    E.Spread,
+                    E.String,
+                    E.TemplatePart,
+                    E.Template,
+                    E.RegExp,
+                    E.Await,
+                    E.Yield,
+                    E.If,
+                    E.Require,
+                    E.RequireOrRequireResolve,
+                    E.Import,
+                }),
+                512,
+            );
 
             threadlocal var has_inited = false;
             pub fn create(allocator: *std.mem.Allocator) void {
@@ -3334,183 +3203,15 @@ pub const Expr = struct {
                 }
 
                 has_inited = true;
-                _ = Array.init(allocator);
-                _ = Unary.init(allocator);
-                _ = Binary.init(allocator);
-                _ = Class.init(allocator);
-                _ = Boolean.init(allocator);
-                _ = New.init(allocator);
-                _ = Function.init(allocator);
-                _ = Call.init(allocator);
-                _ = Dot.init(allocator);
-                _ = Index.init(allocator);
-                _ = Arrow.init(allocator);
-                _ = Identifier.init(allocator);
-                _ = ImportIdentifier.init(allocator);
-                _ = PrivateIdentifier.init(allocator);
-                _ = JSXElement.init(allocator);
-                _ = Number.init(allocator);
-                _ = BigInt.init(allocator);
-                _ = Object.init(allocator);
-                _ = Spread.init(allocator);
-                _ = String.init(allocator);
-                _ = TemplatePart.init(allocator);
-                _ = Template.init(allocator);
-                _ = RegExp.init(allocator);
-                _ = Await.init(allocator);
-                _ = Yield.init(allocator);
-                _ = If.init(allocator);
-                _ = Require.init(allocator);
-                _ = RequireOrRequireResolve.init(allocator);
-                _ = Import.init(allocator);
+                _ = All.init(allocator);
             }
 
             pub fn reset() void {
-                Array.reset();
-                Unary.reset();
-                Binary.reset();
-                Class.reset();
-                Boolean.reset();
-                New.reset();
-                Function.reset();
-                Call.reset();
-                Dot.reset();
-                Index.reset();
-                Arrow.reset();
-                Identifier.reset();
-                ImportIdentifier.reset();
-                PrivateIdentifier.reset();
-                JSXElement.reset();
-                Number.reset();
-                BigInt.reset();
-                Object.reset();
-                Spread.reset();
-                String.reset();
-                TemplatePart.reset();
-                Template.reset();
-                RegExp.reset();
-                Await.reset();
-                Yield.reset();
-                If.reset();
-                Require.reset();
-                RequireOrRequireResolve.reset();
-                Import.reset();
+                All.reset();
             }
 
             pub fn append(comptime ValueType: type, value: anytype) *ValueType {
-                switch (comptime ValueType) {
-                    E.Array => {
-                        return Array.append(value);
-                    },
-                    E.Unary => {
-                        return Unary.append(value);
-                    },
-                    E.Binary => {
-                        return Binary.append(value);
-                    },
-                    E.This => {
-                        return This.append(value);
-                    },
-                    E.Class => {
-                        return Class.append(value);
-                    },
-                    E.Boolean => {
-                        return Boolean.append(value);
-                    },
-                    E.Super => {
-                        return Super.append(value);
-                    },
-                    E.Null => {
-                        return Null.append(value);
-                    },
-                    E.Undefined => {
-                        return Undefined.append(value);
-                    },
-                    E.New => {
-                        return New.append(value);
-                    },
-                    E.NewTarget => {
-                        return @compileError("NewTarget bad");
-                    },
-                    E.Function => {
-                        return Function.append(value);
-                    },
-                    E.ImportMeta => {
-                        return ImportMeta.append(value);
-                    },
-                    E.Call => {
-                        return Call.append(value);
-                    },
-                    E.Dot => {
-                        return Dot.append(value);
-                    },
-                    E.Index => {
-                        return Index.append(value);
-                    },
-                    E.Arrow => {
-                        return Arrow.append(value);
-                    },
-                    E.Identifier => {
-                        return Identifier.append(value);
-                    },
-                    E.ImportIdentifier => {
-                        return ImportIdentifier.append(value);
-                    },
-                    E.PrivateIdentifier => {
-                        return PrivateIdentifier.append(value);
-                    },
-                    E.JSXElement => {
-                        return JSXElement.append(value);
-                    },
-                    E.Missing => {
-                        return Missing.append(value);
-                    },
-                    E.Number => {
-                        return Number.append(value);
-                    },
-                    E.BigInt => {
-                        return BigInt.append(value);
-                    },
-                    E.Object => {
-                        return Object.append(value);
-                    },
-                    E.Spread => {
-                        return Spread.append(value);
-                    },
-                    E.String => {
-                        return String.append(value);
-                    },
-                    E.TemplatePart => {
-                        return TemplatePart.append(value);
-                    },
-                    E.Template => {
-                        return Template.append(value);
-                    },
-                    E.RegExp => {
-                        return RegExp.append(value);
-                    },
-                    E.Await => {
-                        return Await.append(value);
-                    },
-                    E.Yield => {
-                        return Yield.append(value);
-                    },
-                    E.If => {
-                        return If.append(value);
-                    },
-                    E.Require => {
-                        return Require.append(value);
-                    },
-                    E.RequireOrRequireResolve => {
-                        return RequireOrRequireResolve.append(value);
-                    },
-                    E.Import => {
-                        return Import.append(value);
-                    },
-                    else => {
-                        @compileError("Invalid type passed to Stmt.Data.set " ++ @typeName(ValueType));
-                    },
-                }
+                return All.append(ValueType, value);
             }
         };
 

@@ -111,6 +111,10 @@ pub const Output = struct {
         return printError(fmt, args);
     }
 
+    pub fn errorLn(comptime fmt: string, args: anytype) void {
+        return printErrorln(fmt, args);
+    }
+
     pub fn printError(comptime fmt: string, args: anytype) void {
         if (isWasm) {
             source.error_stream.seekTo(0) catch return;

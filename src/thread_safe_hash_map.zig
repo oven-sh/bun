@@ -13,7 +13,7 @@ pub fn ThreadSafeStringHashMap(comptime Value: type) type {
         pub fn init(allocator: *std.mem.Allocator) !*HashMap {
             var self = try allocator.create(HashMap);
             self.* = HashMap{ .backing = HashMapType.init(allocator), .lock = sync.RwLock.init() };
-            try self.backing.ensureCapacity(10);
+
             return self;
         }
 

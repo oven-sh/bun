@@ -79,7 +79,7 @@ pub const Options = struct {
     // line_offset_tables: []LineOffsetTable
 
     pub fn unindent(self: *Options) void {
-        self.indent = if (self.indent > 0) self.indent - 1 else 0;
+        self.indent = std.math.max(self.indent, 1) - 1;
     }
 };
 
@@ -143,6 +143,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
 
         const Printer = @This();
         pub fn comptime_flush(p: *Printer) void {}
+
         // pub fn comptime_flush(p: *Printer) callconv(.Inline) void {
         //     const result = comptime {
         //         if (comptime_buf_i > 0) {
@@ -259,9 +260,10 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
             }
 
             p.js.growBy(p.options.indent * "  ".len) catch unreachable;
-            while (p.options.indent > 0) {
+            var i: usize = 0;
+
+            while (i < p.options.indent) : (i += 1) {
                 p.unsafePrint("  ");
-                p.options.unindent();
             }
         }
 
@@ -319,7 +321,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
             switch (stmt.data) {
                 .s_block => |block| {
                     p.printSpace();
-                    p.printBlock(stmt.loc, stmt.getBlock().stmts);
+                    p.printBlock(stmt.loc, block.stmts);
                     p.printNewline();
                 },
                 else => {
@@ -347,7 +349,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
             p.print("}");
         }
 
-        pub fn printDecls(p: *Printer, keyword: string, decls: []G.Decl, flags: ExprFlag) void {
+        pub fn printDecls(p: *Printer, comptime keyword: string, decls: []G.Decl, flags: ExprFlag) void {
             debug("<printDecls>\n   {s}", .{decls});
             defer debug("</printDecls>", .{});
             p.print(keyword);
@@ -1274,6 +1276,8 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                             p.options.unindent();
                             p.printNewline();
                             p.printIndent();
+                        } else if (e.properties.len > 0) {
+                            p.printSpace();
                         }
                     }
                     p.print("}");
@@ -1699,8 +1703,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
 
             if (item.value) |val| {
                 switch (val.data) {
-                    .e_function => {
-                        const func = val.getFunction();
+                    .e_function => |func| {
                         if (item.flags.is_method) {
                             if (func.func.flags.is_async) {
                                 p.printSpaceBeforeIdentifier();
@@ -1727,8 +1730,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
 
                 if (item.value) |val| {
                     switch (val.data) {
-                        .e_function => {
-                            const func = val.getFunction();
+                        .e_function => |func| {
                             if (item.flags.is_method) {
                                 p.printFunc(func.func);
                                 return;
@@ -1749,8 +1751,8 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
             }
 
             switch (_key.data) {
-                .e_private_identifier => {
-                    p.printSymbol(_key.getPrivateIdentifier().ref);
+                .e_private_identifier => |priv| {
+                    p.printSymbol(priv.ref);
                 },
                 .e_string => |key| {
                     p.addSourceMapping(_key.loc);
@@ -1761,8 +1763,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         // Use a shorthand property if the names are the same
                         if (item.value) |val| {
                             switch (val.data) {
-                                .e_identifier => {
-                                    const e = val.getIdentifier();
+                                .e_identifier => |e| {
 
                                     // TODO: is needing to check item.flags.was_shorthand a bug?
                                     // esbuild doesn't have to do that...
@@ -1776,9 +1777,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                                     }
                                     // if (strings) {}
                                 },
-                                .e_import_identifier => {
-                                    const e = val.getImportIdentifier();
-
+                                .e_import_identifier => |e| {
                                     const ref = p.symbols.follow(e.ref);
                                     if (p.symbols.get(ref)) |symbol| {
                                         if (symbol.namespace_alias == null and strings.eql(key.utf8, p.renamer.nameForSymbol(e.ref))) {
@@ -1799,8 +1798,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         // Use a shorthand property if the names are the same
                         if (item.value) |val| {
                             switch (val.data) {
-                                .e_identifier => {
-                                    const e = val.getIdentifier();
+                                .e_identifier => |e| {
 
                                     // TODO: is needing to check item.flags.was_shorthand a bug?
                                     // esbuild doesn't have to do that...
@@ -1814,9 +1812,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                                     }
                                     // if (strings) {}
                                 },
-                                .e_import_identifier => {
-                                    const e = val.getImportIdentifier();
-
+                                .e_import_identifier => |e| {
                                     const ref = p.symbols.follow(e.ref);
                                     if (p.symbols.get(ref)) |symbol| {
                                         if (symbol.namespace_alias == null and strings.utf16EqlString(key.value, p.renamer.nameForSymbol(e.ref))) {
@@ -1851,8 +1847,8 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
 
             if (item.kind != .normal) {
                 switch (item.value.?.data) {
-                    .e_function => {
-                        p.printFunc(item.value.?.getFunction().func);
+                    .e_function => |func| {
+                        p.printFunc(func.func);
                         return;
                     },
                     else => {},
@@ -1861,8 +1857,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
 
             if (item.value) |val| {
                 switch (val.data) {
-                    .e_function => {
-                        const f = val.getFunction();
+                    .e_function => |f| {
                         if (item.flags.is_method) {
                             p.printFunc(f.func);
 
@@ -1958,12 +1953,11 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         for (b.properties) |*property, i| {
                             if (i != 0) {
                                 p.print(",");
-                                if (b.is_single_line) {
-                                    p.printSpace();
-                                }
                             }
 
-                            if (!b.is_single_line) {
+                            if (b.is_single_line) {
+                                p.printSpace();
+                            } else {
                                 p.printNewline();
                                 p.printIndent();
                             }
@@ -2039,6 +2033,8 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                             p.options.unindent();
                             p.printNewline();
                             p.printIndent();
+                        } else if (b.properties.len > 0) {
+                            p.printSpace();
                         }
                     }
                     p.print("}");
@@ -2065,13 +2061,10 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
 
             p.addSourceMapping(stmt.loc);
             switch (stmt.data) {
-                .s_comment => |s_list_index| {
-                    const s = stmt.getComment();
+                .s_comment => |s| {
                     p.printIndentedComment(s.text);
                 },
-                .s_function => |s_list_index| {
-                    const s = stmt.getFunction();
-
+                .s_function => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     if (s.func.flags.is_export) {
@@ -2092,9 +2085,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.printFunc(s.func);
                     p.printNewline();
                 },
-                .s_class => |s_list_index| {
-                    const s = stmt.getClass();
-
+                .s_class => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     if (s.is_export) {
@@ -2105,14 +2096,12 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.printClass(s.class);
                     p.printNewline();
                 },
-                .s_empty => |s_list_index| {
+                .s_empty => |s| {
                     p.printIndent();
                     p.print(";");
                     p.printNewline();
                 },
-                .s_export_default => |s_list_index| {
-                    const s = stmt.getExportDefault();
-
+                .s_export_default => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.print("export default");
@@ -2168,9 +2157,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         },
                     }
                 },
-                .s_export_star => |s_list_index| {
-                    const s = stmt.getExportStar();
-
+                .s_export_star => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.print("export");
@@ -2189,9 +2176,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.printQuotedUTF8(p.import_records[s.import_record_index].path.text, false);
                     p.printSemicolonAfterStatement();
                 },
-                .s_export_clause => |s_list_index| {
-                    const s = stmt.getExportClause();
-
+                .s_export_clause => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.print("export");
@@ -2232,9 +2217,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.print("}");
                     p.printSemicolonAfterStatement();
                 },
-                .s_export_from => |s_list_index| {
-                    const s = stmt.getExportFrom();
-
+                .s_export_from => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.print("export");
@@ -2279,9 +2262,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.printQuotedUTF8(p.import_records[s.import_record_index].path.text, false);
                     p.printSemicolonAfterStatement();
                 },
-                .s_local => |s_list_index| {
-                    const s = stmt.getLocal();
-
+                .s_local => |s| {
                     switch (s.kind) {
                         .k_const => {
                             p.printDeclStmt(s.is_export, "const", s.decls);
@@ -2294,15 +2275,11 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         },
                     }
                 },
-                .s_if => |s_list_index| {
-                    const s = stmt.getIf();
-
+                .s_if => |s| {
                     p.printIndent();
                     p.printIf(s);
                 },
-                .s_do_while => |s_list_index| {
-                    const s = stmt.getDoWhile();
-
+                .s_do_while => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.print("do");
@@ -2329,9 +2306,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.print(")");
                     p.printSemicolonAfterStatement();
                 },
-                .s_for_in => |s_list_index| {
-                    const s = stmt.getForIn();
-
+                .s_for_in => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.print("for");
@@ -2346,9 +2321,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.print(")");
                     p.printBody(s.body);
                 },
-                .s_for_of => |s_list_index| {
-                    const s = stmt.getForOf();
-
+                .s_for_of => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.print("for");
@@ -2367,9 +2340,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.print(")");
                     p.printBody(s.body);
                 },
-                .s_while => |s_list_index| {
-                    const s = stmt.getWhile();
-
+                .s_while => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.print("while");
@@ -2379,9 +2350,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.print(")");
                     p.printBody(s.body);
                 },
-                .s_with => |s_list_index| {
-                    const s = stmt.getWith();
-
+                .s_with => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.print("with");
@@ -2391,17 +2360,13 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.print(")");
                     p.printBody(s.body);
                 },
-                .s_label => |s_list_index| {
-                    const s = stmt.getLabel();
-
+                .s_label => |s| {
                     p.printIndent();
                     p.printSymbol(s.name.ref orelse Global.panic("Internal error: expected label to have a name {s}", .{s}));
                     p.print(":");
                     p.printBody(s.stmt);
                 },
-                .s_try => |s_list_index| {
-                    const s = stmt.getTry();
-
+                .s_try => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.print("try");
@@ -2430,9 +2395,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
 
                     p.printNewline();
                 },
-                .s_for => |s_list_index| {
-                    const s = stmt.getFor();
-
+                .s_for => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.print("for");
@@ -2459,9 +2422,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.print(")");
                     p.printBody(s.body);
                 },
-                .s_switch => |s_list_index| {
-                    const s = stmt.getSwitch();
-
+                .s_switch => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.print("switch");
@@ -2517,9 +2478,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.printNewline();
                     p.needs_semicolon = false;
                 },
-                .s_import => |s_list_index| {
-                    const s = stmt.getImport();
-
+                .s_import => |s| {
                     var item_count: usize = 0;
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
@@ -2597,24 +2556,18 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.printQuotedUTF8(p.import_records[s.import_record_index].path.text, false);
                     p.printSemicolonAfterStatement();
                 },
-                .s_block => |s_list_index| {
-                    const s = stmt.getBlock();
-
+                .s_block => |s| {
                     p.printIndent();
                     p.printBlock(stmt.loc, s.stmts);
                     p.printNewline();
                 },
-                .s_debugger => |s_list_index| {
-                    const s = stmt.getDebugger();
-
+                .s_debugger => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.print("debugger");
                     p.printSemicolonAfterStatement();
                 },
-                .s_directive => |s_list_index| {
-                    const s = stmt.getDirective();
-
+                .s_directive => |s| {
                     const c = p.bestQuoteCharForString(s.value, false);
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
@@ -2623,9 +2576,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.print(c);
                     p.printSemicolonAfterStatement();
                 },
-                .s_break => |s_list_index| {
-                    const s = stmt.getBreak();
-
+                .s_break => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.print("break");
@@ -2636,9 +2587,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
 
                     p.printSemicolonAfterStatement();
                 },
-                .s_continue => |s_list_index| {
-                    const s = stmt.getContinue();
-
+                .s_continue => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.print("continue");
@@ -2649,9 +2598,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     }
                     p.printSemicolonAfterStatement();
                 },
-                .s_return => |s_list_index| {
-                    const s = stmt.getReturn();
-
+                .s_return => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.print("return");
@@ -2662,9 +2609,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     }
                     p.printSemicolonAfterStatement();
                 },
-                .s_throw => |s_list_index| {
-                    const s = stmt.getThrow();
-
+                .s_throw => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.print("throw");
@@ -2672,9 +2617,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.printExpr(s.value, .lowest, ExprFlag.None());
                     p.printSemicolonAfterStatement();
                 },
-                .s_expr => |s_list_index| {
-                    const s = stmt.getExpr();
-
+                .s_expr => |s| {
                     p.printIndent();
                     p.stmt_start = p.js.lenI();
                     p.printExpr(s.value, .lowest, ExprFlag.ExprResultIsUnused());
@@ -2688,18 +2631,14 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
 
         pub fn printForLoopInit(p: *Printer, initSt: Stmt) void {
             switch (initSt.data) {
-                .s_expr => |s_list_index| {
-                    const s = initSt.getExpr();
-
+                .s_expr => |s| {
                     p.printExpr(
                         s.value,
                         .lowest,
                         ExprFlag{ .forbid_in = true, .expr_result_is_unused = true },
                     );
                 },
-                .s_local => |s_list_index| {
-                    const s = initSt.getLocal();
-
+                .s_local => |s| {
                     switch (s.kind) {
                         .k_var => {
                             p.printDecls("var", s.decls, ExprFlag{ .forbid_in = true });
@@ -2825,7 +2764,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
             }
         }
 
-        pub fn printDeclStmt(p: *Printer, is_export: bool, keyword: string, decls: []G.Decl) void {
+        pub fn printDeclStmt(p: *Printer, is_export: bool, comptime keyword: string, decls: []G.Decl) void {
             p.printIndent();
             p.printSpaceBeforeIdentifier();
             if (is_export) {

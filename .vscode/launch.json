@@ -26,7 +26,7 @@
       "request": "launch",
       "name": "Dev Launch",
       "program": "${workspaceFolder}/build/debug/macos-x86_64/esdev",
-      "args": ["./await.ts", "--resolve=disable"],
+      "args": ["./simple.jsx", "--resolve=disable"],
       "cwd": "${workspaceFolder}/src/test/fixtures",
       "console": "internalConsole"
     },

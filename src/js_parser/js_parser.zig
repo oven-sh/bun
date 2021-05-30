@@ -5249,13 +5249,14 @@ pub const P = struct {
             try p.lexer.expect(.t_close_paren);
             const args = p.allocator.alloc(ExprNodeIndex, 1) catch unreachable;
             args[0] = path;
-            value.data = .{ .e_call = Expr.Data.Store.Call.append(E.Call{ .target = value, .args = args }) };
+            value.data = .{ .e_call = Expr.Data.Store.All.append(E.Call, E.Call{ .target = value, .args = args }) };
         } else {
             // "import Foo = Bar"
             // "import Foo = Bar.Baz"
             while (p.lexer.token == .t_dot) {
                 try p.lexer.next();
-                value.data = .{ .e_dot = Expr.Data.Store.Dot.append(
+                value.data = .{ .e_dot = Expr.Data.Store.All.append(
+                    E.Dot,
                     E.Dot{ .target = value, .name = p.lexer.identifier, .name_loc = p.lexer.loc() },
                 ) };
                 try p.lexer.expect(.t_identifier);

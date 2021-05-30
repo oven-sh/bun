@@ -634,7 +634,7 @@ pub const Bundler = struct {
         // }
 
         if (enableTracing) {
-            Output.print(
+            Output.printError(
                 "\n---Tracing---\nResolve time:      {d}\nParsing time:      {d}\n---Tracing--\n\n",
                 .{
                     bundler.resolver.elapsed,

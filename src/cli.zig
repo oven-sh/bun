@@ -391,10 +391,10 @@ pub const Cli = struct {
         }
 
         if (isDebug) {
-            Output.println("Expr count:       {d}", .{js_ast.Expr.icount});
-            Output.println("Stmt count:       {d}", .{js_ast.Stmt.icount});
-            Output.println("Binding count:    {d}", .{js_ast.Binding.icount});
-            Output.println("File Descriptors: {d} / {d}", .{
+            Output.errorLn("Expr count:       {d}", .{js_ast.Expr.icount});
+            Output.errorLn("Stmt count:       {d}", .{js_ast.Stmt.icount});
+            Output.errorLn("Binding count:    {d}", .{js_ast.Binding.icount});
+            Output.errorLn("File Descriptors: {d} / {d}", .{
                 fs.FileSystem.max_fd,
                 open_file_limit,
             });
@@ -424,7 +424,7 @@ pub const Cli = struct {
 
         if (did_write and duration < @as(i128, @as(i128, std.time.ns_per_s) * @as(i128, 2))) {
             var elapsed = @divTrunc(duration, @as(i128, std.time.ns_per_ms));
-            try writer.print("\nCompleted in {d}ms", .{elapsed});
+            try err_writer.print("\nCompleted in {d}ms", .{elapsed});
         }
 
         std.os.exit(0);

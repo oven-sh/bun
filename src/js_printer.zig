@@ -353,15 +353,11 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
             p.print(keyword);
             p.printSpace();
 
-            var i: usize = 0;
-
-            while (i < decls.len) : (i += 1) {
+            for (decls) |*decl, i| {
                 if (i != 0) {
                     p.print(",");
                     p.printSpace();
                 }
-
-                const decl = decls[i];
 
                 p.printBinding(decl.binding);
 
@@ -857,9 +853,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.printSpaceBeforeIdentifier();
                     p.print("this");
                 },
-                .e_spread => {
-                    const e = expr.getSpread();
-
+                .e_spread => |e| {
                     p.print("...");
                     p.printExpr(e.value, .comma, ExprFlag.None());
                 },
@@ -871,9 +865,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.printSpaceBeforeIdentifier();
                     p.print("import.meta");
                 },
-                .e_new => {
-                    const e = expr.getNew();
-
+                .e_new => |e| {
                     const has_pure_comment = e.can_be_unwrapped_if_unused;
                     const wrap = level.gte(.call) or (has_pure_comment and level.gte(.postfix));
 
@@ -894,15 +886,12 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         p.print("(");
 
                         if (e.args.len > 0) {
-                            var i: usize = 0;
-                            p.printExpr(e.args[i], .comma, ExprFlag.None());
-                            i = 1;
+                            p.printExpr(e.args[0], .comma, ExprFlag.None());
 
-                            while (i < e.args.len) {
+                            for (e.args[1..]) |arg, i| {
                                 p.print(",");
                                 p.printSpace();
-                                p.printExpr(e.args[i], .comma, ExprFlag.None());
-                                i += 1;
+                                p.printExpr(arg, .comma, ExprFlag.None());
                             }
                         }
 
@@ -913,9 +902,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         p.print(")");
                     }
                 },
-                .e_call => {
-                    const e = expr.getCall();
-
+                .e_call => |e| {
                     var wrap = level.gte(.new) or flags.forbid_call;
                     var target_flags = ExprFlag.None();
                     if (e.optional_chain == null) {
@@ -957,12 +944,10 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
 
                     if (e.args.len > 0) {
                         p.printExpr(e.args[0], .comma, ExprFlag.None());
-                        var i: usize = 1;
-                        while (i < e.args.len) {
+                        for (e.args[1..]) |arg, i| {
                             p.print(",");
                             p.printSpace();
-                            p.printExpr(e.args[i], .comma, ExprFlag.None());
-                            i += 1;
+                            p.printExpr(arg, .comma, ExprFlag.None());
                         }
                     }
 
@@ -971,14 +956,10 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         p.print(")");
                     }
                 },
-                .e_require => {
-                    const e = expr.getRequire();
-
+                .e_require => |e| {
                     p.printRequireOrImportExpr(e.import_record_index, &([_]G.Comment{}), level, flags);
                 },
-                .e_require_or_require_resolve => {
-                    const e = expr.getRequireOrRequireResolve();
-
+                .e_require_or_require_resolve => |e| {
                     const wrap = level.gte(.new) or flags.forbid_call;
                     if (wrap) {
                         p.print("(");
@@ -1003,8 +984,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         p.print(")");
                     }
                 },
-                .e_import => {
-                    const e = expr.getImport();
+                .e_import => |e| {
 
                     // Handle non-string expressions
                     if (Ref.isSourceIndexNull(e.import_record_index)) {
@@ -1037,9 +1017,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         p.printRequireOrImportExpr(e.import_record_index, e.leading_interior_comments, level, flags);
                     }
                 },
-                .e_dot => {
-                    const e = expr.getDot();
-
+                .e_dot => |e| {
                     var wrap = false;
                     if (e.optional_chain == null) {
                         flags.has_non_optional_chain_parent = false;
@@ -1078,9 +1056,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         p.print(")");
                     }
                 },
-                .e_index => {
-                    const e = expr.getIndex();
-
+                .e_index => |e| {
                     var wrap = false;
                     if (e.optional_chain == null) {
                         flags.has_non_optional_chain_parent = false;
@@ -1122,9 +1098,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         p.print(")");
                     }
                 },
-                .e_if => {
-                    const e = expr.getIf();
-
+                .e_if => |e| {
                     const wrap = level.gte(.conditional);
                     if (wrap) {
                         p.print("(");
@@ -1143,9 +1117,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         p.print(")");
                     }
                 },
-                .e_arrow => {
-                    const e = expr.getArrow();
-
+                .e_arrow => |e| {
                     const wrap = level.gte(.assign);
 
                     if (wrap) {
@@ -1185,9 +1157,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         p.print(")");
                     }
                 },
-                .e_function => {
-                    const e = expr.getFunction();
-
+                .e_function => |e| {
                     const n = p.js.lenI();
                     var wrap = p.stmt_start == n or p.export_default_start == n;
 
@@ -1214,9 +1184,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         p.print(")");
                     }
                 },
-                .e_class => {
-                    const e = expr.getClass();
-
+                .e_class => |e| {
                     const n = p.js.lenI();
                     var wrap = p.stmt_start == n or p.export_default_start == n;
                     if (wrap) {
@@ -1234,17 +1202,14 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         p.print(")");
                     }
                 },
-                .e_array => {
-                    const e = expr.getArray();
-
+                .e_array => |e| {
                     p.print("[");
                     if (e.items.len > 0) {
                         if (!e.is_single_line) {
                             p.options.indent += 1;
                         }
 
-                        var i: usize = 0;
-                        while (i < e.items.len) : (i += 1) {
+                        for (e.items) |item, i| {
                             if (i != 0) {
                                 p.print(",");
                                 if (e.is_single_line) {
@@ -1255,11 +1220,11 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                                 p.printNewline();
                                 p.printIndent();
                             }
-                            p.printExpr(e.items[i], .comma, ExprFlag.None());
+                            p.printExpr(item, .comma, ExprFlag.None());
 
                             if (i == e.items.len - 1) {
                                 // Make sure there's a comma after trailing missing items
-                                switch (e.items[i].data) {
+                                switch (item.data) {
                                     .e_missing => {
                                         p.print(",");
                                     },
@@ -1277,9 +1242,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
 
                     p.print("]");
                 },
-                .e_object => {
-                    const e = expr.getObject();
-
+                .e_object => |e| {
                     const n = p.js.lenI();
                     const wrap = p.stmt_start == n or p.arrow_expr_start == n;
 
@@ -1318,31 +1281,26 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         p.print(")");
                     }
                 },
-                .e_boolean => {
-                    const e = expr.getBoolean();
-
+                .e_boolean => |e| {
                     p.printSpaceBeforeIdentifier();
                     p.print(if (e.value) "true" else "false");
                 },
-                .e_string => {
-                    const e = expr.getString();
+                .e_string => |e| {
 
                     // If this was originally a template literal, print it as one as long as we're not minifying
                     if (e.prefer_template) {
                         p.print("`");
-                        p.printString(e.*, '`');
+                        p.printString(e, '`');
                         p.print("`");
                         return;
                     }
 
                     const c = p.bestQuoteCharForString(e.value, true);
                     p.print(c);
-                    p.printString(e.*, c);
+                    p.printString(e, c);
                     p.print(c);
                 },
-                .e_template => {
-                    const e = expr.getTemplate();
-
+                .e_template => |e| {
                     if (e.tag) |tag| {
                         // Optional chains are forbidden in template tags
                         if (expr.isOptionalChain()) {
@@ -1359,7 +1317,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         if (e.tag != null) {
                             p.print(e.head.utf8);
                         } else {
-                            p.printString(e.head, '`');
+                            p.printString(&e.head, '`');
                         }
                     }
 
@@ -1371,15 +1329,13 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                             if (e.tag != null) {
                                 p.print(part.tail.utf8);
                             } else {
-                                p.printString(part.tail, '`');
+                                p.printString(&part.tail, '`');
                             }
                         }
                     }
                     p.print("`");
                 },
-                .e_reg_exp => {
-                    const e = expr.getRegExp();
-
+                .e_reg_exp => |e| {
                     const n = p.js.len();
 
                     // Avoid forming a single-line comment
@@ -1392,16 +1348,12 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     // Need a space before the next identifier to avoid it turning into flags
                     p.prev_reg_exp_end = p.js.lenI();
                 },
-                .e_big_int => {
-                    const e = expr.getBigInt();
-
+                .e_big_int => |e| {
                     p.printSpaceBeforeIdentifier();
                     p.print(e.value);
                     p.print('n');
                 },
-                .e_number => {
-                    const e = expr.getNumber();
-
+                .e_number => |e| {
                     const value = e.value;
                     const absValue = std.math.fabs(value);
 
@@ -1441,9 +1393,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         p.prev_num_end = p.js.lenI();
                     }
                 },
-                .e_identifier => {
-                    const e = expr.getIdentifier();
-
+                .e_identifier => |e| {
                     const name = p.renamer.nameForSymbol(e.ref);
                     const wrap = p.js.lenI() == p.for_of_init_start and strings.eqlComptime(name, "let");
 
@@ -1458,8 +1408,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         p.print(")");
                     }
                 },
-                .e_import_identifier => {
-                    const e = expr.getImportIdentifier();
+                .e_import_identifier => |e| {
 
                     // Potentially use a property access instead of an identifier
                     const ref = p.symbols.follow(e.ref);
@@ -1502,9 +1451,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         p.printSymbol(e.ref);
                     }
                 },
-                .e_await => {
-                    const e = expr.getAwait();
-
+                .e_await => |e| {
                     const wrap = level.gte(.prefix);
 
                     if (wrap) {
@@ -1520,9 +1467,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         p.print(")");
                     }
                 },
-                .e_yield => {
-                    const e = expr.getYield();
-
+                .e_yield => |e| {
                     const wrap = level.gte(.assign);
                     if (wrap) {
                         p.print("(");
@@ -1543,9 +1488,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         p.print(")");
                     }
                 },
-                .e_unary => {
-                    const e = expr.getUnary();
-
+                .e_unary => |e| {
                     const entry: Op = Op.Table.get(e.op);
                     const wrap = level.gte(entry.level);
 
@@ -1576,9 +1519,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         p.print(")");
                     }
                 },
-                .e_binary => {
-                    const e = expr.getBinary();
-
+                .e_binary => |e| {
                     const entry: Op = Op.Table.get(e.op);
                     var wrap = level.gte(entry.level) or (e.op == Op.Code.bin_in and flags.forbid_in);
 
@@ -1718,7 +1659,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
             p.print(")");
         }
 
-        pub fn printString(p: *Printer, str: E.String, c: u8) void {
+        pub fn printString(p: *Printer, str: *const E.String, c: u8) void {
             if (!str.isUTF8()) {
                 p.printQuotedUTF16(str.value, c);
             } else {
@@ -1811,8 +1752,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                 .e_private_identifier => {
                     p.printSymbol(_key.getPrivateIdentifier().ref);
                 },
-                .e_string => {
-                    const key = _key.getString();
+                .e_string => |key| {
                     p.addSourceMapping(_key.loc);
                     if (key.isUTF8()) {
                         p.printSpaceBeforeIdentifier();
@@ -1966,8 +1906,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                             p.options.indent += 1;
                         }
 
-                        var i: usize = 0;
-                        while (i < b.items.len) : (i += 1) {
+                        for (b.items) |*item, i| {
                             if (i != 0) {
                                 p.print(",");
                                 if (b.is_single_line) {
@@ -1985,7 +1924,6 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                                 p.print("...");
                             }
 
-                            const item = b.items[i];
                             p.printBinding(item.binding);
 
                             p.maybePrintDefaultBindingValue(item);
@@ -2017,8 +1955,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                             p.options.indent += 1;
                         }
 
-                        var i: usize = 0;
-                        while (i < b.properties.len) : (i += 1) {
+                        for (b.properties) |*property, i| {
                             if (i != 0) {
                                 p.print(",");
                                 if (b.is_single_line) {
@@ -2030,8 +1967,6 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                                 p.printNewline();
                                 p.printIndent();
                             }
-
-                            const property = b.properties[i];
 
                             if (property.flags.is_spread) {
                                 p.print("...");
@@ -2048,8 +1983,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                                 }
 
                                 switch (property.key.data) {
-                                    .e_string => {
-                                        const str = property.key.getString();
+                                    .e_string => |str| {
                                         if (str.isUTF8()) {
                                             p.addSourceMapping(property.key.loc);
                                             p.printSpaceBeforeIdentifier();
@@ -2268,8 +2202,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         p.options.indent += 1;
                     }
 
-                    var i: usize = 0;
-                    while (i < s.items.len) : (i += 1) {
+                    for (s.items) |*item, i| {
                         if (i != 0) {
                             p.print(",");
                             if (s.is_single_line) {
@@ -2281,7 +2214,6 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                             p.printNewline();
                             p.printIndent();
                         }
-                        const item = s.items[i];
                         const name = p.renamer.nameForSymbol(item.name.ref.?);
                         p.printIdentifier(name);
                         if (!strings.eql(name, item.alias)) {
@@ -2313,9 +2245,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         p.options.indent += 1;
                     }
 
-                    var i: usize = 0;
-
-                    while (i < s.items.len) : (i += 1) {
+                    for (s.items) |*item, i| {
                         if (i != 0) {
                             p.print(",");
                             if (s.is_single_line) {
@@ -2327,7 +2257,6 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                             p.printNewline();
                             p.printIndent();
                         }
-                        const item = s.items[i];
                         const name = p.renamer.nameForSymbol(item.name.ref.?);
                         p.printIdentifier(name);
                         if (!strings.eql(name, item.alias)) {
@@ -2613,8 +2542,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                             p.options.unindent();
                         }
 
-                        var i: usize = 0;
-                        while (i < s.items.len) : (i += 1) {
+                        for (s.items) |*item, i| {
                             if (i != 0) {
                                 p.print(",");
                                 if (s.is_single_line) {
@@ -2627,7 +2555,6 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                                 p.printIndent();
                             }
 
-                            const item = s.items[i];
                             p.printClauseAlias(item.alias);
                             const name = p.renamer.nameForSymbol(item.name.ref.?);
                             if (!strings.eql(name, item.alias)) {

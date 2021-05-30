@@ -24,6 +24,7 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
     return struct {
         const Allocator = std.mem.Allocator;
         const Self = @This();
+
         const Block = struct {
             items: [count]UnionValueType align(max_align) = undefined,
             used: usize = 0,
@@ -288,7 +289,10 @@ pub const Binding = struct {
         b_missing,
     };
 
+    pub var icount: usize = 0;
+
     pub fn init(t: anytype, loc: logger.Loc) Binding {
+        icount += 1;
         switch (@TypeOf(t)) {
             *B.Identifier => {
                 return Binding{ .loc = loc, .data = B{ .b_identifier = t } };
@@ -312,6 +316,7 @@ pub const Binding = struct {
     }
 
     pub fn alloc(allocator: *std.mem.Allocator, t: anytype, loc: logger.Loc) Binding {
+        icount += 1;
         switch (@TypeOf(t)) {
             B.Identifier => {
                 var data = allocator.create(B.Identifier) catch unreachable;
@@ -334,9 +339,7 @@ pub const Binding = struct {
                 return Binding{ .loc = loc, .data = B{ .b_object = data } };
             },
             B.Missing => {
-                var data = allocator.create(B.Missing) catch unreachable;
-                data.* = t;
-                return Binding{ .loc = loc, .data = B{ .b_missing = data } };
+                return Binding{ .loc = loc, .data = B{ .b_missing = .{} } };
             },
             else => {
                 @compileError("Invalid type passed to Binding.alloc");
@@ -350,7 +353,7 @@ pub const B = union(Binding.Tag) {
     b_array: *B.Array,
     b_property: *B.Property,
     b_object: *B.Object,
-    b_missing: *B.Missing,
+    b_missing: B.Missing,
 
     pub const Identifier = struct {
         ref: Ref,
@@ -1843,10 +1846,10 @@ pub const Expr = struct {
     pub fn getMissing(exp: *const Expr) *E.Missing {
         return exp.data.e_missing;
     }
-    pub fn getNumber(exp: *const Expr) *E.Number {
+    pub fn getNumber(exp: *const Expr) E.Number {
         return exp.data.e_number;
     }
-    pub fn getBigInt(exp: *const Expr) *E.BigInt {
+    pub fn getBigInt(exp: *const Expr) E.BigInt {
         return exp.data.e_big_int;
     }
     pub fn getObject(exp: *const Expr) *E.Object {
@@ -1855,7 +1858,7 @@ pub const Expr = struct {
     pub fn getSpread(exp: *const Expr) *E.Spread {
         return exp.data.e_spread;
     }
-    pub fn getString(exp: *const Expr) *E.String {
+    pub fn getString(exp: *const Expr) E.String {
         return exp.data.e_string;
     }
     pub fn getTemplatePart(exp: *const Expr) *E.TemplatePart {
@@ -1890,11 +1893,11 @@ pub const Expr = struct {
         if (std.meta.activeTag(expr.data) != .e_object) return null;
         const obj = expr.getObject();
 
-        for (obj.properties) |prop| {
+        for (obj.properties) |*prop| {
             const value = prop.value orelse continue;
             const key = prop.key orelse continue;
             if (std.meta.activeTag(key.data) != .e_string) continue;
-            const key_str: *const E.String = key.getString();
+            const key_str = key.data.e_string;
             if (key_str.eql(string, name)) {
                 return Query{ .expr = value, .loc = key.loc };
             }
@@ -1906,7 +1909,7 @@ pub const Expr = struct {
     pub fn asString(expr: *const Expr, allocator: *std.mem.Allocator) ?string {
         if (std.meta.activeTag(expr.data) != .e_string) return null;
 
-        const key_str: *const E.String = expr.getString();
+        const key_str = expr.data.e_string;
 
         return if (key_str.isUTF8()) key_str.utf8 else key_str.string(allocator) catch null;
     }
@@ -1916,9 +1919,7 @@ pub const Expr = struct {
     ) ?bool {
         if (std.meta.activeTag(expr.data) != .e_boolean) return null;
 
-        const obj = expr.getBoolean();
-
-        return obj.value;
+        return expr.data.e_boolean.value;
     }
 
     pub const EFlags = enum { none, ts_decorator };
@@ -1997,6 +1998,12 @@ pub const Expr = struct {
     }
 
     pub var icount: usize = 0;
+
+    // We don't need to dynamically allocate booleans
+    var true_bool = E.Boolean{ .value = true };
+    var false_bool = E.Boolean{ .value = false };
+    var bool_values = [_]*E.Boolean{ &false_bool, &true_bool };
+
     pub fn init(exp: anytype, loc: logger.Loc) Expr {
         icount += 1;
         const st = exp.*;
@@ -2045,7 +2052,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_boolean = Data.Store.All.append(@TypeOf(st), st),
+                        .e_boolean = bool_values[@boolToInt(st.value)],
                     },
                 };
             },
@@ -2087,297 +2094,6 @@ pub const Expr = struct {
                     .data = Data{
                         .e_new_target = st,
                     },
-                };
-            },
-            E.Function => {
-                return Expr{
-                    .loc = loc,
-                    .data = Data{
-                        .e_function = Data.Store.All.append(@TypeOf(st), st),
-                    },
-                };
-            },
-            E.ImportMeta => {
-                return Expr{
-                    .loc = loc,
-                    .data = Data{
-                        .e_import_meta = Data.Store.All.append(@TypeOf(st), st),
-                    },
-                };
-            },
-            E.Call => {
-                return Expr{
-                    .loc = loc,
-                    .data = Data{
-                        .e_call = Data.Store.All.append(@TypeOf(st), st),
-                    },
-                };
-            },
-            E.Dot => {
-                return Expr{
-                    .loc = loc,
-                    .data = Data{
-                        .e_dot = Data.Store.All.append(@TypeOf(st), st),
-                    },
-                };
-            },
-            E.Index => {
-                return Expr{
-                    .loc = loc,
-                    .data = Data{
-                        .e_index = Data.Store.All.append(@TypeOf(st), st),
-                    },
-                };
-            },
-            E.Arrow => {
-                return Expr{
-                    .loc = loc,
-                    .data = Data{
-                        .e_arrow = Data.Store.All.append(@TypeOf(st), st),
-                    },
-                };
-            },
-            E.Identifier => {
-                return Expr{
-                    .loc = loc,
-                    .data = Data{
-                        .e_identifier = Data.Store.All.append(@TypeOf(st), st),
-                    },
-                };
-            },
-            E.ImportIdentifier => {
-                return Expr{
-                    .loc = loc,
-                    .data = Data{
-                        .e_import_identifier = Data.Store.All.append(@TypeOf(st), st),
-                    },
-                };
-            },
-            E.PrivateIdentifier => {
-                return Expr{
-                    .loc = loc,
-                    .data = Data{
-                        .e_private_identifier = Data.Store.All.append(@TypeOf(st), st),
-                    },
-                };
-            },
-            E.JSXElement => {
-                return Expr{
-                    .loc = loc,
-                    .data = Data{
-                        .e_jsx_element = Data.Store.All.append(@TypeOf(st), st),
-                    },
-                };
-            },
-            E.Missing => {
-                return Expr{ .loc = loc, .data = Data{ .e_missing = E.Missing{} } };
-            },
-            E.Number => {
-                return Expr{
-                    .loc = loc,
-                    .data = Data{
-                        .e_number = Data.Store.All.append(@TypeOf(st), st),
-                    },
-                };
-            },
-            E.BigInt => {
-                return Expr{
-                    .loc = loc,
-                    .data = Data{
-                        .e_big_int = Data.Store.All.append(@TypeOf(st), st),
-                    },
-                };
-            },
-            E.Object => {
-                return Expr{
-                    .loc = loc,
-                    .data = Data{
-                        .e_object = Data.Store.All.append(@TypeOf(st), st),
-                    },
-                };
-            },
-            E.Spread => {
-                return Expr{
-                    .loc = loc,
-                    .data = Data{
-                        .e_spread = Data.Store.All.append(@TypeOf(st), st),
-                    },
-                };
-            },
-            E.String => {
-                return Expr{
-                    .loc = loc,
-                    .data = Data{
-                        .e_string = Data.Store.All.append(@TypeOf(st), st),
-                    },
-                };
-            },
-            E.TemplatePart => {
-                return Expr{
-                    .loc = loc,
-                    .data = Data{
-                        .e_template_part = Data.Store.All.append(@TypeOf(st), st),
-                    },
-                };
-            },
-            E.Template => {
-                return Expr{
-                    .loc = loc,
-                    .data = Data{
-                        .e_template = Data.Store.All.append(@TypeOf(st), st),
-                    },
-                };
-            },
-            E.RegExp => {
-                return Expr{
-                    .loc = loc,
-                    .data = Data{
-                        .e_reg_exp = Data.Store.All.append(@TypeOf(st), st),
-                    },
-                };
-            },
-            E.Await => {
-                return Expr{
-                    .loc = loc,
-                    .data = Data{
-                        .e_await = Data.Store.All.append(@TypeOf(st), st),
-                    },
-                };
-            },
-            E.Yield => {
-                return Expr{
-                    .loc = loc,
-                    .data = Data{
-                        .e_yield = Data.Store.All.append(@TypeOf(st), st),
-                    },
-                };
-            },
-            E.If => {
-                return Expr{
-                    .loc = loc,
-                    .data = Data{
-                        .e_if = Data.Store.All.append(@TypeOf(st), st),
-                    },
-                };
-            },
-            E.RequireOrRequireResolve => {
-                return Expr{
-                    .loc = loc,
-                    .data = Data{
-                        .e_require_or_require_resolve = Data.Store.All.append(@TypeOf(st), st),
-                    },
-                };
-            },
-            E.Import => {
-                return Expr{
-                    .loc = loc,
-                    .data = Data{
-                        .e_import = Data.Store.All.append(@TypeOf(st), st),
-                    },
-                };
-            },
-            E.Require => {
-                return Expr{
-                    .loc = loc,
-                    .data = Data{
-                        .e_require = Data.Store.All.append(@TypeOf(st), st),
-                    },
-                };
-            },
-
-            else => {
-                @compileError("Invalid type passed to Expr.init");
-            },
-        }
-    }
-
-    pub fn alloc(allocator: *std.mem.Allocator, st: anytype, loc: logger.Loc) Expr {
-        icount += 1;
-        switch (@TypeOf(st)) {
-            E.Array => {
-                return Expr{
-                    .loc = loc,
-                    .data = Data{
-                        .e_array = Data.Store.All.append(@TypeOf(st), st),
-                    },
-                };
-            },
-            E.Class => {
-                return Expr{
-                    .loc = loc,
-                    .data = Data{
-                        .e_class = Data.Store.All.append(@TypeOf(st), st),
-                    },
-                };
-            },
-            E.Unary => {
-                return Expr{
-                    .loc = loc,
-                    .data = Data{
-                        .e_unary = Data.Store.All.append(@TypeOf(st), st),
-                    },
-                };
-            },
-            E.Binary => {
-                return Expr{
-                    .loc = loc,
-                    .data = Data{
-                        .e_binary = Data.Store.All.append(@TypeOf(st), st),
-                    },
-                };
-            },
-            E.This => {
-                return Expr{
-                    .loc = loc,
-                    .data = Data{
-                        .e_this = st,
-                    },
-                };
-            },
-            E.Boolean => {
-                return Expr{
-                    .loc = loc,
-                    .data = Data{
-                        .e_boolean = Data.Store.All.append(@TypeOf(st), st),
-                    },
-                };
-            },
-            E.Super => {
-                return Expr{
-                    .loc = loc,
-                    .data = Data{
-                        .e_super = st,
-                    },
-                };
-            },
-            E.Null => {
-                return Expr{
-                    .loc = loc,
-                    .data = Data{
-                        .e_null = st,
-                    },
-                };
-            },
-            E.Undefined => {
-                return Expr{
-                    .loc = loc,
-                    .data = Data{
-                        .e_undefined = st,
-                    },
-                };
-            },
-            E.New => {
-                return Expr{
-                    .loc = loc,
-                    .data = Data{
-                        .e_new = Data.Store.All.append(@TypeOf(st), st),
-                    },
-                };
-            },
-            E.NewTarget => {
-                return Expr{
-                    .loc = loc,
-                    .data = Data{ .e_new_target = st },
                 };
             },
             E.Function => {
@@ -2575,11 +2291,24 @@ pub const Expr = struct {
                     },
                 };
             },
+            *E.String => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_string = st,
+                    },
+                };
+            },
 
             else => {
-                @compileError("Invalid type passed to Expr.init");
+                @compileError("Invalid type passed to Expr.init: " ++ @typeName(@TypeOf(st)));
             },
         }
+    }
+
+    pub fn alloc(allocator: *std.mem.Allocator, st: anytype, loc: logger.Loc) Expr {
+        icount += 1;
+        return init(&st, loc);
     }
 
     pub const Tag = enum(u6) {
@@ -2978,16 +2707,13 @@ pub const Expr = struct {
                 return true;
             },
 
-            .e_if => {
-                const ex = a.getIf();
+            .e_if => |ex| {
                 return isBoolean(ex.yes) and isBoolean(ex.no);
             },
-            .e_unary => {
-                const ex = a.getUnary();
+            .e_unary => |ex| {
                 return ex.op == .un_not or ex.op == .un_delete;
             },
-            .e_binary => {
-                const ex = a.getBinary();
+            .e_binary => |ex| {
                 switch (ex.op) {
                     .bin_strict_eq, .bin_strict_ne, .bin_loose_eq, .bin_loose_ne, .bin_lt, .bin_gt, .bin_le, .bin_ge, .bin_instanceof, .bin_in => {
                         return true;
@@ -3036,17 +2762,14 @@ pub const Expr = struct {
             .e_null, .e_undefined => {
                 return expr.at(E.Boolean{ .value = true }, allocator);
             },
-            .e_boolean => {
-                const b = expr.getBoolean();
+            .e_boolean => |b| {
                 return expr.at(E.Boolean{ .value = b.value }, allocator);
             },
-            .e_number => {
-                const n = expr.getNumber();
+            .e_number => |n| {
                 return expr.at(E.Boolean{ .value = (n.value == 0 or std.math.isNan(n.value)) }, allocator);
             },
-            .e_big_int => {
-                const b = expr.getBigInt();
-                return expr.at(E.Boolean{ .value = strings.eql(b.value, "0") }, allocator);
+            .e_big_int => |b| {
+                return expr.at(E.Boolean{ .value = strings.eqlComptime(b.value, "0") }, allocator);
             },
             .e_function,
             .e_arrow,
@@ -3055,14 +2778,12 @@ pub const Expr = struct {
                 return expr.at(E.Boolean{ .value = false }, allocator);
             },
             // "!!!a" => "!a"
-            .e_unary => {
-                const un = expr.getUnary();
+            .e_unary => |un| {
                 if (un.op == Op.Code.un_not and isBoolean(un.value)) {
                     return un.value;
                 }
             },
-            .e_binary => {
-                const ex = expr.getBinary();
+            .e_binary => |ex| {
                 // TODO: evaluate whether or not it is safe to do this mutation since it's modifying in-place.
                 // Make sure that these transformations are all safe for special values.
                 // For example, "!(a < b)" is not the same as "a >= b" if a and/or b are
@@ -3122,7 +2843,7 @@ pub const Expr = struct {
         e_unary: *E.Unary,
         e_binary: *E.Binary,
         e_class: *E.Class,
-        e_boolean: *E.Boolean,
+
         e_new: *E.New,
         e_function: *E.Function,
         e_call: *E.Call,
@@ -3133,11 +2854,10 @@ pub const Expr = struct {
         e_import_identifier: *E.ImportIdentifier,
         e_private_identifier: *E.PrivateIdentifier,
         e_jsx_element: *E.JSXElement,
-        e_number: *E.Number,
-        e_big_int: *E.BigInt,
+
         e_object: *E.Object,
         e_spread: *E.Spread,
-        e_string: *E.String,
+
         e_template_part: *E.TemplatePart,
         e_template: *E.Template,
         e_reg_exp: *E.RegExp,
@@ -3147,6 +2867,11 @@ pub const Expr = struct {
         e_require: *E.Require,
         e_require_or_require_resolve: *E.RequireOrRequireResolve,
         e_import: *E.Import,
+
+        e_boolean: *E.Boolean,
+        e_number: *E.Number,
+        e_big_int: *E.BigInt,
+        e_string: *E.String,
 
         e_missing: E.Missing,
         e_this: E.This,
@@ -3702,10 +3427,13 @@ pub const Ast = struct {
     // These are used when bundling. They are filled in during the parser pass
     // since we already have to traverse the AST then anyway and the parser pass
     // is conveniently fully parallelized.
-    named_imports: AutoHashMap(Ref, NamedImport) = undefined,
-    named_exports: StringHashMap(NamedExport) = undefined,
+    named_imports: NamedImports = undefined,
+    named_exports: NamedExports = undefined,
     top_level_symbol_to_parts: AutoHashMap(Ref, std.ArrayList(u32)) = undefined,
     export_star_import_records: []u32 = &([_]u32{}),
+
+    pub const NamedImports = std.ArrayHashMap(Ref, NamedImport, Ref.hash, Ref.eql, true);
+    pub const NamedExports = StringHashMap(NamedExport);
 
     pub fn initTest(parts: []Part) Ast {
         return Ast{
@@ -3770,78 +3498,6 @@ pub const Dependency = packed struct {
 pub const ExprList = std.ArrayList(Expr);
 pub const StmtList = std.ArrayList(Stmt);
 pub const BindingList = std.ArrayList(Binding);
-pub const AstData = struct {
-    expr_list: ExprList,
-    stmt_list: StmtList,
-    binding_list: BindingList,
-
-    pub fn init(allocator: *std.mem.Allocator) AstData {
-        return AstData{
-            .expr_list = ExprList.init(allocator),
-            .stmt_list = StmtList.init(allocator),
-            .binding_list = BindingList.init(allocator),
-        };
-    }
-
-    pub fn deinit(self: *AstData) void {
-        self.expr_list.deinit();
-        self.stmt_list.deinit();
-        self.binding_list.deinit();
-    }
-
-    pub fn expr(self: *AstData, index: ExprNodeIndex) Expr {
-        return self.expr_list.items[index];
-    }
-
-    pub fn stmt(self: *AstData, index: StmtNodeIndex) Stmt {
-        return self.stmt_list.items[index];
-    }
-
-    pub fn binding(self: *AstData, index: BindingNodeIndex) Binding {
-        return self.binding_list.items[index];
-    }
-
-    pub fn add_(self: *AstData, t: anytype) !void {
-        return switch (@TypeOf(t)) {
-            Stmt => {
-                try self.stmt_list.append(t);
-            },
-            Expr => {
-                try self.expr_list.append(t);
-            },
-            Binding => {
-                try self.binding_list.append(t);
-            },
-            else => {
-                @compileError("Invalid type passed to AstData.add. Expected Stmt, Expr, or Binding.");
-            },
-        };
-    }
-
-    pub fn add(self: *AstData, t: anytype) !NodeIndex {
-        return &t;
-        // return switch (@TypeOf(t)) {
-        //     Stmt => {
-        //         var len = self.stmt_list.items.len;
-        //         try self.stmt_list.append(t);
-        //         return @intCast(StmtNodeIndex, len);
-        //     },
-        //     Expr => {
-        //         var len = self.expr_list.items.len;
-        //         try self.expr_list.append(t);
-        //         return @intCast(ExprNodeIndex, len);
-        //     },
-        //     Binding => {
-        //         var len = self.binding_list.items.len;
-        //         try self.binding_list.append(t);
-        //         return @intCast(BindingNodeIndex, len);
-        //     },
-        //     else => {
-        //         @compileError("Invalid type passed to AstData.add. Expected Stmt, Expr, or Binding.");
-        //     },
-        // };
-    }
-};
 
 // Each file is made up of multiple parts, and each part consists of one or
 // more top-level statements. Parts are used for tree shaking and code

@@ -27,8 +27,8 @@ pub const Ref = packed struct {
     inner_index: Int = 0,
     is_source_contents_slice: bool = false,
 
-    pub fn hash(key: Ref) u64 {
-        @compileError("Dont call");
+    pub fn hash(key: Ref) u32 {
+        return @truncate(u32, std.hash.Wyhash.hash(0, std.mem.asBytes(&key)));
     }
 
     // 2 bits of padding for whatever is the parent

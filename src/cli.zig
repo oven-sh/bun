@@ -380,7 +380,6 @@ pub const Cli = struct {
                 _ = try writer.write("\n");
                 for (result.output_files) |file| {
                     const padding_count = 2 + (max_path_len - file.path.len);
-
                     try writer.writeByteNTimes(' ', 2);
                     try writer.writeAll(file.path);
                     try writer.writeByteNTimes(' ', padding_count);

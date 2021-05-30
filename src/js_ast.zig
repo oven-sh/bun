@@ -11,15 +11,88 @@ const allocators = @import("allocators.zig");
 const _hash_map = @import("hash_map.zig");
 const StringHashMap = _hash_map.StringHashMap;
 const AutoHashMap = _hash_map.AutoHashMap;
+pub fn NewStore(comptime ValueType: type, comptime count: usize) type {
+    const max_index = count - 1;
+    const list_count = count;
+    return struct {
+        const Allocator = std.mem.Allocator;
+        const Self = @This();
+        const Block = struct {
+            items: [count]ValueType = undefined,
+            used: usize = 0,
+            allocator: *std.mem.Allocator,
 
-pub const ListIndex = packed struct {
-    index: u31,
-    is_overflowing: bool = false,
+            pub fn isFull(block: *const Block) bool {
+                return block.used >= block.items.len;
+            }
 
-    pub fn eql(a: ListIndex, b: ListIndex) bool {
-        return @bitCast(u32, a) == @bitCast(u32, b);
-    }
-};
+            pub fn append(block: *Block, value: ValueType) *ValueType {
+                std.debug.assert(block.used < count);
+                const index = block.used;
+                block.items[index] = value;
+
+                block.used += 1;
+                return &block.items[index];
+            }
+        };
+
+        block: Block,
+        overflow_ptrs: [500]*Block = undefined,
+        overflow: []*Block = &([_]*Block{}),
+        overflow_used: usize = 0,
+        allocator: *Allocator,
+
+        pub threadlocal var instance: Self = undefined;
+        pub threadlocal var _self: *Self = undefined;
+
+        pub fn reset() void {
+            _self.block.used = 0;
+            for (_self.overflow[0.._self.overflow_used]) |b| {
+                b.used = 0;
+            }
+            _self.overflow_used = 0;
+        }
+
+        pub fn init(allocator: *std.mem.Allocator) *Self {
+            instance = Self{
+                .allocator = allocator,
+                .block = Block{ .allocator = allocator },
+            };
+
+            _self = &instance;
+            return _self;
+        }
+
+        pub fn append(value: ValueType) *ValueType {
+            return _self._append(value);
+        }
+
+        fn _append(self: *Self, value: ValueType) *ValueType {
+            if (!self.block.isFull()) {
+                return self.block.append(value);
+            }
+
+            if (self.overflow_used >= self.overflow.len or self.overflow[self.overflow_used].isFull()) {
+                var slice = self.allocator.alloc(Block, 2) catch unreachable;
+                for (slice) |*block| {
+                    block.allocator = self.allocator;
+                    block.used = 0;
+                    block.items = undefined;
+                    self.overflow_ptrs[self.overflow.len] = block;
+                    self.overflow = self.overflow_ptrs[0 .. self.overflow.len + 1];
+                }
+            }
+
+            var block = self.overflow[self.overflow_used];
+            var ptr = block.append(value);
+            if (block.isFull()) {
+                self.overflow_used += 1;
+            }
+
+            return ptr;
+        }
+    };
+}
 
 // There are three types.
 // 1. Expr (expression)
@@ -709,7 +782,7 @@ pub const E = struct {
     pub const Call = struct {
         // Node:
         target: ExprNodeIndex,
-        args: ExprNodeList,
+        args: ExprNodeList = &([_]ExprNodeIndex{}),
         optional_chain: ?OptionalChain = null,
         is_direct_eval: bool = false,
 
@@ -1086,103 +1159,103 @@ pub const Stmt = struct {
     var None = S.Empty{};
 
     pub inline fn getBlock(self: *const @This()) *S.Block {
-        return Data.Store.Block.at(self.data.s_block);
+        return self.data.s_block;
     }
     pub inline fn getBreak(self: *const @This()) *S.Break {
-        return Data.Store.Break.at(self.data.s_break);
+        return self.data.s_break;
     }
     pub inline fn getClass(self: *const @This()) *S.Class {
-        return Data.Store.Class.at(self.data.s_class);
+        return self.data.s_class;
     }
     pub inline fn getComment(self: *const @This()) *S.Comment {
-        return Data.Store.Comment.at(self.data.s_comment);
+        return self.data.s_comment;
     }
     pub inline fn getContinue(self: *const @This()) *S.Continue {
-        return Data.Store.Continue.at(self.data.s_continue);
+        return self.data.s_continue;
     }
     pub inline fn getDebugger(self: *const @This()) S.Debugger {
         return S.Debugger{};
     }
     pub inline fn getDirective(self: *const @This()) *S.Directive {
-        return Data.Store.Directive.at(self.data.s_directive);
+        return self.data.s_directive;
     }
     pub inline fn getDoWhile(self: *const @This()) *S.DoWhile {
-        return Data.Store.DoWhile.at(self.data.s_do_while);
+        return self.data.s_do_while;
     }
     pub inline fn getEmpty(self: *const @This()) S.Empty {
         return S.Empty{};
     }
     pub inline fn getEnum(self: *const @This()) *S.Enum {
-        return Data.Store.Enum.at(self.data.s_enum);
+        return self.data.s_enum;
     }
     pub inline fn getExportClause(self: *const @This()) *S.ExportClause {
-        return Data.Store.ExportClause.at(self.data.s_export_clause);
+        return self.data.s_export_clause;
     }
     pub inline fn getExportDefault(self: *const @This()) *S.ExportDefault {
-        return Data.Store.ExportDefault.at(self.data.s_export_default);
+        return self.data.s_export_default;
     }
     pub inline fn getExportEquals(self: *const @This()) *S.ExportEquals {
-        return Data.Store.ExportEquals.at(self.data.s_export_equals);
+        return self.data.s_export_equals;
     }
     pub inline fn getExportFrom(self: *const @This()) *S.ExportFrom {
-        return Data.Store.ExportFrom.at(self.data.s_export_from);
+        return self.data.s_export_from;
     }
     pub inline fn getExportStar(self: *const @This()) *S.ExportStar {
-        return Data.Store.ExportStar.at(self.data.s_export_star);
+        return self.data.s_export_star;
     }
     pub inline fn getExpr(self: *const @This()) *S.SExpr {
-        return Data.Store.SExpr.at(self.data.s_expr);
+        return self.data.s_expr;
     }
     pub inline fn getForIn(self: *const @This()) *S.ForIn {
-        return Data.Store.ForIn.at(self.data.s_for_in);
+        return self.data.s_for_in;
     }
     pub inline fn getForOf(self: *const @This()) *S.ForOf {
-        return Data.Store.ForOf.at(self.data.s_for_of);
+        return self.data.s_for_of;
     }
     pub inline fn getFor(self: *const @This()) *S.For {
-        return Data.Store.For.at(self.data.s_for);
+        return self.data.s_for;
     }
     pub inline fn getFunction(self: *const @This()) *S.Function {
-        return Data.Store.Function.at(self.data.s_function);
+        return self.data.s_function;
     }
     pub inline fn getIf(self: *const @This()) *S.If {
-        return Data.Store.If.at(self.data.s_if);
+        return self.data.s_if;
     }
     pub inline fn getImport(self: *const @This()) *S.Import {
-        return Data.Store.Import.at(self.data.s_import);
+        return self.data.s_import;
     }
     pub inline fn getLabel(self: *const @This()) *S.Label {
-        return Data.Store.Label.at(self.data.s_label);
+        return self.data.s_label;
     }
     pub inline fn getLazyExport(self: *const @This()) *S.LazyExport {
-        return Data.Store.LazyExport.at(self.data.s_lazy_export);
+        return self.data.s_lazy_export;
     }
     pub inline fn getLocal(self: *const @This()) *S.Local {
-        return Data.Store.Local.at(self.data.s_local);
+        return self.data.s_local;
     }
     pub inline fn getNamespace(self: *const @This()) *S.Namespace {
-        return Data.Store.Namespace.at(self.data.s_namespace);
+        return self.data.s_namespace;
     }
     pub inline fn getReturn(self: *const @This()) *S.Return {
-        return Data.Store.Return.at(self.data.s_return);
+        return self.data.s_return;
     }
     pub inline fn getSwitch(self: *const @This()) *S.Switch {
-        return Data.Store.Switch.at(self.data.s_switch);
+        return self.data.s_switch;
     }
     pub inline fn getThrow(self: *const @This()) *S.Throw {
-        return Data.Store.Throw.at(self.data.s_throw);
+        return self.data.s_throw;
     }
     pub inline fn getTry(self: *const @This()) *S.Try {
-        return Data.Store.Try.at(self.data.s_try);
+        return self.data.s_try;
     }
     pub inline fn getTypeScript(self: *const @This()) S.TypeScript {
         return S.TypeScript{};
     }
     pub inline fn getWhile(self: *const @This()) *S.While {
-        return Data.Store.While.at(self.data.s_while);
+        return self.data.s_while;
     }
     pub inline fn getWith(self: *const @This()) *S.With {
-        return Data.Store.With.at(self.data.s_with);
+        return self.data.s_with;
     }
     pub var icount: usize = 0;
     pub fn init(origData: anytype, loc: logger.Loc) Stmt {
@@ -1454,72 +1527,73 @@ pub const Stmt = struct {
     };
 
     pub const Data = union(Tag) {
-        s_block: ListIndex,
-        s_break: ListIndex,
-        s_class: ListIndex,
-        s_comment: ListIndex,
-        s_continue: ListIndex,
-        s_debugger: S.Debugger,
-        s_directive: ListIndex,
-        s_do_while: ListIndex,
-        s_empty: S.Empty, // special case, its a zero value type
-        s_enum: ListIndex,
-        s_export_clause: ListIndex,
-        s_export_default: ListIndex,
-        s_export_equals: ListIndex,
-        s_export_from: ListIndex,
-        s_export_star: ListIndex,
-        s_expr: ListIndex,
-        s_for_in: ListIndex,
-        s_for_of: ListIndex,
-        s_for: ListIndex,
-        s_function: ListIndex,
-        s_if: ListIndex,
-        s_import: ListIndex,
-        s_label: ListIndex,
-        s_lazy_export: ListIndex,
-        s_local: ListIndex,
-        s_namespace: ListIndex,
-        s_return: ListIndex,
-        s_switch: ListIndex,
-        s_throw: ListIndex,
-        s_try: ListIndex,
+        s_block: *S.Block,
+        s_break: *S.Break,
+        s_class: *S.Class,
+        s_comment: *S.Comment,
+        s_continue: *S.Continue,
+        s_directive: *S.Directive,
+        s_do_while: *S.DoWhile,
+        s_enum: *S.Enum,
+        s_export_clause: *S.ExportClause,
+        s_export_default: *S.ExportDefault,
+        s_export_equals: *S.ExportEquals,
+        s_export_from: *S.ExportFrom,
+        s_export_star: *S.ExportStar,
+        s_expr: *S.SExpr,
+        s_for_in: *S.ForIn,
+        s_for_of: *S.ForOf,
+        s_for: *S.For,
+        s_function: *S.Function,
+        s_if: *S.If,
+        s_import: *S.Import,
+        s_label: *S.Label,
+        s_lazy_export: *S.LazyExport,
+        s_local: *S.Local,
+        s_namespace: *S.Namespace,
+        s_return: *S.Return,
+        s_switch: *S.Switch,
+        s_throw: *S.Throw,
+        s_try: *S.Try,
+        s_while: *S.While,
+        s_with: *S.With,
+
         s_type_script: S.TypeScript,
-        s_while: ListIndex,
-        s_with: ListIndex,
+        s_empty: S.Empty, // special case, its a zero value type
+        s_debugger: S.Debugger,
 
         pub const Store = struct {
-            pub const Block = NewStore(S.Block);
-            pub const Break = NewStore(S.Break);
-            pub const Class = NewStore(S.Class);
-            pub const Comment = NewStore(S.Comment);
-            pub const Continue = NewStore(S.Continue);
-            pub const Directive = NewStore(S.Directive);
-            pub const DoWhile = NewStore(S.DoWhile);
-            pub const Enum = NewStore(S.Enum);
-            pub const ExportClause = NewStore(S.ExportClause);
-            pub const ExportDefault = NewStore(S.ExportDefault);
-            pub const ExportEquals = NewStore(S.ExportEquals);
-            pub const ExportFrom = NewStore(S.ExportFrom);
-            pub const ExportStar = NewStore(S.ExportStar);
-            pub const SExpr = NewStore(S.SExpr);
-            pub const ForIn = NewStore(S.ForIn);
-            pub const ForOf = NewStore(S.ForOf);
-            pub const For = NewStore(S.For);
-            pub const Function = NewStore(S.Function);
-            pub const If = NewStore(S.If);
-            pub const Import = NewStore(S.Import);
-            pub const Label = NewStore(S.Label);
-            pub const LazyExport = NewStore(S.LazyExport);
-            pub const Local = NewStore(S.Local);
-            pub const Namespace = NewStore(S.Namespace);
-            pub const Return = NewStore(S.Return);
-            pub const Switch = NewStore(S.Switch);
-            pub const Throw = NewStore(S.Throw);
-            pub const Try = NewStore(S.Try);
-            pub const TypeScript = NewStore(S.TypeScript);
-            pub const While = NewStore(S.While);
-            pub const With = NewStore(S.With);
+            pub const Block = NewStore(S.Block, 24);
+            pub const Break = NewStore(S.Break, 24);
+            pub const Class = NewStore(S.Class, 24);
+            pub const Comment = NewStore(S.Comment, 24);
+            pub const Continue = NewStore(S.Continue, 24);
+            pub const Directive = NewStore(S.Directive, 24);
+            pub const DoWhile = NewStore(S.DoWhile, 24);
+            pub const Enum = NewStore(S.Enum, 24);
+            pub const ExportClause = NewStore(S.ExportClause, 24);
+            pub const ExportDefault = NewStore(S.ExportDefault, 24);
+            pub const ExportEquals = NewStore(S.ExportEquals, 24);
+            pub const ExportFrom = NewStore(S.ExportFrom, 24);
+            pub const ExportStar = NewStore(S.ExportStar, 24);
+            pub const SExpr = NewStore(S.SExpr, 24);
+            pub const ForIn = NewStore(S.ForIn, 24);
+            pub const ForOf = NewStore(S.ForOf, 24);
+            pub const For = NewStore(S.For, 24);
+            pub const Function = NewStore(S.Function, 24);
+            pub const If = NewStore(S.If, 24);
+            pub const Import = NewStore(S.Import, 24);
+            pub const Label = NewStore(S.Label, 24);
+            pub const LazyExport = NewStore(S.LazyExport, 24);
+            pub const Local = NewStore(S.Local, 24);
+            pub const Namespace = NewStore(S.Namespace, 24);
+            pub const Return = NewStore(S.Return, 24);
+            pub const Switch = NewStore(S.Switch, 24);
+            pub const Throw = NewStore(S.Throw, 24);
+            pub const Try = NewStore(S.Try, 24);
+            pub const TypeScript = NewStore(S.TypeScript, 24);
+            pub const While = NewStore(S.While, 24);
+            pub const With = NewStore(S.With, 24);
 
             threadlocal var has_inited = false;
             pub fn create(allocator: *std.mem.Allocator) void {
@@ -1593,7 +1667,7 @@ pub const Stmt = struct {
                 With.reset();
             }
 
-            pub fn append(comptime ValueType: type, value: anytype) ListIndex {
+            pub fn append(comptime ValueType: type, value: anytype) *ValueType {
                 switch (comptime ValueType) {
                     S.Block => {
                         return Block.append(value);
@@ -1694,76 +1768,6 @@ pub const Stmt = struct {
                         @compileError("Invalid type passed to Stmt.Data.set " ++ @typeName(ValueType));
                     },
                 }
-            }
-
-            pub fn NewStore(comptime ValueType: type) type {
-                const count = 8096;
-                const max_index = count - 1;
-                const list_count = count;
-                return struct {
-                    pub threadlocal var backing_buf: [count]ValueType = undefined;
-                    pub threadlocal var backing_buf_used: u16 = 0;
-                    const Allocator = std.mem.Allocator;
-                    const Self = @This();
-                    const NotFound = allocators.NotFound;
-                    const Unassigned = allocators.Unassigned;
-
-                    overflow_list: std.ArrayListUnmanaged(ValueType),
-                    allocator: *Allocator,
-
-                    pub threadlocal var instance: Self = undefined;
-                    pub threadlocal var self: *Self = undefined;
-
-                    pub fn reset() void {
-                        backing_buf_used = 0;
-                        self.overflow_list.items.len = 0;
-                    }
-
-                    pub fn init(allocator: *std.mem.Allocator) *Self {
-                        instance = Self{
-                            .allocator = allocator,
-                            .overflow_list = std.ArrayListUnmanaged(ValueType){},
-                        };
-
-                        self = &instance;
-                        return self;
-                    }
-
-                    pub fn isOverflowing() bool {
-                        return backing_buf_used >= @as(u16, count);
-                    }
-
-                    pub fn at(index: ListIndex) *ValueType {
-                        std.debug.assert(index.index != NotFound.index and index.index != Unassigned.index);
-
-                        if (index.is_overflowing) {
-                            return &self.overflow_list.items[index.index];
-                        } else {
-                            return &backing_buf[index.index];
-                        }
-                    }
-
-                    pub fn exists(value: ValueType) bool {
-                        return isSliceInBuffer(value, backing_buf);
-                    }
-
-                    pub fn append(value: ValueType) ListIndex {
-                        var result = ListIndex{ .index = std.math.maxInt(u31), .is_overflowing = backing_buf_used > max_index };
-                        if (result.is_overflowing) {
-                            result.index = @intCast(u31, self.overflow_list.items.len);
-                            self.overflow_list.append(self.allocator, value) catch unreachable;
-                        } else {
-                            result.index = backing_buf_used;
-                            backing_buf[result.index] = value;
-                            backing_buf_used += 1;
-                            if (backing_buf_used >= max_index and self.overflow_list.capacity == 0) {
-                                self.overflow_list = @TypeOf(self.overflow_list).initCapacity(self.allocator, 1) catch unreachable;
-                            }
-                        }
-
-                        return result;
-                    }
-                };
             }
         };
 
@@ -1912,110 +1916,110 @@ pub const Expr = struct {
     pub const Query = struct { expr: Expr, loc: logger.Loc };
 
     pub fn getArray(exp: *const Expr) *E.Array {
-        return Data.Store.Array.at(exp.data.e_array);
+        return exp.data.e_array;
     }
     pub fn getUnary(exp: *const Expr) *E.Unary {
-        return Data.Store.Unary.at(exp.data.e_unary);
+        return exp.data.e_unary;
     }
     pub fn getBinary(exp: *const Expr) *E.Binary {
-        return Data.Store.Binary.at(exp.data.e_binary);
+        return exp.data.e_binary;
     }
     pub fn getThis(exp: *const Expr) *E.This {
         return E.This{};
     }
     pub fn getClass(exp: *const Expr) *E.Class {
-        return Data.Store.Class.at(exp.data.e_class);
+        return exp.data.e_class;
     }
     pub fn getBoolean(exp: *const Expr) *E.Boolean {
-        return Data.Store.Boolean.at(exp.data.e_boolean);
+        return exp.data.e_boolean;
     }
     pub fn getSuper(exp: *const Expr) *E.Super {
-        return Data.Store.Super.at(exp.data.e_super);
+        return exp.data.e_super;
     }
     pub fn getNull(exp: *const Expr) *E.Null {
-        return Data.Store.Null.at(exp.data.e_null);
+        return exp.data.e_null;
     }
     pub fn getUndefined(exp: *const Expr) *E.Undefined {
-        return Data.Store.Undefined.at(exp.data.e_undefined);
+        return exp.data.e_undefined;
     }
     pub fn getNew(exp: *const Expr) *E.New {
-        return Data.Store.New.at(exp.data.e_new);
+        return exp.data.e_new;
     }
     pub fn getNewTarget(exp: *const Expr) *E.NewTarget {
         return &E.NewTarget{};
     }
     pub fn getFunction(exp: *const Expr) *E.Function {
-        return Data.Store.Function.at(exp.data.e_function);
+        return exp.data.e_function;
     }
 
     pub fn getCall(exp: *const Expr) *E.Call {
-        return Data.Store.Call.at(exp.data.e_call);
+        return exp.data.e_call;
     }
     pub fn getDot(exp: *const Expr) *E.Dot {
-        return Data.Store.Dot.at(exp.data.e_dot);
+        return exp.data.e_dot;
     }
     pub fn getIndex(exp: *const Expr) *E.Index {
-        return Data.Store.Index.at(exp.data.e_index);
+        return exp.data.e_index;
     }
     pub fn getArrow(exp: *const Expr) *E.Arrow {
-        return Data.Store.Arrow.at(exp.data.e_arrow);
+        return exp.data.e_arrow;
     }
     pub fn getIdentifier(exp: *const Expr) *E.Identifier {
-        return Data.Store.Identifier.at(exp.data.e_identifier);
+        return exp.data.e_identifier;
     }
     pub fn getImportIdentifier(exp: *const Expr) *E.ImportIdentifier {
-        return Data.Store.ImportIdentifier.at(exp.data.e_import_identifier);
+        return exp.data.e_import_identifier;
     }
     pub fn getPrivateIdentifier(exp: *const Expr) *E.PrivateIdentifier {
-        return Data.Store.PrivateIdentifier.at(exp.data.e_private_identifier);
+        return exp.data.e_private_identifier;
     }
     pub fn getJsxElement(exp: *const Expr) *E.JSXElement {
-        return Data.Store.JSXElement.at(exp.data.e_jsx_element);
+        return exp.data.e_jsx_element;
     }
     pub fn getMissing(exp: *const Expr) *E.Missing {
-        return Data.Store.Missing.at(exp.data.e_missing);
+        return exp.data.e_missing;
     }
     pub fn getNumber(exp: *const Expr) *E.Number {
-        return Data.Store.Number.at(exp.data.e_number);
+        return exp.data.e_number;
     }
     pub fn getBigInt(exp: *const Expr) *E.BigInt {
-        return Data.Store.BigInt.at(exp.data.e_big_int);
+        return exp.data.e_big_int;
     }
     pub fn getObject(exp: *const Expr) *E.Object {
-        return Data.Store.Object.at(exp.data.e_object);
+        return exp.data.e_object;
     }
     pub fn getSpread(exp: *const Expr) *E.Spread {
-        return Data.Store.Spread.at(exp.data.e_spread);
+        return exp.data.e_spread;
     }
     pub fn getString(exp: *const Expr) *E.String {
-        return Data.Store.String.at(exp.data.e_string);
+        return exp.data.e_string;
     }
     pub fn getTemplatePart(exp: *const Expr) *E.TemplatePart {
-        return Data.Store.TemplatePart.at(exp.data.e_template_part);
+        return exp.data.e_template_part;
     }
     pub fn getTemplate(exp: *const Expr) *E.Template {
-        return Data.Store.Template.at(exp.data.e_template);
+        return exp.data.e_template;
     }
     pub fn getRegExp(exp: *const Expr) *E.RegExp {
-        return Data.Store.RegExp.at(exp.data.e_reg_exp);
+        return exp.data.e_reg_exp;
     }
     pub fn getAwait(exp: *const Expr) *E.Await {
-        return Data.Store.Await.at(exp.data.e_await);
+        return exp.data.e_await;
     }
     pub fn getYield(exp: *const Expr) *E.Yield {
-        return Data.Store.Yield.at(exp.data.e_yield);
+        return exp.data.e_yield;
     }
     pub fn getIf(exp: *const Expr) *E.If {
-        return Data.Store.If.at(exp.data.e_if);
+        return exp.data.e_if;
     }
     pub fn getRequire(exp: *const Expr) *E.Require {
-        return Data.Store.Require.at(exp.data.e_require);
+        return exp.data.e_require;
     }
     pub fn getRequireOrRequireResolve(exp: *const Expr) *E.RequireOrRequireResolve {
-        return Data.Store.RequireOrRequireResolve.at(exp.data.e_require_or_require_resolve);
+        return exp.data.e_require_or_require_resolve;
     }
     pub fn getImport(exp: *const Expr) *E.Import {
-        return Data.Store.Import.at(exp.data.e_import);
+        return exp.data.e_import;
     }
 
     pub fn asProperty(expr: *const Expr, name: string) ?Query {
@@ -2108,7 +2112,7 @@ pub const Expr = struct {
             return null;
         }
 
-        return [2]f64{ Expr.Data.Store.Number.at(left.e_number).value, Expr.Data.Store.Number.at(right.e_number).value };
+        return [2]f64{ left.e_number.value, right.e_number.value };
     }
 
     pub fn isAnonymousNamed(e: *Expr) bool {
@@ -3250,12 +3254,35 @@ pub const Expr = struct {
     }
 
     pub const Data = union(Tag) {
-        e_array: ListIndex,
-        e_unary: ListIndex,
-        e_binary: ListIndex,
-
-        e_class: ListIndex,
-        e_boolean: ListIndex,
+        e_array: *E.Array,
+        e_unary: *E.Unary,
+        e_binary: *E.Binary,
+        e_class: *E.Class,
+        e_boolean: *E.Boolean,
+        e_new: *E.New,
+        e_function: *E.Function,
+        e_call: *E.Call,
+        e_dot: *E.Dot,
+        e_index: *E.Index,
+        e_arrow: *E.Arrow,
+        e_identifier: *E.Identifier,
+        e_import_identifier: *E.ImportIdentifier,
+        e_private_identifier: *E.PrivateIdentifier,
+        e_jsx_element: *E.JSXElement,
+        e_number: *E.Number,
+        e_big_int: *E.BigInt,
+        e_object: *E.Object,
+        e_spread: *E.Spread,
+        e_string: *E.String,
+        e_template_part: *E.TemplatePart,
+        e_template: *E.Template,
+        e_reg_exp: *E.RegExp,
+        e_await: *E.Await,
+        e_yield: *E.Yield,
+        e_if: *E.If,
+        e_require: *E.Require,
+        e_require_or_require_resolve: *E.RequireOrRequireResolve,
+        e_import: *E.Import,
 
         e_missing: E.Missing,
         e_this: E.This,
@@ -3263,71 +3290,42 @@ pub const Expr = struct {
         e_null: E.Null,
         e_undefined: E.Undefined,
         e_new_target: E.NewTarget,
-
-        e_new: ListIndex,
-
-        e_function: ListIndex,
         e_import_meta: E.ImportMeta,
-        e_call: ListIndex,
-        e_dot: ListIndex,
-        e_index: ListIndex,
-        e_arrow: ListIndex,
-        e_identifier: ListIndex,
-        e_import_identifier: ListIndex,
-        e_private_identifier: ListIndex,
-        e_jsx_element: ListIndex,
-
-        e_number: ListIndex,
-        e_big_int: ListIndex,
-        e_object: ListIndex,
-        e_spread: ListIndex,
-        e_string: ListIndex,
-        e_template_part: ListIndex,
-        e_template: ListIndex,
-        e_reg_exp: ListIndex,
-        e_await: ListIndex,
-        e_yield: ListIndex,
-        e_if: ListIndex,
-        e_require: ListIndex,
-        e_require_or_require_resolve: ListIndex,
-        e_import: ListIndex,
 
         pub const Store = struct {
-            pub const Array = NewStore(E.Array);
-            pub const Unary = NewStore(E.Unary);
-            pub const Binary = NewStore(E.Binary);
-            pub const This = NewStore(E.This);
-            pub const Class = NewStore(E.Class);
-            pub const Boolean = NewStore(E.Boolean);
-            pub const Super = NewStore(E.Super);
-            pub const Null = NewStore(E.Null);
-            pub const Undefined = NewStore(E.Undefined);
-            pub const New = NewStore(E.New);
-            pub const Function = NewStore(E.Function);
-            pub const ImportMeta = NewStore(E.ImportMeta);
-            pub const Call = NewStore(E.Call);
-            pub const Dot = NewStore(E.Dot);
-            pub const Index = NewStore(E.Index);
-            pub const Arrow = NewStore(E.Arrow);
-            pub const Identifier = NewStore(E.Identifier);
-            pub const ImportIdentifier = NewStore(E.ImportIdentifier);
-            pub const PrivateIdentifier = NewStore(E.PrivateIdentifier);
-            pub const JSXElement = NewStore(E.JSXElement);
-            pub const Missing = NewStore(E.Missing);
-            pub const Number = NewStore(E.Number);
-            pub const BigInt = NewStore(E.BigInt);
-            pub const Object = NewStore(E.Object);
-            pub const Spread = NewStore(E.Spread);
-            pub const String = NewStore(E.String);
-            pub const TemplatePart = NewStore(E.TemplatePart);
-            pub const Template = NewStore(E.Template);
-            pub const RegExp = NewStore(E.RegExp);
-            pub const Await = NewStore(E.Await);
-            pub const Yield = NewStore(E.Yield);
-            pub const If = NewStore(E.If);
-            pub const Require = NewStore(E.Require);
-            pub const RequireOrRequireResolve = NewStore(E.RequireOrRequireResolve);
-            pub const Import = NewStore(E.Import);
+            const often = 512;
+            const medium = 256;
+            const rare = 24;
+            pub const Array = NewStore(E.Array, 128);
+            pub const Unary = NewStore(E.Unary, 128);
+            pub const Binary = NewStore(E.Binary, 128);
+            pub const Class = NewStore(E.Class, 24);
+            pub const Boolean = NewStore(E.Boolean, 512);
+            pub const Super = NewStore(E.Super, 128);
+            pub const New = NewStore(E.New, 128);
+            pub const Function = NewStore(E.Function, 24);
+            pub const Call = NewStore(E.Call, often);
+            pub const Dot = NewStore(E.Dot, often);
+            pub const Index = NewStore(E.Index, 24);
+            pub const Arrow = NewStore(E.Arrow, 24);
+            pub const Identifier = NewStore(E.Identifier, 24);
+            pub const ImportIdentifier = NewStore(E.ImportIdentifier, 24);
+            pub const PrivateIdentifier = NewStore(E.PrivateIdentifier, 24);
+            pub const JSXElement = NewStore(E.JSXElement, 24);
+            pub const Number = NewStore(E.Number, 256);
+            pub const BigInt = NewStore(E.BigInt, 256);
+            pub const Object = NewStore(E.Object, 512);
+            pub const Spread = NewStore(E.Spread, 256);
+            pub const String = NewStore(E.String, 512);
+            pub const TemplatePart = NewStore(E.TemplatePart, 128);
+            pub const Template = NewStore(E.Template, 64);
+            pub const RegExp = NewStore(E.RegExp, 24);
+            pub const Await = NewStore(E.Await, 24);
+            pub const Yield = NewStore(E.Yield, 24);
+            pub const If = NewStore(E.If, 24);
+            pub const Require = NewStore(E.Require, 24);
+            pub const RequireOrRequireResolve = NewStore(E.RequireOrRequireResolve, 24);
+            pub const Import = NewStore(E.Import, 24);
 
             threadlocal var has_inited = false;
             pub fn create(allocator: *std.mem.Allocator) void {
@@ -3339,12 +3337,10 @@ pub const Expr = struct {
                 _ = Array.init(allocator);
                 _ = Unary.init(allocator);
                 _ = Binary.init(allocator);
-                _ = This.init(allocator);
                 _ = Class.init(allocator);
                 _ = Boolean.init(allocator);
                 _ = New.init(allocator);
                 _ = Function.init(allocator);
-                _ = ImportMeta.init(allocator);
                 _ = Call.init(allocator);
                 _ = Dot.init(allocator);
                 _ = Index.init(allocator);
@@ -3353,7 +3349,6 @@ pub const Expr = struct {
                 _ = ImportIdentifier.init(allocator);
                 _ = PrivateIdentifier.init(allocator);
                 _ = JSXElement.init(allocator);
-                _ = Missing.init(allocator);
                 _ = Number.init(allocator);
                 _ = BigInt.init(allocator);
                 _ = Object.init(allocator);
@@ -3374,12 +3369,10 @@ pub const Expr = struct {
                 Array.reset();
                 Unary.reset();
                 Binary.reset();
-                This.reset();
                 Class.reset();
                 Boolean.reset();
                 New.reset();
                 Function.reset();
-                ImportMeta.reset();
                 Call.reset();
                 Dot.reset();
                 Index.reset();
@@ -3388,7 +3381,6 @@ pub const Expr = struct {
                 ImportIdentifier.reset();
                 PrivateIdentifier.reset();
                 JSXElement.reset();
-                Missing.reset();
                 Number.reset();
                 BigInt.reset();
                 Object.reset();
@@ -3405,7 +3397,7 @@ pub const Expr = struct {
                 Import.reset();
             }
 
-            pub fn append(comptime ValueType: type, value: anytype) ListIndex {
+            pub fn append(comptime ValueType: type, value: anytype) *ValueType {
                 switch (comptime ValueType) {
                     E.Array => {
                         return Array.append(value);
@@ -3519,77 +3511,6 @@ pub const Expr = struct {
                         @compileError("Invalid type passed to Stmt.Data.set " ++ @typeName(ValueType));
                     },
                 }
-            }
-
-            pub fn NewStore(comptime ValueType: type) type {
-                const count = 8096;
-                const max_index = count - 1;
-                const list_count = count;
-                return struct {
-                    pub threadlocal var backing_buf: [count]ValueType = undefined;
-                    pub threadlocal var backing_buf_used: u16 = 0;
-                    const Allocator = std.mem.Allocator;
-                    const Self = @This();
-                    const NotFound = allocators.NotFound;
-                    const Unassigned = allocators.Unassigned;
-
-                    overflow_list: std.ArrayListUnmanaged(ValueType),
-                    allocator: *Allocator,
-
-                    pub threadlocal var instance: Self = undefined;
-                    pub threadlocal var self: *Self = undefined;
-
-                    pub fn reset() void {
-                        backing_buf_used = 0;
-                        self.overflow_list.shrinkRetainingCapacity(0);
-                    }
-
-                    pub fn init(allocator: *std.mem.Allocator) *Self {
-                        instance = Self{
-                            .allocator = allocator,
-                            .overflow_list = std.ArrayListUnmanaged(ValueType){},
-                        };
-
-                        self = &instance;
-                        return self;
-                    }
-
-                    pub fn isOverflowing() bool {
-                        return backing_buf_used >= @as(u16, count);
-                    }
-
-                    pub fn at(index: ListIndex) *ValueType {
-                        std.debug.assert(index.index != NotFound.index and index.index != Unassigned.index);
-
-                        if (index.is_overflowing) {
-                            return &self.overflow_list.items[index.index];
-                        } else {
-                            return &backing_buf[index.index];
-                        }
-                    }
-
-                    pub fn exists(value: ValueType) bool {
-                        return isSliceInBuffer(value, backing_buf);
-                    }
-
-                    pub fn append(value: ValueType) ListIndex {
-                        var result = ListIndex{ .index = std.math.maxInt(u31), .is_overflowing = backing_buf_used > max_index };
-                        if (result.is_overflowing) {
-                            result.index = @intCast(u31, self.overflow_list.items.len);
-                            self.overflow_list.append(self.allocator, value) catch unreachable;
-                        } else {
-                            result.index = backing_buf_used;
-                            backing_buf[result.index] = value;
-                            backing_buf_used += 1;
-
-                            if (backing_buf_used >= max_index and self.overflow_list.capacity == 0) {
-                                self.overflow_list = @TypeOf(self.overflow_list).initCapacity(self.allocator, 1) catch unreachable;
-                            }
-                        }
-
-                        return result;
-                    }
-                };
             }
         };
 

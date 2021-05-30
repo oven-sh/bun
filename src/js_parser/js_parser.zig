@@ -619,8 +619,8 @@ pub const SideEffects = enum(u2) {
                 // }
             },
 
-            .s_block => {
-                for (stmt.getBlock().stmts) |child| {
+            .s_block => |block| {
+                for (block.stmts) |child| {
                     if (shouldKeepStmtInDeadControlFlow(child)) {
                         return true;
                     }
@@ -734,8 +734,7 @@ pub const SideEffects = enum(u2) {
             .e_null, .e_undefined, .e_boolean, .e_number, .e_big_int, .e_string => {
                 return true;
             },
-            .e_unary => {
-                const e = data.e_unary;
+            .e_unary => |e| {
                 switch (e.op) {
                     // number or bigint
                     .un_pos,
@@ -758,8 +757,7 @@ pub const SideEffects = enum(u2) {
                     else => {},
                 }
             },
-            .e_binary => {
-                const e = data.e_binary;
+            .e_binary => |e| {
                 switch (e.op) {
                     // boolean
                     .bin_lt,
@@ -812,8 +810,7 @@ pub const SideEffects = enum(u2) {
                     else => {},
                 }
             },
-            .e_if => {
-                const e = data.e_if;
+            .e_if => |e| {
                 return isPrimitiveWithSideEffects(e.yes.data) and isPrimitiveWithSideEffects(e.no.data);
             },
             else => {},
@@ -969,8 +966,7 @@ pub const SideEffects = enum(u2) {
             .e_object, .e_array, .e_class => {
                 return Result{ .ok = true, .value = true, .side_effects = .could_have_side_effects };
             },
-            .e_unary => {
-                const e_ = exp.e_unary;
+            .e_unary => |e_| {
                 switch (e_.op) {
                     .un_void => {
                         return Result{ .ok = true, .value = false, .side_effects = .could_have_side_effects };
@@ -990,8 +986,7 @@ pub const SideEffects = enum(u2) {
                     else => {},
                 }
             },
-            .e_binary => {
-                const e_ = exp.e_binary;
+            .e_binary => |e_| {
                 switch (e_.op) {
                     .bin_logical_or => {
                         // "anything || truthy" is truthy
@@ -1092,8 +1087,8 @@ fn statementCaresAboutScope(stmt: Stmt) bool {
         => {
             return false;
         },
-        .s_local => {
-            return stmt.getLocal().kind != .k_var;
+        .s_local => |local| {
+            return local.kind != .k_var;
         },
         else => {
             return true;
@@ -1667,7 +1662,7 @@ pub const Prefill = struct {
         pub var ColumnNumber = E.String{ .value = &Prefill.StringLiteral.ColumnNumber };
     };
     pub const Data = struct {
-        pub var BMissing = B{ .b_missing = &BMissing_ };
+        pub var BMissing = B{ .b_missing = BMissing_ };
         pub var BMissing_ = B.Missing{};
 
         pub var EMissing = Expr.Data{ .e_missing = EMissing_ };
@@ -1692,12 +1687,12 @@ pub const Prefill = struct {
     };
 };
 
-// var keyExprData = Expr.Data{ .e_string = Prefill.String.Key };
-// var jsxChildrenKeyData = Expr.Data{ .e_string = Prefill.String.Children };
+var keyExprData = Expr.Data{ .e_string = &Prefill.String.Key };
+var jsxChildrenKeyData = Expr.Data{ .e_string = &Prefill.String.Children };
 var nullExprValueData = E.Null{};
 var falseExprValueData = E.Boolean{ .value = false };
 var nullValueExpr = Expr.Data{ .e_null = nullExprValueData };
-var falseValueExpr = Expr.Data{ .e_boolean = falseExprValueData };
+var falseValueExpr = Expr.Data{ .e_boolean = &falseExprValueData };
 
 // P is for Parser!
 // public only because of Binding.ToExpr
@@ -1732,7 +1727,6 @@ pub const P = struct {
     promise_ref: ?js_ast.Ref = null,
     scopes_in_order_visitor_index: usize = 0,
     has_classic_runtime_warned: bool = false,
-    data: js_ast.AstData,
 
     injected_define_symbols: List(Ref),
     symbol_uses: SymbolUseMap,
@@ -1790,8 +1784,8 @@ pub const P = struct {
     enclosing_class_keyword: logger.Range = logger.Range.None,
     import_items_for_namespace: Map(js_ast.Ref, StringHashMap(js_ast.LocRef)),
     is_import_item: RefBoolMap,
-    named_imports: Map(js_ast.Ref, js_ast.NamedImport),
-    named_exports: StringHashMap(js_ast.NamedExport),
+    named_imports: js_ast.Ast.NamedImports,
+    named_exports: js_ast.Ast.NamedExports,
     top_level_symbol_to_parts: Map(js_ast.Ref, List(u32)),
     import_namespace_cc_map: Map(ImportNamespaceCallOrConstruct, bool),
 
@@ -1943,7 +1937,7 @@ pub const P = struct {
             }
             const str = arg.data.e_string;
 
-            const import_record_index = p.addImportRecord(.dynamic, arg.loc, arg.getString().string(p.allocator) catch unreachable);
+            const import_record_index = p.addImportRecord(.dynamic, arg.loc, arg.data.e_string.string(p.allocator) catch unreachable);
             p.import_records.items[import_record_index].handles_import_errors = (state.is_await_target and p.fn_or_arrow_data_visit.try_body_count != 0) or state.is_then_catch_target;
             p.import_records_for_current_part.append(import_record_index) catch unreachable;
             return p.e(E.Import{
@@ -5970,8 +5964,7 @@ pub const P = struct {
                 switch (stmt.data) {
                     .s_expr => |expr| {
                         switch (expr.value.data) {
-                            .e_string => {
-                                const str = expr.value.getString();
+                            .e_string => |str| {
                                 if (!str.prefer_template) {
                                     isDirectivePrologue = true;
 
@@ -7166,9 +7159,7 @@ pub const P = struct {
                 // Forbid decorators on class constructors
                 if (opts.ts_decorators.len > 0) {
                     switch ((property.key orelse p.panic("Internal error: Expected property {s} to have a key.", .{property})).data) {
-                        .e_string => {
-                            const str = property.key.?.getString();
-
+                        .e_string => |str| {
                             if (str.eql(string, "constructor")) {
                                 p.log.addError(p.source, first_decorator_loc, "TypeScript does not allow decorators on class constructors") catch unreachable;
                             }
@@ -9099,12 +9090,12 @@ pub const P = struct {
     pub fn bindingCanBeRemovedIfUnused(p: *P, binding: Binding) bool {
         switch (binding.data) {
             .b_array => |bi| {
-                for (bi.items) |item| {
+                for (bi.items) |*item| {
                     if (!p.bindingCanBeRemovedIfUnused(item.binding)) {
                         return false;
                     }
 
-                    if (item.default_value) |default| {
+                    if (item.default_value) |*default| {
                         if (!p.exprCanBeRemovedIfUnused(default)) {
                             return false;
                         }
@@ -9112,8 +9103,8 @@ pub const P = struct {
                 }
             },
             .b_object => |bi| {
-                for (bi.properties) |property| {
-                    if (!property.flags.is_spread and !p.exprCanBeRemovedIfUnused(property.key)) {
+                for (bi.properties) |*property| {
+                    if (!property.flags.is_spread and !p.exprCanBeRemovedIfUnused(&property.key)) {
                         return false;
                     }
 
@@ -9121,7 +9112,7 @@ pub const P = struct {
                         return false;
                     }
 
-                    if (property.default_value) |default| {
+                    if (property.default_value) |*default| {
                         if (!p.exprCanBeRemovedIfUnused(default)) {
                             return false;
                         }
@@ -9155,17 +9146,17 @@ pub const P = struct {
                         // Expressions marked with this are automatically generated and have
                         // no side effects by construction.
                         break;
-                    } else if (!p.exprCanBeRemovedIfUnused(st.value)) {
+                    } else if (!p.exprCanBeRemovedIfUnused(&st.value)) {
                         return false;
                     }
                 },
                 .s_local => |st| {
-                    for (st.decls) |decl| {
+                    for (st.decls) |*decl| {
                         if (!p.bindingCanBeRemovedIfUnused(decl.binding)) {
                             return false;
                         }
 
-                        if (decl.value) |decl_value| {
+                        if (decl.value) |*decl_value| {
                             if (!p.exprCanBeRemovedIfUnused(decl_value)) {
                                 return false;
                             }
@@ -9183,7 +9174,7 @@ pub const P = struct {
                                 // These never have side effects
                                 .s_function => {},
                                 .s_class => {
-                                    if (!p.classCanBeRemovedIfUnused(&s2.getClass().class)) {
+                                    if (!p.classCanBeRemovedIfUnused(&s2.data.s_class.class)) {
                                         return false;
                                     }
                                 },
@@ -9192,7 +9183,7 @@ pub const P = struct {
                                 },
                             }
                         },
-                        .expr => |exp| {
+                        .expr => |*exp| {
                             if (!p.exprCanBeRemovedIfUnused(exp)) {
                                 return false;
                             }
@@ -9449,7 +9440,7 @@ pub const P = struct {
                         if (e_.properties.len > 0) {
                             if (e_.key) |key| {
                                 var props = List(G.Property).fromOwnedSlice(p.allocator, e_.properties);
-                                // props.append(G.Property{ .key = Expr{ .loc = key.loc, .data = keyExprData }, .value = key }) catch unreachable;
+                                props.append(G.Property{ .key = Expr{ .loc = key.loc, .data = keyExprData }, .value = key }) catch unreachable;
                                 args[0] = p.e(E.Object{ .properties = props.toOwnedSlice() }, expr.loc);
                             } else {
                                 args[0] = p.e(E.Object{ .properties = e_.properties }, expr.loc);
@@ -9487,7 +9478,7 @@ pub const P = struct {
                         for (e_.children) |child, i| {
                             e_.children[i] = p.visitExpr(child);
                         }
-                        const children_key = p.e(E.String{ .utf8 = "key" }, expr.loc);
+                        const children_key = Expr{ .data = jsxChildrenKeyData, .loc = expr.loc };
 
                         if (e_.children.len == 1) {
                             props.append(G.Property{
@@ -9514,29 +9505,29 @@ pub const P = struct {
                         }
 
                         if (p.options.jsx.development) {
-                            // args[3] = Expr{ .loc = expr.loc, .data = falseValueExpr };
+                            args[3] = Expr{ .loc = expr.loc, .data = falseValueExpr };
                             // placeholder src prop for now
-                            // var source = p.allocator.alloc(G.Property, 3) catch unreachable;
-                            // p.recordUsage(p.jsx_filename_ref);
-                            // source[0] = G.Property{
-                            //     .key = Expr{ .loc = expr.loc, .data = Prefill.Data.Filename },
-                            //     .value = p.e(E.Identifier{ .ref = p.jsx_filename_ref }, expr.loc),
-                            // };
+                            var source = p.allocator.alloc(G.Property, 3) catch unreachable;
+                            p.recordUsage(p.jsx_filename_ref);
+                            source[0] = G.Property{
+                                .key = Expr{ .loc = expr.loc, .data = Prefill.Data.Filename },
+                                .value = p.e(E.Identifier{ .ref = p.jsx_filename_ref }, expr.loc),
+                            };
 
-                            // source[1] = G.Property{
-                            //     .key = Expr{ .loc = expr.loc, .data = Prefill.Data.LineNumber },
-                            //     .value = p.e(E.Number{ .value = @intToFloat(f64, expr.loc.start) }, expr.loc),
-                            // };
+                            source[1] = G.Property{
+                                .key = Expr{ .loc = expr.loc, .data = Prefill.Data.LineNumber },
+                                .value = p.e(E.Number{ .value = @intToFloat(f64, expr.loc.start) }, expr.loc),
+                            };
 
-                            // source[2] = G.Property{
-                            //     .key = Expr{ .loc = expr.loc, .data = Prefill.Data.ColumnNumber },
-                            //     .value = p.e(E.Number{ .value = @intToFloat(f64, expr.loc.start) }, expr.loc),
-                            // };
+                            source[2] = G.Property{
+                                .key = Expr{ .loc = expr.loc, .data = Prefill.Data.ColumnNumber },
+                                .value = p.e(E.Number{ .value = @intToFloat(f64, expr.loc.start) }, expr.loc),
+                            };
 
-                            // args[4] = p.e(E.Object{
-                            //     .properties = source,
-                            // }, expr.loc);
-                            // args[5] = Expr{ .data = Prefill.Data.This, .loc = expr.loc };
+                            args[4] = p.e(E.Object{
+                                .properties = source,
+                            }, expr.loc);
+                            args[5] = Expr{ .data = Prefill.Data.This, .loc = expr.loc };
                         }
 
                         return p.e(E.Call{
@@ -9556,9 +9547,8 @@ pub const P = struct {
                     e_.tag = p.visitExpr(tag);
                 }
 
-                var i: usize = 0;
-                while (i < e_.parts.len) : (i += 1) {
-                    e_.parts[i].value = p.visitExpr(e_.parts[i].value);
+                for (e_.parts) |*part| {
+                    part.value = p.visitExpr(part.value);
                 }
             },
 
@@ -9902,7 +9892,7 @@ pub const P = struct {
                         in.assign_target,
                         is_delete_target,
                         e_.target,
-                        e_.index.getString().string(p.allocator) catch unreachable,
+                        e_.index.data.e_string.string(p.allocator) catch unreachable,
                         e_.index.loc,
                         is_call_target,
                     )) |val| {
@@ -9957,7 +9947,7 @@ pub const P = struct {
                                 }
                             },
                             .un_void => {
-                                if (p.exprCanBeRemovedIfUnused(e_.value)) {
+                                if (p.exprCanBeRemovedIfUnused(&e_.value)) {
                                     return p.e(E.Undefined{}, e_.value.loc);
                                 }
                             },
@@ -10137,7 +10127,7 @@ pub const P = struct {
                         // Forbid duplicate "__proto__" properties according to the specification
                         if (!property.flags.is_computed and !property.flags.was_shorthand and !property.flags.is_method and in.assign_target == .none and key.data.isStringValue() and strings.eqlComptime(
                             // __proto__ is utf8, assume it lives in refs
-                            key.getString().utf8,
+                            key.data.e_string.utf8,
                             "__proto__",
                         )) {
                             if (has_proto) {
@@ -10153,9 +10143,7 @@ pub const P = struct {
                     // Extract the initializer for expressions like "({ a: b = c } = d)"
                     if (in.assign_target != .none and property.initializer != null and property.value != null) {
                         switch (property.value.?.data) {
-                            .e_binary => {
-                                const bin = property.value.?.getBinary();
-
+                            .e_binary => |bin| {
                                 if (bin.op == .bin_assign) {
                                     property.initializer = bin.right;
                                     property.value = bin.left;
@@ -10395,24 +10383,24 @@ pub const P = struct {
     }
 
     pub fn classCanBeRemovedIfUnused(p: *P, class: *G.Class) bool {
-        if (class.extends) |extends| {
+        if (class.extends) |*extends| {
             if (!p.exprCanBeRemovedIfUnused(extends)) {
                 return false;
             }
         }
 
-        for (class.properties) |property| {
-            if (!p.exprCanBeRemovedIfUnused(property.key orelse unreachable)) {
+        for (class.properties) |*property| {
+            if (!p.exprCanBeRemovedIfUnused(&(property.key orelse unreachable))) {
                 return false;
             }
 
-            if (property.value) |val| {
+            if (property.value) |*val| {
                 if (!p.exprCanBeRemovedIfUnused(val)) {
                     return false;
                 }
             }
 
-            if (property.initializer) |val| {
+            if (property.initializer) |*val| {
                 if (!p.exprCanBeRemovedIfUnused(val)) {
                     return false;
                 }
@@ -10425,7 +10413,7 @@ pub const P = struct {
     // TODO:
     // When React Fast Refresh is enabled, anything that's a JSX component should not be removable
     // This is to improve the reliability of fast refresh between page loads.
-    pub fn exprCanBeRemovedIfUnused(p: *P, expr: Expr) bool {
+    pub fn exprCanBeRemovedIfUnused(p: *P, expr: *const Expr) bool {
         switch (expr.data) {
             .e_null,
             .e_undefined,
@@ -10498,10 +10486,10 @@ pub const P = struct {
                 return true;
             },
             .e_if => |ex| {
-                return p.exprCanBeRemovedIfUnused(ex.test_) and p.exprCanBeRemovedIfUnused(ex.yes) and p.exprCanBeRemovedIfUnused(ex.no);
+                return p.exprCanBeRemovedIfUnused(&ex.test_) and p.exprCanBeRemovedIfUnused(&ex.yes) and p.exprCanBeRemovedIfUnused(&ex.no);
             },
             .e_array => |ex| {
-                for (ex.items) |item| {
+                for (ex.items) |*item| {
                     if (!p.exprCanBeRemovedIfUnused(item)) {
                         return false;
                     }
@@ -10510,14 +10498,14 @@ pub const P = struct {
                 return true;
             },
             .e_object => |ex| {
-                for (ex.properties) |property| {
+                for (ex.properties) |*property| {
 
                     // The key must still be evaluated if it's computed or a spread
                     if (property.kind == .spread or property.flags.is_computed or property.flags.is_spread) {
                         return false;
                     }
 
-                    if (property.value) |val| {
+                    if (property.value) |*val| {
                         if (!p.exprCanBeRemovedIfUnused(val)) {
                             return false;
                         }
@@ -10530,7 +10518,7 @@ pub const P = struct {
                 // A call that has been marked "__PURE__" can be removed if all arguments
                 // can be removed. The annotation causes us to ignore the target.
                 if (ex.can_be_unwrapped_if_unused) {
-                    for (ex.args) |arg| {
+                    for (ex.args) |*arg| {
                         if (!p.exprCanBeRemovedIfUnused(arg)) {
                             return false;
                         }
@@ -10544,7 +10532,7 @@ pub const P = struct {
                 // A call that has been marked "__PURE__" can be removed if all arguments
                 // can be removed. The annotation causes us to ignore the target.
                 if (ex.can_be_unwrapped_if_unused) {
-                    for (ex.args) |arg| {
+                    for (ex.args) |*arg| {
                         if (!p.exprCanBeRemovedIfUnused(arg)) {
                             return false;
                         }
@@ -10556,7 +10544,7 @@ pub const P = struct {
             .e_unary => |ex| {
                 switch (ex.op) {
                     .un_typeof, .un_void, .un_not => {
-                        return p.exprCanBeRemovedIfUnused(ex.value);
+                        return p.exprCanBeRemovedIfUnused(&ex.value);
                     },
                     else => {},
                 }
@@ -10564,7 +10552,7 @@ pub const P = struct {
             .e_binary => |ex| {
                 switch (ex.op) {
                     .bin_strict_eq, .bin_strict_ne, .bin_comma, .bin_logical_or, .bin_logical_and, .bin_nullish_coalescing => {
-                        return p.exprCanBeRemovedIfUnused(ex.left) and p.exprCanBeRemovedIfUnused(ex.right);
+                        return p.exprCanBeRemovedIfUnused(&ex.left) and p.exprCanBeRemovedIfUnused(&ex.right);
                     },
                     else => {},
                 }
@@ -11968,7 +11956,7 @@ pub const P = struct {
             if (is_private) {} else if (!property.flags.is_method and !property.flags.is_computed) {
                 if (property.key) |key| {
                     if (@as(Expr.Tag, key.data) == .e_string) {
-                        name_to_keep = key.getString().string(p.allocator) catch unreachable;
+                        name_to_keep = key.data.e_string.string(p.allocator) catch unreachable;
                     }
                 }
             }
@@ -12240,13 +12228,10 @@ pub const P = struct {
             }
 
             // First, try converting the expressions to bindings
-            var i: usize = 0;
-            while (i < items.len) : (i += 1) {
+            for (items) |_, i| {
                 var is_spread = false;
                 switch (items[i].data) {
-                    .e_spread => {
-                        const v = items[i].getSpread();
-
+                    .e_spread => |v| {
                         is_spread = true;
                         items[i] = v.value;
                     },
@@ -12586,7 +12571,6 @@ pub const P = struct {
             .require_transposer = @TypeOf(_parser.require_transposer).init(_parser),
             .require_resolve_transposer = @TypeOf(_parser.require_resolve_transposer).init(_parser),
             .lexer = lexer,
-            .data = js_ast.AstData.init(allocator),
         };
 
         return _parser;

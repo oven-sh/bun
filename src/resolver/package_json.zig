@@ -133,12 +133,11 @@ pub const PackageJSON = struct {
             //
             if (json.asProperty("browser")) |browser_prop| {
                 switch (browser_prop.expr.data) {
-                    .e_object => {
-                        const obj = browser_prop.expr.getObject();
+                    .e_object => |obj| {
                         // The value is an object
 
                         // Remap all files in the browser field
-                        for (obj.properties) |prop| {
+                        for (obj.properties) |*prop| {
                             var _key_str = (prop.key orelse continue).asString(r.allocator) orelse continue;
                             const value: js_ast.Expr = prop.value orelse continue;
 
@@ -154,13 +153,11 @@ pub const PackageJSON = struct {
                             const key = r.allocator.dupe(u8, r.fs.normalize(_key_str)) catch unreachable;
 
                             switch (value.data) {
-                                .e_string => {
-                                    const str = value.getString();
+                                .e_string => |str| {
                                     // If this is a string, it's a replacement package
                                     package_json.browser_map.put(key, str.string(r.allocator) catch unreachable) catch unreachable;
                                 },
-                                .e_boolean => {
-                                    const boolean = value.getBoolean();
+                                .e_boolean => |boolean| {
                                     if (!boolean.value) {
                                         package_json.browser_map.put(key, "") catch unreachable;
                                     }

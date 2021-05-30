@@ -156,8 +156,7 @@ pub const Bundler = struct {
         }
     }
 
-    pub fn processImportRecord(bundler: *Bundler, source_dir: string, import_record: *ImportRecord) !void {
-        var resolve_result = try bundler.resolver.resolve(source_dir, import_record.path.text, import_record.kind);
+    pub fn processImportRecord(bundler: *Bundler, source_dir: string, resolve_result: *Resolver.Resolver.Result, import_record: *ImportRecord) !void {
 
         // extremely naive.
         resolve_result.is_from_node_modules = strings.contains(resolve_result.path_pair.primary.text, "/node_modules");
@@ -174,13 +173,13 @@ pub const Bundler = struct {
         // Run the resolver
         // Don't parse/print automatically.
         if (bundler.options.resolve_mode != .lazy) {
-            try bundler.enqueueResolveResult(&resolve_result);
+            try bundler.enqueueResolveResult(resolve_result);
         }
 
         import_record.path = try bundler.generateImportPath(source_dir, resolve_result.path_pair.primary.text);
     }
 
-    pub fn resolveResultHashKey(bundler: *Bundler, resolve_result: *Resolver.Resolver.Result) string {
+    pub fn resolveResultHashKey(bundler: *Bundler, resolve_result: *const Resolver.Resolver.Result) string {
         var hash_key = resolve_result.path_pair.primary.text;
 
         // Shorter hash key is faster to hash
@@ -191,7 +190,7 @@ pub const Bundler = struct {
         return hash_key;
     }
 
-    pub fn enqueueResolveResult(bundler: *Bundler, resolve_result: *Resolver.Resolver.Result) !void {
+    pub fn enqueueResolveResult(bundler: *Bundler, resolve_result: *const Resolver.Resolver.Result) !void {
         const hash_key = bundler.resolveResultHashKey(resolve_result);
 
         const get_or_put_entry = try bundler.resolve_results.backing.getOrPut(hash_key);
@@ -225,10 +224,19 @@ pub const Bundler = struct {
                 const ast = result.ast;
 
                 for (ast.import_records) |*import_record| {
-                    bundler.processImportRecord(
-                        std.fs.path.dirname(file_path.text) orelse file_path.text,
-                        import_record,
-                    ) catch |err| {
+                    const source_dir = std.fs.path.dirname(file_path.text) orelse file_path.text;
+
+                    if (bundler.resolver.resolve(source_dir, import_record.path.text, import_record.kind)) |*resolved_import| {
+                        bundler.processImportRecord(
+                            source_dir,
+                            resolved_import,
+                            import_record,
+                        ) catch continue;
+
+                        // "Linking"
+                        // 1. Associate an ImportRecord with NamedImports
+                        // 2. If there is a default import, import the runtime wrapper
+                    } else |err| {
                         switch (err) {
                             error.ModuleNotFound => {
                                 if (Resolver.Resolver.isPackagePath(import_record.path.text)) {
@@ -259,13 +267,14 @@ pub const Bundler = struct {
                                             import_record.path.text,
                                         },
                                     );
+                                    continue;
                                 }
                             },
                             else => {
                                 continue;
                             },
                         }
-                    };
+                    }
                 }
             },
             else => {},

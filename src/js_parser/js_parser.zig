@@ -501,7 +501,7 @@ pub const SideEffects = enum(u2) {
     could_have_side_effects,
     no_side_effects,
 
-    pub const Result = packed struct {
+    pub const Result = struct {
         side_effects: SideEffects,
         ok: bool = false,
         value: bool = false,
@@ -707,7 +707,7 @@ pub const SideEffects = enum(u2) {
         }
     }
 
-    pub const Equality = packed struct { equal: bool = false, ok: bool = false };
+    pub const Equality = struct { equal: bool = false, ok: bool = false };
 
     // Returns "equal, ok". If "ok" is false, then nothing is known about the two
     // values. If "ok" is true, the equality or inequality of the two values is
@@ -1102,7 +1102,7 @@ const AsyncPrefixExpression = enum(u4) {
     }
 };
 
-const IdentifierOpts = packed struct {
+const IdentifierOpts = struct {
     assign_target: js_ast.AssignTarget = js_ast.AssignTarget.none,
     is_delete_target: bool = false,
     was_originally_identifier: bool = false,
@@ -1140,7 +1140,7 @@ fn statementCaresAboutScope(stmt: Stmt) bool {
     }
 }
 
-const ExprIn = packed struct {
+const ExprIn = struct {
     // This tells us if there are optional chain expressions (EDot, EIndex, or
     // ECall) that are chained on to this expression. Because of the way the AST
     // works, chaining expressions on to this expression means they are our
@@ -1297,7 +1297,7 @@ const ScopeOrder = struct {
     scope: *js_ast.Scope,
 };
 
-const ParenExprOpts = packed struct {
+const ParenExprOpts = struct {
     async_range: logger.Range = logger.Range.None,
     is_async: bool = false,
     force_arrow_fn: bool = false,
@@ -1771,7 +1771,6 @@ pub const P = struct {
     promise_ref: ?js_ast.Ref = null,
     scopes_in_order_visitor_index: usize = 0,
     has_classic_runtime_warned: bool = false,
-    data: js_ast.AstData,
 
     injected_define_symbols: List(Ref),
     symbol_uses: SymbolUseMap,
@@ -10258,7 +10257,10 @@ pub const P = struct {
 
                 var has_spread = false;
                 var has_proto = false;
-                for (e_.properties) |*property, i| {
+                for (e_.properties) |_, i| {
+                    var property = e_.properties[i];
+                    defer e_.properties[i] = property;
+
                     if (property.kind != .spread) {
                         property.key = p.visitExpr(property.key orelse Global.panic("Expected property key", .{}));
                         const key = property.key.?;
@@ -12822,7 +12824,6 @@ pub const P = struct {
             .require_transposer = @TypeOf(_parser.require_transposer).init(_parser),
             .require_resolve_transposer = @TypeOf(_parser.require_resolve_transposer).init(_parser),
             .lexer = lexer,
-            .data = js_ast.AstData.init(allocator),
         };
 
         return _parser;

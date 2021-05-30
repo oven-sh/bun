@@ -80,6 +80,9 @@ pub const Bundler = struct {
         log: *logger.Log,
         opts: Api.TransformOptions,
     ) !Bundler {
+        js_ast.Expr.Data.Store.create(allocator);
+        js_ast.Stmt.Data.Store.create(allocator);
+
         var fs = try Fs.FileSystem.init1(allocator, opts.absolute_working_dir, opts.serve orelse false);
         const bundle_options = try options.BundleOptions.fromApi(allocator, fs, log, opts);
 
@@ -168,35 +171,36 @@ pub const Bundler = struct {
             bundler.needs_runtime = true;
         }
 
+        import_record.path = try bundler.generateImportPath(source_dir, resolve_result.path_pair.primary.text);
+
         // lazy means:
         // Run the resolver
         // Don't parse/print automatically.
         if (bundler.options.resolve_mode != .lazy) {
-            try bundler.enqueueResolveResult(&resolve_result);
+            try bundler.enqueueResolveResult(resolve_result);
         }
-
-        import_record.path = try bundler.generateImportPath(source_dir, resolve_result.path_pair.primary.text);
     }
 
-    pub fn resolveResultHashKey(bundler: *Bundler, resolve_result: *Resolver.Resolver.Result) string {
-        var hash_key = resolve_result.path_pair.primary.text;
+    pub fn resolveResultHashKey(bundler: *Bundler, path: string) string {
+        var hash_key = path;
 
         // Shorter hash key is faster to hash
-        if (strings.startsWith(resolve_result.path_pair.primary.text, bundler.fs.top_level_dir)) {
-            hash_key = resolve_result.path_pair.primary.text[bundler.fs.top_level_dir.len..];
+        if (strings.startsWith(path, bundler.fs.top_level_dir)) {
+            hash_key = path[bundler.fs.top_level_dir.len..];
         }
 
         return hash_key;
     }
 
-    pub fn enqueueResolveResult(bundler: *Bundler, resolve_result: *Resolver.Resolver.Result) !void {
-        const hash_key = bundler.resolveResultHashKey(resolve_result);
+    pub fn enqueueResolveResult(bundler: *Bundler, resolve_result: Resolver.Resolver.Result) !void {
+        const hash_key = bundler.resolveResultHashKey(resolve_result.path_pair.primary.text);
 
         const get_or_put_entry = try bundler.resolve_results.backing.getOrPut(hash_key);
 
+        get_or_put_entry.entry.value = resolve_result;
+
         if (!get_or_put_entry.found_existing) {
-            get_or_put_entry.entry.value = resolve_result.*;
-            try bundler.resolve_queue.writeItem(resolve_result.*);
+            try bundler.resolve_queue.writeItem(resolve_result);
         }
     }
 
@@ -510,22 +514,17 @@ pub const Bundler = struct {
         };
     }
 
-    pub fn bundle(
-        allocator: *std.mem.Allocator,
-        log: *logger.Log,
-        opts: Api.TransformOptions,
-    ) !options.TransformResult {
-        var bundler = try Bundler.init(allocator, log, opts);
-
+    pub fn run(bundler: *Bundler) !options.TransformResult {
+        const allocator = bundler.allocator;
         //  100.00 µs std.fifo.LinearFifo(resolver.resolver.Result,std.fifo.LinearFifoBufferType { .Dynamic = {}}).writeItemAssumeCapacity
-        if (bundler.options.resolve_mode != .lazy) {
-            try bundler.resolve_queue.ensureUnusedCapacity(1000);
-        }
+        // if (bundler.options.resolve_mode != .lazy) {
+        //     try bundler.resolve_queue.ensureUnusedCapacity(1000);
+        // }
 
         var entry_points = try allocator.alloc(Resolver.Resolver.Result, bundler.options.entry_points.len);
 
         if (isDebug) {
-            log.level = .verbose;
+            bundler.log.level = .verbose;
             bundler.resolver.debug_logs = try Resolver.Resolver.DebugLogs.init(allocator);
         }
 
@@ -596,6 +595,10 @@ pub const Bundler = struct {
             bundler.resolve_queue.writeItem(result) catch unreachable;
         }
 
+        // The resolver may use the AST store when parsing package.json / tsconfig.json
+        js_ast.Stmt.Data.Store.reset();
+        js_ast.Expr.Data.Store.reset();
+
         switch (bundler.options.resolve_mode) {
             .lazy, .dev, .bundle => {
                 while (bundler.resolve_queue.readItem()) |item| {
@@ -628,7 +631,21 @@ pub const Bundler = struct {
             );
         }
 
-        return try options.TransformResult.init(try allocator.dupe(u8, bundler.result.outbase), bundler.output_files.toOwnedSlice(), log, allocator);
+        return try options.TransformResult.init(
+            try allocator.dupe(u8, bundler.result.outbase),
+            bundler.output_files.toOwnedSlice(),
+            bundler.log,
+            bundler.allocator,
+        );
+    }
+
+    pub fn bundle(
+        allocator: *std.mem.Allocator,
+        log: *logger.Log,
+        opts: Api.TransformOptions,
+    ) !options.TransformResult {
+        var bundler = try Bundler.init(allocator, log, opts);
+        return try bundler.run();
     }
 };
 

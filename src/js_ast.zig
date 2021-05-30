@@ -12,6 +12,132 @@ const _hash_map = @import("hash_map.zig");
 const StringHashMap = _hash_map.StringHashMap;
 const AutoHashMap = _hash_map.AutoHashMap;
 
+pub fn NewBaseStore(comptime Union: anytype, count: usize) type {
+    var max_size: usize = 0;
+    var max_align: usize = 1;
+    for (Union) |kind| {
+        max_size = std.math.max(@sizeOf(kind), max_size);
+        max_align = if (@sizeOf(kind) == 0) max_align else std.math.max(@alignOf(kind), max_align);
+    }
+
+    max_size = std.mem.alignForward(max_size, max_align);
+    const element_size = max_size;
+    const total_byte_count = count * max_size;
+
+    return struct {
+        const Self = @This();
+        const OverflowList = std.ArrayListUnmanaged(u8);
+        pub threadlocal var byte_buffer: [total_byte_count]u8 align(max_align) = undefined;
+        pub threadlocal var bytes_used: usize = undefined;
+        pub threadlocal var bytes_element_count: usize = undefined;
+        pub threadlocal var instance: Self = undefined;
+        pub threadlocal var self: *Self = undefined;
+        pub threadlocal var has_loaded: bool = false;
+        allocator: *std.mem.Allocator,
+        overflow_list: []u8,
+        overflow_list_ptr: [*]u8 = undefined,
+        overflow_list_ptr_len: usize = 0,
+        overflow_element_count: usize = 0,
+
+        pub fn init(allocator: *std.mem.Allocator) *Self {
+            if (has_loaded) {
+                return self;
+            }
+
+            instance = Self{
+                .allocator = allocator,
+                .overflow_list = &([_]u8{}),
+            };
+            bytes_used = 0;
+            bytes_element_count = 0;
+            self = &instance;
+            has_loaded = true;
+            return self;
+        }
+
+        pub fn reset() void {
+            std.debug.assert(has_loaded);
+            self.overflow_list = &([_]u8{});
+            self.overflow_element_count = 0;
+            bytes_used = 0;
+            bytes_element_count = 0;
+        }
+
+        pub fn growOverflowListIfNeeded(store: *Self, to: usize) void {
+            if (store.overflow_list_ptr_len >= to) {
+                return;
+            }
+
+            const is_new = store.overflow_list_ptr_len == 0;
+            store.overflow_list_ptr_len = to + (max_size * 100);
+
+            if (!is_new) {
+                _ = store.allocator.resize(store.overflow_list_ptr[0..store.overflow_list_ptr_len], store.overflow_list_ptr_len) catch unreachable;
+            } else {
+                store.overflow_list_ptr = (store.allocator.alloc(u8, store.overflow_list_ptr_len) catch unreachable).ptr;
+            }
+        }
+
+        pub fn append(comptime ValueType: type, value: ValueType) ListIndex {
+            std.debug.assert(has_loaded);
+
+            if (bytes_used < max_size - 1) {
+                const index = bytes_element_count;
+                const offset = bytes_used;
+                bytes_element_count += 1;
+                bytes_used += max_size;
+                std.mem.copy(u8, byte_buffer[offset..bytes_used], std.mem.asBytes(&value));
+                return ListIndex{ .is_overflowing = false, .index = @intCast(u31, index) };
+            } else {
+                const index = self.overflow_element_count;
+                const offset = self.overflow_list.len;
+                self.overflow_element_count += 1;
+                const end_length = offset + max_size;
+                self.growOverflowListIfNeeded(end_length);
+                std.mem.copy(u8, self.overflow_list_ptr[offset..end_length], std.mem.asBytes(&value));
+                self.overflow_list = self.overflow_list_ptr[0..end_length];
+                return ListIndex{ .is_overflowing = true, .index = @intCast(u31, index) };
+            }
+        }
+
+        pub fn at(index: ListIndex, comptime ValueType: type) *ValueType {
+            std.debug.assert(index.index != allocators.NotFound.index and index.index != allocators.Unassigned.index);
+            @setRuntimeSafety(false);
+
+            const slice_begin = index.index * element_size;
+            const slice_end = slice_begin + element_size;
+
+            var slice: []u8 = undefined;
+            if (index.is_overflowing) {
+                slice = self.overflow_list_ptr[slice_begin..slice_end];
+                @setRuntimeSafety(false);
+            } else {
+                slice = byte_buffer[slice_begin..];
+                @setRuntimeSafety(false);
+            }
+
+            var aligned_slice = @alignCast(@alignOf(ValueType), slice.ptr);
+
+            return @ptrCast(
+                *ValueType,
+                aligned_slice,
+            );
+        }
+    };
+}
+
+pub fn NewStore(comptime BaseStore: type, comptime ValueType: type) type {
+    return struct {
+        pub fn at(index: ListIndex) *ValueType {
+            return BaseStore.at(index, ValueType);
+        }
+
+        pub fn append(value: ValueType) ListIndex {
+            return BaseStore.append(ValueType, value);
+        }
+    };
+}
+
 pub const ListIndex = packed struct {
     index: u31,
     is_overflowing: bool = false,
@@ -197,7 +323,9 @@ pub const Binding = struct {
         b_missing,
     };
 
+    pub var binding_count: usize = 0;
     pub fn init(t: anytype, loc: logger.Loc) Binding {
+        binding_count += 1;
         switch (@TypeOf(t)) {
             *B.Identifier => {
                 return Binding{ .loc = loc, .data = B{ .b_identifier = t } };
@@ -221,6 +349,7 @@ pub const Binding = struct {
     }
 
     pub fn alloc(allocator: *std.mem.Allocator, t: anytype, loc: logger.Loc) Binding {
+        binding_count += 1;
         switch (@TypeOf(t)) {
             B.Identifier => {
                 var data = allocator.create(B.Identifier) catch unreachable;
@@ -690,7 +819,7 @@ pub const E = struct {
         op: Op.Code,
     };
 
-    pub const Boolean = packed struct { value: bool };
+    pub const Boolean = struct { value: bool };
     pub const Super = struct {};
     pub const Null = struct {};
     pub const This = struct {};
@@ -777,7 +906,7 @@ pub const E = struct {
 
     pub const Function = struct { func: G.Fn };
 
-    pub const Identifier = packed struct {
+    pub const Identifier = struct {
         ref: Ref = Ref.None,
 
         // If we're inside a "with" statement, this identifier may be a property
@@ -1459,10 +1588,8 @@ pub const Stmt = struct {
         s_class: ListIndex,
         s_comment: ListIndex,
         s_continue: ListIndex,
-        s_debugger: S.Debugger,
         s_directive: ListIndex,
         s_do_while: ListIndex,
-        s_empty: S.Empty, // special case, its a zero value type
         s_enum: ListIndex,
         s_export_clause: ListIndex,
         s_export_default: ListIndex,
@@ -1484,113 +1611,85 @@ pub const Stmt = struct {
         s_switch: ListIndex,
         s_throw: ListIndex,
         s_try: ListIndex,
-        s_type_script: S.TypeScript,
         s_while: ListIndex,
         s_with: ListIndex,
 
+        s_type_script: S.TypeScript,
+        s_empty: S.Empty, // special case, its a zero value type
+        s_debugger: S.Debugger,
+
         pub const Store = struct {
-            pub const Block = NewStore(S.Block);
-            pub const Break = NewStore(S.Break);
-            pub const Class = NewStore(S.Class);
-            pub const Comment = NewStore(S.Comment);
-            pub const Continue = NewStore(S.Continue);
-            pub const Directive = NewStore(S.Directive);
-            pub const DoWhile = NewStore(S.DoWhile);
-            pub const Enum = NewStore(S.Enum);
-            pub const ExportClause = NewStore(S.ExportClause);
-            pub const ExportDefault = NewStore(S.ExportDefault);
-            pub const ExportEquals = NewStore(S.ExportEquals);
-            pub const ExportFrom = NewStore(S.ExportFrom);
-            pub const ExportStar = NewStore(S.ExportStar);
-            pub const SExpr = NewStore(S.SExpr);
-            pub const ForIn = NewStore(S.ForIn);
-            pub const ForOf = NewStore(S.ForOf);
-            pub const For = NewStore(S.For);
-            pub const Function = NewStore(S.Function);
-            pub const If = NewStore(S.If);
-            pub const Import = NewStore(S.Import);
-            pub const Label = NewStore(S.Label);
-            pub const LazyExport = NewStore(S.LazyExport);
-            pub const Local = NewStore(S.Local);
-            pub const Namespace = NewStore(S.Namespace);
-            pub const Return = NewStore(S.Return);
-            pub const Switch = NewStore(S.Switch);
-            pub const Throw = NewStore(S.Throw);
-            pub const Try = NewStore(S.Try);
-            pub const TypeScript = NewStore(S.TypeScript);
-            pub const While = NewStore(S.While);
-            pub const With = NewStore(S.With);
+            const Union = [_]type{
+                S.Block,
+                S.Break,
+                S.Class,
+                S.Comment,
+                S.Continue,
+                S.Directive,
+                S.DoWhile,
+                S.Enum,
+                S.ExportClause,
+                S.ExportDefault,
+                S.ExportEquals,
+                S.ExportFrom,
+                S.ExportStar,
+                S.SExpr,
+                S.ForIn,
+                S.ForOf,
+                S.For,
+                S.Function,
+                S.If,
+                S.Import,
+                S.Label,
+                S.LazyExport,
+                S.Local,
+                S.Namespace,
+                S.Return,
+                S.Switch,
+                S.Throw,
+                S.Try,
+                S.While,
+                S.With,
+            };
+            pub const BaseStore = NewBaseStore(&Union, 512);
+            pub const Block = NewStore(BaseStore, S.Block);
+            pub const Break = NewStore(BaseStore, S.Break);
+            pub const Class = NewStore(BaseStore, S.Class);
+            pub const Comment = NewStore(BaseStore, S.Comment);
+            pub const Continue = NewStore(BaseStore, S.Continue);
+            pub const Directive = NewStore(BaseStore, S.Directive);
+            pub const DoWhile = NewStore(BaseStore, S.DoWhile);
+            pub const Enum = NewStore(BaseStore, S.Enum);
+            pub const ExportClause = NewStore(BaseStore, S.ExportClause);
+            pub const ExportDefault = NewStore(BaseStore, S.ExportDefault);
+            pub const ExportEquals = NewStore(BaseStore, S.ExportEquals);
+            pub const ExportFrom = NewStore(BaseStore, S.ExportFrom);
+            pub const ExportStar = NewStore(BaseStore, S.ExportStar);
+            pub const SExpr = NewStore(BaseStore, S.SExpr);
+            pub const ForIn = NewStore(BaseStore, S.ForIn);
+            pub const ForOf = NewStore(BaseStore, S.ForOf);
+            pub const For = NewStore(BaseStore, S.For);
+            pub const Function = NewStore(BaseStore, S.Function);
+            pub const If = NewStore(BaseStore, S.If);
+            pub const Import = NewStore(BaseStore, S.Import);
+            pub const Label = NewStore(BaseStore, S.Label);
+            pub const LazyExport = NewStore(BaseStore, S.LazyExport);
+            pub const Local = NewStore(BaseStore, S.Local);
+            pub const Namespace = NewStore(BaseStore, S.Namespace);
+            pub const Return = NewStore(BaseStore, S.Return);
+            pub const Switch = NewStore(BaseStore, S.Switch);
+            pub const Throw = NewStore(BaseStore, S.Throw);
+            pub const Try = NewStore(BaseStore, S.Try);
+            pub const While = NewStore(BaseStore, S.While);
+            pub const With = NewStore(BaseStore, S.With);
 
             threadlocal var has_inited = false;
             pub fn create(allocator: *std.mem.Allocator) void {
-                if (has_inited) {
-                    return;
-                }
-
-                has_inited = true;
-                _ = Block.init(allocator);
-                _ = Break.init(allocator);
-                _ = Class.init(allocator);
-                _ = Comment.init(allocator);
-                _ = Continue.init(allocator);
-                _ = Directive.init(allocator);
-                _ = DoWhile.init(allocator);
-                _ = Enum.init(allocator);
-                _ = ExportClause.init(allocator);
-                _ = ExportDefault.init(allocator);
-                _ = ExportEquals.init(allocator);
-                _ = ExportFrom.init(allocator);
-                _ = ExportStar.init(allocator);
-                _ = SExpr.init(allocator);
-                _ = ForIn.init(allocator);
-                _ = ForOf.init(allocator);
-                _ = For.init(allocator);
-                _ = Function.init(allocator);
-                _ = If.init(allocator);
-                _ = Import.init(allocator);
-                _ = Label.init(allocator);
-                _ = LazyExport.init(allocator);
-                _ = Local.init(allocator);
-                _ = Namespace.init(allocator);
-                _ = Return.init(allocator);
-                _ = Switch.init(allocator);
-                _ = Throw.init(allocator);
-                _ = Try.init(allocator);
-                _ = While.init(allocator);
-                _ = With.init(allocator);
+                _ = BaseStore.init(allocator);
             }
 
             pub fn reset() void {
-                Block.reset();
-                Break.reset();
-                Class.reset();
-                Comment.reset();
-                Continue.reset();
-                Directive.reset();
-                DoWhile.reset();
-                Enum.reset();
-                ExportClause.reset();
-                ExportDefault.reset();
-                ExportEquals.reset();
-                ExportFrom.reset();
-                ExportStar.reset();
-                SExpr.reset();
-                ForIn.reset();
-                ForOf.reset();
-                For.reset();
-                Function.reset();
-                If.reset();
-                Import.reset();
-                Label.reset();
-                LazyExport.reset();
-                Local.reset();
-                Namespace.reset();
-                Return.reset();
-                Switch.reset();
-                Throw.reset();
-                Try.reset();
-                While.reset();
-                With.reset();
+                BaseStore.reset();
             }
 
             pub fn append(comptime ValueType: type, value: anytype) ListIndex {
@@ -1694,76 +1793,6 @@ pub const Stmt = struct {
                         @compileError("Invalid type passed to Stmt.Data.set " ++ @typeName(ValueType));
                     },
                 }
-            }
-
-            pub fn NewStore(comptime ValueType: type) type {
-                const count = 8096;
-                const max_index = count - 1;
-                const list_count = count;
-                return struct {
-                    pub threadlocal var backing_buf: [count]ValueType = undefined;
-                    pub threadlocal var backing_buf_used: u16 = 0;
-                    const Allocator = std.mem.Allocator;
-                    const Self = @This();
-                    const NotFound = allocators.NotFound;
-                    const Unassigned = allocators.Unassigned;
-
-                    overflow_list: std.ArrayListUnmanaged(ValueType),
-                    allocator: *Allocator,
-
-                    pub threadlocal var instance: Self = undefined;
-                    pub threadlocal var self: *Self = undefined;
-
-                    pub fn reset() void {
-                        backing_buf_used = 0;
-                        self.overflow_list.items.len = 0;
-                    }
-
-                    pub fn init(allocator: *std.mem.Allocator) *Self {
-                        instance = Self{
-                            .allocator = allocator,
-                            .overflow_list = std.ArrayListUnmanaged(ValueType){},
-                        };
-
-                        self = &instance;
-                        return self;
-                    }
-
-                    pub fn isOverflowing() bool {
-                        return backing_buf_used >= @as(u16, count);
-                    }
-
-                    pub fn at(index: ListIndex) *ValueType {
-                        std.debug.assert(index.index != NotFound.index and index.index != Unassigned.index);
-
-                        if (index.is_overflowing) {
-                            return &self.overflow_list.items[index.index];
-                        } else {
-                            return &backing_buf[index.index];
-                        }
-                    }
-
-                    pub fn exists(value: ValueType) bool {
-                        return isSliceInBuffer(value, backing_buf);
-                    }
-
-                    pub fn append(value: ValueType) ListIndex {
-                        var result = ListIndex{ .index = std.math.maxInt(u31), .is_overflowing = backing_buf_used > max_index };
-                        if (result.is_overflowing) {
-                            result.index = @intCast(u31, self.overflow_list.items.len);
-                            self.overflow_list.append(self.allocator, value) catch unreachable;
-                        } else {
-                            result.index = backing_buf_used;
-                            backing_buf[result.index] = value;
-                            backing_buf_used += 1;
-                            if (backing_buf_used >= max_index and self.overflow_list.capacity == 0) {
-                                self.overflow_list = @TypeOf(self.overflow_list).initCapacity(self.allocator, 1) catch unreachable;
-                            }
-                        }
-
-                        return result;
-                    }
-                };
             }
         };
 
@@ -3263,11 +3292,12 @@ pub const Expr = struct {
         e_null: E.Null,
         e_undefined: E.Undefined,
         e_new_target: E.NewTarget,
+        e_import_meta: E.ImportMeta,
 
         e_new: ListIndex,
 
         e_function: ListIndex,
-        e_import_meta: E.ImportMeta,
+
         e_call: ListIndex,
         e_dot: ListIndex,
         e_index: ListIndex,
@@ -3293,41 +3323,67 @@ pub const Expr = struct {
         e_import: ListIndex,
 
         pub const Store = struct {
-            pub const Array = NewStore(E.Array);
-            pub const Unary = NewStore(E.Unary);
-            pub const Binary = NewStore(E.Binary);
-            pub const This = NewStore(E.This);
-            pub const Class = NewStore(E.Class);
-            pub const Boolean = NewStore(E.Boolean);
-            pub const Super = NewStore(E.Super);
-            pub const Null = NewStore(E.Null);
-            pub const Undefined = NewStore(E.Undefined);
-            pub const New = NewStore(E.New);
-            pub const Function = NewStore(E.Function);
-            pub const ImportMeta = NewStore(E.ImportMeta);
-            pub const Call = NewStore(E.Call);
-            pub const Dot = NewStore(E.Dot);
-            pub const Index = NewStore(E.Index);
-            pub const Arrow = NewStore(E.Arrow);
-            pub const Identifier = NewStore(E.Identifier);
-            pub const ImportIdentifier = NewStore(E.ImportIdentifier);
-            pub const PrivateIdentifier = NewStore(E.PrivateIdentifier);
-            pub const JSXElement = NewStore(E.JSXElement);
-            pub const Missing = NewStore(E.Missing);
-            pub const Number = NewStore(E.Number);
-            pub const BigInt = NewStore(E.BigInt);
-            pub const Object = NewStore(E.Object);
-            pub const Spread = NewStore(E.Spread);
-            pub const String = NewStore(E.String);
-            pub const TemplatePart = NewStore(E.TemplatePart);
-            pub const Template = NewStore(E.Template);
-            pub const RegExp = NewStore(E.RegExp);
-            pub const Await = NewStore(E.Await);
-            pub const Yield = NewStore(E.Yield);
-            pub const If = NewStore(E.If);
-            pub const Require = NewStore(E.Require);
-            pub const RequireOrRequireResolve = NewStore(E.RequireOrRequireResolve);
-            pub const Import = NewStore(E.Import);
+            const Union = [_]type{
+                E.Array,
+                E.Unary,
+                E.Binary,
+                E.Class,
+                E.Boolean,
+                E.New,
+                E.Function,
+                E.Call,
+                E.Dot,
+                E.Index,
+                E.Arrow,
+                E.Identifier,
+                E.ImportIdentifier,
+                E.PrivateIdentifier,
+                E.JSXElement,
+                E.Number,
+                E.BigInt,
+                E.Object,
+                E.Spread,
+                E.String,
+                E.TemplatePart,
+                E.Template,
+                E.RegExp,
+                E.Await,
+                E.Yield,
+                E.If,
+                E.Require,
+                E.RequireOrRequireResolve,
+                E.Import,
+            };
+            pub const BaseStore = NewBaseStore(&Union, 2048);
+            pub const Array = NewStore(BaseStore, E.Array);
+            pub const Unary = NewStore(BaseStore, E.Unary);
+            pub const Binary = NewStore(BaseStore, E.Binary);
+            pub const Class = NewStore(BaseStore, E.Class);
+            pub const Boolean = NewStore(BaseStore, E.Boolean);
+            pub const New = NewStore(BaseStore, E.New);
+            pub const Function = NewStore(BaseStore, E.Function);
+            pub const Call = NewStore(BaseStore, E.Call);
+            pub const Dot = NewStore(BaseStore, E.Dot);
+            pub const Index = NewStore(BaseStore, E.Index);
+            pub const Arrow = NewStore(BaseStore, E.Arrow);
+            pub const Identifier = NewStore(BaseStore, E.Identifier);
+            pub const ImportIdentifier = NewStore(BaseStore, E.ImportIdentifier);
+            pub const PrivateIdentifier = NewStore(BaseStore, E.PrivateIdentifier);
+            pub const JSXElement = NewStore(BaseStore, E.JSXElement);
+            pub const Number = NewStore(BaseStore, E.Number);
+            pub const BigInt = NewStore(BaseStore, E.BigInt);
+            pub const Object = NewStore(BaseStore, E.Object);
+            pub const Spread = NewStore(BaseStore, E.Spread);
+            pub const String = NewStore(BaseStore, E.String);
+            pub const TemplatePart = NewStore(BaseStore, E.TemplatePart);
+            pub const Template = NewStore(BaseStore, E.Template);
+            pub const RegExp = NewStore(BaseStore, E.RegExp);
+            pub const Await = NewStore(BaseStore, E.Await);
+            pub const Yield = NewStore(BaseStore, E.Yield);
+            pub const If = NewStore(BaseStore, E.If);
+            pub const Require = NewStore(BaseStore, E.Require);
+            pub const RequireOrRequireResolve = NewStore(BaseStore, E.RequireOrRequireResolve);
+            pub const Import = NewStore(BaseStore, E.Import);
 
             threadlocal var has_inited = false;
             pub fn create(allocator: *std.mem.Allocator) void {
@@ -3336,73 +3392,11 @@ pub const Expr = struct {
                 }
 
                 has_inited = true;
-                _ = Array.init(allocator);
-                _ = Unary.init(allocator);
-                _ = Binary.init(allocator);
-                _ = This.init(allocator);
-                _ = Class.init(allocator);
-                _ = Boolean.init(allocator);
-                _ = New.init(allocator);
-                _ = Function.init(allocator);
-                _ = ImportMeta.init(allocator);
-                _ = Call.init(allocator);
-                _ = Dot.init(allocator);
-                _ = Index.init(allocator);
-                _ = Arrow.init(allocator);
-                _ = Identifier.init(allocator);
-                _ = ImportIdentifier.init(allocator);
-                _ = PrivateIdentifier.init(allocator);
-                _ = JSXElement.init(allocator);
-                _ = Missing.init(allocator);
-                _ = Number.init(allocator);
-                _ = BigInt.init(allocator);
-                _ = Object.init(allocator);
-                _ = Spread.init(allocator);
-                _ = String.init(allocator);
-                _ = TemplatePart.init(allocator);
-                _ = Template.init(allocator);
-                _ = RegExp.init(allocator);
-                _ = Await.init(allocator);
-                _ = Yield.init(allocator);
-                _ = If.init(allocator);
-                _ = Require.init(allocator);
-                _ = RequireOrRequireResolve.init(allocator);
-                _ = Import.init(allocator);
+                _ = BaseStore.init(allocator);
             }
 
             pub fn reset() void {
-                Array.reset();
-                Unary.reset();
-                Binary.reset();
-                This.reset();
-                Class.reset();
-                Boolean.reset();
-                New.reset();
-                Function.reset();
-                ImportMeta.reset();
-                Call.reset();
-                Dot.reset();
-                Index.reset();
-                Arrow.reset();
-                Identifier.reset();
-                ImportIdentifier.reset();
-                PrivateIdentifier.reset();
-                JSXElement.reset();
-                Missing.reset();
-                Number.reset();
-                BigInt.reset();
-                Object.reset();
-                Spread.reset();
-                String.reset();
-                TemplatePart.reset();
-                Template.reset();
-                RegExp.reset();
-                Await.reset();
-                Yield.reset();
-                If.reset();
-                Require.reset();
-                RequireOrRequireResolve.reset();
-                Import.reset();
+                BaseStore.reset();
             }
 
             pub fn append(comptime ValueType: type, value: anytype) ListIndex {
@@ -3519,77 +3513,6 @@ pub const Expr = struct {
                         @compileError("Invalid type passed to Stmt.Data.set " ++ @typeName(ValueType));
                     },
                 }
-            }
-
-            pub fn NewStore(comptime ValueType: type) type {
-                const count = 8096;
-                const max_index = count - 1;
-                const list_count = count;
-                return struct {
-                    pub threadlocal var backing_buf: [count]ValueType = undefined;
-                    pub threadlocal var backing_buf_used: u16 = 0;
-                    const Allocator = std.mem.Allocator;
-                    const Self = @This();
-                    const NotFound = allocators.NotFound;
-                    const Unassigned = allocators.Unassigned;
-
-                    overflow_list: std.ArrayListUnmanaged(ValueType),
-                    allocator: *Allocator,
-
-                    pub threadlocal var instance: Self = undefined;
-                    pub threadlocal var self: *Self = undefined;
-
-                    pub fn reset() void {
-                        backing_buf_used = 0;
-                        self.overflow_list.shrinkRetainingCapacity(0);
-                    }
-
-                    pub fn init(allocator: *std.mem.Allocator) *Self {
-                        instance = Self{
-                            .allocator = allocator,
-                            .overflow_list = std.ArrayListUnmanaged(ValueType){},
-                        };
-
-                        self = &instance;
-                        return self;
-                    }
-
-                    pub fn isOverflowing() bool {
-                        return backing_buf_used >= @as(u16, count);
-                    }
-
-                    pub fn at(index: ListIndex) *ValueType {
-                        std.debug.assert(index.index != NotFound.index and index.index != Unassigned.index);
-
-                        if (index.is_overflowing) {
-                            return &self.overflow_list.items[index.index];
-                        } else {
-                            return &backing_buf[index.index];
-                        }
-                    }
-
-                    pub fn exists(value: ValueType) bool {
-                        return isSliceInBuffer(value, backing_buf);
-                    }
-
-                    pub fn append(value: ValueType) ListIndex {
-                        var result = ListIndex{ .index = std.math.maxInt(u31), .is_overflowing = backing_buf_used > max_index };
-                        if (result.is_overflowing) {
-                            result.index = @intCast(u31, self.overflow_list.items.len);
-                            self.overflow_list.append(self.allocator, value) catch unreachable;
-                        } else {
-                            result.index = backing_buf_used;
-                            backing_buf[result.index] = value;
-                            backing_buf_used += 1;
-
-                            if (backing_buf_used >= max_index and self.overflow_list.capacity == 0) {
-                                self.overflow_list = @TypeOf(self.overflow_list).initCapacity(self.allocator, 1) catch unreachable;
-                            }
-                        }
-
-                        return result;
-                    }
-                };
             }
         };
 
@@ -4148,78 +4071,6 @@ pub const Dependency = packed struct {
 pub const ExprList = std.ArrayList(Expr);
 pub const StmtList = std.ArrayList(Stmt);
 pub const BindingList = std.ArrayList(Binding);
-pub const AstData = struct {
-    expr_list: ExprList,
-    stmt_list: StmtList,
-    binding_list: BindingList,
-
-    pub fn init(allocator: *std.mem.Allocator) AstData {
-        return AstData{
-            .expr_list = ExprList.init(allocator),
-            .stmt_list = StmtList.init(allocator),
-            .binding_list = BindingList.init(allocator),
-        };
-    }
-
-    pub fn deinit(self: *AstData) void {
-        self.expr_list.deinit();
-        self.stmt_list.deinit();
-        self.binding_list.deinit();
-    }
-
-    pub fn expr(self: *AstData, index: ExprNodeIndex) Expr {
-        return self.expr_list.items[index];
-    }
-
-    pub fn stmt(self: *AstData, index: StmtNodeIndex) Stmt {
-        return self.stmt_list.items[index];
-    }
-
-    pub fn binding(self: *AstData, index: BindingNodeIndex) Binding {
-        return self.binding_list.items[index];
-    }
-
-    pub fn add_(self: *AstData, t: anytype) !void {
-        return switch (@TypeOf(t)) {
-            Stmt => {
-                try self.stmt_list.append(t);
-            },
-            Expr => {
-                try self.expr_list.append(t);
-            },
-            Binding => {
-                try self.binding_list.append(t);
-            },
-            else => {
-                @compileError("Invalid type passed to AstData.add. Expected Stmt, Expr, or Binding.");
-            },
-        };
-    }
-
-    pub fn add(self: *AstData, t: anytype) !NodeIndex {
-        return &t;
-        // return switch (@TypeOf(t)) {
-        //     Stmt => {
-        //         var len = self.stmt_list.items.len;
-        //         try self.stmt_list.append(t);
-        //         return @intCast(StmtNodeIndex, len);
-        //     },
-        //     Expr => {
-        //         var len = self.expr_list.items.len;
-        //         try self.expr_list.append(t);
-        //         return @intCast(ExprNodeIndex, len);
-        //     },
-        //     Binding => {
-        //         var len = self.binding_list.items.len;
-        //         try self.binding_list.append(t);
-        //         return @intCast(BindingNodeIndex, len);
-        //     },
-        //     else => {
-        //         @compileError("Invalid type passed to AstData.add. Expected Stmt, Expr, or Binding.");
-        //     },
-        // };
-    }
-};
 
 // Each file is made up of multiple parts, and each part consists of one or
 // more top-level statements. Parts are used for tree shaking and code

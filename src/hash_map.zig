@@ -688,7 +688,7 @@ pub fn HashMapUnmanaged(
         }
 
         pub fn getOrPutAssumeCapacity(self: *Self, key: K) GetOrPutResult {
-            return @call(.{ .modifier = .always_inline }, Self.getOrPutAssumeCapacityWithHash, .{ self, key, hashFn(key) });
+            return self.getOrPutAssumeCapacityWithHash(key, hashFn(key));
         }
 
         pub fn getOrPutAssumeCapacityWithHash(self: *Self, key: K, hash: u64) GetOrPutResult {

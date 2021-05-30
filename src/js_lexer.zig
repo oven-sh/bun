@@ -491,7 +491,7 @@ pub const Lexer = struct {
         }
     }
 
-    pub const InnerStringLiteral = packed struct { suffix_len: u3, needs_slow_path: bool };
+    pub const InnerStringLiteral = struct { suffix_len: u3, needs_slow_path: bool };
     fn parseStringLiteralInnter(lexer: *LexerType, comptime quote: CodePoint) !InnerStringLiteral {
         var needs_slow_path = false;
         var suffix_len: u3 = 1;

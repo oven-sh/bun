@@ -392,8 +392,9 @@ pub const Cli = struct {
         }
 
         if (isDebug) {
-            Output.println("Expr count: {d}", .{js_ast.Expr.icount});
-            Output.println("Stmt count: {d}", .{js_ast.Stmt.icount});
+            Output.println("Expr    count: {d}", .{js_ast.Expr.icount});
+            Output.println("Stmt    count: {d}", .{js_ast.Stmt.icount});
+            Output.println("Binding count: {d}", .{js_ast.Binding.binding_count});
 
             Output.println("File Descriptors: {d} / {d}", .{
                 fs.FileSystem.max_fd,

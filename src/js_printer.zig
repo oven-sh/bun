@@ -1473,7 +1473,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                             var wrap = false;
 
                             if (p.call_target) |target| {
-                                wrap = e.was_originally_identifier and target.e_import_identifier.index == expr.data.e_import_identifier.index;
+                                wrap = e.was_originally_identifier and target.e_import_identifier == expr.data.e_import_identifier;
                             }
 
                             if (wrap) {
@@ -2870,26 +2870,26 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
             while (true) {
                 switch (s.*) {
                     .s_if => |index| {
-                        if (Stmt.Data.Store.If.at(index).no) |*no| {
+                        if (index.no) |*no| {
                             s = &no.data;
                         } else {
                             return true;
                         }
                     },
                     .s_for => |current| {
-                        s = &Stmt.Data.Store.For.at(current).body.data;
+                        s = &current.body.data;
                     },
                     .s_for_in => |current| {
-                        s = &Stmt.Data.Store.ForIn.at(current).body.data;
+                        s = &current.body.data;
                     },
                     .s_for_of => |current| {
-                        s = &Stmt.Data.Store.ForOf.at(current).body.data;
+                        s = &current.body.data;
                     },
                     .s_while => |current| {
-                        s = &Stmt.Data.Store.While.at(current).body.data;
+                        s = &current.body.data;
                     },
                     .s_with => |current| {
-                        s = &Stmt.Data.Store.With.at(current).body.data;
+                        s = &current.body.data;
                     },
                     else => {
                         return false;

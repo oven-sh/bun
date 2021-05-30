@@ -18,9 +18,7 @@ pub fn ExpressionTransposer(comptime ctx: type, visitor: fn (ptr: *ctx, arg: Exp
 
         pub fn maybeTransposeIf(self: *@This(), arg: Expr, state: anytype) Expr {
             switch (arg.data) {
-                .e_if => {
-                    const ex = arg.getIf();
-
+                .e_if => |ex| {
                     ex.yes = self.maybeTransposeIf(ex.yes, state);
                     ex.no = self.maybeTransposeIf(ex.no, state);
                     return arg;
@@ -55,9 +53,7 @@ pub const ImportScanner = struct {
             // zls needs the hint, it seems.
             const stmt: Stmt = _stmt;
             switch (stmt.data) {
-                .s_import => {
-                    var st = stmt.getImport();
-
+                .s_import => |st| {
                     var record: ImportRecord = p.import_records.items[st.import_record_index];
 
                     // The official TypeScript compiler always removes unused imported
@@ -368,9 +364,7 @@ pub const ImportScanner = struct {
                         }
                     }
                 },
-                .s_function => {
-                    var st = stmt.getFunction();
-
+                .s_function => |st| {
                     if (st.func.flags.is_export) {
                         if (st.func.name) |name| {
                             try p.recordExport(name.loc, p.symbols.items[name.ref.?.inner_index].original_name, name.ref.?);
@@ -379,9 +373,7 @@ pub const ImportScanner = struct {
                         }
                     }
                 },
-                .s_class => {
-                    var st = stmt.getClass();
-
+                .s_class => |st| {
                     if (st.is_export) {
                         if (st.class.class_name) |name| {
                             try p.recordExport(name.loc, p.symbols.items[name.ref.?.inner_index].original_name, name.ref.?);
@@ -390,9 +382,7 @@ pub const ImportScanner = struct {
                         }
                     }
                 },
-                .s_local => {
-                    var st = stmt.getLocal();
-
+                .s_local => |st| {
                     if (st.is_export) {
                         for (st.decls) |decl| {
                             p.recordExportedBinding(decl.binding);
@@ -432,21 +422,15 @@ pub const ImportScanner = struct {
                         }
                     }
                 },
-                .s_export_default => {
-                    var st = stmt.getExportDefault();
-
+                .s_export_default => |st| {
                     try p.recordExport(st.default_name.loc, "default", st.default_name.ref.?);
                 },
-                .s_export_clause => {
-                    var st = stmt.getExportClause();
-
+                .s_export_clause => |st| {
                     for (st.items) |item| {
                         try p.recordExport(item.alias_loc, item.alias, item.name.ref.?);
                     }
                 },
-                .s_export_star => {
-                    var st = stmt.getExportStar();
-
+                .s_export_star => |st| {
                     try p.import_records_for_current_part.append(st.import_record_index);
 
                     if (st.alias) |alias| {
@@ -465,9 +449,7 @@ pub const ImportScanner = struct {
                         try p.export_star_import_records.append(st.import_record_index);
                     }
                 },
-                .s_export_from => {
-                    var st = stmt.getExportFrom();
-
+                .s_export_from => |st| {
                     try p.import_records_for_current_part.append(st.import_record_index);
 
                     for (st.items) |item| {
@@ -516,12 +498,12 @@ pub const SideEffects = enum(u2) {
                 return std.math.nan_f64;
             },
             .e_boolean => {
-                const e = Expr.Data.Store.Boolean.at(data.e_boolean);
+                const e = data.e_boolean;
 
                 return if (e.value) 1.0 else 0.0;
             },
             .e_number => {
-                const e = Expr.Data.Store.Number.at(data.e_number);
+                const e = data.e_number;
 
                 return e.value;
             },
@@ -548,14 +530,12 @@ pub const SideEffects = enum(u2) {
                 return null;
             },
 
-            .e_dot => {
-                if (expr.getDot().can_be_removed_if_unused) {
+            .e_dot => |dot| {
+                if (dot.can_be_removed_if_unused) {
                     return null;
                 }
             },
-            .e_identifier => {
-                const ident = expr.getIdentifier();
-
+            .e_identifier => |ident| {
                 if (ident.must_keep_due_to_with_stmt) {
                     return expr;
                 }
@@ -564,8 +544,7 @@ pub const SideEffects = enum(u2) {
                     return null;
                 }
             },
-            .e_if => {
-                const __if__ = expr.getIf();
+            .e_if => |__if__| {
                 __if__.yes = simpifyUnusedExpr(p, __if__.yes) orelse __if__.yes.toEmpty();
                 __if__.no = simpifyUnusedExpr(p, __if__.no) orelse __if__.no.toEmpty();
 
@@ -575,8 +554,7 @@ pub const SideEffects = enum(u2) {
                 }
             },
 
-            .e_call => {
-                const call = expr.getCall();
+            .e_call => |call| {
 
                 // A call that has been marked "__PURE__" can be removed if all arguments
                 // can be removed. The annotation causes us to ignore the target.
@@ -585,8 +563,7 @@ pub const SideEffects = enum(u2) {
                 }
             },
 
-            .e_binary => {
-                const bin = expr.getBinary();
+            .e_binary => |bin| {
                 switch (bin.op) {
                     // We can simplify "==" and "!=" even though they can call "toString" and/or
                     // "valueOf" if we can statically determine that the types of both sides are
@@ -601,8 +578,7 @@ pub const SideEffects = enum(u2) {
                 }
             },
 
-            .e_new => {
-                const call = expr.getNew();
+            .e_new => |call| {
                 // A constructor call that has been marked "__PURE__" can be removed if all arguments
                 // can be removed. The annotation causes us to ignore the target.
                 if (call.can_be_unwrapped_if_unused) {
@@ -635,9 +611,7 @@ pub const SideEffects = enum(u2) {
                 return false;
             },
 
-            .s_local => |local__| {
-                var local = stmt.getLocal();
-
+            .s_local => |local| {
                 return local.kind != .k_var;
                 // if (local.kind != .k_var) {
                 //     // Omit these statements entirely
@@ -655,8 +629,7 @@ pub const SideEffects = enum(u2) {
                 return false;
             },
 
-            .s_if => {
-                const _if_ = stmt.getIf();
+            .s_if => |_if_| {
                 if (shouldKeepStmtInDeadControlFlow(_if_.yes)) {
                     return true;
                 }
@@ -674,8 +647,7 @@ pub const SideEffects = enum(u2) {
                 return shouldKeepStmtInDeadControlFlow(stmt.getDoWhile().body);
             },
 
-            .s_for => {
-                const __for__ = stmt.getFor();
+            .s_for => |__for__| {
                 if (__for__.init) |init_| {
                     if (shouldKeepStmtInDeadControlFlow(init_)) {
                         return true;
@@ -685,20 +657,15 @@ pub const SideEffects = enum(u2) {
                 return shouldKeepStmtInDeadControlFlow(__for__.body);
             },
 
-            .s_for_in => {
-                const __for__ = stmt.getForIn();
+            .s_for_in => |__for__| {
                 return shouldKeepStmtInDeadControlFlow(__for__.init) or shouldKeepStmtInDeadControlFlow(__for__.body);
             },
 
-            .s_for_of => {
-                const __for__ = stmt.getForOf();
-
+            .s_for_of => |__for__| {
                 return shouldKeepStmtInDeadControlFlow(__for__.init) or shouldKeepStmtInDeadControlFlow(__for__.body);
             },
 
-            .s_label => {
-                const label = stmt.getLabel();
-
+            .s_label => |label| {
                 return shouldKeepStmtInDeadControlFlow(label.stmt);
             },
             else => {
@@ -724,29 +691,29 @@ pub const SideEffects = enum(u2) {
                 equality.equal = equality.ok;
             },
             .e_boolean => {
-                const l = Expr.Data.Store.Boolean.at(left.e_boolean);
-                const r = Expr.Data.Store.Boolean.at(right.e_boolean);
+                const l = left.e_boolean;
+                const r = right.e_boolean;
 
                 equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_boolean;
                 equality.equal = equality.ok and l.value == r.value;
             },
             .e_number => {
-                const l = Expr.Data.Store.Number.at(left.e_number);
-                const r = Expr.Data.Store.Number.at(right.e_number);
+                const l = left.e_number;
+                const r = right.e_number;
 
                 equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_number;
                 equality.equal = equality.ok and l.value == r.value;
             },
             .e_big_int => {
-                const l = Expr.Data.Store.BigInt.at(left.e_big_int);
-                const r = Expr.Data.Store.BigInt.at(right.e_big_int);
+                const l = left.e_big_int;
+                const r = right.e_big_int;
 
                 equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_big_int;
                 equality.equal = equality.ok and strings.eql(l.value, r.value);
             },
             .e_string => {
-                const l = Expr.Data.Store.String.at(left.e_string);
-                const r = Expr.Data.Store.String.at(right.e_string);
+                const l = left.e_string;
+                const r = right.e_string;
 
                 equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_string;
                 if (equality.ok) {
@@ -768,7 +735,7 @@ pub const SideEffects = enum(u2) {
                 return true;
             },
             .e_unary => {
-                const e = Expr.Data.Store.Unary.at(data.e_unary);
+                const e = data.e_unary;
                 switch (e.op) {
                     // number or bigint
                     .un_pos,
@@ -792,7 +759,7 @@ pub const SideEffects = enum(u2) {
                 }
             },
             .e_binary => {
-                const e = Expr.Data.Store.Binary.at(data.e_binary);
+                const e = data.e_binary;
                 switch (e.op) {
                     // boolean
                     .bin_lt,
@@ -846,7 +813,7 @@ pub const SideEffects = enum(u2) {
                 }
             },
             .e_if => {
-                const e = Expr.Data.Store.If.at(data.e_if);
+                const e = data.e_if;
                 return isPrimitiveWithSideEffects(e.yes.data) and isPrimitiveWithSideEffects(e.no.data);
             },
             else => {},
@@ -902,8 +869,7 @@ pub const SideEffects = enum(u2) {
                 return Result{ .value = true, .side_effects = .could_have_side_effects, .ok = true };
             },
 
-            .e_unary => {
-                const e = Expr.Data.Store.Unary.at(exp.e_unary);
+            .e_unary => |e| {
                 switch (e.op) {
                     // Always number or bigint
                     .un_pos, .un_neg, .un_cpl, .un_pre_dec, .un_pre_inc, .un_post_dec, .un_post_inc => {
@@ -922,8 +888,7 @@ pub const SideEffects = enum(u2) {
                 }
             },
 
-            .e_binary => {
-                const e = Expr.Data.Store.Binary.at(exp.e_binary);
+            .e_binary => |e| {
                 switch (e.op) {
                     // always string or number or bigint
                     .bin_add,
@@ -986,20 +951,16 @@ pub const SideEffects = enum(u2) {
             .e_null, .e_undefined => {
                 return Result{ .ok = true, .value = false, .side_effects = .no_side_effects };
             },
-            .e_boolean => {
-                const e = Expr.Data.Store.Boolean.at(exp.e_boolean);
+            .e_boolean => |e| {
                 return Result{ .ok = true, .value = e.value, .side_effects = .no_side_effects };
             },
-            .e_number => {
-                const e = Expr.Data.Store.Number.at(exp.e_number);
+            .e_number => |e| {
                 return Result{ .ok = true, .value = e.value != 0.0 and !std.math.isNan(e.value), .side_effects = .no_side_effects };
             },
-            .e_big_int => {
-                const e = Expr.Data.Store.BigInt.at(exp.e_big_int);
+            .e_big_int => |e| {
                 return Result{ .ok = true, .value = !strings.eqlComptime(e.value, "0"), .side_effects = .no_side_effects };
             },
-            .e_string => {
-                const e = Expr.Data.Store.String.at(exp.e_string);
+            .e_string => |e| {
                 return Result{ .ok = true, .value = std.math.max(e.value.len, e.utf8.len) > 0, .side_effects = .no_side_effects };
             },
             .e_function, .e_arrow, .e_reg_exp => {
@@ -1009,7 +970,7 @@ pub const SideEffects = enum(u2) {
                 return Result{ .ok = true, .value = true, .side_effects = .could_have_side_effects };
             },
             .e_unary => {
-                const e_ = Expr.Data.Store.Unary.at(exp.e_unary);
+                const e_ = exp.e_unary;
                 switch (e_.op) {
                     .un_void => {
                         return Result{ .ok = true, .value = false, .side_effects = .could_have_side_effects };
@@ -1030,7 +991,7 @@ pub const SideEffects = enum(u2) {
                 }
             },
             .e_binary => {
-                const e_ = Expr.Data.Store.Binary.at(exp.e_binary);
+                const e_ = exp.e_binary;
                 switch (e_.op) {
                     .bin_logical_or => {
                         // "anything || truthy" is truthy
@@ -2008,8 +1969,7 @@ pub const P = struct {
 
     pub fn transposeRequire(p: *P, arg: Expr, transpose_state: anytype) Expr {
         switch (arg.data) {
-            .e_string => {
-                const str = arg.getString();
+            .e_string => |str| {
 
                 // Ignore calls to require() if the control flow is provably dead here.
                 // We don't want to spend time scanning the required files if they will
@@ -2636,14 +2596,10 @@ pub const P = struct {
             .e_missing => {
                 return null;
             },
-            .e_identifier => {
-                const ex = expr.getIdentifier();
-
+            .e_identifier => |ex| {
                 return p.b(B.Identifier{ .ref = ex.ref }, expr.loc);
             },
-            .e_array => {
-                const ex = expr.getArray();
-
+            .e_array => |ex| {
                 if (ex.comma_after_spread) |spread| {
                     invalid_loc.append(spread) catch unreachable;
                 }
@@ -2672,9 +2628,7 @@ pub const P = struct {
                     .is_single_line = ex.is_single_line,
                 }, expr.loc);
             },
-            .e_object => {
-                const ex = expr.getObject();
-
+            .e_object => |ex| {
                 if (ex.comma_after_spread) |sp| {
                     invalid_loc.append(sp) catch unreachable;
                 }
@@ -2726,9 +2680,7 @@ pub const P = struct {
         var override: ?ExprNodeIndex = null;
         // zig syntax is sometimes painful
         switch (expr.*.data) {
-            .e_binary => {
-                const bin = expr.getBinary();
-
+            .e_binary => |bin| {
                 if (bin.op == .bin_assign) {
                     initializer = bin.right;
                     expr = &bin.left;
@@ -4103,9 +4055,7 @@ pub const P = struct {
                         // Handle the default export of an abstract class in TypeScript
                         if (p.options.ts and is_identifier and (p.lexer.token == .t_class or opts.ts_decorators != null) and strings.eqlComptime(name, "abstract")) {
                             switch (expr.data) {
-                                .e_identifier => {
-                                    var ident = expr.getIdentifier();
-
+                                .e_identifier => |ident| {
                                     var stmtOpts = ParseStatementOptions{
                                         .ts_decorators = opts.ts_decorators,
                                         .is_name_optional = true,
@@ -4933,9 +4883,7 @@ pub const P = struct {
                 }
                 if (is_identifier) {
                     switch (expr.data) {
-                        .e_identifier => {
-                            var ident = expr.getIdentifier();
-
+                        .e_identifier => |ident| {
                             if (p.lexer.token == .t_colon and !opts.hasDecorators()) {
                                 _ = try p.pushScopeForParsePass(.label, loc);
                                 defer p.popScope();
@@ -5050,8 +4998,7 @@ pub const P = struct {
                                     if (opts.is_namespace_scope and opts.is_export) {
                                         var decls: []G.Decl = &([_]G.Decl{});
                                         switch (stmt.data) {
-                                            .s_local => {
-                                                const local = stmt.getLocal();
+                                            .s_local => |local| {
                                                 var _decls = try List(G.Decl).initCapacity(p.allocator, local.decls.len);
                                                 for (local.decls) |decl| {
                                                     try extractDeclsForBinding(decl.binding, &_decls);
@@ -5181,9 +5128,7 @@ pub const P = struct {
         const _stmts: []Stmt = stmts.items;
         for (_stmts) |stmt| {
             switch (stmt.data) {
-                .s_local => |local__| {
-                    var local = stmt.getLocal();
-
+                .s_local => |local| {
                     if (local.was_ts_import_equals and !local.is_export) {
                         import_equal_count += 1;
                     }
@@ -6022,8 +5967,7 @@ pub const P = struct {
             if (isDirectivePrologue) {
                 isDirectivePrologue = false;
                 switch (stmt.data) {
-                    .s_expr => {
-                        const expr = stmt.getExpr();
+                    .s_expr => |expr| {
                         switch (expr.value.data) {
                             .e_string => {
                                 const str = expr.value.getString();
@@ -6052,9 +5996,7 @@ pub const P = struct {
             if (!p.options.suppress_warnings_about_weird_code) {
                 var needsCheck = true;
                 switch (stmt.data) {
-                    .s_return => |retu| {
-                        const ret = stmt.getReturn();
-
+                    .s_return => |ret| {
                         if (ret.value == null and !p.latest_return_had_semicolon) {
                             returnWithoutSemicolonStart = stmt.loc.start;
                             needsCheck = false;
@@ -6635,14 +6577,10 @@ pub const P = struct {
         if (had_pure_comment_before and level.lt(.call)) {
             expr = try p.parseSuffix(expr, @intToEnum(Level, @enumToInt(Level.call) - 1), errors, flags);
             switch (expr.data) {
-                .e_call => {
-                    const ex = expr.getCall();
-
+                .e_call => |ex| {
                     ex.can_be_unwrapped_if_unused = true;
                 },
-                .e_new => {
-                    const ex = expr.getNew();
-
+                .e_new => |ex| {
                     ex.can_be_unwrapped_if_unused = true;
                 },
                 else => {},
@@ -6728,14 +6666,10 @@ pub const P = struct {
 
     pub fn markExprAsParenthesized(p: *P, expr: *Expr) void {
         switch (expr.data) {
-            .e_array => {
-                const ex = expr.getArray();
-
+            .e_array => |ex| {
                 ex.is_parenthesized = true;
             },
-            .e_object => {
-                const ex = expr.getObject();
-
+            .e_object => |ex| {
                 ex.is_parenthesized = true;
             },
             else => {
@@ -6811,9 +6745,7 @@ pub const P = struct {
                 // Handle index signatures
                 if (p.options.ts and p.lexer.token == .t_colon and wasIdentifier and opts.is_class) {
                     switch (expr.data) {
-                        .e_identifier => {
-                            var ident = expr.getIdentifier();
-
+                        .e_identifier => |ident| {
                             try p.lexer.next();
                             try p.skipTypeScriptType(.lowest);
                             try p.lexer.expect(.t_close_bracket);
@@ -6962,9 +6894,7 @@ pub const P = struct {
             // Forbid the names "constructor" and "prototype" in some cases
             if (!is_computed) {
                 switch (key.data) {
-                    .e_string => {
-                        const str = key.getString();
-
+                    .e_string => |str| {
                         if (str.eql(string, "constructor") or (opts.is_static and str.eql(string, "prototype"))) {
                             // TODO: fmt error message to include string value.
                             p.log.addRangeError(p.source, key_range, "Invalid field name") catch unreachable;
@@ -6987,9 +6917,7 @@ pub const P = struct {
 
             // Special-case private identifiers
             switch (key.data) {
-                .e_private_identifier => {
-                    const private = key.getPrivateIdentifier();
-
+                .e_private_identifier => |private| {
                     const name = p.loadNameFromRef(private.ref);
                     if (strings.eqlComptime(name, "#constructor")) {
                         p.log.addRangeError(p.source, key_range, "Invalid field name \"#constructor\"") catch unreachable;
@@ -7033,9 +6961,7 @@ pub const P = struct {
             // Forbid the names "constructor" and "prototype" in some cases
             if (opts.is_class and !is_computed) {
                 switch (key.data) {
-                    .e_string => {
-                        const str = key.getString();
-
+                    .e_string => |str| {
                         if (!opts.is_static and str.eql(string, "constructor")) {
                             if (kind == .get) {
                                 p.log.addRangeError(p.source, key_range, "Class constructor cannot be a getter") catch unreachable;
@@ -7102,9 +7028,7 @@ pub const P = struct {
 
             // Special-case private identifiers
             switch (key.data) {
-                .e_private_identifier => {
-                    const private = key.getPrivateIdentifier();
-
+                .e_private_identifier => |private| {
                     var declare: Symbol.Kind = undefined;
                     var suffix: string = "";
                     switch (kind) {
@@ -8061,9 +7985,7 @@ pub const P = struct {
 
                     // Warn about "!a in b" instead of "!(a in b)"
                     switch (left.data) {
-                        .e_unary => {
-                            const unary = expr.getUnary();
-
+                        .e_unary => |unary| {
                             if (unary.op == .un_not) {
                                 // TODO:
                                 // p.log.addRangeWarning(source: ?Source, r: Range, text: string)
@@ -8084,9 +8006,7 @@ pub const P = struct {
                     // example of code with this problem: https://github.com/mrdoob/three.js/pull/11182.
                     if (!p.options.suppress_warnings_about_weird_code) {
                         switch (left.data) {
-                            .e_unary => {
-                                const unary = expr.getUnary();
-
+                            .e_unary => |unary| {
                                 if (unary.op == .un_not) {
                                     // TODO:
                                     // p.log.addRangeWarning(source: ?Source, r: Range, text: string)
@@ -9223,19 +9143,13 @@ pub const P = struct {
                 // check if the imported file is marked as "sideEffects: false" before we
                 // can remove a SImport statement. Otherwise the import must be kept for
                 // its side effects.
-                .s_import => {
-                    var st = stmt.getImport();
-                },
-                .s_class => {
-                    var st = stmt.getClass();
-
+                .s_import => |st| {},
+                .s_class => |st| {
                     if (!p.classCanBeRemovedIfUnused(&st.class)) {
                         return false;
                     }
                 },
-                .s_expr => {
-                    var st = stmt.getExpr();
-
+                .s_expr => |st| {
                     if (st.does_not_affect_tree_shaking) {
                         // Expressions marked with this are automatically generated and have
                         // no side effects by construction.
@@ -9244,9 +9158,7 @@ pub const P = struct {
                         return false;
                     }
                 },
-                .s_local => {
-                    var st = stmt.getLocal();
-
+                .s_local => |st| {
                     for (st.decls) |decl| {
                         if (!p.bindingCanBeRemovedIfUnused(decl.binding)) {
                             return false;
@@ -9263,9 +9175,7 @@ pub const P = struct {
                 // Exports are tracked separately, so this isn't necessary
                 .s_export_clause, .s_export_from => {},
 
-                .s_export_default => {
-                    var st = stmt.getExportDefault();
-
+                .s_export_default => |st| {
                     switch (st.value) {
                         .stmt => |s2| {
                             switch (s2.data) {
@@ -9406,14 +9316,12 @@ pub const P = struct {
         // Output.print("\nVisit: {s} - {d}\n", .{ @tagName(expr.data), expr.loc.start });
         switch (expr.data) {
             .e_null, .e_super, .e_boolean, .e_big_int, .e_reg_exp, .e_new_target, .e_undefined => {},
-            .e_string => {
-                const e_ = expr.getString();
+            .e_string => |e_| {
 
                 // If you're using this, you're probably not using 0-prefixed legacy octal notation
                 // if e.LegacyOctalLoc.Start > 0 {
             },
-            .e_number => {
-                const e_ = expr.getNumber();
+            .e_number => |e_| {
 
                 // idc about legacy octal loc
             },
@@ -9430,7 +9338,8 @@ pub const P = struct {
             },
 
             .e_import_meta => {
-                const is_delete_target = std.meta.activeTag(p.delete_target) == .e_import_meta and &expr.data.e_import_meta == &p.delete_target.e_import_meta;
+                // TODO: delete import.meta might not work
+                const is_delete_target = std.meta.activeTag(p.delete_target) == .e_import_meta;
 
                 if (p.define.dots.get("meta")) |meta| {
                     for (meta) |define| {
@@ -9446,15 +9355,11 @@ pub const P = struct {
                     return p.e(E.Identifier{ .ref = p.import_meta_ref }, expr.loc);
                 }
             },
-            .e_spread => {
-                const exp = expr.getSpread();
-
+            .e_spread => |exp| {
                 exp.value = p.visitExpr(exp.value);
             },
-            .e_identifier => {
-                const e_ = expr.getIdentifier();
-
-                const is_delete_target = @as(Expr.Tag, p.delete_target) == .e_identifier and expr.data.e_identifier.eql(p.delete_target.e_identifier);
+            .e_identifier => |e_| {
+                const is_delete_target = @as(Expr.Tag, p.delete_target) == .e_identifier and expr.data.e_identifier == p.delete_target.e_identifier;
 
                 const name = p.loadNameFromRef(e_.ref);
                 if (p.isStrictMode() and js_lexer.StrictModeReservedWords.has(name)) {
@@ -9506,13 +9411,9 @@ pub const P = struct {
                 });
             },
             .e_private_identifier => {
-                const e_ = expr.getPrivateIdentifier();
-
                 p.panic("Unexpected private identifier. This is an internal error - not your fault.", .{});
             },
-            .e_jsx_element => {
-                const e_ = expr.getJsxElement();
-
+            .e_jsx_element => |e_| {
                 const tag = tagger: {
                     if (e_.tag) |_tag| {
                         break :tagger p.visitExpr(_tag);
@@ -9649,9 +9550,7 @@ pub const P = struct {
                 }
             },
 
-            .e_template => {
-                const e_ = expr.getTemplate();
-
+            .e_template => |e_| {
                 if (e_.tag) |tag| {
                     e_.tag = p.visitExpr(tag);
                 }
@@ -9662,14 +9561,10 @@ pub const P = struct {
                 }
             },
 
-            .e_binary => {
-                const e_ = expr.getBinary();
-
+            .e_binary => |e_| {
                 switch (e_.left.data) {
                     // Special-case private identifiers
-                    .e_private_identifier => {
-                        const private = expr.getPrivateIdentifier();
-
+                    .e_private_identifier => |private| {
                         if (e_.op == .bin_in) {
                             const name = p.loadNameFromRef(private.ref);
                             const result = p.findSymbol(e_.left.loc, name) catch unreachable;
@@ -9690,8 +9585,8 @@ pub const P = struct {
                     else => {},
                 }
 
-                const is_call_target = @as(Expr.Tag, p.call_target) == .e_binary and expr.data.e_binary.eql(p.call_target.e_binary);
-                const is_stmt_expr = @as(Expr.Tag, p.stmt_expr_value) == .e_binary and expr.data.e_binary.eql(p.stmt_expr_value.e_binary);
+                const is_call_target = @as(Expr.Tag, p.call_target) == .e_binary and expr.data.e_binary == p.call_target.e_binary;
+                const is_stmt_expr = @as(Expr.Tag, p.stmt_expr_value) == .e_binary and expr.data.e_binary == p.stmt_expr_value.e_binary;
                 const was_anonymous_named_expr = p.isAnonymousNamedExpr(e_.right);
 
                 e_.left = p.visitExprInOut(e_.left, ExprIn{
@@ -9990,11 +9885,9 @@ pub const P = struct {
                     else => {},
                 }
             },
-            .e_index => {
-                const e_ = expr.getIndex();
-
-                const is_call_target = std.meta.activeTag(p.call_target) == .e_index and expr.data.e_index.eql(p.call_target.e_index);
-                const is_delete_target = std.meta.activeTag(p.delete_target) == .e_index and expr.data.e_index.eql(p.delete_target.e_index);
+            .e_index => |e_| {
+                const is_call_target = std.meta.activeTag(p.call_target) == .e_index and expr.data.e_index == p.call_target.e_index;
+                const is_delete_target = std.meta.activeTag(p.delete_target) == .e_index and expr.data.e_index == p.delete_target.e_index;
 
                 const target = p.visitExprInOut(e_.target, ExprIn{
                     // this is awkward due to a zig compiler bug
@@ -10033,9 +9926,7 @@ pub const P = struct {
 
                 return p.e(e_, expr.loc);
             },
-            .e_unary => {
-                const e_ = expr.getUnary();
-
+            .e_unary => |e_| {
                 switch (e_.op) {
                     .un_typeof => {
                         e_.value = p.visitExprInOut(e_.value, ExprIn{ .assign_target = e_.op.unaryAssignTarget() });
@@ -10099,11 +9990,9 @@ pub const P = struct {
                     },
                 }
             },
-            .e_dot => {
-                const e_ = expr.getDot();
-
-                const is_delete_target = @as(Expr.Tag, p.delete_target) == .e_dot and expr.data.e_dot.eql(p.delete_target.e_dot);
-                const is_call_target = @as(Expr.Tag, p.call_target) == .e_dot and expr.data.e_dot.eql(p.call_target.e_dot);
+            .e_dot => |e_| {
+                const is_delete_target = @as(Expr.Tag, p.delete_target) == .e_dot and expr.data.e_dot == p.delete_target.e_dot;
+                const is_call_target = @as(Expr.Tag, p.call_target) == .e_dot and expr.data.e_dot == p.call_target.e_dot;
 
                 if (p.define.dots.get(e_.name)) |parts| {
                     for (parts) |define| {
@@ -10129,7 +10018,7 @@ pub const P = struct {
                 }
 
                 // Track ".then().catch()" chains
-                if (is_call_target and @as(Expr.Tag, p.then_catch_chain.next_target) == .e_dot and p.then_catch_chain.next_target.e_dot.eql(expr.data.e_dot)) {
+                if (is_call_target and @as(Expr.Tag, p.then_catch_chain.next_target) == .e_dot and p.then_catch_chain.next_target.e_dot == expr.data.e_dot) {
                     if (strings.eqlComptime(e_.name, "catch")) {
                         p.then_catch_chain = ThenCatchChain{
                             .next_target = e_.target.data,
@@ -10158,10 +10047,8 @@ pub const P = struct {
                     }
                 }
             },
-            .e_if => {
-                const e_ = expr.getIf();
-
-                const is_call_target = @as(Expr.Data, p.call_target) == .e_if and expr.data.e_if.eql(p.call_target.e_if);
+            .e_if => |e_| {
+                const is_call_target = @as(Expr.Data, p.call_target) == .e_if and expr.data.e_if == p.call_target.e_if;
 
                 e_.test_ = p.visitExpr(e_.test_);
 
@@ -10189,22 +10076,16 @@ pub const P = struct {
                     }
                 }
             },
-            .e_await => {
-                const e_ = expr.getAwait();
-
+            .e_await => |e_| {
                 p.await_target = e_.value.data;
                 e_.value = p.visitExpr(e_.value);
             },
-            .e_yield => {
-                const e_ = expr.getYield();
-
+            .e_yield => |e_| {
                 if (e_.value) |val| {
                     e_.value = p.visitExpr(val);
                 }
             },
-            .e_array => {
-                const e_ = expr.getArray();
-
+            .e_array => |e_| {
                 if (in.assign_target != .none) {
                     if (e_.comma_after_spread) |spread| {
                         p.log.addRangeError(p.source, logger.Range{ .loc = spread, .len = 1 }, "Unexpected \",\" after rest pattern") catch unreachable;
@@ -10212,20 +10093,13 @@ pub const P = struct {
                 }
 
                 var has_spread = false;
-                var i: usize = 0;
-                while (i < e_.items.len) : (i += 1) {
-                    var item = e_.items[i];
-                    const data = item.data;
-                    switch (data) {
+                for (e_.items) |*item| {
+                    switch (item.data) {
                         .e_missing => {},
-                        .e_spread => {
-                            const spread = item.getSpread();
-
+                        .e_spread => |spread| {
                             spread.value = p.visitExprInOut(spread.value, ExprIn{ .assign_target = in.assign_target });
                         },
-                        .e_binary => {
-                            const e2 = item.getBinary();
-
+                        .e_binary => |e2| {
                             if (in.assign_target != .none and e2.op == .bin_assign) {
                                 const was_anonymous_named_expr = p.isAnonymousNamedExpr(e2.right);
                                 e2.left = p.visitExprInOut(e2.left, ExprIn{ .assign_target = .replace });
@@ -10234,24 +10108,21 @@ pub const P = struct {
                                 if (@as(Expr.Tag, e2.left.data) == .e_identifier) {
                                     e2.right = p.maybeKeepExprSymbolName(
                                         e2.right,
-                                        p.symbols.items[e2.left.getIdentifier().ref.inner_index].original_name,
+                                        p.symbols.items[e2.left.data.e_identifier.ref.inner_index].original_name,
                                         was_anonymous_named_expr,
                                     );
                                 }
                             } else {
-                                item = p.visitExprInOut(item, ExprIn{ .assign_target = in.assign_target });
+                                item.* = p.visitExprInOut(item.*, ExprIn{ .assign_target = in.assign_target });
                             }
                         },
                         else => {
-                            item = p.visitExprInOut(item, ExprIn{ .assign_target = in.assign_target });
+                            item.* = p.visitExprInOut(item.*, ExprIn{ .assign_target = in.assign_target });
                         },
                     }
-                    e_.items[i] = item;
                 }
             },
-            .e_object => {
-                const e_ = expr.getObject();
-
+            .e_object => |e_| {
                 if (in.assign_target != .none) {
                     p.maybeCommaSpreadError(e_.comma_after_spread);
                 }
@@ -10305,7 +10176,7 @@ pub const P = struct {
                             if (@as(Expr.Tag, val.data) == .e_identifier) {
                                 property.initializer = p.maybeKeepExprSymbolName(
                                     property.initializer orelse unreachable,
-                                    p.symbols.items[val.getIdentifier().ref.inner_index].original_name,
+                                    p.symbols.items[val.data.e_identifier.ref.inner_index].original_name,
                                     was_anonymous_named_expr,
                                 );
                             }
@@ -10313,27 +10184,23 @@ pub const P = struct {
                     }
                 }
             },
-            .e_import => {
-                const e_ = expr.getImport();
-
+            .e_import => |e_| {
                 const state = TransposeState{
-                    .is_await_target = if (p.await_target != null) p.await_target.?.e_import.eql(expr.data.e_index) else false,
-                    .is_then_catch_target = expr.data.e_import.eql(p.then_catch_chain.next_target.e_import) and p.then_catch_chain.has_catch,
+                    .is_await_target = if (p.await_target != null) p.await_target.?.e_import == e_ else false,
+                    .is_then_catch_target = expr.data.e_import == p.then_catch_chain.next_target.e_import and p.then_catch_chain.has_catch,
                     .loc = e_.expr.loc,
                 };
 
                 e_.expr = p.visitExpr(e_.expr);
                 return p.import_transposer.maybeTransposeIf(e_.expr, state);
             },
-            .e_call => {
-                const e_ = expr.getCall();
-
+            .e_call => |e_| {
                 p.call_target = e_.target.data;
 
                 p.then_catch_chain = ThenCatchChain{
                     .next_target = e_.target.data,
                     .has_multiple_args = e_.args.len >= 2,
-                    .has_catch = @as(Expr.Tag, p.then_catch_chain.next_target) == .e_call and p.then_catch_chain.next_target.e_call.eql(expr.data.e_call) and p.then_catch_chain.has_catch,
+                    .has_catch = @as(Expr.Tag, p.then_catch_chain.next_target) == .e_call and p.then_catch_chain.next_target.e_call == expr.data.e_call and p.then_catch_chain.has_catch,
                 };
 
                 // Prepare to recognize "require.resolve()" calls
@@ -10350,10 +10217,9 @@ pub const P = struct {
                 });
                 // TODO: wan about import namespace call
                 var has_spread = false;
-                var i: usize = 0;
-                while (i < e_.args.len) : (i += 1) {
-                    e_.args[i] = p.visitExpr(e_.args[i]);
-                    has_spread = has_spread or @as(Expr.Tag, e_.args[i].data) == .e_spread;
+                for (e_.args) |*arg| {
+                    arg.* = p.visitExpr(arg.*);
+                    has_spread = has_spread or @as(Expr.Tag, arg.data) == .e_spread;
                 }
 
                 if (e_.optional_chain == null and @as(Expr.Tag, e_.target.data) == .e_identifier and e_.target.getIdentifier().ref.eql(p.require_ref)) {
@@ -10370,20 +10236,15 @@ pub const P = struct {
 
                 return expr;
             },
-            .e_new => {
-                const e_ = expr.getNew();
-
+            .e_new => |e_| {
                 e_.target = p.visitExpr(e_.target);
                 // p.warnA
 
-                var i: usize = 0;
-                while (i < e_.args.len) : (i += 1) {
-                    e_.args[i] = p.visitExpr(e_.args[i]);
+                for (e_.args) |*arg| {
+                    arg.* = p.visitExpr(arg.*);
                 }
             },
-            .e_arrow => {
-                const e_ = expr.getArrow();
-
+            .e_arrow => |e_| {
                 const old_fn_or_arrow_data = std.mem.toBytes(p.fn_or_arrow_data_visit);
                 p.fn_or_arrow_data_visit = FnOrArrowDataVisit{
                     .is_arrow = true,
@@ -10418,16 +10279,13 @@ pub const P = struct {
                 p.fn_only_data_visit.is_inside_async_arrow_fn = old_inside_async_arrow_fn;
                 p.fn_or_arrow_data_visit = std.mem.bytesToValue(@TypeOf(p.fn_or_arrow_data_visit), &old_fn_or_arrow_data);
             },
-            .e_function => {
-                const e_ = expr.getFunction();
-
+            .e_function => |e_| {
                 e_.func = p.visitFunc(e_.func, expr.loc);
                 if (e_.func.name) |name| {
                     return p.keepExprSymbolName(expr, p.symbols.items[name.ref.?.inner_index].original_name);
                 }
             },
-            .e_class => {
-                const e_ = expr.getClass();
+            .e_class => |e_| {
 
                 // This might be wrong.
                 _ = p.visitClass(expr.loc, e_);
@@ -10509,8 +10367,7 @@ pub const P = struct {
                 .s_comment => {
                     continue;
                 },
-                .s_directive => {
-                    const dir = stmt.getDirective();
+                .s_directive => |dir| {
                     if (strings.utf16EqlString(dir.value, "use strict")) {
                         return stmt.loc;
                     }
@@ -10585,19 +10442,13 @@ pub const P = struct {
                 return true;
             },
 
-            .e_dot => {
-                const ex = expr.getDot();
-
+            .e_dot => |ex| {
                 return ex.can_be_removed_if_unused;
             },
-            .e_class => {
-                const ex = expr.getClass();
-
+            .e_class => |ex| {
                 return p.classCanBeRemovedIfUnused(ex);
             },
-            .e_identifier => {
-                const ex = expr.getIdentifier();
-
+            .e_identifier => |ex| {
                 if (ex.must_keep_due_to_with_stmt) {
                     return false;
                 }
@@ -10625,8 +10476,7 @@ pub const P = struct {
                     return true;
                 }
             },
-            .e_import_identifier => {
-                const ex = expr.getImportIdentifier();
+            .e_import_identifier => |ex| {
 
                 // References to an ES6 import item are always side-effect free in an
                 // ECMAScript environment.
@@ -10646,14 +10496,10 @@ pub const P = struct {
                 // references as being side-effect free.
                 return true;
             },
-            .e_if => {
-                const ex = expr.getIf();
-
+            .e_if => |ex| {
                 return p.exprCanBeRemovedIfUnused(ex.test_) and p.exprCanBeRemovedIfUnused(ex.yes) and p.exprCanBeRemovedIfUnused(ex.no);
             },
-            .e_array => {
-                const ex = expr.getArray();
-
+            .e_array => |ex| {
                 for (ex.items) |item| {
                     if (!p.exprCanBeRemovedIfUnused(item)) {
                         return false;
@@ -10662,9 +10508,7 @@ pub const P = struct {
 
                 return true;
             },
-            .e_object => {
-                const ex = expr.getObject();
-
+            .e_object => |ex| {
                 for (ex.properties) |property| {
 
                     // The key must still be evaluated if it's computed or a spread
@@ -10680,8 +10524,7 @@ pub const P = struct {
                 }
                 return true;
             },
-            .e_call => {
-                const ex = expr.getCall();
+            .e_call => |ex| {
 
                 // A call that has been marked "__PURE__" can be removed if all arguments
                 // can be removed. The annotation causes us to ignore the target.
@@ -10695,8 +10538,7 @@ pub const P = struct {
 
                 return true;
             },
-            .e_new => {
-                const ex = expr.getNew();
+            .e_new => |ex| {
 
                 // A call that has been marked "__PURE__" can be removed if all arguments
                 // can be removed. The annotation causes us to ignore the target.
@@ -10710,9 +10552,7 @@ pub const P = struct {
 
                 return true;
             },
-            .e_unary => {
-                const ex = expr.getUnary();
-
+            .e_unary => |ex| {
                 switch (ex.op) {
                     .un_typeof, .un_void, .un_not => {
                         return p.exprCanBeRemovedIfUnused(ex.value);
@@ -10720,9 +10560,7 @@ pub const P = struct {
                     else => {},
                 }
             },
-            .e_binary => {
-                const ex = expr.getBinary();
-
+            .e_binary => |ex| {
                 switch (ex.op) {
                     .bin_strict_eq, .bin_strict_ne, .bin_comma, .bin_logical_or, .bin_logical_and, .bin_nullish_coalescing => {
                         return p.exprCanBeRemovedIfUnused(ex.left) and p.exprCanBeRemovedIfUnused(ex.right);
@@ -10754,7 +10592,7 @@ pub const P = struct {
         is_call_target: bool,
     ) ?Expr {
         if (@as(Expr.Tag, target.data) == .e_identifier) {
-            const id = target.getIdentifier();
+            const id = target.data.e_identifier;
 
             // Rewrite property accesses on explicit namespace imports as an identifier.
             // This lets us replace them easily in the printer to rebind them to
@@ -10843,23 +10681,19 @@ pub const P = struct {
             // These don't contain anything to traverse
 
             .s_debugger, .s_empty, .s_comment => {},
-            .s_type_script => {
-                var data = stmt.getTypeScript();
+            .s_type_script => |data| {
 
                 // Erase TypeScript constructs from the output completely
                 return;
             },
-            .s_directive => {
-                var data = stmt.getDirective();
+            .s_directive => |data| {
 
                 //         	if p.isStrictMode() && s.LegacyOctalLoc.Start > 0 {
                 // 	p.markStrictModeFeature(legacyOctalEscape, p.source.RangeOfLegacyOctalEscape(s.LegacyOctalLoc), "")
                 // }
                 return;
             },
-            .s_import => {
-                var data = stmt.getImport();
-
+            .s_import => |data| {
                 try p.recordDeclaredSymbol(data.namespace_ref);
 
                 if (data.default_name) |default_name| {
@@ -10872,8 +10706,7 @@ pub const P = struct {
                     }
                 }
             },
-            .s_export_clause => {
-                var data = stmt.getExportClause();
+            .s_export_clause => |data| {
 
                 // "export {foo}"
                 var end: usize = 0;
@@ -10902,8 +10735,7 @@ pub const P = struct {
                 // jarred: does that mean we can remove them here, since we're not bundling for production?
                 data.items = data.items[0..end];
             },
-            .s_export_from => {
-                var data = stmt.getExportFrom();
+            .s_export_from => |data| {
 
                 // "export {foo} from 'path'"
                 const name = p.loadNameFromRef(data.namespace_ref);
@@ -10920,8 +10752,7 @@ pub const P = struct {
                     item.name.ref = ref;
                 }
             },
-            .s_export_star => {
-                var data = stmt.getExportStar();
+            .s_export_star => |data| {
 
                 // "export {foo} from 'path'"
                 const name = p.loadNameFromRef(data.namespace_ref);
@@ -10946,9 +10777,7 @@ pub const P = struct {
                     stmts.appendAssumeCapacity(p.s(S.ExportClause{ .items = items.toOwnedSlice(), .is_single_line = true }, stmt.loc));
                 }
             },
-            .s_export_default => {
-                var data = stmt.getExportDefault();
-
+            .s_export_default => |data| {
                 if (data.default_name.ref) |ref| {
                     try p.recordDeclaredSymbol(ref);
                 }
@@ -10964,9 +10793,7 @@ pub const P = struct {
                         // Discard type-only export default statements
                         if (p.options.ts) {
                             switch (expr.data) {
-                                .e_identifier => {
-                                    var ident = expr.getIdentifier();
-
+                                .e_identifier => |ident| {
                                     const symbol = p.symbols.items[ident.ref.inner_index];
                                     if (symbol.kind == .unbound) {
                                         if (p.local_type_names.get(symbol.original_name)) |local_type| {
@@ -10983,8 +10810,7 @@ pub const P = struct {
 
                     .stmt => |s2| {
                         switch (s2.data) {
-                            .s_function => {
-                                var func = s2.getFunction();
+                            .s_function => |func| {
                                 var name: string = "";
                                 if (func.func.name) |func_loc| {
                                     name = p.loadNameFromRef(func_loc.ref.?);
@@ -11002,8 +10828,7 @@ pub const P = struct {
                                 // prevent doubling export default function name
                                 return;
                             },
-                            .s_class => {
-                                var class = s2.getClass();
+                            .s_class => |class| {
                                 var shadow_ref = p.visitClass(s2.loc, &class.class);
                                 stmts.appendSlice(p.lowerClass(js_ast.StmtOrExpr{ .stmt = stmt.* }, shadow_ref)) catch unreachable;
                                 return;
@@ -11013,8 +10838,7 @@ pub const P = struct {
                     },
                 }
             },
-            .s_export_equals => {
-                var data = stmt.getExportEquals();
+            .s_export_equals => |data| {
 
                 // "module.exports = value"
                 stmts.append(
@@ -11038,9 +10862,7 @@ pub const P = struct {
                 ) catch unreachable;
                 p.recordUsage(p.module_ref);
             },
-            .s_break => {
-                var data = stmt.getBreak();
-
+            .s_break => |data| {
                 if (data.label) |*label| {
                     const name = p.loadNameFromRef(label.ref orelse p.panic("Expected label to have a ref", .{}));
                     const res = p.findLabelSymbol(label.loc, name);
@@ -11054,9 +10876,7 @@ pub const P = struct {
                     p.log.addRangeError(p.source, r, "Cannot use \"break\" here") catch unreachable;
                 }
             },
-            .s_continue => {
-                var data = stmt.getContinue();
-
+            .s_continue => |data| {
                 if (data.label) |*label| {
                     const name = p.loadNameFromRef(label.ref orelse p.panic("Expected continue label to have a ref", .{}));
                     const res = p.findLabelSymbol(label.loc, name);
@@ -11070,9 +10890,7 @@ pub const P = struct {
                     p.log.addRangeError(p.source, r, "Cannot use \"continue\" here") catch unreachable;
                 }
             },
-            .s_label => {
-                var data = stmt.getLabel();
-
+            .s_label => |data| {
                 p.pushScopeForVisitPass(.label, stmt.loc) catch unreachable;
                 const name = p.loadNameFromRef(data.name.ref orelse unreachable);
                 const ref = p.newSymbol(.label, name) catch unreachable;
@@ -11088,9 +10906,7 @@ pub const P = struct {
                 data.stmt = p.visitSingleStmt(data.stmt, StmtsKind.none);
                 p.popScope();
             },
-            .s_local => {
-                var data = stmt.getLocal();
-
+            .s_local => |data| {
                 for (data.decls) |*d| {
                     p.visitBinding(d.binding, null);
 
@@ -11135,21 +10951,16 @@ pub const P = struct {
                 // TODO: do we need to relocate vars? I don't think so.
                 if (data.kind == .k_var) {}
             },
-            .s_expr => {
-                var data = stmt.getExpr();
-
+            .s_expr => |data| {
                 p.stmt_expr_value = data.value.data;
                 data.value = p.visitExpr(data.value);
                 // simplify unused
                 data.value = SideEffects.simpifyUnusedExpr(p, data.value) orelse data.value.toEmpty();
             },
-            .s_throw => {
-                var data = stmt.getThrow();
-
+            .s_throw => |data| {
                 data.value = p.visitExpr(data.value);
             },
-            .s_return => {
-                var data = stmt.getReturn();
+            .s_return => |data| {
 
                 // Forbid top-level return inside modules with ECMAScript-style exports
                 if (p.fn_or_arrow_data_visit.is_outside_fn_or_arrow) {
@@ -11178,9 +10989,7 @@ pub const P = struct {
                     }
                 }
             },
-            .s_block => {
-                var data = stmt.getBlock();
-
+            .s_block => |data| {
                 {
                     p.pushScopeForVisitPass(.block, stmt.loc) catch unreachable;
 
@@ -11206,30 +11015,22 @@ pub const P = struct {
                 stmts.append(stmt.*) catch unreachable;
                 return;
             },
-            .s_with => {
-                var data = stmt.getWith();
-
+            .s_with => |data| {
                 notimpl();
             },
-            .s_while => {
-                var data = stmt.getWhile();
-
+            .s_while => |data| {
                 data.test_ = p.visitExpr(data.test_);
                 data.body = p.visitLoopBody(data.body);
 
                 // TODO: simplify boolean expression
             },
-            .s_do_while => {
-                var data = stmt.getDoWhile();
-
+            .s_do_while => |data| {
                 data.test_ = p.visitExpr(data.test_);
                 data.body = p.visitLoopBody(data.body);
 
                 // TODO: simplify boolean expression
             },
-            .s_if => {
-                var data = stmt.getIf();
-
+            .s_if => |data| {
                 data.test_ = p.visitExpr(data.test_);
 
                 const effects = SideEffects.toBoolean(data.test_.data);
@@ -11259,9 +11060,7 @@ pub const P = struct {
                     }
                 }
             },
-            .s_for => {
-                var data = stmt.getFor();
-
+            .s_for => |data| {
                 {
                     p.pushScopeForVisitPass(.block, stmt.loc) catch unreachable;
 
@@ -11285,9 +11084,7 @@ pub const P = struct {
                 // TODO: Potentially relocate "var" declarations to the top level
 
             },
-            .s_for_in => {
-                var data = stmt.getForIn();
-
+            .s_for_in => |data| {
                 {
                     p.pushScopeForVisitPass(.block, stmt.loc) catch unreachable;
                     defer p.popScope();
@@ -11312,9 +11109,7 @@ pub const P = struct {
                     // }
                 }
             },
-            .s_for_of => {
-                var data = stmt.getForOf();
-
+            .s_for_of => |data| {
                 p.pushScopeForVisitPass(.block, stmt.loc) catch unreachable;
                 defer p.popScope();
                 _ = p.visitForLoopInit(data.init, true);
@@ -11331,9 +11126,7 @@ pub const P = struct {
 
                 // p.lowerObjectRestInForLoopInit(s.Init, &s.Body)
             },
-            .s_try => {
-                var data = stmt.getTry();
-
+            .s_try => |data| {
                 p.pushScopeForVisitPass(.block, stmt.loc) catch unreachable;
                 {
                     var _stmts = List(Stmt).fromOwnedSlice(p.allocator, data.body);
@@ -11367,9 +11160,7 @@ pub const P = struct {
                     p.popScope();
                 }
             },
-            .s_switch => {
-                var data = stmt.getSwitch();
-
+            .s_switch => |data| {
                 data.test_ = p.visitExpr(data.test_);
                 {
                     p.pushScopeForVisitPass(.block, data.body_loc) catch unreachable;
@@ -11394,9 +11185,7 @@ pub const P = struct {
                 // TODO: duplicate case checker
 
             },
-            .s_function => {
-                var data = stmt.getFunction();
-
+            .s_function => |data| {
                 data.func = p.visitFunc(data.func, data.func.open_parens_loc);
 
                 // Handle exporting this function from a namespace
@@ -11427,9 +11216,7 @@ pub const P = struct {
                 // );
                 return;
             },
-            .s_class => {
-                var data = stmt.getClass();
-
+            .s_class => |data| {
                 const shadow_ref = p.visitClass(stmt.loc, &data.class);
 
                 // Remove the export flag inside a namespace
@@ -11452,9 +11239,7 @@ pub const P = struct {
 
                 return;
             },
-            .s_enum => {
-                var data = stmt.getEnum();
-
+            .s_enum => |data| {
                 p.recordDeclaredSymbol(data.name.ref.?) catch unreachable;
                 p.pushScopeForVisitPass(.entry, stmt.loc) catch unreachable;
                 defer p.popScope();
@@ -11498,17 +11283,14 @@ pub const P = struct {
                     if (enum_value.value != null) {
                         enum_value.value = p.visitExpr(enum_value.value.?);
                         switch (enum_value.value.?.data) {
-                            .e_number => {
-                                const num = assign_target.getNumber();
+                            .e_number => |num| {
 
                                 // prob never allocates in practice
                                 values_so_far.put(name.string(p.allocator) catch unreachable, num.value) catch unreachable;
                                 has_numeric_value = true;
                                 next_numeric_value = num.value + 1.0;
                             },
-                            .e_string => {
-                                const str = assign_target.getString();
-
+                            .e_string => |str| {
                                 has_string_value = true;
                             },
                             else => {},
@@ -11575,9 +11357,7 @@ pub const P = struct {
                 );
                 return;
             },
-            .s_namespace => {
-                var data = stmt.getNamespace();
-
+            .s_namespace => |data| {
                 p.recordDeclaredSymbol(data.name.ref.?) catch unreachable;
 
                 // Scan ahead for any variables inside this namespace. This must be done
@@ -11586,9 +11366,7 @@ pub const P = struct {
                 // We need to convert the uses into property accesses on the namespace.
                 for (data.stmts) |child_stmt| {
                     switch (child_stmt.data) {
-                        .s_local => |local__| {
-                            var local = stmt.getLocal();
-
+                        .s_local => |local| {
                             if (local.is_export) {
                                 p.markExportedDeclsInsideNamespace(data.arg, local.decls);
                             }
@@ -11832,16 +11610,12 @@ pub const P = struct {
 
     pub fn visitForLoopInit(p: *P, stmt: Stmt, is_in_or_of: bool) Stmt {
         switch (stmt.data) {
-            .s_expr => {
-                var st = stmt.getExpr();
-
+            .s_expr => |st| {
                 const assign_target = if (is_in_or_of) js_ast.AssignTarget.replace else js_ast.AssignTarget.none;
                 p.stmt_expr_value = st.value.data;
                 st.value = p.visitExprInOut(st.value, ExprIn{ .assign_target = assign_target });
             },
-            .s_local => {
-                var st = stmt.getLocal();
-
+            .s_local => |st| {
                 for (st.decls) |*dec| {
                     p.visitBinding(dec.binding, null);
                     if (dec.value) |val| {
@@ -11891,14 +11665,10 @@ pub const P = struct {
             .e_arrow => {
                 return true;
             },
-            .e_function => {
-                const func = expr.getFunction();
-
+            .e_function => |func| {
                 return func.func.name == null;
             },
-            .e_class => {
-                const class = expr.getClass();
-
+            .e_class => |class| {
                 return class.class_name == null;
             },
             else => {
@@ -11910,7 +11680,7 @@ pub const P = struct {
     pub fn valueForDefine(p: *P, loc: logger.Loc, assign_target: js_ast.AssignTarget, is_delete_target: bool, define_data: *const DefineData) Expr {
         switch (define_data.value) {
             .e_identifier => {
-                var ident = Expr.Data.Store.Identifier.at(define_data.value.e_identifier);
+                var ident = define_data.value.e_identifier;
 
                 return p.handleIdentifier(
                     loc,
@@ -11934,9 +11704,7 @@ pub const P = struct {
 
     pub fn isDotDefineMatch(p: *P, expr: Expr, parts: []const string) bool {
         switch (expr.data) {
-            .e_dot => {
-                const ex = expr.getDot();
-
+            .e_dot => |ex| {
                 if (parts.len > 1) {
                     if (ex.optional_chain != null) {
                         return false;
@@ -11951,8 +11719,7 @@ pub const P = struct {
             .e_import_meta => {
                 return parts.len == 2 and strings.eqlComptime(parts[0], "import") and strings.eqlComptime(parts[1], "meta");
             },
-            .e_identifier => {
-                const ex = expr.getIdentifier();
+            .e_identifier => |ex| {
 
                 // The last expression must be an identifier
                 if (parts.len == 1) {
@@ -12301,8 +12068,7 @@ pub const P = struct {
                         // moves this statement to the end when it generates code.
                         break :list_getter &after;
                     },
-                    .s_function => {
-                        var data = stmt.getFunction();
+                    .s_function => |data| {
                         // Manually hoist block-level function declarations to preserve semantics.
                         // This is only done for function declarations that are not generators
                         // or async functions, since this is a backwards-compatibility hack from
@@ -12446,7 +12212,7 @@ pub const P = struct {
             // Eat the comma token
             try p.lexer.next();
         }
-        var items = items_list.toOwnedSlice();
+        var items = if (items_list.capacity > 0) items_list.toOwnedSlice() else &([_]Expr{});
 
         // The parenthetical construct must end with a close parenthesis
         try p.lexer.expect(.t_close_paren);
@@ -12755,9 +12521,6 @@ pub const P = struct {
     }
 
     pub fn init(allocator: *std.mem.Allocator, log: *logger.Log, source: *const logger.Source, define: *Define, lexer: js_lexer.Lexer, opts: Parser.Options) !*P {
-        Stmt.Data.Store.create(allocator);
-        Expr.Data.Store.create(allocator);
-
         var scope_order = try ScopeOrderList.initCapacity(allocator, 1);
         var scope = try allocator.create(Scope);
         scope.* = Scope{

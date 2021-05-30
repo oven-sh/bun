@@ -35,7 +35,7 @@
       "type": "lldb",
       "request": "launch",
       "name": "DAev Launch",
-      "program": "${workspaceFolder}/build/debug/macos-x86_64/esdev",
+      "program": "${workspaceFolder}/build/macos-x86_64/esdev",
       "args": ["./simple.jsx", "--resolve=disable"],
       "cwd": "${workspaceFolder}/src/test/fixtures",
       "console": "internalConsole"

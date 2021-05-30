@@ -80,6 +80,8 @@ pub const Bundler = struct {
         log: *logger.Log,
         opts: Api.TransformOptions,
     ) !Bundler {
+        js_ast.Expr.Data.Store.create(allocator);
+        js_ast.Stmt.Data.Store.create(allocator);
         var fs = try Fs.FileSystem.init1(allocator, opts.absolute_working_dir, opts.serve orelse false);
         const bundle_options = try options.BundleOptions.fromApi(allocator, fs, log, opts);
 
@@ -204,13 +206,19 @@ pub const Bundler = struct {
         if (resolve_result.is_external) {
             return null;
         }
+        errdefer js_ast.Expr.Data.Store.reset();
+        errdefer js_ast.Stmt.Data.Store.reset();
 
         // Step 1. Parse & scan
         const loader = bundler.options.loaders.get(resolve_result.path_pair.primary.name.ext) orelse .file;
         var file_path = resolve_result.path_pair.primary;
 
         file_path.pretty = relative_paths_list.append(bundler.fs.relativeTo(file_path.text)) catch unreachable;
-        var result = bundler.parse(file_path, loader, resolve_result.dirname_fd) orelse return null;
+        var result = bundler.parse(file_path, loader, resolve_result.dirname_fd) orelse {
+            js_ast.Expr.Data.Store.reset();
+            js_ast.Stmt.Data.Store.reset();
+            return null;
+        };
 
         switch (result.loader) {
             .jsx, .js, .ts, .tsx => {
@@ -266,10 +274,8 @@ pub const Bundler = struct {
         const output_file = try bundler.print(
             result,
         );
-
-        js_ast.Stmt.Data.Store.reset();
         js_ast.Expr.Data.Store.reset();
-
+        js_ast.Stmt.Data.Store.reset();
         return output_file;
     }
 
@@ -643,6 +649,8 @@ pub const Transformer = struct {
         log: *logger.Log,
         opts: Api.TransformOptions,
     ) !options.TransformResult {
+        js_ast.Expr.Data.Store.create(allocator);
+        js_ast.Stmt.Data.Store.create(allocator);
         var raw_defines = try options.stringHashMapFromArrays(RawDefines, allocator, opts.define_keys, opts.define_values);
         if (opts.define_keys.len == 0) {
             try raw_defines.put("process.env.NODE_ENV", "\"development\"");
@@ -686,9 +694,6 @@ pub const Transformer = struct {
         var chosen_alloc: *std.mem.Allocator = allocator;
         var arena: std.heap.ArenaAllocator = undefined;
         const use_arenas = opts.entry_points.len > 8;
-
-        js_ast.Expr.Data.Store.create(allocator);
-        js_ast.Stmt.Data.Store.create(allocator);
 
         var ulimit: usize = Fs.FileSystem.RealFS.adjustUlimit();
         var care_about_closing_files = !(FeatureFlags.store_file_descriptors and opts.entry_points.len * 2 < ulimit);

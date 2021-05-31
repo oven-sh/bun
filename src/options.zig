@@ -523,7 +523,7 @@ pub const BundleOptions = struct {
 
         var user_defines = try stringHashMapFromArrays(defines.RawDefines, allocator, transform.define_keys, transform.define_values);
         if (transform.define_keys.len == 0) {
-            try user_defines.put("process.env.NODE_ENV", "development");
+            try user_defines.put("process.env.NODE_ENV", "\"development\"");
         }
 
         var resolved_defines = try defines.DefineData.from_input(user_defines, log, allocator);

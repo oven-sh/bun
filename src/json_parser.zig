@@ -158,17 +158,7 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
                             }
                         }
 
-                        var str: E.String = undefined;
-                        if (p.lexer.string_literal_is_ascii) {
-                            str = E.String{
-                                .utf8 = p.lexer.string_literal_slice,
-                            };
-                        } else {
-                            const value = p.lexer.stringLiteralUTF16();
-                            str = E.String{
-                                .value = value,
-                            };
-                        }
+                        var str = p.lexer.toEString();
                         const is_duplicate = duplicates.exists(p.lexer.string_literal_slice);
                         if (!is_duplicate) {
                             duplicates.put(p.lexer.string_literal_slice) catch unreachable;

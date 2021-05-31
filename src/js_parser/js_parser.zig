@@ -1692,7 +1692,7 @@ var jsxChildrenKeyData = Expr.Data{ .e_string = &Prefill.String.Children };
 var nullExprValueData = E.Null{};
 var falseExprValueData = E.Boolean{ .value = false };
 var nullValueExpr = Expr.Data{ .e_null = nullExprValueData };
-var falseValueExpr = Expr.Data{ .e_boolean = &falseExprValueData };
+var falseValueExpr = Expr.Data{ .e_boolean = E.Boolean{ .value = false } };
 
 // P is for Parser!
 // public only because of Binding.ToExpr
@@ -9663,7 +9663,7 @@ pub const P = struct {
                     .bin_strict_eq => {
                         const equality = SideEffects.eql(e_.left.data, e_.right.data, p);
                         if (equality.ok) {
-                            return p.e(E.Boolean{ .value = equality.ok }, expr.loc);
+                            return p.e(E.Boolean{ .value = equality.equal }, expr.loc);
                         }
 
                         // const after_op_loc = locAfterOp(e_.);
@@ -9673,7 +9673,7 @@ pub const P = struct {
                     .bin_loose_ne => {
                         const equality = SideEffects.eql(e_.left.data, e_.right.data, p);
                         if (equality.ok) {
-                            return p.e(E.Boolean{ .value = !equality.ok }, expr.loc);
+                            return p.e(E.Boolean{ .value = !equality.equal }, expr.loc);
                         }
                         // const after_op_loc = locAfterOp(e_.);
                         // TODO: warn about equality check
@@ -9687,7 +9687,7 @@ pub const P = struct {
                     .bin_strict_ne => {
                         const equality = SideEffects.eql(e_.left.data, e_.right.data, p);
                         if (equality.ok) {
-                            return p.e(E.Boolean{ .value = !equality.ok }, expr.loc);
+                            return p.e(E.Boolean{ .value = !equality.equal }, expr.loc);
                         }
                     },
                     .bin_nullish_coalescing => {
@@ -11034,7 +11034,7 @@ pub const P = struct {
 
                 // The "else" clause is optional
                 if (data.no) |no| {
-                    if (effects.ok and !effects.value) {
+                    if (effects.ok and effects.value) {
                         const old = p.is_control_flow_dead;
                         p.is_control_flow_dead = true;
                         defer p.is_control_flow_dead = old;
@@ -11515,7 +11515,7 @@ pub const P = struct {
                                 },
                                 name_loc,
                             ),
-                            p.e(E.Object{}, name_loc),
+                            p.e(E.Object{ .properties = &[_]G.Property{} }, name_loc),
                             p.allocator,
                         ),
                     },
@@ -11534,7 +11534,7 @@ pub const P = struct {
                 .right = Expr.assign(
                     p.e(E.Identifier{ .ref = name_ref }, name_loc),
                     p.e(
-                        E.Object{},
+                        E.Object{ .properties = &[_]G.Property{} },
                         name_loc,
                     ),
                     p.allocator,

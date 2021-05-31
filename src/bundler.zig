@@ -117,7 +117,7 @@ pub const Bundler = struct {
         }
         defer relative_path_allocator.reset();
 
-        var pretty = try relative_paths_list.append(bundler.fs.relativeTo(source_path));
+        var pretty = try relative_paths_list.append(bundler.fs.relative(source_dir, source_path));
         var pathname = Fs.PathName.init(pretty);
         var absolute_pathname = Fs.PathName.init(source_path);
 
@@ -224,11 +224,12 @@ pub const Bundler = struct {
                 const ast = result.ast;
 
                 for (ast.import_records) |*import_record| {
-                    const source_dir = std.fs.path.dirname(file_path.text) orelse file_path.text;
+                    const source_dir = file_path.name.dir;
 
                     if (bundler.resolver.resolve(source_dir, import_record.path.text, import_record.kind)) |*resolved_import| {
                         bundler.processImportRecord(
-                            source_dir,
+                            // Include trailing slash
+                            file_path.text[0 .. source_dir.len + 1],
                             resolved_import,
                             import_record,
                         ) catch continue;
@@ -283,8 +284,7 @@ pub const Bundler = struct {
         const output_file = try bundler.print(
             result,
         );
-        js_ast.Expr.Data.Store.reset();
-        js_ast.Stmt.Data.Store.reset();
+
         return output_file;
     }
 
@@ -534,7 +534,7 @@ pub const Bundler = struct {
 
         //  100.00 µs std.fifo.LinearFifo(resolver.resolver.Result,std.fifo.LinearFifoBufferType { .Dynamic = {}}).writeItemAssumeCapacity
         if (bundler.options.resolve_mode != .lazy) {
-            try bundler.resolve_queue.ensureUnusedCapacity(1000);
+            try bundler.resolve_queue.ensureUnusedCapacity(24);
         }
 
         var entry_points = try allocator.alloc(Resolver.Resolver.Result, bundler.options.entry_points.len);
@@ -592,10 +592,16 @@ pub const Bundler = struct {
                 entry = __entry;
             }
 
+            defer {
+                js_ast.Expr.Data.Store.reset();
+                js_ast.Stmt.Data.Store.reset();
+            }
+
             const result = bundler.resolver.resolve(bundler.fs.top_level_dir, entry, .entry_point) catch |err| {
                 Output.printError("Error resolving \"{s}\": {s}\n", .{ entry, @errorName(err) });
                 continue;
             };
+
             const key = result.path_pair.primary.text;
             if (bundler.resolve_results.contains(key)) {
                 continue;
@@ -614,6 +620,8 @@ pub const Bundler = struct {
         switch (bundler.options.resolve_mode) {
             .lazy, .dev, .bundle => {
                 while (bundler.resolve_queue.readItem()) |item| {
+                    defer js_ast.Expr.Data.Store.reset();
+                    defer js_ast.Stmt.Data.Store.reset();
                     const output_file = bundler.buildWithResolveResult(item) catch continue orelse continue;
                     bundler.output_files.append(output_file) catch unreachable;
                 }

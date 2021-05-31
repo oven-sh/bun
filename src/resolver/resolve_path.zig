@@ -174,7 +174,9 @@ pub fn relativeToCommonPath(
     comptime separator: u8,
     comptime always_copy: bool,
 ) []const u8 {
-    const common_path = if (_common_path.len > 0 and _common_path[0] == separator) _common_path[1..] else _common_path;
+    const has_leading_separator = _common_path.len > 0 and _common_path[0] == separator;
+
+    const common_path = if (has_leading_separator) _common_path[1..] else _common_path;
 
     var shortest = std.math.min(normalized_from.len, normalized_to.len);
 
@@ -213,6 +215,8 @@ pub fn relativeToCommonPath(
             // For example: from='/foo/bar/baz'; to='/foo/bar'
             if (normalized_from[common_path.len - 1] == separator) {
                 last_common_separator = common_path.len - 1;
+            } else if (normalized_from[common_path.len] == separator) {
+                last_common_separator = common_path.len;
             } else if (common_path.len == 0) {
                 // We get here if `to` is the root.
                 // For example: from='/foo/bar'; to='/'
@@ -227,10 +231,10 @@ pub fn relativeToCommonPath(
     var out_slice: []u8 = buf[0..0];
 
     if (normalized_from.len > 0) {
-        var i: usize = last_common_separator;
+        var i: usize = @boolToInt(normalized_from[0] == separator) + 1 + last_common_separator;
 
         while (i <= normalized_from.len) : (i += 1) {
-            if (i == normalized_from.len or normalized_from[i] == separator) {
+            if (i == normalized_from.len or (normalized_from[i] == separator and i + 1 < normalized_from.len)) {
                 if (out_slice.len == 0) {
                     out_slice = buf[0 .. out_slice.len + 2];
                     out_slice[0] = '.';
@@ -265,13 +269,31 @@ pub fn relativeToCommonPath(
         std.mem.copy(u8, out_slice[start..], tail);
     }
 
-    return buf[0 .. out_slice.len + 1];
+    return buf[0..out_slice.len];
 }
 
 pub fn relativeNormalized(from: []const u8, to: []const u8, comptime platform: Platform, comptime always_copy: bool) []const u8 {
     const two = [_][]const u8{ from, to };
     const common_path = longestCommonPathGeneric(&two, comptime platform.separator(), platform.isSeparator);
     return relativeToCommonPath(common_path, from, to, &relative_to_common_path_buf, comptime platform.separator(), always_copy);
+}
+
+pub fn dirname(str: []const u8, comptime platform: Platform) []const u8 {
+    switch (comptime platform.resolve()) {
+        .loose => {
+            const separator = lastIndexOfSeparatorLoose(str);
+            return str[0 .. separator + 1];
+        },
+        .posix => {
+            const separator = lastIndexOfSeparatorPosix(str);
+            return str[0 .. separator + 1];
+        },
+        .windows => {
+            const separator = lastIndexOfSeparatorWindows(str) orelse return std.fs.path.diskDesignatorWindows(str);
+            return str[0 .. separator + 1];
+        },
+        else => unreachable,
+    }
 }
 
 threadlocal var relative_from_buf: [4096]u8 = undefined;

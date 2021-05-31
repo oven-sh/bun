@@ -140,6 +140,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
         writer: MutableString.Writer,
         allocator: *std.mem.Allocator,
         renamer: rename.Renamer,
+        prev_stmt_tag: Stmt.Tag = .s_empty,
 
         const Printer = @This();
         pub fn comptime_flush(p: *Printer) void {}
@@ -743,7 +744,11 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.printIndent();
                 }
                 p.addSourceMapping(record.range.loc);
+
+                p.print("import(");
                 p.printQuotedUTF8(record.path.text, true);
+                p.print(")");
+
                 if (leading_interior_comments.len > 0) {
                     p.printNewline();
                     p.options.unindent();
@@ -994,6 +999,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         if (wrap) {
                             p.print("(");
                         }
+
                         p.printSpaceBeforeIdentifier();
                         p.print("import(");
                         if (e.leading_interior_comments.len > 0) {
@@ -1294,14 +1300,14 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     // If this was originally a template literal, print it as one as long as we're not minifying
                     if (e.prefer_template) {
                         p.print("`");
-                        p.printString(e, '`');
+                        p.printStringContent(e, '`');
                         p.print("`");
                         return;
                     }
 
                     const c = p.bestQuoteCharForString(e.value, true);
                     p.print(c);
-                    p.printString(e, c);
+                    p.printStringContent(e, c);
                     p.print(c);
                 },
                 .e_template => |e| {
@@ -1321,7 +1327,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         if (e.tag != null) {
                             p.print(e.head.utf8);
                         } else {
-                            p.printString(&e.head, '`');
+                            p.printStringContent(&e.head, '`');
                         }
                     }
 
@@ -1333,7 +1339,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                             if (e.tag != null) {
                                 p.print(part.tail.utf8);
                             } else {
-                                p.printString(&part.tail, '`');
+                                p.printStringContent(&part.tail, '`');
                             }
                         }
                     }
@@ -1663,12 +1669,49 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
             p.print(")");
         }
 
-        pub fn printString(p: *Printer, str: *const E.String, c: u8) void {
+        // This assumes the string has already been quoted.
+        pub fn printStringContent(p: *Printer, str: *const E.String, c: u8) void {
             if (!str.isUTF8()) {
+                // its already quoted for us!
                 p.printQuotedUTF16(str.value, c);
             } else {
-                // its already quoted for us!
-                p.print(str.utf8);
+                p.printUTF8StringEscapedQuotes(str.utf8, c);
+            }
+        }
+
+        // Add one outer branch so the inner loop does fewer branches
+        pub fn printUTF8StringEscapedQuotes(p: *Printer, str: string, c: u8) void {
+            switch (c) {
+                '`' => _printUTF8StringEscapedQuotes(p, str, '`'),
+                '"' => _printUTF8StringEscapedQuotes(p, str, '"'),
+                '\'' => _printUTF8StringEscapedQuotes(p, str, '\''),
+                else => unreachable,
+            }
+        }
+
+        pub fn _printUTF8StringEscapedQuotes(p: *Printer, str: string, comptime c: u8) void {
+            var utf8 = str;
+            var i: usize = 0;
+            // Walk the string searching for quote characters
+            // Escape any we find
+            // Skip over already-escaped strings
+            while (i < utf8.len) : (i += 1) {
+                switch (utf8[i]) {
+                    '\\' => {
+                        i += 1;
+                    },
+                    c => {
+                        p.print(utf8[0..i]);
+                        p.print("\\" ++ &[_]u8{c});
+                        utf8 = utf8[i + 1 ..];
+                        i = 0;
+                    },
+
+                    else => {},
+                }
+            }
+            if (utf8.len > 0) {
+                p.print(utf8);
             }
         }
 
@@ -1758,7 +1801,30 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.addSourceMapping(_key.loc);
                     if (key.isUTF8()) {
                         p.printSpaceBeforeIdentifier();
-                        p.printIdentifier(key.utf8);
+                        var allow_shorthand: bool = true;
+                        // In react/cjs/react.development.js, there's part of a function like this:
+                        // var escaperLookup = {
+                        //     "=": "=0",
+                        //     ":": "=2"
+                        //   };
+                        // While each of those property keys are ASCII, a subset of ASCII is valid as the start of an identifier
+                        // "=" and ":" are not valid
+                        // So we need to check
+                        if (js_lexer.isIdentifierStart(@intCast(js_lexer.CodePoint, key.utf8[0]))) {
+                            p.print(key.utf8);
+                        } else {
+                            allow_shorthand = false;
+                            const quote = p.bestQuoteCharForString(key.utf8, true);
+                            if (quote == '`') {
+                                p.print('[');
+                            }
+                            p.print(quote);
+                            p.printUTF8StringEscapedQuotes(key.utf8, quote);
+                            p.print(quote);
+                            if (quote == '`') {
+                                p.print(']');
+                            }
+                        }
 
                         // Use a shorthand property if the names are the same
                         if (item.value) |val| {
@@ -1773,7 +1839,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                                         if (item.initializer) |initial| {
                                             p.printInitializer(initial);
                                         }
-                                        return;
+                                        if (allow_shorthand) {
+                                            return;
+                                        }
                                     }
                                     // if (strings) {}
                                 },
@@ -1784,7 +1852,9 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                                             if (item.initializer) |initial| {
                                                 p.printInitializer(initial);
                                             }
-                                            return;
+                                            if (allow_shorthand) {
+                                                return;
+                                            }
                                         }
                                     }
                                 },
@@ -2055,6 +2125,18 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
         }
 
         pub fn printStmt(p: *Printer, stmt: Stmt) !void {
+            const prev_stmt_tag = p.prev_stmt_tag;
+
+            // Give an extra newline for readaiblity
+            defer {
+                //
+                if (std.meta.activeTag(stmt.data) != .s_import and prev_stmt_tag == .s_import) {
+                    p.printNewline();
+                }
+
+                p.prev_stmt_tag = std.meta.activeTag(stmt.data);
+            }
+
             debug("<printStmt>: {s}\n", .{stmt});
             defer debug("</printStmt>: {s}\n", .{stmt});
             p.comptime_flush();
@@ -2086,6 +2168,11 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.printNewline();
                 },
                 .s_class => |s| {
+                    // Give an extra newline for readaiblity
+                    if (prev_stmt_tag != .s_empty) {
+                        p.printNewline();
+                    }
+
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     if (s.is_export) {
@@ -2102,6 +2189,11 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.printNewline();
                 },
                 .s_export_default => |s| {
+                    // Give an extra newline for export default for readability
+                    if (!prev_stmt_tag.isExportLike()) {
+                        p.printNewline();
+                    }
+
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.print("export default");
@@ -2158,6 +2250,10 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     }
                 },
                 .s_export_star => |s| {
+                    // Give an extra newline for readaiblity
+                    if (!prev_stmt_tag.isExportLike()) {
+                        p.printNewline();
+                    }
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.print("export");
@@ -2177,6 +2273,10 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.printSemicolonAfterStatement();
                 },
                 .s_export_clause => |s| {
+                    // Give an extra newline for export default for readability
+                    if (!prev_stmt_tag.isExportLike()) {
+                        p.printNewline();
+                    }
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.print("export");
@@ -2218,6 +2318,10 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.printSemicolonAfterStatement();
                 },
                 .s_export_from => |s| {
+                    // Give an extra newline for readaiblity
+                    if (!prev_stmt_tag.isExportLike()) {
+                        p.printNewline();
+                    }
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.print("export");
@@ -2479,9 +2583,32 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.needs_semicolon = false;
                 },
                 .s_import => |s| {
+                    if (FeatureFlags.css_in_js_import_behavior == .facade) {
+                        // TODO: check loader instead
+                        if (strings.eqlComptime(p.import_records[s.import_record_index].path.name.ext, ".css")) {
+                            // This comment exists to let tooling authors know where CSS files originated
+                            // To parse this, you just look for a line that starts with //@import url("
+                            p.print("//@import url(\"");
+                            // We do not URL escape here.
+                            p.print(p.import_records[s.import_record_index].path.text);
+
+                            // If they actually use the code, then we emit a facade that just echos whatever they write
+                            if (s.default_name) |name| {
+                                p.print("\"); css-module-facade\nvar ");
+                                p.printSymbol(name.ref.?);
+                                p.print(" = new Proxy({}, {get(_,className,__){return className;}});\n");
+                            } else {
+                                p.print("\"); css-import-facade\n");
+                            }
+
+                            return;
+                        }
+                    }
+
                     var item_count: usize = 0;
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+
                     p.print("import");
                     p.printSpace();
 

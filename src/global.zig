@@ -36,6 +36,13 @@ pub const FeatureFlags = struct {
 
     // This doesn't really seem to do anything for us
     pub const disable_filesystem_cache = false and std.Target.current.os.tag == .macos;
+    pub const css_in_js_import_behavior = CSSModulePolyfill.facade;
+
+    pub const CSSModulePolyfill = enum {
+        // When you import a .css file and you reference the import in JavaScript
+        // Just return whatever the property key they referenced was
+        facade,
+    };
 };
 
 pub const enableTracing = true;

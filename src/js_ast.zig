@@ -1000,7 +1000,7 @@ pub const E = struct {
     };
 
     pub const Object = struct {
-        properties: []G.Property = &([_]G.Property{}),
+        properties: []G.Property,
         comma_after_spread: ?logger.Loc = null,
         is_single_line: bool = false,
         is_parenthesized: bool = false,
@@ -1545,6 +1545,13 @@ pub const Stmt = struct {
         s_type_script,
         s_while,
         s_with,
+
+        pub fn isExportLike(tag: Tag) bool {
+            return switch (tag) {
+                .s_export_clause, .s_export_default, .s_export_equals, .s_export_from, .s_export_star, .s_empty => true,
+                else => false,
+            };
+        }
     };
 
     pub const Data = union(Tag) {
@@ -1891,9 +1898,10 @@ pub const Expr = struct {
 
     pub fn asProperty(expr: *const Expr, name: string) ?Query {
         if (std.meta.activeTag(expr.data) != .e_object) return null;
-        const obj = expr.getObject();
+        const obj = expr.data.e_object;
+        if (@ptrToInt(obj.properties.ptr) == 0) return null;
 
-        for (obj.properties) |*prop| {
+        for (obj.properties) |prop| {
             const value = prop.value orelse continue;
             const key = prop.key orelse continue;
             if (std.meta.activeTag(key.data) != .e_string) continue;
@@ -2052,7 +2060,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_boolean = bool_values[@boolToInt(st.value)],
+                        .e_boolean = st,
                     },
                 };
             },
@@ -2868,7 +2876,7 @@ pub const Expr = struct {
         e_require_or_require_resolve: *E.RequireOrRequireResolve,
         e_import: *E.Import,
 
-        e_boolean: *E.Boolean,
+        e_boolean: E.Boolean,
         e_number: *E.Number,
         e_big_int: *E.BigInt,
         e_string: *E.String,

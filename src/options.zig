@@ -63,6 +63,7 @@ pub const ExternalModules = struct {
 
         if (platform == .node) {
             // TODO: fix this stupid copy
+            result.node_modules.hash_map.ensureCapacity(NodeBuiltinPatterns.len) catch unreachable;
             for (NodeBuiltinPatterns) |pattern| {
                 result.node_modules.put(pattern) catch unreachable;
             }

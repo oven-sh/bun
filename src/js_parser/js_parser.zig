@@ -10176,7 +10176,7 @@ pub const P = struct {
             .e_import => |e_| {
                 const state = TransposeState{
                     .is_await_target = if (p.await_target != null) p.await_target.?.e_import == e_ else false,
-                    .is_then_catch_target = expr.data.e_import == p.then_catch_chain.next_target.e_import and p.then_catch_chain.has_catch,
+                    .is_then_catch_target = p.then_catch_chain.has_catch and std.meta.activeTag(p.then_catch_chain.next_target) == .e_import and expr.data.e_import == p.then_catch_chain.next_target.e_import,
                     .loc = e_.expr.loc,
                 };
 

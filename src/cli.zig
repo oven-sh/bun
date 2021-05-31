@@ -329,7 +329,18 @@ pub const Cli = struct {
                 } else |err| {}
 
                 did_write = true;
-                var root_dir = try std.fs.openDirAbsolute(result.outbase, std.fs.Dir.OpenDirOptions{});
+                var root_dir = std.fs.openDirAbsolute(result.outbase, std.fs.Dir.OpenDirOptions{}) catch brk: {
+                    std.fs.makeDirAbsolute(result.outbase) catch |err| {
+                        Output.printErrorln("error: Unable to mkdir \"{s}\": \"{s}\"", .{ result.outbase, @errorName(err) });
+                        std.os.exit(1);
+                    };
+
+                    var handle = std.fs.openDirAbsolute(result.outbase, std.fs.Dir.OpenDirOptions{}) catch |err2| {
+                        Output.printErrorln("error: Unable to open \"{s}\": \"{s}\"", .{ result.outbase, @errorName(err2) });
+                        std.os.exit(1);
+                    };
+                    break :brk handle;
+                };
                 // On posix, file handles automatically close on process exit by the OS
                 // Closing files shows up in profiling.
                 // So don't do that unless we actually need to.
@@ -360,7 +371,12 @@ pub const Cli = struct {
                             .truncate = true,
                         }) catch |err2| return err2);
                     };
+
                     try _handle.seekTo(0);
+
+                    if (FeatureFlags.disable_filesystem_cache) {
+                        _ = std.os.fcntl(_handle.handle, std.os.F_NOCACHE, 1) catch 0;
+                    }
 
                     defer {
                         if (do_we_need_to_close) {

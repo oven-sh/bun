@@ -26,8 +26,18 @@
       "request": "launch",
       "name": "Dev Launch",
       "program": "${workspaceFolder}/build/debug/macos-x86_64/esdev",
-      "args": ["./defines.jsx", "--resolve=disable"],
+      "args": ["./object-newline.js", "--resolve=disable"],
       "cwd": "${workspaceFolder}/src/test/fixtures",
+      "console": "internalConsole"
+    },
+
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Demo Build",
+      "program": "${workspaceFolder}/build/debug/macos-x86_64/esdev",
+      "args": ["./pages/index.tsx", "--resolve=dev", "--outdir=out"],
+      "cwd": "${workspaceFolder}/src/api/demo",
       "console": "internalConsole"
     },
 

@@ -704,6 +704,10 @@ pub const FileSystem = struct {
         pub fn readFileWithHandle(fs: *RealFS, path: string, _size: ?usize, file: std.fs.File) !File {
             FileSystem.setMaxFd(file.handle);
 
+            if (FeatureFlags.disable_filesystem_cache) {
+                _ = std.os.fcntl(file.handle, std.os.F_NOCACHE, 1) catch 0;
+            }
+
             // Skip the extra file.stat() call when possible
             var size = _size orelse (file.getEndPos() catch |err| {
                 fs.readFileError(path, err);

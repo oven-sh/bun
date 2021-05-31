@@ -27,10 +27,15 @@ pub const FeatureFlags = struct {
     pub const use_std_path_relative = false;
     pub const use_std_path_join = false;
 
+    // Debug helpers
     pub const print_ast = false;
     pub const disable_printing_null = false;
 
+    // This was a ~5% performance improvement
     pub const store_file_descriptors = !isWindows and !isBrowser;
+
+    // This doesn't really seem to do anything for us
+    pub const disable_filesystem_cache = false and std.Target.current.os.tag == .macos;
 };
 
 pub const enableTracing = true;

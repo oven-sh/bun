@@ -23,6 +23,8 @@ const ImportRecord = @import("./import_record.zig").ImportRecord;
 const allocators = @import("./allocators.zig");
 const MimeType = @import("./http/mime_type.zig");
 const resolve_path = @import("./resolver/resolve_path.zig");
+const runtime = @import("./runtime.zig");
+const Linker = linker.Linker;
 
 pub const ServeResult = struct {
     value: Value,
@@ -51,8 +53,8 @@ pub const ServeResult = struct {
 };
 
 // const BundleMap =
-const ResolveResults = ThreadSafeHashMap.ThreadSafeStringHashMap(Resolver.Resolver.Result);
-const ResolveQueue = std.fifo.LinearFifo(Resolver.Resolver.Result, std.fifo.LinearFifoBufferType.Dynamic);
+pub const ResolveResults = ThreadSafeHashMap.ThreadSafeStringHashMap(Resolver.Resolver.Result);
+pub const ResolveQueue = std.fifo.LinearFifo(Resolver.Resolver.Result, std.fifo.LinearFifoBufferType.Dynamic);
 pub const Bundler = struct {
     options: options.BundleOptions,
     log: *logger.Log,
@@ -66,8 +68,7 @@ pub const Bundler = struct {
     resolve_queue: ResolveQueue,
     elapsed: i128 = 0,
     needs_runtime: bool = false,
-
-    runtime_output_path: Fs.Path = undefined,
+    linker: Linker,
 
     pub const RuntimeCode = @embedFile("./runtime.js");
 
@@ -85,7 +86,6 @@ pub const Bundler = struct {
         var fs = try Fs.FileSystem.init1(allocator, opts.absolute_working_dir, opts.serve orelse false);
         const bundle_options = try options.BundleOptions.fromApi(allocator, fs, log, opts);
 
-        relative_paths_list = ImportPathsList.init(allocator);
         // var pool = try allocator.create(ThreadPool);
         // try pool.init(ThreadPool.InitConfig{
         //     .allocator = allocator,
@@ -97,6 +97,7 @@ pub const Bundler = struct {
             .resolver = Resolver.Resolver.init1(allocator, log, fs, bundle_options),
             .log = log,
             // .thread_pool = pool,
+            .linker = undefined,
             .result = options.TransformResult{ .outbase = bundle_options.output_dir },
             .resolve_results = try ResolveResults.init(allocator),
             .resolve_queue = ResolveQueue.init(allocator),
@@ -104,101 +105,16 @@ pub const Bundler = struct {
         };
     }
 
-    const ImportPathsList = allocators.BSSStringList(2048, 256);
-    var relative_paths_list: *ImportPathsList = undefined;
-    threadlocal var relative_path_allocator: std.heap.FixedBufferAllocator = undefined;
-    threadlocal var relative_path_allocator_buf: [4096]u8 = undefined;
-    threadlocal var relative_path_allocator_buf_loaded: bool = false;
-
-    pub fn generateImportPath(bundler: *Bundler, source_dir: string, source_path: string) !Fs.Path {
-        if (!relative_path_allocator_buf_loaded) {
-            relative_path_allocator_buf_loaded = true;
-            relative_path_allocator = std.heap.FixedBufferAllocator.init(&relative_path_allocator_buf);
-        }
-        defer relative_path_allocator.reset();
-
-        var pretty = try relative_paths_list.append(bundler.fs.relative(source_dir, source_path));
-        var pathname = Fs.PathName.init(pretty);
-        var absolute_pathname = Fs.PathName.init(source_path);
-
-        if (bundler.options.out_extensions.get(absolute_pathname.ext)) |ext| {
-            absolute_pathname.ext = ext;
-        }
-
-        switch (bundler.options.import_path_format) {
-            .relative => {
-                return Fs.Path.initWithPretty(pretty, pretty);
-            },
-            .relative_nodejs => {
-                var path = Fs.Path.initWithPretty(pretty, pretty);
-                path.text = path.text[0 .. path.text.len - path.name.ext.len];
-                return path;
-            },
-
-            .absolute_url => {
-                const absolute_url = try relative_paths_list.append(
-                    try std.fmt.allocPrint(
-                        &relative_path_allocator.allocator,
-                        "{s}{s}{s}{s}",
-                        .{
-                            bundler.options.public_url,
-                            pathname.dir,
-                            pathname.base,
-                            absolute_pathname.ext,
-                        },
-                    ),
-                );
-
-                return Fs.Path.initWithPretty(absolute_url, pretty);
-            },
-
-            else => unreachable,
-        }
-    }
-
-    pub fn processImportRecord(bundler: *Bundler, source_dir: string, resolve_result: *Resolver.Resolver.Result, import_record: *ImportRecord) !void {
-
-        // extremely naive.
-        resolve_result.is_from_node_modules = strings.contains(resolve_result.path_pair.primary.text, "/node_modules");
-
-        if (resolve_result.shouldAssumeCommonJS()) {
-            import_record.wrap_with_to_module = true;
-            if (!bundler.needs_runtime) {
-                bundler.runtime_output_path = Fs.Path.init(try std.fmt.allocPrint(bundler.allocator, "{s}/__runtime.js", .{bundler.fs.top_level_dir}));
-            }
-            bundler.needs_runtime = true;
-        }
-
-        // lazy means:
-        // Run the resolver
-        // Don't parse/print automatically.
-        if (bundler.options.resolve_mode != .lazy) {
-            try bundler.enqueueResolveResult(resolve_result);
-        }
-
-        import_record.path = try bundler.generateImportPath(source_dir, resolve_result.path_pair.primary.text);
-    }
-
-    pub fn resolveResultHashKey(bundler: *Bundler, resolve_result: *const Resolver.Resolver.Result) string {
-        var hash_key = resolve_result.path_pair.primary.text;
-
-        // Shorter hash key is faster to hash
-        if (strings.startsWith(resolve_result.path_pair.primary.text, bundler.fs.top_level_dir)) {
-            hash_key = resolve_result.path_pair.primary.text[bundler.fs.top_level_dir.len..];
-        }
-
-        return hash_key;
-    }
-
-    pub fn enqueueResolveResult(bundler: *Bundler, resolve_result: *const Resolver.Resolver.Result) !void {
-        const hash_key = bundler.resolveResultHashKey(resolve_result);
-
-        const get_or_put_entry = try bundler.resolve_results.backing.getOrPut(hash_key);
-
-        if (!get_or_put_entry.found_existing) {
-            get_or_put_entry.entry.value = resolve_result.*;
-            try bundler.resolve_queue.writeItem(resolve_result.*);
-        }
+    pub fn configureLinker(bundler: *Bundler) void {
+        bundler.linker = Linker.init(
+            bundler.allocator,
+            bundler.log,
+            &bundler.resolve_queue,
+            &bundler.options,
+            &bundler.resolver,
+            bundler.resolve_results,
+            bundler.fs,
+        );
     }
 
     pub fn buildWithResolveResult(bundler: *Bundler, resolve_result: Resolver.Resolver.Result) !?options.OutputFile {
@@ -212,74 +128,14 @@ pub const Bundler = struct {
         const loader = bundler.options.loaders.get(resolve_result.path_pair.primary.name.ext) orelse .file;
         var file_path = resolve_result.path_pair.primary;
 
-        file_path.pretty = relative_paths_list.append(bundler.fs.relativeTo(file_path.text)) catch unreachable;
+        file_path.pretty = Linker.relative_paths_list.append(bundler.fs.relativeTo(file_path.text)) catch unreachable;
         var result = bundler.parse(file_path, loader, resolve_result.dirname_fd) orelse {
             js_ast.Expr.Data.Store.reset();
             js_ast.Stmt.Data.Store.reset();
             return null;
         };
 
-        switch (result.loader) {
-            .jsx, .js, .ts, .tsx => {
-                const ast = result.ast;
-
-                for (ast.import_records) |*import_record| {
-                    const source_dir = file_path.name.dir;
-
-                    if (bundler.resolver.resolve(source_dir, import_record.path.text, import_record.kind)) |*resolved_import| {
-                        bundler.processImportRecord(
-                            // Include trailing slash
-                            file_path.text[0 .. source_dir.len + 1],
-                            resolved_import,
-                            import_record,
-                        ) catch continue;
-
-                        // "Linking"
-                        // 1. Associate an ImportRecord with NamedImports
-                        // 2. If there is a default import, import the runtime wrapper
-                    } else |err| {
-                        switch (err) {
-                            error.ModuleNotFound => {
-                                if (Resolver.Resolver.isPackagePath(import_record.path.text)) {
-                                    if (bundler.options.platform != .node and options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
-                                        try bundler.log.addRangeErrorFmt(
-                                            &result.source,
-                                            import_record.range,
-                                            bundler.allocator,
-                                            "Could not resolve: \"{s}\". Try setting --platform=\"node\"",
-                                            .{import_record.path.text},
-                                        );
-                                    } else {
-                                        try bundler.log.addRangeErrorFmt(
-                                            &result.source,
-                                            import_record.range,
-                                            bundler.allocator,
-                                            "Could not resolve: \"{s}\". Maybe you need to \"npm install\" (or yarn/pnpm)?",
-                                            .{import_record.path.text},
-                                        );
-                                    }
-                                } else {
-                                    try bundler.log.addRangeErrorFmt(
-                                        &result.source,
-                                        import_record.range,
-                                        bundler.allocator,
-                                        "Could not resolve: \"{s}\"",
-                                        .{
-                                            import_record.path.text,
-                                        },
-                                    );
-                                    continue;
-                                }
-                            },
-                            else => {
-                                continue;
-                            },
-                        }
-                    }
-                }
-            },
-            else => {},
-        }
+        try bundler.linker.link(file_path, &result);
 
         const output_file = try bundler.print(
             result,
@@ -311,7 +167,6 @@ pub const Bundler = struct {
 
         const ast = result.ast;
 
-        var _linker = linker.Linker{};
         var symbols: [][]js_ast.Symbol = &([_][]js_ast.Symbol{ast.symbols});
 
         const print_result = try js_printer.printAst(
@@ -320,8 +175,11 @@ pub const Bundler = struct {
             js_ast.Symbol.Map.initList(symbols),
             &result.source,
             false,
-            js_printer.Options{ .to_module_ref = Ref.RuntimeRef },
-            &_linker,
+            js_printer.Options{
+                .to_module_ref = Ref.RuntimeRef,
+                .externals = ast.externals,
+            },
+            &bundler.linker,
         );
         // allocator.free(result.source.contents);
 
@@ -531,6 +389,7 @@ pub const Bundler = struct {
         opts: Api.TransformOptions,
     ) !options.TransformResult {
         var bundler = try Bundler.init(allocator, log, opts);
+        bundler.configureLinker();
 
         //  100.00 µs std.fifo.LinearFifo(resolver.resolver.Result,std.fifo.LinearFifoBufferType { .Dynamic = {}}).writeItemAssumeCapacity
         if (bundler.options.resolve_mode != .lazy) {
@@ -620,8 +479,8 @@ pub const Bundler = struct {
         switch (bundler.options.resolve_mode) {
             .lazy, .dev, .bundle => {
                 while (bundler.resolve_queue.readItem()) |item| {
-                    defer js_ast.Expr.Data.Store.reset();
-                    defer js_ast.Stmt.Data.Store.reset();
+                    js_ast.Expr.Data.Store.reset();
+                    js_ast.Stmt.Data.Store.reset();
                     const output_file = bundler.buildWithResolveResult(item) catch continue orelse continue;
                     bundler.output_files.append(output_file) catch unreachable;
                 }
@@ -635,11 +494,12 @@ pub const Bundler = struct {
         //     }
         // }
 
-        // if (bundler.needs_runtime) {
-        //     try bundler.output_files.append(options.OutputFile{
-
-        //     });
-        // }
+        if (bundler.linker.any_needs_runtime) {
+            try bundler.output_files.append(options.OutputFile{
+                .path = bundler.linker.runtime_source_path,
+                .contents = runtime.SourceContent,
+            });
+        }
 
         if (enableTracing) {
             Output.printError(
@@ -814,7 +674,6 @@ pub const Transformer = struct {
             },
         }
 
-        var _linker = linker.Linker{};
         var symbols: [][]js_ast.Symbol = &([_][]js_ast.Symbol{ast.symbols});
 
         return try js_printer.printAst(
@@ -823,8 +682,11 @@ pub const Transformer = struct {
             js_ast.Symbol.Map.initList(symbols),
             source,
             false,
-            js_printer.Options{ .to_module_ref = ast.module_ref orelse js_ast.Ref{ .inner_index = 0 } },
-            &_linker,
+            js_printer.Options{
+                .to_module_ref = ast.module_ref orelse js_ast.Ref{ .inner_index = 0 },
+                .transform_imports = false,
+            },
+            null,
         );
     }
 };

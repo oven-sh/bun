@@ -2760,6 +2760,13 @@ pub const Expr = struct {
         return maybeSimplifyNot(expr, allocator) orelse expr.*;
     }
 
+    pub fn hasValueForThisInCall(expr: *const Expr) bool {
+        return switch (expr.data) {
+            .e_dot, .e_index => true,
+            else => false,
+        };
+    }
+
     // The given "expr" argument should be the operand of a "!" prefix operator
     // (i.e. the "x" in "!x"). This returns a simplified expression for the
     // whole operator (i.e. the "!x") if it can be simplified, or false if not.
@@ -3403,6 +3410,9 @@ pub const Ast = struct {
     approximate_line_count: i32 = 0,
     has_lazy_export: bool = false,
 
+    runtime_import_record: ImportRecord = undefined,
+    needs_runtime: bool = false,
+    externals: []u32 = &[_]u32{},
     // This is a list of CommonJS features. When a file uses CommonJS features,
     // it's not a candidate for "flat bundling" and must be wrapped in its own
     // closure.

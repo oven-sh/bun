@@ -7,6 +7,7 @@ pub const options = @import("../options.zig");
 pub const alloc = @import("../alloc.zig");
 pub const js_printer = @import("../js_printer.zig");
 pub const renamer = @import("../renamer.zig");
+pub const RuntimeImports = @import("../runtime.zig").Runtime.Imports;
 pub const fs = @import("../fs.zig");
 const _hash_map = @import("../hash_map.zig");
 pub usingnamespace @import("../global.zig");

@@ -11,6 +11,7 @@ const PackageJSON = @import("./package_json.zig").PackageJSON;
 usingnamespace @import("./data_url.zig");
 
 const Wyhash = std.hash.Wyhash;
+
 const hash_map_v2 = @import("../hash_map_v2.zig");
 const Mutex = sync.Mutex;
 const StringBoolMap = std.StringHashMap(bool);
@@ -268,8 +269,16 @@ pub const Resolver = struct {
         // Most NPM modules are CommonJS
         // If unspecified, assume CommonJS.
         // If internal app code, assume ESM. Since this is designed for ESM.`
-        pub fn shouldAssumeCommonJS(r: *Result) bool {
-            return r.is_from_node_modules and r.module_type != .esm;
+        pub fn shouldAssumeCommonJS(r: *const Result, import_record: *const ast.ImportRecord) bool {
+            if (import_record.kind == .require or import_record.kind == .require_resolve or r.module_type == .cjs) {
+                return true;
+            }
+
+            if (r.module_type == .esm) {
+                return false;
+            }
+
+            return r.is_from_node_modules and import_record.contains_default_alias;
         }
 
         pub const DebugMeta = struct {

@@ -17,8 +17,8 @@ threadlocal var scratch_lookup_buffer: [256]u8 = undefined;
 
 pub const Preallocate = struct {
     pub const Counts = struct {
-        pub const dir_entry: usize = 1024;
-        pub const files: usize = 2048;
+        pub const dir_entry: usize = 512;
+        pub const files: usize = 1024;
     };
 };
 
@@ -42,7 +42,7 @@ pub const FileSystem = struct {
 
     pub var instance: FileSystem = undefined;
 
-    pub const DirnameStore = allocators.BSSStringList(Preallocate.Counts.dir_entry, 256);
+    pub const DirnameStore = allocators.BSSStringList(Preallocate.Counts.dir_entry, 128);
     pub const FilenameStore = allocators.BSSStringList(Preallocate.Counts.files, 64);
 
     pub const Error = error{

@@ -165,6 +165,16 @@ pub fn HashMap(
             return self.unmanaged.getOrPut(self.allocator, key);
         }
 
+        /// If key exists this function cannot fail.
+        /// If there is an existing item with `key`, then the result
+        /// `Entry` pointer points to it, and found_existing is true.
+        /// Otherwise, puts a new item with undefined value, and
+        /// the `Entry` pointer points to it. Caller should then initialize
+        /// the value (but not the key).
+        pub fn getOrPutWithHash(self: *Self, key: K, hash: u64) !GetOrPutResult {
+            return self.unmanaged.getOrPutWithHash(self.allocator, key, hash);
+        }
+
         /// If there is an existing item with `key`, then the result
         /// `Entry` pointer points to it, and found_existing is true.
         /// Otherwise, puts a new item with undefined value, and

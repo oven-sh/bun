@@ -38,3 +38,16 @@ export var __toModule = (module) => {
     module
   );
 };
+
+export var __name = (target, name) => {
+  Object.defineProperty(target, "name", {
+    get() {
+      return name;
+    },
+    set(v) {
+      name = v;
+    },
+  });
+
+  return target;
+};

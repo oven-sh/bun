@@ -178,6 +178,7 @@ pub const Bundler = struct {
             js_printer.Options{
                 .to_module_ref = Ref.RuntimeRef,
                 .externals = ast.externals,
+                .runtime_imports = ast.runtime_imports,
             },
             &bundler.linker,
         );
@@ -685,6 +686,7 @@ pub const Transformer = struct {
             js_printer.Options{
                 .to_module_ref = ast.module_ref orelse js_ast.Ref{ .inner_index = 0 },
                 .transform_imports = false,
+                .runtime_imports = ast.runtime_imports,
             },
             null,
         );

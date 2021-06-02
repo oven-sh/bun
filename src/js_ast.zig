@@ -1,7 +1,7 @@
 const std = @import("std");
 const logger = @import("logger.zig");
 const JSXRuntime = @import("options.zig").JSX.Runtime;
-
+const Runtime = @import("runtime.zig").Runtime;
 usingnamespace @import("global.zig");
 usingnamespace @import("ast/base.zig");
 
@@ -1011,7 +1011,6 @@ pub const E = struct {
     pub const String = struct {
         value: JavascriptString = &([_]u16{}),
         utf8: string = &([_]u8{}),
-        legacy_octal_loc: ?logger.Loc = null,
         prefer_template: bool = false,
 
         pub fn isUTF8(s: *const String) bool {
@@ -1102,7 +1101,6 @@ pub const E = struct {
         tag: ?ExprNodeIndex = null,
         head: E.String,
         parts: []TemplatePart = &([_]TemplatePart{}),
-        legacy_octal_loc: logger.Loc = logger.Loc.Empty,
     };
 
     pub const RegExp = struct {
@@ -2015,6 +2013,7 @@ pub const Expr = struct {
     pub fn init(exp: anytype, loc: logger.Loc) Expr {
         icount += 1;
         const st = exp.*;
+
         switch (@TypeOf(st)) {
             E.Array => {
                 return Expr{
@@ -2156,7 +2155,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_identifier = Data.Store.All.append(@TypeOf(st), st),
+                        .e_identifier = Data.Store.Identifier.append(@TypeOf(st), st),
                     },
                 };
             },
@@ -2900,6 +2899,8 @@ pub const Expr = struct {
             const often = 512;
             const medium = 256;
             const rare = 24;
+            const Identifier = NewBaseStore([_]type{E.Identifier}, 512);
+
             pub const All = NewBaseStore(
                 &([_]type{
                     E.Array,
@@ -2914,7 +2915,7 @@ pub const Expr = struct {
                     E.Dot,
                     E.Index,
                     E.Arrow,
-                    E.Identifier,
+
                     E.ImportIdentifier,
                     E.PrivateIdentifier,
                     E.JSXElement,
@@ -2944,14 +2945,20 @@ pub const Expr = struct {
 
                 has_inited = true;
                 _ = All.init(allocator);
+                _ = Identifier.init(allocator);
             }
 
             pub fn reset() void {
                 All.reset();
+                Identifier.reset();
             }
 
             pub fn append(comptime ValueType: type, value: anytype) *ValueType {
-                return All.append(ValueType, value);
+                if (ValueType == E.Identifier) {
+                    return Identifier.append(ValueType, value);
+                } else {
+                    return All.append(ValueType, value);
+                }
             }
         };
 
@@ -2997,7 +3004,9 @@ pub const S = struct {
 
     pub const Comment = struct { text: string };
 
-    pub const Directive = struct { value: JavascriptString, legacy_octal_loc: ?logger.Loc = null };
+    pub const Directive = struct {
+        value: JavascriptString,
+    };
 
     pub const ExportClause = struct { items: []ClauseItem, is_single_line: bool = false };
 
@@ -3409,8 +3418,9 @@ pub const ArrayBinding = struct {
 pub const Ast = struct {
     approximate_line_count: i32 = 0,
     has_lazy_export: bool = false,
+    runtime_imports: Runtime.Imports,
 
-    runtime_import_record: ImportRecord = undefined,
+    runtime_import_record_id: ?u32 = null,
     needs_runtime: bool = false,
     externals: []u32 = &[_]u32{},
     // This is a list of CommonJS features. When a file uses CommonJS features,
@@ -3456,6 +3466,7 @@ pub const Ast = struct {
     pub fn initTest(parts: []Part) Ast {
         return Ast{
             .parts = parts,
+            .runtime_imports = .{},
         };
     }
 

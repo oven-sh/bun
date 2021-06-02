@@ -21,11 +21,11 @@ pub fn lastIndexOfChar(self: string, char: u8) ?usize {
     return std.mem.lastIndexOfScalar(u8, self, char);
 }
 
-pub fn lastIndexOf(self: string, str: u8) ?usize {
+pub fn lastIndexOf(self: string, str: string) ?usize {
     return std.mem.lastIndexOf(u8, self, str);
 }
 
-pub fn indexOf(self: string, str: u8) ?usize {
+pub fn indexOf(self: string, str: string) ?usize {
     return std.mem.indexOf(u8, self, str);
 }
 

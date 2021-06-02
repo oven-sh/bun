@@ -1,6 +1,6 @@
 import * as Schema from "../../schema";
-import { ByteBuffer } from "peechy";
-import { transform as sucraseTransform } from "sucrase";
+import { ByteBuffer } from "peechy/bb";
+// import { transform as sucraseTransform } from "sucrase";
 
 export interface WebAssemblyModule {
   init(): number;
@@ -118,7 +118,7 @@ export class ESDev {
   };
 
   static async init(url) {
-    globalThis.sucraseTransform = sucraseTransform;
+    // globalThis.sucraseTransform = sucraseTransform;
     scratch = new Uint8Array(8096);
 
     if (ESDev.has_initialized) {

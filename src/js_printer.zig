@@ -70,8 +70,10 @@ pub const SourceMapChunk = struct {
 };
 
 pub const Options = struct {
+    transform_imports: bool = true,
     to_module_ref: js_ast.Ref,
     indent: usize = 0,
+    externals: []u32 = &[_]u32{},
 
     rewrite_require_resolve: bool = true,
     // If we're writing out a source map, this table of line start indices lets
@@ -122,7 +124,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
     return struct {
         symbols: Symbol.Map,
         import_records: []importRecord.ImportRecord,
-        linker: *Linker,
+        linker: ?*Linker,
         js: MutableString,
 
         needs_semicolon: bool = false,
@@ -136,7 +138,6 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
         prev_num_end: i32 = -1,
         prev_reg_exp_end: i32 = -1,
         call_target: ?Expr.Data = null,
-        int_to_bytes_buffer: [64]u8 = [_]u8{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
         writer: MutableString.Writer,
         allocator: *std.mem.Allocator,
         renamer: rename.Renamer,
@@ -705,10 +706,12 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                 level = .lowest;
             }
 
-            if (Ref.isSourceIndexNull(record.source_index)) {
+            if (true or !p.options.transform_imports or std.mem.indexOfScalar(
+                u32,
+                p.options.externals,
+                import_record_index,
+            ) != null) {
                 // External "require()"
-                // This case should ideally not happen.
-                // Emitting "require" when targeting a browser is broken code and a sign of something wrong.
                 if (record.kind != .dynamic) {
 
                     // First, we will assert to make detecting this case a little clearer for us in development.
@@ -718,19 +721,13 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
 
                     p.printSpaceBeforeIdentifier();
 
-                    // Then, we will *dangerously* import it as esm, assuming **top-level await support**.
-                    // This is not a transform that will always work, but it most closely mimicks the behavior of require()
-                    // For ESM interop, webpack & other bundlers typically make the default export the equivalent of require("foo").default
-                    // so that's require("foo").default.bar rather than require("foo").bar
-                    // We are assuming that the target import has been converted into something with an "export default".
-                    // If it's not esm, the code won't work anyway
-                    p.js.growIfNeeded("/* require(\"\") */(await import(".len + record.path.text.len) catch unreachable;
-                    p.print("/* require(\"");
-                    p.print(record.path.text);
-                    p.print("*/(await import(");
-                    p.addSourceMapping(record.range.loc);
+                    // if (p.options.platform == .node) {
+                    p.print("require(");
                     p.printQuotedUTF8(record.path.text, true);
-                    p.print(").default)");
+                    p.print(")");
+                    // } else {
+                    //  p.options.platform
+                    // }
                     return;
                 }
 
@@ -758,7 +755,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                 return;
             }
 
-            var meta = p.linker.requireOrImportMetaForSource(record.source_index);
+            var meta = p.linker.?.requireOrImportMetaForSource(record.source_index);
 
             // Don't need the namespace object if the result is unused anyway
             if (flags.expr_result_is_unused) {
@@ -1184,6 +1181,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     }
 
                     if (e.func.name) |sym| {
+                        p.maybePrintSpace();
                         p.printSymbol(sym.ref orelse Global.panic("internal error: expected E.Function's name symbol to have a ref\n{s}", .{e.func}));
                     }
 
@@ -1810,7 +1808,16 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         // While each of those property keys are ASCII, a subset of ASCII is valid as the start of an identifier
                         // "=" and ":" are not valid
                         // So we need to check
-                        if (js_lexer.isIdentifierStart(@intCast(js_lexer.CodePoint, key.utf8[0]))) {
+                        var needs_quoted = !js_lexer.isIdentifierStart(@intCast(js_lexer.CodePoint, key.utf8[0]));
+                        var i: usize = 1;
+                        while (i < key.utf8.len and !needs_quoted) : (i += 1) {
+                            if (!js_lexer.isIdentifierContinue(@intCast(js_lexer.CodePoint, key.utf8[i]))) {
+                                needs_quoted = true;
+                                break;
+                            }
+                        }
+
+                        if (!needs_quoted) {
                             p.print(key.utf8);
                         } else {
                             allow_shorthand = false;
@@ -2586,7 +2593,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     if (FeatureFlags.css_in_js_import_behavior == .facade) {
                         // TODO: check loader instead
                         if (strings.eqlComptime(p.import_records[s.import_record_index].path.name.ext, ".css")) {
-                            // This comment exists to let tooling authors know where CSS files originated
+                            // This comment exists to let tooling authors know which files CSS originated from
                             // To parse this, you just look for a line that starts with //@import url("
                             p.print("//@import url(\"");
                             // We do not URL escape here.
@@ -2959,7 +2966,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
             }
         }
 
-        pub fn init(allocator: *std.mem.Allocator, tree: Ast, source: *const logger.Source, symbols: Symbol.Map, opts: Options, linker: *Linker) !Printer {
+        pub fn init(allocator: *std.mem.Allocator, tree: *const Ast, source: *const logger.Source, symbols: Symbol.Map, opts: Options, linker: ?*Linker) !Printer {
             // Heuristic: most lines of JavaScript are short.
             var js = try MutableString.init(allocator, 0);
             return Printer{
@@ -2999,17 +3006,26 @@ pub fn quoteIdentifier(js: *MutableString, identifier: string) !void {
 const UnicodePrinter = NewPrinter(false);
 const AsciiPrinter = NewPrinter(true);
 
-pub fn printAst(allocator: *std.mem.Allocator, tree: Ast, symbols: js_ast.Symbol.Map, source: *const logger.Source, ascii_only: bool, opts: Options, linker: *Linker) !PrintResult {
+pub fn printAst(
+    allocator: *std.mem.Allocator,
+    tree: Ast,
+    symbols: js_ast.Symbol.Map,
+    source: *const logger.Source,
+    ascii_only: bool,
+    opts: Options,
+    linker: ?*Linker,
+) !PrintResult {
     if (ascii_only) {
         var printer = try AsciiPrinter.init(
             allocator,
-            tree,
+            &tree,
             source,
             symbols,
 
             opts,
             linker,
         );
+
         for (tree.parts) |part| {
             for (part.stmts) |stmt| {
                 try printer.printStmt(stmt);
@@ -3022,7 +3038,7 @@ pub fn printAst(allocator: *std.mem.Allocator, tree: Ast, symbols: js_ast.Symbol
     } else {
         var printer = try UnicodePrinter.init(
             allocator,
-            tree,
+            &tree,
             source,
             symbols,
             opts,

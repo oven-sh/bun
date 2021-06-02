@@ -1,10 +1,13 @@
 const options = @import("./options.zig");
 usingnamespace @import("ast/base.zig");
 usingnamespace @import("global.zig");
-
+const std = @import("std");
 pub const SourceContent = @embedFile("./runtime.js");
-
 pub const Runtime = struct {
+    pub var version_hash = @embedFile("./runtime.version");
+    pub fn version() string {
+        return version_hash;
+    }
     pub const Features = packed struct {
         react_fast_refresh: bool = false,
         hot_module_reloading: bool = false,

@@ -20,6 +20,17 @@ pub const PropertyModifierKeyword = tables.PropertyModifierKeyword;
 pub const TypescriptStmtKeyword = tables.TypescriptStmtKeyword;
 pub const TypeScriptAccessibilityModifier = tables.TypeScriptAccessibilityModifier;
 
+fn utf8ByteSequenceLength(first_byte: u8) u3 {
+    // The switch is optimized much better than a "smart" approach using @clz
+    return switch (first_byte) {
+        0b0000_0000...0b0111_1111 => 1,
+        0b1100_0000...0b1101_1111 => 2,
+        0b1110_0000...0b1110_1111 => 3,
+        0b1111_0000...0b1111_0111 => 4,
+        else => 0,
+    };
+}
+
 fn notimpl() noreturn {
     Global.panic("not implemented yet!", .{});
 }
@@ -123,22 +134,22 @@ pub const Lexer = struct {
         return logger.usize2Loc(self.start);
     }
 
-    inline fn nextCodepointSlice(it: *LexerType) !?[]const u8 {
+    inline fn nextCodepointSlice(it: *LexerType) []const u8 {
         @setRuntimeSafety(false);
 
-        if (it.current >= it.source.contents.len) {
-            // without this line, strings cut off one before the last characte
-            it.end = it.current;
-            @setRuntimeSafety(false);
+        // if (it.current >= it.source.contents.len) {
+        //     // without this line, strings cut off one before the last characte
+        //     it.end = it.current;
+        //     @setRuntimeSafety(false);
 
-            return null;
-        }
+        //     return null;
+        // }
 
-        const cp_len = unicode.utf8ByteSequenceLength(it.source.contents[it.current]) catch return Error.UTF8Fail;
+        const cp_len = utf8ByteSequenceLength(it.source.contents[it.current]);
         it.end = it.current;
         it.current += cp_len;
 
-        return it.source.contents[it.current - cp_len .. it.current];
+        return if (!(it.current > it.source.contents.len)) it.source.contents[it.current - cp_len .. it.current] else "";
     }
 
     pub fn syntaxError(self: *LexerType) !void {
@@ -192,27 +203,29 @@ pub const Lexer = struct {
     }
 
     inline fn nextCodepoint(it: *LexerType) !CodePoint {
-        const slice = (try it.nextCodepointSlice()) orelse return @as(CodePoint, -1);
+        const slice = it.nextCodepointSlice();
 
-        switch (slice.len) {
-            1 => return @as(CodePoint, slice[0]),
-            2 => return @as(CodePoint, unicode.utf8Decode2(slice) catch unreachable),
-            3 => return @as(CodePoint, unicode.utf8Decode3(slice) catch unreachable),
-            4 => return @as(CodePoint, unicode.utf8Decode4(slice) catch unreachable),
+        return switch (slice.len) {
+            0 => -1,
+            1 => @as(CodePoint, slice[0]),
+            2 => @as(CodePoint, unicode.utf8Decode2(slice) catch unreachable),
+            3 => @as(CodePoint, unicode.utf8Decode3(slice) catch unreachable),
+            4 => @as(CodePoint, unicode.utf8Decode4(slice) catch unreachable),
             else => unreachable,
-        }
+        };
     }
 
     /// Look ahead at the next n codepoints without advancing the iterator.
     /// If fewer than n codepoints are available, then return the remainder of the string.
-    fn peek(it: *LexerType, n: usize) !string {
+    fn peek(it: *LexerType, n: usize) string {
         const original_i = it.current;
         defer it.current = original_i;
 
         var end_ix = original_i;
         var found: usize = 0;
         while (found < n) : (found += 1) {
-            const next_codepoint = (try it.nextCodepointSlice()) orelse return it.source.contents[original_i..];
+            const next_codepoint = it.nextCodepointSlice();
+            if (next_codepoint.len == 0) break;
             end_ix += next_codepoint.len;
         }
 
@@ -963,8 +976,7 @@ pub const Lexer = struct {
                         if (lexer.code_point == '\\') {
                             @setRuntimeSafety(false);
 
-                            const scan_result = try lexer.scanIdentifierWithEscapes(.private);
-                            lexer.identifier = scan_result.contents;
+                            lexer.identifier = (try lexer.scanIdentifierWithEscapes(.private)).contents;
                             lexer.token = T.t_private_identifier;
                         } else {
                             @setRuntimeSafety(false);
@@ -978,8 +990,7 @@ pub const Lexer = struct {
                                 try lexer.step();
                             }
                             if (lexer.code_point == '\\') {
-                                const scan_result = try lexer.scanIdentifierWithEscapes(.private);
-                                lexer.identifier = scan_result.contents;
+                                lexer.identifier = (try lexer.scanIdentifierWithEscapes(.private)).contents;
                                 lexer.token = T.t_private_identifier;
                             } else {
                                 lexer.token = T.t_private_identifier;
@@ -1379,7 +1390,7 @@ pub const Lexer = struct {
                         },
                         // Handle legacy HTML-style comments
                         '!' => {
-                            if (strings.eqlComptime(try lexer.peek("--".len), "--")) {
+                            if (strings.eqlComptime(lexer.peek("--".len), "--")) {
                                 try lexer.addUnsupportedSyntaxError("Legacy HTML comments not implemented yet!");
                                 return;
                             }
@@ -1470,9 +1481,10 @@ pub const Lexer = struct {
                         lexer.identifier = scan_result.contents;
                         lexer.token = scan_result.token;
                     } else {
-                        const contents = lexer.raw();
-                        lexer.identifier = contents;
-                        lexer.token = Keywords.get(contents) orelse T.t_identifier;
+                        // this code is so hot that if you save lexer.raw() into a temporary variable
+                        // it shows up in profiling
+                        lexer.identifier = lexer.raw();
+                        lexer.token = Keywords.get(lexer.identifier) orelse T.t_identifier;
                     }
                 },
 
@@ -2534,43 +2546,23 @@ pub const Lexer = struct {
 };
 
 pub fn isIdentifierStart(codepoint: CodePoint) bool {
-    switch (codepoint) {
-        'a'...'z', 'A'...'Z', '_', '$' => {
-            return true;
-        },
-        else => {
-            return false;
-        },
-    }
+    @setRuntimeSafety(false);
+    return switch (codepoint) {
+        'a'...'z', 'A'...'Z', '_', '$' => true,
+        else => false,
+    };
 }
 pub fn isIdentifierContinue(codepoint: CodePoint) bool {
     @setRuntimeSafety(false);
 
-    switch (codepoint) {
-        '_', '$', '0'...'9', 'a'...'z', 'A'...'Z' => {
-            return true;
-        },
-        -1 => {
-            return false;
-        },
-        else => {},
-    }
-
-    // All ASCII identifier start code points are listed above
-    if (codepoint < 0x7F) {
-        return false;
-    }
-
-    // ZWNJ and ZWJ are allowed in identifiers
-    if (codepoint == 0x200C or codepoint == 0x200D) {
-        return true;
-    }
-
-    return false;
+    return switch (codepoint) {
+        'a'...'z', 'A'...'Z', '_', '$', '0'...'9', 0x200C, 0x200D => true,
+        else => false,
+    };
 }
 
 pub fn isWhitespace(codepoint: CodePoint) bool {
-    switch (codepoint) {
+    return switch (codepoint) {
         0x000B, // line tabulation
         0x0009, // character tabulation
         0x000C, // form feed
@@ -2593,13 +2585,9 @@ pub fn isWhitespace(codepoint: CodePoint) bool {
         0x205F, // medium mathematical space
         0x3000, // ideographic space
         0xFEFF, // zero width non-breaking space
-        => {
-            return true;
-        },
-        else => {
-            return false;
-        },
-    }
+        => true,
+        else => false,
+    };
 }
 
 pub fn isIdentifier(text: string) bool {

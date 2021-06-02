@@ -16,6 +16,7 @@ pub const PackageJSON = struct {
     source: logger.Source,
     main_fields: MainFieldMap,
     module_type: options.ModuleType,
+    version: string = "",
 
     // Present if the "browser" field is present. This field is intended to be
     // used by bundlers and lets you redirect the paths of certain 3rd-party
@@ -80,6 +81,12 @@ pub const PackageJSON = struct {
             .browser_map = BrowserMap.init(r.allocator),
             .main_fields = MainFieldMap.init(r.allocator),
         };
+
+        if (json.asProperty("version")) |version_json| {
+            if (version_json.expr.asString(r.allocator)) |version_str| {
+                package_json.version = r.allocator.dupe(u8, version_str) catch unreachable;
+            }
+        }
 
         if (json.asProperty("type")) |type_json| {
             if (type_json.expr.asString(r.allocator)) |type_str| {

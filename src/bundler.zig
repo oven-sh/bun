@@ -25,10 +25,11 @@ const MimeType = @import("./http/mime_type.zig");
 const resolve_path = @import("./resolver/resolve_path.zig");
 const runtime = @import("./runtime.zig");
 const Linker = linker.Linker;
+const Timer = @import("./timer.zig");
 
 pub const ServeResult = struct {
     value: Value,
-
+    free: bool = true,
     mime_type: MimeType,
 
     // Either we:
@@ -69,6 +70,7 @@ pub const Bundler = struct {
     elapsed: i128 = 0,
     needs_runtime: bool = false,
     linker: Linker,
+    timer: Timer = Timer{},
 
     pub const RuntimeCode = @embedFile("./runtime.js");
 
@@ -137,9 +139,10 @@ pub const Bundler = struct {
 
         try bundler.linker.link(file_path, &result);
 
-        const output_file = try bundler.print(
+        var output_file = try bundler.print(
             result,
         );
+        // output_file.version = if (resolve_result.is_from_node_modules) resolve_result.package_json_version else null;
 
         return output_file;
     }
@@ -196,14 +199,15 @@ pub const Bundler = struct {
 
         ast: js_ast.Ast,
     };
-    pub var tracing_start: i128 = if (enableTracing) 0 else undefined;
+
     pub fn parse(bundler: *Bundler, path: Fs.Path, loader: options.Loader, dirname_fd: StoredFileDescriptorType) ?ParseResult {
         if (enableTracing) {
-            tracing_start = std.time.nanoTimestamp();
+            bundler.timer.start();
         }
         defer {
             if (enableTracing) {
-                bundler.elapsed += std.time.nanoTimestamp() - tracing_start;
+                bundler.timer.stop();
+                bundler.elapsed += bundler.timer.elapsed;
             }
         }
         var result: ParseResult = undefined;
@@ -269,8 +273,9 @@ pub const Bundler = struct {
         log: *logger.Log,
         allocator: *std.mem.Allocator,
         relative_path: string,
-        extension: string,
+        _extension: string,
     ) !ServeResult {
+        var extension = _extension;
         var original_resolver_logger = bundler.resolver.log;
         var original_bundler_logger = bundler.log;
 
@@ -294,14 +299,15 @@ pub const Bundler = struct {
             var _file: ?std.fs.File = null;
 
             // Is it the index file?
-            if (relative_unrooted_path.len == 1 and relative_unrooted_path[0] == '.') {
+            if (relative_unrooted_path.len == 0) {
                 // std.mem.copy(u8, &tmp_buildfile_buf, relative_unrooted_path);
                 // std.mem.copy(u8, tmp_buildfile_buf[relative_unrooted_path.len..], "/"
                 // Search for /index.html
                 if (public_dir.openFile("index.html", .{})) |file| {
-                    std.mem.copy(u8, relative_unrooted_path, "index.html");
-                    relative_unrooted_path = relative_unrooted_path[0.."index.html".len];
+                    var index_path = "index.html".*;
+                    relative_unrooted_path = &(index_path);
                     _file = file;
+                    extension = "html";
                 } else |err| {}
                 // Okay is it actually a full path?
             } else {
@@ -319,6 +325,7 @@ pub const Bundler = struct {
 
                     if (public_dir.openFile(tmp_buildfile_buf[0 .. relative_unrooted_path.len + ".html".len], .{})) |file| {
                         _file = file;
+                        extension = "html";
                         break;
                     } else |err| {}
 
@@ -337,6 +344,7 @@ pub const Bundler = struct {
                     if (public_dir.openFile(_path, .{})) |file| {
                         const __path = _path;
                         relative_unrooted_path = __path;
+                        extension = "html";
                         _file = file;
                         break;
                     } else |err| {}
@@ -357,13 +365,31 @@ pub const Bundler = struct {
             }
         }
 
+        if (strings.eqlComptime(relative_path, "__runtime.js")) {
+            return ServeResult{
+                .free = false,
+                .value = .{ .build = .{ .path = "__runtime.js", .contents = runtime.SourceContent } },
+                .mime_type = MimeType.javascript,
+            };
+        }
+
         // We make some things faster in theory by using absolute paths instead of relative paths
-        const absolute_path = resolve_path.joinAbsStringBuf(
+        var absolute_path = resolve_path.joinAbsStringBuf(
             bundler.fs.top_level_dir,
             &tmp_buildfile_buf,
             &([_][]const u8{relative_path}),
             .auto,
         );
+
+        defer {
+            js_ast.Expr.Data.Store.reset();
+            js_ast.Stmt.Data.Store.reset();
+        }
+
+        // If the extension is .js, omit it.
+        // if (absolute_path.len > ".js".len and strings.eqlComptime(absolute_path[absolute_path.len - ".js".len ..], ".js")) {
+        //     absolute_path = absolute_path[0 .. absolute_path.len - ".js".len];
+        // }
 
         const resolved = (try bundler.resolver.resolve(bundler.fs.top_level_dir, absolute_path, .entry_point));
 

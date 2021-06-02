@@ -9838,10 +9838,12 @@ pub const P = struct {
                         }
 
                         if (p.options.jsx.development) {
-                            // If we leave it as false, we get a warning about not providing a key
-                            // It calls Object.freeze on the array though
-                            // Which is wasteful! Object.freeze is slow.
-                            args[3] = Expr{ .loc = expr.loc, .data = .{ .e_boolean = .{ .value = e_.children.len == 0 } } };
+                            // is the return type of the first child an array?
+                            // It's dynamic
+                            // Else, it's static
+                            args[3] = Expr{ .loc = expr.loc, .data = .{ .e_boolean = .{
+                                .value = e_.children.len == 0 or e_.children.len > 1 or std.meta.activeTag(e_.children[0].data) != .e_array,
+                            } } };
 
                             var source = p.allocator.alloc(G.Property, 2) catch unreachable;
                             p.recordUsage(p.jsx_filename_ref);

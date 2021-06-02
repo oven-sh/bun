@@ -453,6 +453,14 @@ const TypeScript = struct {
     parse: bool = false,
 };
 
+pub const Timings = struct {
+    resolver: i128 = 0,
+    parse: i128 = 0,
+    print: i128 = 0,
+    http: i128 = 0,
+    read_file: i128 = 0,
+};
+
 pub const BundleOptions = struct {
     footer: string = "",
     banner: string = "",
@@ -469,6 +477,11 @@ pub const BundleOptions = struct {
     public_dir_handle: ?std.fs.Dir = null,
     write: bool = false,
     preserve_symlinks: bool = false,
+    preserve_extensions: bool = false,
+    timings: Timings = Timings{},
+
+    append_package_version_in_query_string: bool = false,
+
     resolve_mode: api.Api.ResolveMode,
     tsconfig_override: ?string = null,
     platform: Platform = Platform.browser,
@@ -575,6 +588,8 @@ pub const BundleOptions = struct {
         opts.out_extensions = opts.platform.outExtensions(allocator);
 
         if (transform.serve orelse false) {
+            opts.preserve_extensions = true;
+            opts.append_package_version_in_query_string = true;
             opts.resolve_mode = .lazy;
             var _dirs = [_]string{transform.public_dir orelse opts.public_dir};
             opts.public_dir = try fs.absAlloc(allocator, &_dirs);
@@ -687,6 +702,7 @@ pub const TransformOptions = struct {
 
 pub const OutputFile = struct {
     path: string,
+    version: ?string = null,
     contents: string,
 };
 

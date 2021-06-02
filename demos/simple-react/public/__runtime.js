@@ -7,16 +7,8 @@ var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 
 export var __markAsModule = (target) =>
   __defProp(target, "__esModule", { value: true });
-export var __commonJS = (cb, name, mod) => () => {
-  return (
-    mod,
-    // friendly name for any errors while requiring
-    (__name(cb, `export default ${name}`),
-    cb((mod = { exports: {} }), mod.exports).exports,
-    __name(mod, name),
-    mod),
-    mod.exports
-  );
+export var __commonJS = (cb, mod) => () => {
+  return mod || cb((mod = { exports: {} }).exports, mod), mod.exports;
 };
 
 export var __reExport = (target, module, desc) => {
@@ -49,9 +41,12 @@ export var __toModule = (module) => {
 
 export var __name = (target, name) => {
   Object.defineProperty(target, "name", {
-    value: name,
-    enumerable: false,
-    configurable: true,
+    get() {
+      return name;
+    },
+    set(v) {
+      name = v;
+    },
   });
 
   return target;

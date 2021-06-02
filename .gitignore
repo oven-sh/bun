@@ -32,3 +32,5 @@ coverv
 *.trace
 bench
 github
+out.*
+out

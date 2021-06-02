@@ -268,7 +268,7 @@ pub const Resolver = struct {
 
         // Most NPM modules are CommonJS
         // If unspecified, assume CommonJS.
-        // If internal app code, assume ESM. Since this is designed for ESM.`
+        // If internal app code, assume ESM.
         pub fn shouldAssumeCommonJS(r: *const Result, import_record: *const ast.ImportRecord) bool {
             if (import_record.kind == .require or import_record.kind == .require_resolve or r.module_type == .cjs) {
                 return true;
@@ -278,7 +278,7 @@ pub const Resolver = struct {
                 return false;
             }
 
-            return r.is_from_node_modules and import_record.contains_default_alias;
+            return r.is_from_node_modules;
         }
 
         pub const DebugMeta = struct {

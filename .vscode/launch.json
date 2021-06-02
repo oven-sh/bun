@@ -11,22 +11,13 @@
     //   "cwd": "${workspaceFolder}",
     //   "console": "internalConsole"
     // },
-    {
-      "name": "esbuild",
-      "type": "go",
-      "request": "launch",
-      "mode": "debug",
-      "program": "/Users/jarred/Code/esbuild/cmd/esbuild",
-      "cwd": "/Users/jarred/Code/esdev/src/test/fixtures",
-      "args": ["--bundle", "--outfile=out.esbuild.js", "await.ts"]
-    },
 
     {
       "type": "lldb",
       "request": "launch",
       "name": "Dev Launch",
       "program": "${workspaceFolder}/build/debug/macos-x86_64/esdev",
-      "args": ["./object-newline.js", "--resolve=disable"],
+      "args": ["defines.js", "--resolve=disable"],
       "cwd": "${workspaceFolder}/src/test/fixtures",
       "console": "internalConsole"
     },
@@ -36,8 +27,13 @@
       "request": "launch",
       "name": "Demo Build",
       "program": "${workspaceFolder}/build/debug/macos-x86_64/esdev",
-      "args": ["./pages/index.tsx", "--resolve=dev", "--outdir=out"],
-      "cwd": "${workspaceFolder}/src/api/demo",
+      "args": [
+        "./src/index.tsx",
+        "--resolve=dev",
+        "--outdir=public",
+        "--public-url=http://localhost:8080/"
+      ],
+      "cwd": "${workspaceFolder}/demos/simple-react",
       "console": "internalConsole"
     },
 
@@ -50,6 +46,16 @@
       "cwd": "${workspaceFolder}/src/test/fixtures",
       "console": "internalConsole"
     },
+    {
+      "name": "esbuild",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "/Users/jarred/Code/esbuild/cmd/esbuild",
+      "cwd": "/Users/jarred/Code/esdev/src/test/fixtures",
+      "args": ["--bundle", "--outfile=out.esbuild.js", "await.ts"]
+    },
+
     // {
     //   "type": "lldb",
     //   "request": "launch",

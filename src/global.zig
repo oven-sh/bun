@@ -36,7 +36,13 @@ pub const FeatureFlags = struct {
 
     // This doesn't really seem to do anything for us
     pub const disable_filesystem_cache = false and std.Target.current.os.tag == .macos;
+
+    // This doesn't really seem to do anything for us
     pub const css_in_js_import_behavior = CSSModulePolyfill.facade;
+
+    pub const only_output_esm = true;
+
+    pub const jsx_runtime_is_cjs = true;
 
     pub const CSSModulePolyfill = enum {
         // When you import a .css file and you reference the import in JavaScript

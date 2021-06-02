@@ -24,6 +24,7 @@ const resolve_path = @import("./resolver/resolve_path.zig");
 const _bundler = @import("./bundler.zig");
 const Bundler = _bundler.Bundler;
 const ResolveQueue = _bundler.ResolveQueue;
+const Runtime = @import("./runtime.zig").Runtime;
 
 pub const Linker = struct {
     allocator: *std.mem.Allocator,
@@ -56,7 +57,7 @@ pub const Linker = struct {
             .resolve_queue = resolve_queue,
             .resolver = resolver,
             .resolve_results = resolve_results,
-            .runtime_source_path = fs.joinAlloc(allocator, &[_]string{"__runtime.js"}) catch unreachable,
+            .runtime_source_path = fs.absAlloc(allocator, &([_]string{"__runtime.js"})) catch unreachable,
         };
     }
 
@@ -66,11 +67,18 @@ pub const Linker = struct {
         return RequireOrImportMeta{};
     }
 
+    // pub const Scratch = struct {
+    //     threadlocal var externals: std.ArrayList(u32) = undefined;
+    //     threadlocal var has_externals: std.ArrayList(u32) = undefined;
+    //     pub fn externals() {
+
+    //     }
+    // };
     // This modifies the Ast in-place!
     // But more importantly, this does the following:
     // - Wrap CommonJS files
     pub fn link(linker: *Linker, file_path: Fs.Path, result: *Bundler.ParseResult) !void {
-        var needs_runtime = false;
+        var needs_runtime = result.ast.uses_exports_ref or result.ast.uses_module_ref or result.ast.runtime_imports.hasAny();
         const source_dir = file_path.name.dir;
         var externals = std.ArrayList(u32).init(linker.allocator);
 
@@ -78,23 +86,46 @@ pub const Linker = struct {
         switch (result.loader) {
             .jsx, .js, .ts, .tsx => {
                 for (result.ast.import_records) |*import_record, record_index| {
+                    if (strings.eqlComptime(import_record.path.text, Runtime.Imports.Name)) {
+                        import_record.path = try linker.generateImportPath(
+                            source_dir,
+                            linker.runtime_source_path,
+                        );
+                        result.ast.runtime_import_record_id = @truncate(u32, record_index);
+                        result.ast.needs_runtime = true;
+                        continue;
+                    }
+
                     if (linker.resolver.resolve(source_dir, import_record.path.text, import_record.kind)) |*resolved_import| {
                         if (resolved_import.is_external) {
                             externals.append(@truncate(u32, record_index)) catch unreachable;
+                            continue;
                         }
+
                         linker.processImportRecord(
                             // Include trailing slash
                             file_path.text[0 .. source_dir.len + 1],
                             resolved_import,
                             import_record,
                         ) catch continue;
-                        import_record.wrap_with_to_module = resolved_import.shouldAssumeCommonJS(import_record);
-                        if (import_record.wrap_with_to_module) {
-                            if (!linker.any_needs_runtime) {
-                                linker.any_needs_runtime = true;
-                            }
-                            needs_runtime = true;
+
+                        // If we're importing a CommonJS module as ESM
+                        // We need to do the following transform:
+                        //      import React from 'react';
+                        //      =>
+                        //      import {_require} from 'RUNTIME_IMPORTS';
+                        //      import * as react_module from 'react';
+                        //      var React = _require(react_module).default;
+                        // UNLESS it's a namespace import
+                        // If it's a namespace import, assume it's safe.
+                        // We can do this in the printer instead of creating a bunch of AST nodes here.
+                        // But we need to at least tell the printer that this needs to happen.
+                        if (import_record.kind == .stmt and !import_record.contains_import_star and resolved_import.shouldAssumeCommonJS(import_record)) {
+                            import_record.wrap_with_to_module = true;
+                            result.ast.needs_runtime = true;
                         }
+
+                        Output.println("{s} ({s}): CommonJS? {d}", .{ import_record.path.text, @tagName(resolved_import.module_type), @boolToInt(resolved_import.shouldAssumeCommonJS(import_record)) });
                     } else |err| {
                         switch (err) {
                             error.ModuleNotFound => {
@@ -138,23 +169,7 @@ pub const Linker = struct {
             },
             else => {},
         }
-
-        // Step 2.
-
         result.ast.externals = externals.toOwnedSlice();
-
-        if (needs_runtime) {
-            std.debug.assert(!result.ast.needs_runtime);
-            result.ast.runtime_import_record = ImportRecord{
-                .path = try linker.generateImportPath(
-                    source_dir,
-                    linker.runtime_source_path,
-                ),
-                .range = logger.Range.None,
-                .kind = .internal,
-            };
-            result.ast.needs_runtime = true;
-        }
     }
 
     const ImportPathsList = allocators.BSSStringList(512, 128);
@@ -189,20 +204,24 @@ pub const Linker = struct {
             },
 
             .absolute_url => {
+                var base = linker.fs.relativeTo(source_path);
+                if (strings.lastIndexOfChar(base, '.')) |dot| {
+                    base = base[0..dot];
+                }
+
                 const absolute_url = try relative_paths_list.append(
                     try std.fmt.allocPrint(
                         &relative_path_allocator.allocator,
-                        "{s}{s}{s}{s}",
+                        "{s}{s}{s}",
                         .{
                             linker.options.public_url,
-                            pathname.dir,
-                            pathname.base,
+                            base,
                             absolute_pathname.ext,
                         },
                     ),
                 );
 
-                return Fs.Path.initWithPretty(absolute_url, pretty);
+                return Fs.Path.initWithPretty(absolute_url, absolute_url);
             },
 
             else => unreachable,

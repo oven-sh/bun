@@ -7,17 +7,6 @@ var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 
 export var __markAsModule = (target) =>
   __defProp(target, "__esModule", { value: true });
-export var __commonJS = (cb, name, mod) => () => {
-  return (
-    mod,
-    // friendly name for any errors while requiring
-    (__name(cb, `export default ${name}`),
-    cb((mod = { exports: {} }), mod.exports).exports,
-    __name(mod, name),
-    mod),
-    mod.exports
-  );
-};
 
 export var __reExport = (target, module, desc) => {
   if ((module && typeof module === "object") || typeof module === "function") {
@@ -47,6 +36,40 @@ export var __toModule = (module) => {
   );
 };
 
+export var __commonJS =
+  (cb, name, mod = {}) =>
+  () => {
+    return (
+      mod,
+      // friendly name for any errors while requiring
+      (__name(cb, `export default ${name}`),
+      cb((mod = { exports: {} }), mod.exports),
+      __name(mod, name),
+      mod),
+      // Don't add a name to exports incase it exports "name"
+      mod.exports
+    );
+  };
+
+var require_cache = new WeakMap();
+
+export var __require = (namespace) => {
+  var entry = require_cache.get(namespace);
+  if (typeof entry !== "undefined") {
+    return entry;
+  }
+
+  var target =
+    Object.prototype.hasOwnProperty.call(namespace, "default") &&
+    Object.keys(namespace).length === 1
+      ? namespace["default"]
+      : namespace;
+
+  var exports = target();
+  require_cache.set(namespace, exports);
+  return exports;
+};
+
 export var __name = (target, name) => {
   Object.defineProperty(target, "name", {
     value: name,
@@ -55,14 +78,6 @@ export var __name = (target, name) => {
   });
 
   return target;
-};
-
-// browsers handles ensuring the same ESM is not loaded multiple times
-export var __require = (n) => {
-  return Object.prototype.hasOwnProperty.call(n, "default") &&
-    Object.keys(n).length === 1
-    ? n["default"]
-    : n;
 };
 
 export const __esModule = true;

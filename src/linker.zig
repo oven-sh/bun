@@ -120,7 +120,7 @@ pub const Linker = struct {
                         // If it's a namespace import, assume it's safe.
                         // We can do this in the printer instead of creating a bunch of AST nodes here.
                         // But we need to at least tell the printer that this needs to happen.
-                        if (import_record.kind == .stmt and !import_record.contains_import_star and resolved_import.shouldAssumeCommonJS(import_record)) {
+                        if (import_record.kind == .stmt and resolved_import.shouldAssumeCommonJS(import_record)) {
                             import_record.wrap_with_to_module = true;
                             result.ast.needs_runtime = true;
                         }
@@ -170,6 +170,19 @@ pub const Linker = struct {
             else => {},
         }
         result.ast.externals = externals.toOwnedSlice();
+
+        if (result.ast.needs_runtime and result.ast.runtime_import_record_id == null) {
+            var import_records = try linker.allocator.alloc(ImportRecord, result.ast.import_records.len + 1);
+            std.mem.copy(ImportRecord, import_records, result.ast.import_records);
+            import_records[import_records.len - 1] = ImportRecord{
+                .kind = .stmt,
+                .path = try linker.generateImportPath(
+                    source_dir,
+                    linker.runtime_source_path,
+                ),
+                .range = logger.Range{ .loc = logger.Loc{ .start = 0 }, .len = 0 },
+            };
+        }
     }
 
     const ImportPathsList = allocators.BSSStringList(512, 128);

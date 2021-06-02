@@ -6,6 +6,7 @@ const js_ast = @import("js_ast.zig");
 const options = @import("options.zig");
 const alloc = @import("alloc.zig");
 const rename = @import("renamer.zig");
+const runtime = @import("runtime.zig");
 
 const fs = @import("fs.zig");
 usingnamespace @import("global.zig");
@@ -72,9 +73,10 @@ pub const SourceMapChunk = struct {
 pub const Options = struct {
     transform_imports: bool = true,
     to_module_ref: js_ast.Ref,
+    require_ref: ?js_ast.Ref = null,
     indent: usize = 0,
     externals: []u32 = &[_]u32{},
-
+    runtime_imports: runtime.Runtime.Imports,
     rewrite_require_resolve: bool = true,
     // If we're writing out a source map, this table of line start indices lets
     // us do binary search on to figure out what line a given AST node came from
@@ -2612,9 +2614,46 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         }
                     }
 
+                    const record = p.import_records[s.import_record_index];
                     var item_count: usize = 0;
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+
+                    if (record.wrap_with_to_module) {
+                        if (p.options.runtime_imports.__require) |require_ref| {
+                            p.print("import * as ");
+                            const module_name_start = p.js.list.items.len;
+                            const module_name_segment = (fs.PathName.init(record.path.pretty).nonUniqueNameString(p.allocator) catch unreachable)[1..];
+                            p.print(module_name_segment);
+                            p.print("_module");
+                            const module_name_end = p.js.list.items[module_name_start..].len + module_name_start;
+                            p.print(" from \"");
+                            p.print(record.path.text);
+                            p.print("\";\n");
+
+                            if (record.contains_import_star) {
+                                p.print("var ");
+                                p.printSymbol(s.namespace_ref);
+                                p.print(" = ");
+                                p.printSymbol(require_ref);
+                                p.print("(");
+                                p.print(module_name_segment);
+                                p.print("_module);\n");
+                            }
+
+                            if (s.default_name) |default_name| {
+                                p.print("var ");
+                                p.printSymbol(default_name.ref.?);
+                                p.print(" = ");
+                                p.printSymbol(require_ref);
+                                p.print("(");
+                                p.print(module_name_segment);
+                                p.print("_module);\n");
+                            }
+
+                            return;
+                        }
+                    }
 
                     p.print("import");
                     p.printSpace();

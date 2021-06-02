@@ -365,7 +365,9 @@ pub const JSX = struct {
         /// Facilitates automatic JSX importing
         /// Set on a per file basis like this:
         /// /** @jsxImportSource @emotion/core */
-        import_source: string = "react",
+        import_source: string = "react/jsx-dev-runtime",
+        classic_import_source: string = "react",
+
         jsx: string = "jsxDEV",
 
         development: bool = true,
@@ -373,6 +375,10 @@ pub const JSX = struct {
         pub const Defaults = struct {
             pub var Factory = [_]string{ "React", "createElement" };
             pub var Fragment = [_]string{ "React", "Fragment" };
+            pub const ImportSourceDev = "react/jsx-dev-runtime";
+            pub const ImportSource = "react/jsx-runtime";
+            pub const JSXFunction = "jsx";
+            pub const JSXFunctionDev = "jsxDEV";
         };
 
         // "React.createElement" => ["React", "createElement"]
@@ -424,7 +430,13 @@ pub const JSX = struct {
             }
 
             if (jsx.import_source.len > 0) {
-                pragma.jsx = jsx.import_source;
+                pragma.import_source = jsx.import_source;
+            } else if (jsx.development) {
+                pragma.import_source = Defaults.ImportSourceDev;
+                pragma.jsx = Defaults.JSXFunctionDev;
+            } else {
+                pragma.import_source = Defaults.ImportSource;
+                pragma.jsx = Defaults.JSXFunction;
             }
 
             pragma.development = jsx.development;
@@ -433,17 +445,6 @@ pub const JSX = struct {
             return pragma;
         }
     };
-
-    parse: bool = true,
-    factory: string = "createElement",
-    fragment: string = "Fragment",
-    jsx: string = "jsxDEV",
-    runtime: Runtime = Runtime.automatic,
-    development: bool = true,
-
-    /// Set on a per file basis like this:
-    /// /** @jsxImportSource @emotion/core */
-    import_source: string = "react",
 
     pub const Runtime = api.Api.JsxRuntime;
 };

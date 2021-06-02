@@ -239,6 +239,8 @@ pub const Resolver = struct {
 
         jsx: options.JSX.Pragma = options.JSX.Pragma{},
 
+        package_json_version: ?string = null,
+
         is_external: bool = false,
 
         // This is true when the package was loaded from within the node_modules directory.
@@ -539,6 +541,7 @@ pub const Resolver = struct {
                                     .is_from_node_modules = _result.is_node_module,
                                     .module_type = pkg.module_type,
                                     .dirname_fd = _result.dirname_fd,
+                                    .package_json_version = pkg.version,
                                 };
                                 check_relative = false;
                                 check_package = false;
@@ -556,6 +559,7 @@ pub const Resolver = struct {
                         .diff_case = res.diff_case,
                         .is_from_node_modules = res.is_node_module,
                         .dirname_fd = res.dirname_fd,
+                        .package_json_version = res.package_json_version,
                     };
                 } else if (!check_package) {
                     return null;
@@ -604,6 +608,7 @@ pub const Resolver = struct {
                                     .dirname_fd = node_module.dirname_fd,
                                     .diff_case = node_module.diff_case,
                                     .is_from_node_modules = true,
+                                    .package_json_version = package_json.version,
                                 };
                             }
                         } else {
@@ -625,6 +630,7 @@ pub const Resolver = struct {
                     .diff_case = res.diff_case,
                     .is_from_node_modules = res.is_node_module,
                     .dirname_fd = res.dirname_fd,
+                    .package_json_version = res.package_json_version,
                 };
             } else {
                 // Note: node's "self references" are not currently supported
@@ -640,6 +646,7 @@ pub const Resolver = struct {
             const pkg_json = dir_info.package_json orelse continue;
             const rel_path = r.fs.relative(pkg_json.source.key_path.text, path.text);
             result.module_type = pkg_json.module_type;
+            result.package_json_version = if (result.package_json_version == null) pkg_json.version else result.package_json_version;
             if (r.checkBrowserMap(pkg_json, rel_path)) |remapped| {
                 if (remapped.len == 0) {
                     path.is_disabled = true;
@@ -1048,6 +1055,7 @@ pub const Resolver = struct {
         dirname_fd: StoredFileDescriptorType = 0,
         file_fd: StoredFileDescriptorType = 0,
         is_node_module: bool = false,
+        package_json_version: ?string = null,
         diff_case: ?Fs.FileSystem.Entry.Lookup.DifferentCase = null,
     };
 
@@ -1271,6 +1279,7 @@ pub const Resolver = struct {
                             .path_pair = PathPair{
                                 .primary = _path,
                             },
+                            .package_json_version = browser_json.version,
                         };
                     }
 
@@ -1342,6 +1351,7 @@ pub const Resolver = struct {
                             .path_pair = PathPair{
                                 .primary = _path,
                             },
+                            .package_json_version = browser_json.version,
                         };
                     }
 
@@ -1392,9 +1402,11 @@ pub const Resolver = struct {
         }
 
         const dir_info = (r.dirInfoCached(path) catch null) orelse return null;
+        var package_json_version: ?string = null;
 
         // Try using the main field(s) from "package.json"
         if (dir_info.package_json) |pkg_json| {
+            package_json_version = pkg_json.version;
             if (pkg_json.main_fields.count() > 0) {
                 const main_field_values = pkg_json.main_fields;
                 const main_field_keys = r.opts.main_fields;
@@ -1455,6 +1467,7 @@ pub const Resolver = struct {
                                     },
                                     .diff_case = auto_main_result.diff_case,
                                     .dirname_fd = auto_main_result.dirname_fd,
+                                    .package_json_version = pkg_json.version,
                                 };
                             } else {
                                 if (r.debug_logs) |*debug| {
@@ -1464,8 +1477,9 @@ pub const Resolver = struct {
                                         pkg_json.source.key_path.text,
                                     }) catch {};
                                 }
-
-                                return auto_main_result;
+                                var _auto_main_result = auto_main_result;
+                                _auto_main_result.package_json_version = pkg_json.version;
+                                return _auto_main_result;
                             }
                         }
                     }
@@ -1474,7 +1488,14 @@ pub const Resolver = struct {
         }
 
         // Look for an "index" file with known extensions
-        return r.loadAsIndexWithBrowserRemapping(dir_info, path, extension_order);
+        if (r.loadAsIndexWithBrowserRemapping(dir_info, path, extension_order)) |*res| {
+            if (res.package_json_version == null and package_json_version != null) {
+                res.package_json_version = package_json_version;
+            }
+            return res.*;
+        }
+
+        return null;
     }
 
     pub fn loadAsFile(r: *Resolver, path: string, extension_order: []const string) ?LoadResult {

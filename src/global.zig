@@ -63,7 +63,8 @@ pub const Output = struct {
             if (isWasm) {
                 return std.io.FixedBufferStream([]u8);
             } else {
-                return std.fs.File;
+                var stdin = std.io.getStdIn();
+                return @TypeOf(std.io.bufferedWriter(stdin.writer()));
             }
         };
         stream: StreamType,

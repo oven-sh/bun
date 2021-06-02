@@ -491,7 +491,23 @@ pub const RequestContext = struct {
                 }
             },
             .build => |output| {
-                defer ctx.bundler.allocator.free(output.contents);
+                defer {
+                    if (result.free) {
+                        ctx.bundler.allocator.free(output.contents);
+                    }
+                }
+
+                // The version query string is only included for:
+                // - The runtime
+                // - node_modules
+                // For the runtime, it's a hash of the file contents
+                // For node modules, it's just the package version from the package.json
+                // It's safe to assume node_modules are immutable. In practice, they aren't.
+                // However, a lot of other stuff breaks when node_modules change so it's fine
+                if (strings.contains(ctx.url.query_string, "v=")) {
+                    ctx.appendHeader("Cache-Control", "public, immutable, max-age=31556952");
+                }
+
                 if (FeatureFlags.strong_etags_for_built_files) {
                     const strong_etag = std.hash.Wyhash.hash(1, output.contents);
                     const etag_content_slice = std.fmt.bufPrintIntToSlice(strong_etag_buffer[0..49], strong_etag, 16, true, .{});
@@ -680,6 +696,7 @@ pub const Server = struct {
             .bundler = undefined,
         };
         server.bundler = try Bundler.init(allocator, &server.log, options);
+        server.bundler.configureLinker();
 
         try server.run();
     }

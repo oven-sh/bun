@@ -90,6 +90,7 @@ pub const Linker = struct {
                         import_record.path = try linker.generateImportPath(
                             source_dir,
                             linker.runtime_source_path,
+                            Runtime.version(),
                         );
                         result.ast.runtime_import_record_id = @truncate(u32, record_index);
                         result.ast.needs_runtime = true;
@@ -124,8 +125,6 @@ pub const Linker = struct {
                             import_record.wrap_with_to_module = true;
                             result.ast.needs_runtime = true;
                         }
-
-                        Output.println("{s} ({s}): CommonJS? {d}", .{ import_record.path.text, @tagName(resolved_import.module_type), @boolToInt(resolved_import.shouldAssumeCommonJS(import_record)) });
                     } else |err| {
                         switch (err) {
                             error.ModuleNotFound => {
@@ -179,6 +178,7 @@ pub const Linker = struct {
                 .path = try linker.generateImportPath(
                     source_dir,
                     linker.runtime_source_path,
+                    Runtime.version(),
                 ),
                 .range = logger.Range{ .loc = logger.Loc{ .start = 0 }, .len = 0 },
             };
@@ -191,7 +191,7 @@ pub const Linker = struct {
     threadlocal var relative_path_allocator_buf: [4096]u8 = undefined;
     threadlocal var relative_path_allocator_buf_loaded: bool = false;
 
-    pub fn generateImportPath(linker: *Linker, source_dir: string, source_path: string) !Fs.Path {
+    pub fn generateImportPath(linker: *Linker, source_dir: string, source_path: string, package_version: ?string) !Fs.Path {
         if (!relative_path_allocator_buf_loaded) {
             relative_path_allocator_buf_loaded = true;
             relative_path_allocator = std.heap.FixedBufferAllocator.init(&relative_path_allocator_buf);
@@ -202,8 +202,10 @@ pub const Linker = struct {
         var pathname = Fs.PathName.init(pretty);
         var absolute_pathname = Fs.PathName.init(source_path);
 
-        if (linker.options.out_extensions.get(absolute_pathname.ext)) |ext| {
-            absolute_pathname.ext = ext;
+        if (!linker.options.preserve_extensions) {
+            if (linker.options.out_extensions.get(absolute_pathname.ext)) |ext| {
+                absolute_pathname.ext = ext;
+            }
         }
 
         switch (linker.options.import_path_format) {
@@ -222,19 +224,36 @@ pub const Linker = struct {
                     base = base[0..dot];
                 }
 
-                const absolute_url = try relative_paths_list.append(
-                    try std.fmt.allocPrint(
-                        &relative_path_allocator.allocator,
-                        "{s}{s}{s}",
-                        .{
-                            linker.options.public_url,
-                            base,
-                            absolute_pathname.ext,
-                        },
-                    ),
-                );
+                if (linker.options.append_package_version_in_query_string and package_version != null) {
+                    const absolute_url = try relative_paths_list.append(
+                        try std.fmt.allocPrint(
+                            &relative_path_allocator.allocator,
+                            "{s}{s}{s}?v={s}",
+                            .{
+                                linker.options.public_url,
+                                base,
+                                absolute_pathname.ext,
+                                package_version.?,
+                            },
+                        ),
+                    );
 
-                return Fs.Path.initWithPretty(absolute_url, absolute_url);
+                    return Fs.Path.initWithPretty(absolute_url, absolute_url);
+                } else {
+                    const absolute_url = try relative_paths_list.append(
+                        try std.fmt.allocPrint(
+                            &relative_path_allocator.allocator,
+                            "{s}{s}{s}",
+                            .{
+                                linker.options.public_url,
+                                base,
+                                absolute_pathname.ext,
+                            },
+                        ),
+                    );
+
+                    return Fs.Path.initWithPretty(absolute_url, absolute_url);
+                }
             },
 
             else => unreachable,
@@ -253,7 +272,11 @@ pub const Linker = struct {
             try linker.enqueueResolveResult(resolve_result);
         }
 
-        import_record.path = try linker.generateImportPath(source_dir, resolve_result.path_pair.primary.text);
+        import_record.path = try linker.generateImportPath(
+            source_dir,
+            resolve_result.path_pair.primary.text,
+            resolve_result.package_json_version,
+        );
     }
 
     pub fn resolveResultHashKey(linker: *Linker, resolve_result: *const Resolver.Resolver.Result) string {

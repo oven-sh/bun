@@ -44,6 +44,8 @@ pub const FeatureFlags = struct {
 
     pub const jsx_runtime_is_cjs = true;
 
+    pub const cache_node_module_output_in_memory = true;
+
     pub const CSSModulePolyfill = enum {
         // When you import a .css file and you reference the import in JavaScript
         // Just return whatever the property key they referenced was
@@ -63,8 +65,9 @@ pub const Output = struct {
             if (isWasm) {
                 return std.io.FixedBufferStream([]u8);
             } else {
-                var stdin = std.io.getStdIn();
-                return @TypeOf(std.io.bufferedWriter(stdin.writer()));
+                return std.fs.File;
+                // var stdout = std.io.getStdOut();
+                // return @TypeOf(std.io.bufferedWriter(stdout.writer()));
             }
         };
         stream: StreamType,
@@ -90,6 +93,13 @@ pub const Output = struct {
 
     pub fn writer() @typeInfo(@TypeOf(Source.StreamType.writer)).Fn.return_type.? {
         return source.stream.writer();
+    }
+
+    pub fn flush() void {
+        if (isNative) {
+            // source.stream.flush() catch {};
+            // source.error_stream.flush() catch {};
+        }
     }
 
     pub fn printErrorable(comptime fmt: string, args: anytype) !void {

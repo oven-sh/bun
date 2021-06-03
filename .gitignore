@@ -34,3 +34,4 @@ bench
 github
 out.*
 out
+.parcel-cache

@@ -30,14 +30,14 @@ pub fn main() anyerror!void {
     // var root_alloc = std.heap.ArenaAllocator.init(std.heap.raw_c_allocator);
     // var root_alloc_ = &root_alloc.allocator;
     try alloc.setup(std.heap.c_allocator);
-    var stdout_file = std.io.getStdIn();
-    var stdout = std.io.bufferedWriter(stdout_file.writer());
-    var stderr_file = std.io.getStdErr();
-    var stderr = std.io.bufferedWriter(stderr_file.writer());
+    var stdout = std.io.getStdOut();
+    // var stdout = std.io.bufferedWriter(stdout_file.writer());
+    var stderr = std.io.getStdErr();
+    // var stderr = std.io.bufferedWriter(stderr_file.writer());
     var output_source = Output.Source.init(stdout, stderr);
-    defer stdout.flush() catch {};
-    defer stderr.flush() catch {};
+    // defer stdout.flush() catch {};
+    // defer stderr.flush() catch {};
     Output.Source.set(&output_source);
 
-    try cli.Cli.start(std.heap.c_allocator, &stdout, &stderr, MainPanicHandler);
+    try cli.Cli.start(std.heap.c_allocator, stdout, stderr, MainPanicHandler);
 }

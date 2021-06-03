@@ -418,7 +418,7 @@ pub const Cli = struct {
 
         if (!did_write) {
             for (result.output_files) |file, i| {
-                try stdout.unbuffered_writer.writeAll(file.contents);
+                try stdout.writeAll(file.contents);
                 if (i > 0) {
                     _ = try writer.write("\n\n");
                 }

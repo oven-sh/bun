@@ -586,7 +586,7 @@ pub const Server = struct {
 
     fn run(server: *Server) !void {
         adjustUlimit() catch {};
-        const listener = try tcp.Listener.init(.ip, SOCKET_FLAGS);
+        const listener = try tcp.Listener.init(.ip, .{ .close_on_exec = true });
         defer listener.deinit();
 
         listener.setReuseAddress(true) catch {};
@@ -610,7 +610,7 @@ pub const Server = struct {
 
         // var eventlist: [128]os.Kevent = undefined;
         while (true) {
-            var conn = listener.accept(SOCKET_FLAGS) catch |err| {
+            var conn = listener.accept(.{ .close_on_exec = true }) catch |err| {
                 continue;
             };
 

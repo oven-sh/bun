@@ -30,6 +30,22 @@ pub const FileSystem = struct {
     dirname_store: *DirnameStore,
     filename_store: *FilenameStore,
 
+    _tmpdir: ?std.fs.Dir = null,
+
+    pub fn tmpdir(fs: *FileSystem) std.fs.Dir {
+        if (fs._tmpdir == null) {
+            fs._tmpdir = fs.fs.openTmpDir() catch unreachable;
+        }
+
+        return fs._tmpdir.?;
+    }
+
+    var tmpname_buf: [64]u8 = undefined;
+    pub fn tmpname(fs: *const FileSystem, extname: string) !string {
+        const int = std.crypto.random.int(u64);
+        return try std.fmt.bufPrint(&tmpname_buf, "{x}{s}", .{ int, extname });
+    }
+
     pub var max_fd: FileDescriptorType = 0;
 
     pub inline fn setMaxFd(fd: anytype) void {
@@ -387,6 +403,18 @@ pub const FileSystem = struct {
         parent_fs: *FileSystem = undefined,
         file_limit: usize = 32,
         file_quota: usize = 32,
+
+        pub var tmpdir_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        pub var tmpdir_path: []const u8 = undefined;
+        pub fn openTmpDir(fs: *const RealFS) !std.fs.Dir {
+            if (isMac) {
+                var tmpdir_base = std.os.getenv("TMPDIR") orelse "/private/tmp";
+                tmpdir_path = try std.fs.realpath(tmpdir_base, &tmpdir_buf);
+                return try std.fs.openDirAbsolute(tmpdir_path, .{ .access_sub_paths = true, .iterate = true });
+            } else {
+                @compileError("Implement openTmpDir");
+            }
+        }
 
         pub fn needToCloseFiles(rfs: *const RealFS) bool {
             // On Windows, we must always close open file handles

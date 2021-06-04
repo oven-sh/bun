@@ -16,3 +16,5 @@ pub fn stop(timer: *Timer) void {
 pub fn seconds(timer: *const Timer) f64 {
     return @intToFloat(f64, timer.elapsed) / std.time.ns_per_s;
 }
+
+pub const Group = struct {};

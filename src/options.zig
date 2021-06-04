@@ -6,10 +6,18 @@ const resolver = @import("./resolver/resolver.zig");
 const api = @import("./api/schema.zig");
 const Api = api.Api;
 const defines = @import("./defines.zig");
+const resolve_path = @import("./resolver/resolve_path.zig");
 
 usingnamespace @import("global.zig");
 
 const assert = std.debug.assert;
+
+pub const WriteDestination = enum {
+    stdout,
+    disk,
+    http,
+    // eventaully: wasm
+};
 
 pub fn validatePath(log: *logger.Log, fs: *Fs.FileSystem.Implementation, cwd: string, rel_path: string, allocator: *std.mem.Allocator, path_kind: string) string {
     if (rel_path.len == 0) {
@@ -474,6 +482,7 @@ pub const BundleOptions = struct {
     public_dir: string = "public",
     public_dir_enabled: bool = true,
     output_dir: string = "",
+    output_dir_handle: ?std.fs.Dir = null,
     public_dir_handle: ?std.fs.Dir = null,
     write: bool = false,
     preserve_symlinks: bool = false,
@@ -642,6 +651,22 @@ pub const BundleOptions = struct {
             }
         }
 
+        if (opts.write and opts.output_dir.len > 0) {
+            opts.output_dir_handle = std.fs.openDirAbsolute(opts.output_dir, std.fs.Dir.OpenDirOptions{}) catch brk: {
+                std.fs.makeDirAbsolute(opts.output_dir) catch |err| {
+                    Output.printErrorln("error: Unable to mkdir \"{s}\": \"{s}\"", .{ opts.output_dir, @errorName(err) });
+                    std.os.exit(1);
+                };
+
+                var handle = std.fs.openDirAbsolute(opts.output_dir, std.fs.Dir.OpenDirOptions{}) catch |err2| {
+                    Output.printErrorln("error: Unable to open \"{s}\": \"{s}\"", .{ opts.output_dir, @errorName(err2) });
+                    std.os.exit(1);
+                };
+                break :brk handle;
+            };
+            Fs.FileSystem.setMaxFd(opts.output_dir_handle.?.fd);
+        }
+
         return opts;
     }
 };
@@ -686,7 +711,6 @@ pub const TransformOptions = struct {
         if (defaultLoaders.get(entryPoint.path.name.ext)) |defaultLoader| {
             loader = defaultLoader;
         }
-
         assert(code.len > 0);
 
         return TransformOptions{
@@ -700,10 +724,174 @@ pub const TransformOptions = struct {
     }
 };
 
+// Instead of keeping files in-memory, we:
+// 1. Write directly to disk
+// 2. (Optional) move the file to the destination
+// This saves us from allocating a buffer
 pub const OutputFile = struct {
-    path: string,
-    version: ?string = null,
-    contents: string,
+    loader: Loader,
+    input: Fs.Path,
+    value: Value,
+    size: usize = 0,
+    mtime: ?i128 = null,
+
+    // Depending on:
+    // - The platform
+    // - The number of open file handles
+    // - Whether or not a file of the same name exists
+    // We may use a different system call
+    pub const FileOperation = struct {
+        pathname: string,
+        fd: FileDescriptorType = 0,
+        dir: FileDescriptorType = 0,
+        is_tmpdir: bool = false,
+
+        pub fn fromFile(fd: FileDescriptorType, pathname: string) FileOperation {
+            return .{
+                .pathname = pathname,
+                .fd = fd,
+            };
+        }
+
+        pub fn getPathname(file: *const FileOperation) string {
+            if (file.is_tmpdir) {
+                return resolve_path.joinAbs(@TypeOf(Fs.FileSystem.instance.fs).tmpdir_path, .auto, file.pathname);
+            } else {
+                return file.pathname;
+            }
+        }
+    };
+
+    pub const Value = union(Kind) {
+        buffer: []const u8,
+        move: FileOperation,
+        copy: FileOperation,
+        noop: u0,
+        pending: resolver.Resolver.Result,
+    };
+
+    pub const Kind = enum { move, copy, noop, buffer, pending };
+
+    pub fn initPending(loader: Loader, pending: resolver.Resolver.Result) OutputFile {
+        return .{
+            .loader = .file,
+            .input = pending.path_pair.primary,
+            .size = 0,
+            .value = .{ .pending = pending },
+        };
+    }
+
+    pub fn initFile(file: std.fs.File, pathname: string, size: usize) OutputFile {
+        return .{
+            .loader = .file,
+            .input = Fs.Path.init(pathname),
+            .size = size,
+            .value = .{ .copy = FileOperation.fromFile(file.handle, pathname) },
+        };
+    }
+
+    pub fn initFileWithDir(file: std.fs.File, pathname: string, size: usize, dir: std.fs.Dir) OutputFile {
+        var res = initFile(file, pathname, size);
+        res.value.copy.dir_handle = dir.fd;
+        return res;
+    }
+
+    pub fn initBuf(buf: []const u8, pathname: string, loader: Loader) OutputFile {
+        return .{
+            .loader = loader,
+            .input = Fs.Path.init(pathname),
+            .size = buf.len,
+            .value = .{ .buffer = buf },
+        };
+    }
+
+    pub fn moveTo(file: *const OutputFile, base_path: string, rel_path: []u8, dir: FileDescriptorType) !void {
+        var move = file.value.move;
+        if (move.dir > 0) {
+            std.os.renameat(move.dir, move.pathname, dir, rel_path) catch |err| {
+                const dir_ = std.fs.Dir{ .fd = dir };
+                if (std.fs.path.dirname(rel_path)) |dirname| {
+                    dir_.makePath(dirname) catch {};
+                    std.os.renameat(move.dir, move.pathname, dir, rel_path) catch {};
+                    return;
+                }
+            };
+            return;
+        }
+
+        try std.os.rename(move.pathname, resolve_path.joinAbs(base_path, .auto, rel_path));
+    }
+
+    pub fn copyTo(file: *const OutputFile, base_path: string, rel_path: []u8, dir: FileDescriptorType) !void {
+        var copy = file.value.copy;
+        if (isMac and copy.fd > 0) {
+            // First try using a copy-on-write clonefile()
+            // this will fail if the destination already exists
+            rel_path.ptr[rel_path.len + 1] = 0;
+            var rel_c_path = rel_path.ptr[0..rel_path.len :0];
+            const success = C.fclonefileat(copy.fd, dir, rel_c_path, 0) == 0;
+            if (success) {
+                return;
+            }
+        }
+
+        var dir_obj = std.fs.Dir{ .fd = dir };
+        const file_out = (try dir_obj.createFile(rel_path, .{}));
+
+        const fd_out = file_out.handle;
+        var do_close = false;
+        // TODO: close file_out on error
+        const fd_in = if (copy.fd > 0) copy.fd else (try std.fs.openFileAbsolute(copy.getPathname(), .{ .read = true })).handle;
+
+        if (isNative) {
+            Fs.FileSystem.setMaxFd(fd_out);
+            Fs.FileSystem.setMaxFd(fd_in);
+            do_close = Fs.FileSystem.instance.fs.needToCloseFiles();
+        }
+
+        defer {
+            if (do_close) {
+                std.os.close(fd_out);
+                std.os.close(fd_in);
+            }
+        }
+
+        const os = std.os;
+
+        if (comptime std.Target.current.isDarwin()) {
+            const rc = os.system.fcopyfile(fd_in, fd_out, null, os.system.COPYFILE_DATA);
+            if (os.errno(rc) == 0) {
+                return;
+            }
+        }
+
+        if (std.Target.current.os.tag == .linux) {
+            // Try copy_file_range first as that works at the FS level and is the
+            // most efficient method (if available).
+            var offset: u64 = 0;
+            cfr_loop: while (true) {
+                // The kernel checks the u64 value `offset+count` for overflow, use
+                // a 32 bit value so that the syscall won't return EINVAL except for
+                // impossibly large files (> 2^64-1 - 2^32-1).
+                const amt = try os.copy_file_range(fd_in, offset, fd_out, offset, math.maxInt(u32), 0);
+                // Terminate when no data was copied
+                if (amt == 0) break :cfr_loop;
+                offset += amt;
+            }
+            return;
+        }
+
+        // Sendfile is a zero-copy mechanism iff the OS supports it, otherwise the
+        // fallback code will copy the contents chunk by chunk.
+        const empty_iovec = [0]os.iovec_const{};
+        var offset: u64 = 0;
+        sendfile_loop: while (true) {
+            const amt = try os.sendfile(fd_out, fd_in, offset, 0, &empty_iovec, &empty_iovec, 0);
+            // Terminate when no data was copied
+            if (amt == 0) break :sendfile_loop;
+            offset += amt;
+        }
+    }
 };
 
 pub const TransformResult = struct {
@@ -711,6 +899,7 @@ pub const TransformResult = struct {
     warnings: []logger.Msg = &([_]logger.Msg{}),
     output_files: []OutputFile = &([_]OutputFile{}),
     outbase: string,
+    root_dir: ?std.fs.Dir = null,
     pub fn init(
         outbase: string,
         output_files: []OutputFile,

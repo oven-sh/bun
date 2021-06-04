@@ -118,7 +118,7 @@ const ExprFlag = packed struct {
     }
 };
 
-pub fn NewPrinter(comptime ascii_only: bool) type {
+pub fn NewPrinter(comptime ascii_only: bool, comptime Writer: type) type {
     // comptime const comptime_buf_len = 64;
     // comptime var comptime_buf = [comptime_buf_len]u8{};
     // comptime var comptime_buf_i: usize = 0;
@@ -127,7 +127,6 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
         symbols: Symbol.Map,
         import_records: []importRecord.ImportRecord,
         linker: ?*Linker,
-        js: MutableString,
 
         needs_semicolon: bool = false,
         stmt_start: i32 = -1,
@@ -140,8 +139,8 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
         prev_num_end: i32 = -1,
         prev_reg_exp_end: i32 = -1,
         call_target: ?Expr.Data = null,
-        writer: MutableString.Writer,
-        allocator: *std.mem.Allocator,
+        writer: Writer,
+
         renamer: rename.Renamer,
         prev_stmt_tag: Stmt.Tag = .s_empty,
 
@@ -200,60 +199,17 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
 
         pub fn print(p: *Printer, str: anytype) void {
             switch (@TypeOf(str)) {
-                comptime_int => {
-                    p.js.appendChar(str) catch unreachable;
-                },
-                string => {
-                    if (FeatureFlags.disable_printing_null) {
-                        if (str.len > 0 and str[0] == 0 or (str[0] == '\\' and str[1] == '0')) {
-                            Global.panic("Attempted to print null char", .{});
-                        }
-                    }
-
-                    p.js.append(str) catch unreachable;
-                },
-                u8 => {
-                    if (FeatureFlags.disable_printing_null) {
-                        if (str == 0) {
-                            Global.panic("Attempted to print null char", .{});
-                        }
-                    }
-                    p.js.appendChar(str) catch unreachable;
-                },
-                u16 => {
-                    if (FeatureFlags.disable_printing_null) {
-                        if (str == 0) {
-                            Global.panic("Attempted to print null char", .{});
-                        }
-                    }
-                    p.js.appendChar(@intCast(u8, str)) catch unreachable;
-                },
-                u21 => {
-                    if (FeatureFlags.disable_printing_null) {
-                        if (str == 0) {
-                            Global.panic("Attempted to print null char", .{});
-                        }
-                    }
-                    p.js.appendChar(@intCast(u8, str)) catch unreachable;
+                comptime_int, u16, u8 => {
+                    p.writer.print(@TypeOf(str), str);
                 },
                 else => {
-                    if (FeatureFlags.disable_printing_null) {
-                        if (str[0] == 0 or (str[0] == '\\' and str[1] == '0')) {
-                            Global.panic("Attempted to print null char", .{});
-                        }
-                    }
-                    p.js.append(@as(string, str)) catch unreachable;
+                    p.writer.print(@TypeOf(str), str);
                 },
             }
         }
 
         pub fn unsafePrint(p: *Printer, str: string) void {
-            if (FeatureFlags.disable_printing_null) {
-                if (str[0] == 0 or (str[0] == '\\' and str[1] == '0')) {
-                    Global.panic("Attempted to print null char", .{});
-                }
-            }
-            p.js.appendAssumeCapacity(str);
+            p.print(str);
         }
 
         pub fn printIndent(p: *Printer) void {
@@ -263,7 +219,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                 return;
             }
 
-            p.js.growBy(p.options.indent * "  ".len) catch unreachable;
+            // p.js.growBy(p.options.indent * "  ".len) catch unreachable;
             var i: usize = 0;
 
             while (i < p.options.indent) : (i += 1) {
@@ -289,8 +245,8 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
         pub fn printSpaceBeforeIdentifier(
             p: *Printer,
         ) void {
-            const n = p.js.len();
-            if (n > 0 and (js_lexer.isIdentifierContinue(p.js.list.items[n - 1]) or n == p.prev_reg_exp_end)) {
+            const n = p.writer.written;
+            if (n > 0 and (js_lexer.isIdentifierContinue(p.writer.prev_char) or n == p.prev_reg_exp_end)) {
                 p.print(" ");
             }
         }
@@ -298,10 +254,10 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
         pub fn maybePrintSpace(
             p: *Printer,
         ) void {
-            const n = p.js.len();
-            if (n <= 0) return;
+            const n = p.writer.written;
+            if (n == 0) return;
 
-            switch (p.js.list.items[n - 1]) {
+            switch (p.writer.prev_char) {
                 ' ', '\n' => {},
                 else => {
                     p.print(" ");
@@ -513,7 +469,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
             // not in zig! CI pays for it instead
             // its probably still doing some unnecessary integer conversion somewhere though
             var slice = std.fmt.bufPrint(&parts, "{d}", .{float}) catch unreachable;
-            p.js.list.appendSlice(p.allocator, slice) catch unreachable;
+            p.print(slice);
         }
 
         pub fn printQuotedUTF16(e: *Printer, text: JavascriptString, quote: u8) void {
@@ -526,7 +482,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
             var c: u21 = 0;
             var width: u3 = 0;
 
-            e.js.growIfNeeded(text.len) catch unreachable;
+            // e(text.len) catch unreachable;
 
             while (i < n) {
                 c = text[i];
@@ -927,10 +883,10 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     }
 
                     if (has_pure_comment) {
-                        const was_stmt_start = p.stmt_start == p.js.len();
+                        const was_stmt_start = p.stmt_start == p.writer.written;
                         p.print("/* @__PURE__ */ ");
                         if (was_stmt_start) {
-                            p.stmt_start = p.js.lenI();
+                            p.stmt_start = p.writer.written;
                         }
                     }
                     // We don't ever want to accidentally generate a direct eval expression here
@@ -1045,7 +1001,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         p.print("?");
                     }
                     if (p.canPrintIdentifier(e.name)) {
-                        if (isOptionalChain and p.prev_num_end == p.js.len()) {
+                        if (isOptionalChain and p.prev_num_end == p.writer.written) {
                             // "1.toString" is a syntax error, so print "1 .toString" instead
                             p.print(" ");
                         }
@@ -1147,7 +1103,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         switch (e.body.stmts[0].data) {
                             .s_return => {
                                 if (e.body.stmts[0].getReturn().value) |val| {
-                                    p.arrow_expr_start = p.js.lenI();
+                                    p.arrow_expr_start = p.writer.written;
                                     p.printExpr(val, .comma, ExprFlag.None());
                                     wasPrinted = true;
                                 }
@@ -1165,7 +1121,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     }
                 },
                 .e_function => |e| {
-                    const n = p.js.lenI();
+                    const n = p.writer.written;
                     var wrap = p.stmt_start == n or p.export_default_start == n;
 
                     if (wrap) {
@@ -1193,7 +1149,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     }
                 },
                 .e_class => |e| {
-                    const n = p.js.lenI();
+                    const n = p.writer.written;
                     var wrap = p.stmt_start == n or p.export_default_start == n;
                     if (wrap) {
                         p.print("(");
@@ -1251,7 +1207,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.print("]");
                 },
                 .e_object => |e| {
-                    const n = p.js.lenI();
+                    const n = p.writer.written;
                     const wrap = p.stmt_start == n or p.arrow_expr_start == n;
 
                     if (wrap) {
@@ -1346,17 +1302,17 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     p.print("`");
                 },
                 .e_reg_exp => |e| {
-                    const n = p.js.len();
+                    const n = p.writer.written;
 
                     // Avoid forming a single-line comment
-                    if (n > 0 and p.js.list.items[n - 1] == '/') {
+                    if (n > 0 and p.writer.prev_char == '/') {
                         p.print(" ");
                     }
 
                     p.print(e.value);
 
                     // Need a space before the next identifier to avoid it turning into flags
-                    p.prev_reg_exp_end = p.js.lenI();
+                    p.prev_reg_exp_end = p.writer.written;
                 },
                 .e_big_int => |e| {
                     p.printSpaceBeforeIdentifier();
@@ -1385,7 +1341,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         p.printNonNegativeFloat(absValue);
 
                         // Remember the end of the latest number
-                        p.prev_num_end = p.js.lenI();
+                        p.prev_num_end = p.writer.written;
                     } else if (level.gte(.prefix)) {
                         // Expressions such as "(-1).toString" need to wrap negative numbers.
                         // Instead of testing for "value < 0" we test for "signbit(value)" and
@@ -1400,12 +1356,12 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         p.printNonNegativeFloat(absValue);
 
                         // Remember the end of the latest number
-                        p.prev_num_end = p.js.lenI();
+                        p.prev_num_end = p.writer.written;
                     }
                 },
                 .e_identifier => |e| {
                     const name = p.renamer.nameForSymbol(e.ref);
-                    const wrap = p.js.lenI() == p.for_of_init_start and strings.eqlComptime(name, "let");
+                    const wrap = p.writer.written == p.for_of_init_start and strings.eqlComptime(name, "let");
 
                     if (wrap) {
                         p.print("(");
@@ -1518,7 +1474,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         p.printSpaceBeforeOperator(e.op);
                         p.print(entry.text);
                         p.prev_op = e.op;
-                        p.prev_op_end = p.js.lenI();
+                        p.prev_op_end = p.writer.written;
                     }
 
                     if (e.op.isPrefix()) {
@@ -1534,7 +1490,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     var wrap = level.gte(entry.level) or (e.op == Op.Code.bin_in and flags.forbid_in);
 
                     // Destructuring assignments must be parenthesized
-                    const n = p.js.lenI();
+                    const n = p.writer.written;
                     if (n == p.stmt_start or n == p.arrow_expr_start) {
                         switch (e.left.data) {
                             .e_object => {
@@ -1626,7 +1582,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                         p.printSpaceBeforeIdentifier();
                         p.print(entry.text);
                         p.prev_op = e.op;
-                        p.prev_op_end = p.js.lenI();
+                        p.prev_op_end = p.writer.written;
                     }
 
                     p.printSpace();
@@ -1644,7 +1600,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
         }
 
         pub fn printSpaceBeforeOperator(p: *Printer, next: Op.Code) void {
-            if (p.prev_op_end == p.js.lenI()) {
+            if (p.prev_op_end == p.writer.written) {
                 const prev = p.prev_op;
                 // "+ + y" => "+ +y"
                 // "+ ++ y" => "+ ++y"
@@ -1656,7 +1612,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                 if (((prev == Op.Code.bin_add or prev == Op.Code.un_pos) and (next == Op.Code.bin_add or next == Op.Code.un_pos or next == Op.Code.un_pre_inc)) or
                     ((prev == Op.Code.bin_sub or prev == Op.Code.un_neg) and (next == Op.Code.bin_sub or next == Op.Code.un_neg or next == Op.Code.un_pre_dec)) or
                     (prev == Op.Code.un_post_dec and next == Op.Code.bin_gt) or
-                    (prev == Op.Code.un_not and next == Op.Code.un_pre_dec and p.js.len() > 1 and p.js.list.items[p.js.list.items.len - 2] == '<'))
+                    (prev == Op.Code.un_not and next == Op.Code.un_pre_dec and p.writer.written > 1 and p.writer.prev_prev_char == '<'))
                 {
                     p.print(" ");
                 }
@@ -2212,7 +2168,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     switch (s.value) {
                         .expr => |expr| {
                             // Functions and classes must be wrapped to avoid confusion with their statement forms
-                            p.export_default_start = p.js.lenI();
+                            p.export_default_start = p.writer.written;
                             p.printExpr(expr, .comma, ExprFlag.None());
                             p.printSemicolonAfterStatement();
                             return;
@@ -2443,7 +2399,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     }
                     p.printSpace();
                     p.print("(");
-                    p.for_of_init_start = p.js.lenI();
+                    p.for_of_init_start = p.writer.written;
                     p.printForLoopInit(s.init);
                     p.printSpace();
                     p.printSpaceBeforeIdentifier();
@@ -2622,11 +2578,11 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                     if (record.wrap_with_to_module) {
                         if (p.options.runtime_imports.__require) |require_ref| {
                             p.print("import * as ");
-                            const module_name_start = p.js.list.items.len;
-                            const module_name_segment = (fs.PathName.init(record.path.pretty).nonUniqueNameString(p.allocator) catch unreachable)[1..];
+                            var module_name_buf: [256]u8 = undefined;
+                            var fixed_buf_allocator = std.heap.FixedBufferAllocator.init(&module_name_buf);
+                            const module_name_segment = (fs.PathName.init(record.path.pretty).nonUniqueNameString(&fixed_buf_allocator.allocator) catch unreachable)[1..];
                             p.print(module_name_segment);
                             p.print("_module");
-                            const module_name_end = p.js.list.items[module_name_start..].len + module_name_start;
                             p.print(" from \"");
                             p.print(record.path.text);
                             p.print("\";\n");
@@ -2792,7 +2748,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
                 },
                 .s_expr => |s| {
                     p.printIndent();
-                    p.stmt_start = p.js.lenI();
+                    p.stmt_start = p.writer.written;
                     p.printExpr(s.value, .lowest, ExprFlag.ExprResultIsUnused());
                     p.printSemicolonAfterStatement();
                 },
@@ -2948,11 +2904,7 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
         }
 
         pub fn printIdentifier(p: *Printer, identifier: string) void {
-            if (ascii_only) {
-                quoteIdentifier(&p.js, identifier) catch unreachable;
-            } else {
-                p.print(identifier);
-            }
+            p.print(identifier);
         }
 
         pub fn printIdentifierUTF16(p: *Printer, name: JavascriptString) !void {
@@ -3005,16 +2957,19 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
             }
         }
 
-        pub fn init(allocator: *std.mem.Allocator, tree: *const Ast, source: *const logger.Source, symbols: Symbol.Map, opts: Options, linker: ?*Linker) !Printer {
-            // Heuristic: most lines of JavaScript are short.
-            var js = try MutableString.init(allocator, 0);
+        pub fn init(
+            writer: Writer,
+            tree: *const Ast,
+            source: *const logger.Source,
+            symbols: Symbol.Map,
+            opts: Options,
+            linker: ?*Linker,
+        ) !Printer {
             return Printer{
-                .allocator = allocator,
                 .import_records = tree.import_records,
                 .options = opts,
                 .symbols = symbols,
-                .js = js,
-                .writer = js.writer(),
+                .writer = writer,
                 .linker = linker,
                 .renamer = rename.Renamer.init(symbols, source),
             };
@@ -3022,75 +2977,186 @@ pub fn NewPrinter(comptime ascii_only: bool) type {
     };
 }
 
-// TODO:
-pub fn quoteIdentifier(js: *MutableString, identifier: string) !void {
-    return try js.append(identifier);
-    // assert(identifier.len > 0);
-    // var utf8iter = std.unicode.Utf8Iterator{ .bytes = identifier, .i = 0 };
-    // try js.growIfNeeded(identifier.len);
+pub fn NewWriter(
+    comptime ContextType: type,
+    writeByte: fn (ctx: *ContextType, char: u8) anyerror!usize,
+    writeAll: fn (ctx: *ContextType, buf: anytype) anyerror!usize,
+) type {
+    return struct {
+        const Self = @This();
+        ctx: ContextType,
+        written: i32 = -1,
+        // Used by the printer
+        prev_char: u8 = 0,
+        prev_prev_char: u8 = 0,
+        err: ?anyerror = null,
+        orig_err: ?anyerror = null,
 
-    // var init = utf8iter.nextCodepoint() orelse unreachable;
-    // var ascii_start: usize = if (init >= first_ascii and init <= last_ascii) 0 else std.math.maxInt(usize);
+        pub fn init(ctx: ContextType) Self {
+            return .{
+                .ctx = ctx,
+            };
+        }
 
-    // while (utf8iter.nextCodepoint()) |code_point| {
-    //     switch (code_point) {
-    //         first_ascii...last_ascii => {},
-    //         else => {
-    //             ascii_start = utf8iter.i;
-    //         },
-    //     }
-    // }
+        pub fn getError(writer: *const Self) anyerror!void {
+            if (writer.orig_err) |orig_err| {
+                return orig_err;
+            }
+
+            if (writer.err) |err| {
+                return err;
+            }
+        }
+
+        pub inline fn print(writer: *Self, comptime ValueType: type, str: ValueType) void {
+            if (FeatureFlags.disable_printing_null) {
+                if (str == 0) {
+                    Global.panic("Attempted to print null char", .{});
+                }
+            }
+
+            switch (ValueType) {
+                comptime_int, u16, u8 => {
+                    const written = writeByte(&writer.ctx, @intCast(u8, str)) catch |err| brk: {
+                        writer.orig_err = err;
+                        break :brk 0;
+                    };
+
+                    writer.written += @intCast(i32, written);
+
+                    writer.prev_prev_char = writer.prev_char;
+                    writer.prev_char = str;
+
+                    writer.err = if (written == 0) error.WriteFailed else writer.err;
+                },
+                else => {
+                    const written = writeAll(&writer.ctx, str) catch |err| brk: {
+                        writer.orig_err = err;
+                        break :brk 0;
+                    };
+
+                    writer.written += @intCast(i32, written);
+
+                    writer.prev_prev_char = if (written > 1) str[written - 1] else if (written == 1) writer.prev_char else writer.prev_prev_char;
+                    writer.prev_char = if (written > 1) str[written - 1] else writer.prev_char;
+
+                    if (written < str.len) {
+                        writer.err = if (written == 0) error.WriteFailed else error.PartialWrite;
+                    }
+                },
+            }
+        }
+
+        const hasFlush = std.meta.trait.hasFn("flush");
+        pub fn flush(writer: *Self) !void {
+            if (hasFlush(ContextType)) {
+                try writer.ctx.flush();
+            }
+        }
+        const hasDone = std.meta.trait.hasFn("done");
+        pub fn done(writer: *Self) !void {
+            if (hasDone(ContextType)) {
+                try writer.ctx.done();
+            }
+        }
+    };
 }
 
-const UnicodePrinter = NewPrinter(false);
-const AsciiPrinter = NewPrinter(true);
+pub const DirectWriter = struct {
+    handle: FileDescriptorType,
 
+    pub fn write(writer: *DirectWriter, buf: []const u8) !usize {
+        return try std.os.write(writer.handle, buf);
+    }
+
+    pub fn writeAll(writer: *DirectWriter, buf: []const u8) !void {
+        _ = try std.os.write(writer.handle, buf);
+    }
+
+    pub const Error = std.os.WriteError;
+};
+
+// Unbuffered           653ms
+//   Buffered    65k     47ms
+//   Buffered    16k     43ms
+//   Buffered     4k     55ms
+const FileWriterInternal = struct {
+    file: std.fs.File,
+    threadlocal var buffer: MutableString = undefined;
+    threadlocal var has_loaded_buffer: bool = false;
+
+    pub fn init(file: std.fs.File) FileWriterInternal {
+        // if (isMac) {
+        //     _ = std.os.fcntl(file.handle, std.os.F_NOCACHE, 1) catch 0;
+        // }
+
+        if (!has_loaded_buffer) {
+            buffer = MutableString.init(alloc.dynamic, 0) catch unreachable;
+            has_loaded_buffer = true;
+        }
+
+        buffer.reset();
+
+        return FileWriterInternal{
+            .file = file,
+        };
+    }
+    pub fn writeByte(ctx: *FileWriterInternal, byte: u8) anyerror!usize {
+        try buffer.appendChar(byte);
+        return 1;
+    }
+    pub fn writeAll(ctx: *FileWriterInternal, bytes: anytype) anyerror!usize {
+        try buffer.append(bytes);
+        return bytes.len;
+    }
+
+    pub fn done(
+        ctx: *FileWriterInternal,
+    ) anyerror!void {
+        _ = try ctx.file.writeAll(buffer.toOwnedSliceLeaky());
+        buffer.reset();
+    }
+
+    pub fn flush(
+        ctx: *FileWriterInternal,
+    ) anyerror!void {}
+};
+
+pub const FileWriter = NewWriter(FileWriterInternal, FileWriterInternal.writeByte, FileWriterInternal.writeAll);
+pub fn NewFileWriter(file: std.fs.File) FileWriter {
+    var internal = FileWriterInternal.init(file);
+    return FileWriter.init(internal);
+}
 pub fn printAst(
-    allocator: *std.mem.Allocator,
+    comptime Writer: type,
+    _writer: Writer,
     tree: Ast,
     symbols: js_ast.Symbol.Map,
     source: *const logger.Source,
     ascii_only: bool,
     opts: Options,
     linker: ?*Linker,
-) !PrintResult {
-    if (ascii_only) {
-        var printer = try AsciiPrinter.init(
-            allocator,
-            &tree,
-            source,
-            symbols,
-
-            opts,
-            linker,
-        );
-
-        for (tree.parts) |part| {
-            for (part.stmts) |stmt| {
-                try printer.printStmt(stmt);
+) !usize {
+    const PrinterType = NewPrinter(false, Writer);
+    var writer = _writer;
+    var printer = try PrinterType.init(
+        writer,
+        &tree,
+        source,
+        symbols,
+        opts,
+        linker,
+    );
+    for (tree.parts) |part| {
+        for (part.stmts) |stmt| {
+            try printer.printStmt(stmt);
+            if (printer.writer.getError()) {} else |err| {
+                return err;
             }
         }
-
-        return PrintResult{
-            .js = printer.js.toOwnedSliceLeaky(),
-        };
-    } else {
-        var printer = try UnicodePrinter.init(
-            allocator,
-            &tree,
-            source,
-            symbols,
-            opts,
-            linker,
-        );
-        for (tree.parts) |part| {
-            for (part.stmts) |stmt| {
-                try printer.printStmt(stmt);
-            }
-        }
-
-        return PrintResult{
-            .js = printer.js.toOwnedSliceLeaky(),
-        };
     }
+
+    try printer.writer.done();
+
+    return @intCast(usize, std.math.max(printer.writer.written, 0));
 }

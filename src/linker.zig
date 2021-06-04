@@ -198,8 +198,6 @@ pub const Linker = struct {
         }
         defer relative_path_allocator.reset();
 
-        var pretty = try relative_paths_list.append(linker.fs.relative(source_dir, source_path));
-        var pathname = Fs.PathName.init(pretty);
         var absolute_pathname = Fs.PathName.init(source_path);
 
         if (!linker.options.preserve_extensions) {
@@ -210,9 +208,13 @@ pub const Linker = struct {
 
         switch (linker.options.import_path_format) {
             .relative => {
+                var pretty = try linker.allocator.dupe(u8, linker.fs.relative(source_dir, source_path));
+                var pathname = Fs.PathName.init(pretty);
                 return Fs.Path.initWithPretty(pretty, pretty);
             },
             .relative_nodejs => {
+                var pretty = try linker.allocator.dupe(u8, linker.fs.relative(source_dir, source_path));
+                var pathname = Fs.PathName.init(pretty);
                 var path = Fs.Path.initWithPretty(pretty, pretty);
                 path.text = path.text[0 .. path.text.len - path.name.ext.len];
                 return path;
@@ -225,31 +227,28 @@ pub const Linker = struct {
                 }
 
                 if (linker.options.append_package_version_in_query_string and package_version != null) {
-                    const absolute_url = try relative_paths_list.append(
+                    const absolute_url =
                         try std.fmt.allocPrint(
-                            &relative_path_allocator.allocator,
-                            "{s}{s}{s}?v={s}",
-                            .{
-                                linker.options.public_url,
-                                base,
-                                absolute_pathname.ext,
-                                package_version.?,
-                            },
-                        ),
+                        linker.allocator,
+                        "{s}{s}{s}?v={s}",
+                        .{
+                            linker.options.public_url,
+                            base,
+                            absolute_pathname.ext,
+                            package_version.?,
+                        },
                     );
 
                     return Fs.Path.initWithPretty(absolute_url, absolute_url);
                 } else {
-                    const absolute_url = try relative_paths_list.append(
-                        try std.fmt.allocPrint(
-                            &relative_path_allocator.allocator,
-                            "{s}{s}{s}",
-                            .{
-                                linker.options.public_url,
-                                base,
-                                absolute_pathname.ext,
-                            },
-                        ),
+                    const absolute_url = try std.fmt.allocPrint(
+                        linker.allocator,
+                        "{s}{s}{s}",
+                        .{
+                            linker.options.public_url,
+                            base,
+                            absolute_pathname.ext,
+                        },
                     );
 
                     return Fs.Path.initWithPretty(absolute_url, absolute_url);

@@ -769,12 +769,12 @@ pub const OutputFile = struct {
         move: FileOperation,
         copy: FileOperation,
         noop: u0,
-        pending: resolver.Resolver.Result,
+        pending: resolver.Result,
     };
 
     pub const Kind = enum { move, copy, noop, buffer, pending };
 
-    pub fn initPending(loader: Loader, pending: resolver.Resolver.Result) OutputFile {
+    pub fn initPending(loader: Loader, pending: resolver.Result) OutputFile {
         return .{
             .loader = .file,
             .input = pending.path_pair.primary,

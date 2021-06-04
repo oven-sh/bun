@@ -45,13 +45,13 @@ pub const PackageJSON = struct {
     //
     browser_map: BrowserMap,
 
-    pub fn parse(r: *resolver.Resolver, input_path: string, dirname_fd: StoredFileDescriptorType) ?PackageJSON {
+    pub fn parse(comptime ResolverType: type, r: *ResolverType, input_path: string, dirname_fd: StoredFileDescriptorType) ?PackageJSON {
         const parts = [_]string{ input_path, "package.json" };
 
         const package_json_path_ = r.fs.abs(&parts);
         const package_json_path = r.fs.filename_store.append(package_json_path_) catch unreachable;
 
-        const entry = r.caches.fs.readFile(r.fs, package_json_path, dirname_fd) catch |err| {
+        const entry = r.caches.fs.readFile(r.fs, package_json_path, dirname_fd, false) catch |err| {
             if (err != error.IsDir) {
                 r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Cannot read file \"{s}\": {s}", .{ r.prettyPath(fs.Path.init(input_path)), @errorName(err) }) catch unreachable;
             }

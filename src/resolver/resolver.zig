@@ -91,6 +91,9 @@ pub const TemporaryBuffer = struct {
     pub threadlocal var TSConfigMatchFullBuf = std.mem.zeroes([512]u8);
 };
 
+// TODO:
+// - Fix "browser" field mapping
+// - Consider removing the string list abstraction?
 pub const Resolver = struct {
     opts: options.BundleOptions,
     fs: *Fs.FileSystem,

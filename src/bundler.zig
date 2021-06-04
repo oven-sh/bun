@@ -41,7 +41,7 @@ pub const ResolveQueue = std.fifo.LinearFifo(Resolver.Resolver.Result, std.fifo.
 // 2. Look at the extension of that file path, and determine a loader
 // 3. If the loader is .js, .jsx, .ts, .tsx, or .json, run it through our JavaScript Parser
 // IF serving via HTTP and it's parsed without errors:
-// 4. If parsed without errors, generate a strong ETag & write the output directly to the network socket in the Printer.
+// 4. If parsed without errors, generate a strong ETag & write the output to a buffer that sends to the in the Printer.
 // 7. Else, write any errors to error page
 // IF writing to disk AND it's parsed without errors:
 // 4. Write the output to a temporary file.

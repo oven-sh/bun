@@ -24,6 +24,7 @@ src/deps/zig-clap/README.md
 src/deps/zig-clap/.github
 src/deps/zig-clap/.gitattributes
 out
+outdir
 
 .trace
 cover
@@ -35,3 +36,4 @@ github
 out.*
 out
 .parcel-cache
+esbuilddir

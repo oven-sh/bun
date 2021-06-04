@@ -340,16 +340,16 @@ pub const Resolver = struct {
             }
         }
     }
-    var tracing_start: i128 = if (enableTracing) 0 else undefined;
+    var tracing_start: i128 = if (FeatureFlags.tracing) 0 else undefined;
 
     threadlocal var relative_abs_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 
     pub fn resolve(r: *Resolver, source_dir: string, import_path: string, kind: ast.ImportKind) !Result {
-        if (enableTracing) {
+        if (FeatureFlags.tracing) {
             tracing_start = std.time.nanoTimestamp();
         }
         defer {
-            if (enableTracing) {
+            if (FeatureFlags.tracing) {
                 r.elapsed += std.time.nanoTimestamp() - tracing_start;
             }
         }

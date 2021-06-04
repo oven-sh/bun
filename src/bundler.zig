@@ -28,34 +28,72 @@ const Linker = linker.Linker;
 const Timer = @import("./timer.zig");
 
 pub const ServeResult = struct {
-    value: Value,
-    free: bool = true,
+    file: options.OutputFile,
     mime_type: MimeType,
-
-    // Either we:
-    // - send pre-buffered asset body
-    // - stream a file from the file system
-    pub const Value = union(Tag) {
-        file: File,
-        build: options.OutputFile,
-        none: u0,
-
-        pub const Tag = enum {
-            file,
-            build,
-            none,
-        };
-
-        pub const File = struct {
-            absolute_path: string,
-            handle: std.fs.File,
-        };
-    };
 };
 
 // const BundleMap =
 pub const ResolveResults = ThreadSafeHashMap.ThreadSafeStringHashMap(Resolver.Resolver.Result);
 pub const ResolveQueue = std.fifo.LinearFifo(Resolver.Resolver.Result, std.fifo.LinearFifoBufferType.Dynamic);
+
+// How it works end-to-end
+// 1. Resolve a file path from input using the resolver
+// 2. Look at the extension of that file path, and determine a loader
+// 3. If the loader is .js, .jsx, .ts, .tsx, or .json, run it through our JavaScript Parser
+// IF serving via HTTP and it's parsed without errors:
+// 4. If parsed without errors, generate a strong ETag & write the output directly to the network socket in the Printer.
+// 7. Else, write any errors to error page
+// IF writing to disk AND it's parsed without errors:
+// 4. Write the output to a temporary file.
+//    Why? Two reasons.
+//    1. At this point, we don't know what the best output path is.
+//       Most of the time, you want the shortest common path, which you can't know until you've
+//       built & resolved all paths.
+//       Consider this directory tree:
+//          - /Users/jarred/Code/app/src/index.tsx
+//          - /Users/jarred/Code/app/src/Button.tsx
+//          - /Users/jarred/Code/app/assets/logo.png
+//          - /Users/jarred/Code/app/src/Button.css
+//          - /Users/jarred/Code/app/node_modules/react/index.js
+//          - /Users/jarred/Code/app/node_modules/react/cjs/react.development.js
+//        Remember that we cannot know which paths need to be resolved without parsing the JavaScript.
+//        If we stopped here: /Users/jarred/Code/app/src/Button.tsx
+//        We would choose /Users/jarred/Code/app/src/ as the directory
+//        Then, that would result in a directory structure like this:
+//         - /Users/jarred/Code/app/src/Users/jarred/Code/app/node_modules/react/cjs/react.development.js
+//        Which is absolutely insane
+//
+//    2. We will need to write to disk at some point!
+//          - If we delay writing to disk, we need to print & allocate a potentially quite large
+//          buffer (react-dom.development.js is 550 KB)
+//             ^ This is how it used to work!
+//          - If we delay printing, we need to keep the AST around. Which breaks all our
+//          recycling logic since that could be many many ASTs.
+//  5. Once all files are written, determine the shortest common path
+//  6. Move all the temporary files to their intended destinations
+// IF writing to disk AND it's a file-like loader
+// 4. Hash the contents
+//     - rewrite_paths.put(absolute_path, hash(file(absolute_path)))
+// 5. Resolve any imports of this file to that hash(file(absolute_path))
+// 6. Append to the files array with the new filename
+// 7. When parsing & resolving is over, just copy the file.
+//     - on macOS, ensure it does an APFS shallow clone so that doesn't use disk space
+// IF serving via HTTP AND it's a file-like loader:
+// 4. Hash the metadata ${absolute_path}-${fstat.mtime}-${fstat.size}
+// 5. Use a deterministic prefix so we know what file to look for without copying it
+//    Example scenario:
+//      GET /logo-SIU3242.png
+//      404 Not Found because there is no file named "logo-SIu3242.png"
+//    Instead, we can do this:
+//      GET /public/SIU3242/logo.png
+//      Our server sees "/public/" and knows the next segment will be a token
+//      which lets it ignore that when resolving the absolute path on disk
+// 6. Compare the current hash with the expected hash
+// 7. IF does not match, do a 301 Temporary Redirect to the new file path
+//    This adds an extra network request for outdated files, but that should be uncommon.
+// 7. IF does match, serve it with that hash as a weak ETag
+// 8. This should also just work unprefixed, but that will be served Cache-Control: private, no-store
+
 pub const Bundler = struct {
     options: options.BundleOptions,
     log: *logger.Log,
@@ -119,61 +157,120 @@ pub const Bundler = struct {
         );
     }
 
-    pub fn buildWithResolveResult(bundler: *Bundler, resolve_result: Resolver.Resolver.Result) !?options.OutputFile {
+    pub fn resetStore(bundler: *Bundler) void {
+        js_ast.Expr.Data.Store.reset();
+        js_ast.Stmt.Data.Store.reset();
+    }
+
+    pub fn buildWithResolveResult(
+        bundler: *Bundler,
+        resolve_result: Resolver.Resolver.Result,
+        allocator: *std.mem.Allocator,
+        loader: options.Loader,
+        comptime Writer: type,
+        writer: Writer,
+    ) !usize {
+        if (resolve_result.is_external) {
+            return 0;
+        }
+
+        errdefer bundler.resetStore();
+
+        var file_path = resolve_result.path_pair.primary;
+        file_path.pretty = allocator.dupe(u8, bundler.fs.relativeTo(file_path.text)) catch unreachable;
+
+        var old_bundler_allocator = bundler.allocator;
+        bundler.allocator = allocator;
+        defer bundler.allocator = old_bundler_allocator;
+        var result = bundler.parse(allocator, file_path, loader, resolve_result.dirname_fd) orelse {
+            bundler.resetStore();
+            return 0;
+        };
+        var old_linker_allocator = bundler.linker.allocator;
+        defer bundler.linker.allocator = old_linker_allocator;
+        bundler.linker.allocator = allocator;
+        try bundler.linker.link(file_path, &result);
+
+        return try bundler.print(
+            result,
+            Writer,
+            writer,
+        );
+        // output_file.version = if (resolve_result.is_from_node_modules) resolve_result.package_json_version else null;
+
+    }
+
+    pub fn buildWithResolveResultEager(bundler: *Bundler, resolve_result: Resolver.Resolver.Result) !?options.OutputFile {
         if (resolve_result.is_external) {
             return null;
         }
+
         errdefer js_ast.Expr.Data.Store.reset();
         errdefer js_ast.Stmt.Data.Store.reset();
 
         // Step 1. Parse & scan
         const loader = bundler.options.loaders.get(resolve_result.path_pair.primary.name.ext) orelse .file;
         var file_path = resolve_result.path_pair.primary;
-
         file_path.pretty = Linker.relative_paths_list.append(bundler.fs.relativeTo(file_path.text)) catch unreachable;
-        var result = bundler.parse(file_path, loader, resolve_result.dirname_fd) orelse {
-            js_ast.Expr.Data.Store.reset();
-            js_ast.Stmt.Data.Store.reset();
-            return null;
-        };
 
-        try bundler.linker.link(file_path, &result);
+        switch (loader) {
+            .jsx, .tsx, .js, .json => {
+                var result = bundler.parse(bundler.allocator, file_path, loader, resolve_result.dirname_fd) orelse {
+                    js_ast.Expr.Data.Store.reset();
+                    js_ast.Stmt.Data.Store.reset();
+                    return null;
+                };
 
-        var output_file = try bundler.print(
-            result,
-        );
-        // output_file.version = if (resolve_result.is_from_node_modules) resolve_result.package_json_version else null;
+                try bundler.linker.link(file_path, &result);
+                var output_file = options.OutputFile{
+                    .input = file_path,
+                    .loader = loader,
+                    .value = undefined,
+                };
 
-        return output_file;
+                const output_dir = bundler.options.output_dir_handle.?;
+                if (std.fs.path.dirname(file_path.pretty)) |dirname| {
+                    try output_dir.makePath(dirname);
+                }
+
+                var file = try output_dir.createFile(file_path.pretty, .{});
+                output_file.size = try bundler.print(
+                    result,
+                    js_printer.FileWriter,
+                    js_printer.NewFileWriter(file),
+                );
+
+                var file_op = options.OutputFile.FileOperation.fromFile(file.handle, file_path.pretty);
+                file_op.dir = output_dir.fd;
+                file_op.fd = file.handle;
+
+                if (bundler.fs.fs.needToCloseFiles()) {
+                    file.close();
+                    file_op.fd = 0;
+                }
+                file_op.is_tmpdir = false;
+                output_file.value = .{ .move = file_op };
+                return output_file;
+            },
+            // TODO:
+            else => {
+                return null;
+            },
+        }
     }
 
     pub fn print(
         bundler: *Bundler,
         result: ParseResult,
-    ) !options.OutputFile {
-        var allocator = bundler.allocator;
-        var parts = &([_]string{result.source.path.text});
-        var abs_path = bundler.fs.abs(parts);
-        var rel_path = bundler.fs.relativeTo(abs_path);
-        var pathname = Fs.PathName.init(rel_path);
-
-        if (bundler.options.out_extensions.get(pathname.ext)) |ext| {
-            pathname.ext = ext;
-        }
-
-        var stack_fallback = std.heap.stackFallback(1024, bundler.allocator);
-
-        var stack = stack_fallback.get();
-        var _out_path = std.fmt.allocPrint(stack, "{s}{s}{s}{s}", .{ pathname.dir, std.fs.path.sep_str, pathname.base, pathname.ext }) catch unreachable;
-        defer stack.free(_out_path);
-        var out_path = bundler.fs.filename_store.append(_out_path) catch unreachable;
-
+        comptime Writer: type,
+        writer: Writer,
+    ) !usize {
         const ast = result.ast;
-
         var symbols: [][]js_ast.Symbol = &([_][]js_ast.Symbol{ast.symbols});
 
-        const print_result = try js_printer.printAst(
-            allocator,
+        return try js_printer.printAst(
+            Writer,
+            writer,
             ast,
             js_ast.Symbol.Map.initList(symbols),
             &result.source,
@@ -185,22 +282,15 @@ pub const Bundler = struct {
             },
             &bundler.linker,
         );
-        // allocator.free(result.source.contents);
-
-        return options.OutputFile{
-            .path = out_path,
-            .contents = print_result.js,
-        };
     }
 
     pub const ParseResult = struct {
         source: logger.Source,
         loader: options.Loader,
-
         ast: js_ast.Ast,
     };
 
-    pub fn parse(bundler: *Bundler, path: Fs.Path, loader: options.Loader, dirname_fd: StoredFileDescriptorType) ?ParseResult {
+    pub fn parse(bundler: *Bundler, allocator: *std.mem.Allocator, path: Fs.Path, loader: options.Loader, dirname_fd: StoredFileDescriptorType) ?ParseResult {
         if (enableTracing) {
             bundler.timer.start();
         }
@@ -212,6 +302,7 @@ pub const Bundler = struct {
         }
         var result: ParseResult = undefined;
         const entry = bundler.resolver.caches.fs.readFile(bundler.fs, path.text, dirname_fd) catch return null;
+
         const source = logger.Source.initFile(Fs.File{ .path = path, .contents = entry.contents }, bundler.allocator) catch return null;
 
         switch (loader) {
@@ -219,7 +310,7 @@ pub const Bundler = struct {
                 var jsx = bundler.options.jsx;
                 jsx.parse = loader.isJSX();
                 var opts = js_parser.Parser.Options.init(jsx, loader);
-                const value = (bundler.resolver.caches.js.parse(bundler.allocator, opts, bundler.options.define, bundler.log, &source) catch null) orelse return null;
+                const value = (bundler.resolver.caches.js.parse(allocator, opts, bundler.options.define, bundler.log, &source) catch null) orelse return null;
                 return ParseResult{
                     .ast = value,
                     .source = source,
@@ -227,14 +318,14 @@ pub const Bundler = struct {
                 };
             },
             .json => {
-                var expr = json_parser.ParseJSON(&source, bundler.log, bundler.allocator) catch return null;
-                var stmt = js_ast.Stmt.alloc(bundler.allocator, js_ast.S.ExportDefault{
+                var expr = json_parser.ParseJSON(&source, bundler.log, allocator) catch return null;
+                var stmt = js_ast.Stmt.alloc(allocator, js_ast.S.ExportDefault{
                     .value = js_ast.StmtOrExpr{ .expr = expr },
                     .default_name = js_ast.LocRef{ .loc = logger.Loc{}, .ref = Ref{} },
                 }, logger.Loc{ .start = 0 });
-                var stmts = bundler.allocator.alloc(js_ast.Stmt, 1) catch unreachable;
+                var stmts = allocator.alloc(js_ast.Stmt, 1) catch unreachable;
                 stmts[0] = stmt;
-                var parts = bundler.allocator.alloc(js_ast.Part, 1) catch unreachable;
+                var parts = allocator.alloc(js_ast.Part, 1) catch unreachable;
                 parts[0] = js_ast.Part{ .stmts = stmts };
 
                 return ParseResult{
@@ -282,6 +373,7 @@ pub const Bundler = struct {
         defer bundler.log = original_bundler_logger;
         defer bundler.resolver.log = original_resolver_logger;
         bundler.log = log;
+        bundler.linker.allocator = allocator;
         bundler.resolver.log = log;
 
         // Resolving a public file has special behavior
@@ -353,22 +445,32 @@ pub const Bundler = struct {
                 break;
             }
 
-            if (_file) |file| {
-                const _parts = [_]string{ bundler.options.public_dir, relative_unrooted_path };
+            if (_file) |*file| {
+                var stat = try file.stat();
+                var absolute_path = resolve_path.joinAbs(bundler.options.public_dir, .auto, relative_unrooted_path);
+
+                if (stat.kind == .SymLink) {
+                    absolute_path = try std.fs.realpath(absolute_path, &tmp_buildfile_buf);
+                    file.close();
+                    file.* = try std.fs.openFileAbsolute(absolute_path, .{ .read = true });
+                    stat = try file.stat();
+                }
+
+                if (stat.kind != .File) {
+                    file.close();
+                    return error.NotFile;
+                }
+
                 return ServeResult{
-                    .value = ServeResult.Value{ .file = .{
-                        .absolute_path = try bundler.fs.joinAlloc(allocator, &_parts),
-                        .handle = file,
-                    } },
-                    .mime_type = MimeType.byExtension(extension),
+                    .file = options.OutputFile.initFile(file.*, absolute_path, stat.size),
+                    .mime_type = MimeType.byExtension(std.fs.path.extension(absolute_path)[1..]),
                 };
             }
         }
 
         if (strings.eqlComptime(relative_path, "__runtime.js")) {
             return ServeResult{
-                .free = false,
-                .value = .{ .build = .{ .path = "__runtime.js", .contents = runtime.SourceContent } },
+                .file = options.OutputFile.initBuf(runtime.SourceContent, "__runtime.js", .js),
                 .mime_type = MimeType.javascript,
             };
         }
@@ -394,20 +496,27 @@ pub const Bundler = struct {
         const resolved = (try bundler.resolver.resolve(bundler.fs.top_level_dir, absolute_path, .entry_point));
 
         const loader = bundler.options.loaders.get(resolved.path_pair.primary.name.ext) orelse .file;
-        const output = switch (loader) {
-            .js, .jsx, .ts, .tsx, .json => ServeResult.Value{
-                .build = (try bundler.buildWithResolveResult(resolved)) orelse return error.BuildFailed,
-            },
-            else => ServeResult.Value{ .file = ServeResult.Value.File{
-                .absolute_path = resolved.path_pair.primary.text,
-                .handle = try std.fs.openFileAbsolute(resolved.path_pair.primary.text, .{ .read = true, .write = false }),
-            } },
-        };
 
-        return ServeResult{
-            .value = output,
-            .mime_type = MimeType.byLoader(loader, resolved.path_pair.primary.name.ext),
-        };
+        switch (loader) {
+            .js, .jsx, .ts, .tsx, .json => {
+                return ServeResult{
+                    .file = options.OutputFile.initPending(loader, resolved),
+                    .mime_type = MimeType.byLoader(
+                        loader,
+                        bundler.options.out_extensions.get(resolved.path_pair.primary.name.ext) orelse resolved.path_pair.primary.name.ext,
+                    ),
+                };
+            },
+            else => {
+                var abs_path = resolved.path_pair.primary.text;
+                const file = try std.fs.openFileAbsolute(abs_path, .{ .read = true });
+                var stat = try file.stat();
+                return ServeResult{
+                    .file = options.OutputFile.initFile(file, abs_path, stat.size),
+                    .mime_type = MimeType.byLoader(loader, abs_path),
+                };
+            },
+        }
     }
 
     pub fn bundle(
@@ -417,6 +526,8 @@ pub const Bundler = struct {
     ) !options.TransformResult {
         var bundler = try Bundler.init(allocator, log, opts);
         bundler.configureLinker();
+
+        if (bundler.options.write and bundler.options.output_dir.len > 0) {}
 
         //  100.00 µs std.fifo.LinearFifo(resolver.resolver.Result,std.fifo.LinearFifoBufferType { .Dynamic = {}}).writeItemAssumeCapacity
         if (bundler.options.resolve_mode != .lazy) {
@@ -435,30 +546,8 @@ pub const Bundler = struct {
         var entry_point_i: usize = 0;
         for (bundler.options.entry_points) |_entry| {
             var entry: string = _entry;
-            // if (!std.fs.path.isAbsolute(_entry)) {
-            //     const _paths = [_]string{ bundler.fs.top_level_dir, _entry };
-            //     entry = std.fs.path.join(allocator, &_paths) catch unreachable;
-            // } else {
-            //     entry = allocator.dupe(u8, _entry) catch unreachable;
-            // }
-
-            // const dir = std.fs.path.dirname(entry) orelse continue;
-            // const base = std.fs.path.basename(entry);
-
-            // var dir_entry = try rfs.readDirectory(dir);
-            // if (std.meta.activeTag(dir_entry) == .err) {
-            //     log.addErrorFmt(null, logger.Loc.Empty, allocator, "Failed to read directory: {s} - {s}", .{ dir, @errorName(dir_entry.err.original_err) }) catch unreachable;
-            //     continue;
-            // }
-
-            // const file_entry = dir_entry.entries.get(base) orelse continue;
-            // if (file_entry.entry.kind(rfs) != .file) {
-            //     continue;
-            // }
 
             if (!strings.startsWith(entry, "./")) {
-                // allocator.free(entry);
-
                 // Entry point paths without a leading "./" are interpreted as package
                 // paths. This happens because they go through general path resolution
                 // like all other import paths so that plugins can run on them. Requiring
@@ -508,7 +597,7 @@ pub const Bundler = struct {
                 while (bundler.resolve_queue.readItem()) |item| {
                     js_ast.Expr.Data.Store.reset();
                     js_ast.Stmt.Data.Store.reset();
-                    const output_file = bundler.buildWithResolveResult(item) catch continue orelse continue;
+                    const output_file = bundler.buildWithResolveResultEager(item) catch continue orelse continue;
                     bundler.output_files.append(output_file) catch unreachable;
                 }
             },
@@ -522,10 +611,9 @@ pub const Bundler = struct {
         // }
 
         if (bundler.linker.any_needs_runtime) {
-            try bundler.output_files.append(options.OutputFile{
-                .path = bundler.linker.runtime_source_path,
-                .contents = runtime.SourceContent,
-            });
+            try bundler.output_files.append(
+                options.OutputFile.initBuf(runtime.SourceContent, bundler.linker.runtime_source_path, .js),
+            );
         }
 
         if (enableTracing) {
@@ -538,7 +626,9 @@ pub const Bundler = struct {
             );
         }
 
-        return try options.TransformResult.init(try allocator.dupe(u8, bundler.result.outbase), bundler.output_files.toOwnedSlice(), log, allocator);
+        var final_result = try options.TransformResult.init(try allocator.dupe(u8, bundler.result.outbase), bundler.output_files.toOwnedSlice(), log, allocator);
+        final_result.root_dir = bundler.options.output_dir_handle;
+        return final_result;
     }
 };
 
@@ -601,76 +691,78 @@ pub const Transformer = struct {
 
         var ulimit: usize = Fs.FileSystem.RealFS.adjustUlimit();
         var care_about_closing_files = !(FeatureFlags.store_file_descriptors and opts.entry_points.len * 2 < ulimit);
-        for (opts.entry_points) |entry_point, i| {
-            if (use_arenas) {
-                arena = std.heap.ArenaAllocator.init(allocator);
-                chosen_alloc = &arena.allocator;
-            }
 
-            defer {
-                if (use_arenas) {
-                    arena.deinit();
-                }
-            }
-
-            var _log = logger.Log.init(allocator);
-            var __log = &_log;
-            const absolutePath = resolve_path.joinAbs(cwd, .auto, entry_point);
-
-            const file = try std.fs.openFileAbsolute(absolutePath, std.fs.File.OpenFlags{ .read = true });
-            defer {
-                if (care_about_closing_files) {
-                    file.close();
-                }
-            }
-
-            const stat = try file.stat();
-
-            // 1 byte sentinel
-            const code = try file.readToEndAlloc(allocator, stat.size);
-            defer {
-                if (_log.msgs.items.len == 0) {
-                    allocator.free(code);
-                }
-                _log.appendTo(log) catch {};
-            }
-            const _file = Fs.File{ .path = Fs.Path.init(entry_point), .contents = code };
-            var source = try logger.Source.initFile(_file, chosen_alloc);
-            var loader: options.Loader = undefined;
-            if (use_default_loaders) {
-                loader = options.defaultLoaders.get(std.fs.path.extension(absolutePath)) orelse continue;
-            } else {
-                loader = options.Loader.forFileName(
-                    entry_point,
-                    loader_map,
-                ) orelse continue;
-            }
-
-            jsx.parse = loader.isJSX();
-
-            const parser_opts = js_parser.Parser.Options.init(jsx, loader);
-            var _source = &source;
-            const res = _transform(chosen_alloc, allocator, __log, parser_opts, loader, define, _source) catch continue;
-
-            const relative_path = resolve_path.relative(cwd, absolutePath);
-            const out_path = resolve_path.joinAbs2(cwd, .auto, absolutePath, relative_path);
-            try output_files.append(options.OutputFile{ .path = allocator.dupe(u8, out_path) catch continue, .contents = res.js });
-            js_ast.Expr.Data.Store.reset();
-            js_ast.Stmt.Data.Store.reset();
-        }
+        for (opts.entry_points) |entry_point, i| {}
 
         return try options.TransformResult.init(output_dir, output_files.toOwnedSlice(), log, allocator);
     }
 
+    pub fn processEntryPoint(
+        transformer: *Transformer,
+        entry_point: string,
+        i: usize,
+        comptime write_destination_type: options.WriteDestination,
+    ) !void {
+        var allocator = transformer.allocator;
+        var log = transformer.log;
+
+        var _log = logger.Log.init(allocator);
+        var __log = &_log;
+        const absolutePath = resolve_path.joinAbs(cwd, .auto, entry_point);
+
+        const file = try std.fs.openFileAbsolute(absolutePath, std.fs.File.OpenFlags{ .read = true });
+        defer {
+            if (care_about_closing_files) {
+                file.close();
+            }
+        }
+
+        const stat = try file.stat();
+
+        const code = try file.readToEndAlloc(allocator, stat.size);
+        defer {
+            if (_log.msgs.items.len == 0) {
+                allocator.free(code);
+            }
+            _log.appendTo(log) catch {};
+        }
+        const _file = Fs.File{ .path = Fs.Path.init(entry_point), .contents = code };
+        var source = try logger.Source.initFile(_file, allocator);
+        var loader: options.Loader = undefined;
+        if (use_default_loaders) {
+            loader = options.defaultLoaders.get(std.fs.path.extension(absolutePath)) orelse return;
+        } else {
+            loader = options.Loader.forFileName(
+                entry_point,
+                loader_map,
+            ) orelse return;
+        }
+
+        jsx.parse = loader.isJSX();
+
+        const parser_opts = js_parser.Parser.Options.init(jsx, loader);
+        var _source = &source;
+
+        const relative_path = resolve_path.relative(cwd, absolutePath);
+        const out_path = resolve_path.joinAbs(cwd, .auto, absolutePath, relative_path);
+
+        switch (write_destination_type) {}
+
+        try output_files.append();
+        js_ast.Expr.Data.Store.reset();
+        js_ast.Stmt.Data.Store.reset();
+    }
+
     pub fn _transform(
         allocator: *std.mem.Allocator,
-        result_allocator: *std.mem.Allocator,
         log: *logger.Log,
         opts: js_parser.Parser.Options,
         loader: options.Loader,
-        define: *Define,
-        source: *logger.Source,
-    ) !js_printer.PrintResult {
+        define: *const Define,
+        source: *const logger.Source,
+        comptime Writer: type,
+        writer: Writer,
+    ) !usize {
         var ast: js_ast.Ast = undefined;
 
         switch (loader) {
@@ -704,7 +796,8 @@ pub const Transformer = struct {
         var symbols: [][]js_ast.Symbol = &([_][]js_ast.Symbol{ast.symbols});
 
         return try js_printer.printAst(
-            result_allocator,
+            Writer,
+            writer,
             ast,
             js_ast.Symbol.Map.initList(symbols),
             source,

@@ -102,25 +102,31 @@ pub const MutableString = struct {
         }
     }
 
-    pub fn growBy(self: *MutableString, amount: usize) callconv(.Inline) !void {
+    pub inline fn growBy(self: *MutableString, amount: usize) !void {
         try self.list.ensureUnusedCapacity(self.allocator, amount);
     }
 
-    pub fn appendChar(self: *MutableString, char: u8) callconv(.Inline) !void {
+    pub inline fn reset(
+        self: *MutableString,
+    ) void {
+        self.list.shrinkRetainingCapacity(0);
+    }
+
+    pub inline fn appendChar(self: *MutableString, char: u8) !void {
         try self.list.append(self.allocator, char);
     }
-    pub fn appendCharAssumeCapacity(self: *MutableString, char: u8) callconv(.Inline) void {
+    pub inline fn appendCharAssumeCapacity(self: *MutableString, char: u8) void {
         self.list.appendAssumeCapacity(char);
     }
-    pub fn append(self: *MutableString, char: []const u8) callconv(.Inline) !void {
+    pub inline fn append(self: *MutableString, char: []const u8) !void {
         try self.list.appendSlice(self.allocator, char);
     }
-    pub fn appendAssumeCapacity(self: *MutableString, char: []const u8) callconv(.Inline) void {
+    pub inline fn appendAssumeCapacity(self: *MutableString, char: []const u8) void {
         self.list.appendSliceAssumeCapacity(
             char,
         );
     }
-    pub fn lenI(self: *MutableString) callconv(.Inline) i32 {
+    pub inline fn lenI(self: *MutableString) i32 {
         return @intCast(i32, self.list.items.len);
     }
 

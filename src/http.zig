@@ -21,6 +21,7 @@ const Headers = picohttp.Headers;
 const MimeType = @import("http/mime_type.zig");
 const Bundler = bundler.Bundler;
 
+const js_printer = @import("js_printer.zig");
 const SOCKET_FLAGS = os.SOCK_CLOEXEC;
 
 threadlocal var req_headers_buf: [100]picohttp.Header = undefined;
@@ -270,7 +271,9 @@ pub const RequestContext = struct {
     }
 
     pub fn sendNotFound(req: *RequestContext) !void {
-        return req.writeStatus(404);
+        try req.writeStatus(404);
+        try req.flushHeaders();
+        req.done();
     }
 
     pub fn sendInternalError(ctx: *RequestContext, err: anytype) !void {
@@ -313,7 +316,7 @@ pub const RequestContext = struct {
         break :brk std.fmt.bufPrintIntToSlice(&buf, file_chunk_size, 16, true, .{}).len;
     };
 
-    threadlocal var file_chunk_buf: [chunk_preamble_len + 2 + file_chunk_size]u8 = undefined;
+    threadlocal var file_chunk_buf: [chunk_preamble_len + 2]u8 = undefined;
     threadlocal var symlink_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
     threadlocal var weak_etag_buffer: [100]u8 = undefined;
     threadlocal var strong_etag_buffer: [100]u8 = undefined;
@@ -331,7 +334,12 @@ pub const RequestContext = struct {
     }
 
     pub fn handleGet(ctx: *RequestContext) !void {
-        const result = try ctx.bundler.buildFile(&ctx.log, ctx.allocator, ctx.url.path, ctx.url.extname);
+        const result = try ctx.bundler.buildFile(
+            &ctx.log,
+            ctx.allocator,
+            ctx.url.path,
+            ctx.url.extname,
+        );
 
         ctx.mime_type = result.mime_type;
         ctx.appendHeader("Content-Type", result.mime_type.value);
@@ -341,58 +349,246 @@ pub const RequestContext = struct {
 
         const send_body = ctx.method == .GET;
 
-        switch (result.value) {
-            .none => {
-                unreachable;
-            },
-            .file => |file| {
-                defer file.handle.close();
-                var do_extra_close = false;
-                var handle = file.handle;
-
-                var real_path = file.absolute_path;
-
-                // Assume "stat" is lying to us.
-                // Don't write a 2xx status until we've successfully read at least 1 byte
-                var stat = try handle.stat();
-                switch (stat.kind) {
-                    .Directory,
-                    .NamedPipe,
-                    .UnixDomainSocket,
-                    .Whiteout,
-                    .BlockDevice,
-                    .CharacterDevice,
-                    => {
-                        ctx.log.addErrorFmt(null, logger.Loc.Empty, ctx.allocator, "Bad file type: {s}", .{@tagName(stat.kind)}) catch {};
-                        try ctx.sendBadRequest();
-                        return;
-                    },
-                    .SymLink => {
-                        const real_file_path = try std.fs.realpath(file.absolute_path, &symlink_buffer);
-                        real_path = real_file_path;
-                        handle = try std.fs.openFileAbsolute(real_file_path, .{});
-                        stat = try handle.stat();
-                        do_extra_close = true;
-                    },
-                    else => {},
+        switch (result.file.value) {
+            .pending => |resolve_result| {
+                if (resolve_result.is_external) {
+                    try ctx.sendBadRequest();
+                    return;
                 }
-                defer {
-                    if (do_extra_close) {
-                        handle.close();
+
+                const SocketPrinterInternal = struct {
+                    const SocketPrinterInternal = @This();
+                    rctx: *RequestContext,
+                    threadlocal var buffer: MutableString = undefined;
+                    threadlocal var has_loaded_buffer: bool = false;
+
+                    pub fn init(rctx: *RequestContext) SocketPrinterInternal {
+                        // if (isMac) {
+                        //     _ = std.os.fcntl(file.handle, std.os.F_NOCACHE, 1) catch 0;
+                        // }
+
+                        if (!has_loaded_buffer) {
+                            buffer = MutableString.init(std.heap.c_allocator, 0) catch unreachable;
+                            has_loaded_buffer = true;
+                        }
+
+                        buffer.reset();
+
+                        return SocketPrinterInternal{
+                            .rctx = rctx,
+                        };
                     }
-                }
-                var file_chunk_slice = file_chunk_buf[chunk_preamble_len .. file_chunk_buf.len - 3];
+                    pub fn writeByte(_ctx: *SocketPrinterInternal, byte: u8) anyerror!usize {
+                        try buffer.appendChar(byte);
+                        return 1;
+                    }
+                    pub fn writeAll(_ctx: *SocketPrinterInternal, bytes: anytype) anyerror!usize {
+                        try buffer.append(bytes);
+                        return bytes.len;
+                    }
+
+                    pub fn done(
+                        chunky: *SocketPrinterInternal,
+                    ) anyerror!void {
+                        const buf = buffer.toOwnedSliceLeaky();
+                        defer buffer.reset();
+
+                        if (buf.len == 0) {
+                            try chunky.rctx.sendNoContent();
+                            return;
+                        }
+
+                        if (FeatureFlags.strong_etags_for_built_files) {
+                            if (buf.len < 16 * 16 * 16 * 16) {
+                                const strong_etag = std.hash.Wyhash.hash(1, buf);
+                                const etag_content_slice = std.fmt.bufPrintIntToSlice(strong_etag_buffer[0..49], strong_etag, 16, true, .{});
+
+                                chunky.rctx.appendHeader("ETag", etag_content_slice);
+
+                                if (chunky.rctx.header("If-None-Match")) |etag_header| {
+                                    if (std.mem.eql(u8, etag_content_slice, etag_header.value)) {
+                                        try chunky.rctx.sendNotModified();
+                                        return;
+                                    }
+                                }
+                            }
+                        }
+
+                        try chunky.rctx.writeStatus(200);
+                        try chunky.rctx.prepareToSendBody(buf.len, false);
+                        try chunky.rctx.writeBodyBuf(buf);
+                        chunky.rctx.done();
+                    }
+
+                    pub fn flush(
+                        _ctx: *SocketPrinterInternal,
+                    ) anyerror!void {}
+                };
+
+                const SocketPrinter = js_printer.NewWriter(SocketPrinterInternal, SocketPrinterInternal.writeByte, SocketPrinterInternal.writeAll);
+
+                // const ChunkedTransferEncoding = struct {
+                //     rctx: *RequestContext,
+                //     has_disconnected: bool = false,
+                //     chunk_written: usize = 0,
+                //     pushed_chunks_count: usize = 0,
+                //     disabled: bool = false,
+
+                //     threadlocal var chunk_buf: [8096]u8 = undefined;
+                //     threadlocal var chunk_header_buf: [32]u8 = undefined;
+                //     threadlocal var chunk_footer_buf: [2]u8 = undefined;
+
+                //     pub fn create(rctx: *RequestContext) @This() {
+                //         return @This(){
+                //             .rctx = rctx,
+                //         };
+                //     }
+
+                //     pub fn writeByte(chunky: *@This(), byte: u8) anyerror!usize {
+                //         return try chunky.writeAll(&[_]u8{byte});
+                //     }
+                //     pub fn writeAll(chunky: *@This(), bytes: anytype) anyerror!usize {
+                //         // This lets us check if disabled without an extra branch
+                //         const dest_chunk_written = (bytes.len + chunky.chunk_written) * @intCast(usize, @boolToInt(!chunky.disabled));
+                //         switch (dest_chunk_written) {
+                //             0 => {
+                //                 return 0;
+                //             },
+                //             // Fast path
+                //             1...chunk_buf.len => {
+                //                 std.mem.copy(u8, chunk_buf[chunky.chunk_written..dest_chunk_written], bytes);
+                //                 chunky.chunk_written = dest_chunk_written;
+                //                 return bytes.len;
+                //             },
+                //             // Slow path
+                //             else => {
+                //                 var byte_slice: []const u8 = bytes[0..bytes.len];
+                //                 while (byte_slice.len > 0) {
+                //                     var remainder_slice = chunk_buf[chunky.chunk_written..];
+                //                     const copied_size = std.math.min(remainder_slice.len, byte_slice.len);
+
+                //                     std.mem.copy(u8, remainder_slice, byte_slice[0..copied_size]);
+                //                     byte_slice = byte_slice[copied_size..];
+
+                //                     chunky.chunk_written += copied_size;
+
+                //                     if (chunky.chunk_written >= chunk_buf.len) {
+                //                         chunky.flush() catch |err| {
+                //                             return err;
+                //                         };
+                //                     }
+                //                 }
+                //                 return bytes.len;
+                //             },
+                //         }
+                //     }
+
+                //     pub fn flush(chunky: *@This()) anyerror!void {
+                //         if (!chunky.rctx.has_written_last_header) {
+                //             try chunky.rctx.writeStatus(200);
+                //             try chunky.rctx.prepareToSendBody(0, true);
+                //         }
+
+                //         // how much are we pushing?
+                //         // remember, this won't always be a full chunk size
+                //         const content_length = chunky.chunk_written;
+                //         // it could be zero if it's the final chunk
+                //         var content_length_buf_size = std.fmt.formatIntBuf(&chunk_header_buf, content_length, 16, true, .{});
+                //         var after_content_length = chunk_header_buf[content_length_buf_size..];
+                //         after_content_length[0] = '\r';
+                //         after_content_length[1] = '\n';
+
+                //         var written = try chunky.rctx.conn.client.write(chunk_header_buf[0 .. content_length_buf_size + 2], SOCKET_FLAGS);
+                //         if (written == 0) {
+                //             chunky.disabled = true;
+                //             return error.SocketClosed;
+                //         }
+                //         written = try chunky.rctx.conn.client.write(chunk_buf[0..chunky.chunk_written], SOCKET_FLAGS);
+                //         chunky.chunk_written = chunky.chunk_written - written;
+
+                //         chunky.pushed_chunks_count += 1;
+                //     }
+
+                //     pub fn done(chunky: *@This()) anyerror!void {
+                //         if (chunky.disabled) {
+                //             return;
+                //         }
+
+                //         defer chunky.rctx.done();
+
+                //         // Actually, its just one chunk so we'll send it all at once
+                //         // instead of using transfer encoding
+                //         if (chunky.pushed_chunks_count == 0 and !chunky.rctx.has_written_last_header) {
+
+                //             // turns out it's empty!
+                //             if (chunky.chunk_written == 0) {
+                //                 try chunky.rctx.sendNoContent();
+
+                //                 return;
+                //             }
+
+                //             const buffer = chunk_buf[0..chunky.chunk_written];
+
+                //     if (FeatureFlags.strong_etags_for_built_files) {
+                //         const strong_etag = std.hash.Wyhash.hash(1, buffer);
+                //         const etag_content_slice = std.fmt.bufPrintIntToSlice(strong_etag_buffer[0..49], strong_etag, 16, true, .{});
+
+                //         chunky.rctx.appendHeader("ETag", etag_content_slice);
+
+                //         if (chunky.rctx.header("If-None-Match")) |etag_header| {
+                //             if (std.mem.eql(u8, etag_content_slice, etag_header.value)) {
+                //                 try chunky.rctx.sendNotModified();
+                //                 return;
+                //             }
+                //         }
+                //     }
+
+                //     try chunky.rctx.writeStatus(200);
+                //     try chunky.rctx.prepareToSendBody(chunky.chunk_written, false);
+                //     try chunky.rctx.writeBodyBuf(buffer);
+                //     return;
+                // }
+
+                //         if (chunky.chunk_written > 0) {
+                //             try chunky.flush();
+                //         }
+
+                //         _ = try chunky.rctx.writeSocket("0\r\n\r\n", SOCKET_FLAGS);
+                //     }
+
+                //     pub const Writer = js_printer.NewWriter(@This(), writeByte, writeAll);
+                //     pub fn writer(chunky: *@This()) Writer {
+                //         return Writer.init(chunky.*);
+                //     }
+                // };
+
+                var chunked_encoder = SocketPrinter.init(SocketPrinterInternal.init(ctx));
+
+                // It will call flush for us automatically
+                defer ctx.bundler.resetStore();
+                const loader = ctx.bundler.options.loaders.get(resolve_result.path_pair.primary.name.ext) orelse .file;
+                var written = try ctx.bundler.buildWithResolveResult(resolve_result, ctx.allocator, loader, SocketPrinter, chunked_encoder);
+            },
+            .noop => {
+                try ctx.sendNotFound();
+            },
+            .copy, .move => |file| {
+                defer std.os.close(file.fd);
 
                 if (result.mime_type.category != .html) {
                     // hash(absolute_file_path, size, mtime)
                     var weak_etag = std.hash.Wyhash.init(1);
                     weak_etag_buffer[0] = 'W';
                     weak_etag_buffer[1] = '/';
-                    weak_etag.update(real_path);
-                    std.mem.writeIntNative(u64, weak_etag_tmp_buffer[0..8], stat.size);
+                    weak_etag.update(result.file.input.text);
+                    std.mem.writeIntNative(u64, weak_etag_tmp_buffer[0..8], result.file.size);
                     weak_etag.update(weak_etag_tmp_buffer[0..8]);
-                    std.mem.writeIntNative(i128, weak_etag_tmp_buffer[0..16], stat.mtime);
-                    weak_etag.update(weak_etag_tmp_buffer[0..16]);
+
+                    if (result.file.mtime) |mtime| {
+                        std.mem.writeIntNative(i128, weak_etag_tmp_buffer[0..16], mtime);
+                        weak_etag.update(weak_etag_tmp_buffer[0..16]);
+                    }
+
                     const etag_content_slice = std.fmt.bufPrintIntToSlice(weak_etag_buffer[2..], weak_etag.final(), 16, true, .{});
                     const complete_weak_etag = weak_etag_buffer[0 .. etag_content_slice.len + 2];
 
@@ -408,94 +604,30 @@ pub const RequestContext = struct {
                     ctx.appendHeader("Cache-Control", "no-cache");
                 }
 
-                switch (stat.size) {
+                switch (result.file.size) {
                     0 => {
                         try ctx.sendNoContent();
                         return;
                     },
-                    1...file_chunk_size - 1 => {
+                    else => {
                         defer ctx.done();
 
-                        // always report by amount we actually read instead of stat-reported read
-                        const file_read = try handle.read(file_chunk_slice);
-                        if (file_read == 0) {
-                            return ctx.sendNoContent();
-                        }
-
-                        const file_slice = file_chunk_slice[0..file_read];
                         try ctx.writeStatus(200);
-                        try ctx.prepareToSendBody(file_read, false);
+                        try ctx.prepareToSendBody(result.file.size, false);
                         if (!send_body) return;
-                        _ = try ctx.writeSocket(file_slice, SOCKET_FLAGS);
-                    },
-                    else => {
-                        var chunk_written: usize = 0;
-                        var size_slice = file_chunk_buf[0..chunk_preamble_len];
-                        var trailing_newline_slice = file_chunk_buf[file_chunk_buf.len - 3 ..];
-                        trailing_newline_slice[0] = '\r';
-                        trailing_newline_slice[1] = '\n';
-                        var pushed_chunk_count: usize = 0;
-                        while (true) : (pushed_chunk_count += 1) {
-                            defer chunk_written = 0;
-
-                            // Read from the file until we reach either end of file or the max chunk size
-                            chunk_written = handle.read(file_chunk_slice) catch |err| {
-                                if (pushed_chunk_count > 0) {
-                                    _ = try ctx.writeSocket("0\r\n\r\n", SOCKET_FLAGS);
-                                }
-                                return ctx.sendInternalError(err);
-                            };
-
-                            // empty chunk
-                            if (chunk_written == 0) {
-                                defer ctx.done();
-                                if (pushed_chunk_count == 0) {
-                                    return ctx.sendNoContent();
-                                }
-                                _ = try ctx.writeSocket("0\r\n\r\n", SOCKET_FLAGS);
-                                break;
-                                // final chunk
-                            } else if (chunk_written < file_chunk_size - 1) {
-                                defer ctx.done();
-                                var hex_size_slice = std.fmt.bufPrintIntToSlice(size_slice, chunk_written, 16, true, .{});
-                                var remainder_slice = file_chunk_buf[hex_size_slice.len..size_slice.len];
-                                remainder_slice[0] = '\r';
-                                remainder_slice[1] = '\n';
-                                if (pushed_chunk_count == 0) {
-                                    ctx.writeStatus(200) catch {};
-                                    ctx.prepareToSendBody(0, true) catch {};
-                                    if (!send_body) return;
-                                }
-                                _ = try ctx.writeSocket(size_slice, SOCKET_FLAGS);
-                                _ = try ctx.writeSocket(file_chunk_slice[0..chunk_written], SOCKET_FLAGS);
-                                _ = try ctx.writeSocket(trailing_newline_slice, SOCKET_FLAGS);
-                                break;
-                                // full chunk
-                            } else {
-                                if (pushed_chunk_count == 0) {
-                                    try ctx.writeStatus(200);
-
-                                    try ctx.prepareToSendBody(0, true);
-                                    if (!send_body) return;
-                                }
-
-                                var hex_size_slice = std.fmt.bufPrintIntToSlice(size_slice, chunk_written, 16, true, .{});
-                                var remainder_slice = file_chunk_buf[hex_size_slice.len..size_slice.len];
-                                remainder_slice[0] = '\r';
-                                remainder_slice[1] = '\n';
-
-                                _ = try ctx.writeSocket(&file_chunk_buf, SOCKET_FLAGS);
-                            }
-                        }
+                        _ = try std.os.sendfile(
+                            ctx.conn.client.socket.fd,
+                            file.fd,
+                            0,
+                            result.file.size,
+                            &[_]std.os.iovec_const{},
+                            &[_]std.os.iovec_const{},
+                            0,
+                        );
                     },
                 }
             },
-            .build => |output| {
-                defer {
-                    if (result.free) {
-                        ctx.bundler.allocator.free(output.contents);
-                    }
-                }
+            .buffer => |buffer| {
 
                 // The version query string is only included for:
                 // - The runtime
@@ -509,7 +641,8 @@ pub const RequestContext = struct {
                 }
 
                 if (FeatureFlags.strong_etags_for_built_files) {
-                    const strong_etag = std.hash.Wyhash.hash(1, output.contents);
+                    // TODO: don't hash runtime.js
+                    const strong_etag = std.hash.Wyhash.hash(1, buffer);
                     const etag_content_slice = std.fmt.bufPrintIntToSlice(strong_etag_buffer[0..49], strong_etag, 16, true, .{});
 
                     ctx.appendHeader("ETag", etag_content_slice);
@@ -522,15 +655,15 @@ pub const RequestContext = struct {
                     }
                 }
 
-                if (output.contents.len == 0) {
+                if (buffer.len == 0) {
                     return try ctx.sendNoContent();
                 }
 
                 defer ctx.done();
                 try ctx.writeStatus(200);
-                try ctx.prepareToSendBody(output.contents.len, false);
+                try ctx.prepareToSendBody(buffer.len, false);
                 if (!send_body) return;
-                _ = try ctx.writeSocket(output.contents, SOCKET_FLAGS);
+                _ = try ctx.writeSocket(buffer, SOCKET_FLAGS);
             },
         }
 

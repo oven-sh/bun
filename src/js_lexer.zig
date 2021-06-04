@@ -1745,7 +1745,7 @@ pub const Lexer = struct {
 
     // TODO: use wtf-8 encoding.
     pub fn utf16ToString(lexer: *LexerType, js: JavascriptString) string {
-        var temp = std.mem.zeroes([4]u8);
+        var temp: [4]u8 = undefined;
         var list = std.ArrayList(u8).initCapacity(lexer.allocator, js.len) catch unreachable;
         var i: usize = 0;
         while (i < js.len) : (i += 1) {
@@ -1760,7 +1760,7 @@ pub const Lexer = struct {
             const width = strings.encodeWTF8Rune(&temp, r1);
             list.appendSlice(temp[0..width]) catch unreachable;
         }
-        return list.toOwnedSlice();
+        return list.items;
         // return std.unicode.utf16leToUtf8Alloc(lexer.allocator, js) catch unreachable;
     }
 

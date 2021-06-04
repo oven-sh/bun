@@ -211,7 +211,7 @@ pub fn eqlUtf16(comptime self: string, other: JavascriptString) bool {
 }
 
 pub fn toUTF8Alloc(allocator: *std.mem.Allocator, js: JavascriptString) !string {
-    var temp = std.mem.zeroes([4]u8);
+    var temp: [4]u8 = undefined;
     var list = std.ArrayList(u8).initCapacity(allocator, js.len) catch unreachable;
     var i: usize = 0;
     while (i < js.len) : (i += 1) {
@@ -226,7 +226,7 @@ pub fn toUTF8Alloc(allocator: *std.mem.Allocator, js: JavascriptString) !string 
         const width = encodeWTF8Rune(&temp, r1);
         list.appendSlice(temp[0..width]) catch unreachable;
     }
-    return list.toOwnedSlice();
+    return list.items;
 }
 
 // Check utf16 string equals utf8 string without allocating extra memory

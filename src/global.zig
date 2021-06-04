@@ -16,6 +16,7 @@ pub const build_target: BuildTarget = comptime {
 pub const isWasm = build_target == .wasm;
 pub const isNative = build_target == .native;
 pub const isWasi = build_target == .wasi;
+pub const isMac = build_target == .native and std.Target.current.os.tag == .macos;
 pub const isBrowser = !isWasi and isWasm;
 pub const isWindows = std.Target.current.os.tag == .windows;
 

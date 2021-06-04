@@ -319,87 +319,90 @@ pub const Cli = struct {
             },
         }
         var did_write = false;
+        var stderr_writer = stderr.writer();
+        var buffered_writer = std.io.bufferedWriter(stderr_writer);
+        defer buffered_writer.flush() catch {};
+        var writer = buffered_writer.writer();
+        var err_writer = writer;
 
-        var writer = stdout.writer();
         var open_file_limit: usize = 32;
         if (args.write) |write| {
             if (write) {
+                const root_dir = result.root_dir orelse unreachable;
                 if (std.os.getrlimit(.NOFILE)) |limit| {
                     open_file_limit = limit.cur;
                 } else |err| {}
 
-                did_write = true;
-                var root_dir = std.fs.openDirAbsolute(result.outbase, std.fs.Dir.OpenDirOptions{}) catch brk: {
-                    std.fs.makeDirAbsolute(result.outbase) catch |err| {
-                        Output.printErrorln("error: Unable to mkdir \"{s}\": \"{s}\"", .{ result.outbase, @errorName(err) });
-                        std.os.exit(1);
-                    };
+                var all_paths = try allocator.alloc([]const u8, result.output_files.len);
+                var max_path_len: usize = 0;
+                var max_padded_size: usize = 0;
+                for (result.output_files) |f, i| {
+                    all_paths[i] = f.input.text;
+                }
 
-                    var handle = std.fs.openDirAbsolute(result.outbase, std.fs.Dir.OpenDirOptions{}) catch |err2| {
-                        Output.printErrorln("error: Unable to open \"{s}\": \"{s}\"", .{ result.outbase, @errorName(err2) });
-                        std.os.exit(1);
-                    };
-                    break :brk handle;
-                };
+                var from_path = resolve_path.longestCommonPath(all_paths);
+
+                for (result.output_files) |f, i| {
+                    max_path_len = std.math.max(
+                        f.input.text[from_path.len..].len + 2,
+                        max_path_len,
+                    );
+                }
+
+                did_write = true;
+
                 // On posix, file handles automatically close on process exit by the OS
                 // Closing files shows up in profiling.
                 // So don't do that unless we actually need to.
                 const do_we_need_to_close = !FeatureFlags.store_file_descriptors or (@intCast(usize, root_dir.fd) + open_file_limit) < result.output_files.len;
 
-                defer {
-                    if (do_we_need_to_close) {
-                        root_dir.close();
+                var filepath_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+                filepath_buf[0] = '.';
+                filepath_buf[1] = '/';
+
+                for (result.output_files) |f, i| {
+                    var rel_path: []const u8 = undefined;
+                    switch (f.value) {
+                        // easy mode: write the buffer
+                        .buffer => |value| {
+                            rel_path = resolve_path.relative(from_path, f.input.text);
+
+                            try root_dir.writeFile(rel_path, value);
+                        },
+                        .move => |value| {
+                            // const primary = f.input.text[from_path.len..];
+                            // std.mem.copy(u8, filepath_buf[2..], primary);
+                            // rel_path = filepath_buf[0 .. primary.len + 2];
+                            rel_path = value.pathname;
+
+                            // try f.moveTo(result.outbase, constStrToU8(rel_path), root_dir.fd);
+                        },
+                        .copy => |value| {
+                            const rel_path_base = resolve_path.relativeToCommonPath(
+                                from_path,
+                                from_path,
+                                f.input.text,
+                                filepath_buf[2..],
+                                comptime resolve_path.Platform.auto.separator(),
+                                false,
+                            );
+                            rel_path = filepath_buf[0 .. rel_path_base.len + 2];
+
+                            try f.copyTo(result.outbase, constStrToU8(rel_path), root_dir.fd);
+                        },
+                        .noop => {},
+                        .pending => |value| {
+                            unreachable;
+                        },
                     }
-                }
 
-                for (result.output_files) |f| {
-                    var fp = f.path;
-                    if (fp[0] == std.fs.path.sep) {
-                        fp = fp[1..];
-                    }
-
-                    var _handle = root_dir.createFile(fp, std.fs.File.CreateFlags{
-                        .truncate = true,
-                    }) catch |err| brk: {
-                        // Only bother to create the directory if there's an error because that's probably why it errored
-                        if (std.fs.path.dirname(fp)) |dirname| {
-                            root_dir.makePath(dirname) catch {};
-                        }
-
-                        // Then, retry!
-                        break :brk (root_dir.createFile(fp, std.fs.File.CreateFlags{
-                            .truncate = true,
-                        }) catch |err2| return err2);
-                    };
-
-                    try _handle.seekTo(0);
-
-                    if (FeatureFlags.disable_filesystem_cache) {
-                        _ = std.os.fcntl(_handle.handle, std.os.F_NOCACHE, 1) catch 0;
-                    }
-
-                    defer {
-                        if (do_we_need_to_close) {
-                            _handle.close();
-                        }
-                    }
-
-                    try _handle.writeAll(f.contents);
-                }
-
-                var max_path_len: usize = 0;
-                var max_padded_size: usize = 0;
-                for (result.output_files) |file| {
-                    max_path_len = std.math.max(file.path.len, max_path_len);
-                }
-
-                _ = try writer.write("\n");
-                for (result.output_files) |file| {
-                    const padding_count = 2 + (max_path_len - file.path.len);
+                    // Print summary
+                    _ = try writer.write("\n");
+                    const padding_count = 2 + (std.math.max(rel_path.len, max_path_len) - rel_path.len);
                     try writer.writeByteNTimes(' ', 2);
-                    try writer.writeAll(file.path);
+                    try writer.writeAll(rel_path);
                     try writer.writeByteNTimes(' ', padding_count);
-                    const size = @intToFloat(f64, file.contents.len) / 1000.0;
+                    const size = @intToFloat(f64, f.size) / 1000.0;
                     try std.fmt.formatFloatDecimal(size, .{ .precision = 2 }, writer);
                     try writer.writeAll(" KB\n");
                 }
@@ -407,25 +410,15 @@ pub const Cli = struct {
         }
 
         if (isDebug) {
-            Output.errorLn("Expr count:       {d}", .{js_ast.Expr.icount});
-            Output.errorLn("Stmt count:       {d}", .{js_ast.Stmt.icount});
-            Output.errorLn("Binding count:    {d}", .{js_ast.Binding.icount});
-            Output.errorLn("File Descriptors: {d} / {d}", .{
+            err_writer.print("\nExpr count:       {d}\n", .{js_ast.Expr.icount}) catch {};
+            err_writer.print("Stmt count:       {d}\n", .{js_ast.Stmt.icount}) catch {};
+            err_writer.print("Binding count:    {d}\n", .{js_ast.Binding.icount}) catch {};
+            err_writer.print("File Descriptors: {d} / {d}\n", .{
                 fs.FileSystem.max_fd,
                 open_file_limit,
-            });
+            }) catch {};
         }
 
-        if (!did_write) {
-            for (result.output_files) |file, i| {
-                try stdout.writeAll(file.contents);
-                if (i > 0) {
-                    _ = try writer.write("\n\n");
-                }
-            }
-        }
-
-        var err_writer = stderr.writer();
         for (result.errors) |err| {
             try err.writeFormat(err_writer);
             _ = try err_writer.write("\n");
@@ -442,7 +435,5 @@ pub const Cli = struct {
             var elapsed = @divTrunc(duration, @as(i128, std.time.ns_per_ms));
             try err_writer.print("\nCompleted in {d}ms", .{elapsed});
         }
-
-        std.os.exit(0);
     }
 };

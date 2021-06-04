@@ -291,11 +291,11 @@ pub const Bundler = struct {
     };
 
     pub fn parse(bundler: *Bundler, allocator: *std.mem.Allocator, path: Fs.Path, loader: options.Loader, dirname_fd: StoredFileDescriptorType) ?ParseResult {
-        if (enableTracing) {
+        if (FeatureFlags.tracing) {
             bundler.timer.start();
         }
         defer {
-            if (enableTracing) {
+            if (FeatureFlags.tracing) {
                 bundler.timer.stop();
                 bundler.elapsed += bundler.timer.elapsed;
             }
@@ -616,7 +616,7 @@ pub const Bundler = struct {
             );
         }
 
-        if (enableTracing) {
+        if (FeatureFlags.tracing) {
             Output.printError(
                 "\n---Tracing---\nResolve time:      {d}\nParsing time:      {d}\n---Tracing--\n\n",
                 .{

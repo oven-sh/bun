@@ -3762,9 +3762,9 @@ test "Expr.init" {
         E.Array{ .items = list[0..] },
         logger.Loc{ .start = 1 },
     );
-    std.testing.expect(expr.loc.start == 1);
-    std.testing.expect(@as(Expr.Tag, expr.data) == Expr.Tag.e_array);
-    std.testing.expect(expr.data.e_array.items[0].loc.start == 100);
+    try std.testing.expect(expr.loc.start == 1);
+    try std.testing.expect(@as(Expr.Tag, expr.data) == Expr.Tag.e_array);
+    try std.testing.expect(expr.data.e_array.items[0].loc.start == 100);
 
     printmem("--Ref                      {d} bits\n", .{@bitSizeOf(Ref)});
     printmem("--LocRef                   {d} bits\n", .{@bitSizeOf(LocRef)});

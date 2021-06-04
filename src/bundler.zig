@@ -633,10 +633,14 @@ pub const Bundler = struct {
 };
 
 pub const Transformer = struct {
-    options: options.TransformOptions,
+    opts: Api.TransformOptions,
     log: *logger.Log,
     allocator: *std.mem.Allocator,
-    result: ?options.TransformResult = null,
+    platform: options.Platform = undefined,
+    out_extensions: std.StringHashMap(string) = undefined,
+    output_path: string,
+    cwd: string,
+    define: *Define,
 
     pub fn transform(
         allocator: *std.mem.Allocator,
@@ -656,11 +660,15 @@ pub const Transformer = struct {
             user_defines,
         );
 
-        const cwd = opts.absolute_working_dir orelse try std.process.getCwdAlloc(allocator);
+        const cwd = if (opts.absolute_working_dir) |workdir| try std.fs.realpathAlloc(allocator, workdir) else try std.process.getCwdAlloc(allocator);
+
         const output_dir_parts = [_]string{ try std.process.getCwdAlloc(allocator), opts.output_dir orelse "out" };
         const output_dir = try std.fs.path.join(allocator, &output_dir_parts);
         var output_files = try std.ArrayList(options.OutputFile).initCapacity(allocator, opts.entry_points.len);
         var loader_values = try allocator.alloc(options.Loader, opts.loader_values.len);
+        const platform = options.Platform.from(opts.platform);
+        const out_extensions = platform.outExtensions(allocator);
+
         for (loader_values) |_, i| {
             const loader = switch (opts.loader_values[i]) {
                 .jsx => options.Loader.jsx,
@@ -692,7 +700,53 @@ pub const Transformer = struct {
         var ulimit: usize = Fs.FileSystem.RealFS.adjustUlimit();
         var care_about_closing_files = !(FeatureFlags.store_file_descriptors and opts.entry_points.len * 2 < ulimit);
 
-        for (opts.entry_points) |entry_point, i| {}
+        var transformer = Transformer{
+            .log = log,
+            .allocator = allocator,
+            .opts = opts,
+            .cwd = cwd,
+            .platform = platform,
+            .out_extensions = out_extensions,
+            .define = define,
+            .output_path = output_dir,
+        };
+
+        const write_to_output_dir = opts.entry_points.len > 1 or opts.output_dir != null;
+
+        var output_dir_handle: ?std.fs.Dir = null;
+        if (write_to_output_dir) {
+            output_dir_handle = try options.openOutputDir(output_dir);
+        }
+
+        if (write_to_output_dir) {
+            for (opts.entry_points) |entry_point, i| {
+                try transformer.processEntryPoint(
+                    entry_point,
+                    i,
+                    &output_files,
+                    output_dir_handle,
+                    .disk,
+                    care_about_closing_files,
+                    use_default_loaders,
+                    loader_map,
+                    &jsx,
+                );
+            }
+        } else {
+            for (opts.entry_points) |entry_point, i| {
+                try transformer.processEntryPoint(
+                    entry_point,
+                    i,
+                    &output_files,
+                    output_dir_handle,
+                    .stdout,
+                    care_about_closing_files,
+                    use_default_loaders,
+                    loader_map,
+                    &jsx,
+                );
+            }
+        }
 
         return try options.TransformResult.init(output_dir, output_files.toOwnedSlice(), log, allocator);
     }
@@ -701,14 +755,20 @@ pub const Transformer = struct {
         transformer: *Transformer,
         entry_point: string,
         i: usize,
+        output_files: *std.ArrayList(options.OutputFile),
+        _output_dir: ?std.fs.Dir,
         comptime write_destination_type: options.WriteDestination,
+        care_about_closing_files: bool,
+        use_default_loaders: bool,
+        loader_map: std.StringHashMap(options.Loader),
+        jsx: *options.JSX.Pragma,
     ) !void {
         var allocator = transformer.allocator;
         var log = transformer.log;
 
         var _log = logger.Log.init(allocator);
         var __log = &_log;
-        const absolutePath = resolve_path.joinAbs(cwd, .auto, entry_point);
+        const absolutePath = resolve_path.joinAbs(transformer.cwd, .auto, entry_point);
 
         const file = try std.fs.openFileAbsolute(absolutePath, std.fs.File.OpenFlags{ .read = true });
         defer {
@@ -738,19 +798,73 @@ pub const Transformer = struct {
             ) orelse return;
         }
 
-        jsx.parse = loader.isJSX();
-
-        const parser_opts = js_parser.Parser.Options.init(jsx, loader);
         var _source = &source;
 
-        const relative_path = resolve_path.relative(cwd, absolutePath);
-        const out_path = resolve_path.joinAbs(cwd, .auto, absolutePath, relative_path);
+        var output_file = options.OutputFile{
+            .input = _file.path,
+            .loader = loader,
+            .value = undefined,
+        };
 
-        switch (write_destination_type) {}
+        var file_to_write: std.fs.File = undefined;
+        var output_path: Fs.Path = undefined;
 
-        try output_files.append();
+        switch (write_destination_type) {
+            .stdout => {
+                file_to_write = std.io.getStdOut();
+                output_path = Fs.Path.init("stdout");
+            },
+            .disk => {
+                const output_dir = _output_dir orelse unreachable;
+                output_path = Fs.Path.init(try allocator.dupe(u8, resolve_path.relative(transformer.cwd, entry_point)));
+                file_to_write = try output_dir.createFile(entry_point, .{});
+            },
+        }
+
+        switch (loader) {
+            .jsx, .js, .ts, .tsx => {
+                jsx.parse = loader.isJSX();
+                var file_op = options.OutputFile.FileOperation.fromFile(file_to_write.handle, output_path.pretty);
+
+                const parser_opts = js_parser.Parser.Options.init(jsx.*, loader);
+                file_op.is_tmpdir = false;
+                output_file.value = .{ .move = file_op };
+
+                if (_output_dir) |output_dir| {
+                    file_op.dir = output_dir.fd;
+                }
+
+                file_op.fd = file.handle;
+                var parser = try js_parser.Parser.init(parser_opts, log, _source, transformer.define, allocator);
+                const result = try parser.parse();
+
+                const ast = result.ast;
+                var symbols: [][]js_ast.Symbol = &([_][]js_ast.Symbol{ast.symbols});
+
+                output_file.size = try js_printer.printAst(
+                    js_printer.FileWriter,
+                    js_printer.NewFileWriter(file_to_write),
+                    ast,
+                    js_ast.Symbol.Map.initList(symbols),
+                    _source,
+                    false,
+                    js_printer.Options{
+                        .to_module_ref = Ref.RuntimeRef,
+                        .externals = ast.externals,
+                        .transform_imports = false,
+                        .runtime_imports = ast.runtime_imports,
+                    },
+                    null,
+                );
+            },
+            else => {
+                unreachable;
+            },
+        }
+
         js_ast.Expr.Data.Store.reset();
         js_ast.Stmt.Data.Store.reset();
+        try output_files.append(output_file);
     }
 
     pub fn _transform(

@@ -15,7 +15,6 @@ const assert = std.debug.assert;
 pub const WriteDestination = enum {
     stdout,
     disk,
-    http,
     // eventaully: wasm
 };
 
@@ -652,24 +651,27 @@ pub const BundleOptions = struct {
         }
 
         if (opts.write and opts.output_dir.len > 0) {
-            opts.output_dir_handle = std.fs.openDirAbsolute(opts.output_dir, std.fs.Dir.OpenDirOptions{}) catch brk: {
-                std.fs.makeDirAbsolute(opts.output_dir) catch |err| {
-                    Output.printErrorln("error: Unable to mkdir \"{s}\": \"{s}\"", .{ opts.output_dir, @errorName(err) });
-                    std.os.exit(1);
-                };
-
-                var handle = std.fs.openDirAbsolute(opts.output_dir, std.fs.Dir.OpenDirOptions{}) catch |err2| {
-                    Output.printErrorln("error: Unable to open \"{s}\": \"{s}\"", .{ opts.output_dir, @errorName(err2) });
-                    std.os.exit(1);
-                };
-                break :brk handle;
-            };
-            Fs.FileSystem.setMaxFd(opts.output_dir_handle.?.fd);
+            opts.output_dir_handle = try openOutputDir(opts.output_dir);
         }
 
         return opts;
     }
 };
+
+pub fn openOutputDir(output_dir: string) !std.fs.Dir {
+    return std.fs.openDirAbsolute(output_dir, std.fs.Dir.OpenDirOptions{}) catch brk: {
+        std.fs.makeDirAbsolute(output_dir) catch |err| {
+            Output.printErrorln("error: Unable to mkdir \"{s}\": \"{s}\"", .{ output_dir, @errorName(err) });
+            std.os.exit(1);
+        };
+
+        var handle = std.fs.openDirAbsolute(output_dir, std.fs.Dir.OpenDirOptions{}) catch |err2| {
+            Output.printErrorln("error: Unable to open \"{s}\": \"{s}\"", .{ output_dir, @errorName(err2) });
+            std.os.exit(1);
+        };
+        break :brk handle;
+    };
+}
 
 pub const TransformOptions = struct {
     footer: string = "",

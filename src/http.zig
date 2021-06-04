@@ -19,7 +19,7 @@ const Request = picohttp.Request;
 const Response = picohttp.Response;
 const Headers = picohttp.Headers;
 const MimeType = @import("http/mime_type.zig");
-const Bundler = bundler.Bundler;
+const Bundler = bundler.ServeBundler;
 
 const js_printer = @import("js_printer.zig");
 const SOCKET_FLAGS = os.SOCK_CLOEXEC;

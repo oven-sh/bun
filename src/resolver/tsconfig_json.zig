@@ -60,7 +60,8 @@ pub const TSConfigJSON = struct {
         allocator: *std.mem.Allocator,
         log: *logger.Log,
         source: logger.Source,
-        json_cache: *cache.Cache.Json,
+        comptime JSONCache: type,
+        json_cache: *JSONCache,
     ) anyerror!?*TSConfigJSON {
         // Unfortunately "tsconfig.json" isn't actually JSON. It's some other
         // format that appears to be defined by the implementation details of the

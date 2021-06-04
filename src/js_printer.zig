@@ -41,7 +41,6 @@ const last_high_surrogate: u21 = 0xDBFF;
 const first_low_surrogate: u21 = 0xDC00;
 const last_low_surrogate: u21 = 0xDFFF;
 const assert = std.debug.assert;
-const Linker = @import("linker.zig").Linker;
 
 fn notimpl() void {
     Global.panic("Not implemented yet!", .{});
@@ -118,7 +117,7 @@ const ExprFlag = packed struct {
     }
 };
 
-pub fn NewPrinter(comptime ascii_only: bool, comptime Writer: type) type {
+pub fn NewPrinter(comptime ascii_only: bool, comptime Writer: type, comptime Linker: type) type {
     // comptime const comptime_buf_len = 64;
     // comptime var comptime_buf = [comptime_buf_len]u8{};
     // comptime var comptime_buf_i: usize = 0;
@@ -3135,9 +3134,10 @@ pub fn printAst(
     source: *const logger.Source,
     ascii_only: bool,
     opts: Options,
-    linker: ?*Linker,
+    comptime LinkerType: type,
+    linker: ?*LinkerType,
 ) !usize {
-    const PrinterType = NewPrinter(false, Writer);
+    const PrinterType = NewPrinter(false, Writer, LinkerType);
     var writer = _writer;
     var printer = try PrinterType.init(
         writer,

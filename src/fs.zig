@@ -729,7 +729,14 @@ pub const FileSystem = struct {
             }
         }
 
-        pub fn readFileWithHandle(fs: *RealFS, path: string, _size: ?usize, file: std.fs.File) !File {
+        pub fn readFileWithHandle(
+            fs: *RealFS,
+            path: string,
+            _size: ?usize,
+            file: std.fs.File,
+            comptime use_shared_buffer: bool,
+            shared_buffer: *MutableString,
+        ) !File {
             FileSystem.setMaxFd(file.handle);
 
             if (FeatureFlags.disable_filesystem_cache) {
@@ -742,10 +749,28 @@ pub const FileSystem = struct {
                 return err;
             });
 
-            const file_contents: []u8 = file.readToEndAllocOptions(fs.allocator, size, size, @alignOf(u8), null) catch |err| {
-                fs.readFileError(path, err);
-                return err;
-            };
+            var file_contents: []u8 = undefined;
+
+            // When we're serving a JavaScript-like file over HTTP, we do not want to cache the contents in memory
+            // This imposes a performance hit because not reading from disk is faster than reading from disk
+            // Part of that hit is allocating a temporary buffer to store the file contents in
+            // As a mitigation, we can just keep one buffer forever and re-use it for the parsed files
+            if (use_shared_buffer) {
+                shared_buffer.reset();
+                try shared_buffer.growBy(size);
+                shared_buffer.list.expandToCapacity();
+                var read_count = file.readAll(shared_buffer.list.items) catch |err| {
+                    fs.readFileError(path, err);
+                    return err;
+                };
+                shared_buffer.list.items = shared_buffer.list.items[0..read_count];
+                file_contents = shared_buffer.list.items;
+            } else {
+                file_contents = file.readToEndAllocOptions(fs.allocator, size, size, @alignOf(u8), null) catch |err| {
+                    fs.readFileError(path, err);
+                    return err;
+                };
+            }
 
             if (fs.watcher) |*watcher| {
                 fs.watcher_mutex.lock();

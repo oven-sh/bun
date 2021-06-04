@@ -11,203 +11,215 @@ const fs = @import("./fs.zig");
 const sync = @import("sync.zig");
 const Mutex = sync.Mutex;
 
-pub const Cache = struct {
-    pub const Set = struct {
-        js: JavaScript,
-        fs: Fs,
-        json: Json,
+pub fn NewCache(comptime cache_files: bool) type {
+    return struct {
+        pub const Set = struct {
+            js: JavaScript,
+            fs: Fs,
+            json: Json,
 
-        pub fn init(allocator: *std.mem.Allocator) Set {
-            return Set{
-                .js = JavaScript.init(allocator),
-                .fs = Fs{
-                    .mutex = Mutex.init(),
-                    .entries = std.StringHashMap(Fs.Entry).init(allocator),
-                },
-                .json = Json{
-                    .mutex = Mutex.init(),
-                    .entries = std.StringHashMap(*Json.Entry).init(allocator),
-                },
-            };
-        }
-    };
-    pub const Fs = struct {
-        mutex: Mutex,
-        entries: std.StringHashMap(Entry),
-
-        pub const Entry = struct {
-            contents: string,
-            fd: StoredFileDescriptorType = 0,
-            // Null means its not usable
-            mod_key: ?fs.FileSystem.Implementation.ModKey = null,
-
-            pub fn deinit(entry: *Entry, allocator: *std.mem.Allocator) void {
-                if (entry.contents.len > 0) {
-                    allocator.free(entry.contents);
-                    entry.contents = "";
-                }
+            pub fn init(allocator: *std.mem.Allocator) Set {
+                return Set{
+                    .js = JavaScript.init(allocator),
+                    .fs = Fs{
+                        .mutex = Mutex.init(),
+                        .entries = std.StringHashMap(Fs.Entry).init(allocator),
+                        .shared_buffer = MutableString.init(allocator, 0) catch unreachable,
+                    },
+                    .json = Json{
+                        .mutex = Mutex.init(),
+                        .entries = std.StringHashMap(*Json.Entry).init(allocator),
+                    },
+                };
             }
         };
+        pub const Fs = struct {
+            mutex: Mutex,
+            entries: std.StringHashMap(Entry),
+            shared_buffer: MutableString,
 
-        pub fn deinit(c: *Fs) void {
-            var iter = c.entries.iterator();
-            while (iter.next()) |entry| {
-                entry.value.deinit(c.entries.allocator);
+            pub const Entry = struct {
+                contents: string,
+                fd: StoredFileDescriptorType = 0,
+                // Null means its not usable
+                mod_key: ?fs.FileSystem.Implementation.ModKey = null,
+
+                pub fn deinit(entry: *Entry, allocator: *std.mem.Allocator) void {
+                    if (entry.contents.len > 0) {
+                        allocator.free(entry.contents);
+                        entry.contents = "";
+                    }
+                }
+            };
+
+            pub fn deinit(c: *Fs) void {
+                var iter = c.entries.iterator();
+                while (iter.next()) |entry| {
+                    entry.value.deinit(c.entries.allocator);
+                }
+                c.entries.deinit();
             }
-            c.entries.deinit();
-        }
 
-        pub fn readFile(c: *Fs, _fs: *fs.FileSystem, path: string, dirname_fd: StoredFileDescriptorType) !Entry {
-            var rfs = _fs.fs;
+            pub fn readFile(c: *Fs, _fs: *fs.FileSystem, path: string, dirname_fd: StoredFileDescriptorType, comptime use_shared_buffer: bool) !Entry {
+                var rfs = _fs.fs;
 
-            {
-                c.mutex.lock();
-                defer c.mutex.unlock();
-                if (c.entries.get(path)) |entry| {
+                if (cache_files) {
+                    {
+                        c.mutex.lock();
+                        defer c.mutex.unlock();
+                        if (c.entries.get(path)) |entry| {
+                            return entry;
+                        }
+                    }
+                }
+
+                var file_handle: std.fs.File = undefined;
+
+                if (FeatureFlags.store_file_descriptors and dirname_fd > 0) {
+                    file_handle = try std.fs.Dir.openFile(std.fs.Dir{ .fd = dirname_fd }, std.fs.path.basename(path), .{ .read = true });
+                } else {
+                    file_handle = try std.fs.openFileAbsolute(path, .{ .read = true });
+                }
+
+                defer {
+                    if (rfs.needToCloseFiles()) {
+                        file_handle.close();
+                    }
+                }
+
+                // If the file's modification key hasn't changed since it was cached, assume
+                // the contents of the file are also the same and skip reading the file.
+                var mod_key: ?fs.FileSystem.Implementation.ModKey = rfs.modKeyWithFile(path, file_handle) catch |err| handler: {
+                    switch (err) {
+                        error.FileNotFound, error.AccessDenied => {
+                            return err;
+                        },
+                        else => {
+                            if (isDebug) {
+                                Output.printError("modkey error: {s}", .{@errorName(err)});
+                            }
+                            break :handler null;
+                        },
+                    }
+                };
+
+                var file: fs.File = undefined;
+                if (mod_key) |modk| {
+                    file = rfs.readFileWithHandle(path, modk.size, file_handle, use_shared_buffer, &c.shared_buffer) catch |err| {
+                        if (isDebug) {
+                            Output.printError("{s}: readFile error -- {s}", .{ path, @errorName(err) });
+                        }
+                        return err;
+                    };
+                } else {
+                    file = rfs.readFileWithHandle(path, null, file_handle, use_shared_buffer, &c.shared_buffer) catch |err| {
+                        if (isDebug) {
+                            Output.printError("{s}: readFile error -- {s}", .{ path, @errorName(err) });
+                        }
+                        return err;
+                    };
+                }
+
+                const entry = Entry{
+                    .contents = file.contents,
+                    .mod_key = mod_key,
+                    .fd = if (FeatureFlags.store_file_descriptors) file_handle.handle else 0,
+                };
+
+                if (cache_files) {
+                    c.mutex.lock();
+                    defer c.mutex.unlock();
+                    var res = c.entries.getOrPut(path) catch unreachable;
+
+                    if (res.found_existing) {
+                        res.entry.value.deinit(c.entries.allocator);
+                    }
+                    res.entry.value = entry;
+                    return res.entry.value;
+                } else {
                     return entry;
                 }
             }
-
-            var file_handle: std.fs.File = undefined;
-
-            if (FeatureFlags.store_file_descriptors and dirname_fd > 0) {
-                file_handle = try std.fs.Dir.openFile(std.fs.Dir{ .fd = dirname_fd }, std.fs.path.basename(path), .{ .read = true });
-            } else {
-                file_handle = try std.fs.openFileAbsolute(path, .{ .read = true });
-            }
-
-            defer {
-                if (rfs.needToCloseFiles()) {
-                    file_handle.close();
-                }
-            }
-
-            // If the file's modification key hasn't changed since it was cached, assume
-            // the contents of the file are also the same and skip reading the file.
-            var mod_key: ?fs.FileSystem.Implementation.ModKey = rfs.modKeyWithFile(path, file_handle) catch |err| handler: {
-                switch (err) {
-                    error.FileNotFound, error.AccessDenied => {
-                        return err;
-                    },
-                    else => {
-                        if (isDebug) {
-                            Output.printError("modkey error: {s}", .{@errorName(err)});
-                        }
-                        break :handler null;
-                    },
-                }
-            };
-
-            var file: fs.File = undefined;
-            if (mod_key) |modk| {
-                file = rfs.readFileWithHandle(path, modk.size, file_handle) catch |err| {
-                    if (isDebug) {
-                        Output.printError("{s}: readFile error -- {s}", .{ path, @errorName(err) });
-                    }
-                    return err;
-                };
-            } else {
-                file = rfs.readFileWithHandle(path, null, file_handle) catch |err| {
-                    if (isDebug) {
-                        Output.printError("{s}: readFile error -- {s}", .{ path, @errorName(err) });
-                    }
-                    return err;
-                };
-            }
-
-            const entry = Entry{
-                .contents = file.contents,
-                .mod_key = mod_key,
-                .fd = if (FeatureFlags.store_file_descriptors) file_handle.handle else 0,
-            };
-
-            c.mutex.lock();
-            defer c.mutex.unlock();
-            var res = c.entries.getOrPut(path) catch unreachable;
-
-            if (res.found_existing) {
-                res.entry.value.deinit(c.entries.allocator);
-            }
-
-            res.entry.value = entry;
-            return res.entry.value;
-        }
-    };
-
-    pub const Css = struct {
-        pub const Entry = struct {};
-        pub const Result = struct {
-            ok: bool,
-            value: void,
         };
-        pub fn parse(cache: *@This(), log: *logger.Log, source: logger.Source) !Result {
-            Global.notimpl();
-        }
-    };
 
-    pub const JavaScript = struct {
-        mutex: Mutex,
-        entries: std.StringHashMap(Result),
-
-        pub const Result = js_ast.Result;
-
-        pub fn init(allocator: *std.mem.Allocator) JavaScript {
-            return JavaScript{ .mutex = Mutex.init(), .entries = std.StringHashMap(Result).init(allocator) };
-        }
-        // For now, we're not going to cache JavaScript ASTs.
-        // It's probably only relevant when bundling for production.
-        pub fn parse(
-            cache: *@This(),
-            allocator: *std.mem.Allocator,
-            opts: js_parser.Parser.Options,
-            defines: *Define,
-            log: *logger.Log,
-            source: *const logger.Source,
-        ) anyerror!?js_ast.Ast {
-            var temp_log = logger.Log.init(allocator);
-            defer temp_log.appendTo(log) catch {};
-
-            var parser = js_parser.Parser.init(opts, &temp_log, source, defines, allocator) catch |err| {
-                return null;
+        pub const Css = struct {
+            pub const Entry = struct {};
+            pub const Result = struct {
+                ok: bool,
+                value: void,
             };
-
-            const result = try parser.parse();
-
-            return if (result.ok) result.ast else null;
-        }
-    };
-
-    pub const Json = struct {
-        pub const Entry = struct {
-            is_tsconfig: bool = false,
-            source: logger.Source,
-            expr: ?js_ast.Expr = null,
-            ok: bool = false,
-            // msgs: []logger.Msg,
-        };
-        mutex: Mutex,
-        entries: std.StringHashMap(*Entry),
-        pub fn init(allocator: *std.mem.Allocator) Json {
-            return Json{
-                .mutex = Mutex.init(),
-                .entries = std.StringHashMap(Entry).init(allocator),
-            };
-        }
-        fn parse(cache: *@This(), log: *logger.Log, source: logger.Source, allocator: *std.mem.Allocator, is_tsconfig: bool, func: anytype) anyerror!?js_ast.Expr {
-            var temp_log = logger.Log.init(allocator);
-            defer {
-                temp_log.appendTo(log) catch {};
+            pub fn parse(cache: *@This(), log: *logger.Log, source: logger.Source) !Result {
+                Global.notimpl();
             }
-            return func(&source, &temp_log, allocator) catch handler: {
-                break :handler null;
-            };
-        }
-        pub fn parseJSON(cache: *@This(), log: *logger.Log, source: logger.Source, allocator: *std.mem.Allocator) anyerror!?js_ast.Expr {
-            return try parse(cache, log, source, allocator, false, json_parser.ParseJSON);
-        }
+        };
 
-        pub fn parseTSConfig(cache: *@This(), log: *logger.Log, source: logger.Source, allocator: *std.mem.Allocator) anyerror!?js_ast.Expr {
-            return try parse(cache, log, source, allocator, true, json_parser.ParseTSConfig);
-        }
+        pub const JavaScript = struct {
+            mutex: Mutex,
+            entries: std.StringHashMap(Result),
+
+            pub const Result = js_ast.Result;
+
+            pub fn init(allocator: *std.mem.Allocator) JavaScript {
+                return JavaScript{ .mutex = Mutex.init(), .entries = std.StringHashMap(Result).init(allocator) };
+            }
+            // For now, we're not going to cache JavaScript ASTs.
+            // It's probably only relevant when bundling for production.
+            pub fn parse(
+                cache: *@This(),
+                allocator: *std.mem.Allocator,
+                opts: js_parser.Parser.Options,
+                defines: *Define,
+                log: *logger.Log,
+                source: *const logger.Source,
+            ) anyerror!?js_ast.Ast {
+                var temp_log = logger.Log.init(allocator);
+                defer temp_log.appendTo(log) catch {};
+
+                var parser = js_parser.Parser.init(opts, &temp_log, source, defines, allocator) catch |err| {
+                    return null;
+                };
+
+                const result = try parser.parse();
+
+                return if (result.ok) result.ast else null;
+            }
+        };
+
+        pub const Json = struct {
+            pub const Entry = struct {
+                is_tsconfig: bool = false,
+                source: logger.Source,
+                expr: ?js_ast.Expr = null,
+                ok: bool = false,
+                // msgs: []logger.Msg,
+            };
+            mutex: Mutex,
+            entries: std.StringHashMap(*Entry),
+            pub fn init(allocator: *std.mem.Allocator) Json {
+                return Json{
+                    .mutex = Mutex.init(),
+                    .entries = std.StringHashMap(Entry).init(allocator),
+                };
+            }
+            fn parse(cache: *@This(), log: *logger.Log, source: logger.Source, allocator: *std.mem.Allocator, is_tsconfig: bool, func: anytype) anyerror!?js_ast.Expr {
+                var temp_log = logger.Log.init(allocator);
+                defer {
+                    temp_log.appendTo(log) catch {};
+                }
+                return func(&source, &temp_log, allocator) catch handler: {
+                    break :handler null;
+                };
+            }
+            pub fn parseJSON(cache: *@This(), log: *logger.Log, source: logger.Source, allocator: *std.mem.Allocator) anyerror!?js_ast.Expr {
+                return try parse(cache, log, source, allocator, false, json_parser.ParseJSON);
+            }
+
+            pub fn parseTSConfig(cache: *@This(), log: *logger.Log, source: logger.Source, allocator: *std.mem.Allocator) anyerror!?js_ast.Expr {
+                return try parse(cache, log, source, allocator, true, json_parser.ParseTSConfig);
+            }
+        };
     };
-};
+}
+
+pub const Cache = NewCache(true);
+pub const ServeCache = NewCache(false);

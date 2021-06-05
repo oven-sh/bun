@@ -20,7 +20,7 @@ pub const PropertyModifierKeyword = tables.PropertyModifierKeyword;
 pub const TypescriptStmtKeyword = tables.TypescriptStmtKeyword;
 pub const TypeScriptAccessibilityModifier = tables.TypeScriptAccessibilityModifier;
 
-fn utf8ByteSequenceLength(first_byte: u8) u3 {
+pub fn utf8ByteSequenceLength(first_byte: u8) u3 {
     // The switch is optimized much better than a "smart" approach using @clz
     return switch (first_byte) {
         0b0000_0000...0b0111_1111 => 1,

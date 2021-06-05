@@ -2,6 +2,7 @@ const std = @import("std");
 const expect = std.testing.expect;
 
 usingnamespace @import("string_types.zig");
+const js_lexer = @import("js_lexer.zig");
 
 pub const MutableString = struct {
     allocator: *std.mem.Allocator,
@@ -51,34 +52,40 @@ pub const MutableString = struct {
         var start_i: usize = 0;
 
         // Common case: no gap necessary. No allocation necessary.
-        needs_gap = std.ascii.isAlNum(str[0]);
+        needs_gap = !js_lexer.isIdentifierStart(@intCast(js_lexer.CodePoint, str[0]));
         if (!needs_gap) {
             // Are there any non-alphanumeric chars at all?
             for (str[1..str.len]) |c, i| {
-                switch (c) {
-                    'a'...'z', 'A'...'Z', '0'...'9' => {},
-                    else => {
-                        needs_gap = true;
-                        start_i = i;
-                        break;
-                    },
+                if (!js_lexer.isIdentifierContinue(@intCast(js_lexer.CodePoint, c))) {
+                    needs_gap = true;
+                    start_i = 1 + i;
+                    break;
                 }
             }
         }
 
         if (needs_gap) {
             var mutable = try MutableString.initCopy(allocator, str[0..start_i]);
+            needs_gap = false;
 
-            for (str[start_i..str.len]) |c, i| {
-                if (std.ascii.isLower(c) or std.ascii.isUpper(c) or (mutable.len() > 0 and std.ascii.isAlNum(c))) {
+            var i: usize = 0;
+
+            var slice = str[start_i..];
+
+            while (i < slice.len) : (i += 1) {
+                const c = @intCast(js_lexer.CodePoint, slice[i]);
+                if (js_lexer.isIdentifierContinue(c)) {
                     if (needs_gap) {
                         try mutable.appendChar('_');
                         needs_gap = false;
                         has_needed_gap = true;
                     }
-                    try mutable.appendChar(c);
+
+                    try mutable.appendChar(slice[i]);
                 } else if (!needs_gap) {
                     needs_gap = true;
+                    // skip the code point, replace it with a single _
+                    i += std.math.max(js_lexer.utf8ByteSequenceLength(slice[i]), 1) - 1;
                 }
             }
 
@@ -182,6 +189,6 @@ test "MutableString" {
 test "MutableString.ensureValidIdentifier" {
     const alloc = std.heap.page_allocator;
 
-    std.testing.expectEqualStrings("jquery", try MutableString.ensureValidIdentifier("jquery", alloc));
-    std.testing.expectEqualStrings("jquery_foo", try MutableString.ensureValidIdentifier("jquery😋foo", alloc));
+    try std.testing.expectEqualStrings("jquery", try MutableString.ensureValidIdentifier("jquery", alloc));
+    try std.testing.expectEqualStrings("jquery_foo", try MutableString.ensureValidIdentifier("jquery😋foo", alloc));
 }

@@ -89,6 +89,13 @@ pub const MutableString = struct {
                 }
             }
 
+            // If it ends with an emoji
+            if (needs_gap) {
+                try mutable.appendChar('_');
+                needs_gap = false;
+                has_needed_gap = true;
+            }
+
             return mutable.list.toOwnedSlice(allocator);
         }
 

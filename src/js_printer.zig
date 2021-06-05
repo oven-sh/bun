@@ -192,10 +192,6 @@ pub fn NewPrinter(comptime ascii_only: bool, comptime Writer: type, comptime Lin
         //     }
         // }
 
-        pub fn printFmt(p: *Printer, comptime fmt: string, args: anytype) void {
-            std.fmt.format(p.writer, fmt, args) catch unreachable;
-        }
-
         pub fn print(p: *Printer, str: anytype) void {
             switch (@TypeOf(str)) {
                 comptime_int, u16, u8 => {
@@ -244,8 +240,7 @@ pub fn NewPrinter(comptime ascii_only: bool, comptime Writer: type, comptime Lin
         pub fn printSpaceBeforeIdentifier(
             p: *Printer,
         ) void {
-            const n = p.writer.written;
-            if (n > 0 and (js_lexer.isIdentifierContinue(p.writer.prev_char) or n == p.prev_reg_exp_end)) {
+            if (p.writer.written > 0 and (js_lexer.isIdentifierContinue(p.writer.prevChar()) or p.writer.written == p.prev_reg_exp_end)) {
                 p.print(" ");
             }
         }
@@ -253,11 +248,8 @@ pub fn NewPrinter(comptime ascii_only: bool, comptime Writer: type, comptime Lin
         pub fn maybePrintSpace(
             p: *Printer,
         ) void {
-            const n = p.writer.written;
-            if (n == 0) return;
-
-            switch (p.writer.prev_char) {
-                ' ', '\n' => {},
+            switch (p.writer.prevChar()) {
+                0, ' ', '\n' => {},
                 else => {
                     p.print(" ");
                 },
@@ -1304,7 +1296,7 @@ pub fn NewPrinter(comptime ascii_only: bool, comptime Writer: type, comptime Lin
                     const n = p.writer.written;
 
                     // Avoid forming a single-line comment
-                    if (n > 0 and p.writer.prev_char == '/') {
+                    if (n > 0 and p.writer.prevChar() == '/') {
                         p.print(" ");
                     }
 
@@ -1611,7 +1603,7 @@ pub fn NewPrinter(comptime ascii_only: bool, comptime Writer: type, comptime Lin
                 if (((prev == Op.Code.bin_add or prev == Op.Code.un_pos) and (next == Op.Code.bin_add or next == Op.Code.un_pos or next == Op.Code.un_pre_inc)) or
                     ((prev == Op.Code.bin_sub or prev == Op.Code.un_neg) and (next == Op.Code.bin_sub or next == Op.Code.un_neg or next == Op.Code.un_pre_dec)) or
                     (prev == Op.Code.un_post_dec and next == Op.Code.bin_gt) or
-                    (prev == Op.Code.un_not and next == Op.Code.un_pre_dec and p.writer.written > 1 and p.writer.prev_prev_char == '<'))
+                    (prev == Op.Code.un_not and next == Op.Code.un_pre_dec and p.writer.written > 1 and p.writer.prevPrevChar() == '<'))
                 {
                     p.print(" ");
                 }
@@ -2576,13 +2568,12 @@ pub fn NewPrinter(comptime ascii_only: bool, comptime Writer: type, comptime Lin
 
                     if (record.wrap_with_to_module) {
                         if (p.options.runtime_imports.__require) |require_ref| {
-                            p.print("import * as ");
                             var module_name_buf: [256]u8 = undefined;
                             var fixed_buf_allocator = std.heap.FixedBufferAllocator.init(&module_name_buf);
                             const module_name_segment = (fs.PathName.init(record.path.pretty).nonUniqueNameString(&fixed_buf_allocator.allocator) catch unreachable)[1..];
+                            p.print("import * as ");
                             p.print(module_name_segment);
-                            p.print("_module");
-                            p.print(" from \"");
+                            p.print("_module from \"");
                             p.print(record.path.text);
                             p.print("\";\n");
 
@@ -2979,7 +2970,9 @@ pub fn NewPrinter(comptime ascii_only: bool, comptime Writer: type, comptime Lin
 pub fn NewWriter(
     comptime ContextType: type,
     writeByte: fn (ctx: *ContextType, char: u8) anyerror!usize,
-    writeAll: fn (ctx: *ContextType, buf: anytype) anyerror!usize,
+    writeAllFn: fn (ctx: *ContextType, buf: anytype) anyerror!usize,
+    getLastByte: fn (ctx: *const ContextType) u8,
+    getLastLastByte: fn (ctx: *const ContextType) u8,
 ) type {
     return struct {
         const Self = @This();
@@ -3007,6 +3000,16 @@ pub fn NewWriter(
             }
         }
 
+        pub inline fn prevChar(writer: *const Self) u8 {
+            return @call(.{ .modifier = .always_inline }, getLastByte, .{&writer.ctx});
+        }
+
+        pub inline fn prevPrevChar(writer: *const Self) u8 {
+            return @call(.{ .modifier = .always_inline }, getLastLastByte, .{&writer.ctx});
+        }
+
+        pub const Error = error{FormatError};
+
         pub inline fn print(writer: *Self, comptime ValueType: type, str: ValueType) void {
             if (FeatureFlags.disable_printing_null) {
                 if (str == 0) {
@@ -3022,23 +3025,15 @@ pub fn NewWriter(
                     };
 
                     writer.written += @intCast(i32, written);
-
-                    writer.prev_prev_char = writer.prev_char;
-                    writer.prev_char = str;
-
                     writer.err = if (written == 0) error.WriteFailed else writer.err;
                 },
                 else => {
-                    const written = writeAll(&writer.ctx, str) catch |err| brk: {
+                    const written = writeAllFn(&writer.ctx, str) catch |err| brk: {
                         writer.orig_err = err;
                         break :brk 0;
                     };
 
                     writer.written += @intCast(i32, written);
-
-                    writer.prev_prev_char = if (written > 1) str[written - 1] else if (written == 1) writer.prev_char else writer.prev_prev_char;
-                    writer.prev_char = if (written > 1) str[written - 1] else writer.prev_char;
-
                     if (written < str.len) {
                         writer.err = if (written == 0) error.WriteFailed else error.PartialWrite;
                     }
@@ -3109,6 +3104,14 @@ const FileWriterInternal = struct {
         return bytes.len;
     }
 
+    pub fn getLastByte(_ctx: *const FileWriterInternal) u8 {
+        return if (buffer.list.items.len > 0) buffer.list.items[buffer.list.items.len - 1] else 0;
+    }
+
+    pub fn getLastLastByte(_ctx: *const FileWriterInternal) u8 {
+        return if (buffer.list.items.len > 1) buffer.list.items[buffer.list.items.len - 2] else 0;
+    }
+
     pub fn done(
         ctx: *FileWriterInternal,
     ) anyerror!void {
@@ -3121,7 +3124,7 @@ const FileWriterInternal = struct {
     ) anyerror!void {}
 };
 
-pub const FileWriter = NewWriter(FileWriterInternal, FileWriterInternal.writeByte, FileWriterInternal.writeAll);
+pub const FileWriter = NewWriter(FileWriterInternal, FileWriterInternal.writeByte, FileWriterInternal.writeAll, FileWriterInternal.getLastByte, FileWriterInternal.getLastLastByte);
 pub fn NewFileWriter(file: std.fs.File) FileWriter {
     var internal = FileWriterInternal.init(file);
     return FileWriter.init(internal);

@@ -387,6 +387,14 @@ pub const RequestContext = struct {
                         return bytes.len;
                     }
 
+                    pub fn getLastByte(_ctx: *const SocketPrinterInternal) u8 {
+                        return if (buffer.list.items.len > 0) buffer.list.items[buffer.list.items.len - 1] else 0;
+                    }
+
+                    pub fn getLastLastByte(_ctx: *const SocketPrinterInternal) u8 {
+                        return if (buffer.list.items.len > 1) buffer.list.items[buffer.list.items.len - 2] else 0;
+                    }
+
                     pub fn done(
                         chunky: *SocketPrinterInternal,
                     ) anyerror!void {
@@ -425,7 +433,13 @@ pub const RequestContext = struct {
                     ) anyerror!void {}
                 };
 
-                const SocketPrinter = js_printer.NewWriter(SocketPrinterInternal, SocketPrinterInternal.writeByte, SocketPrinterInternal.writeAll);
+                const SocketPrinter = js_printer.NewWriter(
+                    SocketPrinterInternal,
+                    SocketPrinterInternal.writeByte,
+                    SocketPrinterInternal.writeAll,
+                    SocketPrinterInternal.getLastByte,
+                    SocketPrinterInternal.getLastLastByte,
+                );
 
                 // const ChunkedTransferEncoding = struct {
                 //     rctx: *RequestContext,

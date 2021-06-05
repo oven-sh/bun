@@ -344,7 +344,7 @@ pub const Cli = struct {
 
                 for (result.output_files) |f, i| {
                     max_path_len = std.math.max(
-                        f.input.text[from_path.len..].len + 2,
+                        std.math.max(from_path.len, f.input.text.len) + 2 - from_path.len,
                         max_path_len,
                     );
                 }

@@ -227,7 +227,7 @@ pub fn NewBundler(cache_files: bool) type {
             file_path.pretty = Linker.relative_paths_list.append(bundler.fs.relativeTo(file_path.text)) catch unreachable;
 
             switch (loader) {
-                .jsx, .tsx, .js, .json => {
+                .jsx, .tsx, .js, .ts, .json => {
                     var result = bundler.parse(bundler.allocator, file_path, loader, resolve_result.dirname_fd) orelse {
                         js_ast.Expr.Data.Store.reset();
                         js_ast.Stmt.Data.Store.reset();
@@ -314,7 +314,11 @@ pub fn NewBundler(cache_files: bool) type {
             const source = logger.Source.initFile(Fs.File{ .path = path, .contents = entry.contents }, bundler.allocator) catch return null;
 
             switch (loader) {
-                .js, .jsx, .ts, .tsx => {
+                .js,
+                .jsx,
+                .ts,
+                .tsx,
+                => {
                     var jsx = bundler.options.jsx;
                     jsx.parse = loader.isJSX();
                     var opts = js_parser.Parser.Options.init(jsx, loader);

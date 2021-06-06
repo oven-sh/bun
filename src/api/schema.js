@@ -135,6 +135,338 @@ bb.writeByte(encoded);
 
 }
 
+function decodeStringPointer(bb) {
+  var result = {};
+
+  result["offset"] = bb.readUint32();
+  result["length"] = bb.readUint32();
+  return result;
+}
+
+function encodeStringPointer(message, bb) {
+
+  var value = message["offset"];
+  if (value != null) {
+    bb.writeUint32(value);
+  } else {
+    throw new Error("Missing required field \"offset\"");
+  }
+
+  var value = message["length"];
+  if (value != null) {
+    bb.writeUint32(value);
+  } else {
+    throw new Error("Missing required field \"length\"");
+  }
+
+}
+
+function decodeJavascriptBundledModule(bb) {
+  var result = {};
+
+  result["path"] = decodeStringPointer(bb);
+  result["code"] = decodeStringPointer(bb);
+  result["package_id"] = bb.readUint32();
+  return result;
+}
+
+function encodeJavascriptBundledModule(message, bb) {
+
+  var value = message["path"];
+  if (value != null) {
+    encodeStringPointer(value, bb);
+  } else {
+    throw new Error("Missing required field \"path\"");
+  }
+
+  var value = message["code"];
+  if (value != null) {
+    encodeStringPointer(value, bb);
+  } else {
+    throw new Error("Missing required field \"code\"");
+  }
+
+  var value = message["package_id"];
+  if (value != null) {
+    bb.writeUint32(value);
+  } else {
+    throw new Error("Missing required field \"package_id\"");
+  }
+
+}
+
+function decodeJavascriptBundledPackage(bb) {
+  var result = {};
+
+  result["name"] = decodeStringPointer(bb);
+  result["version"] = decodeStringPointer(bb);
+  result["hash"] = bb.readUint32();
+  result["modules_offset"] = bb.readUint32();
+  result["modules_length"] = bb.readUint32();
+  return result;
+}
+
+function encodeJavascriptBundledPackage(message, bb) {
+
+  var value = message["name"];
+  if (value != null) {
+    encodeStringPointer(value, bb);
+  } else {
+    throw new Error("Missing required field \"name\"");
+  }
+
+  var value = message["version"];
+  if (value != null) {
+    encodeStringPointer(value, bb);
+  } else {
+    throw new Error("Missing required field \"version\"");
+  }
+
+  var value = message["hash"];
+  if (value != null) {
+    bb.writeUint32(value);
+  } else {
+    throw new Error("Missing required field \"hash\"");
+  }
+
+  var value = message["modules_offset"];
+  if (value != null) {
+    bb.writeUint32(value);
+  } else {
+    throw new Error("Missing required field \"modules_offset\"");
+  }
+
+  var value = message["modules_length"];
+  if (value != null) {
+    bb.writeUint32(value);
+  } else {
+    throw new Error("Missing required field \"modules_length\"");
+  }
+
+}
+
+function decodeJavascriptBundle(bb) {
+  var result = {};
+
+  var length = bb.readVarUint();
+  var values = result["modules"] = Array(length);
+  for (var i = 0; i < length; i++) values[i] = decodeJavascriptBundledModule(bb);
+  var length = bb.readVarUint();
+  var values = result["packages"] = Array(length);
+  for (var i = 0; i < length; i++) values[i] = decodeJavascriptBundledPackage(bb);
+  result["etag"] = bb.readByteArray();
+  result["generated_at"] = bb.readUint32();
+  result["app_package_json_dependencies_hash"] = bb.readByteArray();
+  result["import_from_name"] = bb.readByteArray();
+  result["manifest_string"] = bb.readByteArray();
+  return result;
+}
+
+function encodeJavascriptBundle(message, bb) {
+
+  var value = message["modules"];
+  if (value != null) {
+    var values = value, n = values.length;
+    bb.writeVarUint(n);
+    for (var i = 0; i < n; i++) {
+      value = values[i];
+      encodeJavascriptBundledModule(value, bb);
+    }
+  } else {
+    throw new Error("Missing required field \"modules\"");
+  }
+
+  var value = message["packages"];
+  if (value != null) {
+    var values = value, n = values.length;
+    bb.writeVarUint(n);
+    for (var i = 0; i < n; i++) {
+      value = values[i];
+      encodeJavascriptBundledPackage(value, bb);
+    }
+  } else {
+    throw new Error("Missing required field \"packages\"");
+  }
+
+  var value = message["etag"];
+  if (value != null) {
+   bb.writeByteArray(value);
+  } else {
+    throw new Error("Missing required field \"etag\"");
+  }
+
+  var value = message["generated_at"];
+  if (value != null) {
+    bb.writeUint32(value);
+  } else {
+    throw new Error("Missing required field \"generated_at\"");
+  }
+
+  var value = message["app_package_json_dependencies_hash"];
+  if (value != null) {
+   bb.writeByteArray(value);
+  } else {
+    throw new Error("Missing required field \"app_package_json_dependencies_hash\"");
+  }
+
+  var value = message["import_from_name"];
+  if (value != null) {
+   bb.writeByteArray(value);
+  } else {
+    throw new Error("Missing required field \"import_from_name\"");
+  }
+
+  var value = message["manifest_string"];
+  if (value != null) {
+   bb.writeByteArray(value);
+  } else {
+    throw new Error("Missing required field \"manifest_string\"");
+  }
+
+}
+
+function decodeJavascriptBundleContainer(bb) {
+  var result = {};
+
+  while (true) {
+    switch (bb.readByte()) {
+    case 0:
+      return result;
+
+    case 1:
+      result["bundle_format_version"] = bb.readUint32();
+      break;
+
+    case 2:
+      result["bundle"] = decodeJavascriptBundle(bb);
+      break;
+
+    case 3:
+      result["code_length"] = bb.readUint32();
+      break;
+
+    default:
+      throw new Error("Attempted to parse invalid message");
+    }
+  }
+}
+
+function encodeJavascriptBundleContainer(message, bb) {
+
+  var value = message["bundle_format_version"];
+  if (value != null) {
+    bb.writeByte(1);
+    bb.writeUint32(value);
+  }
+
+  var value = message["bundle"];
+  if (value != null) {
+    bb.writeByte(2);
+    encodeJavascriptBundle(value, bb);
+  }
+
+  var value = message["code_length"];
+  if (value != null) {
+    bb.writeByte(3);
+    bb.writeUint32(value);
+  }
+  bb.writeByte(0);
+
+}
+const ScanDependencyMode = {
+  "1": 1,
+  "2": 2,
+  "app": 1,
+  "all": 2
+};
+const ScanDependencyModeKeys = {
+  "1": "app",
+  "2": "all",
+  "app": "app",
+  "all": "all"
+};
+const ModuleImportType = {
+  "1": 1,
+  "2": 2,
+  "import": 1,
+  "require": 2
+};
+const ModuleImportTypeKeys = {
+  "1": "import",
+  "2": "require",
+  "import": "import",
+  "require": "require"
+};
+
+function decodeModuleImportRecord(bb) {
+  var result = {};
+
+  result["kind"] = ModuleImportType[bb.readByte()];
+  result["path"] = bb.readString();
+  result["dynamic"] = !!bb.readByte();
+  return result;
+}
+
+function encodeModuleImportRecord(message, bb) {
+
+  var value = message["kind"];
+  if (value != null) {
+    var encoded = ModuleImportType[value];
+if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + " for enum \"ModuleImportType\"");
+bb.writeByte(encoded);
+  } else {
+    throw new Error("Missing required field \"kind\"");
+  }
+
+  var value = message["path"];
+  if (value != null) {
+    bb.writeString(value);
+  } else {
+    throw new Error("Missing required field \"path\"");
+  }
+
+  var value = message["dynamic"];
+  if (value != null) {
+    bb.writeByte(value);
+  } else {
+    throw new Error("Missing required field \"dynamic\"");
+  }
+
+}
+
+function decodeModule(bb) {
+  var result = {};
+
+  result["path"] = bb.readString();
+  var length = bb.readVarUint();
+  var values = result["imports"] = Array(length);
+  for (var i = 0; i < length; i++) values[i] = decodeModuleImportRecord(bb);
+  return result;
+}
+
+function encodeModule(message, bb) {
+
+  var value = message["path"];
+  if (value != null) {
+    bb.writeString(value);
+  } else {
+    throw new Error("Missing required field \"path\"");
+  }
+
+  var value = message["imports"];
+  if (value != null) {
+    var values = value, n = values.length;
+    bb.writeVarUint(n);
+    for (var i = 0; i < n; i++) {
+      value = values[i];
+      encodeModuleImportRecord(value, bb);
+    }
+  } else {
+    throw new Error("Missing required field \"imports\"");
+  }
+
+}
+
 function decodeTransformOptions(bb) {
   var result = {};
 
@@ -239,6 +571,14 @@ function decodeTransformOptions(bb) {
 
     case 20:
       result["public_dir"] = bb.readString();
+      break;
+
+    case 21:
+      result["only_scan_dependencies"] = ScanDependencyMode[bb.readByte()];
+      break;
+
+    case 22:
+      result["generate_node_module_bundle"] = !!bb.readByte();
       break;
 
     default:
@@ -418,6 +758,20 @@ bb.writeByte(encoded);
   if (value != null) {
     bb.writeByte(20);
     bb.writeString(value);
+  }
+
+  var value = message["only_scan_dependencies"];
+  if (value != null) {
+    bb.writeByte(21);
+    var encoded = ScanDependencyMode[value];
+if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + " for enum \"ScanDependencyMode\"");
+bb.writeByte(encoded);
+  }
+
+  var value = message["generate_node_module_bundle"];
+  if (value != null) {
+    bb.writeByte(22);
+    bb.writeByte(value);
   }
   bb.writeByte(0);
 
@@ -835,6 +1189,24 @@ export { JSXRuntime }
 export { JSXRuntimeKeys }
 export { decodeJSX }
 export { encodeJSX }
+export { decodeStringPointer }
+export { encodeStringPointer }
+export { decodeJavascriptBundledModule }
+export { encodeJavascriptBundledModule }
+export { decodeJavascriptBundledPackage }
+export { encodeJavascriptBundledPackage }
+export { decodeJavascriptBundle }
+export { encodeJavascriptBundle }
+export { decodeJavascriptBundleContainer }
+export { encodeJavascriptBundleContainer }
+export { ScanDependencyMode }
+export { ScanDependencyModeKeys }
+export { ModuleImportType }
+export { ModuleImportTypeKeys }
+export { decodeModuleImportRecord }
+export { encodeModuleImportRecord }
+export { decodeModule }
+export { encodeModule }
 export { decodeTransformOptions }
 export { encodeTransformOptions }
 export { decodeFileHandle }

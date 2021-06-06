@@ -148,6 +148,388 @@ pub const Api = struct {
         }
     };
 
+    pub const StringPointer = struct {
+        /// offset
+        offset: u32 = 0,
+
+        /// length
+        length: u32 = 0,
+
+        pub fn decode(allocator: *std.mem.Allocator, reader: anytype) anyerror!StringPointer {
+            var obj = std.mem.zeroes(StringPointer);
+            try update(&obj, allocator, reader);
+            return obj;
+        }
+        pub fn update(result: *StringPointer, allocator: *std.mem.Allocator, reader: anytype) anyerror!void {
+            _ = try reader.readAll(std.mem.asBytes(&result.offset));
+            _ = try reader.readAll(std.mem.asBytes(&result.length));
+            return;
+        }
+
+        pub fn encode(result: *const @This(), writer: anytype) anyerror!void {
+            try writer.writeIntNative(u32, result.offset);
+
+            try writer.writeIntNative(u32, result.length);
+            return;
+        }
+    };
+
+    pub const JavascriptBundledModule = struct {
+        /// path
+        path: StringPointer,
+
+        /// code
+        code: StringPointer,
+
+        /// package_id
+        package_id: u32 = 0,
+
+        pub fn decode(allocator: *std.mem.Allocator, reader: anytype) anyerror!JavascriptBundledModule {
+            var obj = std.mem.zeroes(JavascriptBundledModule);
+            try update(&obj, allocator, reader);
+            return obj;
+        }
+        pub fn update(result: *JavascriptBundledModule, allocator: *std.mem.Allocator, reader: anytype) anyerror!void {
+            result.path = try StringPointer.decode(allocator, reader);
+            result.code = try StringPointer.decode(allocator, reader);
+            _ = try reader.readAll(std.mem.asBytes(&result.package_id));
+            return;
+        }
+
+        pub fn encode(result: *const @This(), writer: anytype) anyerror!void {
+            try result.path.encode(writer);
+
+            try result.code.encode(writer);
+
+            try writer.writeIntNative(u32, result.package_id);
+            return;
+        }
+    };
+
+    pub const JavascriptBundledPackage = struct {
+        /// name
+        name: StringPointer,
+
+        /// version
+        version: StringPointer,
+
+        /// hash
+        hash: u32 = 0,
+
+        /// modules_offset
+        modules_offset: u32 = 0,
+
+        /// modules_length
+        modules_length: u32 = 0,
+
+        pub fn decode(allocator: *std.mem.Allocator, reader: anytype) anyerror!JavascriptBundledPackage {
+            var obj = std.mem.zeroes(JavascriptBundledPackage);
+            try update(&obj, allocator, reader);
+            return obj;
+        }
+        pub fn update(result: *JavascriptBundledPackage, allocator: *std.mem.Allocator, reader: anytype) anyerror!void {
+            result.name = try StringPointer.decode(allocator, reader);
+            result.version = try StringPointer.decode(allocator, reader);
+            _ = try reader.readAll(std.mem.asBytes(&result.hash));
+            _ = try reader.readAll(std.mem.asBytes(&result.modules_offset));
+            _ = try reader.readAll(std.mem.asBytes(&result.modules_length));
+            return;
+        }
+
+        pub fn encode(result: *const @This(), writer: anytype) anyerror!void {
+            try result.name.encode(writer);
+
+            try result.version.encode(writer);
+
+            try writer.writeIntNative(u32, result.hash);
+
+            try writer.writeIntNative(u32, result.modules_offset);
+
+            try writer.writeIntNative(u32, result.modules_length);
+            return;
+        }
+    };
+
+    pub const JavascriptBundle = struct {
+        /// modules
+        modules: []JavascriptBundledModule,
+
+        /// packages
+        packages: []JavascriptBundledPackage,
+
+        /// etag
+        etag: []const u8,
+
+        /// generated_at
+        generated_at: u32 = 0,
+
+        /// app_package_json_dependencies_hash
+        app_package_json_dependencies_hash: []const u8,
+
+        /// import_from_name
+        import_from_name: []const u8,
+
+        /// manifest_string
+        manifest_string: []const u8,
+
+        pub fn decode(allocator: *std.mem.Allocator, reader: anytype) anyerror!JavascriptBundle {
+            var obj = std.mem.zeroes(JavascriptBundle);
+            try update(&obj, allocator, reader);
+            return obj;
+        }
+        pub fn update(result: *JavascriptBundle, allocator: *std.mem.Allocator, reader: anytype) anyerror!void {
+            var length: usize = 0;
+            length = try reader.readIntNative(u32);
+            result.modules = try allocator.alloc(JavascriptBundledModule, length);
+            {
+                var j: usize = 0;
+                while (j < length) : (j += 1) {
+                    result.modules[j] = try JavascriptBundledModule.decode(allocator, reader);
+                }
+            }
+            length = try reader.readIntNative(u32);
+            result.packages = try allocator.alloc(JavascriptBundledPackage, length);
+            {
+                var j: usize = 0;
+                while (j < length) : (j += 1) {
+                    result.packages[j] = try JavascriptBundledPackage.decode(allocator, reader);
+                }
+            }
+            length = @intCast(usize, try reader.readIntNative(u32));
+            if (result.etag != length) {
+                result.etag = try allocator.alloc(u8, length);
+            }
+            _ = try reader.readAll(result.etag);
+            _ = try reader.readAll(std.mem.asBytes(&result.generated_at));
+            length = @intCast(usize, try reader.readIntNative(u32));
+            if (result.app_package_json_dependencies_hash != length) {
+                result.app_package_json_dependencies_hash = try allocator.alloc(u8, length);
+            }
+            _ = try reader.readAll(result.app_package_json_dependencies_hash);
+            length = @intCast(usize, try reader.readIntNative(u32));
+            if (result.import_from_name != length) {
+                result.import_from_name = try allocator.alloc(u8, length);
+            }
+            _ = try reader.readAll(result.import_from_name);
+            length = @intCast(usize, try reader.readIntNative(u32));
+            if (result.manifest_string != length) {
+                result.manifest_string = try allocator.alloc(u8, length);
+            }
+            _ = try reader.readAll(result.manifest_string);
+            return;
+        }
+
+        pub fn encode(result: *const @This(), writer: anytype) anyerror!void {
+            var n: usize = 0;
+            n = result.modules.len;
+            _ = try writer.writeIntNative(u32, @intCast(u32, n));
+            {
+                var j: usize = 0;
+                while (j < n) : (j += 1) {
+                    try result.modules[j].encode(writer);
+                }
+            }
+
+            n = result.packages.len;
+            _ = try writer.writeIntNative(u32, @intCast(u32, n));
+            {
+                var j: usize = 0;
+                while (j < n) : (j += 1) {
+                    try result.packages[j].encode(writer);
+                }
+            }
+
+            try writer.writeIntNative(u32, @intCast(u32, result.etag.len));
+            try writer.writeAll(result.etag);
+
+            try writer.writeIntNative(u32, result.generated_at);
+
+            try writer.writeIntNative(u32, @intCast(u32, result.app_package_json_dependencies_hash.len));
+            try writer.writeAll(result.app_package_json_dependencies_hash);
+
+            try writer.writeIntNative(u32, @intCast(u32, result.import_from_name.len));
+            try writer.writeAll(result.import_from_name);
+
+            try writer.writeIntNative(u32, @intCast(u32, result.manifest_string.len));
+            try writer.writeAll(result.manifest_string);
+            return;
+        }
+    };
+
+    pub const JavascriptBundleContainer = struct {
+        /// bundle_format_version
+        bundle_format_version: ?u32 = null,
+
+        /// bundle
+        bundle: ?JavascriptBundle = null,
+
+        /// code_length
+        code_length: ?u32 = null,
+
+        pub fn decode(allocator: *std.mem.Allocator, reader: anytype) anyerror!JavascriptBundleContainer {
+            var obj = std.mem.zeroes(JavascriptBundleContainer);
+            try update(&obj, allocator, reader);
+            return obj;
+        }
+        pub fn update(result: *JavascriptBundleContainer, allocator: *std.mem.Allocator, reader: anytype) anyerror!void {
+            while (true) {
+                const field_type: u8 = try reader.readByte();
+                switch (field_type) {
+                    0 => {
+                        return;
+                    },
+
+                    1 => {
+                        _ = try reader.readAll(std.mem.asBytes(&result.bundle_format_version));
+                    },
+                    2 => {
+                        result.bundle = try JavascriptBundle.decode(allocator, reader);
+                    },
+                    3 => {
+                        _ = try reader.readAll(std.mem.asBytes(&result.code_length));
+                    },
+                    else => {
+                        return error.InvalidMessage;
+                    },
+                }
+            }
+        }
+
+        pub fn encode(result: *const @This(), writer: anytype) anyerror!void {
+            if (result.bundle_format_version) |bundle_format_version| {
+                try writer.writeByte(1);
+                try writer.writeIntNative(u32, bundle_format_version);
+            }
+
+            if (result.bundle) |bundle| {
+                try writer.writeByte(2);
+                try bundle.encode(writer);
+            }
+
+            if (result.code_length) |code_length| {
+                try writer.writeByte(3);
+                try writer.writeIntNative(u32, code_length);
+            }
+            try writer.writeByte(0);
+            return;
+        }
+    };
+
+    pub const ScanDependencyMode = enum(u8) {
+        _none,
+        /// app
+        app,
+
+        /// all
+        all,
+
+        _,
+
+        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
+            return try std.json.stringify(@tagName(self), opts, o);
+        }
+    };
+
+    pub const ModuleImportType = enum(u8) {
+        _none,
+        /// import
+        import,
+
+        /// require
+        require,
+
+        _,
+
+        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
+            return try std.json.stringify(@tagName(self), opts, o);
+        }
+    };
+
+    pub const ModuleImportRecord = struct {
+        /// kind
+        kind: ModuleImportType,
+
+        /// path
+        path: []const u8,
+
+        /// dynamic
+        dynamic: bool = false,
+
+        pub fn decode(allocator: *std.mem.Allocator, reader: anytype) anyerror!ModuleImportRecord {
+            var obj = std.mem.zeroes(ModuleImportRecord);
+            try update(&obj, allocator, reader);
+            return obj;
+        }
+        pub fn update(result: *ModuleImportRecord, allocator: *std.mem.Allocator, reader: anytype) anyerror!void {
+            var length: usize = 0;
+            result.kind = try reader.readEnum(ModuleImportType, .Little);
+            length = try reader.readIntNative(u32);
+            if (result.path.len != length) {
+                result.path = try allocator.alloc(u8, length);
+            }
+            _ = try reader.readAll(result.path);
+            result.dynamic = (try reader.readByte()) == @as(u8, 1);
+            return;
+        }
+
+        pub fn encode(result: *const @This(), writer: anytype) anyerror!void {
+            try writer.writeIntNative(@TypeOf(@enumToInt(result.kind)), @enumToInt(result.kind));
+
+            try writer.writeIntNative(u32, @intCast(u32, result.path.len));
+            try writer.writeAll(std.mem.sliceAsBytes(result.path));
+
+            try writer.writeByte(@boolToInt(result.dynamic));
+            return;
+        }
+    };
+
+    pub const Module = struct {
+        /// path
+        path: []const u8,
+
+        /// imports
+        imports: []ModuleImportRecord,
+
+        pub fn decode(allocator: *std.mem.Allocator, reader: anytype) anyerror!Module {
+            var obj = std.mem.zeroes(Module);
+            try update(&obj, allocator, reader);
+            return obj;
+        }
+        pub fn update(result: *Module, allocator: *std.mem.Allocator, reader: anytype) anyerror!void {
+            var length: usize = 0;
+            length = try reader.readIntNative(u32);
+            if (result.path.len != length) {
+                result.path = try allocator.alloc(u8, length);
+            }
+            _ = try reader.readAll(result.path);
+            length = try reader.readIntNative(u32);
+            result.imports = try allocator.alloc(ModuleImportRecord, length);
+            {
+                var j: usize = 0;
+                while (j < length) : (j += 1) {
+                    result.imports[j] = try ModuleImportRecord.decode(allocator, reader);
+                }
+            }
+            return;
+        }
+
+        pub fn encode(result: *const @This(), writer: anytype) anyerror!void {
+            var n: usize = 0;
+            try writer.writeIntNative(u32, @intCast(u32, result.path.len));
+            try writer.writeAll(std.mem.sliceAsBytes(result.path));
+
+            n = result.imports.len;
+            _ = try writer.writeIntNative(u32, @intCast(u32, n));
+            {
+                var j: usize = 0;
+                while (j < n) : (j += 1) {
+                    try result.imports[j].encode(writer);
+                }
+            }
+            return;
+        }
+    };
+
     pub const TransformOptions = struct {
         /// jsx
         jsx: ?Jsx = null,
@@ -208,6 +590,12 @@ pub const Api = struct {
 
         /// public_dir
         public_dir: ?[]const u8 = null,
+
+        /// only_scan_dependencies
+        only_scan_dependencies: ?ScanDependencyMode = null,
+
+        /// generate_node_module_bundle
+        generate_node_module_bundle: ?bool = null,
 
         pub fn decode(allocator: *std.mem.Allocator, reader: anytype) anyerror!TransformOptions {
             var obj = std.mem.zeroes(TransformOptions);
@@ -408,6 +796,12 @@ pub const Api = struct {
                         }
                         _ = try reader.readAll(result.public_dir.?);
                     },
+                    21 => {
+                        result.only_scan_dependencies = try reader.readEnum(ScanDependencyMode, .Little);
+                    },
+                    22 => {
+                        result.generate_node_module_bundle = (try reader.readByte()) == @as(u8, 1);
+                    },
                     else => {
                         return error.InvalidMessage;
                     },
@@ -591,6 +985,16 @@ pub const Api = struct {
                 try writer.writeByte(20);
                 try writer.writeIntNative(u32, @intCast(u32, public_dir.len));
                 try writer.writeAll(std.mem.sliceAsBytes(public_dir));
+            }
+
+            if (result.only_scan_dependencies) |only_scan_dependencies| {
+                try writer.writeByte(21);
+                try writer.writeIntNative(@TypeOf(@enumToInt(result.only_scan_dependencies orelse unreachable)), @enumToInt(result.only_scan_dependencies orelse unreachable));
+            }
+
+            if (result.generate_node_module_bundle) |generate_node_module_bundle| {
+                try writer.writeByte(22);
+                try writer.writeByte(@boolToInt(generate_node_module_bundle));
             }
             try writer.writeByte(0);
             return;

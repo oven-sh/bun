@@ -121,6 +121,18 @@ pub const Output = struct {
         return print(fmt, args);
     }
 
+    pub const debug = if (isDebug) _debug else _noop;
+
+    fn _noop(comptime fmt: string, args: anytype) void {}
+
+    pub fn _debug(comptime fmt: string, args: anytype) void {
+        if (fmt[fmt.len - 1] != '\n') {
+            return print(fmt ++ "\n", args);
+        }
+
+        return print(fmt, args);
+    }
+
     pub fn print(comptime fmt: string, args: anytype) void {
         if (isWasm) {
             source.stream.seekTo(0) catch return;

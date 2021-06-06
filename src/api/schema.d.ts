@@ -73,6 +73,26 @@ type uint32 = number;
     2: "classic",
     classic: "classic"
   }
+  export enum ScanDependencyMode {
+    app = 1,
+    all = 2
+  }
+  export const ScanDependencyModeKeys = {
+    1: "app",
+    app: "app",
+    2: "all",
+    all: "all"
+  }
+  export enum ModuleImportType {
+    import = 1,
+    require = 2
+  }
+  export const ModuleImportTypeKeys = {
+    1: "import",
+    import: "import",
+    2: "require",
+    require: "require"
+  }
   export enum TransformResponseStatus {
     success = 1,
     fail = 2
@@ -108,6 +128,52 @@ type uint32 = number;
     react_fast_refresh: boolean;
   }
 
+  export interface StringPointer {
+    offset: uint32;
+    length: uint32;
+  }
+
+  export interface JavascriptBundledModule {
+    path: StringPointer;
+    code: StringPointer;
+    package_id: uint32;
+  }
+
+  export interface JavascriptBundledPackage {
+    name: StringPointer;
+    version: StringPointer;
+    hash: uint32;
+    modules_offset: uint32;
+    modules_length: uint32;
+  }
+
+  export interface JavascriptBundle {
+    modules: JavascriptBundledModule[];
+    packages: JavascriptBundledPackage[];
+    etag: Uint8Array;
+    generated_at: uint32;
+    app_package_json_dependencies_hash: Uint8Array;
+    import_from_name: Uint8Array;
+    manifest_string: Uint8Array;
+  }
+
+  export interface JavascriptBundleContainer {
+    bundle_format_version?: uint32;
+    bundle?: JavascriptBundle;
+    code_length?: uint32;
+  }
+
+  export interface ModuleImportRecord {
+    kind: ModuleImportType;
+    path: string;
+    dynamic: boolean;
+  }
+
+  export interface Module {
+    path: string;
+    imports: ModuleImportRecord[];
+  }
+
   export interface TransformOptions {
     jsx?: JSX;
     tsconfig_override?: string;
@@ -129,6 +195,8 @@ type uint32 = number;
     serve?: boolean;
     extension_order?: string[];
     public_dir?: string;
+    only_scan_dependencies?: ScanDependencyMode;
+    generate_node_module_bundle?: boolean;
   }
 
   export interface FileHandle {
@@ -185,6 +253,20 @@ type uint32 = number;
 
   export declare function  encodeJSX(message: JSX, bb: ByteBuffer): void;
   export declare function decodeJSX(buffer: ByteBuffer): JSX;
+  export declare function  encodeStringPointer(message: StringPointer, bb: ByteBuffer): void;
+  export declare function decodeStringPointer(buffer: ByteBuffer): StringPointer;
+  export declare function  encodeJavascriptBundledModule(message: JavascriptBundledModule, bb: ByteBuffer): void;
+  export declare function decodeJavascriptBundledModule(buffer: ByteBuffer): JavascriptBundledModule;
+  export declare function  encodeJavascriptBundledPackage(message: JavascriptBundledPackage, bb: ByteBuffer): void;
+  export declare function decodeJavascriptBundledPackage(buffer: ByteBuffer): JavascriptBundledPackage;
+  export declare function  encodeJavascriptBundle(message: JavascriptBundle, bb: ByteBuffer): void;
+  export declare function decodeJavascriptBundle(buffer: ByteBuffer): JavascriptBundle;
+  export declare function  encodeJavascriptBundleContainer(message: JavascriptBundleContainer, bb: ByteBuffer): void;
+  export declare function decodeJavascriptBundleContainer(buffer: ByteBuffer): JavascriptBundleContainer;
+  export declare function  encodeModuleImportRecord(message: ModuleImportRecord, bb: ByteBuffer): void;
+  export declare function decodeModuleImportRecord(buffer: ByteBuffer): ModuleImportRecord;
+  export declare function  encodeModule(message: Module, bb: ByteBuffer): void;
+  export declare function decodeModule(buffer: ByteBuffer): Module;
   export declare function  encodeTransformOptions(message: TransformOptions, bb: ByteBuffer): void;
   export declare function decodeTransformOptions(buffer: ByteBuffer): TransformOptions;
   export declare function  encodeFileHandle(message: FileHandle, bb: ByteBuffer): void;

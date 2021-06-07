@@ -197,6 +197,23 @@ pub fn NewPrinter(
         //     }
         // }
 
+        pub fn writeAll(p: *Printer, bytes: anytype) anyerror!void {
+            p.print(bytes);
+            return;
+        }
+
+        pub fn writeByteNTimes(self: *Printer, byte: u8, n: usize) !void {
+            var bytes: [256]u8 = undefined;
+            std.mem.set(u8, bytes[0..], byte);
+
+            var remaining: usize = n;
+            while (remaining > 0) {
+                const to_write = std.math.min(remaining, bytes.len);
+                try self.writeAll(bytes[0..to_write]);
+                remaining -= to_write;
+            }
+        }
+
         pub fn print(p: *Printer, str: anytype) void {
             switch (@TypeOf(str)) {
                 comptime_int, u16, u8 => {
@@ -457,15 +474,12 @@ pub fn NewPrinter(
         }
 
         pub fn printNonNegativeFloat(p: *Printer, float: f64) void {
-            // cool thing about languages like this
-            // i know this is going to be in the stack and not the heap
-            var parts = [_]u8{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+            if (float < 1000 and @intToFloat(f64, @floatToInt(i64, float)) == float) {
+                std.fmt.formatFloatDecimal(float, .{}, p) catch unreachable;
+                return;
+            }
 
-            // normally, you pay the cost of parsing a string formatter at runtime
-            // not in zig! CI pays for it instead
-            // its probably still doing some unnecessary integer conversion somewhere though
-            var slice = std.fmt.bufPrint(&parts, "{d}", .{float}) catch unreachable;
-            p.print(slice);
+            std.fmt.formatFloatScientific(float, .{}, p) catch unreachable;
         }
 
         pub fn printQuotedUTF16(e: *Printer, text: JavascriptString, quote: u8) void {
@@ -3020,6 +3034,12 @@ pub fn NewWriter(
         }
 
         pub const Error = error{FormatError};
+
+        pub fn writeAll(writer: *Self, bytes: anytype) Error!usize {
+            const written = writer.written;
+            writer.print(@TypeOf(bytes), bytes);
+            return writer.written - written;
+        }
 
         pub inline fn print(writer: *Self, comptime ValueType: type, str: ValueType) void {
             if (FeatureFlags.disable_printing_null) {

@@ -37,3 +37,4 @@ out.*
 out
 .parcel-cache
 esbuilddir
+*.jsbundle

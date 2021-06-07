@@ -17,7 +17,7 @@
       "request": "launch",
       "name": "Dev Launch",
       "program": "${workspaceFolder}/build/debug/macos-x86_64/esdev",
-      "args": ["defines.js", "--resolve=disable"],
+      "args": ["nql-define.js", "--resolve=dev"],
       "cwd": "${workspaceFolder}/src/test/fixtures",
       "console": "internalConsole"
     },
@@ -48,6 +48,30 @@
         "--outdir=out",
         "--public-url=http://localhost:9000/"
       ],
+      "cwd": "${workspaceFolder}/demos/simple-react",
+      "console": "internalConsole"
+    },
+
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Demo .jsbundle",
+      "program": "${workspaceFolder}/build/debug/macos-x86_64/esdev",
+      "args": [
+        "./src/index.tsx",
+        "--resolve=dev",
+        "--jsbundle",
+        "--public-url=http://localhost:9000/"
+      ],
+      "cwd": "${workspaceFolder}/demos/simple-react",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Demo Print .jsbundle",
+      "program": "${workspaceFolder}/build/debug/macos-x86_64/esdev",
+      "args": ["./node_modules.jsbundle"],
       "cwd": "${workspaceFolder}/demos/simple-react",
       "console": "internalConsole"
     },

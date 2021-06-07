@@ -117,7 +117,12 @@ const ExprFlag = packed struct {
     }
 };
 
-pub fn NewPrinter(comptime ascii_only: bool, comptime Writer: type, comptime Linker: type) type {
+pub fn NewPrinter(
+    comptime ascii_only: bool,
+    comptime Writer: type,
+    comptime Linker: type,
+    comptime rewrite_esm_to_cjs: bool,
+) type {
     // comptime const comptime_buf_len = 64;
     // comptime var comptime_buf = [comptime_buf_len]u8{};
     // comptime var comptime_buf_i: usize = 0;
@@ -2563,6 +2568,10 @@ pub fn NewPrinter(comptime ascii_only: bool, comptime Writer: type, comptime Lin
 
                     const record = p.import_records[s.import_record_index];
                     var item_count: usize = 0;
+                    if (rewrite_esm_to_cjs) {
+                        return p.printImportAsCommonJS(record, s, stmt);
+                    }
+
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
 
@@ -2747,6 +2756,8 @@ pub fn NewPrinter(comptime ascii_only: bool, comptime Writer: type, comptime Lin
                 },
             }
         }
+
+        pub fn printImportAsCommonJS(p: *Printer, record: importRecord.ImportRecord, s: *S.Import, stmt: Stmt) void {}
 
         pub fn printForLoopInit(p: *Printer, initSt: Stmt) void {
             switch (initSt.data) {
@@ -3079,6 +3090,11 @@ const FileWriterInternal = struct {
     threadlocal var buffer: MutableString = undefined;
     threadlocal var has_loaded_buffer: bool = false;
 
+    pub fn getBuffer() *MutableString {
+        buffer.reset();
+        return &buffer;
+    }
+
     pub fn init(file: std.fs.File) FileWriterInternal {
         // if (isMac) {
         //     _ = std.os.fcntl(file.handle, std.os.F_NOCACHE, 1) catch 0;
@@ -3140,7 +3156,7 @@ pub fn printAst(
     comptime LinkerType: type,
     linker: ?*LinkerType,
 ) !usize {
-    const PrinterType = NewPrinter(false, Writer, LinkerType);
+    const PrinterType = NewPrinter(false, Writer, LinkerType, false);
     var writer = _writer;
     var printer = try PrinterType.init(
         writer,
@@ -3158,6 +3174,44 @@ pub fn printAst(
             }
         }
     }
+
+    try printer.writer.done();
+
+    return @intCast(usize, std.math.max(printer.writer.written, 0));
+}
+
+pub fn printCommonJS(
+    comptime Writer: type,
+    _writer: Writer,
+    tree: Ast,
+    symbols: js_ast.Symbol.Map,
+    source: *const logger.Source,
+    ascii_only: bool,
+    opts: Options,
+    comptime LinkerType: type,
+    linker: ?*LinkerType,
+) !usize {
+    const PrinterType = NewPrinter(false, Writer, LinkerType, true);
+    var writer = _writer;
+    var printer = try PrinterType.init(
+        writer,
+        &tree,
+        source,
+        symbols,
+        opts,
+        linker,
+    );
+    for (tree.parts) |part| {
+        for (part.stmts) |stmt| {
+            try printer.printStmt(stmt);
+            if (printer.writer.getError()) {} else |err| {
+                return err;
+            }
+        }
+    }
+
+    // Add a couple extra newlines at the end
+    printer.writer.print(@TypeOf("\n\n"), "\n\n");
 
     try printer.writer.done();
 

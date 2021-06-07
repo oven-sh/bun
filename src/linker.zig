@@ -79,7 +79,12 @@ pub fn NewLinker(comptime BundlerType: type) type {
         // This modifies the Ast in-place!
         // But more importantly, this does the following:
         // - Wrap CommonJS files
-        pub fn link(linker: *ThisLinker, file_path: Fs.Path, result: *_bundler.ParseResult) !void {
+        pub fn link(
+            linker: *ThisLinker,
+            file_path: Fs.Path,
+            result: *_bundler.ParseResult,
+            comptime import_path_format: Options.BundleOptions.ImportPathFormat,
+        ) !void {
             var needs_runtime = result.ast.uses_exports_ref or result.ast.uses_module_ref or result.ast.runtime_imports.hasAny();
             const source_dir = file_path.name.dir;
             var externals = std.ArrayList(u32).init(linker.allocator);
@@ -87,21 +92,23 @@ pub fn NewLinker(comptime BundlerType: type) type {
             // Step 1. Resolve imports & requires
             switch (result.loader) {
                 .jsx, .js, .ts, .tsx => {
-                    for (result.ast.import_records) |*import_record, record_index| {
+                    for (result.ast.import_records) |*import_record, _record_index| {
+                        const record_index = @truncate(u32, _record_index);
                         if (strings.eqlComptime(import_record.path.text, Runtime.Imports.Name)) {
                             import_record.path = try linker.generateImportPath(
                                 source_dir,
                                 linker.runtime_source_path,
                                 Runtime.version(),
+                                import_path_format,
                             );
-                            result.ast.runtime_import_record_id = @truncate(u32, record_index);
+                            result.ast.runtime_import_record_id = record_index;
                             result.ast.needs_runtime = true;
                             continue;
                         }
 
                         if (linker.resolver.resolve(source_dir, import_record.path.text, import_record.kind)) |*resolved_import| {
                             if (resolved_import.is_external) {
-                                externals.append(@truncate(u32, record_index)) catch unreachable;
+                                externals.append(record_index) catch unreachable;
                                 continue;
                             }
 
@@ -110,6 +117,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
                                 file_path.text[0 .. source_dir.len + 1],
                                 resolved_import,
                                 import_record,
+                                import_path_format,
                             ) catch continue;
 
                             // If we're importing a CommonJS module as ESM
@@ -181,6 +189,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
                         source_dir,
                         linker.runtime_source_path,
                         Runtime.version(),
+                        import_path_format,
                     ),
                     .range = logger.Range{ .loc = logger.Loc{ .start = 0 }, .len = 0 },
                 };
@@ -193,7 +202,13 @@ pub fn NewLinker(comptime BundlerType: type) type {
         threadlocal var relative_path_allocator_buf: [4096]u8 = undefined;
         threadlocal var relative_path_allocator_buf_loaded: bool = false;
 
-        pub fn generateImportPath(linker: *ThisLinker, source_dir: string, source_path: string, package_version: ?string) !Fs.Path {
+        pub fn generateImportPath(
+            linker: *ThisLinker,
+            source_dir: string,
+            source_path: string,
+            package_version: ?string,
+            comptime import_path_format: Options.BundleOptions.ImportPathFormat,
+        ) !Fs.Path {
             if (!relative_path_allocator_buf_loaded) {
                 relative_path_allocator_buf_loaded = true;
                 relative_path_allocator = std.heap.FixedBufferAllocator.init(&relative_path_allocator_buf);
@@ -208,7 +223,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
                 }
             }
 
-            switch (linker.options.import_path_format) {
+            switch (import_path_format) {
                 .relative => {
                     var pretty = try linker.allocator.dupe(u8, linker.fs.relative(source_dir, source_path));
                     var pathname = Fs.PathName.init(pretty);
@@ -261,7 +276,13 @@ pub fn NewLinker(comptime BundlerType: type) type {
             }
         }
 
-        pub fn processImportRecord(linker: *ThisLinker, source_dir: string, resolve_result: *Resolver.Result, import_record: *ImportRecord) !void {
+        pub fn processImportRecord(
+            linker: *ThisLinker,
+            source_dir: string,
+            resolve_result: *Resolver.Result,
+            import_record: *ImportRecord,
+            comptime import_path_format: Options.BundleOptions.ImportPathFormat,
+        ) !void {
 
             // extremely naive.
             resolve_result.is_from_node_modules = strings.contains(resolve_result.path_pair.primary.text, "/node_modules");
@@ -277,6 +298,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
                 source_dir,
                 resolve_result.path_pair.primary.text,
                 resolve_result.package_json_version,
+                import_path_format,
             );
         }
 

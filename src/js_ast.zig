@@ -45,7 +45,7 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
         };
 
         block: Block,
-        overflow_ptrs: [500]*Block = undefined,
+        overflow_ptrs: [10_000]*Block = undefined,
         overflow: []*Block = &([_]*Block{}),
         overflow_used: usize = 0,
         allocator: *Allocator,
@@ -1012,6 +1012,20 @@ pub const E = struct {
         value: JavascriptString = &([_]u16{}),
         utf8: string = &([_]u8{}),
         prefer_template: bool = false,
+
+        pub fn clone(str: *const String, allocator: *std.mem.Allocator) !String {
+            if (str.isUTF8()) {
+                return String{
+                    .utf8 = try allocator.dupe(u8, str.utf8),
+                    .prefer_template = str.prefer_template,
+                };
+            } else {
+                return String{
+                    .value = try allocator.dupe(u16, str.value),
+                    .prefer_template = str.prefer_template,
+                };
+            }
+        }
 
         pub fn isUTF8(s: *const String) bool {
             return s.utf8.len > 0;
@@ -2219,6 +2233,14 @@ pub const Expr = struct {
                 };
             },
             E.String => {
+                if (isDebug) {
+                    // Sanity check: assert string is not a null ptr
+                    if (st.isUTF8()) {
+                        std.debug.assert(st.utf8[0] > 0);
+                    } else if (st.value.len > 0) {
+                        std.debug.assert(st.value[0] > 0);
+                    }
+                }
                 return Expr{
                     .loc = loc,
                     .data = Data{
@@ -2302,7 +2324,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_string = st,
+                        .e_string = Data.Store.All.append(@TypeOf(st.*), st.*),
                     },
                 };
             },

@@ -108,7 +108,25 @@ pub const DefineData = struct {
                 .e_missing => {
                     continue;
                 },
-                .e_null, .e_boolean, .e_string, .e_number, .e_object, .e_array => {
+                // We must copy so we don't recycle
+                .e_string => {
+                    const e_string = try expr.data.e_string.clone(allocator);
+                    expr.data.e_string.* = e_string;
+                    data = expr.data;
+                },
+                .e_null, .e_boolean, .e_number => {
+                    data = expr.data;
+                },
+                // We must copy so we don't recycle
+                .e_object => |obj| {
+                    expr.data.e_object = try allocator.create(js_ast.E.Object);
+                    expr.data.e_object.* = obj.*;
+                    data = expr.data;
+                },
+                // We must copy so we don't recycle
+                .e_array => |obj| {
+                    expr.data.e_array = try allocator.create(js_ast.E.Array);
+                    expr.data.e_array.* = obj.*;
                     data = expr.data;
                 },
                 else => {

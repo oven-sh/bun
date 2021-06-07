@@ -85,10 +85,10 @@ pub const DirInfo = struct {
     pub const HashMap = allocators.BSSMap(DirInfo, Fs.Preallocate.Counts.dir_entry, false, 128);
 };
 pub const TemporaryBuffer = struct {
-    pub threadlocal var ExtensionPathBuf = std.mem.zeroes([512]u8);
-    pub threadlocal var TSConfigMatchStarBuf = std.mem.zeroes([512]u8);
-    pub threadlocal var TSConfigMatchPathBuf = std.mem.zeroes([512]u8);
-    pub threadlocal var TSConfigMatchFullBuf = std.mem.zeroes([512]u8);
+    pub threadlocal var ExtensionPathBuf: [512]u8 = undefined;
+    pub threadlocal var TSConfigMatchStarBuf: [512]u8 = undefined;
+    pub threadlocal var TSConfigMatchPathBuf: [512]u8 = undefined;
+    pub threadlocal var TSConfigMatchFullBuf: [512]u8 = undefined;
 };
 
 pub const PathPair = struct {
@@ -121,6 +121,7 @@ pub const Result = struct {
     jsx: options.JSX.Pragma = options.JSX.Pragma{},
 
     package_json_version: ?string = null,
+    package_json_name: ?string = null,
 
     is_external: bool = false,
 
@@ -281,6 +282,7 @@ pub const MatchResult = struct {
     file_fd: StoredFileDescriptorType = 0,
     is_node_module: bool = false,
     package_json_version: ?string = null,
+    package_json_name: ?string = null,
     diff_case: ?Fs.FileSystem.Entry.Lookup.DifferentCase = null,
 };
 
@@ -386,11 +388,6 @@ pub fn NewResolver(cache_files: bool) type {
 
         pub fn flushDebugLogs(r: *ThisResolver, flush_mode: DebugLogs.FlushMode) !void {
             if (r.debug_logs) |*debug| {
-                defer {
-                    debug.deinit();
-                    r.debug_logs = null;
-                }
-
                 if (flush_mode == DebugLogs.FlushMode.fail) {
                     try r.log.addRangeDebugWithNotes(null, logger.Range{ .loc = logger.Loc{} }, debug.what, debug.notes.toOwnedSlice());
                 } else if (@enumToInt(r.log.level) <= @enumToInt(logger.Log.Level.verbose)) {
@@ -482,9 +479,16 @@ pub fn NewResolver(cache_files: bool) type {
             r.mutex.lock();
             defer r.mutex.unlock();
 
-            var result = try r.resolveWithoutSymlinks(source_dir, import_path, kind);
+            const result = r.resolveWithoutSymlinks(source_dir, import_path, kind) catch |err| {
+                r.flushDebugLogs(.fail) catch {};
+                return err;
+            };
 
-            return result orelse error.ModuleNotFound;
+            defer {
+                if (result == null) r.flushDebugLogs(.fail) catch {} else r.flushDebugLogs(.success) catch {};
+            }
+
+            return result orelse return error.ModuleNotFound;
         }
 
         pub fn resolveWithoutSymlinks(r: *ThisResolver, source_dir: string, import_path: string, kind: ast.ImportKind) !?Result {
@@ -517,6 +521,8 @@ pub fn NewResolver(cache_files: bool) type {
                                     .diff_case = res.diff_case,
                                     .dirname_fd = dir_info.getFileDescriptor(),
                                     .is_from_node_modules = res.is_node_module,
+                                    .package_json_name = res.package_json_name,
+                                    .package_json_version = res.package_json_version,
                                 };
                             }
                         }
@@ -545,6 +551,8 @@ pub fn NewResolver(cache_files: bool) type {
                         .path_pair = entry.path_pair,
                         .diff_case = entry.diff_case,
                         .is_from_node_modules = entry.is_node_module,
+                        .package_json_name = entry.package_json_name,
+                        .package_json_version = entry.package_json_version,
                     };
                 }
 
@@ -603,6 +611,7 @@ pub fn NewResolver(cache_files: bool) type {
                                         .module_type = pkg.module_type,
                                         .dirname_fd = _result.dirname_fd,
                                         .package_json_version = pkg.version,
+                                        .package_json_name = pkg.name,
                                     };
                                     check_relative = false;
                                     check_package = false;
@@ -621,6 +630,7 @@ pub fn NewResolver(cache_files: bool) type {
                             .is_from_node_modules = res.is_node_module,
                             .dirname_fd = res.dirname_fd,
                             .package_json_version = res.package_json_version,
+                            .package_json_name = res.package_json_name,
                         };
                     } else if (!check_package) {
                         return null;
@@ -670,6 +680,7 @@ pub fn NewResolver(cache_files: bool) type {
                                         .diff_case = node_module.diff_case,
                                         .is_from_node_modules = true,
                                         .package_json_version = package_json.version,
+                                        .package_json_name = package_json.name,
                                     };
                                 }
                             } else {
@@ -692,6 +703,7 @@ pub fn NewResolver(cache_files: bool) type {
                         .is_from_node_modules = res.is_node_module,
                         .dirname_fd = res.dirname_fd,
                         .package_json_version = res.package_json_version,
+                        .package_json_name = res.package_json_name,
                     };
                 } else {
                     // Note: node's "self references" are not currently supported
@@ -708,6 +720,7 @@ pub fn NewResolver(cache_files: bool) type {
                 const rel_path = r.fs.relative(pkg_json.source.key_path.text, path.text);
                 result.module_type = pkg_json.module_type;
                 result.package_json_version = if (result.package_json_version == null) pkg_json.version else result.package_json_version;
+                result.package_json_name = if (result.package_json_name == null) pkg_json.name else result.package_json_name;
                 if (r.checkBrowserMap(pkg_json, rel_path)) |remapped| {
                     if (remapped.len == 0) {
                         path.is_disabled = true;
@@ -1289,6 +1302,7 @@ pub fn NewResolver(cache_files: bool) type {
                                     .primary = _path,
                                 },
                                 .package_json_version = browser_json.version,
+                                .package_json_name = browser_json.name,
                             };
                         }
 
@@ -1296,16 +1310,30 @@ pub fn NewResolver(cache_files: bool) type {
                     }
                 }
             }
-            const _paths = [_]string{ field_rel_path, path };
-            const field_abs_path = r.fs.absAlloc(r.allocator, &_paths) catch unreachable;
+            const _paths = [_]string{ path, field_rel_path };
+            const field_abs_path = r.fs.abs(&_paths);
 
+            // Is this a file?
+            if (r.loadAsFile(field_abs_path, extension_order)) |result| {
+                if (dir_info.package_json) |package_json| {
+                    return MatchResult{
+                        .path_pair = PathPair{ .primary = Fs.Path.init(result.path) },
+                        .package_json_name = package_json.name,
+                        .package_json_version = package_json.version,
+                    };
+                }
+
+                return MatchResult{
+                    .path_pair = PathPair{ .primary = Fs.Path.init(result.path) },
+                };
+            }
+
+            // Is it a directory with an index?
             const field_dir_info = (r.dirInfoCached(field_abs_path) catch null) orelse {
-                r.allocator.free(field_abs_path);
                 return null;
             };
 
             return r.loadAsIndexWithBrowserRemapping(field_dir_info, field_abs_path, extension_order) orelse {
-                r.allocator.free(field_abs_path);
                 return null;
             };
         }
@@ -1361,6 +1389,7 @@ pub fn NewResolver(cache_files: bool) type {
                                     .primary = _path,
                                 },
                                 .package_json_version = browser_json.version,
+                                .package_json_name = browser_json.name,
                             };
                         }
 
@@ -1392,6 +1421,27 @@ pub fn NewResolver(cache_files: bool) type {
 
             // Is this a file?
             if (r.loadAsFile(path, extension_order)) |file| {
+                // ServeBundler cares about the package.json
+                if (!cache_files) {
+                    // Determine the package folder by looking at the last node_modules/ folder in the path
+                    if (strings.lastIndexOf(file.path, "node_modules" ++ std.fs.path.sep_str)) |last_node_modules_folder| {
+                        const node_modules_folder_offset = last_node_modules_folder + ("node_modules" ++ std.fs.path.sep_str).len;
+                        // Determine the package name by looking at the next separator
+                        if (strings.indexOfChar(file.path[node_modules_folder_offset..], std.fs.path.sep)) |package_name_length| {
+                            if ((r.dirInfoCached(file.path[0 .. node_modules_folder_offset + package_name_length]) catch null)) |package_dir_info| {
+                                if (package_dir_info.package_json) |package_json| {
+                                    return MatchResult{
+                                        .path_pair = .{ .primary = Path.init(file.path) },
+                                        .diff_case = file.diff_case,
+                                        .dirname_fd = file.dirname_fd,
+                                        .package_json_name = package_json.name,
+                                        .package_json_version = package_json.version,
+                                    };
+                                }
+                            }
+                        }
+                    }
+                }
                 return MatchResult{
                     .path_pair = .{ .primary = Path.init(file.path) },
                     .diff_case = file.diff_case,
@@ -1412,10 +1462,12 @@ pub fn NewResolver(cache_files: bool) type {
 
             const dir_info = (r.dirInfoCached(path) catch null) orelse return null;
             var package_json_version: ?string = null;
+            var package_json_name: ?string = null;
 
             // Try using the main field(s) from "package.json"
             if (dir_info.package_json) |pkg_json| {
                 package_json_version = pkg_json.version;
+                package_json_name = pkg_json.name;
                 if (pkg_json.main_fields.count() > 0) {
                     const main_field_values = pkg_json.main_fields;
                     const main_field_keys = r.opts.main_fields;
@@ -1434,7 +1486,7 @@ pub fn NewResolver(cache_files: bool) type {
                             continue;
                         };
 
-                        var _result = r.loadFromMainField(path, dir_info, field_rel_path, key, extension_order) orelse continue;
+                        const _result = r.loadFromMainField(path, dir_info, field_rel_path, key, extension_order) orelse continue;
 
                         // If the user did not manually configure a "main" field order, then
                         // use a special per-module automatic algorithm to decide whether to
@@ -1477,6 +1529,7 @@ pub fn NewResolver(cache_files: bool) type {
                                         .diff_case = auto_main_result.diff_case,
                                         .dirname_fd = auto_main_result.dirname_fd,
                                         .package_json_version = pkg_json.version,
+                                        .package_json_name = pkg_json.name,
                                     };
                                 } else {
                                     if (r.debug_logs) |*debug| {
@@ -1488,10 +1541,13 @@ pub fn NewResolver(cache_files: bool) type {
                                     }
                                     var _auto_main_result = auto_main_result;
                                     _auto_main_result.package_json_version = pkg_json.version;
+                                    _auto_main_result.package_json_name = pkg_json.name;
                                     return _auto_main_result;
                                 }
                             }
                         }
+
+                        return _result;
                     }
                 }
             }
@@ -1500,6 +1556,10 @@ pub fn NewResolver(cache_files: bool) type {
             if (r.loadAsIndexWithBrowserRemapping(dir_info, path, extension_order)) |*res| {
                 if (res.package_json_version == null and package_json_version != null) {
                     res.package_json_version = package_json_version;
+                }
+
+                if (res.package_json_name == null and package_json_name != null) {
+                    res.package_json_name = package_json_name;
                 }
                 return res.*;
             }
@@ -1568,7 +1628,6 @@ pub fn NewResolver(cache_files: bool) type {
             }
 
             // Try the path with extensions
-
             std.mem.copy(u8, &TemporaryBuffer.ExtensionPathBuf, path);
             for (r.opts.extension_order) |ext| {
                 var buffer = TemporaryBuffer.ExtensionPathBuf[0 .. path.len + ext.len];
@@ -1576,7 +1635,7 @@ pub fn NewResolver(cache_files: bool) type {
                 const file_name = buffer[path.len - base.len .. buffer.len];
 
                 if (r.debug_logs) |*debug| {
-                    debug.addNoteFmt("Checking for file \"{s}{s}\" ", .{ base, ext }) catch {};
+                    debug.addNoteFmt("Checking for file \"{s}\" ", .{buffer}) catch {};
                 }
 
                 if (entries.get(file_name)) |query| {

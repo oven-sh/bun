@@ -27,6 +27,8 @@ pub fn constStrToU8(s: string) []u8 {
     return @intToPtr([*]u8, @ptrToInt(s.ptr))[0..s.len];
 }
 
+const NodeModuleBundle = @import("./node_module_bundle.zig").NodeModuleBundle;
+
 pub const Cli = struct {
     const LoaderMatcher = strings.ExactSizeMatcher(4);
     pub fn ColonListType(comptime t: type, value_resolver: anytype) type {
@@ -108,28 +110,30 @@ pub const Cli = struct {
         pub fn parse(allocator: *std.mem.Allocator, stdout: anytype, stderr: anytype) !Api.TransformOptions {
             @setEvalBranchQuota(9999);
             const params = comptime [_]clap.Param(clap.Help){
-                clap.parseParam("-h, --help                   Display this help and exit.              ") catch unreachable,
-                clap.parseParam("-r, --resolve <STR>          Determine import/require behavior. \"disable\" ignores. \"dev\" bundles node_modules and builds everything else as independent entry points") catch unreachable,
-                clap.parseParam("-d, --define <STR>...        Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:development") catch unreachable,
-                clap.parseParam("-l, --loader <STR>...        Parse files with .ext:loader, e.g. --loader .js:jsx. Valid loaders: jsx, js, json, tsx (not implemented yet), ts (not implemented yet), css (not implemented yet)") catch unreachable,
-                clap.parseParam("-o, --outdir <STR>           Save output to directory (default: \"out\" if none provided and multiple entry points passed)") catch unreachable,
-                clap.parseParam("-e, --external <STR>...      Exclude module from transpilation (can use * wildcards). ex: -e react") catch unreachable,
-                clap.parseParam("-i, --inject <STR>...        Inject module at the top of every file") catch unreachable,
-                clap.parseParam("--cwd <STR>                  Absolute path to resolve entry points from. Defaults to cwd") catch unreachable,
-                clap.parseParam("--public-url <STR>           Rewrite import paths to start with --public-url. Useful for web browsers.") catch unreachable,
-                clap.parseParam("--serve                      Start a local dev server. This also sets resolve to \"lazy\".") catch unreachable,
-                clap.parseParam("--public-dir <STR>           Top-level directory for .html files, fonts, images, or anything external. Only relevant with --serve. Defaults to \"<cwd>/public\", to match create-react-app and Next.js") catch unreachable,
-                clap.parseParam("--jsx-factory <STR>          Changes the function called when compiling JSX elements using the classic JSX runtime") catch unreachable,
-                clap.parseParam("--jsx-fragment <STR>         Changes the function called when compiling JSX fragments using the classic JSX runtime") catch unreachable,
-                clap.parseParam("--jsx-import-source <STR>    Declares the module specifier to be used for importing the jsx and jsxs factory functions. Default: \"react\"") catch unreachable,
-                clap.parseParam("--jsx-runtime <STR>          \"automatic\" (default) or \"classic\"") catch unreachable,
-                clap.parseParam("--jsx-production             Use jsx instead of jsxDEV (default) for the automatic runtime") catch unreachable,
-                clap.parseParam("--extension-order <STR>...   defaults to: .tsx,.ts,.jsx,.js,.json ") catch unreachable,
-                clap.parseParam("--react-fast-refresh         Enable React Fast Refresh (not implemented yet)") catch unreachable,
-                clap.parseParam("--tsconfig-override <STR>    Load tsconfig from path instead of cwd/tsconfig.json") catch unreachable,
-                clap.parseParam("--platform <STR>             \"browser\" or \"node\". Defaults to \"browser\"") catch unreachable,
-                clap.parseParam("--main-fields <STR>...       Main fields to lookup in package.json. Defaults to --platform dependent") catch unreachable,
-                clap.parseParam("<POS>...                     Entry points to use") catch unreachable,
+                clap.parseParam("-h, --help                        Display this help and exit.              ") catch unreachable,
+                clap.parseParam("-r, --resolve <STR>               Determine import/require behavior. \"disable\" ignores. \"dev\" bundles node_modules and builds everything else as independent entry points") catch unreachable,
+                clap.parseParam("-d, --define <STR>...             Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:development") catch unreachable,
+                clap.parseParam("-l, --loader <STR>...             Parse files with .ext:loader, e.g. --loader .js:jsx. Valid loaders: jsx, js, json, tsx (not implemented yet), ts (not implemented yet), css (not implemented yet)") catch unreachable,
+                clap.parseParam("-o, --outdir <STR>                Save output to directory (default: \"out\" if none provided and multiple entry points passed)") catch unreachable,
+                clap.parseParam("-e, --external <STR>...           Exclude module from transpilation (can use * wildcards). ex: -e react") catch unreachable,
+                clap.parseParam("-i, --inject <STR>...             Inject module at the top of every file") catch unreachable,
+                clap.parseParam("--cwd <STR>                       Absolute path to resolve entry points from. Defaults to cwd") catch unreachable,
+                clap.parseParam("--public-url <STR>                Rewrite import paths to start with --public-url. Useful for web browsers.") catch unreachable,
+                clap.parseParam("--serve                           Start a local dev server. This also sets resolve to \"lazy\".") catch unreachable,
+                clap.parseParam("--public-dir <STR>                Top-level directory for .html files, fonts, images, or anything external. Only relevant with --serve. Defaults to \"<cwd>/public\", to match create-react-app and Next.js") catch unreachable,
+                clap.parseParam("--jsx-factory <STR>               Changes the function called when compiling JSX elements using the classic JSX runtime") catch unreachable,
+                clap.parseParam("--jsx-fragment <STR>              Changes the function called when compiling JSX fragments using the classic JSX runtime") catch unreachable,
+                clap.parseParam("--jsx-import-source <STR>         Declares the module specifier to be used for importing the jsx and jsxs factory functions. Default: \"react\"") catch unreachable,
+                clap.parseParam("--jsx-runtime <STR>               \"automatic\" (default) or \"classic\"") catch unreachable,
+                clap.parseParam("--jsx-production                  Use jsx instead of jsxDEV (default) for the automatic runtime") catch unreachable,
+                clap.parseParam("--extension-order <STR>...        defaults to: .tsx,.ts,.jsx,.js,.json ") catch unreachable,
+                clap.parseParam("--react-fast-refresh              Enable React Fast Refresh (not implemented yet)") catch unreachable,
+                clap.parseParam("--tsconfig-override <STR>         Load tsconfig from path instead of cwd/tsconfig.json") catch unreachable,
+                clap.parseParam("--platform <STR>                  \"browser\" or \"node\". Defaults to \"browser\"") catch unreachable,
+                clap.parseParam("--main-fields <STR>...            Main fields to lookup in package.json. Defaults to --platform dependent") catch unreachable,
+                clap.parseParam("--scan                            Instead of bundling or transpiling, print a list of every file imported by an entry point, recursively") catch unreachable,
+                clap.parseParam("--jsbundle                        Generate a new node_modules.jsbundle file from the current node_modules folder and entry point(s)") catch unreachable,
+                clap.parseParam("<POS>...                          Entry points to use") catch unreachable,
             };
 
             var diag = clap.Diagnostic{};
@@ -274,6 +278,8 @@ pub const Cli = struct {
                 .extension_order = args.options("--extension-order"),
                 .main_fields = args.options("--main-fields"),
                 .platform = platform,
+                .only_scan_dependencies = if (args.flag("--scan")) Api.ScanDependencyMode.all else Api.ScanDependencyMode._none,
+                .generate_node_module_bundle = if (args.flag("--jsbundle")) true else false,
             };
         }
     };
@@ -286,6 +292,12 @@ pub const Cli = struct {
             return error.InvalidJSXRuntime;
         }
     }
+    pub fn printScanResults(scan_results: bundler.ScanResult.Summary, allocator: *std.mem.Allocator) !void {
+        var stdout = std.io.getStdOut();
+        const print_start = std.time.nanoTimestamp();
+        try std.json.stringify(scan_results.list(), .{}, stdout.writer());
+        Output.printError("\nJSON printing took: {d}\n", .{std.time.nanoTimestamp() - print_start});
+    }
     pub fn startTransform(allocator: *std.mem.Allocator, args: Api.TransformOptions, log: *logger.Log) anyerror!void {}
     pub fn start(allocator: *std.mem.Allocator, stdout: anytype, stderr: anytype, comptime MainPanicHandler: type) anyerror!void {
         const start_time = std.time.nanoTimestamp();
@@ -294,10 +306,27 @@ pub const Cli = struct {
         MainPanicHandler.Singleton = &panicker;
 
         var args = try Arguments.parse(alloc.static, stdout, stderr);
+        if ((args.entry_points.len == 1 and args.entry_points[0].len > ".jsbundle".len and args.entry_points[0][args.entry_points[0].len - ".jsbundle".len] == '.' and strings.eqlComptime(args.entry_points[0][args.entry_points[0].len - "jsbundle".len ..], "jsbundle"))) {
+            var out_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+            var input = try std.fs.openFileAbsolute(try std.os.realpath(args.entry_points[0], &out_buffer), .{ .read = true });
+            try NodeModuleBundle.printBundle(std.fs.File, input, @TypeOf(stdout), stdout);
+            return;
+        }
 
         if (args.serve orelse false) {
             try Server.start(allocator, args);
 
+            return;
+        }
+
+        if ((args.only_scan_dependencies orelse ._none) == .all) {
+            return try printScanResults(try bundler.Bundler.scanDependencies(allocator, &log, args), allocator);
+        }
+
+        if ((args.generate_node_module_bundle orelse false)) {
+            var this_bundler = try bundler.ServeBundler.init(allocator, &log, args);
+            this_bundler.configureLinker();
+            try bundler.ServeBundler.GenerateNodeModuleBundle.generate(&this_bundler, allocator);
             return;
         }
 

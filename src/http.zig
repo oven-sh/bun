@@ -581,7 +581,14 @@ pub const RequestContext = struct {
                 // It will call flush for us automatically
                 defer ctx.bundler.resetStore();
                 const loader = ctx.bundler.options.loaders.get(resolve_result.path_pair.primary.name.ext) orelse .file;
-                var written = try ctx.bundler.buildWithResolveResult(resolve_result, ctx.allocator, loader, SocketPrinter, chunked_encoder);
+                var written = try ctx.bundler.buildWithResolveResult(
+                    resolve_result,
+                    ctx.allocator,
+                    loader,
+                    SocketPrinter,
+                    chunked_encoder,
+                    .absolute_url,
+                );
             },
             .noop => {
                 try ctx.sendNotFound();

@@ -33,9 +33,11 @@ pub fn validatePath(log: *logger.Log, fs: *Fs.FileSystem.Implementation, cwd: st
 
 pub fn stringHashMapFromArrays(comptime t: type, allocator: *std.mem.Allocator, keys: anytype, values: anytype) !t {
     var hash_map = t.init(allocator);
-    try hash_map.ensureCapacity(@intCast(u32, keys.len));
-    for (keys) |key, i| {
-        try hash_map.put(key, values[i]);
+    if (keys.len > 0) {
+        try hash_map.ensureCapacity(@intCast(u32, keys.len));
+        for (keys) |key, i| {
+            try hash_map.put(key, values[i]);
+        }
     }
 
     return hash_map;
@@ -508,6 +510,7 @@ pub const BundleOptions = struct {
         absolute_url,
         // omit file extension
         absolute_path,
+        package_path,
     };
 
     pub const Defaults = struct {

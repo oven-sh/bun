@@ -408,7 +408,7 @@ pub const ImportScanner = struct {
                             if (@as(Expr.Tag, val.data) == .e_identifier) {
                                 // Is this import statement unused?
                                 if (@as(Binding.Tag, decl.binding.data) == .b_identifier and p.symbols.items[decl.binding.data.b_identifier.ref.inner_index].use_count_estimate == 0) {
-                                    p.ignoreUsage(val.getIdentifier().ref);
+                                    p.ignoreUsage(val.data.e_identifier.ref);
 
                                     scanner.removed_import_equals = true;
                                     continue;
@@ -734,33 +734,22 @@ pub const SideEffects = enum(u2) {
                 equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_undefined;
                 equality.equal = equality.ok;
             },
-            .e_boolean => {
-                const l = left.e_boolean;
-                const r = right.e_boolean;
-
+            .e_boolean => |l| {
                 equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_boolean;
-                equality.equal = equality.ok and l.value == r.value;
+                equality.equal = equality.ok and l.value == right.e_boolean.value;
             },
-            .e_number => {
-                const l = left.e_number;
-                const r = right.e_number;
-
+            .e_number => |l| {
                 equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_number;
-                equality.equal = equality.ok and l.value == r.value;
+                equality.equal = equality.ok and l.value == right.e_number.value;
             },
-            .e_big_int => {
-                const l = left.e_big_int;
-                const r = right.e_big_int;
-
+            .e_big_int => |l| {
                 equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_big_int;
-                equality.equal = equality.ok and strings.eql(l.value, r.value);
+                equality.equal = equality.ok and strings.eql(l.value, right.e_big_int.value);
             },
-            .e_string => {
-                const l = left.e_string;
-                const r = right.e_string;
-
+            .e_string => |l| {
                 equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_string;
                 if (equality.ok) {
+                    const r = right.e_string;
                     equality.equal = r.eql(E.String, l);
                 }
             },
@@ -1455,6 +1444,23 @@ const PropertyOpts = struct {
     ts_decorators: []Expr = &[_]Expr{},
 };
 
+pub const ScanPassResult = struct {
+    import_records: List(ImportRecord),
+    named_imports: js_ast.Ast.NamedImports,
+
+    pub fn init(allocator: *std.mem.Allocator) ScanPassResult {
+        return .{
+            .import_records = List(ImportRecord).init(allocator),
+            .named_imports = js_ast.Ast.NamedImports.init(allocator),
+        };
+    }
+
+    pub fn reset(scan_pass: *ScanPassResult) void {
+        scan_pass.named_imports.clearRetainingCapacity();
+        scan_pass.import_records.shrinkRetainingCapacity(0);
+    }
+};
+
 pub const Parser = struct {
     options: Options,
     lexer: js_lexer.Lexer,
@@ -1474,6 +1480,9 @@ pub const Parser = struct {
         use_define_for_class_fields: bool = false,
         suppress_warnings_about_weird_code: bool = true,
 
+        // Used when bundling node_modules
+        output_commonjs: bool = false,
+
         moduleType: ModuleType = ModuleType.esm,
         trim_unused_imports: bool = true,
 
@@ -1488,6 +1497,34 @@ pub const Parser = struct {
         }
     };
 
+    pub fn scanImports(self: *Parser, scan_pass: *ScanPassResult) !void {
+        if (self.options.ts and self.options.jsx.parse) {
+            return try self._scanImports(TSXImportScanner, scan_pass);
+        } else if (self.options.ts) {
+            return try self._scanImports(TypeScriptImportScanner, scan_pass);
+        } else if (self.options.jsx.parse) {
+            return try self._scanImports(JSXImportScanner, scan_pass);
+        } else {
+            return try self._scanImports(JavaScriptImportScanner, scan_pass);
+        }
+    }
+
+    fn _scanImports(self: *Parser, comptime ParserType: type, scan_pass: *ScanPassResult) !void {
+        var p: ParserType = undefined;
+        try ParserType.init(self.allocator, self.log, self.source, self.define, self.lexer, self.options, &p);
+        p.import_records = &scan_pass.import_records;
+        p.named_imports = &scan_pass.named_imports;
+        // Parse the file in the first pass, but do not bind symbols
+        var opts = ParseStatementOptions{ .is_module_scope = true };
+        debugl("<p.parseStmtsUpTo>");
+
+        // Parsing seems to take around 2x as much time as visiting.
+        // Which makes sense.
+        // June 4: "Parsing took: 18028000"
+        // June 4: "Rest of this took: 8003000"
+        _ = try p.parseStmtsUpTo(js_lexer.T.t_end_of_file, &opts);
+    }
+
     pub fn parse(self: *Parser) !js_ast.Result {
         if (self.options.ts and self.options.jsx.parse) {
             return try self._parse(TSXParser);
@@ -1501,7 +1538,8 @@ pub const Parser = struct {
     }
 
     fn _parse(self: *Parser, comptime ParserType: type) !js_ast.Result {
-        var p = try ParserType.init(self.allocator, self.log, self.source, self.define, self.lexer, self.options);
+        var p: ParserType = undefined;
+        try ParserType.init(self.allocator, self.log, self.source, self.define, self.lexer, self.options, &p);
 
         var result: js_ast.Result = undefined;
 
@@ -1515,6 +1553,11 @@ pub const Parser = struct {
         // Parse the file in the first pass, but do not bind symbols
         var opts = ParseStatementOptions{ .is_module_scope = true };
         debugl("<p.parseStmtsUpTo>");
+
+        // Parsing seems to take around 2x as much time as visiting.
+        // Which makes sense.
+        // June 4: "Parsing took: 18028000"
+        // June 4: "Rest of this took: 8003000"
         const stmts = try p.parseStmtsUpTo(js_lexer.T.t_end_of_file, &opts);
         debugl("</p.parseStmtsUpTo>");
         try p.prepareForVisitPass();
@@ -1787,7 +1830,7 @@ pub const Parser = struct {
             p.generateImportStmt(RuntimeImports.Name, &imports, &before, p.runtime_imports, null, "import_") catch unreachable;
         }
 
-        if (p.cjs_import_stmts.items.len > 0) {
+        if (p.cjs_import_stmts.items.len > 0 and !p.options.output_commonjs) {
             var import_records = try p.allocator.alloc(u32, p.cjs_import_stmts.items.len);
             var declared_symbols = try p.allocator.alloc(js_ast.DeclaredSymbol, p.cjs_import_stmts.items.len);
 
@@ -1956,7 +1999,18 @@ var falseExprValueData = E.Boolean{ .value = false };
 var nullValueExpr = Expr.Data{ .e_null = nullExprValueData };
 var falseValueExpr = Expr.Data{ .e_boolean = E.Boolean{ .value = false } };
 
-pub fn NewParser(comptime is_typescript_enabled: bool, comptime is_jsx_enabled: bool) type {
+pub const ImportOrRequireScanResults = struct {
+    import_records: List(ImportRecord),
+};
+
+pub fn NewParser(
+    comptime is_typescript_enabled: bool,
+    comptime is_jsx_enabled: bool,
+    comptime only_scan_imports_and_do_not_visit: bool,
+) type {
+    const ImportRecordList = if (only_scan_imports_and_do_not_visit) *std.ArrayList(ImportRecord) else std.ArrayList(ImportRecord);
+    const NamedImportsType = if (only_scan_imports_and_do_not_visit) *js_ast.Ast.NamedImports else js_ast.Ast.NamedImports;
+
     // P is for Parser!
     // public only because of Binding.ToExpr
     return struct {
@@ -2042,7 +2096,7 @@ pub fn NewParser(comptime is_typescript_enabled: bool, comptime is_jsx_enabled: 
         jsx_source_list_ref: js_ast.Ref = Ref.None,
 
         // Imports (both ES6 and CommonJS) are tracked at the top level
-        import_records: List(ImportRecord),
+        import_records: ImportRecordList,
         import_records_for_current_part: List(u32),
         export_star_import_records: List(u32),
 
@@ -2052,7 +2106,7 @@ pub fn NewParser(comptime is_typescript_enabled: bool, comptime is_jsx_enabled: 
         enclosing_class_keyword: logger.Range = logger.Range.None,
         import_items_for_namespace: Map(js_ast.Ref, StringHashMap(js_ast.LocRef)),
         is_import_item: RefBoolMap,
-        named_imports: js_ast.Ast.NamedImports,
+        named_imports: NamedImportsType,
         named_exports: js_ast.Ast.NamedExports,
         top_level_symbol_to_parts: Map(js_ast.Ref, List(u32)),
         import_namespace_cc_map: Map(ImportNamespaceCallOrConstruct, bool),
@@ -2300,6 +2354,23 @@ pub fn NewParser(comptime is_typescript_enabled: bool, comptime is_jsx_enabled: 
         pub fn s(p: *P, t: anytype, loc: logger.Loc) Stmt {
             // Output.print("\nStmt: {s} - {d}\n", .{ @typeName(@TypeOf(t)), loc.start });
             if (@typeInfo(@TypeOf(t)) == .Pointer) {
+                // ExportFrom normally becomes import records during the visiting pass
+                // However, we skip the visiting pass in this mode
+                // So we must generate a minimum version of it here.
+                if (comptime only_scan_imports_and_do_not_visit) {
+                    // if (@TypeOf(t) == *S.ExportFrom) {
+                    //     switch (call.target.data) {
+                    //         .e_identifier => |ident| {
+                    //             // is this a require("something")
+                    //             if (strings.eqlComptime(p.loadNameFromRef(ident.ref), "require") and call.args.len == 1 and std.meta.activeTag(call.args[0].data) == .e_string) {
+                    //                 _ = p.addImportRecord(.require, loc, call.args[0].data.e_string.string(p.allocator) catch unreachable);
+                    //             }
+                    //         },
+                    //         else => {},
+                    //     }
+                    // }
+                }
+
                 return Stmt.init(t, loc);
             } else {
                 return Stmt.alloc(p.allocator, t, loc);
@@ -2310,8 +2381,36 @@ pub fn NewParser(comptime is_typescript_enabled: bool, comptime is_jsx_enabled: 
 
             // Output.print("\nExpr: {s} - {d}\n", .{ @typeName(@TypeOf(t)), loc.start });
             if (@typeInfo(@TypeOf(t)) == .Pointer) {
+                if (comptime only_scan_imports_and_do_not_visit) {
+                    if (@TypeOf(t) == *E.Call) {
+                        const call: *E.Call = t;
+                        switch (call.target.data) {
+                            .e_identifier => |ident| {
+                                // is this a require("something")
+                                if (strings.eqlComptime(p.loadNameFromRef(ident.ref), "require") and call.args.len == 1 and std.meta.activeTag(call.args[0].data) == .e_string) {
+                                    _ = p.addImportRecord(.require, loc, call.args[0].data.e_string.string(p.allocator) catch unreachable);
+                                }
+                            },
+                            else => {},
+                        }
+                    }
+                }
                 return Expr.init(t, loc);
             } else {
+                if (comptime only_scan_imports_and_do_not_visit) {
+                    if (@TypeOf(t) == E.Call) {
+                        const call: E.Call = t;
+                        switch (call.target.data) {
+                            .e_identifier => |ident| {
+                                // is this a require("something")
+                                if (strings.eqlComptime(p.loadNameFromRef(ident.ref), "require") and call.args.len == 1 and std.meta.activeTag(call.args[0].data) == .e_string) {
+                                    _ = p.addImportRecord(.require, loc, call.args[0].data.e_string.string(p.allocator) catch unreachable);
+                                }
+                            },
+                            else => {},
+                        }
+                    }
+                }
                 return Expr.alloc(p.allocator, t, loc);
             }
         }
@@ -2640,7 +2739,9 @@ pub fn NewParser(comptime is_typescript_enabled: bool, comptime is_jsx_enabled: 
             comptime suffix: string,
         ) !void {
             const import_record_i = p.addImportRecordByRange(.stmt, logger.Range.None, import_path);
-            var import_record = p.import_records.items[import_record_i];
+            var import_record: *ImportRecord = &p.import_records.items[import_record_i];
+
+            import_record.is_internal = true;
             var import_path_identifier = try import_record.path.name.nonUniqueNameString(p.allocator);
             var namespace_identifier = try p.allocator.alloc(u8, import_path_identifier.len + suffix.len);
             var clause_items = try p.allocator.alloc(js_ast.ClauseItem, imports.len);
@@ -2733,8 +2834,14 @@ pub fn NewParser(comptime is_typescript_enabled: bool, comptime is_jsx_enabled: 
             p.hoistSymbols(p.module_scope);
 
             p.require_ref = try p.declareCommonJSSymbol(.unbound, "require");
-            p.exports_ref = try p.declareSymbol(.hoisted, logger.Loc.Empty, "exports");
-            p.module_ref = try p.declareSymbol(.hoisted, logger.Loc.Empty, "module");
+
+            if (p.options.output_commonjs) {
+                p.exports_ref = try p.declareCommonJSSymbol(.hoisted, "exports");
+                p.module_ref = try p.declareCommonJSSymbol(.hoisted, "module");
+            } else {
+                p.exports_ref = try p.declareSymbol(.hoisted, logger.Loc.Empty, "exports");
+                p.module_ref = try p.declareSymbol(.hoisted, logger.Loc.Empty, "module");
+            }
 
             p.runtime_imports.__require = p.require_ref;
 
@@ -6429,8 +6536,9 @@ pub fn NewParser(comptime is_typescript_enabled: bool, comptime is_jsx_enabled: 
             return true;
         }
 
-        pub fn declareCommonJSSymbol(p: *P, kind: Symbol.Kind, name: string) !Ref {
-            const member = p.module_scope.members.get(name);
+        pub fn declareCommonJSSymbol(p: *P, comptime kind: Symbol.Kind, comptime name: string) !Ref {
+            const name_hash = comptime @TypeOf(p.module_scope.members).getHash(name);
+            const member = p.module_scope.members.getWithHash(name, name_hash);
 
             // If the code declared this symbol using "var name", then this is actually
             // not a collision. For example, node will let you do this:
@@ -6460,7 +6568,7 @@ pub fn NewParser(comptime is_typescript_enabled: bool, comptime is_jsx_enabled: 
             const ref = try p.newSymbol(kind, name);
 
             if (member == null) {
-                try p.module_scope.members.put(name, Scope.Member{ .ref = ref, .loc = logger.Loc.Empty });
+                try p.module_scope.members.putWithHash(name, name_hash, Scope.Member{ .ref = ref, .loc = logger.Loc.Empty });
                 return ref;
             }
 
@@ -9540,6 +9648,10 @@ pub fn NewParser(comptime is_typescript_enabled: bool, comptime is_jsx_enabled: 
         }
 
         pub fn visitStmtsAndPrependTempRefs(p: *P, stmts: *List(Stmt), opts: *PrependTempRefsOpts) !void {
+            if (only_scan_imports_and_do_not_visit) {
+                @compileError("only_scan_imports_and_do_not_visit must not run this.");
+            }
+
             var old_temp_refs = p.temp_refs_to_declare;
             var old_temp_ref_count = p.temp_ref_count;
             p.temp_refs_to_declare.deinit();
@@ -9568,10 +9680,18 @@ pub fn NewParser(comptime is_typescript_enabled: bool, comptime is_jsx_enabled: 
         }
 
         pub fn visitExpr(p: *P, expr: Expr) Expr {
-            return p.visitExprInOut(expr, ExprIn{});
+            if (only_scan_imports_and_do_not_visit) {
+                @compileError("only_scan_imports_and_do_not_visit must not run this.");
+            }
+            // Inline to avoid the extra unnecessary function call in the stack
+            return @call(.{ .modifier = .always_inline }, P.visitExprInOut, .{ p, expr, ExprIn{} });
         }
 
         pub fn visitFunc(p: *P, _func: G.Fn, open_parens_loc: logger.Loc) G.Fn {
+            if (only_scan_imports_and_do_not_visit) {
+                @compileError("only_scan_imports_and_do_not_visit must not run this.");
+            }
+
             var func = _func;
             const old_fn_or_arrow_data = std.mem.toBytes(p.fn_or_arrow_data_visit);
             const old_fn_only_data = std.mem.toBytes(p.fn_only_data_visit);
@@ -10170,7 +10290,7 @@ pub fn NewParser(comptime is_typescript_enabled: bool, comptime is_jsx_enabled: 
 
                             // Optionally preserve the name
                             if (@as(Expr.Tag, e_.left.data) == .e_identifier) {
-                                e_.right = p.maybeKeepExprSymbolName(e_.right, p.symbols.items[e_.left.getIdentifier().ref.inner_index].original_name, was_anonymous_named_expr);
+                                e_.right = p.maybeKeepExprSymbolName(e_.right, p.symbols.items[e_.left.data.e_identifier.ref.inner_index].original_name, was_anonymous_named_expr);
                             }
                         },
                         .bin_add_assign => {
@@ -10249,14 +10369,14 @@ pub fn NewParser(comptime is_typescript_enabled: bool, comptime is_jsx_enabled: 
                     // though this is a run-time error, we make it a compile-time error when
                     // bundling because scope hoisting means these will no longer be run-time
                     // errors.
-                    if ((in.assign_target != .none or is_delete_target) and @as(Expr.Tag, e_.target.data) == .e_identifier and p.symbols.items[e_.target.getIdentifier().ref.inner_index].kind == .import) {
+                    if ((in.assign_target != .none or is_delete_target) and @as(Expr.Tag, e_.target.data) == .e_identifier and p.symbols.items[e_.target.data.e_identifier.ref.inner_index].kind == .import) {
                         const r = js_lexer.rangeOfIdentifier(p.source, e_.target.loc);
                         p.log.addRangeErrorFmt(
                             p.source,
                             r,
                             p.allocator,
                             "Cannot assign to property on import \"{s}\"",
-                            .{p.symbols.items[e_.target.getIdentifier().ref.inner_index].original_name},
+                            .{p.symbols.items[e_.target.data.e_identifier.ref.inner_index].original_name},
                         ) catch unreachable;
                     }
 
@@ -11334,16 +11454,13 @@ pub fn NewParser(comptime is_typescript_enabled: bool, comptime is_jsx_enabled: 
                             var val = d.value orelse unreachable;
                             const was_anonymous_named_expr = p.isAnonymousNamedExpr(val);
 
-                            val = p.visitExpr(val);
-                            // go version of defer would cause this to reset the variable
-                            // zig version of defer causes this to set it to the last value of val, at the end of the scope.
-                            d.value = val;
+                            d.value = p.visitExpr(val);
 
                             // Optionally preserve the name
                             switch (d.binding.data) {
                                 .b_identifier => |id| {
-                                    val = p.maybeKeepExprSymbolName(
-                                        val,
+                                    d.value = p.maybeKeepExprSymbolName(
+                                        d.value.?,
                                         p.symbols.items[id.ref.inner_index].original_name,
                                         was_anonymous_named_expr,
                                     );
@@ -11460,7 +11577,8 @@ pub fn NewParser(comptime is_typescript_enabled: bool, comptime is_jsx_enabled: 
                     // TODO: simplify boolean expression
                 },
                 .s_if => |data| {
-                    data.test_ = SideEffects.simplifyBoolean(p, p.visitExpr(data.test_));
+                    var test__ = p.visitExpr(data.test_);
+                    data.test_ = SideEffects.simplifyBoolean(p, test__);
 
                     const effects = SideEffects.toBoolean(data.test_.data);
                     if (effects.ok and !effects.value) {
@@ -12186,6 +12304,9 @@ pub fn NewParser(comptime is_typescript_enabled: bool, comptime is_jsx_enabled: 
                         },
                     );
                 },
+                .e_string => |str| {
+                    return p.e(str, loc);
+                },
                 else => {},
             }
 
@@ -12394,6 +12515,10 @@ pub fn NewParser(comptime is_typescript_enabled: bool, comptime is_jsx_enabled: 
         }
 
         pub fn visitClass(p: *P, name_scope_loc: logger.Loc, class: *G.Class) Ref {
+            if (only_scan_imports_and_do_not_visit) {
+                @compileError("only_scan_imports_and_do_not_visit must not run this.");
+            }
+
             class.ts_decorators = p.visitTSDecorators(class.ts_decorators);
 
             if (class.class_name) |name| {
@@ -12540,6 +12665,10 @@ pub fn NewParser(comptime is_typescript_enabled: bool, comptime is_jsx_enabled: 
 
         // Try separating the list for appending, so that it's not a pointer.
         fn visitStmts(p: *P, stmts: *List(Stmt), kind: StmtsKind) !void {
+            if (only_scan_imports_and_do_not_visit) {
+                @compileError("only_scan_imports_and_do_not_visit must not run this.");
+            }
+
             // Save the current control-flow liveness. This represents if we are
             // currently inside an "if (false) { ... }" block.
             var old_is_control_flow_dead = p.is_control_flow_dead;
@@ -13025,6 +13154,7 @@ pub fn NewParser(comptime is_typescript_enabled: bool, comptime is_jsx_enabled: 
                 .symbols = p.symbols.items,
                 .exports_ref = p.exports_ref,
                 .wrapper_ref = null,
+                .module_ref = p.module_ref,
                 .import_records = p.import_records.items,
                 .export_star_import_records = p.export_star_import_records.items,
                 .top_level_symbol_to_parts = p.top_level_symbol_to_parts,
@@ -13038,7 +13168,15 @@ pub fn NewParser(comptime is_typescript_enabled: bool, comptime is_jsx_enabled: 
             };
         }
 
-        pub fn init(allocator: *std.mem.Allocator, log: *logger.Log, source: *const logger.Source, define: *Define, lexer: js_lexer.Lexer, opts: Parser.Options) !*P {
+        pub fn init(
+            allocator: *std.mem.Allocator,
+            log: *logger.Log,
+            source: *const logger.Source,
+            define: *Define,
+            lexer: js_lexer.Lexer,
+            opts: Parser.Options,
+            this: *P,
+        ) !void {
             var scope_order = try ScopeOrderList.initCapacity(allocator, 1);
             var scope = try allocator.create(Scope);
             scope.* = Scope{
@@ -13053,11 +13191,8 @@ pub fn NewParser(comptime is_typescript_enabled: bool, comptime is_jsx_enabled: 
             };
 
             scope_order.appendAssumeCapacity(ScopeOrder{ .loc = locModuleScope, .scope = scope });
-
-            var _parser = try allocator.create(P);
-
-            _parser.* = P{
-                .cjs_import_stmts = @TypeOf(_parser.cjs_import_stmts).init(allocator),
+            this.* = P{
+                .cjs_import_stmts = @TypeOf(this.cjs_import_stmts).init(allocator),
                 // This must default to true or else parsing "in" won't work right.
                 // It will fail for the case in the "in-keyword.js" file
                 .allow_in = true,
@@ -13068,44 +13203,54 @@ pub fn NewParser(comptime is_typescript_enabled: bool, comptime is_jsx_enabled: 
                 .stmt_expr_value = nullExprData,
                 .expr_list = List(Expr).init(allocator),
                 .loop_body = nullStmtData,
-                .injected_define_symbols = @TypeOf(_parser.injected_define_symbols).init(allocator),
-                .emitted_namespace_vars = @TypeOf(_parser.emitted_namespace_vars).init(allocator),
-                .is_exported_inside_namespace = @TypeOf(_parser.is_exported_inside_namespace).init(allocator),
-                .known_enum_values = @TypeOf(_parser.known_enum_values).init(allocator),
-                .local_type_names = @TypeOf(_parser.local_type_names).init(allocator),
-                .allocated_names = @TypeOf(_parser.allocated_names).init(allocator),
+                .injected_define_symbols = @TypeOf(this.injected_define_symbols).init(allocator),
+                .emitted_namespace_vars = @TypeOf(this.emitted_namespace_vars).init(allocator),
+                .is_exported_inside_namespace = @TypeOf(this.is_exported_inside_namespace).init(allocator),
+                .known_enum_values = @TypeOf(this.known_enum_values).init(allocator),
+                .local_type_names = @TypeOf(this.local_type_names).init(allocator),
+                .allocated_names = @TypeOf(this.allocated_names).init(allocator),
                 .define = define,
-                .scopes_for_current_part = @TypeOf(_parser.scopes_for_current_part).init(allocator),
-                .symbols = @TypeOf(_parser.symbols).init(allocator),
-                .ts_use_counts = @TypeOf(_parser.ts_use_counts).init(allocator),
-                .declared_symbols = @TypeOf(_parser.declared_symbols).init(allocator),
-                .import_records = @TypeOf(_parser.import_records).init(allocator),
-                .import_records_for_current_part = @TypeOf(_parser.import_records_for_current_part).init(allocator),
-                .export_star_import_records = @TypeOf(_parser.export_star_import_records).init(allocator),
-                .import_items_for_namespace = @TypeOf(_parser.import_items_for_namespace).init(allocator),
-                .named_imports = @TypeOf(_parser.named_imports).init(allocator),
-                .named_exports = @TypeOf(_parser.named_exports).init(allocator),
-                .top_level_symbol_to_parts = @TypeOf(_parser.top_level_symbol_to_parts).init(allocator),
-                .import_namespace_cc_map = @TypeOf(_parser.import_namespace_cc_map).init(allocator),
+                .scopes_for_current_part = @TypeOf(this.scopes_for_current_part).init(allocator),
+                .symbols = @TypeOf(this.symbols).init(allocator),
+                .ts_use_counts = @TypeOf(this.ts_use_counts).init(allocator),
+                .declared_symbols = @TypeOf(this.declared_symbols).init(allocator),
+                .import_records = undefined,
+                .import_records_for_current_part = @TypeOf(this.import_records_for_current_part).init(allocator),
+                .export_star_import_records = @TypeOf(this.export_star_import_records).init(allocator),
+                .import_items_for_namespace = @TypeOf(this.import_items_for_namespace).init(allocator),
+                .named_imports = undefined,
+                .named_exports = @TypeOf(this.named_exports).init(allocator),
+                .top_level_symbol_to_parts = @TypeOf(this.top_level_symbol_to_parts).init(allocator),
+                .import_namespace_cc_map = @TypeOf(this.import_namespace_cc_map).init(allocator),
                 .scopes_in_order = scope_order,
                 .current_scope = scope,
-                .temp_refs_to_declare = @TypeOf(_parser.temp_refs_to_declare).init(allocator),
-                .relocated_top_level_vars = @TypeOf(_parser.relocated_top_level_vars).init(allocator),
+                .temp_refs_to_declare = @TypeOf(this.temp_refs_to_declare).init(allocator),
+                .relocated_top_level_vars = @TypeOf(this.relocated_top_level_vars).init(allocator),
                 .log = log,
-                .is_import_item = @TypeOf(_parser.is_import_item).init(allocator),
+                .is_import_item = @TypeOf(this.is_import_item).init(allocator),
                 .allocator = allocator,
                 .options = opts,
                 .then_catch_chain = ThenCatchChain{ .next_target = nullExprData },
-                .to_expr_wrapper_namespace = Binding2ExprWrapper.Namespace.init(_parser),
-                .to_expr_wrapper_hoisted = Binding2ExprWrapper.Hoisted.init(_parser),
+                .to_expr_wrapper_namespace = undefined,
+                .to_expr_wrapper_hoisted = undefined,
+                .import_transposer = undefined,
+                .require_transposer = undefined,
+                .require_resolve_transposer = undefined,
                 .source = source,
-                .import_transposer = @TypeOf(_parser.import_transposer).init(_parser),
-                .require_transposer = @TypeOf(_parser.require_transposer).init(_parser),
-                .require_resolve_transposer = @TypeOf(_parser.require_resolve_transposer).init(_parser),
+
                 .lexer = lexer,
             };
 
-            return _parser;
+            if (!only_scan_imports_and_do_not_visit) {
+                this.import_records = @TypeOf(this.import_records).init(allocator);
+                this.named_imports = NamedImportsType.init(allocator);
+            }
+
+            this.to_expr_wrapper_namespace = Binding2ExprWrapper.Namespace.init(this);
+            this.to_expr_wrapper_hoisted = Binding2ExprWrapper.Hoisted.init(this);
+            this.import_transposer = @TypeOf(this.import_transposer).init(this);
+            this.require_transposer = @TypeOf(this.require_transposer).init(this);
+            this.require_resolve_transposer = @TypeOf(this.require_resolve_transposer).init(this);
         }
     };
 }
@@ -13121,10 +13266,15 @@ pub fn NewParser(comptime is_typescript_enabled: bool, comptime is_jsx_enabled: 
 //   Range (min … max):    24.1 ms …  39.7 ms    500 runs
 // '../../build/macos-x86_64/esdev node_modules/react-dom/cjs/react-dom.development.js --resolve=disable' ran
 // 1.02 ± 0.07 times faster than '../../esdev.before-comptime-js-parser node_modules/react-dom/cjs/react-dom.development.js --resolve=disable'
-const JavaScriptParser = NewParser(false, false);
-const JSXParser = NewParser(false, true);
-const TSXParser = NewParser(true, true);
-const TypeScriptParser = NewParser(true, false);
+const JavaScriptParser = NewParser(false, false, false);
+const JSXParser = NewParser(false, true, false);
+const TSXParser = NewParser(true, true, false);
+const TypeScriptParser = NewParser(true, false, false);
+
+const JavaScriptImportScanner = NewParser(false, false, true);
+const JSXImportScanner = NewParser(false, true, true);
+const TSXImportScanner = NewParser(true, true, true);
+const TypeScriptImportScanner = NewParser(true, false, true);
 
 // The "await" and "yield" expressions are never allowed in argument lists but
 // may or may not be allowed otherwise depending on the details of the enclosing

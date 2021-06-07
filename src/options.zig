@@ -74,7 +74,7 @@ pub const ExternalModules = struct {
             // TODO: fix this stupid copy
             result.node_modules.hash_map.ensureCapacity(NodeBuiltinPatterns.len) catch unreachable;
             for (NodeBuiltinPatterns) |pattern| {
-                result.node_modules.put(pattern) catch unreachable;
+                result.node_modules.insert(pattern) catch unreachable;
             }
         }
 
@@ -97,12 +97,12 @@ pub const ExternalModules = struct {
                     .suffix = external[i + 1 .. external.len],
                 }) catch unreachable;
             } else if (resolver.Resolver.isPackagePath(external)) {
-                result.node_modules.put(external) catch unreachable;
+                result.node_modules.insert(external) catch unreachable;
             } else {
                 const normalized = validatePath(log, fs, cwd, external, allocator, "external path");
 
                 if (normalized.len > 0) {
-                    result.abs_paths.put(normalized) catch unreachable;
+                    result.abs_paths.insert(normalized) catch unreachable;
                 }
             }
         }
@@ -470,6 +470,14 @@ pub const Timings = struct {
     read_file: i128 = 0,
 };
 
+pub const DefaultUserDefines = struct {
+    // This must be globally scoped so it doesn't disappear
+    pub const NodeEnv = struct {
+        pub const Key = "process.env.NODE_ENV";
+        pub const Value = "\"development\"";
+    };
+};
+
 pub const BundleOptions = struct {
     footer: string = "",
     banner: string = "",
@@ -548,7 +556,7 @@ pub const BundleOptions = struct {
 
         var user_defines = try stringHashMapFromArrays(defines.RawDefines, allocator, transform.define_keys, transform.define_values);
         if (transform.define_keys.len == 0) {
-            try user_defines.put("process.env.NODE_ENV", "\"development\"");
+            try user_defines.put(DefaultUserDefines.NodeEnv.Key, DefaultUserDefines.NodeEnv.Value);
         }
 
         var resolved_defines = try defines.DefineData.from_input(user_defines, log, allocator);

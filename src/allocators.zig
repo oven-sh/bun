@@ -70,7 +70,15 @@ pub const IndexType = packed struct {
 };
 
 const HashKeyType = u64;
-const IndexMap = std.HashMapUnmanaged(HashKeyType, IndexType, hash_hashFn, hash_eqlFn, 80);
+const IndexMap = std.HashMapUnmanaged(HashKeyType, IndexType, struct {
+    pub fn hash(ctx: @This(), key: HashKeyType) HashKeyType {
+        return key;
+    }
+
+    pub fn eql(ctx: @This(), a: HashKeyType, b: HashKeyType) bool {
+        return a == b;
+    }
+}, 80);
 pub const Result = struct {
     hash: HashKeyType,
     index: IndexType,
@@ -96,14 +104,6 @@ pub const NotFound = IndexType{
 pub const Unassigned = IndexType{
     .index = std.math.maxInt(u31) - 1,
 };
-
-pub fn hash_hashFn(key: HashKeyType) HashKeyType {
-    return key;
-}
-
-pub fn hash_eqlFn(a: HashKeyType, b: HashKeyType) bool {
-    return a == b;
-}
 
 pub const ItemStatus = enum(u3) {
     unknown,
@@ -389,15 +389,15 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, store_keys: boo
             if (index.found_existing) {
                 return Result{
                     .hash = _key,
-                    .index = index.entry.value,
-                    .status = switch (index.entry.value.index) {
+                    .index = index.value_ptr.*,
+                    .status = switch (index.value_ptr.index) {
                         NotFound.index => .not_found,
                         Unassigned.index => .unknown,
                         else => .exists,
                     },
                 };
             }
-            index.entry.value = Unassigned;
+            index.value_ptr.* = Unassigned;
 
             return Result{
                 .hash = _key,

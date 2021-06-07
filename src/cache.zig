@@ -141,10 +141,10 @@ pub fn NewCache(comptime cache_files: bool) type {
                     var res = c.entries.getOrPut(path) catch unreachable;
 
                     if (res.found_existing) {
-                        res.entry.value.deinit(c.entries.allocator);
+                        res.value_ptr.*.deinit(c.entries.allocator);
                     }
-                    res.entry.value = entry;
-                    return res.entry.value;
+                    res.value_ptr.* = entry;
+                    return res.value_ptr.*;
                 } else {
                     return entry;
                 }

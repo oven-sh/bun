@@ -22,14 +22,21 @@ pub const NodeIndexNone = 4294967293;
 // be an array of arrays indexed first by source index, then by inner index.
 // The maps can be merged quickly by creating a single outer array containing
 // all inner arrays from all parsed files.
+
+pub const RefHashCtx = struct {
+    pub fn hash(ctx: @This(), key: Ref) u32 {
+        return @truncate(u32, std.hash.Wyhash.hash(0, std.mem.asBytes(&key)));
+    }
+
+    pub fn eql(ctx: @This(), ref: Ref, b: Ref) bool {
+        return std.mem.readIntNative(u64, std.mem.asBytes(&ref)) == std.mem.readIntNative(u64, std.mem.asBytes(&b));
+    }
+};
+
 pub const Ref = packed struct {
     source_index: Int = std.math.maxInt(Ref.Int),
     inner_index: Int = 0,
     is_source_contents_slice: bool = false,
-
-    pub fn hash(key: Ref) u32 {
-        return @truncate(u32, std.hash.Wyhash.hash(0, std.mem.asBytes(&key)));
-    }
 
     // 2 bits of padding for whatever is the parent
     pub const Int = u30;
@@ -44,6 +51,14 @@ pub const Ref = packed struct {
     pub fn toInt(int: anytype) Int {
         return @intCast(Int, int);
     }
+
+    pub fn hash(key: Ref) u32 {
+        return @truncate(u32, std.hash.Wyhash.hash(0, std.mem.asBytes(&key)));
+    }
+
+    pub fn eql(ref: Ref, b: Ref) bool {
+        return std.mem.readIntNative(u64, std.mem.asBytes(&ref)) == std.mem.readIntNative(u64, std.mem.asBytes(&b));
+    }
     pub fn isNull(self: *const Ref) bool {
         return self.source_index == std.math.maxInt(Ref.Int) and self.inner_index == std.math.maxInt(Ref.Int);
     }
@@ -54,10 +69,6 @@ pub const Ref = packed struct {
 
     pub fn isSourceIndexNull(int: anytype) bool {
         return int == std.math.maxInt(Ref.Int);
-    }
-
-    pub fn eql(ref: Ref, b: Ref) bool {
-        return std.mem.readIntNative(u64, std.mem.asBytes(&ref)) == std.mem.readIntNative(u64, std.mem.asBytes(&b));
     }
 
     pub fn jsonStringify(self: *const Ref, options: anytype, writer: anytype) !void {

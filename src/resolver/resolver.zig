@@ -529,7 +529,7 @@ pub fn NewResolver(cache_files: bool) type {
                     }
                 }
 
-                if (r.opts.external.abs_paths.count() > 0 and r.opts.external.abs_paths.exists(import_path)) {
+                if (r.opts.external.abs_paths.count() > 0 and r.opts.external.abs_paths.contains(import_path)) {
                     // If the string literal in the source text is an absolute path and has
                     // been marked as an external module, mark it as *not* an absolute path.
                     // That way we preserve the literal text in the output and don't generate
@@ -569,7 +569,7 @@ pub fn NewResolver(cache_files: bool) type {
                 const parts = [_]string{ source_dir, import_path };
                 const abs_path = r.fs.absBuf(&parts, &relative_abs_path_buf);
 
-                if (r.opts.external.abs_paths.count() > 0 and r.opts.external.abs_paths.exists(abs_path)) {
+                if (r.opts.external.abs_paths.count() > 0 and r.opts.external.abs_paths.contains(abs_path)) {
                     // If the string literal in the source text is an absolute path and has
                     // been marked as an external module, mark it as *not* an absolute path.
                     // That way we preserve the literal text in the output and don't generate
@@ -643,7 +643,7 @@ pub fn NewResolver(cache_files: bool) type {
                 if (r.opts.external.node_modules.count() > 0) {
                     var query = import_path;
                     while (true) {
-                        if (r.opts.external.node_modules.exists(query)) {
+                        if (r.opts.external.node_modules.contains(query)) {
                             if (r.debug_logs) |*debug| {
                                 debug.addNoteFmt("The path \"{s}\" was marked as external by the user", .{query}) catch {};
                             }
@@ -741,6 +741,27 @@ pub fn NewResolver(cache_files: bool) type {
             }
 
             return result;
+        }
+
+        // This is a fallback, hopefully not called often. It should be relatively quick because everything should be in the cache.
+        pub fn packageJSONForResolvedNodeModule(r: *ThisResolver, result: *const Result) ?*const PackageJSON {
+            var current_dir = std.fs.path.dirname(result.path_pair.primary.text);
+            while (current_dir != null) {
+                var dir_info = (r.dirInfoCached(current_dir orelse unreachable) catch null) orelse return null;
+
+                if (dir_info.package_json) |pkg| {
+                    // if it doesn't have a name, assume it's something just for adjusting the main fields (react-bootstrap does this)
+                    // In that case, we really would like the top-level package that you download from NPM
+                    // so we ignore any unnamed packages
+                    if (pkg.name.len > 0) {
+                        return pkg;
+                    }
+                }
+
+                current_dir = std.fs.path.dirname(current_dir.?);
+            }
+
+            return null;
         }
 
         pub fn loadNodeModules(r: *ThisResolver, import_path: string, kind: ast.ImportKind, _dir_info: *DirInfo) ?MatchResult {
@@ -1111,10 +1132,10 @@ pub fn NewResolver(cache_files: bool) type {
             {
                 var iter = tsconfig.paths.iterator();
                 while (iter.next()) |entry| {
-                    const key = entry.key;
+                    const key = entry.key_ptr.*;
 
                     if (strings.eql(key, path)) {
-                        for (entry.value) |original_path| {
+                        for (entry.value_ptr.*) |original_path| {
                             var absolute_original_path = original_path;
                             var was_alloc = false;
 
@@ -1148,8 +1169,8 @@ pub fn NewResolver(cache_files: bool) type {
 
             var iter = tsconfig.paths.iterator();
             while (iter.next()) |entry| {
-                const key = entry.key;
-                const original_paths = entry.value;
+                const key = entry.key_ptr.*;
+                const original_paths = entry.value_ptr.*;
 
                 if (strings.indexOfChar(key, '*')) |star_index| {
                     const prefix = key[0..star_index];
@@ -1320,11 +1341,14 @@ pub fn NewResolver(cache_files: bool) type {
                         .path_pair = PathPair{ .primary = Fs.Path.init(result.path) },
                         .package_json_name = package_json.name,
                         .package_json_version = package_json.version,
+                        .dirname_fd = result.dirname_fd,
                     };
                 }
 
                 return MatchResult{
                     .path_pair = PathPair{ .primary = Fs.Path.init(result.path) },
+                    .dirname_fd = result.dirname_fd,
+                    .diff_case = result.diff_case,
                 };
             }
 
@@ -1355,9 +1379,20 @@ pub fn NewResolver(cache_files: bool) type {
                                 debug.addNoteFmt("Found file: \"{s}\"", .{out_buf}) catch unreachable;
                             }
 
+                            if (dir_info.package_json) |package_json| {
+                                return MatchResult{
+                                    .path_pair = .{ .primary = Path.init(out_buf) },
+                                    .diff_case = lookup.diff_case,
+                                    .package_json_name = package_json.name,
+                                    .package_json_version = package_json.version,
+                                    .dirname_fd = dir_info.getFileDescriptor(),
+                                };
+                            }
+
                             return MatchResult{
                                 .path_pair = .{ .primary = Path.init(out_buf) },
                                 .diff_case = lookup.diff_case,
+
                                 .dirname_fd = dir_info.getFileDescriptor(),
                             };
                         }
@@ -1442,6 +1477,7 @@ pub fn NewResolver(cache_files: bool) type {
                         }
                     }
                 }
+
                 return MatchResult{
                     .path_pair = .{ .primary = Path.init(file.path) },
                     .diff_case = file.diff_case,
@@ -1486,7 +1522,7 @@ pub fn NewResolver(cache_files: bool) type {
                             continue;
                         };
 
-                        const _result = r.loadFromMainField(path, dir_info, field_rel_path, key, extension_order) orelse continue;
+                        var _result = r.loadFromMainField(path, dir_info, field_rel_path, key, extension_order) orelse continue;
 
                         // If the user did not manually configure a "main" field order, then
                         // use a special per-module automatic algorithm to decide whether to
@@ -1547,6 +1583,8 @@ pub fn NewResolver(cache_files: bool) type {
                             }
                         }
 
+                        if (_result.package_json_version == null) _result.package_json_version = package_json_version;
+                        if (_result.package_json_name == null) _result.package_json_name = package_json_name;
                         return _result;
                     }
                 }

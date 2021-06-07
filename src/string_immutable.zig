@@ -97,6 +97,10 @@ pub fn endsWithAnyComptime(self: string, comptime str: string) bool {
 
 pub fn eql(self: string, other: anytype) bool {
     if (self.len != other.len) return false;
+    if (comptime @TypeOf(other) == *string) {
+        return eql(self, other.*);
+    }
+
     for (self) |c, i| {
         if (other[i] != c) return false;
     }

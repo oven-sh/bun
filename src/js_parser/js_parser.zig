@@ -1472,7 +1472,6 @@ pub const Parser = struct {
     pub const Options = struct {
         jsx: options.JSX.Pragma,
         ts: bool = false,
-        ascii_only: bool = true,
         keep_names: bool = true,
         omit_runtime_for_tests: bool = false,
         ignore_dce_annotations: bool = true,
@@ -13039,7 +13038,7 @@ pub fn NewParser(
                         .s_export_clause => |clause| {
                             for (clause.items) |item| {
                                 if (p.named_imports.getEntry(item.name.ref.?)) |_import| {
-                                    _import.value.is_exported = true;
+                                    _import.value_ptr.is_exported = true;
                                 }
                             }
                         },

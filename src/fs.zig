@@ -154,7 +154,7 @@ pub const FileSystem = struct {
             var iter = i.data.iterator();
             i.dir = dir;
             while (iter.next()) |entry| {
-                entry.value.dir = dir;
+                entry.value_ptr.dir = dir;
             }
         }
 
@@ -504,7 +504,7 @@ pub const FileSystem = struct {
                 }
 
                 var entry = watcher.getOrPutValue(path, WatchData{ .state = state }) catch unreachable;
-                entry.value.state = state;
+                entry.value_ptr.state = state;
             }
         }
 
@@ -519,7 +519,7 @@ pub const FileSystem = struct {
                 defer fs.watcher_mutex.unlock();
 
                 var entry = watcher.getOrPutValue(path, WatchData{ .state = .file_has_mod_key, .mod_key = key }) catch unreachable;
-                entry.value.mod_key = key;
+                entry.value_ptr.mod_key = key;
             }
 
             return key;
@@ -725,7 +725,7 @@ pub const FileSystem = struct {
                 fs.watcher_mutex.lock();
                 defer fs.watcher_mutex.unlock();
                 var res = watcher.getOrPutValue(path, WatchData{ .state = .file_missing }) catch unreachable;
-                res.value.state = .file_missing;
+                res.value_ptr.state = .file_missing;
             }
         }
 
@@ -776,8 +776,8 @@ pub const FileSystem = struct {
                 fs.watcher_mutex.lock();
                 defer fs.watcher_mutex.unlock();
                 var res = watcher.getOrPutValue(path, WatchData{}) catch unreachable;
-                res.value.state = .file_need_mod_key;
-                res.value.file_contents = file_contents;
+                res.value_ptr.state = .file_need_mod_key;
+                res.value_ptr.file_contents = file_contents;
             }
 
             return File{ .path = Path.init(path), .contents = file_contents };

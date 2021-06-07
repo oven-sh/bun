@@ -65,39 +65,39 @@ pub const DefineData = struct {
 
         var iter = defines.iterator();
         while (iter.next()) |entry| {
-            var splitter = std.mem.split(entry.key, ".");
+            var splitter = std.mem.split(entry.key_ptr.*, ".");
             while (splitter.next()) |part| {
                 if (!js_lexer.isIdentifier(part)) {
-                    if (strings.eql(part, entry.key)) {
-                        try log.addErrorFmt(null, logger.Loc{}, allocator, "The define key \"{s}\" must be a valid identifier", .{entry.key});
+                    if (strings.eql(part, entry.key_ptr)) {
+                        try log.addErrorFmt(null, logger.Loc{}, allocator, "The define key \"{s}\" must be a valid identifier", .{entry.key_ptr});
                     } else {
-                        try log.addErrorFmt(null, logger.Loc{}, allocator, "The define key \"{s}\" contains invalid  identifier \"{s}\"", .{ part, entry.key });
+                        try log.addErrorFmt(null, logger.Loc{}, allocator, "The define key \"{s}\" contains invalid  identifier \"{s}\"", .{ part, entry.key_ptr });
                     }
                     break;
                 }
             }
 
-            if (js_lexer.isIdentifier(entry.value) and !js_lexer.Keywords.has(entry.value)) {
+            if (js_lexer.isIdentifier(entry.value_ptr.*) and !js_lexer.Keywords.has(entry.value_ptr.*)) {
                 var ident: *js_ast.E.Identifier = try allocator.create(js_ast.E.Identifier);
                 ident.ref = Ref.None;
                 ident.can_be_removed_if_unused = true;
                 user_defines.putAssumeCapacity(
-                    entry.key,
+                    entry.key_ptr.*,
                     DefineData{
                         .value = js_ast.Expr.Data{ .e_identifier = ident },
-                        .original_name = entry.value,
+                        .original_name = entry.value_ptr.*,
                         .can_be_removed_if_unused = true,
                     },
                 );
                 // user_defines.putAssumeCapacity(
-                //     entry.key,
+                //     entry.key_ptr,
                 //     DefineData{ .value = js_ast.Expr.Data{.e_identifier = } },
                 // );
                 continue;
             }
             var _log = log;
             var source = logger.Source{
-                .contents = entry.value,
+                .contents = entry.value_ptr.*,
                 .path = defines_path,
                 .identifier_name = "defines",
                 .key_path = fs.Path.initWithNamespace("defines", "internal"),
@@ -110,9 +110,8 @@ pub const DefineData = struct {
                 },
                 // We must copy so we don't recycle
                 .e_string => {
-                    const e_string = try expr.data.e_string.clone(allocator);
-                    expr.data.e_string.* = e_string;
-                    data = expr.data;
+                    data = .{ .e_string = try allocator.create(js_ast.E.String) };
+                    data.e_string.* = try expr.data.e_string.clone(allocator);
                 },
                 .e_null, .e_boolean, .e_number => {
                     data = expr.data;
@@ -134,7 +133,7 @@ pub const DefineData = struct {
                 },
             }
 
-            user_defines.putAssumeCapacity(entry.key, DefineData{
+            user_defines.putAssumeCapacity(entry.key_ptr.*, DefineData{
                 .value = data,
             });
         }
@@ -198,8 +197,8 @@ pub const Define = struct {
                 // TODO: move this to comptime
                 // TODO: when https://github.com/ziglang/zig/pull/8596 is merged, switch to putAssumeCapacityNoClobber
                 if (define.dots.getEntry(key)) |entry| {
-                    var list = try std.ArrayList(DotDefine).initCapacity(allocator, entry.value.len + 1);
-                    list.appendSliceAssumeCapacity(entry.value);
+                    var list = try std.ArrayList(DotDefine).initCapacity(allocator, entry.value_ptr.*.len + 1);
+                    list.appendSliceAssumeCapacity(entry.value_ptr.*);
                     list.appendAssumeCapacity(DotDefine{
                         .parts = global[0..global.len],
                         .data = value_define,
@@ -232,11 +231,12 @@ pub const Define = struct {
         if (_user_defines) |user_defines| {
             var iter = user_defines.iterator();
             while (iter.next()) |user_define| {
+                const user_define_key = user_define.key_ptr.*;
                 // If it has a dot, then it's a DotDefine.
                 // e.g. process.env.NODE_ENV
-                if (strings.lastIndexOfChar(user_define.key, '.')) |last_dot| {
-                    const tail = user_define.key[last_dot + 1 .. user_define.key.len];
-                    const remainder = user_define.key[0..last_dot];
+                if (strings.lastIndexOfChar(user_define_key, '.')) |last_dot| {
+                    const tail = user_define_key[last_dot + 1 .. user_define_key.len];
+                    const remainder = user_define_key[0..last_dot];
                     const count = std.mem.count(u8, remainder, ".") + 1;
                     var parts = try allocator.alloc(string, count + 1);
                     var splitter = std.mem.split(remainder, ".");
@@ -250,16 +250,16 @@ pub const Define = struct {
 
                     // "NODE_ENV"
                     if (define.dots.getEntry(tail)) |entry| {
-                        for (entry.value) |*part| {
+                        for (entry.value_ptr.*) |*part| {
                             // ["process", "env"] === ["process", "env"] (if that actually worked)
                             if (arePartsEqual(part.parts, parts)) {
-                                part.data = part.data.merge(user_define.value);
+                                part.data = part.data.merge(user_define.value_ptr.*);
                                 didFind = true;
                                 break;
                             }
                         }
 
-                        initial_values = entry.value;
+                        initial_values = entry.value_ptr.*;
                     }
 
                     if (!didFind) {
@@ -269,7 +269,7 @@ pub const Define = struct {
                         }
 
                         list.appendAssumeCapacity(DotDefine{
-                            .data = user_define.value,
+                            .data = user_define.value_ptr.*,
                             // TODO: do we need to allocate this?
                             .parts = parts,
                         });
@@ -277,7 +277,7 @@ pub const Define = struct {
                     }
                 } else {
                     // e.g. IS_BROWSER
-                    try define.identifiers.put(user_define.key, user_define.value);
+                    try define.identifiers.put(user_define_key, user_define.value_ptr.*);
                 }
             }
         }

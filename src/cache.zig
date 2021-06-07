@@ -11,6 +11,9 @@ const fs = @import("./fs.zig");
 const sync = @import("sync.zig");
 const Mutex = sync.Mutex;
 
+const import_record = @import("./import_record.zig");
+const ImportRecord = import_record.ImportRecord;
+
 pub fn NewCache(comptime cache_files: bool) type {
     return struct {
         pub const Set = struct {
@@ -60,7 +63,13 @@ pub fn NewCache(comptime cache_files: bool) type {
                 c.entries.deinit();
             }
 
-            pub fn readFile(c: *Fs, _fs: *fs.FileSystem, path: string, dirname_fd: StoredFileDescriptorType, comptime use_shared_buffer: bool) !Entry {
+            pub fn readFile(
+                c: *Fs,
+                _fs: *fs.FileSystem,
+                path: string,
+                dirname_fd: StoredFileDescriptorType,
+                comptime use_shared_buffer: bool,
+            ) !Entry {
                 var rfs = _fs.fs;
 
                 if (cache_files) {
@@ -174,6 +183,9 @@ pub fn NewCache(comptime cache_files: bool) type {
             ) anyerror!?js_ast.Ast {
                 var temp_log = logger.Log.init(allocator);
                 defer temp_log.appendTo(log) catch {};
+                if (isDebug) {
+                    Output.println("Parse!", .{});
+                }
 
                 var parser = js_parser.Parser.init(opts, &temp_log, source, defines, allocator) catch |err| {
                     return null;
@@ -182,6 +194,25 @@ pub fn NewCache(comptime cache_files: bool) type {
                 const result = try parser.parse();
 
                 return if (result.ok) result.ast else null;
+            }
+
+            pub fn scan(
+                cache: *@This(),
+                allocator: *std.mem.Allocator,
+                scan_pass_result: *js_parser.ScanPassResult,
+                opts: js_parser.Parser.Options,
+                defines: *Define,
+                log: *logger.Log,
+                source: *const logger.Source,
+            ) anyerror!void {
+                var temp_log = logger.Log.init(allocator);
+                defer temp_log.appendTo(log) catch {};
+
+                var parser = js_parser.Parser.init(opts, &temp_log, source, defines, allocator) catch |err| {
+                    return;
+                };
+
+                return try parser.scanImports(scan_pass_result);
             }
         };
 

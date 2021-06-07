@@ -31,6 +31,10 @@ pub const ImportKind = enum(u8) {
 
     internal,
 
+    pub fn jsonStringify(self: @This(), options: anytype, writer: anytype) !void {
+        return try std.json.stringify(@tagName(self), options, writer);
+    }
+
     pub fn isFromCSS(k: ImportKind) bool {
         return k == .at_conditional or k == .at or k == .url;
     }
@@ -53,6 +57,8 @@ pub const ImportRecord = struct {
     // In these cases we shouldn't generate an error if the path could not be
     // resolved.
     handles_import_errors: bool = false,
+
+    is_internal: bool = false,
 
     // Sometimes the parser creates an import record and decides it isn't needed.
     // For example, TypeScript code may have import statements that later turn

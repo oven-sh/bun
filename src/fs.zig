@@ -970,6 +970,10 @@ pub const Path = struct {
     name: PathName,
     is_disabled: bool = false,
 
+    pub fn jsonStringify(self: *const @This(), options: anytype, writer: anytype) !void {
+        return try std.json.stringify(self.text, options, writer);
+    }
+
     pub fn generateKey(p: *Path, allocator: *std.mem.Allocator) !string {
         return try std.fmt.allocPrint(allocator, "{s}://{s}", .{ p.namespace, p.text });
     }

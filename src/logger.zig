@@ -123,6 +123,31 @@ pub const Data = struct {
 
         allocator.free(text);
     }
+
+    pub fn writeFormat(
+        this: *const Data,
+        to: anytype,
+        kind: Kind,
+    ) !void {
+        if (this.text.len == 0) return;
+
+        if (this.location) |location| {
+            try std.fmt.format(to, "\n\n{s}: {s}\n{s}\n{s}:{}:{} {d}", .{
+                kind.string(),
+                this.text,
+                location.line_text,
+                location.file,
+                location.line,
+                location.column,
+                location.offset,
+            });
+        } else {
+            try std.fmt.format(to, "\n\n{s}: {s}\n", .{
+                kind.string(),
+                this.text,
+            });
+        }
+    }
 };
 
 pub const Msg = struct {
@@ -144,26 +169,17 @@ pub const Msg = struct {
         msg: *const Msg,
         to: anytype,
     ) !void {
-        if (msg.data.location) |location| {
-            try std.fmt.format(to, "\n\n{s}: {s}\n{s}\n{s}:{}:{} {d}", .{
-                msg.kind.string(),
-                msg.data.text,
-                location.line_text,
-                location.file,
-                location.line,
-                location.column,
-                location.offset,
-            });
-        } else {
-            try std.fmt.format(to, "\n\n{s}: {s}\n", .{
-                msg.kind.string(),
-                msg.data.text,
-            });
+        try msg.data.writeFormat(to, msg.kind);
+
+        if (msg.notes) |notes| {
+            for (notes) |note| {
+                try note.writeFormat(to, msg.kind);
+            }
         }
     }
 
     pub fn doFormat(msg: *const Msg, to: anytype, formatterFunc: anytype) !void {
-        try formatterFunc(to, "\n\n{s}: {s}\n{s}\n{s}:{}:{} {d}", .{
+        try formatterFunc(to, "\n\n{s}: {s}\n{s}\n{s}:{s}:{s} {d}", .{
             msg.kind.string(),
             msg.data.text,
             msg.data.location.?.line_text,
@@ -368,7 +384,7 @@ pub const Log = struct {
     // TODO:
     pub fn print(self: *Log, to: anytype) !void {
         for (self.msgs.items) |msg| {
-            try msg.doFormat(to, std.fmt.format);
+            try msg.writeFormat(to);
         }
     }
 };

@@ -13,6 +13,7 @@ const MainFieldMap = std.StringHashMap(string);
 const BrowserMap = std.StringHashMap(string);
 
 pub const PackageJSON = struct {
+    name: string = "",
     source: logger.Source,
     main_fields: MainFieldMap,
     module_type: options.ModuleType,
@@ -85,6 +86,12 @@ pub const PackageJSON = struct {
         if (json.asProperty("version")) |version_json| {
             if (version_json.expr.asString(r.allocator)) |version_str| {
                 package_json.version = r.allocator.dupe(u8, version_str) catch unreachable;
+            }
+        }
+
+        if (json.asProperty("name")) |version_json| {
+            if (version_json.expr.asString(r.allocator)) |version_str| {
+                package_json.name = r.allocator.dupe(u8, version_str) catch unreachable;
             }
         }
 

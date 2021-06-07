@@ -748,6 +748,7 @@ pub fn joinAbsStringBuf(_cwd: []const u8, buf: []u8, _parts: anytype, comptime _
     // One last normalization, to remove any ../ added
     const result = normalizeStringBuf(buf[0..out], parser_buffer[leading_separator.len..parser_buffer.len], false, _platform, false);
     std.mem.copy(u8, buf[0..leading_separator.len], leading_separator);
+
     std.mem.copy(u8, buf[leading_separator.len .. result.len + leading_separator.len], result);
 
     return buf[0 .. result.len + leading_separator.len];

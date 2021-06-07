@@ -25,6 +25,7 @@ const MimeType = @import("./http/mime_type.zig");
 const resolve_path = @import("./resolver/resolve_path.zig");
 const runtime = @import("./runtime.zig");
 const Timer = @import("./timer.zig");
+const hash_map = @import("hash_map.zig");
 
 const DebugLogs = _resolver.DebugLogs;
 
@@ -101,6 +102,29 @@ pub const ParseResult = struct {
     ast: js_ast.Ast,
 };
 
+pub const ScanResult = struct {
+    path: Fs.Path,
+    is_node_module: bool = false,
+    file_size: u32 = 0,
+    import_record_start: u32,
+    import_record_length: u32,
+
+    pub const Summary = struct {
+        import_records: std.ArrayList(ImportRecord),
+        scan_results: std.ArrayList(ScanResult),
+        pub fn list(summary: *const Summary) List {
+            return List{
+                .import_records = summary.import_records.items,
+                .scan_results = summary.scan_results.items,
+            };
+        }
+        pub const List = struct {
+            import_records: []ImportRecord,
+            scan_results: []ScanResult,
+        };
+    };
+};
+
 pub fn NewBundler(cache_files: bool) type {
     return struct {
         const Linker = if (cache_files) linker.Linker else linker.ServeLinker;
@@ -136,6 +160,8 @@ pub fn NewBundler(cache_files: bool) type {
         ) !ThisBundler {
             js_ast.Expr.Data.Store.create(allocator);
             js_ast.Stmt.Data.Store.create(allocator);
+            js_ast.Expr.Data.Store.reset();
+            js_ast.Stmt.Data.Store.reset();
             var fs = try Fs.FileSystem.init1(allocator, opts.absolute_working_dir, opts.serve orelse false);
             const bundle_options = try options.BundleOptions.fromApi(allocator, fs, log, opts);
 
@@ -175,6 +201,394 @@ pub fn NewBundler(cache_files: bool) type {
             js_ast.Stmt.Data.Store.reset();
         }
 
+        pub const GenerateNodeModuleBundle = struct {
+            module_list: std.ArrayList(Api.JavascriptBundledModule),
+            package_list: std.ArrayList(Api.JavascriptBundledPackage),
+            header_string_buffer: MutableString,
+            // Just need to know if we've already enqueued this one
+            resolved_paths: hash_map.StringHashMap(void),
+            package_list_map: hash_map.StringHashMap(u32),
+            resolve_queue: std.fifo.LinearFifo(_resolver.Result, .Dynamic),
+            bundler: *ThisBundler,
+            allocator: *std.mem.Allocator,
+            scan_pass_result: js_parser.ScanPassResult,
+            tmpfile: std.fs.File,
+            log: *logger.Log,
+            tmpfile_byte_offset: u32 = 0,
+            code_end_byte_offset: u32 = 0,
+
+            pub const current_version: u32 = 1;
+
+            // The Speedy Bundle Format
+            // Your entire node_modules folder in a single compact file designed for web browsers.
+            // A binary JavaScript bundle format prioritizing bundle time and serialization/deserialization time
+            pub const magic_bytes = "#!/usr/bin/env speedy\n\n";
+            // This makes it possible to do ./path-to-bundle on posix systems you can see the raw JS contents
+            // https://en.wikipedia.org/wiki/Magic_number_(programming)#In_files
+            // Immediately after the magic bytes, the next character is a uint32 followed by a newline
+            // 0x00000000\n
+            // That uint32 denotes the byte offset in the file where the code for the bundle ends
+            //     - If the value is 0, that means the file did not finish writing or there are no modules
+            //     - This imposes a maximum bundle size of around 4,294,967,295 bytes. If your JS is more than 4 GB, you probably should fix that...
+            // The raw JavaScript is encoded as a UTF-8 string starting from the current position + 1 until the above byte offset.
+            // This uint32 is useful for HTTP servers to separate:
+            // - Which part of the bundle is the JS code?
+            // - Which part is the metadata?
+            // Without needing to do a full pass through the file.
+            // The metadata is at the bottom of the file instead of the top because the metadata is generated after the entire bundle is written.
+            // The rationale there is:
+            // 1. We cannot prepend to a file without a pass over the entire file
+            // 2. The metadata is variable-length and that format will change more often. Perhaps different bundlers will generate different metadata.
+            // If you have 32 MB of JavaScript dependencies, the only time it's acceptable to do a full pass is when sending it over HTTP via sendfile()
+            // So instead, we append to the file after printing each node_module
+            // When there are no more modules to process, we generate the metadata
+            // To find the metadata, you look at the byte offset: initial_header[magic_bytes.len..initial_header.len - 1]
+            // Then, you add that number to initial_header.len
+            const initial_header = {
+                var buf = std.mem.zeroes([magic_bytes.len + 5]u8);
+                std.mem.copy(u8, &buf, magic_bytes);
+                var remainder = buf[magic_bytes.len..];
+                // Write an invalid byte offset to be updated after the file ends
+                std.mem.writeIntNative(u32, remainder[0 .. remainder.len - 1], 0);
+                buf[buf.len - 1] = '\n';
+                return buf;
+            };
+            const code_start_byte_offset: u32 = initial_header.len;
+
+            pub fn appendHeaderString(generator: *GenerateNodeModuleBundle, str: string) !Api.StringPointer {
+                var offset = generator.header_string_buffer.list.items.len;
+                try generator.header_string_buffer.append(str);
+                return Api.StringPointer{
+                    .offset = @truncate(u32, offset),
+                    .length = @truncate(u32, str.len),
+                };
+            }
+
+            pub fn generate(bundler: *ThisBundler, allocator: *std.mem.Allocator) !void {
+                var tmpdir: std.fs.Dir = bundler.fs.tmpdir();
+                const tmpname = try bundler.fs.tmpname(".jsbundle");
+
+                var tmpfile = try tmpdir.createFile(tmpname, .{});
+                var generator = GenerateNodeModuleBundle{
+                    .module_list = std.ArrayList(Api.JavascriptBundledModule).init(allocator),
+                    .package_list = std.ArrayList(Api.JavascriptBundledPackage).init(allocator),
+                    .scan_pass_result = js_parser.ScanPassResult.init(allocator),
+                    .header_string_buffer = try MutableString.init(allocator, 0),
+                    .allocator = allocator,
+                    .resolved_paths = hash_map.StringHashMap(void).init(allocator),
+                    .resolve_queue = std.fifo.LinearFifo(_resolver.Result, .Dynamic).init(allocator),
+                    .bundler = bundler,
+                    .tmpfile = tmpfile,
+                    .log = bundler.log,
+                    .package_list_map = hash_map.StringHashMap(u32).init(allocator),
+                };
+                var this = &generator;
+                // Always inline the runtime into the bundle
+                try generator.appendBytes(initial_header ++ runtime.SourceContent ++ "\n\n");
+
+                if (isDebug) {
+                    generator.log.level = .verbose;
+                    bundler.resolver.debug_logs = try DebugLogs.init(allocator);
+                }
+
+                for (bundler.options.entry_points) |entry_point| {
+                    const entry_point_path = bundler.normalizeEntryPointPath(entry_point);
+                    const source_dir = bundler.fs.top_level_dir;
+                    const resolved = try bundler.linker.resolver.resolve(source_dir, entry_point, .entry_point);
+                    try this.resolve_queue.writeItem(resolved);
+                }
+
+                while (this.resolve_queue.readItem()) |resolved| {
+                    try this.processFile(resolved);
+                }
+                // Ensure we never overflow
+                this.code_end_byte_offset = @truncate(
+                    u32,
+                    std.math.max(this.tmpfile_byte_offset, @truncate(u32, initial_header.len)) - initial_header.len,
+                );
+                if (isDebug) {
+                    Output.print(
+                        "Wrote {d} bytes of code for {d} modules and {d} packages\n",
+                        .{ this.code_end_byte_offset - code_start_byte_offset, this.module_list.items.len, this.package_list.items.len },
+                    );
+                }
+                var javascript_bundle_container = std.mem.zeroes(Api.JavascriptBundleContainer);
+
+                std.sort.sort(Api.JavascriptBundledModule, this.module_list.items, this, GenerateNodeModuleBundle.sortJavascriptModuleByPath);
+                var hasher = std.hash.Wyhash.init(0);
+
+                if (this.module_list.items.len > 0) {
+                    var i: usize = 0;
+                    // Assumption: packages are immutable
+                    // Assumption: module files are immutable
+                    // The etag is the hash of each module's path in sorted order
+                    // followed by the hash of package-name@version
+                    // This will allow any unused files to force re-updating the bundle
+                    // or package version changes
+                    while (i < this.module_list.items.len) {
+                        var current_package_id = this.module_list.items[i].package_id;
+                        var offset = @truncate(u32, i);
+                        hasher.update(this.metadataStringPointer(this.module_list.items[i].path));
+
+                        i += 1;
+
+                        while (i < this.module_list.items.len and this.module_list.items[i].package_id == current_package_id) : (i += 1) {
+                            hasher.update(this.metadataStringPointer(this.module_list.items[i].path));
+                            break;
+                        }
+
+                        this.package_list.items[current_package_id].modules_offset = offset;
+                        this.package_list.items[current_package_id].modules_length = @truncate(u32, i) - offset;
+
+                        var bytes: [4]u8 = undefined;
+                        std.mem.writeIntNative(u32, &bytes, this.package_list.items[current_package_id].hash);
+                        hasher.update(&bytes);
+                    }
+                }
+
+                var javascript_bundle = std.mem.zeroes(Api.JavascriptBundle);
+                javascript_bundle.modules = this.module_list.items;
+                javascript_bundle.packages = this.package_list.items;
+                javascript_bundle.manifest_string = this.header_string_buffer.list.items;
+
+                javascript_bundle.generated_at = @truncate(u32, @intCast(u64, std.time.milliTimestamp()));
+
+                var from_name = "node_modules.jsbundle".*;
+                javascript_bundle.import_from_name = &from_name;
+
+                var etag_bytes: [8]u8 = undefined;
+                std.mem.writeIntNative(u64, &etag_bytes, hasher.final());
+                javascript_bundle.etag = &etag_bytes;
+
+                javascript_bundle_container.bundle_format_version = current_version;
+                javascript_bundle_container.bundle = javascript_bundle;
+                javascript_bundle_container.code_length = this.code_end_byte_offset;
+
+                var tmpwriter = this.tmpfile.writer();
+                try javascript_bundle_container.encode(tmpwriter);
+                try this.tmpfile.seekTo(magic_bytes.len);
+                var code_length_bytes: [4]u8 = undefined;
+                std.mem.writeIntNative(u32, &code_length_bytes, this.code_end_byte_offset);
+                try this.tmpfile.writeAll(&code_length_bytes);
+
+                const top_dir = try std.fs.openDirAbsolute(this.bundler.fs.top_level_dir, .{});
+                try std.os.renameat(tmpdir.fd, tmpname, top_dir.fd, "node_modules.jsbundle");
+
+                // Print any errors at the end
+                try this.log.print(Output.errorWriter());
+
+                if (isDebug) {
+                    Output.println("Saved node_modules.jsbundle", .{});
+                }
+            }
+
+            pub fn metadataStringPointer(this: *GenerateNodeModuleBundle, ptr: Api.StringPointer) string {
+                return this.header_string_buffer.list.items[ptr.offset .. ptr.offset + ptr.length];
+            }
+
+            pub fn sortJavascriptModuleByPath(ctx: *GenerateNodeModuleBundle, a: Api.JavascriptBundledModule, b: Api.JavascriptBundledModule) bool {
+                return std.mem.order(u8, ctx.metadataStringPointer(a.path), ctx.metadataStringPointer(b.path)) == .lt;
+            }
+
+            // pub fn sortJavascriptPackageByName(ctx: *GenerateNodeModuleBundle, a: Api.JavascriptBundledPackage, b: Api.JavascriptBundledPackage) bool {
+            //     return std.mem.order(u8, ctx.metadataStringPointer(a.name), ctx.metadataStringPointer(b.name)) == .lt;
+            // }
+
+            pub fn appendBytes(generator: *GenerateNodeModuleBundle, bytes: anytype) !void {
+                try generator.tmpfile.writeAll(bytes);
+                generator.tmpfile_byte_offset += @truncate(u32, bytes.len);
+            }
+
+            fn processImportRecord(this: *GenerateNodeModuleBundle, import_record: ImportRecord) !void {}
+            threadlocal var package_key_buf: [512]u8 = undefined;
+            fn processFile(this: *GenerateNodeModuleBundle, _resolve: _resolver.Result) !void {
+                var resolve = _resolve;
+                if (resolve.is_external) return;
+                const node_module_root_string = comptime "node_modules" ++ std.fs.path.sep_str;
+                resolve.is_from_node_modules = strings.contains(resolve.path_pair.primary.text, node_module_root_string);
+                const loader = this.bundler.options.loaders.get(resolve.path_pair.primary.name.ext) orelse .file;
+                var bundler = this.bundler;
+                defer this.scan_pass_result.reset();
+                defer this.bundler.resetStore();
+                const file_path = resolve.path_pair.primary;
+
+                // If we're in a node_module, build that almost normally
+                if (resolve.is_from_node_modules) {
+                    switch (loader) {
+                        .jsx,
+                        .tsx,
+                        .js,
+                        .ts,
+                        => {
+                            const entry = try bundler.resolver.caches.fs.readFile(
+                                bundler.fs,
+                                file_path.text,
+                                resolve.dirname_fd,
+                                true,
+                            );
+                            const source = logger.Source.initFile(Fs.File{ .path = file_path, .contents = entry.contents }, bundler.allocator) catch return null;
+                            const source_dir = file_path.name.dir;
+
+                            var jsx = bundler.options.jsx;
+                            jsx.parse = loader.isJSX();
+                            var opts = js_parser.Parser.Options.init(jsx, loader);
+                            opts.output_commonjs = true;
+                            var ast: js_ast.Ast = (try bundler.resolver.caches.js.parse(
+                                bundler.allocator,
+                                opts,
+                                bundler.options.define,
+                                this.log,
+                                &source,
+                            )) orelse return;
+
+                            for (ast.import_records) |*import_record, record_id| {
+
+                                // Don't resolve the runtime
+                                if (import_record.is_internal) {
+                                    continue;
+                                }
+
+                                if (bundler.linker.resolver.resolve(source_dir, import_record.path.text, import_record.kind)) |*_resolved_import| {
+                                    const resolved_import: *const _resolver.Result = _resolved_import;
+                                    if (resolved_import.is_external) {
+                                        continue;
+                                    }
+
+                                    const absolute_path = resolved_import.path_pair.primary.text;
+
+                                    // It should be the first index, not the last to support bundling multiple of the same package
+                                    if (strings.indexOf(absolute_path, node_module_root_string)) |node_module_start| {
+                                        import_record.path = Fs.Path.init(absolute_path[node_module_root_string.len + node_module_start ..]);
+                                    }
+
+                                    const get_or_put_result = try this.resolved_paths.getOrPut(absolute_path);
+
+                                    if (get_or_put_result.found_existing) {
+                                        continue;
+                                    }
+
+                                    try this.resolve_queue.writeItem(_resolved_import.*);
+                                } else |err| {}
+                            }
+
+                            const code_offset = this.tmpfile_byte_offset - code_start_byte_offset;
+                            var writer = js_printer.NewFileWriter(this.tmpfile);
+                            var symbols: [][]js_ast.Symbol = &([_][]js_ast.Symbol{ast.symbols});
+
+                            const code_length = @truncate(
+                                u32,
+                                try js_printer.printCommonJS(
+                                    @TypeOf(writer),
+                                    writer,
+                                    ast,
+                                    js_ast.Symbol.Map.initList(symbols),
+                                    &source,
+                                    false,
+                                    js_printer.Options{
+                                        .to_module_ref = Ref.RuntimeRef,
+                                        .externals = ast.externals,
+                                        // Indent by one
+                                        .indent = 1,
+                                        .runtime_imports = ast.runtime_imports,
+                                    },
+                                    Linker,
+                                    &bundler.linker,
+                                ),
+                            );
+                            this.tmpfile_byte_offset += code_length;
+
+                            const package_name = resolve.package_json_name.?;
+                            const package_version = resolve.package_json_version.?;
+
+                            const package_id_key = try std.fmt.bufPrint(&package_key_buf, "{s}@{s}", .{ package_name, package_version });
+                            const package_id_key_hash = @TypeOf(this.package_list_map).getHash(package_id_key);
+                            var package_get_or_put_entry = try this.package_list_map.getOrPutWithHash(package_id_key, package_id_key_hash);
+                            if (!package_get_or_put_entry.found_existing) {
+                                package_get_or_put_entry.entry.value = @truncate(u32, this.package_list.items.len);
+                                try this.package_list.append(
+                                    Api.JavascriptBundledPackage{
+                                        .name = try this.appendHeaderString(package_name),
+                                        .version = try this.appendHeaderString(package_version),
+                                        .hash = @truncate(u32, package_id_key_hash),
+                                    },
+                                );
+                            }
+                            const node_module_root = strings.indexOf(resolve.path_pair.primary.text, node_module_root_string) orelse unreachable;
+
+                            try this.module_list.append(
+                                Api.JavascriptBundledModule{
+                                    .path = try this.appendHeaderString(resolve.path_pair.primary.text[node_module_root + node_module_root_string.len ..]),
+                                    .package_id = package_get_or_put_entry.entry.value,
+                                    .code = Api.StringPointer{
+                                        .length = @truncate(u32, code_length),
+                                        .offset = @truncate(u32, code_offset),
+                                    },
+                                },
+                            );
+                        },
+                        else => {},
+                    }
+                } else {
+                    // If it's app code, scan but do not fully parse.
+                    switch (loader) {
+                        .jsx,
+                        .tsx,
+                        .js,
+                        .ts,
+                        => {
+                            const entry = bundler.resolver.caches.fs.readFile(
+                                bundler.fs,
+                                file_path.text,
+                                resolve.dirname_fd,
+                                true,
+                            ) catch return;
+
+                            const source = logger.Source.initFile(Fs.File{ .path = file_path, .contents = entry.contents }, bundler.allocator) catch return null;
+                            const source_dir = file_path.name.dir;
+
+                            var jsx = bundler.options.jsx;
+                            jsx.parse = loader.isJSX();
+                            var opts = js_parser.Parser.Options.init(jsx, loader);
+
+                            try bundler.resolver.caches.js.scan(
+                                bundler.allocator,
+                                &this.scan_pass_result,
+                                opts,
+                                bundler.options.define,
+                                this.log,
+                                &source,
+                            );
+
+                            for (this.scan_pass_result.import_records.items) |*import_record, i| {
+                                if (import_record.is_internal) {
+                                    continue;
+                                }
+
+                                if (bundler.linker.resolver.resolve(source_dir, import_record.path.text, import_record.kind)) |*_resolved_import| {
+                                    const resolved_import: *const _resolver.Result = _resolved_import;
+                                    if (resolved_import.is_external) {
+                                        continue;
+                                    }
+
+                                    const get_or_put_result = try this.resolved_paths.getOrPut(resolved_import.path_pair.primary.text);
+
+                                    if (get_or_put_result.found_existing) {
+                                        continue;
+                                    }
+
+                                    try this.resolve_queue.writeItem(_resolved_import.*);
+                                } else |err| {}
+                            }
+                        },
+                        // TODO:
+                        else => {
+                            return;
+                        },
+                    }
+                }
+            }
+        };
+
         pub fn buildWithResolveResult(
             bundler: *ThisBundler,
             resolve_result: _resolver.Result,
@@ -182,6 +596,7 @@ pub fn NewBundler(cache_files: bool) type {
             loader: options.Loader,
             comptime Writer: type,
             writer: Writer,
+            comptime import_path_format: options.BundleOptions.ImportPathFormat,
         ) !usize {
             if (resolve_result.is_external) {
                 return 0;
@@ -202,7 +617,7 @@ pub fn NewBundler(cache_files: bool) type {
             var old_linker_allocator = bundler.linker.allocator;
             defer bundler.linker.allocator = old_linker_allocator;
             bundler.linker.allocator = allocator;
-            try bundler.linker.link(file_path, &result);
+            try bundler.linker.link(file_path, &result, import_path_format);
 
             return try bundler.print(
                 result,
@@ -213,11 +628,91 @@ pub fn NewBundler(cache_files: bool) type {
 
         }
 
-        pub fn buildWithResolveResultEager(bundler: *ThisBundler, resolve_result: _resolver.Result) !?options.OutputFile {
+        pub fn buildWithResolveResultEager(
+            bundler: *ThisBundler,
+            resolve_result: _resolver.Result,
+            comptime import_path_format: options.BundleOptions.ImportPathFormat,
+            comptime Outstream: type,
+            outstream: Outstream,
+        ) !?options.OutputFile {
             if (resolve_result.is_external) {
                 return null;
             }
 
+            // Step 1. Parse & scan
+            const loader = bundler.options.loaders.get(resolve_result.path_pair.primary.name.ext) orelse .file;
+            var file_path = resolve_result.path_pair.primary;
+            file_path.pretty = Linker.relative_paths_list.append(bundler.fs.relativeTo(file_path.text)) catch unreachable;
+
+            switch (loader) {
+                .jsx, .tsx, .js, .ts, .json => {
+                    var result = bundler.parse(bundler.allocator, file_path, loader, resolve_result.dirname_fd) orelse {
+                        return null;
+                    };
+
+                    try bundler.linker.link(
+                        file_path,
+                        &result,
+                        import_path_format,
+                    );
+                    var output_file = options.OutputFile{
+                        .input = file_path,
+                        .loader = loader,
+                        .value = undefined,
+                    };
+
+                    var file: std.fs.File = undefined;
+
+                    if (Outstream == std.fs.Dir) {
+                        const output_dir = outstream;
+
+                        if (std.fs.path.dirname(file_path.pretty)) |dirname| {
+                            try output_dir.makePath(dirname);
+                        }
+                        file = try output_dir.createFile(file_path.pretty, .{});
+                    } else {
+                        file = outstream;
+                    }
+
+                    output_file.size = try bundler.print(
+                        result,
+                        js_printer.FileWriter,
+                        js_printer.NewFileWriter(file),
+                    );
+
+                    var file_op = options.OutputFile.FileOperation.fromFile(file.handle, file_path.pretty);
+
+                    file_op.fd = file.handle;
+
+                    file_op.is_tmpdir = false;
+                    output_file.value = .{ .move = file_op };
+                    if (Outstream == std.fs.Dir) {
+                        file_op.dir = outstream.fd;
+
+                        if (bundler.fs.fs.needToCloseFiles()) {
+                            file.close();
+                            file_op.fd = 0;
+                        }
+                    }
+                    return output_file;
+                },
+                // TODO:
+                else => {
+                    return null;
+                },
+            }
+        }
+
+        pub fn scanWithResolveResult(
+            bundler: *ThisBundler,
+            resolve_result: _resolver.Result,
+            scan_pass_result: *js_parser.ScanPassResult,
+        ) !?ScanResult {
+            if (resolve_result.is_external) {
+                return null;
+            }
+            var import_records = &scan_pass_result.import_records;
+            var named_imports = &scan_pass_result.named_imports;
             errdefer js_ast.Expr.Data.Store.reset();
             errdefer js_ast.Stmt.Data.Store.reset();
 
@@ -228,42 +723,45 @@ pub fn NewBundler(cache_files: bool) type {
 
             switch (loader) {
                 .jsx, .tsx, .js, .ts, .json => {
-                    var result = bundler.parse(bundler.allocator, file_path, loader, resolve_result.dirname_fd) orelse {
-                        js_ast.Expr.Data.Store.reset();
-                        js_ast.Stmt.Data.Store.reset();
-                        return null;
+                    const entry = bundler.resolver.caches.fs.readFile(
+                        bundler.fs,
+                        file_path.text,
+                        resolve_result.dirname_fd,
+                        !cache_files,
+                    ) catch return null;
+
+                    const source = logger.Source.initFile(Fs.File{ .path = file_path, .contents = entry.contents }, bundler.allocator) catch return null;
+                    const source_dir = file_path.name.dir;
+
+                    var jsx = bundler.options.jsx;
+                    jsx.parse = loader.isJSX();
+                    var opts = js_parser.Parser.Options.init(jsx, loader);
+
+                    var result = ScanResult{
+                        .path = file_path,
+                        .file_size = @truncate(u32, source.contents.len),
+                        .is_node_module = resolve_result.is_from_node_modules or strings.contains(file_path.text, "node_modules" ++ std.fs.path.sep_str),
+                        .import_record_start = @truncate(u32, import_records.items.len),
+                        .import_record_length = 0,
                     };
 
-                    try bundler.linker.link(file_path, &result);
-                    var output_file = options.OutputFile{
-                        .input = file_path,
-                        .loader = loader,
-                        .value = undefined,
-                    };
-
-                    const output_dir = bundler.options.output_dir_handle.?;
-                    if (std.fs.path.dirname(file_path.pretty)) |dirname| {
-                        try output_dir.makePath(dirname);
-                    }
-
-                    var file = try output_dir.createFile(file_path.pretty, .{});
-                    output_file.size = try bundler.print(
-                        result,
-                        js_printer.FileWriter,
-                        js_printer.NewFileWriter(file),
+                    try bundler.resolver.caches.js.scan(
+                        bundler.allocator,
+                        scan_pass_result,
+                        opts,
+                        bundler.options.define,
+                        bundler.log,
+                        &source,
                     );
-
-                    var file_op = options.OutputFile.FileOperation.fromFile(file.handle, file_path.pretty);
-                    file_op.dir = output_dir.fd;
-                    file_op.fd = file.handle;
-
-                    if (bundler.fs.fs.needToCloseFiles()) {
-                        file.close();
-                        file_op.fd = 0;
+                    result.import_record_length = @truncate(u32, import_records.items.len - result.import_record_start);
+                    for (import_records.items[result.import_record_start..import_records.items.len]) |*import_record, i| {
+                        if (bundler.linker.resolver.resolve(source_dir, import_record.path.text, import_record.kind)) |*resolved_import| {
+                            if (resolved_import.is_external) {
+                                continue;
+                            }
+                        } else |err| {}
                     }
-                    file_op.is_tmpdir = false;
-                    output_file.value = .{ .move = file_op };
-                    return output_file;
+                    return result;
                 },
                 // TODO:
                 else => {
@@ -531,6 +1029,124 @@ pub fn NewBundler(cache_files: bool) type {
             }
         }
 
+        pub fn normalizeEntryPointPath(bundler: *ThisBundler, _entry: string) string {
+            var paths = [_]string{_entry};
+            var entry = bundler.fs.abs(&paths);
+
+            std.fs.accessAbsolute(entry, .{}) catch |err| {
+                return _entry;
+            };
+
+            entry = bundler.fs.relativeTo(entry);
+
+            if (!strings.startsWith(entry, "./")) {
+                // Entry point paths without a leading "./" are interpreted as package
+                // paths. This happens because they go through general path resolution
+                // like all other import paths so that plugins can run on them. Requiring
+                // a leading "./" for a relative path simplifies writing plugins because
+                // entry points aren't a special case.
+                //
+                // However, requiring a leading "./" also breaks backward compatibility
+                // and makes working with the CLI more difficult. So attempt to insert
+                // "./" automatically when needed. We don't want to unconditionally insert
+                // a leading "./" because the path may not be a file system path. For
+                // example, it may be a URL. So only insert a leading "./" when the path
+                // is an exact match for an existing file.
+                var __entry = bundler.allocator.alloc(u8, "./".len + entry.len) catch unreachable;
+                __entry[0] = '.';
+                __entry[1] = '/';
+                std.mem.copy(u8, __entry[2..__entry.len], entry);
+                entry = __entry;
+            }
+
+            return entry;
+        }
+
+        pub fn scanDependencies(
+            allocator: *std.mem.Allocator,
+            log: *logger.Log,
+            _opts: Api.TransformOptions,
+        ) !ScanResult.Summary {
+            var opts = _opts;
+            opts.resolve = .dev;
+            var bundler = try ThisBundler.init(allocator, log, opts);
+
+            bundler.configureLinker();
+
+            var entry_points = try allocator.alloc(_resolver.Result, bundler.options.entry_points.len);
+
+            if (isDebug) {
+                log.level = .verbose;
+                bundler.resolver.debug_logs = try DebugLogs.init(allocator);
+            }
+
+            var rfs: *Fs.FileSystem.RealFS = &bundler.fs.fs;
+
+            var entry_point_i: usize = 0;
+            for (bundler.options.entry_points) |_entry| {
+                var entry: string = bundler.normalizeEntryPointPath(_entry);
+
+                defer {
+                    js_ast.Expr.Data.Store.reset();
+                    js_ast.Stmt.Data.Store.reset();
+                }
+
+                const result = bundler.resolver.resolve(bundler.fs.top_level_dir, entry, .entry_point) catch |err| {
+                    Output.printError("Error resolving \"{s}\": {s}\n", .{ entry, @errorName(err) });
+                    continue;
+                };
+
+                const key = result.path_pair.primary.text;
+                if (bundler.resolve_results.contains(key)) {
+                    continue;
+                }
+                try bundler.resolve_results.put(key, result);
+                entry_points[entry_point_i] = result;
+
+                if (isDebug) {
+                    Output.print("Resolved {s} => {s}", .{ entry, result.path_pair.primary.text });
+                }
+
+                entry_point_i += 1;
+                bundler.resolve_queue.writeItem(result) catch unreachable;
+            }
+            var scan_results = std.ArrayList(ScanResult).init(allocator);
+            var scan_pass_result = js_parser.ScanPassResult.init(allocator);
+
+            switch (bundler.options.resolve_mode) {
+                .lazy, .dev, .bundle => {
+                    while (bundler.resolve_queue.readItem()) |item| {
+                        js_ast.Expr.Data.Store.reset();
+                        js_ast.Stmt.Data.Store.reset();
+                        scan_pass_result.named_imports.clearRetainingCapacity();
+                        scan_results.append(bundler.scanWithResolveResult(item, &scan_pass_result) catch continue orelse continue) catch continue;
+                    }
+                },
+                else => Global.panic("Unsupported resolve mode: {s}", .{@tagName(bundler.options.resolve_mode)}),
+            }
+
+            // if (log.level == .verbose) {
+            //     for (log.msgs.items) |msg| {
+            //         try msg.writeFormat(std.io.getStdOut().writer());
+            //     }
+            // }
+
+            if (FeatureFlags.tracing) {
+                Output.printError(
+                    "\n---Tracing---\nResolve time:      {d}\nParsing time:      {d}\n---Tracing--\n\n",
+                    .{
+                        bundler.resolver.elapsed,
+                        bundler.elapsed,
+                    },
+                );
+            }
+
+            return ScanResult.Summary{
+                .scan_results = scan_results,
+                .import_records = scan_pass_result.import_records,
+            };
+        }
+
         pub fn bundle(
             allocator: *std.mem.Allocator,
             log: *logger.Log,
@@ -557,27 +1173,7 @@ pub fn NewBundler(cache_files: bool) type {
 
             var entry_point_i: usize = 0;
             for (bundler.options.entry_points) |_entry| {
-                var entry: string = _entry;
-
-                if (!strings.startsWith(entry, "./")) {
-                    // Entry point paths without a leading "./" are interpreted as package
-                    // paths. This happens because they go through general path resolution
-                    // like all other import paths so that plugins can run on them. Requiring
-                    // a leading "./" for a relative path simplifies writing plugins because
-                    // entry points aren't a special case.
-                    //
-                    // However, requiring a leading "./" also breaks backward compatibility
-                    // and makes working with the CLI more difficult. So attempt to insert
-                    // "./" automatically when needed. We don't want to unconditionally insert
-                    // a leading "./" because the path may not be a file system path. For
-                    // example, it may be a URL. So only insert a leading "./" when the path
-                    // is an exact match for an existing file.
-                    var __entry = allocator.alloc(u8, "./".len + entry.len) catch unreachable;
-                    __entry[0] = '.';
-                    __entry[1] = '/';
-                    std.mem.copy(u8, __entry[2..__entry.len], entry);
-                    entry = __entry;
-                }
+                var entry: string = bundler.normalizeEntryPointPath(_entry);
 
                 defer {
                     js_ast.Expr.Data.Store.reset();
@@ -604,16 +1200,27 @@ pub fn NewBundler(cache_files: bool) type {
                 bundler.resolve_queue.writeItem(result) catch unreachable;
             }
 
-            switch (bundler.options.resolve_mode) {
-                .lazy, .dev, .bundle => {
-                    while (bundler.resolve_queue.readItem()) |item| {
-                        js_ast.Expr.Data.Store.reset();
-                        js_ast.Stmt.Data.Store.reset();
-                        const output_file = bundler.buildWithResolveResultEager(item) catch continue orelse continue;
-                        bundler.output_files.append(output_file) catch unreachable;
-                    }
-                },
-                else => Global.panic("Unsupported resolve mode: {s}", .{@tagName(bundler.options.resolve_mode)}),
+            if (bundler.options.output_dir_handle == null) {
+                const outstream = std.io.getStdOut();
+                try switch (bundler.options.import_path_format) {
+                    .relative => bundler.processResolveQueue(.relative, @TypeOf(outstream), outstream),
+                    .relative_nodejs => bundler.processResolveQueue(.relative_nodejs, @TypeOf(outstream), outstream),
+                    .absolute_url => bundler.processResolveQueue(.absolute_url, @TypeOf(outstream), outstream),
+                    .absolute_path => bundler.processResolveQueue(.absolute_path, @TypeOf(outstream), outstream),
+                    .package_path => bundler.processResolveQueue(.package_path, @TypeOf(outstream), outstream),
+                };
+            } else {
+                const output_dir = bundler.options.output_dir_handle orelse {
+                    Output.printError("Invalid or missing output directory.", .{});
+                    std.os.exit(1);
+                };
+                try switch (bundler.options.import_path_format) {
+                    .relative => bundler.processResolveQueue(.relative, std.fs.Dir, output_dir),
+                    .relative_nodejs => bundler.processResolveQueue(.relative_nodejs, std.fs.Dir, output_dir),
+                    .absolute_url => bundler.processResolveQueue(.absolute_url, std.fs.Dir, output_dir),
+                    .absolute_path => bundler.processResolveQueue(.absolute_path, std.fs.Dir, output_dir),
+                    .package_path => bundler.processResolveQueue(.package_path, std.fs.Dir, output_dir),
+                };
             }
 
             // if (log.level == .verbose) {
@@ -641,6 +1248,25 @@ pub fn NewBundler(cache_files: bool) type {
             var final_result = try options.TransformResult.init(try allocator.dupe(u8, bundler.result.outbase), bundler.output_files.toOwnedSlice(), log, allocator);
             final_result.root_dir = bundler.options.output_dir_handle;
             return final_result;
+        }
+
+        pub fn processResolveQueue(
+            bundler: *ThisBundler,
+            comptime import_path_format: options.BundleOptions.ImportPathFormat,
+            comptime Outstream: type,
+            outstream: Outstream,
+        ) !void {
+            while (bundler.resolve_queue.readItem()) |item| {
+                js_ast.Expr.Data.Store.reset();
+                js_ast.Stmt.Data.Store.reset();
+                const output_file = bundler.buildWithResolveResultEager(
+                    item,
+                    import_path_format,
+                    Outstream,
+                    outstream,
+                ) catch continue orelse continue;
+                bundler.output_files.append(output_file) catch unreachable;
+            }
         }
     };
 }

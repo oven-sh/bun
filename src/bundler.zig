@@ -207,7 +207,7 @@ pub fn NewBundler(cache_files: bool) type {
             header_string_buffer: MutableString,
             // Just need to know if we've already enqueued this one
             resolved_paths: hash_map.StringHashMap(void),
-            package_list_map: hash_map.StringHashMap(u32),
+            package_list_map: std.AutoHashMap(u64, u32),
             resolve_queue: std.fifo.LinearFifo(_resolver.Result, .Dynamic),
             bundler: *ThisBundler,
             allocator: *std.mem.Allocator,
@@ -280,14 +280,13 @@ pub fn NewBundler(cache_files: bool) type {
                     .bundler = bundler,
                     .tmpfile = tmpfile,
                     .log = bundler.log,
-                    .package_list_map = hash_map.StringHashMap(u32).init(allocator),
+                    .package_list_map = std.AutoHashMap(u64, u32).init(allocator),
                 };
                 var this = &generator;
                 // Always inline the runtime into the bundle
                 try generator.appendBytes(initial_header ++ runtime.SourceContent ++ "\n\n");
 
-                if (isDebug) {
-                    generator.log.level = .verbose;
+                if (bundler.log.level == .verbose) {
                     bundler.resolver.debug_logs = try DebugLogs.init(allocator);
                 }
 
@@ -497,18 +496,29 @@ pub fn NewBundler(cache_files: bool) type {
                             );
                             this.tmpfile_byte_offset += code_length;
 
-                            const package_name = resolve.package_json_name.?;
-                            const package_version = resolve.package_json_version.?;
+                            const PackageNameVersionPair = struct { name: string, version: string };
+                            var package: PackageNameVersionPair = undefined;
 
-                            const package_id_key = try std.fmt.bufPrint(&package_key_buf, "{s}@{s}", .{ package_name, package_version });
-                            const package_id_key_hash = @TypeOf(this.package_list_map).getHash(package_id_key);
-                            var package_get_or_put_entry = try this.package_list_map.getOrPutWithHash(package_id_key, package_id_key_hash);
+                            if (resolve.package_json_version) |version| {
+                                package = .{ .name = resolve.package_json_name.?, .version = version };
+                            } else {
+                                if (this.bundler.resolver.packageJSONForResolvedNodeModule(&resolve)) |package_json| {
+                                    package = .{
+                                        .name = package_json.name,
+                                        .version = package_json.version,
+                                    };
+                                }
+                            }
+
+                            const package_id_key = try std.fmt.bufPrint(&package_key_buf, "{s}@{s}", .{ package.name, package.version });
+                            const package_id_key_hash = std.hash.Wyhash.hash(0, package_id_key);
+                            var package_get_or_put_entry = try this.package_list_map.getOrPut(package_id_key_hash);
                             if (!package_get_or_put_entry.found_existing) {
-                                package_get_or_put_entry.entry.value = @truncate(u32, this.package_list.items.len);
+                                package_get_or_put_entry.value_ptr.* = @truncate(u32, this.package_list.items.len);
                                 try this.package_list.append(
                                     Api.JavascriptBundledPackage{
-                                        .name = try this.appendHeaderString(package_name),
-                                        .version = try this.appendHeaderString(package_version),
+                                        .name = try this.appendHeaderString(package.name),
+                                        .version = try this.appendHeaderString(package.version),
                                         .hash = @truncate(u32, package_id_key_hash),
                                     },
                                 );
@@ -518,7 +528,7 @@ pub fn NewBundler(cache_files: bool) type {
                             try this.module_list.append(
                                 Api.JavascriptBundledModule{
                                     .path = try this.appendHeaderString(resolve.path_pair.primary.text[node_module_root + node_module_root_string.len ..]),
-                                    .package_id = package_get_or_put_entry.entry.value,
+                                    .package_id = package_get_or_put_entry.value_ptr.*,
                                     .code = Api.StringPointer{
                                         .length = @truncate(u32, code_length),
                                         .offset = @truncate(u32, code_offset),
@@ -1075,8 +1085,7 @@ pub fn NewBundler(cache_files: bool) type {
 
             var entry_points = try allocator.alloc(_resolver.Result, bundler.options.entry_points.len);
 
-            if (isDebug) {
-                log.level = .verbose;
+            if (log.level == .verbose) {
                 bundler.resolver.debug_logs = try DebugLogs.init(allocator);
             }
 
@@ -1164,8 +1173,7 @@ pub fn NewBundler(cache_files: bool) type {
 
             var entry_points = try allocator.alloc(_resolver.Result, bundler.options.entry_points.len);
 
-            if (isDebug) {
-                log.level = .verbose;
+            if (log.level == .verbose) {
                 bundler.resolver.debug_logs = try DebugLogs.init(allocator);
             }
 
@@ -1293,7 +1301,7 @@ pub const Transformer = struct {
         js_ast.Stmt.Data.Store.create(allocator);
         var raw_defines = try options.stringHashMapFromArrays(RawDefines, allocator, opts.define_keys, opts.define_values);
         if (opts.define_keys.len == 0) {
-            try raw_defines.put("process.env.NODE_ENV", "\"development\"");
+            try raw_defines.put(options.DefaultUserDefines.NodeEnv.Key, options.DefaultUserDefines.NodeEnv.Value);
         }
 
         var user_defines = try DefineData.from_input(raw_defines, log, alloc.static);

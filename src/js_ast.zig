@@ -3482,7 +3482,7 @@ pub const Ast = struct {
     top_level_symbol_to_parts: AutoHashMap(Ref, std.ArrayList(u32)) = undefined,
     export_star_import_records: []u32 = &([_]u32{}),
 
-    pub const NamedImports = std.ArrayHashMap(Ref, NamedImport, Ref.hash, Ref.eql, true);
+    pub const NamedImports = std.ArrayHashMap(Ref, NamedImport, RefHashCtx, true);
     pub const NamedExports = StringHashMap(NamedExport);
 
     pub fn initTest(parts: []Part) Ast {

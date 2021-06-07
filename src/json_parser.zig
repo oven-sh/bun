@@ -159,9 +159,9 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
                         }
 
                         var str = p.lexer.toEString();
-                        const is_duplicate = duplicates.exists(p.lexer.string_literal_slice);
+                        const is_duplicate = duplicates.contains(p.lexer.string_literal_slice);
                         if (!is_duplicate) {
-                            duplicates.put(p.lexer.string_literal_slice) catch unreachable;
+                            duplicates.insert(p.lexer.string_literal_slice) catch unreachable;
                         }
                         var key_range = p.lexer.range();
                         // Warn about duplicate keys

@@ -38,6 +38,7 @@ pub fn main() anyerror!void {
     // defer stdout.flush() catch {};
     // defer stderr.flush() catch {};
     Output.Source.set(&output_source);
-
+    Output.enable_ansi_colors = stderr.isTty();
+    defer Output.flush();
     try cli.Cli.start(std.heap.c_allocator, stdout, stderr, MainPanicHandler);
 }

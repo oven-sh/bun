@@ -87,7 +87,7 @@ pub fn StreamingClap(comptime Id: type, comptime ArgIterator: type) type {
                         return Arg(Id){ .param = param, .value = value };
                     }
 
-                    return parser.err(arg, .{ .long = name }, error.InvalidArgument);
+                    return null;
                 },
                 .short => return try parser.chainging(.{
                     .arg = arg,

@@ -70,6 +70,11 @@ pub const Output = struct {
                 // return @TypeOf(std.io.bufferedWriter(stdout.writer()));
             }
         };
+        const BufferedStream = std.io.BufferedWriter(4096, @typeInfo(@TypeOf(Source.StreamType.writer)).Fn.return_type.?);
+
+        buffered_stream: BufferedStream,
+        buffered_error_stream: BufferedStream,
+
         stream: StreamType,
         error_stream: StreamType,
         out_buffer: []u8 = &([_]u8{}),
@@ -79,13 +84,28 @@ pub const Output = struct {
             stream: StreamType,
             err: StreamType,
         ) Source {
-            return Source{ .stream = stream, .error_stream = err };
+            return Source{
+                .stream = stream,
+                .error_stream = err,
+                .buffered_stream = BufferedStream{ .unbuffered_writer = stream.writer() },
+                .buffered_error_stream = BufferedStream{ .unbuffered_writer = err.writer() },
+            };
         }
 
         pub fn set(_source: *Source) void {
             source = _source;
         }
     };
+    pub var enable_ansi_colors = isNative;
+    pub var enable_buffering = true;
+
+    pub fn enableBuffering() void {
+        enable_buffering = true;
+    }
+
+    pub fn disableBuffering() void {
+        enable_buffering = false;
+    }
 
     pub fn errorWriter() @typeInfo(@TypeOf(Source.StreamType.writer)).Fn.return_type.? {
         return source.error_stream.writer();
@@ -97,6 +117,8 @@ pub const Output = struct {
 
     pub fn flush() void {
         if (isNative) {
+            source.buffered_stream.flush() catch {};
+            source.buffered_error_stream.flush() catch {};
             // source.stream.flush() catch {};
             // source.error_stream.flush() catch {};
         }
@@ -140,7 +162,142 @@ pub const Output = struct {
             const root = @import("root");
             root.console_log(root.Uint8Array.fromSlice(source.out_buffer[0..source.stream.pos]));
         } else {
-            std.fmt.format(source.stream.writer(), fmt, args) catch unreachable;
+            if (enable_buffering) {
+                std.fmt.format(source.buffered_stream.writer(), fmt, args) catch unreachable;
+            } else {
+                std.fmt.format(writer(), fmt, args) catch unreachable;
+            }
+        }
+    }
+
+    // Valid colors:
+    // <black>
+    // <blue>
+    // <cyan>
+    // <green>
+    // <magenta>
+    // <red>
+    // <white>
+    // <yellow>
+    // <b> - bold
+    // <d> - dim
+    // </r> - reset
+    // <r> - reset
+    fn _pretty(comptime fmt: string, args: anytype, comptime printer: anytype, comptime is_enabled: bool) void {
+        comptime var new_fmt: [fmt.len * 4]u8 = undefined;
+        comptime var new_fmt_i: usize = 0;
+        comptime const ED = "\x1b[";
+
+        @setEvalBranchQuota(9999);
+        comptime var i: usize = 0;
+        comptime while (i < fmt.len) {
+            const c = fmt[i];
+            switch (c) {
+                '\\' => {
+                    i += 1;
+                    if (fmt.len < i) {
+                        switch (fmt[i]) {
+                            '<', '>' => {
+                                i += 1;
+                            },
+                            else => {
+                                new_fmt[new_fmt_i] = '\\';
+                                new_fmt_i += 1;
+                                new_fmt[new_fmt_i] = fmt[i];
+                                new_fmt_i += 1;
+                            },
+                        }
+                    }
+                },
+                '>' => {
+                    i += 1;
+                },
+                '{' => {
+                    while (fmt.len > i and fmt[i] != '}') {
+                        new_fmt[new_fmt_i] = fmt[i];
+                        new_fmt_i += 1;
+                        i += 1;
+                    }
+                },
+                '<' => {
+                    i += 1;
+                    var is_reset = fmt[i] == '/';
+                    if (is_reset) i += 1;
+                    var start: usize = i;
+                    while (i < fmt.len and fmt[i] != '>') {
+                        i += 1;
+                    }
+
+                    const color_name = fmt[start..i];
+                    const color_str = color_picker: {
+                        if (std.mem.eql(u8, color_name, "black")) {
+                            break :color_picker ED ++ "30m";
+                        } else if (std.mem.eql(u8, color_name, "blue")) {
+                            break :color_picker ED ++ "34m";
+                        } else if (std.mem.eql(u8, color_name, "b")) {
+                            break :color_picker ED ++ "1m";
+                        } else if (std.mem.eql(u8, color_name, "d")) {
+                            break :color_picker ED ++ "2m";
+                        } else if (std.mem.eql(u8, color_name, "cyan")) {
+                            break :color_picker ED ++ "36m";
+                        } else if (std.mem.eql(u8, color_name, "green")) {
+                            break :color_picker ED ++ "32m";
+                        } else if (std.mem.eql(u8, color_name, "magenta")) {
+                            break :color_picker ED ++ "35m";
+                        } else if (std.mem.eql(u8, color_name, "red")) {
+                            break :color_picker ED ++ "31m";
+                        } else if (std.mem.eql(u8, color_name, "white")) {
+                            break :color_picker ED ++ "37m";
+                        } else if (std.mem.eql(u8, color_name, "yellow")) {
+                            break :color_picker ED ++ "33m";
+                        } else if (std.mem.eql(u8, color_name, "r")) {
+                            is_reset = true;
+                            break :color_picker "";
+                        } else {
+                            @compileError("Invalid color name passed:" ++ color_name);
+                        }
+                    };
+                    var orig = new_fmt_i;
+
+                    if (is_enabled) {
+                        if (!is_reset) {
+                            orig = new_fmt_i;
+                            new_fmt_i += color_str.len;
+                            std.mem.copy(u8, new_fmt[orig..new_fmt_i], color_str);
+                        }
+
+                        if (is_reset) {
+                            const reset_sequence = "\x1b[0m";
+                            orig = new_fmt_i;
+                            new_fmt_i += reset_sequence.len;
+                            std.mem.copy(u8, new_fmt[orig..new_fmt_i], reset_sequence);
+                        }
+                    }
+                },
+
+                else => {
+                    new_fmt[new_fmt_i] = fmt[i];
+                    new_fmt_i += 1;
+                    i += 1;
+                },
+            }
+        };
+        printer(new_fmt[0..new_fmt_i], args);
+    }
+
+    pub fn pretty(comptime fmt: string, args: anytype) void {
+        if (enable_ansi_colors) {
+            _pretty(fmt, args, print, true);
+        } else {
+            _pretty(fmt, args, print, false);
+        }
+    }
+
+    pub fn prettyln(comptime fmt: string, args: anytype) void {
+        if (enable_ansi_colors) {
+            _pretty(fmt, args, println, true);
+        } else {
+            _pretty(fmt, args, println, false);
         }
     }
 

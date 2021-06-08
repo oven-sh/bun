@@ -55,12 +55,12 @@
     {
       "type": "lldb",
       "request": "launch",
-      "name": "Demo .jsbundle",
+      "name": "Demo .jsb",
       "program": "${workspaceFolder}/build/debug/macos-x86_64/esdev",
       "args": [
         "./src/index.tsx",
         "--resolve=dev",
-        "--jsbundle",
+        "--jsb",
         "--public-url=http://localhost:9000/"
       ],
       "cwd": "${workspaceFolder}/demos/simple-react",
@@ -69,9 +69,9 @@
     {
       "type": "lldb",
       "request": "launch",
-      "name": "Demo Print .jsbundle",
+      "name": "Demo Print .jsb",
       "program": "${workspaceFolder}/build/debug/macos-x86_64/esdev",
-      "args": ["./node_modules.jsbundle"],
+      "args": ["./node_modules.jsb"],
       "cwd": "${workspaceFolder}/demos/simple-react",
       "console": "internalConsole"
     },

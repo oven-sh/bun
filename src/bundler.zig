@@ -14,7 +14,8 @@ usingnamespace @import("ast/base.zig");
 usingnamespace @import("defines.zig");
 const panicky = @import("panic_handler.zig");
 const Fs = @import("fs.zig");
-const Api = @import("api/schema.zig").Api;
+const schema = @import("api/schema.zig");
+const Api = schema.Api;
 const _resolver = @import("./resolver/resolver.zig");
 const sync = @import("sync.zig");
 const ThreadPool = sync.ThreadPool;
@@ -264,11 +265,11 @@ pub fn NewBundler(cache_files: bool) type {
                 };
             }
 
-            pub fn generate(bundler: *ThisBundler, allocator: *std.mem.Allocator) !void {
+            pub fn generate(bundler: *ThisBundler, allocator: *std.mem.Allocator, destination: string) !Api.JavascriptBundleContainer {
                 var tmpdir: std.fs.Dir = bundler.fs.tmpdir();
-                const tmpname = try bundler.fs.tmpname(".jsbundle");
+                const tmpname = try bundler.fs.tmpname(".jsb");
 
-                var tmpfile = try tmpdir.createFile(tmpname, .{});
+                var tmpfile = try tmpdir.createFile(tmpname, .{ .read = isDebug });
                 var generator = GenerateNodeModuleBundle{
                     .module_list = std.ArrayList(Api.JavascriptBundledModule).init(allocator),
                     .package_list = std.ArrayList(Api.JavascriptBundledPackage).init(allocator),
@@ -284,7 +285,10 @@ pub fn NewBundler(cache_files: bool) type {
                 };
                 var this = &generator;
                 // Always inline the runtime into the bundle
-                try generator.appendBytes(initial_header ++ runtime.SourceContent ++ "\n\n");
+                try generator.appendBytes(&initial_header);
+                // If we try to be smart and rely on .written, it turns out incorrect
+                const code_start_pos = try this.tmpfile.getPos();
+                try generator.appendBytes(runtime.SourceContent ++ "\n\n");
 
                 if (bundler.log.level == .verbose) {
                     bundler.resolver.debug_logs = try DebugLogs.init(allocator);
@@ -303,57 +307,77 @@ pub fn NewBundler(cache_files: bool) type {
                 // Ensure we never overflow
                 this.code_end_byte_offset = @truncate(
                     u32,
-                    std.math.max(this.tmpfile_byte_offset, @truncate(u32, initial_header.len)) - initial_header.len,
+                    // Doing this math ourself seems to not necessarily produce correct results
+                    (try this.tmpfile.getPos()),
                 );
-                if (isDebug) {
-                    Output.print(
-                        "Wrote {d} bytes of code for {d} modules and {d} packages\n",
-                        .{ this.code_end_byte_offset - code_start_byte_offset, this.module_list.items.len, this.package_list.items.len },
-                    );
-                }
+
                 var javascript_bundle_container = std.mem.zeroes(Api.JavascriptBundleContainer);
 
-                std.sort.sort(Api.JavascriptBundledModule, this.module_list.items, this, GenerateNodeModuleBundle.sortJavascriptModuleByPath);
+                std.sort.sort(
+                    Api.JavascriptBundledModule,
+                    this.module_list.items,
+                    this,
+                    GenerateNodeModuleBundle.sortJavascriptModuleByPath,
+                );
                 var hasher = std.hash.Wyhash.init(0);
 
+                // We want to sort the packages as well as the files
+                // The modules sort the packages already
+                // So can just copy it in the below loop.
+                var sorted_package_list = try allocator.alloc(Api.JavascriptBundledPackage, this.package_list.items.len);
+
+                // At this point, the module_list is sorted.
                 if (this.module_list.items.len > 0) {
+                    var package_id_i: u32 = 0;
                     var i: usize = 0;
-                    // Assumption: packages are immutable
+                    // Assumption: node_modules are immutable
                     // Assumption: module files are immutable
-                    // The etag is the hash of each module's path in sorted order
-                    // followed by the hash of package-name@version
-                    // This will allow any unused files to force re-updating the bundle
-                    // or package version changes
+                    // (They're not. But, for our purposes that's okay)
+                    // The etag is:
+                    // - The hash of each module's path in sorted order
+                    // - The hash of each module's code size in sorted order
+                    // - hash(hash(package_name, package_version))
+                    // If this doesn't prove strong enough, we will do a proper content hash
+                    // But I want to avoid that overhead unless proven necessary.
+                    // There's a good chance we don't even strictly need an etag here.
+                    var bytes: [4]u8 = undefined;
                     while (i < this.module_list.items.len) {
                         var current_package_id = this.module_list.items[i].package_id;
+                        this.module_list.items[i].package_id = package_id_i;
                         var offset = @truncate(u32, i);
-                        hasher.update(this.metadataStringPointer(this.module_list.items[i].path));
 
                         i += 1;
 
                         while (i < this.module_list.items.len and this.module_list.items[i].package_id == current_package_id) : (i += 1) {
+                            this.module_list.items[i].package_id = package_id_i;
+                            // Hash the file path
                             hasher.update(this.metadataStringPointer(this.module_list.items[i].path));
-                            break;
+                            // Then the length of the code
+                            std.mem.writeIntNative(u32, &bytes, this.module_list.items[i].code.length);
+                            hasher.update(&bytes);
                         }
 
                         this.package_list.items[current_package_id].modules_offset = offset;
                         this.package_list.items[current_package_id].modules_length = @truncate(u32, i) - offset;
 
-                        var bytes: [4]u8 = undefined;
+                        // Hash the hash of the package name
+                        // it's hash(hash(package_name, package_version))
                         std.mem.writeIntNative(u32, &bytes, this.package_list.items[current_package_id].hash);
                         hasher.update(&bytes);
+
+                        sorted_package_list[package_id_i] = this.package_list.items[current_package_id];
+                        package_id_i += 1;
                     }
                 }
 
                 var javascript_bundle = std.mem.zeroes(Api.JavascriptBundle);
                 javascript_bundle.modules = this.module_list.items;
-                javascript_bundle.packages = this.package_list.items;
+                javascript_bundle.packages = sorted_package_list;
                 javascript_bundle.manifest_string = this.header_string_buffer.list.items;
 
                 javascript_bundle.generated_at = @truncate(u32, @intCast(u64, std.time.milliTimestamp()));
 
-                var from_name = "node_modules.jsbundle".*;
-                javascript_bundle.import_from_name = &from_name;
+                javascript_bundle.import_from_name = destination;
 
                 var etag_bytes: [8]u8 = undefined;
                 std.mem.writeIntNative(u64, &etag_bytes, hasher.final());
@@ -363,30 +387,55 @@ pub fn NewBundler(cache_files: bool) type {
                 javascript_bundle_container.bundle = javascript_bundle;
                 javascript_bundle_container.code_length = this.code_end_byte_offset;
 
-                var tmpwriter = this.tmpfile.writer();
-                try javascript_bundle_container.encode(tmpwriter);
-                try this.tmpfile.seekTo(magic_bytes.len);
+                var start_pos = try this.tmpfile.getPos();
+                var tmpwriter = std.io.bufferedWriter(this.tmpfile.writer());
+                const SchemaWriter = schema.Writer(@TypeOf(tmpwriter.writer()));
+                var schema_file_writer = SchemaWriter.init(tmpwriter.writer());
+                try javascript_bundle_container.encode(&schema_file_writer);
+                try tmpwriter.flush();
+
+                // sanity check
+                if (isDebug) {
+                    try this.tmpfile.seekTo(start_pos);
+                    var contents = try allocator.alloc(u8, (try this.tmpfile.getEndPos()) - start_pos);
+                    var read_bytes = try this.tmpfile.read(contents);
+                    var buf = contents[0..read_bytes];
+                    var reader = schema.Reader.init(buf, allocator);
+
+                    var decoder = try Api.JavascriptBundleContainer.decode(
+                        &reader,
+                    );
+                    std.debug.assert(decoder.code_length.? == javascript_bundle_container.code_length.?);
+                }
+
                 var code_length_bytes: [4]u8 = undefined;
                 std.mem.writeIntNative(u32, &code_length_bytes, this.code_end_byte_offset);
-                try this.tmpfile.writeAll(&code_length_bytes);
+                _ = try std.os.pwrite(this.tmpfile.handle, &code_length_bytes, magic_bytes.len);
 
                 const top_dir = try std.fs.openDirAbsolute(this.bundler.fs.top_level_dir, .{});
-                try std.os.renameat(tmpdir.fd, tmpname, top_dir.fd, "node_modules.jsbundle");
+                _ = C.fchmod(
+                    this.tmpfile.handle,
+                    // chmod 777
+                    0000010 | 0000100 | 0000001 | 0001000 | 0000040 | 0000004 | 0000002 | 0000400 | 0000200 | 0000020,
+                );
+                try std.os.renameat(tmpdir.fd, tmpname, top_dir.fd, destination);
 
                 // Print any errors at the end
                 try this.log.print(Output.errorWriter());
-
-                if (isDebug) {
-                    Output.println("Saved node_modules.jsbundle", .{});
-                }
+                return javascript_bundle_container;
             }
 
             pub fn metadataStringPointer(this: *GenerateNodeModuleBundle, ptr: Api.StringPointer) string {
                 return this.header_string_buffer.list.items[ptr.offset .. ptr.offset + ptr.length];
             }
 
+            // Since we trim the prefixes, we must also compare the package name
             pub fn sortJavascriptModuleByPath(ctx: *GenerateNodeModuleBundle, a: Api.JavascriptBundledModule, b: Api.JavascriptBundledModule) bool {
-                return std.mem.order(u8, ctx.metadataStringPointer(a.path), ctx.metadataStringPointer(b.path)) == .lt;
+                return switch (std.mem.order(u8, ctx.metadataStringPointer(ctx.package_list.items[a.package_id].name), ctx.metadataStringPointer(ctx.package_list.items[b.package_id].name))) {
+                    .eq => std.mem.order(u8, ctx.metadataStringPointer(a.path), ctx.metadataStringPointer(b.path)) == .lt,
+                    .lt => true,
+                    else => false,
+                };
             }
 
             // pub fn sortJavascriptPackageByName(ctx: *GenerateNodeModuleBundle, a: Api.JavascriptBundledPackage, b: Api.JavascriptBundledPackage) bool {
@@ -399,11 +448,12 @@ pub fn NewBundler(cache_files: bool) type {
             }
 
             fn processImportRecord(this: *GenerateNodeModuleBundle, import_record: ImportRecord) !void {}
+            const node_module_root_string = "node_modules" ++ std.fs.path.sep_str;
             threadlocal var package_key_buf: [512]u8 = undefined;
             fn processFile(this: *GenerateNodeModuleBundle, _resolve: _resolver.Result) !void {
                 var resolve = _resolve;
                 if (resolve.is_external) return;
-                const node_module_root_string = comptime "node_modules" ++ std.fs.path.sep_str;
+
                 resolve.is_from_node_modules = strings.contains(resolve.path_pair.primary.text, node_module_root_string);
                 const loader = this.bundler.options.loaders.get(resolve.path_pair.primary.name.ext) orelse .file;
                 var bundler = this.bundler;
@@ -523,11 +573,22 @@ pub fn NewBundler(cache_files: bool) type {
                                     },
                                 );
                             }
-                            const node_module_root = strings.indexOf(resolve.path_pair.primary.text, node_module_root_string) orelse unreachable;
+                            // trim node_modules/${package.name}/ from the string to save space
+                            // This reduces metadata size by about 30% for a large-ish file
+                            // A future optimization here could be to reuse the string from the original path
+                            var node_module_root = strings.indexOf(resolve.path_pair.primary.text, node_module_root_string) orelse unreachable;
+                            // omit package name
+                            node_module_root += package.name.len;
+                            // omit node_modules
+                            node_module_root += node_module_root_string.len;
+                            // omit trailing separator
+                            node_module_root += 1;
 
                             try this.module_list.append(
                                 Api.JavascriptBundledModule{
-                                    .path = try this.appendHeaderString(resolve.path_pair.primary.text[node_module_root + node_module_root_string.len ..]),
+                                    .path = try this.appendHeaderString(
+                                        resolve.path_pair.primary.text[node_module_root..],
+                                    ),
                                     .package_id = package_get_or_put_entry.value_ptr.*,
                                     .code = Api.StringPointer{
                                         .length = @truncate(u32, code_length),

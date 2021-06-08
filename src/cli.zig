@@ -132,7 +132,7 @@ pub const Cli = struct {
                 clap.parseParam("--platform <STR>                  \"browser\" or \"node\". Defaults to \"browser\"") catch unreachable,
                 clap.parseParam("--main-fields <STR>...            Main fields to lookup in package.json. Defaults to --platform dependent") catch unreachable,
                 clap.parseParam("--scan                            Instead of bundling or transpiling, print a list of every file imported by an entry point, recursively") catch unreachable,
-                clap.parseParam("--jsbundle                        Generate a new node_modules.jsbundle file from the current node_modules folder and entry point(s)") catch unreachable,
+                clap.parseParam("--jsb                             Generate a new node_modules.jsb file from node_modules and entry point(s)") catch unreachable,
                 clap.parseParam("<POS>...                          Entry points to use") catch unreachable,
             };
 
@@ -279,7 +279,7 @@ pub const Cli = struct {
                 .main_fields = args.options("--main-fields"),
                 .platform = platform,
                 .only_scan_dependencies = if (args.flag("--scan")) Api.ScanDependencyMode.all else Api.ScanDependencyMode._none,
-                .generate_node_module_bundle = if (args.flag("--jsbundle")) true else false,
+                .generate_node_module_bundle = if (args.flag("--jsb")) true else false,
             };
         }
     };
@@ -306,10 +306,26 @@ pub const Cli = struct {
         MainPanicHandler.Singleton = &panicker;
 
         var args = try Arguments.parse(alloc.static, stdout, stderr);
-        if ((args.entry_points.len == 1 and args.entry_points[0].len > ".jsbundle".len and args.entry_points[0][args.entry_points[0].len - ".jsbundle".len] == '.' and strings.eqlComptime(args.entry_points[0][args.entry_points[0].len - "jsbundle".len ..], "jsbundle"))) {
+        if ((args.entry_points.len == 1 and args.entry_points[0].len > ".jsb".len and args.entry_points[0][args.entry_points[0].len - ".jsb".len] == '.' and strings.eqlComptime(args.entry_points[0][args.entry_points[0].len - "jsb".len ..], "jsb"))) {
             var out_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
             var input = try std.fs.openFileAbsolute(try std.os.realpath(args.entry_points[0], &out_buffer), .{ .read = true });
-            try NodeModuleBundle.printBundle(std.fs.File, input, @TypeOf(stdout), stdout);
+
+            const params = comptime [_]clap.Param(clap.Help){
+                clap.parseParam("--summary    Print a summary") catch unreachable,
+                clap.parseParam("<POS>...     ") catch unreachable,
+            };
+
+            var jsBundleArgs = clap.parse(clap.Help, &params, .{}) catch |err| {
+                try NodeModuleBundle.printBundle(std.fs.File, input, @TypeOf(stdout), stdout);
+                return;
+            };
+
+            if (jsBundleArgs.flag("--summary")) {
+                try NodeModuleBundle.printSummaryFromDisk(std.fs.File, input, @TypeOf(stdout), stdout, allocator);
+            } else {
+                try NodeModuleBundle.printBundle(std.fs.File, input, @TypeOf(stdout), stdout);
+            }
+
             return;
         }
 
@@ -326,7 +342,15 @@ pub const Cli = struct {
         if ((args.generate_node_module_bundle orelse false)) {
             var this_bundler = try bundler.ServeBundler.init(allocator, &log, args);
             this_bundler.configureLinker();
-            try bundler.ServeBundler.GenerateNodeModuleBundle.generate(&this_bundler, allocator);
+            var filepath = "node_modules.jsb";
+            var node_modules = try bundler.ServeBundler.GenerateNodeModuleBundle.generate(&this_bundler, allocator, filepath);
+            var elapsed = @divTrunc(std.time.nanoTimestamp() - start_time, @as(i128, std.time.ns_per_ms));
+            var bundle = NodeModuleBundle.init(node_modules, allocator);
+
+            bundle.printSummary();
+            const indent = comptime " ";
+            Output.prettyln(indent ++ "<d>{d:6}ms elapsed", .{@intCast(u32, elapsed)});
+            Output.prettyln(indent ++ "<r>Saved to ./{s}", .{filepath});
             return;
         }
 

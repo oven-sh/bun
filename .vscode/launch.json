@@ -59,9 +59,22 @@
       "program": "${workspaceFolder}/build/debug/macos-x86_64/esdev",
       "args": [
         "./src/index.tsx",
-        "--resolve=dev",
-        "--jsb",
+        "--resolve=lazy",
         "--public-url=http://localhost:9000/"
+      ],
+      "cwd": "${workspaceFolder}/demos/simple-react",
+      "console": "internalConsole"
+    },
+
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Demo Build .jsb",
+      "program": "${workspaceFolder}/build/debug/macos-x86_64/esdev",
+      "args": [
+        "./src/index.tsx",
+        "--public-url=http://localhost:9000/",
+        "--new-jsb"
       ],
       "cwd": "${workspaceFolder}/demos/simple-react",
       "console": "internalConsole"

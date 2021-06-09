@@ -104,6 +104,7 @@ pub const Output = struct {
     }
 
     pub fn disableBuffering() void {
+        Output.flush();
         enable_buffering = false;
     }
 
@@ -285,12 +286,16 @@ pub const Output = struct {
         printer(new_fmt[0..new_fmt_i], args);
     }
 
-    pub fn pretty(comptime fmt: string, args: anytype) void {
+    pub fn prettyWithPrinter(comptime fmt: string, args: anytype, printer: anytype) void {
         if (enable_ansi_colors) {
-            _pretty(fmt, args, print, true);
+            _pretty(fmt, args, printer, true);
         } else {
-            _pretty(fmt, args, print, false);
+            _pretty(fmt, args, printer, false);
         }
+    }
+
+    pub fn pretty(comptime fmt: string, args: anytype) void {
+        prettyWithPrinter(fmt, args, print);
     }
 
     pub fn prettyln(comptime fmt: string, args: anytype) void {
@@ -307,6 +312,26 @@ pub const Output = struct {
         }
 
         return printError(fmt, args);
+    }
+
+    pub fn prettyError(comptime fmt: string, args: anytype) void {
+        prettyWithPrinter(fmt, args, printError);
+    }
+
+    pub fn prettyErrorln(comptime fmt: string, args: anytype) void {
+        if (fmt[fmt.len - 1] != '\n') {
+            return prettyWithPrinter(
+                fmt ++ "\n",
+                args,
+                printError,
+            );
+        }
+
+        return prettyWithPrinter(
+            fmt,
+            args,
+            printError,
+        );
     }
 
     pub fn errorLn(comptime fmt: string, args: anytype) void {
@@ -329,14 +354,22 @@ pub const Global = struct {
     pub fn panic(comptime fmt: string, args: anytype) noreturn {
         if (isWasm) {
             Output.print(fmt, args);
+            Output.flush();
             @panic(fmt);
         } else {
+            Output.flush();
             std.debug.panic(fmt, args);
         }
     }
 
     pub fn notimpl() noreturn {
         Global.panic("Not implemented yet!!!!!", .{});
+    }
+
+    // Make sure we always print any leftover
+    pub fn crash() noreturn {
+        Output.flush();
+        std.os.exit(1);
     }
 };
 

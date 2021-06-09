@@ -53,6 +53,10 @@ export var __commonJS =
 
 var require_cache = new WeakMap();
 
+export var __SPEEDY_INTERNAL_DO_NOT_USE_OR_YOU_WILL_BE_FIRED = {
+  RequireFailedError: class RequireFailedError {},
+};
+
 export var __require = (namespace) => {
   var entry = require_cache.get(namespace);
   if (typeof entry !== "undefined") {
@@ -64,6 +68,16 @@ export var __require = (namespace) => {
     Object.keys(namespace).length === 1
       ? namespace["default"]
       : namespace;
+
+  if (typeof target !== "function") {
+    throw new __SPEEDY_INTERNAL_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.RequireFailedError(
+      `Couldn't find module "${
+        typeof namespace === "string"
+          ? namespace
+          : namespace.name || namespace.displayName || namespace.toString()
+      }"`
+    );
+  }
 
   var exports = target();
   require_cache.set(namespace, exports);
@@ -81,3 +95,21 @@ export var __name = (target, name) => {
 };
 
 export const __esModule = true;
+
+// Used to implement ES6 exports to CommonJS
+export var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+
+export var __reExport = (target, module, desc) => {
+  if ((module && typeof module === "object") || typeof module === "function")
+    for (let key of __getOwnPropNames(module))
+      if (!__hasOwnProp.call(target, key) && key !== "default")
+        __defProp(target, key, {
+          get: () => module[key],
+          enumerable:
+            !(desc = __getOwnPropDesc(module, key)) || desc.enumerable,
+        });
+  return target;
+};

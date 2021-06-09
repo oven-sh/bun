@@ -918,6 +918,18 @@ pub const PathName = struct {
         return MutableString.ensureValidIdentifier(self.base, allocator);
     }
 
+    pub fn dirWithTrailingSlash(this: *const PathName) string {
+        // The three strings basically always point to the same underlying ptr
+        // so if dir does not have a trailing slash, but is spaced one apart from the basename
+        // we can assume there is a trailing slash there
+        // so we extend the original slice's length by one
+        if (this.dir[this.dir.len - 1] != std.fs.path.sep_posix and (@ptrToInt(this.dir.ptr) + this.dir.len + 1) == @ptrToInt(this.base.ptr)) {
+            return this.dir.ptr[0 .. this.dir.len + 1];
+        }
+
+        return this.dir;
+    }
+
     pub fn init(_path: string) PathName {
         var path = _path;
         var base = path;

@@ -11,13 +11,14 @@ const resolver = @import("./resolver.zig");
 
 const MainFieldMap = std.StringHashMap(string);
 const BrowserMap = std.StringHashMap(string);
-
+threadlocal var hashed_buf: [2048]u8 = undefined;
 pub const PackageJSON = struct {
     name: string = "",
     source: logger.Source,
     main_fields: MainFieldMap,
     module_type: options.ModuleType,
     version: string = "",
+    hash: u32 = 0,
 
     // Present if the "browser" field is present. This field is intended to be
     // used by bundlers and lets you redirect the paths of certain 3rd-party
@@ -46,7 +47,13 @@ pub const PackageJSON = struct {
     //
     browser_map: BrowserMap,
 
-    pub fn parse(comptime ResolverType: type, r: *ResolverType, input_path: string, dirname_fd: StoredFileDescriptorType) ?PackageJSON {
+    pub fn parse(
+        comptime ResolverType: type,
+        r: *ResolverType,
+        input_path: string,
+        dirname_fd: StoredFileDescriptorType,
+        comptime generate_hash: bool,
+    ) ?PackageJSON {
         const parts = [_]string{ input_path, "package.json" };
 
         const package_json_path_ = r.fs.abs(&parts);
@@ -189,6 +196,13 @@ pub const PackageJSON = struct {
 
         // TODO: side effects
         // TODO: exports map
+
+        if (generate_hash) {
+            std.mem.copy(u8, &hashed_buf, package_json.name);
+            hashed_buf[package_json.name.len + 1] = '@';
+            std.mem.copy(u8, hashed_buf[package_json.name.len + 1 ..], package_json.version);
+            package_json.hash = @truncate(u32, std.hash.Wyhash.hash(0, hashed_buf[0 .. package_json.name.len + 1 + package_json.version.len]));
+        }
 
         return package_json;
     }

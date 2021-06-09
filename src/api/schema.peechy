@@ -49,7 +49,9 @@ struct JavascriptBundledModule {
   StringPointer path;
   StringPointer code;
   uint32 package_id;
-
+  // This lets us efficiently compare strings ignoring the extension
+  // If we instead omit the extension
+  byte path_extname_length;
 }
 
 struct JavascriptBundledPackage {
@@ -105,6 +107,16 @@ struct Module {
   ModuleImportRecord[] imports;
 }
 
+struct StringMap {
+  string[] keys;
+  string[] values;
+}
+
+struct LoaderMap {
+  string[] extensions;
+  Loader[] loaders;
+}
+
 message TransformOptions {
   JSX jsx = 1;
   string tsconfig_override = 2;
@@ -113,35 +125,34 @@ message TransformOptions {
   string public_url = 4;
   string absolute_working_dir = 5;
 
+  StringMap define = 6;
 
-  string[] define_keys = 6;
-  string[] define_values = 7;
+  bool preserve_symlinks = 7;
 
-  bool preserve_symlinks = 8;
+  string[] entry_points = 8;
+  bool write = 9;
 
-  string[] entry_points = 9;
-  bool write = 10;
+  string[] inject = 10;
+  string output_dir = 11;
 
-  string[] inject = 11;
-  string output_dir = 12;
+  string[] external = 12;
 
-  string[] external = 13;
+  LoaderMap loaders = 13;
 
-  string[] loader_keys = 14;
-  Loader[] loader_values = 15;
+  string[] main_fields = 14;
+  Platform platform = 15;
 
-  string[] main_fields = 16;
-  Platform platform = 17;
+  bool serve = 16;
 
-  bool serve = 18;
+  string[] extension_order = 17;
 
-  string[] extension_order = 19;
+  string public_dir = 18;
 
-  string public_dir = 20;
+  ScanDependencyMode only_scan_dependencies = 19;
 
-  ScanDependencyMode only_scan_dependencies = 21;
+  bool generate_node_module_bundle = 20;
 
-  bool generate_node_module_bundle = 22;
+  string node_modules_bundle_path = 21;
 }
 
 struct FileHandle {

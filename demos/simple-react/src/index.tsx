@@ -1,11 +1,8 @@
 import ReactDOM from "react-dom";
 import { Button } from "./components/button";
-import * as Bootstrap from "react-bootstrap";
-import * as leftPad from "left-pad";
 import { DatePicker } from "antd";
 
 const Base = ({}) => {
-  Bootstrap.Accordion;
   return (
     <main>
       <h1>I am the page</h1>
@@ -28,3 +25,5 @@ function startReact() {
 globalThis.addEventListener("DOMContentLoaded", () => {
   startReact();
 });
+
+export { Base };

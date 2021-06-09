@@ -19,8 +19,17 @@ pub const Runtime = struct {
         __toModule: ?Ref = null,
         __commonJS: ?Ref = null,
         __require: ?Ref = null,
+        __export: ?Ref = null,
+        __reExport: ?Ref = null,
 
-        pub const all = [_][]const u8{ "__name", "__toModule", "__require", "__commonJS" };
+        pub const all = [_][]const u8{
+            "__name",
+            "__toModule",
+            "__require",
+            "__commonJS",
+            "__export",
+            "__reExport",
+        };
         pub const Name = "<RUNTIME";
 
         pub const Iterator = struct {
@@ -56,6 +65,16 @@ pub const Runtime = struct {
                         3 => {
                             if (@field(this.runtime_imports, all[3])) |val| {
                                 return Entry{ .key = 3, .value = val };
+                            }
+                        },
+                        4 => {
+                            if (@field(this.runtime_imports, all[4])) |val| {
+                                return Entry{ .key = 4, .value = val };
+                            }
+                        },
+                        5 => {
+                            if (@field(this.runtime_imports, all[5])) |val| {
+                                return Entry{ .key = 5, .value = val };
                             }
                         },
                         else => {
@@ -106,6 +125,8 @@ pub const Runtime = struct {
                 1 => @field(imports, all[1]),
                 2 => @field(imports, all[2]),
                 3 => @field(imports, all[3]),
+                4 => @field(imports, all[4]),
+                5 => @field(imports, all[5]),
                 else => null,
             };
         }

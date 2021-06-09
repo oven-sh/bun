@@ -137,6 +137,7 @@ type uint32 = number;
     path: StringPointer;
     code: StringPointer;
     package_id: uint32;
+    path_extname_length: byte;
   }
 
   export interface JavascriptBundledPackage {
@@ -174,22 +175,30 @@ type uint32 = number;
     imports: ModuleImportRecord[];
   }
 
+  export interface StringMap {
+    keys: string[];
+    values: string[];
+  }
+
+  export interface LoaderMap {
+    extensions: string[];
+    loaders: Loader[];
+  }
+
   export interface TransformOptions {
     jsx?: JSX;
     tsconfig_override?: string;
     resolve?: ResolveMode;
     public_url?: string;
     absolute_working_dir?: string;
-    define_keys?: string[];
-    define_values?: string[];
+    define?: StringMap;
     preserve_symlinks?: boolean;
     entry_points?: string[];
     write?: boolean;
     inject?: string[];
     output_dir?: string;
     external?: string[];
-    loader_keys?: string[];
-    loader_values?: Loader[];
+    loaders?: LoaderMap;
     main_fields?: string[];
     platform?: Platform;
     serve?: boolean;
@@ -197,6 +206,7 @@ type uint32 = number;
     public_dir?: string;
     only_scan_dependencies?: ScanDependencyMode;
     generate_node_module_bundle?: boolean;
+    node_modules_bundle_path?: string;
   }
 
   export interface FileHandle {
@@ -267,6 +277,10 @@ type uint32 = number;
   export declare function decodeModuleImportRecord(buffer: ByteBuffer): ModuleImportRecord;
   export declare function  encodeModule(message: Module, bb: ByteBuffer): void;
   export declare function decodeModule(buffer: ByteBuffer): Module;
+  export declare function  encodeStringMap(message: StringMap, bb: ByteBuffer): void;
+  export declare function decodeStringMap(buffer: ByteBuffer): StringMap;
+  export declare function  encodeLoaderMap(message: LoaderMap, bb: ByteBuffer): void;
+  export declare function decodeLoaderMap(buffer: ByteBuffer): LoaderMap;
   export declare function  encodeTransformOptions(message: TransformOptions, bb: ByteBuffer): void;
   export declare function decodeTransformOptions(buffer: ByteBuffer): TransformOptions;
   export declare function  encodeFileHandle(message: FileHandle, bb: ByteBuffer): void;

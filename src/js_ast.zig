@@ -3474,6 +3474,8 @@ pub const Ast = struct {
     module_ref: ?Ref = null,
     wrapper_ref: ?Ref = null,
 
+    bundle_namespace_ref: ?Ref = null,
+
     // These are used when bundling. They are filled in during the parser pass
     // since we already have to traverse the AST then anyway and the parser pass
     // is conveniently fully parallelized.

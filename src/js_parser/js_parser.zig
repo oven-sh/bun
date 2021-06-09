@@ -1522,6 +1522,24 @@ pub const Parser = struct {
         // June 4: "Parsing took: 18028000"
         // June 4: "Rest of this took: 8003000"
         _ = try p.parseStmtsUpTo(js_lexer.T.t_end_of_file, &opts);
+
+        // Symbol use counts are unavailable
+        // So we say "did we parse any JSX?"
+        // if yes, just automatically add the import so that .jsb knows to include the file.
+        if (self.options.jsx.parse and p.needs_jsx_import) {
+            _ = p.addImportRecord(
+                .internal,
+                logger.Loc{ .start = 0 },
+                p.options.jsx.import_source,
+            );
+            // Ensure we have both classic and automatic
+            // This is to handle cases where they use fragments in the automatic runtime
+            _ = p.addImportRecord(
+                .internal,
+                logger.Loc{ .start = 0 },
+                p.options.jsx.classic_import_source,
+            );
+        }
     }
 
     pub fn parse(self: *Parser) !js_ast.Result {
@@ -1770,7 +1788,7 @@ pub const Parser = struct {
                         };
                         decl_i += 1;
                     }
-                    const import_record_id = p.addImportRecord(.internal, loc, p.options.jsx.import_source);
+                    const import_record_id = p.addImportRecord(.internal, loc, p.options.jsx.classic_import_source);
                     jsx_part_stmts[stmt_i] = p.s(S.Import{
                         .namespace_ref = classic_namespace_ref,
                         .star_name_loc = loc,
@@ -1826,7 +1844,15 @@ pub const Parser = struct {
         var runtime_imports_iter = p.runtime_imports.iter();
         while (runtime_imports_iter.next()) |entry| {
             const imports = [_]u16{entry.key};
-            p.generateImportStmt(RuntimeImports.Name, &imports, &before, p.runtime_imports, null, "import_") catch unreachable;
+            p.generateImportStmt(
+                RuntimeImports.Name,
+                &imports,
+                &before,
+                p.runtime_imports,
+                null,
+                "import_",
+                true,
+            ) catch unreachable;
         }
 
         if (p.cjs_import_stmts.items.len > 0 and !p.options.output_commonjs) {
@@ -2009,6 +2035,7 @@ pub fn NewParser(
 ) type {
     const ImportRecordList = if (only_scan_imports_and_do_not_visit) *std.ArrayList(ImportRecord) else std.ArrayList(ImportRecord);
     const NamedImportsType = if (only_scan_imports_and_do_not_visit) *js_ast.Ast.NamedImports else js_ast.Ast.NamedImports;
+    const NeedsJSXType = if (only_scan_imports_and_do_not_visit) bool else void;
 
     // P is for Parser!
     // public only because of Binding.ToExpr
@@ -2109,6 +2136,14 @@ pub fn NewParser(
         named_exports: js_ast.Ast.NamedExports,
         top_level_symbol_to_parts: Map(js_ast.Ref, List(u32)),
         import_namespace_cc_map: Map(ImportNamespaceCallOrConstruct, bool),
+
+        // When we're only scanning the imports
+        // If they're using the automatic JSX runtime
+        // We won't know that we need to import JSX robustly because we don't track
+        // symbol counts. Instead, we ask:
+        // "Did we parse anything that looked like JSX"?
+        // If yes, then automatically add the JSX import.
+        needs_jsx_import: NeedsJSXType,
 
         // The parser does two passes and we need to pass the scope tree information
         // from the first pass to the second pass. That's done by tracking the calls
@@ -2736,11 +2771,11 @@ pub fn NewParser(
             symbols: anytype,
             additional_stmt: ?Stmt,
             comptime suffix: string,
+            comptime is_internal: bool,
         ) !void {
             const import_record_i = p.addImportRecordByRange(.stmt, logger.Range.None, import_path);
             var import_record: *ImportRecord = &p.import_records.items[import_record_i];
-
-            import_record.is_internal = true;
+            import_record.is_internal = is_internal;
             var import_path_identifier = try import_record.path.name.nonUniqueNameString(p.allocator);
             var namespace_identifier = try p.allocator.alloc(u8, import_path_identifier.len + suffix.len);
             var clause_items = try p.allocator.alloc(js_ast.ClauseItem, imports.len);
@@ -9254,6 +9289,10 @@ pub fn NewParser(
         }
 
         pub fn parseJSXElement(p: *P, loc: logger.Loc) !Expr {
+            if (only_scan_imports_and_do_not_visit) {
+                p.needs_jsx_import = true;
+            }
+
             var tag = try JSXTag.parse(p);
 
             // The tag may have TypeScript type arguments: "<Foo<T>/>"
@@ -13237,6 +13276,7 @@ pub fn NewParser(
                 .require_resolve_transposer = undefined,
                 .source = source,
 
+                .needs_jsx_import = if (only_scan_imports_and_do_not_visit) false else NeedsJSXType{},
                 .lexer = lexer,
             };
 

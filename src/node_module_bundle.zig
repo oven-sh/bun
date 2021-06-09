@@ -3,6 +3,19 @@ const Api = schema.Api;
 const std = @import("std");
 usingnamespace @import("global.zig");
 
+pub fn modulesIn(bundle: *const Api.JavascriptBundle, pkg: *const Api.JavascriptBundledPackage) []const Api.JavascriptBundledModule {
+    return bundle.modules[pkg.modules_offset .. pkg.modules_offset + pkg.modules_length];
+}
+
+// This corresponds to Api.JavascriptBundledPackage.hash
+pub const BundledPackageHash = u32;
+// This is the offset in the array of packages
+pub const BundledPackageID = u32;
+
+const PackageIDMap = std.AutoHashMap(BundledPackageHash, BundledPackageID);
+
+const PackageNameMap = std.StringHashMap([]BundledPackageID);
+
 pub const NodeModuleBundle = struct {
     container: Api.JavascriptBundleContainer,
     bundle: Api.JavascriptBundle,
@@ -11,14 +24,199 @@ pub const NodeModuleBundle = struct {
     bytes: []u8 = undefined,
     fd: FileDescriptorType = 0,
 
+    // Lookup packages by ID - hash(name@version)
+    package_id_map: PackageIDMap,
+
+    // Lookup packages by name. Remember that you can have multiple versions of the same package.
+    package_name_map: PackageNameMap,
+
+    // This is stored as a single pre-allocated, flat array so we can avoid dynamic allocations.
+    package_name_ids_ptr: []BundledPackageID = &([_]BundledPackageID{}),
+
     pub const magic_bytes = "#!/usr/bin/env speedy\n\n";
     threadlocal var jsbundle_prefix: [magic_bytes.len + 5]u8 = undefined;
+
+    pub fn loadPackageMap(this: *NodeModuleBundle) !void {
+        this.package_name_map = PackageNameMap.init(this.allocator);
+        var ids = PackageIDMap.init(this.allocator);
+
+        const package_count = @truncate(u32, this.bundle.packages.len);
+
+        // this.package_has_multiple_versions = try std.bit_set.DynamicBitSet.initFull(package_count, this.allocator);
+
+        try ids.ensureCapacity(
+            package_count,
+        );
+        this.package_name_ids_ptr = try this.allocator.alloc(BundledPackageID, this.bundle.packages.len);
+        var remaining_names = this.package_name_ids_ptr;
+        try this.package_name_map.ensureCapacity(
+            package_count,
+        );
+        var prev_package_ids_for_name: []u32 = &[_]u32{};
+
+        for (this.bundle.packages) |package, _package_id| {
+            const package_id = @truncate(u32, _package_id);
+            std.debug.assert(package.hash != 0);
+            ids.putAssumeCapacityNoClobber(package.hash, @truncate(u32, package_id));
+
+            const package_name = this.str(package.name);
+            var entry = this.package_name_map.getOrPutAssumeCapacity(package_name);
+
+            if (entry.found_existing) {
+                // this.package_has_multiple_versions.set(prev_package_ids_for_name[prev_package_ids_for_name.len - 1]);
+                // Assert that multiple packages with the same name come immediately after another
+                // This catches any issues with the sorting order, which would cause all sorts of weird bugs
+                // This also allows us to simply extend the length of the previous slice to the new length
+                // Saving us an allocation
+                if (@ptrToInt(prev_package_ids_for_name.ptr) != @ptrToInt(entry.value_ptr.ptr)) {
+                    Output.prettyErrorln(
+                        \\<r><red>Fatal<r>: incorrect package sorting order detected in .jsb file.\n
+                        \\This is a bug! Please create an issue.\n
+                        \\If this bug blocks you from doing work, for now 
+                        \\please <b>avoid having multiple versions of <cyan>"{s}"<r> in the same bundle.\n
+                        \\\n
+                        \\- Jarred"
+                    ,
+                        .{
+                            package_name,
+                        },
+                    );
+                    Global.crash();
+                }
+
+                const end = prev_package_ids_for_name.len + 1;
+                // Assert we have enough room to add another package
+                std.debug.assert(end < remaining_names.len);
+                entry.value_ptr.* = prev_package_ids_for_name.ptr[0..end];
+                entry.value_ptr.*[end] = package_id;
+            } else {
+                prev_package_ids_for_name = remaining_names[0..1];
+                prev_package_ids_for_name[0] = package_id;
+                entry.value_ptr.* = prev_package_ids_for_name;
+                remaining_names = remaining_names[1..];
+            }
+        }
+
+        this.package_id_map = ids;
+    }
+
+    pub fn getPackageIDByHash(this: *const NodeModuleBundle, hash: BundledPackageID) ?u32 {
+        return this.package_id_map.get(hash);
+    }
+
+    pub fn getPackageIDByName(this: *const NodeModuleBundle, name: string) ?[]u32 {
+        return this.package_name_map.get(name);
+    }
+
+    pub fn getPackage(this: *const NodeModuleBundle, name: string) ?*const Api.JavascriptBundledPackage {
+        const package_id = this.getPackageID(name) orelse return null;
+        return &this.bundle.packages[@intCast(usize, package_id)];
+    }
+
+    pub fn hasModule(this: *const NodeModuleBundle, name: string) ?*const Api.JavascriptBundledPackage {
+        const package_id = this.getPackageID(name) orelse return null;
+        return &this.bundle.packages[@intCast(usize, package_id)];
+    }
+
+    pub const ModuleQuery = struct {
+        package: *const Api.JavascriptBundledPackage,
+        relative_path: string,
+        extensions: []string,
+    };
+
+    pub fn allocModuleImport(
+        this: *const NodeModuleBundle,
+        to: *const Api.JavascriptBundledModule,
+        allocator: *std.mem.Allocator,
+    ) !string {
+        return try std.fmt.allocPrint(
+            allocator,
+            "{x}/{s}",
+            .{
+                this.bundle.packages[to.package_id].hash,
+                this.str(to.path),
+                123,
+            },
+        );
+    }
+
+    pub fn findModuleInPackageByPathWithoutPackageName(
+        this: *const NodeModuleBundle,
+        package: *const Api.JavascriptBundledPackage,
+        query: ModuleQuery,
+    ) ?Api.JavascriptBundledModule {
+        // const ModuleSearcher = struct {
+        //     ctx: *const NodeModuleBundle,
+        //     query: ModuleQuery,
+        // };
+        // std.sort.binarySearch(comptime T: type, key: T, items: []const T, context: anytype, comptime compareFn: fn(context:@TypeOf(context), lhs:T, rhs:T)math.Order)
+    }
+
+    pub fn findModuleInPackage(
+        this: *const NodeModuleBundle,
+        package: *const Api.JavascriptBundledPackage,
+        _query: string,
+    ) ?*const Api.JavascriptBundledModule {
+        const ModuleFinder = struct {
+            const Self = @This();
+            ctx: *const NodeModuleBundle,
+            pkg: *const Api.JavascriptBundledPackage,
+            query: string,
+
+            // Since the module doesn't necessarily exist, we use an integer overflow as the module name
+            pub fn moduleName(context: *const Self, module: *const Api.JavascriptBundledModule) string {
+                return if (module.path.offset == context.ctx.bundle.manifest_string.len) context.query else context.ctx.str(module.path);
+            }
+
+            pub fn cmpAsc(context: Self, lhs: Api.JavascriptBundledModule, rhs: Api.JavascriptBundledModule) std.math.Order {
+                // Comapre the module name
+                const lhs_name = context.moduleName(&lhs);
+                const rhs_name = context.moduleName(&rhs);
+                const VoidType = void;
+
+                const traversal_length = std.math.min(lhs_name.len, rhs_name.len);
+
+                for (lhs_name[0..traversal_length]) |char, i| {
+                    switch (std.math.order(char, rhs_name[i])) {
+                        .lt, .gt => |order| {
+                            return order;
+                        },
+                        .eq => {},
+                    }
+                }
+
+                return std.math.order(lhs_name.len, rhs_name.len);
+            }
+        };
+        var to_find = Api.JavascriptBundledModule{
+            .package_id = 0,
+            .code = .{},
+            .path = .{
+                .offset = @truncate(u32, this.bundle.manifest_string.len),
+            },
+        };
+
+        var finder = ModuleFinder{ .ctx = this, .pkg = package, .query = _query };
+
+        const modules = modulesIn(&this.bundle, package);
+        const module_id = std.sort.binarySearch(
+            Api.JavascriptBundledModule,
+            to_find,
+            modules,
+            finder,
+            ModuleFinder.cmpAsc,
+        ) orelse return null;
+        return &modules[module_id];
+    }
 
     pub fn init(container: Api.JavascriptBundleContainer, allocator: *std.mem.Allocator) NodeModuleBundle {
         return NodeModuleBundle{
             .container = container,
             .bundle = container.bundle.?,
             .allocator = allocator,
+            .package_id_map = undefined,
+            .package_name_map = undefined,
+            .package_name_ids_ptr = undefined,
         };
     }
 
@@ -43,14 +241,19 @@ pub const NodeModuleBundle = struct {
         var reader = schema.Reader.init(read_bytes, allocator);
         var container = try Api.JavascriptBundleContainer.decode(&reader);
 
-        return NodeModuleBundle{
+        var bundle = NodeModuleBundle{
             .allocator = allocator,
             .container = container,
             .bundle = container.bundle.?,
             .fd = stream.handle,
             .bytes = read_bytes,
             .bytes_ptr = file_bytes,
+            .package_id_map = undefined,
+            .package_name_map = undefined,
+            .package_name_ids_ptr = undefined,
         };
+        try bundle.loadPackageMap();
+        return bundle;
     }
 
     pub fn str(bundle: *const NodeModuleBundle, pointer: Api.StringPointer) string {
@@ -58,7 +261,6 @@ pub const NodeModuleBundle = struct {
     }
 
     pub fn getPackageSize(this: *const NodeModuleBundle, pkg: Api.JavascriptBundledPackage) usize {
-        const modules = this.bundle.modules[pkg.modules_offset .. pkg.modules_offset + pkg.modules_length];
         var size: usize = 0;
         for (modules) |module| {
             size += module.code.length;
@@ -86,10 +288,11 @@ pub const NodeModuleBundle = struct {
             );
 
             for (modules) |module| {
-                const size_level = switch (module.code.length) {
-                    0...5_000 => SizeLevel.good,
-                    5_001...74_999 => SizeLevel.neutral,
-                    else => SizeLevel.bad,
+                const size_level: SizeLevel =
+                    switch (module.code.length) {
+                    0...5_000 => .good,
+                    5_001...74_999 => .neutral,
+                    else => .bad,
                 };
 
                 Output.print(indent, .{});

@@ -76,6 +76,7 @@ pub const Options = struct {
     indent: usize = 0,
     externals: []u32 = &[_]u32{},
     runtime_imports: runtime.Runtime.Imports,
+    package_json_hash: u32 = 0,
     rewrite_require_resolve: bool = true,
     // If we're writing out a source map, this table of line start indices lets
     // us do binary search on to figure out what line a given AST node came from

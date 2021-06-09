@@ -149,6 +149,34 @@ pub fn longestCommonPathGeneric(strings: []const []const u8, comptime separator:
     return strings[0][0 .. last_common_separator + 1];
 }
 
+const sep_posix_str = &([_]u8{std.fs.path.sep_posix});
+const node_modules_root = "node_modules" ++ std.fs.path.sep_str;
+
+pub const PackageRelativePath = struct { base_path: string, package_name: string };
+pub fn packageRelative(absolute_path: string) ?PackageRelativePath {
+    if (std.Target.current.os.tag == .windows) {
+        @compileError("Not implemented in windows");
+    }
+
+    const node_modules_index = std.mem.lastIndexOf(u8, absolute_path, node_modules_root) orelse return null;
+    const current_path = absolute_path[node_modules_index + node_modules_root.len + 1 ..];
+    return packageRelativeFromNodeModulesFolder(current_path);
+}
+
+pub fn packageRelativeFromNodeModulesFolder(current_path: string) ?PackageRelativePath {
+    if (std.Target.current.os.tag == .windows) {
+        @compileError("Not implemented in windows");
+    }
+
+    const package_name_end = std.mem.indexOfScalar(u8, current_path, std.fs.path.sep) orelse return null;
+    const package_name = current_path[0..package_name_end];
+
+    return PackageRelativePath{
+        .base_path = current_path[package_name_end + 1 ..],
+        .package_name = package_name,
+    };
+}
+
 pub fn longestCommonPath(strings: []const []const u8) []const u8 {
     return longestCommonPathGeneric(strings, '/', isSepAny);
 }
@@ -678,7 +706,7 @@ pub fn joinAbsStringBuf(_cwd: []const u8, buf: []u8, _parts: anytype, comptime _
         return _cwd;
     }
 
-    if ((_platform == .loose or _platform == .posix) and parts.len == 1 and parts[0].len == 1 and parts[0] == std.fs.path.sep_posix) {
+    if ((_platform == .loose or _platform == .posix) and parts.len == 1 and parts[0].len == 1 and parts[0][0] == std.fs.path.sep_posix) {
         return "/";
     }
 
@@ -859,50 +887,50 @@ test "joinAbsStringPosix" {
     var t = tester.Tester.t(std.heap.c_allocator);
     defer t.report(@src());
     const string = []const u8;
-    const cwd = "/Users/jarredsumner/Code/app";
+    const cwd = "/Users/jarredsumner/Code/app/";
 
     _ = t.expect(
         "/Users/jarredsumner/Code/app/foo/bar/file.js",
-        joinAbsString(cwd, [_]string{ "foo", "bar", "file.js" }, .posix),
+        joinAbsString(cwd, &[_]string{ "foo", "bar", "file.js" }, .posix),
         @src(),
     );
     _ = t.expect(
         "/Users/jarredsumner/Code/app/foo/file.js",
-        joinAbsString(cwd, [_]string{ "foo", "bar", "../file.js" }, .posix),
+        joinAbsString(cwd, &[_]string{ "foo", "bar", "../file.js" }, .posix),
         @src(),
     );
     _ = t.expect(
         "/Users/jarredsumner/Code/app/foo/file.js",
-        joinAbsString(cwd, [_]string{ "foo", "./bar", "../file.js" }, .posix),
+        joinAbsString(cwd, &[_]string{ "foo", "./bar", "../file.js" }, .posix),
+        @src(),
+    );
+
+    _ = t.expect(
+        "/Users/jarredsumner/file.js",
+        joinAbsString(cwd, &[_]string{ "", "../../file.js" }, .posix),
         @src(),
     );
 
     _ = t.expect(
         "/Users/jarredsumner/Code/app/foo/file.js",
-        joinAbsString(cwd, [_]string{ "", "../../file.js" }, .posix),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Users/jarredsumner/Code/app/foo/file.js",
-        joinAbsString(cwd, [_]string{ "././././foo", "././././bar././././", "../file.js" }, .posix),
+        joinAbsString(cwd, &[_]string{ "././././foo", "././././bar././././", "../file.js" }, .posix),
         @src(),
     );
     _ = t.expect(
         "/Code/app/foo/file.js",
-        joinAbsString(cwd, [_]string{ "/Code/app", "././././foo", "././././bar././././", "../file.js" }, .posix),
+        joinAbsString(cwd, &[_]string{ "/Code/app", "././././foo", "././././bar././././", "../file.js" }, .posix),
         @src(),
     );
 
     _ = t.expect(
         "/Code/app/foo/file.js",
-        joinAbsString(cwd, [_]string{ "/Code/app", "././././foo", ".", "././././bar././././", ".", "../file.js" }, .posix),
+        joinAbsString(cwd, &[_]string{ "/Code/app", "././././foo", ".", "././././bar././././", ".", "../file.js" }, .posix),
         @src(),
     );
 
     _ = t.expect(
         "/Code/app/file.js",
-        joinAbsString(cwd, [_]string{ "/Code/app", "././././foo", "..", "././././bar././././", ".", "../file.js" }, .posix),
+        joinAbsString(cwd, &[_]string{ "/Code/app", "././././foo", "..", "././././bar././././", ".", "../file.js" }, .posix),
         @src(),
     );
 }
@@ -915,81 +943,81 @@ test "joinAbsStringLoose" {
 
     _ = t.expect(
         "/Users/jarredsumner/Code/app/foo/bar/file.js",
-        joinAbsString(cwd, [_]string{ "foo", "bar", "file.js" }, .loose),
+        joinAbsString(cwd, &[_]string{ "foo", "bar", "file.js" }, .loose),
         @src(),
     );
     _ = t.expect(
         "/Users/jarredsumner/Code/app/foo/file.js",
-        joinAbsString(cwd, [_]string{ "foo", "bar", "../file.js" }, .loose),
+        joinAbsString(cwd, &[_]string{ "foo", "bar", "../file.js" }, .loose),
         @src(),
     );
     _ = t.expect(
         "/Users/jarredsumner/Code/app/foo/file.js",
-        joinAbsString(cwd, [_]string{ "foo", "./bar", "../file.js" }, .loose),
+        joinAbsString(cwd, &[_]string{ "foo", "./bar", "../file.js" }, .loose),
         @src(),
     );
 
     _ = t.expect(
         "/Users/jarredsumner/Code/app/foo/file.js",
-        joinAbsString(cwd, [_]string{ "././././foo", "././././bar././././", "../file.js" }, .loose),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Code/app/foo/file.js",
-        joinAbsString(cwd, [_]string{ "/Code/app", "././././foo", "././././bar././././", "../file.js" }, .loose),
+        joinAbsString(cwd, &[_]string{ "././././foo", "././././bar././././", "../file.js" }, .loose),
         @src(),
     );
 
     _ = t.expect(
         "/Code/app/foo/file.js",
-        joinAbsString(cwd, [_]string{ "/Code/app", "././././foo", ".", "././././bar././././", ".", "../file.js" }, .loose),
+        joinAbsString(cwd, &[_]string{ "/Code/app", "././././foo", "././././bar././././", "../file.js" }, .loose),
+        @src(),
+    );
+
+    _ = t.expect(
+        "/Code/app/foo/file.js",
+        joinAbsString(cwd, &[_]string{ "/Code/app", "././././foo", ".", "././././bar././././", ".", "../file.js" }, .loose),
         @src(),
     );
 
     _ = t.expect(
         "/Code/app/file.js",
-        joinAbsString(cwd, [_]string{ "/Code/app", "././././foo", "..", "././././bar././././", ".", "../file.js" }, .loose),
+        joinAbsString(cwd, &[_]string{ "/Code/app", "././././foo", "..", "././././bar././././", ".", "../file.js" }, .loose),
         @src(),
     );
 
     _ = t.expect(
         "/Users/jarredsumner/Code/app/foo/bar/file.js",
-        joinAbsString(cwd, [_]string{ "foo", "bar", "file.js" }, .loose),
+        joinAbsString(cwd, &[_]string{ "foo", "bar", "file.js" }, .loose),
         @src(),
     );
     _ = t.expect(
         "/Users/jarredsumner/Code/app/foo/file.js",
-        joinAbsString(cwd, [_]string{ "foo", "bar", "../file.js" }, .loose),
+        joinAbsString(cwd, &[_]string{ "foo", "bar", "../file.js" }, .loose),
         @src(),
     );
     _ = t.expect(
         "/Users/jarredsumner/Code/app/foo/file.js",
-        joinAbsString(cwd, [_]string{ "foo", "./bar", "../file.js" }, .loose),
+        joinAbsString(cwd, &[_]string{ "foo", "./bar", "../file.js" }, .loose),
         @src(),
     );
 
     _ = t.expect(
         "/Users/jarredsumner/Code/app/foo/file.js",
-        joinAbsString(cwd, [_]string{ ".\\.\\.\\.\\foo", "././././bar././././", "..\\file.js" }, .loose),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Code/app/foo/file.js",
-        joinAbsString(cwd, [_]string{ "/Code/app", "././././foo", "././././bar././././", "../file.js" }, .loose),
+        joinAbsString(cwd, &[_]string{ ".\\.\\.\\.\\foo", "././././bar././././", "..\\file.js" }, .loose),
         @src(),
     );
 
     _ = t.expect(
         "/Code/app/foo/file.js",
-        joinAbsString(cwd, [_]string{ "/Code/app", "././././foo", ".", "././././bar././././", ".", "../file.js" }, .loose),
+        joinAbsString(cwd, &[_]string{ "/Code/app", "././././foo", "././././bar././././", "../file.js" }, .loose),
+        @src(),
+    );
+
+    _ = t.expect(
+        "/Code/app/foo/file.js",
+        joinAbsString(cwd, &[_]string{ "/Code/app", "././././foo", ".", "././././bar././././", ".", "../file.js" }, .loose),
         @src(),
     );
 
     _ = t.expect(
         "/Code/app/file.js",
-        joinAbsString(cwd, [_]string{ "/Code/app", "././././foo", "..", "././././bar././././", ".", "../file.js" }, .loose),
+        joinAbsString(cwd, &[_]string{ "/Code/app", "././././foo", "..", "././././bar././././", ".", "../file.js" }, .loose),
         @src(),
     );
 }

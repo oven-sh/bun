@@ -167,6 +167,7 @@ function decodeJavascriptBundledModule(bb) {
   result["path"] = decodeStringPointer(bb);
   result["code"] = decodeStringPointer(bb);
   result["package_id"] = bb.readUint32();
+  result["path_extname_length"] = bb.readByte();
   return result;
 }
 
@@ -191,6 +192,13 @@ function encodeJavascriptBundledModule(message, bb) {
     bb.writeUint32(value);
   } else {
     throw new Error("Missing required field \"package_id\"");
+  }
+
+  var value = message["path_extname_length"];
+  if (value != null) {
+    bb.writeByte(value);
+  } else {
+    throw new Error("Missing required field \"path_extname_length\"");
   }
 
 }
@@ -467,6 +475,88 @@ function encodeModule(message, bb) {
 
 }
 
+function decodeStringMap(bb) {
+  var result = {};
+
+  var length = bb.readVarUint();
+  var values = result["keys"] = Array(length);
+  for (var i = 0; i < length; i++) values[i] = bb.readString();
+  var length = bb.readVarUint();
+  var values = result["values"] = Array(length);
+  for (var i = 0; i < length; i++) values[i] = bb.readString();
+  return result;
+}
+
+function encodeStringMap(message, bb) {
+
+  var value = message["keys"];
+  if (value != null) {
+    var values = value, n = values.length;
+    bb.writeVarUint(n);
+    for (var i = 0; i < n; i++) {
+      value = values[i];
+      bb.writeString(value);
+    }
+  } else {
+    throw new Error("Missing required field \"keys\"");
+  }
+
+  var value = message["values"];
+  if (value != null) {
+    var values = value, n = values.length;
+    bb.writeVarUint(n);
+    for (var i = 0; i < n; i++) {
+      value = values[i];
+      bb.writeString(value);
+    }
+  } else {
+    throw new Error("Missing required field \"values\"");
+  }
+
+}
+
+function decodeLoaderMap(bb) {
+  var result = {};
+
+  var length = bb.readVarUint();
+  var values = result["extensions"] = Array(length);
+  for (var i = 0; i < length; i++) values[i] = bb.readString();
+  var length = bb.readVarUint();
+  var values = result["loaders"] = Array(length);
+  for (var i = 0; i < length; i++) values[i] = Loader[bb.readByte()];
+  return result;
+}
+
+function encodeLoaderMap(message, bb) {
+
+  var value = message["extensions"];
+  if (value != null) {
+    var values = value, n = values.length;
+    bb.writeVarUint(n);
+    for (var i = 0; i < n; i++) {
+      value = values[i];
+      bb.writeString(value);
+    }
+  } else {
+    throw new Error("Missing required field \"extensions\"");
+  }
+
+  var value = message["loaders"];
+  if (value != null) {
+    var values = value, n = values.length;
+    bb.writeVarUint(n);
+    for (var i = 0; i < n; i++) {
+      value = values[i];
+      var encoded = Loader[value];
+if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + " for enum \"Loader\"");
+bb.writeByte(encoded);
+    }
+  } else {
+    throw new Error("Missing required field \"loaders\"");
+  }
+
+}
+
 function decodeTransformOptions(bb) {
   var result = {};
 
@@ -496,89 +586,77 @@ function decodeTransformOptions(bb) {
       break;
 
     case 6:
-      var length = bb.readVarUint();
-      var values = result["define_keys"] = Array(length);
-      for (var i = 0; i < length; i++) values[i] = bb.readString();
+      result["define"] = decodeStringMap(bb);
       break;
 
     case 7:
-      var length = bb.readVarUint();
-      var values = result["define_values"] = Array(length);
-      for (var i = 0; i < length; i++) values[i] = bb.readString();
-      break;
-
-    case 8:
       result["preserve_symlinks"] = !!bb.readByte();
       break;
 
-    case 9:
+    case 8:
       var length = bb.readVarUint();
       var values = result["entry_points"] = Array(length);
       for (var i = 0; i < length; i++) values[i] = bb.readString();
       break;
 
-    case 10:
+    case 9:
       result["write"] = !!bb.readByte();
       break;
 
-    case 11:
+    case 10:
       var length = bb.readVarUint();
       var values = result["inject"] = Array(length);
       for (var i = 0; i < length; i++) values[i] = bb.readString();
       break;
 
-    case 12:
+    case 11:
       result["output_dir"] = bb.readString();
       break;
 
-    case 13:
+    case 12:
       var length = bb.readVarUint();
       var values = result["external"] = Array(length);
       for (var i = 0; i < length; i++) values[i] = bb.readString();
       break;
 
+    case 13:
+      result["loaders"] = decodeLoaderMap(bb);
+      break;
+
     case 14:
-      var length = bb.readVarUint();
-      var values = result["loader_keys"] = Array(length);
-      for (var i = 0; i < length; i++) values[i] = bb.readString();
-      break;
-
-    case 15:
-      var length = bb.readVarUint();
-      var values = result["loader_values"] = Array(length);
-      for (var i = 0; i < length; i++) values[i] = Loader[bb.readByte()];
-      break;
-
-    case 16:
       var length = bb.readVarUint();
       var values = result["main_fields"] = Array(length);
       for (var i = 0; i < length; i++) values[i] = bb.readString();
       break;
 
-    case 17:
+    case 15:
       result["platform"] = Platform[bb.readByte()];
       break;
 
-    case 18:
+    case 16:
       result["serve"] = !!bb.readByte();
       break;
 
-    case 19:
+    case 17:
       var length = bb.readVarUint();
       var values = result["extension_order"] = Array(length);
       for (var i = 0; i < length; i++) values[i] = bb.readString();
       break;
 
-    case 20:
+    case 18:
       result["public_dir"] = bb.readString();
       break;
 
-    case 21:
+    case 19:
       result["only_scan_dependencies"] = ScanDependencyMode[bb.readByte()];
       break;
 
-    case 22:
+    case 20:
       result["generate_node_module_bundle"] = !!bb.readByte();
+      break;
+
+    case 21:
+      result["node_modules_bundle_path"] = bb.readString();
       break;
 
     default:
@@ -621,37 +699,21 @@ bb.writeByte(encoded);
     bb.writeString(value);
   }
 
-  var value = message["define_keys"];
+  var value = message["define"];
   if (value != null) {
     bb.writeByte(6);
-    var values = value, n = values.length;
-    bb.writeVarUint(n);
-    for (var i = 0; i < n; i++) {
-      value = values[i];
-      bb.writeString(value);
-    }
-  }
-
-  var value = message["define_values"];
-  if (value != null) {
-    bb.writeByte(7);
-    var values = value, n = values.length;
-    bb.writeVarUint(n);
-    for (var i = 0; i < n; i++) {
-      value = values[i];
-      bb.writeString(value);
-    }
+    encodeStringMap(value, bb);
   }
 
   var value = message["preserve_symlinks"];
   if (value != null) {
-    bb.writeByte(8);
+    bb.writeByte(7);
     bb.writeByte(value);
   }
 
   var value = message["entry_points"];
   if (value != null) {
-    bb.writeByte(9);
+    bb.writeByte(8);
     var values = value, n = values.length;
     bb.writeVarUint(n);
     for (var i = 0; i < n; i++) {
@@ -662,13 +724,13 @@ bb.writeByte(encoded);
 
   var value = message["write"];
   if (value != null) {
-    bb.writeByte(10);
+    bb.writeByte(9);
     bb.writeByte(value);
   }
 
   var value = message["inject"];
   if (value != null) {
-    bb.writeByte(11);
+    bb.writeByte(10);
     var values = value, n = values.length;
     bb.writeVarUint(n);
     for (var i = 0; i < n; i++) {
@@ -679,13 +741,13 @@ bb.writeByte(encoded);
 
   var value = message["output_dir"];
   if (value != null) {
-    bb.writeByte(12);
+    bb.writeByte(11);
     bb.writeString(value);
   }
 
   var value = message["external"];
   if (value != null) {
-    bb.writeByte(13);
+    bb.writeByte(12);
     var values = value, n = values.length;
     bb.writeVarUint(n);
     for (var i = 0; i < n; i++) {
@@ -694,7 +756,13 @@ bb.writeByte(encoded);
     }
   }
 
-  var value = message["loader_keys"];
+  var value = message["loaders"];
+  if (value != null) {
+    bb.writeByte(13);
+    encodeLoaderMap(value, bb);
+  }
+
+  var value = message["main_fields"];
   if (value != null) {
     bb.writeByte(14);
     var values = value, n = values.length;
@@ -705,33 +773,9 @@ bb.writeByte(encoded);
     }
   }
 
-  var value = message["loader_values"];
-  if (value != null) {
-    bb.writeByte(15);
-    var values = value, n = values.length;
-    bb.writeVarUint(n);
-    for (var i = 0; i < n; i++) {
-      value = values[i];
-      var encoded = Loader[value];
-if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + " for enum \"Loader\"");
-bb.writeByte(encoded);
-    }
-  }
-
-  var value = message["main_fields"];
-  if (value != null) {
-    bb.writeByte(16);
-    var values = value, n = values.length;
-    bb.writeVarUint(n);
-    for (var i = 0; i < n; i++) {
-      value = values[i];
-      bb.writeString(value);
-    }
-  }
-
   var value = message["platform"];
   if (value != null) {
-    bb.writeByte(17);
+    bb.writeByte(15);
     var encoded = Platform[value];
 if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + " for enum \"Platform\"");
 bb.writeByte(encoded);
@@ -739,13 +783,13 @@ bb.writeByte(encoded);
 
   var value = message["serve"];
   if (value != null) {
-    bb.writeByte(18);
+    bb.writeByte(16);
     bb.writeByte(value);
   }
 
   var value = message["extension_order"];
   if (value != null) {
-    bb.writeByte(19);
+    bb.writeByte(17);
     var values = value, n = values.length;
     bb.writeVarUint(n);
     for (var i = 0; i < n; i++) {
@@ -756,13 +800,13 @@ bb.writeByte(encoded);
 
   var value = message["public_dir"];
   if (value != null) {
-    bb.writeByte(20);
+    bb.writeByte(18);
     bb.writeString(value);
   }
 
   var value = message["only_scan_dependencies"];
   if (value != null) {
-    bb.writeByte(21);
+    bb.writeByte(19);
     var encoded = ScanDependencyMode[value];
 if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + " for enum \"ScanDependencyMode\"");
 bb.writeByte(encoded);
@@ -770,8 +814,14 @@ bb.writeByte(encoded);
 
   var value = message["generate_node_module_bundle"];
   if (value != null) {
-    bb.writeByte(22);
+    bb.writeByte(20);
     bb.writeByte(value);
+  }
+
+  var value = message["node_modules_bundle_path"];
+  if (value != null) {
+    bb.writeByte(21);
+    bb.writeString(value);
   }
   bb.writeByte(0);
 
@@ -1207,6 +1257,10 @@ export { decodeModuleImportRecord }
 export { encodeModuleImportRecord }
 export { decodeModule }
 export { encodeModule }
+export { decodeStringMap }
+export { encodeStringMap }
+export { decodeLoaderMap }
+export { encodeLoaderMap }
 export { decodeTransformOptions }
 export { encodeTransformOptions }
 export { decodeFileHandle }

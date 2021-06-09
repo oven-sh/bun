@@ -19,6 +19,12 @@ const StringBoolMap = std.StringHashMap(bool);
 const allocators = @import("../allocators.zig");
 
 const Path = Fs.Path;
+const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
+
+pub fn isPackagePath(path: string) bool {
+    // this could probably be flattened into something more optimized
+    return path[0] != '/' and !strings.startsWith(path, "./") and !strings.startsWith(path, "../") and !strings.eql(path, ".") and !strings.eql(path, "..");
+}
 
 pub const SideEffectsData = struct {
     source: *logger.Source,
@@ -120,8 +126,7 @@ pub const Result = struct {
 
     jsx: options.JSX.Pragma = options.JSX.Pragma{},
 
-    package_json_version: ?string = null,
-    package_json_name: ?string = null,
+    package_json: ?*PackageJSON = null,
 
     is_external: bool = false,
 
@@ -281,8 +286,7 @@ pub const MatchResult = struct {
     dirname_fd: StoredFileDescriptorType = 0,
     file_fd: StoredFileDescriptorType = 0,
     is_node_module: bool = false,
-    package_json_version: ?string = null,
-    package_json_name: ?string = null,
+    package_json: ?*PackageJSON = null,
     diff_case: ?Fs.FileSystem.Entry.Lookup.DifferentCase = null,
 };
 
@@ -304,6 +308,7 @@ pub fn NewResolver(cache_files: bool) type {
         fs: *Fs.FileSystem,
         log: *logger.Log,
         allocator: *std.mem.Allocator,
+        node_module_bundle: ?*NodeModuleBundle,
 
         debug_logs: ?DebugLogs = null,
         elapsed: i128 = 0, // tracing
@@ -367,6 +372,7 @@ pub fn NewResolver(cache_files: bool) type {
                 .caches = CacheSet.init(allocator),
                 .opts = opts,
                 .fs = _fs,
+                .node_module_bundle = opts.node_modules_bundle,
                 .log = log,
             };
         }
@@ -521,8 +527,7 @@ pub fn NewResolver(cache_files: bool) type {
                                     .diff_case = res.diff_case,
                                     .dirname_fd = dir_info.getFileDescriptor(),
                                     .is_from_node_modules = res.is_node_module,
-                                    .package_json_name = res.package_json_name,
-                                    .package_json_version = res.package_json_version,
+                                    .package_json = res.package_json,
                                 };
                             }
                         }
@@ -551,8 +556,7 @@ pub fn NewResolver(cache_files: bool) type {
                         .path_pair = entry.path_pair,
                         .diff_case = entry.diff_case,
                         .is_from_node_modules = entry.is_node_module,
-                        .package_json_name = entry.package_json_name,
-                        .package_json_version = entry.package_json_version,
+                        .package_json = entry.package_json,
                     };
                 }
 
@@ -610,8 +614,7 @@ pub fn NewResolver(cache_files: bool) type {
                                         .is_from_node_modules = _result.is_node_module,
                                         .module_type = pkg.module_type,
                                         .dirname_fd = _result.dirname_fd,
-                                        .package_json_version = pkg.version,
-                                        .package_json_name = pkg.name,
+                                        .package_json = pkg,
                                     };
                                     check_relative = false;
                                     check_package = false;
@@ -629,8 +632,7 @@ pub fn NewResolver(cache_files: bool) type {
                             .diff_case = res.diff_case,
                             .is_from_node_modules = res.is_node_module,
                             .dirname_fd = res.dirname_fd,
-                            .package_json_version = res.package_json_version,
-                            .package_json_name = res.package_json_name,
+                            .package_json = res.package_json,
                         };
                     } else if (!check_package) {
                         return null;
@@ -679,8 +681,7 @@ pub fn NewResolver(cache_files: bool) type {
                                         .dirname_fd = node_module.dirname_fd,
                                         .diff_case = node_module.diff_case,
                                         .is_from_node_modules = true,
-                                        .package_json_version = package_json.version,
-                                        .package_json_name = package_json.name,
+                                        .package_json = package_json,
                                     };
                                 }
                             } else {
@@ -702,8 +703,7 @@ pub fn NewResolver(cache_files: bool) type {
                         .diff_case = res.diff_case,
                         .is_from_node_modules = res.is_node_module,
                         .dirname_fd = res.dirname_fd,
-                        .package_json_version = res.package_json_version,
-                        .package_json_name = res.package_json_name,
+                        .package_json = res.package_json,
                     };
                 } else {
                     // Note: node's "self references" are not currently supported
@@ -719,8 +719,7 @@ pub fn NewResolver(cache_files: bool) type {
                 const pkg_json = dir_info.package_json orelse continue;
                 const rel_path = r.fs.relative(pkg_json.source.key_path.text, path.text);
                 result.module_type = pkg_json.module_type;
-                result.package_json_version = if (result.package_json_version == null) pkg_json.version else result.package_json_version;
-                result.package_json_name = if (result.package_json_name == null) pkg_json.name else result.package_json_name;
+                result.package_json = result.package_json orelse pkg_json;
                 if (r.checkBrowserMap(pkg_json, rel_path)) |remapped| {
                     if (remapped.len == 0) {
                         path.is_disabled = true;
@@ -888,15 +887,10 @@ pub fn NewResolver(cache_files: bool) type {
         }
 
         pub fn parsePackageJSON(r: *ThisResolver, file: string, dirname_fd: StoredFileDescriptorType) !?*PackageJSON {
-            const pkg = PackageJSON.parse(ThisResolver, r, file, dirname_fd) orelse return null;
+            const pkg = PackageJSON.parse(ThisResolver, r, file, dirname_fd, !cache_files) orelse return null;
             var _pkg = try r.allocator.create(PackageJSON);
             _pkg.* = pkg;
             return _pkg;
-        }
-
-        pub fn isPackagePath(path: string) bool {
-            // this could probably be flattened into something more optimized
-            return path[0] != '/' and !strings.startsWith(path, "./") and !strings.startsWith(path, "../") and !strings.eql(path, ".") and !strings.eql(path, "..");
         }
 
         fn dirInfoCached(r: *ThisResolver, path: string) !?*DirInfo {
@@ -1322,8 +1316,7 @@ pub fn NewResolver(cache_files: bool) type {
                                 .path_pair = PathPair{
                                     .primary = _path,
                                 },
-                                .package_json_version = browser_json.version,
-                                .package_json_name = browser_json.name,
+                                .package_json = browser_json,
                             };
                         }
 
@@ -1339,8 +1332,7 @@ pub fn NewResolver(cache_files: bool) type {
                 if (dir_info.package_json) |package_json| {
                     return MatchResult{
                         .path_pair = PathPair{ .primary = Fs.Path.init(result.path) },
-                        .package_json_name = package_json.name,
-                        .package_json_version = package_json.version,
+                        .package_json = package_json,
                         .dirname_fd = result.dirname_fd,
                     };
                 }
@@ -1383,8 +1375,7 @@ pub fn NewResolver(cache_files: bool) type {
                                 return MatchResult{
                                     .path_pair = .{ .primary = Path.init(out_buf) },
                                     .diff_case = lookup.diff_case,
-                                    .package_json_name = package_json.name,
-                                    .package_json_version = package_json.version,
+                                    .package_json = package_json,
                                     .dirname_fd = dir_info.getFileDescriptor(),
                                 };
                             }
@@ -1423,8 +1414,7 @@ pub fn NewResolver(cache_files: bool) type {
                                 .path_pair = PathPair{
                                     .primary = _path,
                                 },
-                                .package_json_version = browser_json.version,
-                                .package_json_name = browser_json.name,
+                                .package_json = browser_json,
                             };
                         }
 
@@ -1469,8 +1459,7 @@ pub fn NewResolver(cache_files: bool) type {
                                         .path_pair = .{ .primary = Path.init(file.path) },
                                         .diff_case = file.diff_case,
                                         .dirname_fd = file.dirname_fd,
-                                        .package_json_name = package_json.name,
-                                        .package_json_version = package_json.version,
+                                        .package_json = package_json,
                                     };
                                 }
                             }
@@ -1497,13 +1486,11 @@ pub fn NewResolver(cache_files: bool) type {
             }
 
             const dir_info = (r.dirInfoCached(path) catch null) orelse return null;
-            var package_json_version: ?string = null;
-            var package_json_name: ?string = null;
+            var package_json: ?*PackageJSON = null;
 
             // Try using the main field(s) from "package.json"
             if (dir_info.package_json) |pkg_json| {
-                package_json_version = pkg_json.version;
-                package_json_name = pkg_json.name;
+                package_json = pkg_json;
                 if (pkg_json.main_fields.count() > 0) {
                     const main_field_values = pkg_json.main_fields;
                     const main_field_keys = r.opts.main_fields;
@@ -1564,8 +1551,7 @@ pub fn NewResolver(cache_files: bool) type {
                                         },
                                         .diff_case = auto_main_result.diff_case,
                                         .dirname_fd = auto_main_result.dirname_fd,
-                                        .package_json_version = pkg_json.version,
-                                        .package_json_name = pkg_json.name,
+                                        .package_json = package_json,
                                     };
                                 } else {
                                     if (r.debug_logs) |*debug| {
@@ -1576,15 +1562,13 @@ pub fn NewResolver(cache_files: bool) type {
                                         }) catch {};
                                     }
                                     var _auto_main_result = auto_main_result;
-                                    _auto_main_result.package_json_version = pkg_json.version;
-                                    _auto_main_result.package_json_name = pkg_json.name;
+                                    _auto_main_result.package_json = package_json;
                                     return _auto_main_result;
                                 }
                             }
                         }
 
-                        if (_result.package_json_version == null) _result.package_json_version = package_json_version;
-                        if (_result.package_json_name == null) _result.package_json_name = package_json_name;
+                        _result.package_json = _result.package_json orelse package_json;
                         return _result;
                     }
                 }
@@ -1592,13 +1576,7 @@ pub fn NewResolver(cache_files: bool) type {
 
             // Look for an "index" file with known extensions
             if (r.loadAsIndexWithBrowserRemapping(dir_info, path, extension_order)) |*res| {
-                if (res.package_json_version == null and package_json_version != null) {
-                    res.package_json_version = package_json_version;
-                }
-
-                if (res.package_json_name == null and package_json_name != null) {
-                    res.package_json_name = package_json_name;
-                }
+                res.package_json = res.package_json orelse package_json;
                 return res.*;
             }
 
@@ -1881,5 +1859,9 @@ pub fn NewResolver(cache_files: bool) type {
     };
 }
 
-pub const Resolver = NewResolver(true);
-pub const ResolverUncached = NewResolver(false);
+pub const Resolver = NewResolver(
+    true,
+);
+pub const ResolverUncached = NewResolver(
+    false,
+);

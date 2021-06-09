@@ -44,6 +44,9 @@ pub const ImportRecord = struct {
     range: logger.Range,
     path: fs.Path,
 
+    // 0 is invalid
+    package_json_hash: u32 = 0,
+
     source_index: Ref.Int = std.math.maxInt(Ref.Int),
 
     // True for the following cases:
@@ -59,6 +62,8 @@ pub const ImportRecord = struct {
     handles_import_errors: bool = false,
 
     is_internal: bool = false,
+
+    is_bundled: bool = false,
 
     // Sometimes the parser creates an import record and decides it isn't needed.
     // For example, TypeScript code may have import statements that later turn

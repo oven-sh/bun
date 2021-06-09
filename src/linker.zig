@@ -88,6 +88,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
             var needs_runtime = result.ast.uses_exports_ref or result.ast.uses_module_ref or result.ast.runtime_imports.hasAny();
             const source_dir = file_path.name.dir;
             var externals = std.ArrayList(u32).init(linker.allocator);
+            var needs_bundle = false;
 
             // Step 1. Resolve imports & requires
             switch (result.loader) {
@@ -106,10 +107,72 @@ pub fn NewLinker(comptime BundlerType: type) type {
                             continue;
                         }
 
-                        if (linker.resolver.resolve(source_dir, import_record.path.text, import_record.kind)) |*resolved_import| {
+                        if (linker.resolver.resolve(source_dir, import_record.path.text, import_record.kind)) |*_resolved_import| {
+                            var resolved_import: *Resolver.Result = _resolved_import;
                             if (resolved_import.is_external) {
                                 externals.append(record_index) catch unreachable;
                                 continue;
+                            }
+
+                            if (resolved_import.package_json) |package_json| {
+                                if (linker.options.node_modules_bundle) |node_modules_bundle| {
+                                    if (strings.contains(package_json.source.path.name.dirWithTrailingSlash(), "node_modules")) {
+                                        if (node_modules_bundle.getPackageIDByName(package_json.name)) |possible_pkg_ids| {
+                                            const pkg_id: u32 = brk: {
+                                                for (possible_pkg_ids) |pkg_id| {
+                                                    const pkg = node_modules_bundle.bundle.packages[pkg_id];
+                                                    if (pkg.hash == package_json.hash) {
+                                                        break :brk pkg_id;
+                                                    }
+                                                }
+
+                                                linker.log.addErrorFmt(
+                                                    null,
+                                                    logger.Loc.Empty,
+                                                    linker.allocator,
+                                                    "\"{s}\" version changed, we'll need to regenerate the .jsb.\nOld version: \"{s}\"\nNew version: \"{s}\"",
+                                                    .{
+                                                        package_json.name,
+                                                        node_modules_bundle.str(node_modules_bundle.bundle.packages[possible_pkg_ids[0]].version),
+                                                        package_json.version,
+                                                    },
+                                                ) catch {};
+                                                return error.RebuildJSB;
+                                            };
+
+                                            const package = &node_modules_bundle.bundle.packages[pkg_id];
+
+                                            if (isDebug) {
+                                                std.debug.assert(strings.eql(node_modules_bundle.str(package.name), package_json.name));
+                                            }
+
+                                            const package_relative_path = linker.fs.relative(
+                                                package_json.source.path.name.dirWithTrailingSlash(),
+                                                resolved_import.path_pair.primary.text,
+                                            );
+
+                                            const found_module = node_modules_bundle.findModuleInPackage(package, package_relative_path) orelse {
+                                                linker.log.addErrorFmt(
+                                                    null,
+                                                    logger.Loc.Empty,
+                                                    linker.allocator,
+                                                    "New dependency import: \"{s}/{s}\"\nWe'll need to regenerate the .jsb.",
+                                                    .{
+                                                        package_json.name,
+                                                        package_relative_path,
+                                                    },
+                                                ) catch {};
+                                                return error.RebuildJSB;
+                                            };
+
+                                            import_record.is_bundled = true;
+                                            import_record.path.text = node_modules_bundle.str(found_module.path);
+                                            import_record.package_json_hash = package.hash;
+                                            needs_bundle = true;
+                                            continue;
+                                        }
+                                    }
+                                }
                             }
 
                             linker.processImportRecord(
@@ -138,7 +201,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
                         } else |err| {
                             switch (err) {
                                 error.ModuleNotFound => {
-                                    if (BundlerType.Resolver.isPackagePath(import_record.path.text)) {
+                                    if (Resolver.isPackagePath(import_record.path.text)) {
                                         if (linker.options.platform != .node and Options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
                                             try linker.log.addRangeErrorFmt(
                                                 &result.source,
@@ -198,9 +261,6 @@ pub fn NewLinker(comptime BundlerType: type) type {
 
         const ImportPathsList = allocators.BSSStringList(512, 128);
         pub var relative_paths_list: *ImportPathsList = undefined;
-        threadlocal var relative_path_allocator: std.heap.FixedBufferAllocator = undefined;
-        threadlocal var relative_path_allocator_buf: [4096]u8 = undefined;
-        threadlocal var relative_path_allocator_buf_loaded: bool = false;
 
         pub fn generateImportPath(
             linker: *ThisLinker,
@@ -209,20 +269,6 @@ pub fn NewLinker(comptime BundlerType: type) type {
             package_version: ?string,
             comptime import_path_format: Options.BundleOptions.ImportPathFormat,
         ) !Fs.Path {
-            if (!relative_path_allocator_buf_loaded) {
-                relative_path_allocator_buf_loaded = true;
-                relative_path_allocator = std.heap.FixedBufferAllocator.init(&relative_path_allocator_buf);
-            }
-            defer relative_path_allocator.reset();
-
-            var absolute_pathname = Fs.PathName.init(source_path);
-
-            if (!linker.options.preserve_extensions) {
-                if (linker.options.out_extensions.get(absolute_pathname.ext)) |ext| {
-                    absolute_pathname.ext = ext;
-                }
-            }
-
             switch (import_path_format) {
                 .relative => {
                     var pretty = try linker.allocator.dupe(u8, linker.fs.relative(source_dir, source_path));
@@ -238,6 +284,14 @@ pub fn NewLinker(comptime BundlerType: type) type {
                 },
 
                 .absolute_url => {
+                    var absolute_pathname = Fs.PathName.init(source_path);
+
+                    if (!linker.options.preserve_extensions) {
+                        if (linker.options.out_extensions.get(absolute_pathname.ext)) |ext| {
+                            absolute_pathname.ext = ext;
+                        }
+                    }
+
                     var base = linker.fs.relativeTo(source_path);
                     if (strings.lastIndexOfChar(base, '.')) |dot| {
                         base = base[0..dot];
@@ -285,7 +339,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
         ) !void {
 
             // extremely naive.
-            resolve_result.is_from_node_modules = strings.contains(resolve_result.path_pair.primary.text, "/node_modules");
+            resolve_result.is_from_node_modules = resolve_result.package_json != null or strings.contains(resolve_result.path_pair.primary.text, "/node_modules");
 
             // lazy means:
             // Run the resolver
@@ -297,7 +351,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
             import_record.path = try linker.generateImportPath(
                 source_dir,
                 resolve_result.path_pair.primary.text,
-                resolve_result.package_json_version,
+                if (resolve_result.package_json) |package_json| package_json.version else "",
                 import_path_format,
             );
         }

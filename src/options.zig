@@ -7,6 +7,7 @@ const api = @import("./api/schema.zig");
 const Api = api.Api;
 const defines = @import("./defines.zig");
 const resolve_path = @import("./resolver/resolve_path.zig");
+const NodeModuleBundle = @import("./node_module_bundle.zig").NodeModuleBundle;
 
 usingnamespace @import("global.zig");
 
@@ -96,7 +97,7 @@ pub const ExternalModules = struct {
                     .prefix = external[0..i],
                     .suffix = external[i + 1 .. external.len],
                 }) catch unreachable;
-            } else if (resolver.Resolver.isPackagePath(external)) {
+            } else if (resolver.isPackagePath(external)) {
                 result.node_modules.insert(external) catch unreachable;
             } else {
                 const normalized = validatePath(log, fs, cwd, external, allocator, "external path");
@@ -478,6 +479,60 @@ pub const DefaultUserDefines = struct {
     };
 };
 
+pub fn definesFromTransformOptions(allocator: *std.mem.Allocator, log: *logger.Log, _input_define: ?Api.StringMap) !*defines.Define {
+    var input_user_define = _input_define orelse std.mem.zeroes(Api.StringMap);
+
+    var user_defines = try stringHashMapFromArrays(
+        defines.RawDefines,
+        allocator,
+        input_user_define.keys,
+        input_user_define.values,
+    );
+    if (input_user_define.keys.len == 0) {
+        try user_defines.put(DefaultUserDefines.NodeEnv.Key, DefaultUserDefines.NodeEnv.Value);
+    }
+
+    var resolved_defines = try defines.DefineData.from_input(user_defines, log, allocator);
+    return try defines.Define.init(
+        allocator,
+        resolved_defines,
+    );
+}
+
+pub fn loadersFromTransformOptions(allocator: *std.mem.Allocator, _loaders: ?Api.LoaderMap) !std.StringHashMap(Loader) {
+    var input_loaders = _loaders orelse std.mem.zeroes(Api.LoaderMap);
+    var loader_values = try allocator.alloc(Loader, input_loaders.loaders.len);
+    for (loader_values) |_, i| {
+        const loader = switch (input_loaders.loaders[i]) {
+            .jsx => Loader.jsx,
+            .js => Loader.js,
+            .ts => Loader.ts,
+            .css => Loader.css,
+            .tsx => Loader.tsx,
+            .json => Loader.json,
+            else => unreachable,
+        };
+
+        loader_values[i] = loader;
+    }
+
+    var loaders = try stringHashMapFromArrays(
+        std.StringHashMap(Loader),
+        allocator,
+        input_loaders.extensions,
+        loader_values,
+    );
+    const default_loader_ext = comptime [_]string{ ".jsx", ".json", ".js", ".mjs", ".css", ".ts", ".tsx" };
+
+    inline for (default_loader_ext) |ext| {
+        if (!loaders.contains(ext)) {
+            try loaders.put(ext, defaultLoaders.get(ext).?);
+        }
+    }
+
+    return loaders;
+}
+
 pub const BundleOptions = struct {
     footer: string = "",
     banner: string = "",
@@ -497,6 +552,7 @@ pub const BundleOptions = struct {
     preserve_symlinks: bool = false,
     preserve_extensions: bool = false,
     timings: Timings = Timings{},
+    node_modules_bundle: ?*NodeModuleBundle = null,
 
     append_package_version_in_query_string: bool = false,
 
@@ -510,6 +566,8 @@ pub const BundleOptions = struct {
     extension_order: []const string = &Defaults.ExtensionOrder,
     out_extensions: std.StringHashMap(string),
     import_path_format: ImportPathFormat = ImportPathFormat.relative,
+
+    pub fn asJavascriptBundleConfig(this: *const BundleOptions) Api.JavascriptBundleConfig {}
 
     pub const ImportPathFormat = enum {
         relative,
@@ -531,44 +589,12 @@ pub const BundleOptions = struct {
         log: *logger.Log,
         transform: Api.TransformOptions,
     ) !BundleOptions {
-        var loader_values = try allocator.alloc(Loader, transform.loader_values.len);
-        for (loader_values) |_, i| {
-            const loader = switch (transform.loader_values[i]) {
-                .jsx => Loader.jsx,
-                .js => Loader.js,
-                .ts => Loader.ts,
-                .css => Loader.css,
-                .tsx => Loader.tsx,
-                .json => Loader.json,
-                else => unreachable,
-            };
-
-            loader_values[i] = loader;
-        }
-
-        var loaders = try stringHashMapFromArrays(std.StringHashMap(Loader), allocator, transform.loader_keys, loader_values);
-        const default_loader_ext = [_]string{ ".jsx", ".json", ".js", ".mjs", ".css", ".ts", ".tsx" };
-        inline for (default_loader_ext) |ext| {
-            if (!loaders.contains(ext)) {
-                try loaders.put(ext, defaultLoaders.get(ext).?);
-            }
-        }
-
-        var user_defines = try stringHashMapFromArrays(defines.RawDefines, allocator, transform.define_keys, transform.define_values);
-        if (transform.define_keys.len == 0) {
-            try user_defines.put(DefaultUserDefines.NodeEnv.Key, DefaultUserDefines.NodeEnv.Value);
-        }
-
-        var resolved_defines = try defines.DefineData.from_input(user_defines, log, allocator);
         const output_dir_parts = [_]string{ try std.process.getCwdAlloc(allocator), transform.output_dir orelse "out" };
         var opts: BundleOptions = BundleOptions{
             .log = log,
             .resolve_mode = transform.resolve orelse .dev,
-            .define = try defines.Define.init(
-                allocator,
-                resolved_defines,
-            ),
-            .loaders = loaders,
+            .define = try definesFromTransformOptions(allocator, log, transform.define),
+            .loaders = try loadersFromTransformOptions(allocator, transform.loaders),
             .output_dir = try fs.absAlloc(allocator, &output_dir_parts),
             .platform = Platform.from(transform.platform),
             .write = transform.write orelse false,
@@ -665,6 +691,46 @@ pub const BundleOptions = struct {
             opts.output_dir_handle = try openOutputDir(opts.output_dir);
         }
 
+        if (opts.resolve_mode == .lazy and !(transform.generate_node_module_bundle orelse false)) {
+            if (transform.node_modules_bundle_path) |bundle_path| {
+                if (bundle_path.len > 0) {
+                    load_bundle: {
+                        const pretty_path = fs.relativeTo(bundle_path);
+                        var bundle_file = std.fs.openFileAbsolute(bundle_path, .{ .read = true, .write = true }) catch |err| {
+                            Output.disableBuffering();
+                            Output.prettyErrorln("<r>error opening <d>\"<r><b>{s}<r><d>\":<r> <b><red>{s}<r>", .{ pretty_path, @errorName(err) });
+                            break :load_bundle;
+                        };
+
+                        const time_start = std.time.nanoTimestamp();
+                        if (NodeModuleBundle.loadBundle(allocator, bundle_file)) |bundle| {
+                            var node_module_bundle = try allocator.create(NodeModuleBundle);
+                            node_module_bundle.* = bundle;
+                            opts.node_modules_bundle = node_module_bundle;
+                            const elapsed = @intToFloat(f64, (std.time.nanoTimestamp() - time_start)) / std.time.ns_per_ms;
+                            Output.prettyErrorln(
+                                "<r><b><d>\"{s}\"<r><d> - {d} modules, {d} packages <b>[{d:>.2}ms]<r>",
+                                .{
+                                    pretty_path,
+                                    node_module_bundle.bundle.modules.len,
+                                    node_module_bundle.bundle.packages.len,
+                                    elapsed,
+                                },
+                            );
+                            Output.flush();
+                        } else |err| {
+                            Output.disableBuffering();
+                            Output.prettyErrorln(
+                                "<r>error reading <d>\"<r><b>{s}<r><d>\":<r> <b><red>{s}<r>, <b>deleting it<r> so you don't keep seeing this message.",
+                                .{ pretty_path, @errorName(err) },
+                            );
+                            bundle_file.close();
+                        }
+                    }
+                }
+            }
+        }
+
         return opts;
     }
 };
@@ -673,12 +739,12 @@ pub fn openOutputDir(output_dir: string) !std.fs.Dir {
     return std.fs.openDirAbsolute(output_dir, std.fs.Dir.OpenDirOptions{}) catch brk: {
         std.fs.makeDirAbsolute(output_dir) catch |err| {
             Output.printErrorln("error: Unable to mkdir \"{s}\": \"{s}\"", .{ output_dir, @errorName(err) });
-            std.os.exit(1);
+            Global.crash();
         };
 
         var handle = std.fs.openDirAbsolute(output_dir, std.fs.Dir.OpenDirOptions{}) catch |err2| {
             Output.printErrorln("error: Unable to open \"{s}\": \"{s}\"", .{ output_dir, @errorName(err2) });
-            std.os.exit(1);
+            Global.crash();
         };
         break :brk handle;
     };

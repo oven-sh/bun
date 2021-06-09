@@ -27,7 +27,7 @@ const resolve_path = @import("./resolver/resolve_path.zig");
 const runtime = @import("./runtime.zig");
 const Timer = @import("./timer.zig");
 const hash_map = @import("hash_map.zig");
-
+const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 const DebugLogs = _resolver.DebugLogs;
 
 pub const ServeResult = struct {
@@ -374,14 +374,22 @@ pub fn NewBundler(cache_files: bool) type {
                 javascript_bundle.modules = this.module_list.items;
                 javascript_bundle.packages = sorted_package_list;
                 javascript_bundle.manifest_string = this.header_string_buffer.list.items;
-
+                var etag_bytes: [8]u8 = undefined;
+                const etag_u64 = hasher.final();
+                std.mem.writeIntNative(u64, &etag_bytes, etag_u64);
+                javascript_bundle.etag = &etag_bytes;
                 javascript_bundle.generated_at = @truncate(u32, @intCast(u64, std.time.milliTimestamp()));
 
-                javascript_bundle.import_from_name = destination;
-
-                var etag_bytes: [8]u8 = undefined;
-                std.mem.writeIntNative(u64, &etag_bytes, hasher.final());
-                javascript_bundle.etag = &etag_bytes;
+                const basename = std.fs.path.basename(destination);
+                const extname = std.fs.path.extension(basename);
+                javascript_bundle.import_from_name = try std.fmt.allocPrint(
+                    this.allocator,
+                    "/{s}.{x}.jsb",
+                    .{
+                        basename[0 .. basename.len - extname.len],
+                        etag_u64,
+                    },
+                );
 
                 javascript_bundle_container.bundle_format_version = current_version;
                 javascript_bundle_container.bundle = javascript_bundle;
@@ -450,6 +458,7 @@ pub fn NewBundler(cache_files: bool) type {
             fn processImportRecord(this: *GenerateNodeModuleBundle, import_record: ImportRecord) !void {}
             const node_module_root_string = "node_modules" ++ std.fs.path.sep_str;
             threadlocal var package_key_buf: [512]u8 = undefined;
+
             fn processFile(this: *GenerateNodeModuleBundle, _resolve: _resolver.Result) !void {
                 var resolve = _resolve;
                 if (resolve.is_external) return;
@@ -459,7 +468,7 @@ pub fn NewBundler(cache_files: bool) type {
                 var bundler = this.bundler;
                 defer this.scan_pass_result.reset();
                 defer this.bundler.resetStore();
-                const file_path = resolve.path_pair.primary;
+                var file_path = resolve.path_pair.primary;
 
                 // If we're in a node_module, build that almost normally
                 if (resolve.is_from_node_modules) {
@@ -476,12 +485,13 @@ pub fn NewBundler(cache_files: bool) type {
                                 true,
                             );
                             const source = logger.Source.initFile(Fs.File{ .path = file_path, .contents = entry.contents }, bundler.allocator) catch return null;
-                            const source_dir = file_path.name.dir;
+                            const source_dir = file_path.name.dirWithTrailingSlash();
 
                             var jsx = bundler.options.jsx;
                             jsx.parse = loader.isJSX();
                             var opts = js_parser.Parser.Options.init(jsx, loader);
                             opts.output_commonjs = true;
+
                             var ast: js_ast.Ast = (try bundler.resolver.caches.js.parse(
                                 bundler.allocator,
                                 opts,
@@ -504,11 +514,37 @@ pub fn NewBundler(cache_files: bool) type {
                                     }
 
                                     const absolute_path = resolved_import.path_pair.primary.text;
+                                    const package_json: *const PackageJSON = (resolved_import.package_json orelse (this.bundler.resolver.packageJSONForResolvedNodeModule(resolved_import) orelse {
+                                        this.log.addWarningFmt(
+                                            &source,
+                                            import_record.range.loc,
+                                            this.allocator,
+                                            "Failed to find package.json for \"{s}\". This will be unresolved and might break at runtime. If it's external, you could add it to the external list.",
+                                            .{
+                                                resolved_import.path_pair.primary.text,
+                                                source.path.text,
+                                            },
+                                        ) catch {};
+                                        continue;
+                                    }));
+
+                                    // trim node_modules/${package.name}/ from the string to save space
+                                    // This reduces metadata size by about 30% for a large-ish file
+                                    // A future optimization here could be to reuse the string from the original path
+                                    var node_module_root = strings.indexOf(resolved_import.path_pair.primary.text, node_module_root_string) orelse unreachable;
+                                    // // omit package name
+                                    // node_module_root += package_json.name.len;
+                                    // omit node_modules
+                                    node_module_root += node_module_root_string.len;
+                                    // omit trailing separator
+                                    node_module_root += 1;
 
                                     // It should be the first index, not the last to support bundling multiple of the same package
-                                    if (strings.indexOf(absolute_path, node_module_root_string)) |node_module_start| {
-                                        import_record.path = Fs.Path.init(absolute_path[node_module_root_string.len + node_module_start ..]);
-                                    }
+                                    import_record.path = Fs.Path.init(
+                                        absolute_path[node_module_root..],
+                                    );
+
+                                    import_record.package_json_hash = package_json.hash;
 
                                     const get_or_put_result = try this.resolved_paths.getOrPut(absolute_path);
 
@@ -518,6 +554,25 @@ pub fn NewBundler(cache_files: bool) type {
 
                                     try this.resolve_queue.writeItem(_resolved_import.*);
                                 } else |err| {}
+                            }
+
+                            const PackageNameVersionPair = struct { name: string, version: string, hash: u32 };
+                            var package: PackageNameVersionPair = undefined;
+
+                            if (resolve.package_json) |package_json| {
+                                package = .{
+                                    .name = package_json.name,
+                                    .version = package_json.version,
+                                    .hash = package_json.hash,
+                                };
+                            } else {
+                                if (this.bundler.resolver.packageJSONForResolvedNodeModule(&resolve)) |package_json| {
+                                    package = .{
+                                        .name = package_json.name,
+                                        .version = package_json.version,
+                                        .hash = package_json.hash,
+                                    };
+                                }
                             }
 
                             const code_offset = this.tmpfile_byte_offset - code_start_byte_offset;
@@ -538,6 +593,7 @@ pub fn NewBundler(cache_files: bool) type {
                                         .externals = ast.externals,
                                         // Indent by one
                                         .indent = 1,
+                                        .package_json_hash = package.hash,
                                         .runtime_imports = ast.runtime_imports,
                                     },
                                     Linker,
@@ -546,30 +602,14 @@ pub fn NewBundler(cache_files: bool) type {
                             );
                             this.tmpfile_byte_offset += code_length;
 
-                            const PackageNameVersionPair = struct { name: string, version: string };
-                            var package: PackageNameVersionPair = undefined;
-
-                            if (resolve.package_json_version) |version| {
-                                package = .{ .name = resolve.package_json_name.?, .version = version };
-                            } else {
-                                if (this.bundler.resolver.packageJSONForResolvedNodeModule(&resolve)) |package_json| {
-                                    package = .{
-                                        .name = package_json.name,
-                                        .version = package_json.version,
-                                    };
-                                }
-                            }
-
-                            const package_id_key = try std.fmt.bufPrint(&package_key_buf, "{s}@{s}", .{ package.name, package.version });
-                            const package_id_key_hash = std.hash.Wyhash.hash(0, package_id_key);
-                            var package_get_or_put_entry = try this.package_list_map.getOrPut(package_id_key_hash);
+                            var package_get_or_put_entry = try this.package_list_map.getOrPut(package.hash);
                             if (!package_get_or_put_entry.found_existing) {
                                 package_get_or_put_entry.value_ptr.* = @truncate(u32, this.package_list.items.len);
                                 try this.package_list.append(
                                     Api.JavascriptBundledPackage{
                                         .name = try this.appendHeaderString(package.name),
                                         .version = try this.appendHeaderString(package.version),
-                                        .hash = @truncate(u32, package_id_key_hash),
+                                        .hash = package.hash,
                                     },
                                 );
                             }
@@ -584,11 +624,14 @@ pub fn NewBundler(cache_files: bool) type {
                             // omit trailing separator
                             node_module_root += 1;
 
+                            var path_str = resolve.path_pair.primary.text[node_module_root..];
+                            var path_extname_length = @truncate(u8, std.fs.path.extension(path_str).len);
                             try this.module_list.append(
                                 Api.JavascriptBundledModule{
                                     .path = try this.appendHeaderString(
-                                        resolve.path_pair.primary.text[node_module_root..],
+                                        path_str,
                                     ),
+                                    .path_extname_length = path_extname_length,
                                     .package_id = package_get_or_put_entry.value_ptr.*,
                                     .code = Api.StringPointer{
                                         .length = @truncate(u32, code_length),
@@ -615,7 +658,7 @@ pub fn NewBundler(cache_files: bool) type {
                             ) catch return;
 
                             const source = logger.Source.initFile(Fs.File{ .path = file_path, .contents = entry.contents }, bundler.allocator) catch return null;
-                            const source_dir = file_path.name.dir;
+                            const source_dir = file_path.name.dirWithTrailingSlash();
 
                             var jsx = bundler.options.jsx;
                             jsx.parse = loader.isJSX();
@@ -802,7 +845,7 @@ pub fn NewBundler(cache_files: bool) type {
                     ) catch return null;
 
                     const source = logger.Source.initFile(Fs.File{ .path = file_path, .contents = entry.contents }, bundler.allocator) catch return null;
-                    const source_dir = file_path.name.dir;
+                    const source_dir = file_path.name.dirWithTrailingSlash();
 
                     var jsx = bundler.options.jsx;
                     jsx.parse = loader.isJSX();
@@ -1258,6 +1301,7 @@ pub fn NewBundler(cache_files: bool) type {
                 if (bundler.resolve_results.contains(key)) {
                     continue;
                 }
+
                 try bundler.resolve_results.put(key, result);
                 entry_points[entry_point_i] = result;
 
@@ -1281,8 +1325,9 @@ pub fn NewBundler(cache_files: bool) type {
             } else {
                 const output_dir = bundler.options.output_dir_handle orelse {
                     Output.printError("Invalid or missing output directory.", .{});
-                    std.os.exit(1);
+                    Global.crash();
                 };
+
                 try switch (bundler.options.import_path_format) {
                     .relative => bundler.processResolveQueue(.relative, std.fs.Dir, output_dir),
                     .relative_nodejs => bundler.processResolveQueue(.relative_nodejs, std.fs.Dir, output_dir),
@@ -1360,45 +1405,18 @@ pub const Transformer = struct {
     ) !options.TransformResult {
         js_ast.Expr.Data.Store.create(allocator);
         js_ast.Stmt.Data.Store.create(allocator);
-        var raw_defines = try options.stringHashMapFromArrays(RawDefines, allocator, opts.define_keys, opts.define_values);
-        if (opts.define_keys.len == 0) {
-            try raw_defines.put(options.DefaultUserDefines.NodeEnv.Key, options.DefaultUserDefines.NodeEnv.Value);
-        }
 
-        var user_defines = try DefineData.from_input(raw_defines, log, alloc.static);
-        var define = try Define.init(
-            alloc.static,
-            user_defines,
-        );
+        var define = try options.definesFromTransformOptions(allocator, log, opts.define);
 
         const cwd = if (opts.absolute_working_dir) |workdir| try std.fs.realpathAlloc(allocator, workdir) else try std.process.getCwdAlloc(allocator);
 
         const output_dir_parts = [_]string{ try std.process.getCwdAlloc(allocator), opts.output_dir orelse "out" };
         const output_dir = try std.fs.path.join(allocator, &output_dir_parts);
         var output_files = try std.ArrayList(options.OutputFile).initCapacity(allocator, opts.entry_points.len);
-        var loader_values = try allocator.alloc(options.Loader, opts.loader_values.len);
         const platform = options.Platform.from(opts.platform);
         const out_extensions = platform.outExtensions(allocator);
 
-        for (loader_values) |_, i| {
-            const loader = switch (opts.loader_values[i]) {
-                .jsx => options.Loader.jsx,
-                .js => options.Loader.js,
-                .ts => options.Loader.ts,
-                .css => options.Loader.css,
-                .tsx => options.Loader.tsx,
-                .json => options.Loader.json,
-                else => unreachable,
-            };
-
-            loader_values[i] = loader;
-        }
-        var loader_map = try options.stringHashMapFromArrays(
-            std.StringHashMap(options.Loader),
-            allocator,
-            opts.loader_keys,
-            loader_values,
-        );
+        var loader_map = try options.loadersFromTransformOptions(allocator, opts.loaders);
         var use_default_loaders = loader_map.count() == 0;
 
         var jsx = if (opts.jsx) |_jsx| try options.JSX.Pragma.fromApi(_jsx, allocator) else options.JSX.Pragma{};

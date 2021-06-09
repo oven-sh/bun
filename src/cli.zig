@@ -132,7 +132,9 @@ pub const Cli = struct {
                 clap.parseParam("--platform <STR>                  \"browser\" or \"node\". Defaults to \"browser\"") catch unreachable,
                 clap.parseParam("--main-fields <STR>...            Main fields to lookup in package.json. Defaults to --platform dependent") catch unreachable,
                 clap.parseParam("--scan                            Instead of bundling or transpiling, print a list of every file imported by an entry point, recursively") catch unreachable,
-                clap.parseParam("--jsb                             Generate a new node_modules.jsb file from node_modules and entry point(s)") catch unreachable,
+                clap.parseParam("--new-jsb                         Generate a new node_modules.jsb file from node_modules and entry point(s)") catch unreachable,
+                clap.parseParam("--jsb <STR>                       Use a Speedy JavaScript Bundle (default: \"./node_modules.jsb\" if exists)") catch unreachable,
+                // clap.parseParam("--no-jsb                          Use a Speedy JavaScript Bundle (default: \"./node_modules.jsb\" if exists)") catch unreachable,
                 clap.parseParam("<POS>...                          Entry points to use") catch unreachable,
             };
 
@@ -185,6 +187,22 @@ pub const Cli = struct {
             var jsx_production = args.flag("--jsx-production");
             var react_fast_refresh = args.flag("--react-fast-refresh");
             var main_fields = args.options("--main-fields");
+
+            var node_modules_bundle_path = args.option("--jsb") orelse brk: {
+                if (args.flag("--new-jsb")) {
+                    break :brk null;
+                }
+
+                const node_modules_bundle_path_absolute = resolve_path.joinAbs(cwd, .auto, "node_modules.jsb");
+                std.fs.accessAbsolute(node_modules_bundle_path_absolute, .{}) catch |err| {
+                    break :brk null;
+                };
+                break :brk try allocator.dupe(u8, node_modules_bundle_path_absolute);
+            };
+
+            if (args.flag("--new-jsb")) {
+                node_modules_bundle_path = null;
+            }
 
             const PlatformMatcher = strings.ExactSizeMatcher(8);
             const ResoveMatcher = strings.ExactSizeMatcher(8);
@@ -266,10 +284,15 @@ pub const Cli = struct {
                 .absolute_working_dir = cwd,
                 .tsconfig_override = tsconfig_override,
                 .public_url = public_url,
-                .define_keys = define_keys,
-                .define_values = define_values,
-                .loader_keys = loader_keys,
-                .loader_values = loader_values,
+                .define = .{
+                    .keys = define_keys,
+                    .values = define_values,
+                },
+                .loaders = .{
+                    .extensions = loader_keys,
+                    .loaders = loader_values,
+                },
+                .node_modules_bundle_path = node_modules_bundle_path,
                 .public_dir = if (args.option("--public-dir")) |public_dir| allocator.dupe(u8, public_dir) catch unreachable else null,
                 .write = write,
                 .serve = serve,
@@ -279,7 +302,7 @@ pub const Cli = struct {
                 .main_fields = args.options("--main-fields"),
                 .platform = platform,
                 .only_scan_dependencies = if (args.flag("--scan")) Api.ScanDependencyMode.all else Api.ScanDependencyMode._none,
-                .generate_node_module_bundle = if (args.flag("--jsb")) true else false,
+                .generate_node_module_bundle = if (args.flag("--new-jsb")) true else false,
             };
         }
     };
@@ -358,6 +381,13 @@ pub const Cli = struct {
         switch (args.resolve orelse Api.ResolveMode.dev) {
             Api.ResolveMode.disable => {
                 result = try bundler.Transformer.transform(
+                    allocator,
+                    &log,
+                    args,
+                );
+            },
+            .lazy => {
+                result = try bundler.ServeBundler.bundle(
                     allocator,
                     &log,
                     args,

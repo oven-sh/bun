@@ -38,3 +38,5 @@ out
 .parcel-cache
 esbuilddir
 *.jsb
+parceldist
+esbuilddir

@@ -2869,13 +2869,8 @@ pub fn NewParser(
 
             p.require_ref = try p.declareCommonJSSymbol(.unbound, "require");
 
-            if (p.options.output_commonjs) {
-                p.exports_ref = try p.declareCommonJSSymbol(.hoisted, "exports");
-                p.module_ref = try p.declareCommonJSSymbol(.hoisted, "module");
-            } else {
-                p.exports_ref = try p.declareSymbol(.hoisted, logger.Loc.Empty, "exports");
-                p.module_ref = try p.declareSymbol(.hoisted, logger.Loc.Empty, "module");
-            }
+            p.exports_ref = try p.declareSymbol(.hoisted, logger.Loc.Empty, "exports");
+            p.module_ref = try p.declareSymbol(.hoisted, logger.Loc.Empty, "module");
 
             p.runtime_imports.__require = p.require_ref;
 

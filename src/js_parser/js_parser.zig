@@ -1543,6 +1543,7 @@ pub const Parser = struct {
 
     pub const Options = struct {
         jsx: options.JSX.Pragma,
+        can_import_from_bundle: bool = false,
         ts: bool = false,
         keep_names: bool = true,
         omit_runtime_for_tests: bool = false,
@@ -1552,7 +1553,8 @@ pub const Parser = struct {
         suppress_warnings_about_weird_code: bool = true,
 
         // Used when bundling node_modules
-        output_commonjs: bool = false,
+        enable_bundling: bool = false,
+        transform_require_to_import: bool = true,
 
         moduleType: ModuleType = ModuleType.esm,
         trim_unused_imports: bool = true,
@@ -1907,27 +1909,31 @@ pub const Parser = struct {
             exports_kind = .esm;
         } else if (uses_exports_ref or uses_module_ref or p.has_top_level_return) {
             exports_kind = .cjs;
-            var args = p.allocator.alloc(Expr, 2) catch unreachable;
-            to_module_expr = p.callRuntime(logger.Loc.Empty, "__commonJS", args);
+            if (p.options.transform_require_to_import) {
+                var args = p.allocator.alloc(Expr, 2) catch unreachable;
+                to_module_expr = p.callRuntime(logger.Loc.Empty, "__commonJS", args);
+            }
         } else {
             exports_kind = .esm;
         }
 
         var runtime_imports_iter = p.runtime_imports.iter();
-        while (runtime_imports_iter.next()) |entry| {
-            const imports = [_]u16{entry.key};
-            p.generateImportStmt(
-                RuntimeImports.Name,
-                &imports,
-                &before,
-                p.runtime_imports,
-                null,
-                "import_",
-                true,
-            ) catch unreachable;
+        // don't import runtime if we're bundling, it's already included
+        if (!p.options.transform_require_to_import) {
+            while (runtime_imports_iter.next()) |entry| {
+                const imports = [_]u16{entry.key};
+                p.generateImportStmt(
+                    RuntimeImports.Name,
+                    &imports,
+                    &before,
+                    p.runtime_imports,
+                    null,
+                    "import_",
+                    true,
+                ) catch unreachable;
+            }
         }
-
-        if (p.cjs_import_stmts.items.len > 0 and !p.options.output_commonjs) {
+        if (p.cjs_import_stmts.items.len > 0 and p.options.transform_require_to_import) {
             var import_records = try p.allocator.alloc(u32, p.cjs_import_stmts.items.len);
             var declared_symbols = try p.allocator.alloc(js_ast.DeclaredSymbol, p.cjs_import_stmts.items.len);
 
@@ -2145,6 +2151,8 @@ pub fn NewParser(
         has_classic_runtime_warned: bool = false,
 
         cjs_import_stmts: std.ArrayList(Stmt),
+
+        bundle_export_ref: ?Ref = null,
 
         injected_define_symbols: List(Ref),
         symbol_uses: SymbolUseMap,
@@ -2404,6 +2412,11 @@ pub fn NewParser(
                     const import_record_index = p.addImportRecord(.require, arg.loc, original_name);
                     p.import_records.items[import_record_index].handles_import_errors = p.fn_or_arrow_data_visit.try_body_count != 0;
                     p.import_records_for_current_part.append(import_record_index) catch unreachable;
+
+                    if (!p.options.transform_require_to_import) {
+                        return p.e(E.Require{ .import_record_index = import_record_index }, arg.loc);
+                    }
+
                     const suffix = "_module";
                     var base_identifier_name = fs.PathName.init(original_name).nonUniqueNameString(p.allocator) catch unreachable;
                     var cjs_import_name = p.allocator.alloc(u8, base_identifier_name.len + suffix.len) catch unreachable;
@@ -2941,8 +2954,18 @@ pub fn NewParser(
 
             p.require_ref = try p.declareCommonJSSymbol(.unbound, "require");
 
-            p.exports_ref = try p.declareSymbol(.hoisted, logger.Loc.Empty, "exports");
-            p.module_ref = try p.declareSymbol(.hoisted, logger.Loc.Empty, "module");
+            if (p.options.enable_bundling) {
+                p.bundle_export_ref = try p.declareSymbol(.unbound, logger.Loc.Empty, "IF_YOU_SEE_THIS_ITS_A_BUNDLER_BUG_PLEASE_FILE_AN_ISSUE_THX");
+                p.runtime_imports.__reExport = try p.declareSymbol(.unbound, logger.Loc.Empty, "__reExport");
+                p.runtime_imports.register = try p.declareSymbol(.unbound, logger.Loc.Empty, "$$m");
+                p.runtime_imports.__export = try p.declareSymbol(.unbound, logger.Loc.Empty, "__export");
+
+                p.exports_ref = try p.declareSymbol(.hoisted, logger.Loc.Empty, "exports");
+                p.module_ref = try p.declareSymbol(.hoisted, logger.Loc.Empty, "module");
+            } else {
+                p.exports_ref = try p.declareSymbol(.hoisted, logger.Loc.Empty, "exports");
+                p.module_ref = try p.declareSymbol(.hoisted, logger.Loc.Empty, "module");
+            }
 
             p.runtime_imports.__require = p.require_ref;
 
@@ -6485,6 +6508,7 @@ pub fn NewParser(
                         .text = comment.text,
                     }, p.lexer.loc()));
                 }
+                p.lexer.comments_to_preserve_before.shrinkRetainingCapacity(0);
 
                 if (p.lexer.token == eend) {
                     break;
@@ -11152,7 +11176,13 @@ pub fn NewParser(
                 },
                 .e_binary => |ex| {
                     switch (ex.op) {
-                        .bin_strict_eq, .bin_strict_ne, .bin_comma, .bin_logical_or, .bin_logical_and, .bin_nullish_coalescing => {
+                        .bin_strict_eq,
+                        .bin_strict_ne,
+                        .bin_comma,
+                        .bin_logical_or,
+                        .bin_logical_and,
+                        .bin_nullish_coalescing,
+                        => {
                             return p.exprCanBeRemovedIfUnused(&ex.left) and p.exprCanBeRemovedIfUnused(&ex.right);
                         },
                         else => {},
@@ -13269,6 +13299,7 @@ pub fn NewParser(
                 .named_exports = p.named_exports,
                 .import_keyword = p.es6_import_keyword,
                 .export_keyword = p.es6_export_keyword,
+                .bundle_export_ref = p.bundle_export_ref,
                 // .top_Level_await_keyword = p.top_level_await_keyword,
             };
         }

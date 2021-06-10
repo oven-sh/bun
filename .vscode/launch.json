@@ -17,7 +17,7 @@
       "request": "launch",
       "name": "Dev Launch",
       "program": "${workspaceFolder}/build/debug/macos-x86_64/esdev",
-      "args": ["nql-define.js", "--resolve=dev"],
+      "args": ["optional-chain-polyfill.js", "--resolve=disable"],
       "cwd": "${workspaceFolder}/src/test/fixtures",
       "console": "internalConsole"
     },

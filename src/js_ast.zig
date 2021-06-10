@@ -1955,6 +1955,49 @@ pub const Expr = struct {
         return std.meta.activeTag(a.data) == Expr.Tag.e_missing;
     }
 
+    // The goal of this function is to "rotate" the AST if it's possible to use the
+    // left-associative property of the operator to avoid unnecessary parentheses.
+    //
+    // When using this, make absolutely sure that the operator is actually
+    // associative. For example, the "-" operator is not associative for
+    // floating-point numbers.
+    pub fn joinWithLeftAssociativeOp(
+        op: Op.Code,
+        a: Expr,
+        b: Expr,
+        allocator: *std.mem.Allocator,
+    ) Expr {
+        // "(a, b) op c" => "a, b op c"
+        switch (a.data) {
+            .e_binary => |comma| {
+                if (comma.op == .bin_comma) {
+                    comma.right = joinWithLeftAssociativeOp(op, comma.right, b, allocator);
+                }
+            },
+            else => {},
+        }
+
+        // "a op (b op c)" => "(a op b) op c"
+        // "a op (b op (c op d))" => "((a op b) op c) op d"
+        switch (b.data) {
+            .e_binary => |binary| {
+                if (binary.op == op) {
+                    return joinWithLeftAssociativeOp(
+                        op,
+                        joinWithLeftAssociativeOp(op, a, binary.left, allocator),
+                        binary.right,
+                        allocator,
+                    );
+                }
+            },
+            else => {},
+        }
+
+        // "a op b" => "a op b"
+        // "(a op b) op c" => "(a op b) op c"
+        return Expr.alloc(allocator, E.Binary{ .op = op, .left = a, .right = b }, a.loc);
+    }
+
     pub fn joinWithComma(a: Expr, b: Expr, allocator: *std.mem.Allocator) Expr {
         if (a.isMissing()) {
             return b;
@@ -3452,6 +3495,8 @@ pub const Ast = struct {
     uses_exports_ref: bool = false,
     uses_module_ref: bool = false,
     exports_kind: ExportsKind = ExportsKind.none,
+
+    bundle_export_ref: ?Ref = null,
 
     // This is a list of ES6 features. They are ranges instead of booleans so
     // that they can be used in log messages. Check to see if "Len > 0".

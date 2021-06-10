@@ -472,6 +472,7 @@ pub fn NewBundler(cache_files: bool) type {
 
                 // If we're in a node_module, build that almost normally
                 if (resolve.is_from_node_modules) {
+                    var hasher = std.hash.Wyhash.init(0);
                     switch (loader) {
                         .jsx,
                         .tsx,
@@ -489,8 +490,10 @@ pub fn NewBundler(cache_files: bool) type {
 
                             var jsx = bundler.options.jsx;
                             jsx.parse = loader.isJSX();
+
                             var opts = js_parser.Parser.Options.init(jsx, loader);
-                            opts.output_commonjs = true;
+                            opts.transform_require_to_import = false;
+                            opts.enable_bundling = true;
 
                             var ast: js_ast.Ast = (try bundler.resolver.caches.js.parse(
                                 bundler.allocator,
@@ -522,7 +525,6 @@ pub fn NewBundler(cache_files: bool) type {
                                             "Failed to find package.json for \"{s}\". This will be unresolved and might break at runtime. If it's external, you could add it to the external list.",
                                             .{
                                                 resolved_import.path_pair.primary.text,
-                                                source.path.text,
                                             },
                                         ) catch {};
                                         continue;
@@ -533,18 +535,19 @@ pub fn NewBundler(cache_files: bool) type {
                                     // A future optimization here could be to reuse the string from the original path
                                     var node_module_root = strings.indexOf(resolved_import.path_pair.primary.text, node_module_root_string) orelse unreachable;
                                     // // omit package name
-                                    // node_module_root += package_json.name.len;
+                                    node_module_root += package_json.name.len;
                                     // omit node_modules
                                     node_module_root += node_module_root_string.len;
-                                    // omit trailing separator
-                                    node_module_root += 1;
 
                                     // It should be the first index, not the last to support bundling multiple of the same package
                                     import_record.path = Fs.Path.init(
                                         absolute_path[node_module_root..],
                                     );
-
-                                    import_record.package_json_hash = package_json.hash;
+                                    hasher = std.hash.Wyhash.init(0);
+                                    hasher.update(import_record.path.text);
+                                    hasher.update(std.mem.asBytes(&package_json.hash));
+                                    import_record.module_id = @truncate(u32, hasher.final());
+                                    import_record.is_bundled = true;
 
                                     const get_or_put_result = try this.resolved_paths.getOrPut(absolute_path);
 
@@ -556,28 +559,101 @@ pub fn NewBundler(cache_files: bool) type {
                                 } else |err| {}
                             }
 
-                            const PackageNameVersionPair = struct { name: string, version: string, hash: u32 };
-                            var package: PackageNameVersionPair = undefined;
+                            const package = resolve.package_json orelse this.bundler.resolver.packageJSONForResolvedNodeModule(&resolve) orelse unreachable;
+                            const package_relative_path = brk: {
+                                // trim node_modules/${package.name}/ from the string to save space
+                                // This reduces metadata size by about 30% for a large-ish file
+                                // A future optimization here could be to reuse the string from the original path
+                                var node_module_root = strings.indexOf(resolve.path_pair.primary.text, node_module_root_string) orelse unreachable;
+                                // omit node_modules
+                                node_module_root += node_module_root_string.len;
 
-                            if (resolve.package_json) |package_json| {
-                                package = .{
-                                    .name = package_json.name,
-                                    .version = package_json.version,
-                                    .hash = package_json.hash,
-                                };
-                            } else {
-                                if (this.bundler.resolver.packageJSONForResolvedNodeModule(&resolve)) |package_json| {
-                                    package = .{
-                                        .name = package_json.name,
-                                        .version = package_json.version,
-                                        .hash = package_json.hash,
-                                    };
-                                }
-                            }
+                                file_path.pretty = resolve.path_pair.primary.text[node_module_root..];
+
+                                // omit trailing separator
+                                node_module_root += 1;
+
+                                // omit package name
+                                node_module_root += package.name.len;
+
+                                break :brk resolve.path_pair.primary.text[node_module_root..];
+                            };
+
+                            // const load_from_symbol_ref = ast.runtime_imports.$$r.?;
+                            // const reexport_ref = ast.runtime_imports.__reExport.?;
+                            const register_ref = ast.runtime_imports.register.?;
+                            const E = js_ast.E;
+                            const Expr = js_ast.Expr;
+                            const Stmt = js_ast.Stmt;
+                            var part = &ast.parts[ast.parts.len - 1];
+                            var new_stmts: [1]Stmt = undefined;
+                            var register_args: [4]Expr = undefined;
+
+                            var package_json_string = E.String{ .utf8 = package.name };
+                            var module_path_string = E.String{ .utf8 = package_relative_path };
+                            var target_identifier = E.Identifier{ .ref = register_ref };
+                            var cjs_args: [2]js_ast.G.Arg = undefined;
+                            var module_binding = js_ast.B.Identifier{ .ref = ast.module_ref.? };
+                            var exports_binding = js_ast.B.Identifier{ .ref = ast.exports_ref.? };
+                            cjs_args[0] = js_ast.G.Arg{
+                                .binding = js_ast.Binding{
+                                    .loc = logger.Loc.Empty,
+                                    .data = .{ .b_identifier = &module_binding },
+                                },
+                            };
+                            cjs_args[1] = js_ast.G.Arg{
+                                .binding = js_ast.Binding{
+                                    .loc = logger.Loc.Empty,
+                                    .data = .{ .b_identifier = &exports_binding },
+                                },
+                            };
+                            var closure = E.Arrow{
+                                .args = &cjs_args,
+                                .body = .{
+                                    .loc = logger.Loc.Empty,
+                                    .stmts = part.stmts,
+                                },
+                            };
+
+                            // $$m(12345, "react", "index.js", function(module, exports) {
+
+                            // })
+                            register_args[0] = Expr{ .loc = .{ .start = 0 }, .data = .{ .e_string = &package_json_string } };
+                            register_args[1] = Expr{ .loc = .{ .start = 0 }, .data = .{ .e_string = &module_path_string } };
+                            register_args[2] = Expr{ .loc = .{ .start = 0 }, .data = .{ .e_arrow = &closure } };
+
+                            var call_register = E.Call{
+                                .target = Expr{
+                                    .data = .{ .e_identifier = &target_identifier },
+                                    .loc = logger.Loc{ .start = 0 },
+                                },
+                                .args = &register_args,
+                            };
+                            var register_expr = Expr{ .loc = call_register.target.loc, .data = .{ .e_call = &call_register } };
+                            var decls: [1]js_ast.G.Decl = undefined;
+                            var bundle_export_binding = js_ast.B.Identifier{ .ref = ast.bundle_export_ref.? };
+                            var binding = js_ast.Binding{
+                                .loc = register_expr.loc,
+                                .data = .{ .b_identifier = &bundle_export_binding },
+                            };
+                            decls[0] = js_ast.G.Decl{
+                                .value = register_expr,
+                                .binding = binding,
+                            };
+                            var export_var = js_ast.S.Local{
+                                .decls = &decls,
+                                .is_export = true,
+                            };
+                            new_stmts[0] = Stmt{ .loc = register_expr.loc, .data = .{ .s_local = &export_var } };
+                            part.stmts = &new_stmts;
 
                             const code_offset = this.tmpfile_byte_offset - code_start_byte_offset;
                             var writer = js_printer.NewFileWriter(this.tmpfile);
                             var symbols: [][]js_ast.Symbol = &([_][]js_ast.Symbol{ast.symbols});
+                            hasher = std.hash.Wyhash.init(0);
+                            hasher.update(package_relative_path);
+                            hasher.update(std.mem.asBytes(&package.hash));
+                            const module_id = @truncate(u32, hasher.final());
 
                             const code_length = @truncate(
                                 u32,
@@ -590,10 +666,11 @@ pub fn NewBundler(cache_files: bool) type {
                                     false,
                                     js_printer.Options{
                                         .to_module_ref = Ref.RuntimeRef,
+                                        .bundle_export_ref = ast.bundle_export_ref.?,
+                                        .source_path = file_path,
                                         .externals = ast.externals,
-                                        // Indent by one
-                                        .indent = 1,
-                                        .package_json_hash = package.hash,
+                                        .indent = 0,
+                                        .module_hash = module_id,
                                         .runtime_imports = ast.runtime_imports,
                                     },
                                     Linker,
@@ -613,26 +690,16 @@ pub fn NewBundler(cache_files: bool) type {
                                     },
                                 );
                             }
-                            // trim node_modules/${package.name}/ from the string to save space
-                            // This reduces metadata size by about 30% for a large-ish file
-                            // A future optimization here could be to reuse the string from the original path
-                            var node_module_root = strings.indexOf(resolve.path_pair.primary.text, node_module_root_string) orelse unreachable;
-                            // omit package name
-                            node_module_root += package.name.len;
-                            // omit node_modules
-                            node_module_root += node_module_root_string.len;
-                            // omit trailing separator
-                            node_module_root += 1;
 
-                            var path_str = resolve.path_pair.primary.text[node_module_root..];
-                            var path_extname_length = @truncate(u8, std.fs.path.extension(path_str).len);
+                            var path_extname_length = @truncate(u8, std.fs.path.extension(package_relative_path).len);
                             try this.module_list.append(
                                 Api.JavascriptBundledModule{
                                     .path = try this.appendHeaderString(
-                                        path_str,
+                                        package_relative_path,
                                     ),
                                     .path_extname_length = path_extname_length,
                                     .package_id = package_get_or_put_entry.value_ptr.*,
+                                    .id = module_id,
                                     .code = Api.StringPointer{
                                         .length = @truncate(u32, code_length),
                                         .offset = @truncate(u32, code_offset),
@@ -934,6 +1001,8 @@ pub fn NewBundler(cache_files: bool) type {
                     var jsx = bundler.options.jsx;
                     jsx.parse = loader.isJSX();
                     var opts = js_parser.Parser.Options.init(jsx, loader);
+                    opts.enable_bundling = bundler.options.node_modules_bundle != null;
+                    opts.transform_require_to_import = true;
                     const value = (bundler.resolver.caches.js.parse(allocator, opts, bundler.options.define, bundler.log, &source) catch null) orelse return null;
                     return ParseResult{
                         .ast = value,

@@ -76,7 +76,9 @@ pub const Options = struct {
     indent: usize = 0,
     externals: []u32 = &[_]u32{},
     runtime_imports: runtime.Runtime.Imports,
-    package_json_hash: u32 = 0,
+    module_hash: u32 = 0,
+    source_path: ?fs.Path = null,
+    bundle_export_ref: ?js_ast.Ref = null,
     rewrite_require_resolve: bool = true,
     // If we're writing out a source map, this table of line start indices lets
     // us do binary search on to figure out what line a given AST node came from
@@ -475,8 +477,12 @@ pub fn NewPrinter(
         }
 
         pub fn printNonNegativeFloat(p: *Printer, float: f64) void {
-            if (float < 1000 and @intToFloat(f64, @floatToInt(i64, float)) == float) {
-                std.fmt.formatFloatDecimal(float, .{}, p) catch unreachable;
+            // Is this actually an integer?
+            if (float < std.math.maxInt(u32) and std.math.ceil(float) == float) {
+                // In JavaScript, numbers are represented as 64 bit floats
+                // However, they could also be signed or unsigned int 32 (when doing bit shifts)
+                // In this case, it's always going to unsigned since that conversion has already happened.
+                std.fmt.formatInt(@floatToInt(u32, float), 10, true, .{}, p) catch unreachable;
                 return;
             }
 
@@ -930,7 +936,15 @@ pub fn NewPrinter(
                     }
                 },
                 .e_require => |e| {
-                    p.printRequireOrImportExpr(e.import_record_index, &([_]G.Comment{}), level, flags);
+                    if (rewrite_esm_to_cjs) {
+                        p.printIndent();
+                        p.printBundledRequire(e.*);
+                        p.printSemicolonIfNeeded();
+                    }
+
+                    if (!rewrite_esm_to_cjs) {
+                        p.printRequireOrImportExpr(e.import_record_index, &([_]G.Comment{}), level, flags);
+                    }
                 },
                 .e_require_or_require_resolve => |e| {
                     const wrap = level.gte(.new) or flags.forbid_call;
@@ -1078,7 +1092,6 @@ pub fn NewPrinter(
                         p.print("(");
                         flags.forbid_in = !flags.forbid_in;
                     }
-                    flags.forbid_in = true;
                     p.printExpr(e.test_, .conditional, flags);
                     p.printSpace();
                     p.print("? ");
@@ -1517,7 +1530,7 @@ pub fn NewPrinter(
                     }
 
                     var left_level = entry.level.sub(1);
-                    var right_level = left_level;
+                    var right_level = entry.level.sub(1);
 
                     if (e.op.isRightAssociative()) {
                         left_level = entry.level;
@@ -2172,7 +2185,13 @@ pub fn NewPrinter(
 
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
-                    p.print("export default");
+
+                    if (rewrite_esm_to_cjs) {
+                        p.printSymbol(p.options.runtime_imports.__export.?);
+                        p.print(".default =");
+                    } else {
+                        p.print("export default");
+                    }
 
                     p.printSpace();
 
@@ -2583,12 +2602,13 @@ pub fn NewPrinter(
 
                     const record = p.import_records[s.import_record_index];
                     var item_count: usize = 0;
-                    if (rewrite_esm_to_cjs) {
-                        return p.printImportAsCommonJS(record, s, stmt);
-                    }
 
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+
+                    if (rewrite_esm_to_cjs) {
+                        return p.printBundledImport(record, s, stmt);
+                    }
 
                     if (record.wrap_with_to_module) {
                         if (p.options.runtime_imports.__require) |require_ref| {
@@ -2772,7 +2792,142 @@ pub fn NewPrinter(
             }
         }
 
-        pub fn printImportAsCommonJS(p: *Printer, record: importRecord.ImportRecord, s: *S.Import, stmt: Stmt) void {}
+        pub fn printBundledImport(p: *Printer, record: importRecord.ImportRecord, s: *S.Import, stmt: Stmt) void {
+            if (record.is_internal) {
+                return;
+            }
+
+            const ImportVariant = enum {
+                path_only,
+                import_star,
+                import_default,
+                import_star_and_import_default,
+                import_items,
+                import_items_and_default,
+                import_items_and_star,
+                import_items_and_default_and_star,
+
+                pub fn hasItems(import_variant: @This()) @This() {
+                    return switch (import_variant) {
+                        .import_default => .import_items_and_default,
+                        .import_star => .import_items_and_star,
+                        .import_star_and_import_default => .import_items_and_default_and_star,
+                        else => .import_items,
+                    };
+                }
+
+                // We always check star first so don't need to be exhaustive here
+                pub fn hasStar(import_variant: @This()) @This() {
+                    return switch (import_variant) {
+                        .path_only => .import_star,
+                        else => import_variant,
+                    };
+                }
+
+                // We check default after star
+                pub fn hasDefault(import_variant: @This()) @This() {
+                    return switch (import_variant) {
+                        .path_only => .import_default,
+                        .import_star => .import_star_and_import_default,
+                        else => import_variant,
+                    };
+                }
+            };
+
+            var variant = ImportVariant.path_only;
+
+            if (s.star_name_loc != null and s.star_name_loc.?.start > -1) {
+                variant = variant.hasStar();
+            }
+
+            if (s.default_name != null) {
+                variant = variant.hasDefault();
+            }
+
+            if (s.items.len > 0) {
+                variant = variant.hasItems();
+            }
+
+            switch (variant) {
+                .import_star => {
+                    p.print("var ");
+                    p.printSymbol(s.namespace_ref);
+                    p.print(" = ");
+                    p.printLoadFromBundle(s.import_record_index);
+                    p.printSemicolonAfterStatement();
+                },
+                .import_default => {
+                    p.print("var ");
+                    p.printSymbol(s.default_name.?.ref.?);
+                    p.print(" = ");
+                    p.printLoadFromBundle(s.import_record_index);
+                    p.print(".default");
+                    p.printSemicolonAfterStatement();
+                },
+                .import_star_and_import_default => {
+                    p.print("var ");
+                    p.printSymbol(s.namespace_ref);
+                    p.print(" = ");
+                    p.printLoadFromBundle(s.import_record_index);
+                    p.print(", ");
+                    p.printSymbol(s.default_name.?.ref.?);
+                    p.print(" = ");
+                    p.printSymbol(s.namespace_ref);
+                    p.print(".default");
+                    p.printSemicolonAfterStatement();
+                },
+                .import_items => {
+                    p.print("var {");
+
+                    var item_count: usize = 0;
+
+                    for (s.items) |*item, i| {
+                        if (i != 0) {
+                            p.print(",");
+                            if (s.is_single_line) {
+                                p.printSpace();
+                            }
+                        }
+
+                        p.printClauseAlias(item.alias);
+                        const name = p.renamer.nameForSymbol(item.name.ref.?);
+                        if (!strings.eql(name, item.alias)) {
+                            p.printSpace();
+                            p.print(":");
+                            p.printSpaceBeforeIdentifier();
+                            p.printIdentifier(name);
+                        }
+                        item_count += 1;
+                    }
+
+                    p.print("}");
+                    p.print(" = ");
+                    p.printLoadFromBundle(s.import_record_index);
+
+                    p.printSemicolonAfterStatement();
+                },
+                .import_items_and_default => {},
+                .import_items_and_star => {},
+                .import_items_and_default_and_star => {},
+                .path_only => {
+                    p.printLoadFromBundle(s.import_record_index);
+                    p.printSemicolonAfterStatement();
+                },
+            }
+        }
+        pub fn printLoadFromBundle(p: *Printer, import_record_index: u32) void {
+            const record = p.import_records[import_record_index];
+            p.print("$");
+            std.fmt.formatInt(record.module_id, 16, true, .{}, p) catch unreachable;
+            p.print("()");
+        }
+        pub fn printBundledRequire(p: *Printer, require: E.Require) void {
+            if (p.import_records[require.import_record_index].is_internal) {
+                return;
+            }
+
+            p.printLoadFromBundle(require.import_record_index);
+        }
 
         pub fn printForLoopInit(p: *Printer, initSt: Stmt) void {
             switch (initSt.data) {
@@ -2910,9 +3065,24 @@ pub fn NewPrinter(
         }
 
         pub fn printDeclStmt(p: *Printer, is_export: bool, comptime keyword: string, decls: []G.Decl) void {
+            if (rewrite_esm_to_cjs and keyword[0] == 'v' and is_export) {
+                // this is a top-level export
+                if (decls.len == 1 and std.meta.activeTag(decls[0].binding.data) == .b_identifier and decls[0].binding.data.b_identifier.ref.eql(p.options.bundle_export_ref.?)) {
+                    p.print("// ");
+                    p.print(p.options.source_path.?.pretty);
+                    p.print("\nexport var $");
+                    std.fmt.formatInt(p.options.module_hash, 16, true, .{}, p) catch unreachable;
+                    p.print(" = ");
+                    p.printExpr(decls[0].value.?, .comma, ExprFlag.None());
+                    p.printSemicolonAfterStatement();
+                    return;
+                }
+            }
+
             p.printIndent();
             p.printSpaceBeforeIdentifier();
-            if (is_export) {
+
+            if (!rewrite_esm_to_cjs and is_export) {
                 p.print("export ");
             }
             p.printDecls(keyword, decls, ExprFlag.None());

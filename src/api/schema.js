@@ -167,6 +167,7 @@ function decodeJavascriptBundledModule(bb) {
   result["path"] = decodeStringPointer(bb);
   result["code"] = decodeStringPointer(bb);
   result["package_id"] = bb.readUint32();
+  result["id"] = bb.readUint32();
   result["path_extname_length"] = bb.readByte();
   return result;
 }
@@ -192,6 +193,13 @@ function encodeJavascriptBundledModule(message, bb) {
     bb.writeUint32(value);
   } else {
     throw new Error("Missing required field \"package_id\"");
+  }
+
+  var value = message["id"];
+  if (value != null) {
+    bb.writeUint32(value);
+  } else {
+    throw new Error("Missing required field \"id\"");
   }
 
   var value = message["path_extname_length"];

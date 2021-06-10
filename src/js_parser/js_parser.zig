@@ -596,6 +596,46 @@ pub const SideEffects = enum(u2) {
                 if (__if__.yes.isEmpty() and __if__.no.isEmpty()) {
                     return simpifyUnusedExpr(p, __if__.test_);
                 }
+
+                // "foo() ? 1 : bar()" => "foo() || bar()"
+                if (__if__.yes.isEmpty()) {
+                    return Expr.joinWithLeftAssociativeOp(
+                        .bin_logical_or,
+                        __if__.test_,
+                        __if__.no,
+                        p.allocator,
+                    );
+                }
+
+                // "foo() ? bar() : 2" => "foo() && bar()"
+                if (__if__.no.isEmpty()) {
+                    return Expr.joinWithLeftAssociativeOp(
+                        .bin_logical_or,
+                        __if__.test_,
+                        __if__.yes,
+                        p.allocator,
+                    );
+                }
+            },
+            .e_unary => |un| {
+                // These operators must not have any type conversions that can execute code
+                // such as "toString" or "valueOf". They must also never throw any exceptions.
+                switch (un.op) {
+                    .un_void, .un_not => {
+                        return simpifyUnusedExpr(p, un.value);
+                    },
+                    .un_typeof => {
+                        // "typeof x" must not be transformed into if "x" since doing so could
+                        // cause an exception to be thrown. Instead we can just remove it since
+                        // "typeof x" is special-cased in the standard to never throw.
+                        if (std.meta.activeTag(un.value.data) == .e_identifier) {
+                            return null;
+                        }
+
+                        return simpifyUnusedExpr(p, un.value);
+                    },
+                    else => {},
+                }
             },
 
             .e_call => |call| {
@@ -609,15 +649,38 @@ pub const SideEffects = enum(u2) {
 
             .e_binary => |bin| {
                 switch (bin.op) {
+                    // These operators must not have any type conversions that can execute code
+                    // such as "toString" or "valueOf". They must also never throw any exceptions.
+                    .bin_strict_eq, .bin_strict_ne, .bin_comma => {
+                        return Expr.joinWithComma(
+                            simpifyUnusedExpr(p, bin.left) orelse bin.left.toEmpty(),
+                            simpifyUnusedExpr(p, bin.right) orelse bin.right.toEmpty(),
+                            p.allocator,
+                        );
+                    },
+
                     // We can simplify "==" and "!=" even though they can call "toString" and/or
                     // "valueOf" if we can statically determine that the types of both sides are
                     // primitives. In that case there won't be any chance for user-defined
                     // "toString" and/or "valueOf" to be called.
-                    .bin_loose_eq, .bin_loose_ne => {
+                    .bin_loose_eq,
+                    .bin_loose_ne,
+                    => {
                         if (isPrimitiveWithSideEffects(bin.left.data) and isPrimitiveWithSideEffects(bin.right.data)) {
                             return Expr.joinWithComma(simpifyUnusedExpr(p, bin.left) orelse bin.left.toEmpty(), simpifyUnusedExpr(p, bin.right) orelse bin.right.toEmpty(), p.allocator);
                         }
                     },
+
+                    .bin_logical_and, .bin_logical_or, .bin_nullish_coalescing => {
+                        // Preserve short-circuit behavior: the left expression is only unused if
+                        // the right expression can be completely removed. Otherwise, the left
+                        // expression is important for the branch.
+                        bin.right = simpifyUnusedExpr(p, bin.right) orelse bin.right.toEmpty();
+                        if (!bin.right.isEmpty()) {
+                            return simpifyUnusedExpr(p, bin.left);
+                        }
+                    },
+
                     else => {},
                 }
             },
@@ -902,14 +965,23 @@ pub const SideEffects = enum(u2) {
             .e_unary => |e| {
                 switch (e.op) {
                     // Always number or bigint
-                    .un_pos, .un_neg, .un_cpl, .un_pre_dec, .un_pre_inc, .un_post_dec, .un_post_inc => {
+                    .un_pos,
+                    .un_neg,
+                    .un_cpl,
+                    .un_pre_dec,
+                    .un_pre_inc,
+                    .un_post_dec,
+                    .un_post_inc,
+
+                    // Always boolean
+                    .un_not,
+                    .un_typeof,
+                    .un_delete,
+                    => {
                         return Result{ .ok = true, .value = false, .side_effects = SideEffects.could_have_side_effects };
                     },
-                    // Always undefined
-                    .un_not, .un_typeof, .un_delete => {
-                        return Result{ .value = true, .side_effects = .could_have_side_effects, .ok = true };
-                    },
 
+                    // Always undefined
                     .un_void => {
                         return Result{ .value = true, .side_effects = .could_have_side_effects, .ok = true };
                     },

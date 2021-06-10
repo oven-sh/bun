@@ -122,7 +122,7 @@ pub const ImportScanner = struct {
 
                         if (st.default_name) |default_name| {
                             found_imports = true;
-                            var symbol = p.symbols.items[default_name.ref.?.inner_index];
+                            const symbol = p.symbols.items[default_name.ref.?.inner_index];
 
                             // TypeScript has a separate definition of unused
                             if (p.options.ts and p.ts_use_counts.items[default_name.ref.?.inner_index] != 0) {
@@ -2958,13 +2958,15 @@ pub fn NewParser(
                 p.bundle_export_ref = try p.declareSymbol(.unbound, logger.Loc.Empty, "IF_YOU_SEE_THIS_ITS_A_BUNDLER_BUG_PLEASE_FILE_AN_ISSUE_THX");
                 p.runtime_imports.__reExport = try p.declareSymbol(.unbound, logger.Loc.Empty, "__reExport");
                 p.runtime_imports.register = try p.declareSymbol(.unbound, logger.Loc.Empty, "$$m");
-                p.runtime_imports.__export = try p.declareSymbol(.unbound, logger.Loc.Empty, "__export");
+                p.runtime_imports.lazy_export = try p.declareSymbol(.unbound, logger.Loc.Empty, "$$lzy");
 
                 p.exports_ref = try p.declareSymbol(.hoisted, logger.Loc.Empty, "exports");
                 p.module_ref = try p.declareSymbol(.hoisted, logger.Loc.Empty, "module");
+                p.runtime_imports.__export = p.exports_ref;
             } else {
                 p.exports_ref = try p.declareSymbol(.hoisted, logger.Loc.Empty, "exports");
                 p.module_ref = try p.declareSymbol(.hoisted, logger.Loc.Empty, "module");
+                p.runtime_imports.__export = p.exports_ref;
             }
 
             p.runtime_imports.__require = p.require_ref;
@@ -2996,7 +2998,7 @@ pub fn NewParser(
             if (!scope.kindStopsHoisting()) {
                 var iter = scope.members.iterator();
                 nextMember: while (iter.next()) |res| {
-                    var symbol = p.symbols.items[res.value.ref.inner_index];
+                    var symbol = &p.symbols.items[res.value.ref.inner_index];
                     if (!symbol.isHoisted()) {
                         continue :nextMember;
                     }
@@ -6720,7 +6722,7 @@ pub fn NewParser(
             var entry = try scope.members.getOrPut(name);
             if (entry.found_existing) {
                 const existing = entry.entry.value;
-                var symbol: Symbol = p.symbols.items[@intCast(usize, existing.ref.inner_index)];
+                var symbol: *Symbol = &p.symbols.items[@intCast(usize, existing.ref.inner_index)];
 
                 switch (p.canMergeSymbols(scope, symbol.kind, kind)) {
                     .forbidden => {
@@ -11283,11 +11285,14 @@ pub fn NewParser(
                         import_items.put(name, item) catch unreachable;
                         p.is_import_item.put(item.ref orelse unreachable, true) catch unreachable;
 
-                        var symbol = p.symbols.items[item.ref.?.inner_index];
+                        var symbol = &p.symbols.items[item.ref.?.inner_index];
                         // Mark this as generated in case it's missing. We don't want to
                         // generate errors for missing import items that are automatically
                         // generated.
                         symbol.import_item_status = .generated;
+
+                        // Make sure the printer prints this as a property access
+                        symbol.namespace_alias = G.NamespaceAlias{ .namespace_ref = id.ref, .alias = name };
                     } else {
                         item = import_items.get(name) orelse unreachable;
                     }

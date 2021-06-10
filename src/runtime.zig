@@ -24,6 +24,7 @@ pub const Runtime = struct {
         __load: ?Ref = null,
         load_from_bundle: ?Ref = null,
         register: ?Ref = null,
+        lazy_export: ?Ref = null,
 
         pub const all = [_][]const u8{
             "__name",
@@ -37,6 +38,7 @@ pub const Runtime = struct {
             "load_from_bundle",
             //
             "register",
+            "lazy_export",
         };
         pub const Name = "<RUNTIME";
 
@@ -100,6 +102,11 @@ pub const Runtime = struct {
                                 return Entry{ .key = 8, .value = val };
                             }
                         },
+                        9 => {
+                            if (@field(this.runtime_imports, all[9])) |val| {
+                                return Entry{ .key = 9, .value = val };
+                            }
+                        },
 
                         else => {
                             return null;
@@ -154,6 +161,7 @@ pub const Runtime = struct {
                 6 => @field(imports, all[6]),
                 7 => @field(imports, all[7]),
                 8 => @field(imports, all[8]),
+                9 => @field(imports, all[9]),
                 else => null,
             };
         }

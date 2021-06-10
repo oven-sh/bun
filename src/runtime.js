@@ -22,6 +22,17 @@ export var __reExport = (target, module, desc) => {
   return target;
 };
 
+export var $$lz = (target, module, props) => {
+  for (key in props) {
+    if (!__hasOwnProp.call(target, key) && key !== "default")
+      __defProp(target, key, {
+        get: () => module()[props[key]],
+        enumerable: true,
+      });
+  }
+  return target;
+};
+
 export var __toModule = (module) => {
   return __reExport(
     __markAsModule(
@@ -43,7 +54,7 @@ export var __commonJS =
     return (
       mod,
       // friendly name for any errors while requiring
-      (__name(cb, `export default ${name}`),
+      (__name(cb, name),
       cb((mod = { exports: {} }), mod.exports),
       __name(mod, name),
       mod),

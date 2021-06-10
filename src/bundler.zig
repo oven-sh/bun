@@ -207,7 +207,7 @@ pub fn NewBundler(cache_files: bool) type {
             package_list: std.ArrayList(Api.JavascriptBundledPackage),
             header_string_buffer: MutableString,
             // Just need to know if we've already enqueued this one
-            resolved_paths: hash_map.StringHashMap(void),
+            resolved_paths: hash_map.StringHashMap(u32),
             package_list_map: std.AutoHashMap(u64, u32),
             resolve_queue: std.fifo.LinearFifo(_resolver.Result, .Dynamic),
             bundler: *ThisBundler,
@@ -276,7 +276,7 @@ pub fn NewBundler(cache_files: bool) type {
                     .scan_pass_result = js_parser.ScanPassResult.init(allocator),
                     .header_string_buffer = try MutableString.init(allocator, 0),
                     .allocator = allocator,
-                    .resolved_paths = hash_map.StringHashMap(void).init(allocator),
+                    .resolved_paths = hash_map.StringHashMap(u32).init(allocator),
                     .resolve_queue = std.fifo.LinearFifo(_resolver.Result, .Dynamic).init(allocator),
                     .bundler = bundler,
                     .tmpfile = tmpfile,
@@ -534,26 +534,35 @@ pub fn NewBundler(cache_files: bool) type {
                                     // This reduces metadata size by about 30% for a large-ish file
                                     // A future optimization here could be to reuse the string from the original path
                                     var node_module_root = strings.indexOf(resolved_import.path_pair.primary.text, node_module_root_string) orelse unreachable;
-                                    // // omit package name
-                                    node_module_root += package_json.name.len;
+
                                     // omit node_modules
                                     node_module_root += node_module_root_string.len;
+
+                                    // // omit package name
+                                    node_module_root += package_json.name.len;
+
+                                    node_module_root += 1;
 
                                     // It should be the first index, not the last to support bundling multiple of the same package
                                     import_record.path = Fs.Path.init(
                                         absolute_path[node_module_root..],
                                     );
-                                    hasher = std.hash.Wyhash.init(0);
-                                    hasher.update(import_record.path.text);
-                                    hasher.update(std.mem.asBytes(&package_json.hash));
-                                    import_record.module_id = @truncate(u32, hasher.final());
-                                    import_record.is_bundled = true;
 
                                     const get_or_put_result = try this.resolved_paths.getOrPut(absolute_path);
 
                                     if (get_or_put_result.found_existing) {
+                                        import_record.module_id = get_or_put_result.entry.value;
+                                        import_record.is_bundled = true;
                                         continue;
                                     }
+
+                                    hasher = std.hash.Wyhash.init(0);
+                                    hasher.update(import_record.path.text);
+                                    hasher.update(std.mem.asBytes(&package_json.hash));
+
+                                    import_record.module_id = @truncate(u32, hasher.final());
+                                    get_or_put_result.entry.value = import_record.module_id;
+                                    import_record.is_bundled = true;
 
                                     try this.resolve_queue.writeItem(_resolved_import.*);
                                 } else |err| {}
@@ -585,6 +594,7 @@ pub fn NewBundler(cache_files: bool) type {
                             const E = js_ast.E;
                             const Expr = js_ast.Expr;
                             const Stmt = js_ast.Stmt;
+
                             var part = &ast.parts[ast.parts.len - 1];
                             var new_stmts: [1]Stmt = undefined;
                             var register_args: [4]Expr = undefined;
@@ -595,6 +605,12 @@ pub fn NewBundler(cache_files: bool) type {
                             var cjs_args: [2]js_ast.G.Arg = undefined;
                             var module_binding = js_ast.B.Identifier{ .ref = ast.module_ref.? };
                             var exports_binding = js_ast.B.Identifier{ .ref = ast.exports_ref.? };
+
+                            // if (!ast.uses_module_ref) {
+                            //     var symbol = &ast.symbols[ast.module_ref.?.inner_index];
+                            //     symbol.original_name = "_$$";
+                            // }
+
                             cjs_args[0] = js_ast.G.Arg{
                                 .binding = js_ast.Binding{
                                     .loc = logger.Loc.Empty,
@@ -652,7 +668,7 @@ pub fn NewBundler(cache_files: bool) type {
                             var symbols: [][]js_ast.Symbol = &([_][]js_ast.Symbol{ast.symbols});
                             hasher = std.hash.Wyhash.init(0);
                             hasher.update(package_relative_path);
-                            hasher.update(std.mem.asBytes(&package.hash));
+                            hasher.update(std.mem.asBytes(&package.hash)[0..4]);
                             const module_id = @truncate(u32, hasher.final());
 
                             const code_length = @truncate(

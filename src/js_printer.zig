@@ -936,13 +936,13 @@ pub fn NewPrinter(
                     }
                 },
                 .e_require => |e| {
-                    if (rewrite_esm_to_cjs) {
+                    if (rewrite_esm_to_cjs and p.import_records[e.import_record_index].is_bundled) {
                         p.printIndent();
                         p.printBundledRequire(e.*);
                         p.printSemicolonIfNeeded();
                     }
 
-                    if (!rewrite_esm_to_cjs) {
+                    if (!rewrite_esm_to_cjs or !p.import_records[e.import_record_index].is_bundled) {
                         p.printRequireOrImportExpr(e.import_record_index, &([_]G.Comment{}), level, flags);
                     }
                 },
@@ -2138,8 +2138,19 @@ pub fn NewPrinter(
                 .s_function => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+                    const name = s.func.name orelse Global.panic("Internal error: expected func to have a name ref\n{s}", .{s});
+                    const nameRef = name.ref orelse Global.panic("Internal error: expected func to have a name\n{s}", .{s});
                     if (s.func.flags.is_export) {
-                        p.print("export ");
+                        if (!rewrite_esm_to_cjs) {
+                            p.print("export ");
+                        } else {
+                            if (rewrite_esm_to_cjs) {
+                                p.printSymbol(p.options.runtime_imports.__export.?);
+                                p.print(".");
+                                p.printSymbol(nameRef);
+                                p.print(" = ");
+                            }
+                        }
                     }
                     if (s.func.flags.is_async) {
                         p.print("async ");
@@ -2149,8 +2160,7 @@ pub fn NewPrinter(
                         p.print("*");
                         p.printSpace();
                     }
-                    const name = s.func.name orelse Global.panic("Internal error: expected func to have a name ref\n{s}", .{s});
-                    const nameRef = name.ref orelse Global.panic("Internal error: expected func to have a name\n{s}", .{s});
+
                     p.printSpace();
                     p.printSymbol(nameRef);
                     p.printFunc(s.func);
@@ -2165,8 +2175,18 @@ pub fn NewPrinter(
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     if (s.is_export) {
-                        p.print("export ");
+                        if (!rewrite_esm_to_cjs) {
+                            p.print("export ");
+                        }
+
+                        if (rewrite_esm_to_cjs) {
+                            p.printSymbol(p.options.runtime_imports.__export.?);
+                            p.print(".");
+                            p.printSymbol(s.class.class_name.?.ref.?);
+                            p.print(" = ");
+                        }
                     }
+
                     p.print("class ");
                     p.printSymbol(s.class.class_name.?.ref.?);
                     p.printClass(s.class);
@@ -2245,6 +2265,32 @@ pub fn NewPrinter(
                     }
                 },
                 .s_export_star => |s| {
+                    if (rewrite_esm_to_cjs) {
+                        p.printIndent();
+                        p.printSpaceBeforeIdentifier();
+
+                        // module.exports.react = $react();
+                        if (s.alias) |alias| {
+                            p.printSymbol(p.options.runtime_imports.__export.?);
+                            p.print(".");
+                            p.printClauseAlias(alias.original_name);
+                            p.print(" = ");
+                            p.printLoadFromBundle(s.import_record_index);
+                            p.printSemicolonAfterStatement();
+                            return;
+                            // module.exports = $react();
+                        } else {
+                            p.printSymbol(p.options.runtime_imports.__reExport.?);
+                            p.print("(");
+                            p.printSymbol(p.options.runtime_imports.__export.?);
+                            p.print(",");
+                            p.printLoadFromBundle(s.import_record_index);
+                            p.print(")");
+                            p.printSemicolonAfterStatement();
+                            return;
+                        }
+                    }
+
                     // Give an extra newline for readaiblity
                     if (!prev_stmt_tag.isExportLike()) {
                         p.printNewline();
@@ -2268,6 +2314,56 @@ pub fn NewPrinter(
                     p.printSemicolonAfterStatement();
                 },
                 .s_export_clause => |s| {
+                    if (rewrite_esm_to_cjs) {
+                        p.printIndent();
+                        p.printSpaceBeforeIdentifier();
+
+                        switch (s.items.len) {
+                            0 => {},
+                            // __export.prop1 = prop1;
+                            1 => {
+                                const item = s.items[0];
+
+                                p.printSymbol(p.options.runtime_imports.__export.?);
+                                p.print(".");
+                                const name = p.renamer.nameForSymbol(item.name.ref.?);
+                                if (!strings.eql(name, item.alias)) {
+                                    p.printClauseAlias(item.alias);
+                                } else {
+                                    p.printIdentifier(name);
+                                }
+                                p.print(" = ");
+                                p.printIdentifier(name);
+                                p.printSemicolonAfterStatement();
+                            },
+
+                            // Object.assign(__export, {prop1, prop2, prop3});
+                            else => {
+                                p.print("Object.assign");
+                                p.print("(");
+                                p.printSymbol(p.options.runtime_imports.__export.?);
+                                p.print(", {");
+                                const last = s.items.len - 1;
+                                for (s.items) |item, i| {
+                                    const name = p.renamer.nameForSymbol(item.name.ref.?);
+                                    p.printIdentifier(name);
+                                    if (!strings.eql(name, item.alias)) {
+                                        p.print(":");
+                                        p.printSpace();
+                                        p.printClauseAlias(item.alias);
+                                    }
+
+                                    if (i < last) {
+                                        p.print(",");
+                                    }
+                                }
+                                p.print("})");
+                                p.printSemicolonAfterStatement();
+                            },
+                        }
+                        return;
+                    }
+
                     // Give an extra newline for export default for readability
                     if (!prev_stmt_tag.isExportLike()) {
                         p.printNewline();
@@ -2313,9 +2409,48 @@ pub fn NewPrinter(
                     p.printSemicolonAfterStatement();
                 },
                 .s_export_from => |s| {
-                    // Give an extra newline for readaiblity
-                    if (!prev_stmt_tag.isExportLike()) {
-                        p.printNewline();
+                    if (rewrite_esm_to_cjs) {
+                        const record = p.import_records[s.import_record_index];
+
+                        // $$lz(export, $React(), {default: "React"});
+                        if (s.items.len == 1) {
+                            const item = s.items[0];
+                            p.printSymbol(p.options.runtime_imports.lazy_export.?);
+                            p.print("(");
+                            p.printSymbol(p.options.runtime_imports.__export.?);
+                            p.print(",");
+                            // Avoid initializing an entire component library because you imported one icon
+                            p.printLoadFromBundleWithoutCall(s.import_record_index);
+                            p.print(",{");
+                            p.printClauseAlias(item.alias);
+                            p.print(":");
+                            const name = p.renamer.nameForSymbol(item.name.ref.?);
+                            p.printQuotedUTF8(name, true);
+                            p.print("})");
+
+                            p.printSemicolonAfterStatement();
+                            // $$lz(export, $React(), {createElement: "React"});
+                        } else {
+                            p.printSymbol(p.options.runtime_imports.lazy_export.?);
+                            p.print("(");
+                            p.printSymbol(p.options.runtime_imports.__export.?);
+
+                            // Avoid initializing an entire component library because you imported one icon
+                            p.printLoadFromBundleWithoutCall(s.import_record_index);
+                            p.print(",{");
+                            for (s.items) |item, i| {
+                                p.printClauseAlias(item.alias);
+                                p.print(":");
+                                p.printQuotedUTF8(p.renamer.nameForSymbol(item.name.ref.?), true);
+                                if (i < s.items.len - 1) {
+                                    p.print(",");
+                                }
+                            }
+                            p.print("})");
+                            p.printSemicolonAfterStatement();
+                        }
+
+                        return;
                     }
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
@@ -2836,11 +2971,13 @@ pub fn NewPrinter(
 
             var variant = ImportVariant.path_only;
 
-            if (s.star_name_loc != null and s.star_name_loc.?.start > -1) {
+            var namespace = p.symbols.get(s.namespace_ref).?;
+
+            if (record.contains_import_star) {
                 variant = variant.hasStar();
             }
 
-            if (s.default_name != null) {
+            if (record.contains_default_alias or s.default_name != null) {
                 variant = variant.hasDefault();
             }
 
@@ -2849,7 +2986,8 @@ pub fn NewPrinter(
             }
 
             switch (variant) {
-                .import_star => {
+                // we treat path_only the same as import_star because we may have property accesses using it.
+                .path_only, .import_star => {
                     p.print("var ");
                     p.printSymbol(s.namespace_ref);
                     p.print(" = ");
@@ -2906,20 +3044,107 @@ pub fn NewPrinter(
 
                     p.printSemicolonAfterStatement();
                 },
-                .import_items_and_default => {},
-                .import_items_and_star => {},
-                .import_items_and_default_and_star => {},
-                .path_only => {
+                .import_items_and_default => {
+                    p.print("var {");
+
+                    const default_name = s.default_name.?.ref.?;
+                    p.print("default: ");
+                    p.printSymbol(default_name);
+
+                    for (s.items) |*item, i| {
+                        p.print(",");
+
+                        p.printClauseAlias(item.alias);
+                        const name = p.renamer.nameForSymbol(item.name.ref.?);
+                        if (!strings.eql(name, item.alias)) {
+                            p.printSpace();
+                            p.print(":");
+                            p.printSpaceBeforeIdentifier();
+                            p.printIdentifier(name);
+                        }
+                    }
+
+                    p.print("}");
+                    p.print(" = ");
                     p.printLoadFromBundle(s.import_record_index);
+
                     p.printSemicolonAfterStatement();
                 },
+                .import_items_and_star => {
+                    p.print("var ");
+
+                    p.printSymbol(s.namespace_ref);
+                    p.print(" = ");
+                    p.printLoadFromBundle(s.import_record_index);
+                    p.print(", {");
+
+                    for (s.items) |*item, i| {
+                        if (i > 0) {
+                            p.print(",");
+                        }
+
+                        p.printClauseAlias(item.alias);
+                        const name = p.renamer.nameForSymbol(item.name.ref.?);
+                        if (!strings.eql(name, item.alias)) {
+                            p.printSpace();
+                            p.print(":");
+                            p.printSpaceBeforeIdentifier();
+                            p.printIdentifier(name);
+                        }
+                    }
+
+                    p.print("} = ");
+                    p.printSymbol(s.namespace_ref);
+                    p.printSemicolonAfterStatement();
+                },
+                .import_items_and_default_and_star => {
+                    p.print("var ");
+
+                    p.printSymbol(s.namespace_ref);
+                    p.print(" = ");
+                    p.printLoadFromBundle(s.import_record_index);
+                    p.print(", {");
+
+                    const default_name = s.default_name.?.ref.?;
+                    p.print("default: ");
+                    p.printSymbol(default_name);
+
+                    for (s.items) |*item, i| {
+                        p.print(",");
+
+                        p.printClauseAlias(item.alias);
+                        const name = p.renamer.nameForSymbol(item.name.ref.?);
+                        if (!strings.eql(name, item.alias)) {
+                            p.printSpace();
+                            p.print(":");
+
+                            p.printIdentifier(name);
+                        }
+                    }
+
+                    p.print("}");
+                    p.print(" = ");
+                    p.printSymbol(s.namespace_ref);
+
+                    p.printSemicolonAfterStatement();
+                },
+                // .path_only => {
+                //     p.printLoadFromBundle(s.import_record_index);
+                //     p.print("/* ");
+                //     p.printSymbol(s.namespace_ref);
+                //     p.print(" */");
+                //     p.printSemicolonAfterStatement();
+                // },
             }
         }
         pub fn printLoadFromBundle(p: *Printer, import_record_index: u32) void {
+            p.printLoadFromBundleWithoutCall(import_record_index);
+            p.print("()");
+        }
+        pub fn printLoadFromBundleWithoutCall(p: *Printer, import_record_index: u32) void {
             const record = p.import_records[import_record_index];
             p.print("$");
-            std.fmt.formatInt(record.module_id, 16, true, .{}, p) catch unreachable;
-            p.print("()");
+            std.fmt.formatInt(record.module_id, 16, false, .{}, p) catch unreachable;
         }
         pub fn printBundledRequire(p: *Printer, require: E.Require) void {
             if (p.import_records[require.import_record_index].is_internal) {
@@ -3071,7 +3296,7 @@ pub fn NewPrinter(
                     p.print("// ");
                     p.print(p.options.source_path.?.pretty);
                     p.print("\nexport var $");
-                    std.fmt.formatInt(p.options.module_hash, 16, true, .{}, p) catch unreachable;
+                    std.fmt.formatInt(p.options.module_hash, 16, false, .{}, p) catch unreachable;
                     p.print(" = ");
                     p.printExpr(decls[0].value.?, .comma, ExprFlag.None());
                     p.printSemicolonAfterStatement();
@@ -3087,6 +3312,21 @@ pub fn NewPrinter(
             }
             p.printDecls(keyword, decls, ExprFlag.None());
             p.printSemicolonAfterStatement();
+            if (rewrite_esm_to_cjs and is_export and decls.len > 0) {
+                p.printIndent();
+                p.printSpaceBeforeIdentifier();
+                for (decls) |decl, i| {
+                    p.printSymbol(p.options.runtime_imports.__export.?);
+                    p.print(".");
+                    p.printBinding(decl.binding);
+                    p.print(" = ");
+                    p.printBinding(decl.binding);
+                    if (i < decls.len - 1) {
+                        p.print(",");
+                    }
+                }
+                p.printSemicolonAfterStatement();
+            }
         }
 
         pub fn printIdentifier(p: *Printer, identifier: string) void {

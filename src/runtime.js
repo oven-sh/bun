@@ -1,3 +1,4 @@
+var $$mod$ = Symbol.for;
 var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getProtoOf = Object.getPrototypeOf;
@@ -54,8 +55,17 @@ export var __commonJS =
 var require_cache = new WeakMap();
 
 export var __SPEEDY_INTERNAL_DO_NOT_USE_OR_YOU_WILL_BE_FIRED = {
-  RequireFailedError: class RequireFailedError {},
+  RequireFailedError: class {},
 };
+
+__name(
+  __SPEEDY_INTERNAL_DO_NOT_USE_OR_YOU_WILL_BE_FIRED__MODULE_LOAD_CACHE.RequireFailedError,
+  "RequireFailedError"
+);
+__name(
+  __SPEEDY_INTERNAL_DO_NOT_USE_OR_YOU_WILL_BE_FIRED__MODULE_LOAD_CACHE.Module,
+  "Module"
+);
 
 export var __require = (namespace) => {
   var entry = require_cache.get(namespace);
@@ -82,6 +92,95 @@ export var __require = (namespace) => {
   var exports = target();
   require_cache.set(namespace, exports);
   return exports;
+};
+
+if (
+  !(
+    "__SPEEDY_INTERNAL_DO_NOT_USE_OR_YOU_WILL_BE_FIRED__MODULE_LOAD_CACHE" in
+    globalThis
+  )
+) {
+  globalThis.__SPEEDY_INTERNAL_DO_NOT_USE_OR_YOU_WILL_BE_FIRED__MODULE_LOAD_CACHE =
+    new Map();
+}
+
+if (
+  !(
+    "__SPEEDY_INTERNAL_DO_NOT_USE_OR_YOU_WILL_BE_FIRED__MODULE_REGISTRY" in
+    globalThis
+  )
+) {
+  globalThis.__SPEEDY_INTERNAL_DO_NOT_USE_OR_YOU_WILL_BE_FIRED__MODULE_REGISTRY =
+    new Map();
+}
+
+// Like require() but accepts:
+// - package_json_hash
+// - package_json_name
+// - module_path
+// This locks the require to a specific package version
+// This is also slightly faster to generate since we don't need to allocate additional strings
+// for import paths
+export var $$r = (package_json_hash, package_json_name, module_path) => {
+  // Symbol is useful here because it gives us:
+  // - A built-in "description" property for providing friendlier errors. Potentially shared across multiple tabs depending on engine implementaion, saving a little memory.
+  // - Guranteed uniqueness, letting the JS engine deal with mapping import paths to unique identifiers instead of us
+  // - Relatively cheap in-memory size, costs one machine word
+  // - Shouldn't cause de-opts from mixing short strings and long strings
+  // - auto-incrementing integer ID is an alternative, but a stable key means we don't worry about generating a manifest ahead of time and we don't worry about the order of the module declarations
+  return __load(
+    // The displayed description is everything after the first slash
+    Symbol.for(`${package_json_hash}/${package_json_name}/${module_path}`)
+  );
+};
+
+export var __load = (id) => {
+  if (
+    globalThis.__SPEEDY_INTERNAL_DO_NOT_USE_OR_YOU_WILL_BE_FIRED__MODULE_LOAD_CACHE.has(
+      id
+    )
+  ) {
+    return globalThis.__SPEEDY_INTERNAL_DO_NOT_USE_OR_YOU_WILL_BE_FIRED__MODULE_LOAD_CACHE.get(
+      id
+    );
+  }
+
+  const namespace =
+    globalThis.__SPEEDY_INTERNAL_DO_NOT_USE_OR_YOU_WILL_BE_FIRED__MODULE_REGISTRY.get(
+      id
+    );
+
+  const target =
+    Object.prototype.hasOwnProperty.call(namespace, "default") &&
+    Object.keys(namespace).length === 1
+      ? namespace["default"]
+      : namespace;
+
+  if (typeof target !== "function") {
+    throw new __SPEEDY_INTERNAL_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.RequireFailedError(
+      `Couldn't find module "${namespace.description.substring(
+        namespace.description.indexOf("/") + 1
+      )}"`
+    );
+  }
+
+  globalThis.__SPEEDY_INTERNAL_DO_NOT_USE_OR_YOU_WILL_BE_FIRED__MODULE_LOAD_CACHE.set(
+    id,
+    target()
+  );
+
+  // It might be slightly slower to do this extra get, but only returning from the map
+  // might be a better hint to a JS engine that "target" doesn't escape this function
+  return globalThis.__SPEEDY_INTERNAL_DO_NOT_USE_OR_YOU_WILL_BE_FIRED__MODULE_LOAD_CACHE.get(
+    id
+  );
+};
+
+export var $$m = (package_json_hash, package_json_name, module_path, cb) => {
+  globalThis.__SPEEDY_INTERNAL_DO_NOT_USE_OR_YOU_WILL_BE_FIRED__MODULE_REGISTRY.set(
+    Symbol.for(`${package_json_hash}/${package_json_name}/${module_path}`),
+    __commonJS(cb, `${package_json_name}/${module_path}`)
+  );
 };
 
 export var __name = (target, name) => {

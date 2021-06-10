@@ -454,6 +454,9 @@ code: StringPointer,
 /// package_id
 package_id: u32 = 0,
 
+/// id
+id: u32 = 0,
+
 /// path_extname_length
 path_extname_length: u8 = 0,
 
@@ -464,6 +467,7 @@ pub fn decode(reader: anytype) anyerror!JavascriptBundledModule {
   this.path = try reader.readValue(StringPointer); 
   this.code = try reader.readValue(StringPointer); 
   this.package_id = try reader.readValue(u32); 
+  this.id = try reader.readValue(u32); 
   this.path_extname_length = try reader.readValue(u8); 
    return this;
 }
@@ -472,6 +476,7 @@ pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
    try writer.writeValue(this.path);
    try writer.writeValue(this.code);
    try writer.writeInt(this.package_id);
+   try writer.writeInt(this.id);
    try writer.writeInt(this.path_extname_length);
 }
 

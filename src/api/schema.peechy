@@ -49,6 +49,10 @@ struct JavascriptBundledModule {
   StringPointer path;
   StringPointer code;
   uint32 package_id;
+
+  // This is the export id, which is hash(path).hash(package.hash)
+  uint32 id;
+
   // This lets us efficiently compare strings ignoring the extension
   // If we instead omit the extension
   byte path_extname_length;

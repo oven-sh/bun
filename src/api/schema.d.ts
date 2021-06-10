@@ -137,6 +137,7 @@ type uint32 = number;
     path: StringPointer;
     code: StringPointer;
     package_id: uint32;
+    id: uint32;
     path_extname_length: byte;
   }
 

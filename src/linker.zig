@@ -167,7 +167,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
 
                                             import_record.is_bundled = true;
                                             import_record.path.text = node_modules_bundle.str(found_module.path);
-                                            import_record.package_json_hash = package.hash;
+                                            import_record.module_id = found_module.id;
                                             needs_bundle = true;
                                             continue;
                                         }

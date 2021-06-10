@@ -21,6 +21,9 @@ pub const Runtime = struct {
         __require: ?Ref = null,
         __export: ?Ref = null,
         __reExport: ?Ref = null,
+        __load: ?Ref = null,
+        load_from_bundle: ?Ref = null,
+        register: ?Ref = null,
 
         pub const all = [_][]const u8{
             "__name",
@@ -29,6 +32,11 @@ pub const Runtime = struct {
             "__commonJS",
             "__export",
             "__reExport",
+            "__load",
+            // require
+            "load_from_bundle",
+            //
+            "register",
         };
         pub const Name = "<RUNTIME";
 
@@ -77,6 +85,22 @@ pub const Runtime = struct {
                                 return Entry{ .key = 5, .value = val };
                             }
                         },
+                        6 => {
+                            if (@field(this.runtime_imports, all[6])) |val| {
+                                return Entry{ .key = 6, .value = val };
+                            }
+                        },
+                        7 => {
+                            if (@field(this.runtime_imports, all[7])) |val| {
+                                return Entry{ .key = 7, .value = val };
+                            }
+                        },
+                        8 => {
+                            if (@field(this.runtime_imports, all[8])) |val| {
+                                return Entry{ .key = 8, .value = val };
+                            }
+                        },
+
                         else => {
                             return null;
                         },
@@ -127,6 +151,9 @@ pub const Runtime = struct {
                 3 => @field(imports, all[3]),
                 4 => @field(imports, all[4]),
                 5 => @field(imports, all[5]),
+                6 => @field(imports, all[6]),
+                7 => @field(imports, all[7]),
+                8 => @field(imports, all[8]),
                 else => null,
             };
         }

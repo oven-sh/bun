@@ -186,7 +186,7 @@ pub const RequestContext = struct {
         const status_text = switch (code) {
             200...299 => "OK",
             300...399 => "=>",
-            400...499 => "UH",
+            400...499 => "DID YOU KNOW YOU CAN MAKE THIS SAY WHATEVER YOU WANT",
             500...599 => "ERR",
             else => @compileError("Invalid code passed to printStatusLine"),
         };
@@ -333,7 +333,39 @@ pub const RequestContext = struct {
         ctx.done();
     }
 
+    pub fn sendJSB(ctx: *RequestContext) !void {
+        const node_modules_bundle = ctx.bundler.options.node_modules_bundle orelse unreachable;
+        defer ctx.done();
+        ctx.appendHeader("ETag", node_modules_bundle.bundle.etag);
+        ctx.appendHeader("Content-Type", "text/javascript");
+        ctx.appendHeader("Cache-Control", "immutable, max-age=99999");
+
+        if (ctx.header("If-None-Match")) |etag_header| {
+            if (std.mem.eql(u8, node_modules_bundle.bundle.etag, etag_header.value)) {
+                try ctx.sendNotModified();
+                return;
+            }
+        }
+
+        const content_length = node_modules_bundle.container.code_length.? - node_modules_bundle.codeStartOffset();
+        try ctx.writeStatus(200);
+        try ctx.prepareToSendBody(content_length, false);
+
+        _ = try std.os.sendfile(
+            ctx.conn.client.socket.fd,
+            node_modules_bundle.fd,
+            node_modules_bundle.codeStartOffset(),
+            content_length,
+            &[_]std.os.iovec_const{},
+            &[_]std.os.iovec_const{},
+            0,
+        );
+    }
+
     pub fn handleGet(ctx: *RequestContext) !void {
+        if (strings.eqlComptime(ctx.url.extname, "jsb") and ctx.bundler.options.node_modules_bundle != null) {
+            return try ctx.sendJSB();
+        }
         const result = try ctx.bundler.buildFile(
             &ctx.log,
             ctx.allocator,
@@ -596,34 +628,34 @@ pub const RequestContext = struct {
             .copy, .move => |file| {
                 defer std.os.close(file.fd);
 
-                if (result.mime_type.category != .html) {
-                    // hash(absolute_file_path, size, mtime)
-                    var weak_etag = std.hash.Wyhash.init(1);
-                    weak_etag_buffer[0] = 'W';
-                    weak_etag_buffer[1] = '/';
-                    weak_etag.update(result.file.input.text);
-                    std.mem.writeIntNative(u64, weak_etag_tmp_buffer[0..8], result.file.size);
-                    weak_etag.update(weak_etag_tmp_buffer[0..8]);
+                // if (result.mime_type.category != .html) {
+                // hash(absolute_file_path, size, mtime)
+                var weak_etag = std.hash.Wyhash.init(1);
+                weak_etag_buffer[0] = 'W';
+                weak_etag_buffer[1] = '/';
+                weak_etag.update(result.file.input.text);
+                std.mem.writeIntNative(u64, weak_etag_tmp_buffer[0..8], result.file.size);
+                weak_etag.update(weak_etag_tmp_buffer[0..8]);
 
-                    if (result.file.mtime) |mtime| {
-                        std.mem.writeIntNative(i128, weak_etag_tmp_buffer[0..16], mtime);
-                        weak_etag.update(weak_etag_tmp_buffer[0..16]);
-                    }
-
-                    const etag_content_slice = std.fmt.bufPrintIntToSlice(weak_etag_buffer[2..], weak_etag.final(), 16, true, .{});
-                    const complete_weak_etag = weak_etag_buffer[0 .. etag_content_slice.len + 2];
-
-                    ctx.appendHeader("ETag", complete_weak_etag);
-
-                    if (ctx.header("If-None-Match")) |etag_header| {
-                        if (strings.eql(complete_weak_etag, etag_header.value)) {
-                            try ctx.sendNotModified();
-                            return;
-                        }
-                    }
-                } else {
-                    ctx.appendHeader("Cache-Control", "no-cache");
+                if (result.file.mtime) |mtime| {
+                    std.mem.writeIntNative(i128, weak_etag_tmp_buffer[0..16], mtime);
+                    weak_etag.update(weak_etag_tmp_buffer[0..16]);
                 }
+
+                const etag_content_slice = std.fmt.bufPrintIntToSlice(weak_etag_buffer[2..], weak_etag.final(), 16, true, .{});
+                const complete_weak_etag = weak_etag_buffer[0 .. etag_content_slice.len + 2];
+
+                ctx.appendHeader("ETag", complete_weak_etag);
+
+                if (ctx.header("If-None-Match")) |etag_header| {
+                    if (strings.eql(complete_weak_etag, etag_header.value)) {
+                        try ctx.sendNotModified();
+                        return;
+                    }
+                }
+                // } else {
+                //     ctx.appendHeader("Cache-Control", "no-cache");
+                // }
 
                 switch (result.file.size) {
                     0 => {

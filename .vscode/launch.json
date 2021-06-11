@@ -40,6 +40,20 @@
     {
       "type": "lldb",
       "request": "launch",
+      "name": "Demo Lazy Build",
+      "program": "${workspaceFolder}/build/debug/macos-x86_64/esdev",
+      "args": [
+        "./src/index.tsx",
+        "--resolve=lazy",
+        "--public-url=http://localhost:9000/"
+      ],
+      "cwd": "${workspaceFolder}/demos/simple-react",
+      "console": "internalConsole"
+    },
+
+    {
+      "type": "lldb",
+      "request": "launch",
       "name": "Demo Build",
       "program": "${workspaceFolder}/build/debug/macos-x86_64/esdev",
       "args": [

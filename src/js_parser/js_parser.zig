@@ -1748,8 +1748,9 @@ pub const Parser = struct {
                 if (jsx_symbol.use_count_estimate > 0) {
                     require_call_args_base[require_call_args_i] = p.e(E.Identifier{ .ref = automatic_namespace_ref }, loc);
                     require_call_args_i += 1;
+
                     var require_call_args = require_call_args_base[0..require_call_args_i];
-                    var require_call = p.callRuntime(loc, "__require", require_call_args);
+                    var require_call = p.callRequireOrBundledRequire(require_call_args);
 
                     declared_symbols[declared_symbols_i] = .{ .ref = p.jsx_runtime_ref, .is_top_level = true };
                     declared_symbols_i += 1;
@@ -1816,7 +1817,7 @@ pub const Parser = struct {
                 if (jsx_classic_symbol.use_count_estimate > 0) {
                     require_call_args_base[require_call_args_i] = p.e(E.Identifier{ .ref = classic_namespace_ref }, loc);
                     var require_call_args = require_call_args_base[require_call_args_i..];
-                    var require_call = p.callRuntime(loc, "__require", require_call_args);
+                    var require_call = p.callRequireOrBundledRequire(require_call_args);
                     if (jsx_factory_symbol.use_count_estimate > 0) {
                         declared_symbols[declared_symbols_i] = .{ .ref = p.jsx_factory_ref, .is_top_level = true };
                         declared_symbols_i += 1;
@@ -1888,7 +1889,7 @@ pub const Parser = struct {
 
                 jsx_part_stmts[stmt_i] = p.s(S.Local{ .kind = .k_var, .decls = decls }, loc);
 
-                before.append(js_ast.Part{
+                after.append(js_ast.Part{
                     .stmts = jsx_part_stmts,
                     .declared_symbols = declared_symbols,
                     .import_record_indices = import_records,
@@ -1946,7 +1947,7 @@ pub const Parser = struct {
                 };
             }
 
-            before.append(js_ast.Part{
+            after.append(js_ast.Part{
                 .stmts = p.cjs_import_stmts.items,
                 .declared_symbols = declared_symbols,
                 .import_record_indices = import_records,
@@ -1966,16 +1967,24 @@ pub const Parser = struct {
                     after_len +
                     parts_len,
             );
+
+            var remaining_parts = _parts;
             if (before_len > 0) {
-                std.mem.copy(js_ast.Part, _parts, before.toOwnedSlice());
+                var parts_to_copy = before.toOwnedSlice();
+                std.mem.copy(js_ast.Part, remaining_parts, parts_to_copy);
+                remaining_parts = remaining_parts[parts_to_copy.len..];
             }
             if (parts_len > 0) {
-                std.mem.copy(js_ast.Part, _parts[before_len .. before_len + parts_len], parts.toOwnedSlice());
+                var parts_to_copy = parts.toOwnedSlice();
+                std.mem.copy(js_ast.Part, remaining_parts, parts_to_copy);
+                remaining_parts = remaining_parts[parts_to_copy.len..];
             }
 
             if (after_len > 0) {
-                std.mem.copy(js_ast.Part, _parts[before_len + parts_len .. _parts.len], after.toOwnedSlice());
+                var parts_to_copy = after.toOwnedSlice();
+                std.mem.copy(js_ast.Part, remaining_parts, parts_to_copy);
             }
+
             parts_slice = _parts;
         } else {
             after.deinit();
@@ -2638,6 +2647,16 @@ pub fn NewParser(
                 else => {
                     p.panic("Unexpected binding export type {s}", .{binding});
                 },
+            }
+        }
+
+        // If we're auto-importing JSX and it's bundled, we use the bundled version
+        // This means we need to transform from require(react) to react()
+        pub fn callRequireOrBundledRequire(p: *P, require_args: []Expr) Expr {
+            if (p.options.can_import_from_bundle) {
+                return p.e(E.Call{ .target = require_args[0] }, require_args[0].loc);
+            } else {
+                return p.callRuntime(require_args[0].loc, "__require", require_args);
             }
         }
 

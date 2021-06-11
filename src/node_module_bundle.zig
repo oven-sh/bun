@@ -317,6 +317,10 @@ pub const NodeModuleBundle = struct {
         Output.prettyln(indent ++ "<b>{d:6} packages", .{this.bundle.packages.len});
     }
 
+    pub fn codeStartOffset(this: *const NodeModuleBundle) u32 {
+        return @intCast(u32, jsbundle_prefix.len);
+    }
+
     pub fn printSummaryFromDisk(
         comptime StreamType: type,
         input: StreamType,

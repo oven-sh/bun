@@ -2,8 +2,19 @@ const options = @import("./options.zig");
 usingnamespace @import("ast/base.zig");
 usingnamespace @import("global.zig");
 const std = @import("std");
-pub const SourceContent = @embedFile("./runtime.js");
+pub const ProdSourceContent = @embedFile("./runtime.js");
+
 pub const Runtime = struct {
+    pub fn sourceContent() string {
+        if (isDebug) {
+            var runtime_path = std.fs.path.join(std.heap.c_allocator, &[_]string{ std.fs.path.dirname(@src().file).?, "runtime.js" }) catch unreachable;
+            const file = std.fs.openFileAbsolute(runtime_path, .{}) catch unreachable;
+            defer file.close();
+            return file.readToEndAlloc(std.heap.c_allocator, (file.stat() catch unreachable).size) catch unreachable;
+        } else {
+            return ProdSourceContent;
+        }
+    }
     pub var version_hash = @embedFile("./runtime.version");
     pub fn version() string {
         return version_hash;

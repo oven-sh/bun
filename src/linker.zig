@@ -166,7 +166,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
                                             };
 
                                             import_record.is_bundled = true;
-                                            import_record.path.text = node_modules_bundle.str(found_module.path);
+                                            import_record.path.text = node_modules_bundle.bundle.import_from_name;
                                             import_record.module_id = found_module.id;
                                             needs_bundle = true;
                                             continue;
@@ -256,6 +256,56 @@ pub fn NewLinker(comptime BundlerType: type) type {
                     ),
                     .range = logger.Range{ .loc = logger.Loc{ .start = 0 }, .len = 0 },
                 };
+            }
+
+            const ImportStatementSorter = struct {
+                import_records: []ImportRecord,
+                pub fn lessThan(ctx: @This(), lhs: js_ast.Stmt, rhs: js_ast.Stmt) bool {
+                    switch (lhs.data) {
+                        .s_import => |li| {
+                            switch (rhs.data) {
+                                .s_import => |ri| {
+                                    const a = ctx.import_records[li.import_record_index];
+                                    const b = ctx.import_records[ri.import_record_index];
+                                    if (a.is_bundled and !b.is_bundled) {
+                                        return false;
+                                    } else {
+                                        return true;
+                                    }
+                                },
+                                else => {
+                                    return true;
+                                },
+                            }
+                        },
+                        else => {
+                            switch (rhs.data) {
+                                .s_import => |ri| {
+                                    const a = ctx.import_records[ri.import_record_index];
+                                    if (!a.is_bundled) {
+                                        return false;
+                                    } else {
+                                        return true;
+                                    }
+                                },
+                                else => {
+                                    return true;
+                                },
+                            }
+                        },
+                    }
+                }
+            };
+
+            // std.sort.sort(comptime T: type, items: []T, context: anytype, comptime lessThan: fn(context:@TypeOf(context), lhs:T, rhs:T)bool)
+
+            // Change the import order so that any bundled imports appear last
+            // This is to make it so the bundle (which should be quite large) is least likely to block rendering
+            if (needs_bundle) {
+                const sorter = ImportStatementSorter{ .import_records = result.ast.import_records };
+                for (result.ast.parts) |*part, i| {
+                    std.sort.sort(js_ast.Stmt, part.stmts, sorter, ImportStatementSorter.lessThan);
+                }
             }
         }
 

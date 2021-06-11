@@ -288,7 +288,12 @@ pub fn NewBundler(cache_files: bool) type {
                 try generator.appendBytes(&initial_header);
                 // If we try to be smart and rely on .written, it turns out incorrect
                 const code_start_pos = try this.tmpfile.getPos();
-                try generator.appendBytes(runtime.SourceContent ++ "\n\n");
+                if (isDebug) {
+                    try generator.appendBytes(runtime.Runtime.sourceContent());
+                    try generator.appendBytes("\n\n");
+                } else {
+                    try generator.appendBytes(comptime runtime.Runtime.sourceContent() ++ "\n\n");
+                }
 
                 if (bundler.log.level == .verbose) {
                     bundler.resolver.debug_logs = try DebugLogs.init(allocator);
@@ -374,10 +379,10 @@ pub fn NewBundler(cache_files: bool) type {
                 javascript_bundle.modules = this.module_list.items;
                 javascript_bundle.packages = sorted_package_list;
                 javascript_bundle.manifest_string = this.header_string_buffer.list.items;
-                var etag_bytes: [8]u8 = undefined;
                 const etag_u64 = hasher.final();
-                std.mem.writeIntNative(u64, &etag_bytes, etag_u64);
-                javascript_bundle.etag = &etag_bytes;
+                // We store the etag as a ascii hex encoded u64
+                // This is so we can send the bytes directly in the HTTP server instead of formatting it as hex each time.
+                javascript_bundle.etag = try std.fmt.allocPrint(allocator, "{x}", .{etag_u64});
                 javascript_bundle.generated_at = @truncate(u32, @intCast(u64, std.time.milliTimestamp()));
 
                 const basename = std.fs.path.basename(destination);
@@ -469,10 +474,10 @@ pub fn NewBundler(cache_files: bool) type {
                 defer this.scan_pass_result.reset();
                 defer this.bundler.resetStore();
                 var file_path = resolve.path_pair.primary;
+                var hasher = std.hash.Wyhash.init(0);
 
                 // If we're in a node_module, build that almost normally
                 if (resolve.is_from_node_modules) {
-                    var hasher = std.hash.Wyhash.init(0);
                     switch (loader) {
                         .jsx,
                         .tsx,
@@ -773,7 +778,42 @@ pub fn NewBundler(cache_files: bool) type {
                                         continue;
                                     }
 
+                                    // Always enqueue unwalked import paths, but if it's not a node_module, we don't care about the hash
                                     try this.resolve_queue.writeItem(_resolved_import.*);
+
+                                    // trim node_modules/${package.name}/ from the string to save space
+                                    // This reduces metadata size by about 30% for a large-ish file
+                                    // A future optimization here could be to reuse the string from the original path
+                                    var node_module_root = strings.indexOf(resolved_import.path_pair.primary.text, node_module_root_string) orelse continue;
+
+                                    const package_json: *const PackageJSON = (resolved_import.package_json orelse (this.bundler.resolver.packageJSONForResolvedNodeModule(resolved_import) orelse {
+                                        this.log.addWarningFmt(
+                                            &source,
+                                            import_record.range.loc,
+                                            this.allocator,
+                                            "Failed to find package.json for \"{s}\". This will be unresolved and might break at runtime. If it's external, you could add it to the external list.",
+                                            .{
+                                                resolved_import.path_pair.primary.text,
+                                            },
+                                        ) catch {};
+                                        continue;
+                                    }));
+
+                                    // omit node_modules
+                                    node_module_root += node_module_root_string.len;
+                                    // // omit package name
+                                    node_module_root += package_json.name.len;
+                                    node_module_root += 1;
+
+                                    // It should be the first index, not the last to support bundling multiple of the same package
+                                    import_record.path = Fs.Path.init(
+                                        resolved_import.path_pair.primary.text[node_module_root..],
+                                    );
+
+                                    hasher = std.hash.Wyhash.init(0);
+                                    hasher.update(import_record.path.text);
+                                    hasher.update(std.mem.asBytes(&package_json.hash));
+                                    get_or_put_result.entry.value = @truncate(u32, hasher.final());
                                 } else |err| {}
                             }
                         },
@@ -1019,6 +1059,7 @@ pub fn NewBundler(cache_files: bool) type {
                     var opts = js_parser.Parser.Options.init(jsx, loader);
                     opts.enable_bundling = bundler.options.node_modules_bundle != null;
                     opts.transform_require_to_import = true;
+                    opts.can_import_from_bundle = bundler.options.node_modules_bundle != null;
                     const value = (bundler.resolver.caches.js.parse(allocator, opts, bundler.options.define, bundler.log, &source) catch null) orelse return null;
                     return ParseResult{
                         .ast = value,
@@ -1179,7 +1220,7 @@ pub fn NewBundler(cache_files: bool) type {
 
             if (strings.eqlComptime(relative_path, "__runtime.js")) {
                 return ServeResult{
-                    .file = options.OutputFile.initBuf(runtime.SourceContent, "__runtime.js", .js),
+                    .file = options.OutputFile.initBuf(runtime.Runtime.sourceContent(), "__runtime.js", .js),
                     .mime_type = MimeType.javascript,
                 };
             }
@@ -1430,7 +1471,7 @@ pub fn NewBundler(cache_files: bool) type {
 
             if (bundler.linker.any_needs_runtime) {
                 try bundler.output_files.append(
-                    options.OutputFile.initBuf(runtime.SourceContent, bundler.linker.runtime_source_path, .js),
+                    options.OutputFile.initBuf(runtime.Runtime.sourceContent(), bundler.linker.runtime_source_path, .js),
                 );
             }
 
@@ -1640,7 +1681,7 @@ pub const Transformer = struct {
                 jsx.parse = loader.isJSX();
                 var file_op = options.OutputFile.FileOperation.fromFile(file_to_write.handle, output_path.pretty);
 
-                const parser_opts = js_parser.Parser.Options.init(jsx.*, loader);
+                var parser_opts = js_parser.Parser.Options.init(jsx.*, loader);
                 file_op.is_tmpdir = false;
                 output_file.value = .{ .move = file_op };
 
@@ -1650,6 +1691,7 @@ pub const Transformer = struct {
 
                 file_op.fd = file.handle;
                 var parser = try js_parser.Parser.init(parser_opts, log, _source, transformer.define, allocator);
+                parser_opts.can_import_from_bundle = false;
                 const result = try parser.parse();
 
                 const ast = result.ast;

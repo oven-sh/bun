@@ -2145,8 +2145,7 @@ pub fn NewPrinter(
                             p.print("export ");
                         } else {
                             if (rewrite_esm_to_cjs) {
-                                p.printSymbol(p.options.runtime_imports.__export.?);
-                                p.print(".");
+                                p.print("var ");
                                 p.printSymbol(nameRef);
                                 p.print(" = ");
                             }
@@ -2164,7 +2163,22 @@ pub fn NewPrinter(
                     p.printSpace();
                     p.printSymbol(nameRef);
                     p.printFunc(s.func);
-                    p.printNewline();
+
+                    if (rewrite_esm_to_cjs and s.func.flags.is_export) {
+                        p.printSemicolonAfterStatement();
+                    } else {
+                        p.printNewline();
+                    }
+
+                    if (rewrite_esm_to_cjs and s.func.flags.is_export) {
+                        p.printIndent();
+                        p.printSymbol(p.options.runtime_imports.__export.?);
+                        p.print(".");
+                        p.printSymbol(nameRef);
+                        p.print(" = ");
+                        p.printSymbol(nameRef);
+                        p.printSemicolonAfterStatement();
+                    }
                 },
                 .s_class => |s| {
                     // Give an extra newline for readaiblity
@@ -2174,23 +2188,40 @@ pub fn NewPrinter(
 
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+                    const nameRef = s.class.class_name.?.ref.?;
                     if (s.is_export) {
                         if (!rewrite_esm_to_cjs) {
                             p.print("export ");
                         }
 
                         if (rewrite_esm_to_cjs) {
-                            p.printSymbol(p.options.runtime_imports.__export.?);
-                            p.print(".");
-                            p.printSymbol(s.class.class_name.?.ref.?);
+                            p.print("var ");
+                            p.printSymbol(nameRef);
                             p.print(" = ");
                         }
                     }
 
                     p.print("class ");
-                    p.printSymbol(s.class.class_name.?.ref.?);
+                    p.printSymbol(nameRef);
                     p.printClass(s.class);
-                    p.printNewline();
+
+                    if (rewrite_esm_to_cjs and s.is_export) {
+                        p.printSemicolonAfterStatement();
+                    } else {
+                        p.printNewline();
+                    }
+
+                    if (rewrite_esm_to_cjs) {
+                        if (s.is_export) {
+                            p.printIndent();
+                            p.printSymbol(p.options.runtime_imports.__export.?);
+                            p.print(".");
+                            p.printSymbol(nameRef);
+                            p.print(" = ");
+                            p.printSymbol(nameRef);
+                            p.printSemicolonAfterStatement();
+                        }
+                    }
                 },
                 .s_empty => |s| {
                     p.printIndent();
@@ -2206,10 +2237,7 @@ pub fn NewPrinter(
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
 
-                    if (rewrite_esm_to_cjs) {
-                        p.printSymbol(p.options.runtime_imports.__export.?);
-                        p.print(".default =");
-                    } else {
+                    if (!rewrite_esm_to_cjs) {
                         p.print("export default");
                     }
 
@@ -2217,21 +2245,38 @@ pub fn NewPrinter(
 
                     switch (s.value) {
                         .expr => |expr| {
+                            if (rewrite_esm_to_cjs) {
+                                p.printSymbol(p.options.runtime_imports.__export.?);
+                                p.print(".default = ");
+                            }
+
                             // Functions and classes must be wrapped to avoid confusion with their statement forms
                             p.export_default_start = p.writer.written;
                             p.printExpr(expr, .comma, ExprFlag.None());
                             p.printSemicolonAfterStatement();
                             return;
                         },
+
                         .stmt => |s2| {
                             switch (s2.data) {
-                                .s_function => {
-                                    const func = s2.getFunction();
+                                .s_function => |func| {
                                     p.printSpaceBeforeIdentifier();
+                                    if (rewrite_esm_to_cjs) {
+                                        if (func.func.name) |name| {
+                                            // p.print("var ");
+                                            // p.printSymbol(name.ref.?);
+                                            // p.print(" = ");
+                                        } else {
+                                            p.printSymbol(p.options.runtime_imports.__export.?);
+                                            p.print(".default = ");
+                                        }
+                                    }
+
                                     if (func.func.flags.is_async) {
                                         p.print("async ");
                                     }
                                     p.print("function");
+
                                     if (func.func.flags.is_generator) {
                                         p.print("*");
                                         p.printSpace();
@@ -2240,22 +2285,65 @@ pub fn NewPrinter(
                                     }
 
                                     if (func.func.name) |name| {
-                                        p.printSymbol(name.ref orelse Global.panic("Internal error: Expected func to have a name ref\n{s}", .{func}));
+                                        p.printSymbol(name.ref.?);
                                     }
+
                                     p.printFunc(func.func);
-                                    p.printNewline();
+
+                                    if (rewrite_esm_to_cjs) {
+                                        p.printSemicolonAfterStatement();
+
+                                        if (rewrite_esm_to_cjs) {
+                                            if (func.func.name) |name| {
+                                                p.printIndent();
+                                                p.printSpaceBeforeIdentifier();
+                                                p.printSymbol(p.options.runtime_imports.__export.?);
+                                                p.print(".default = ");
+                                                p.printSymbol(name.ref.?);
+                                                p.printSemicolonAfterStatement();
+                                            }
+                                        }
+                                    } else {
+                                        p.printNewline();
+                                    }
                                 },
-                                .s_class => {
-                                    const class = s2.getClass();
+                                .s_class => |class| {
                                     p.printSpaceBeforeIdentifier();
+
+                                    if (rewrite_esm_to_cjs) {
+                                        if (class.class.class_name) |name| {
+                                            // p.print("var ");
+                                            // p.printSymbol(name.ref.?);
+                                            // p.print(" = ");
+                                        } else {
+                                            p.printSymbol(p.options.runtime_imports.__export.?);
+                                            p.print(".default = ");
+                                        }
+                                    }
+
                                     if (class.class.class_name) |name| {
                                         p.print("class ");
                                         p.printSymbol(name.ref orelse Global.panic("Internal error: Expected class to have a name ref\n{s}", .{class}));
                                     } else {
                                         p.print("class");
                                     }
+
                                     p.printClass(class.class);
-                                    p.printNewline();
+
+                                    if (rewrite_esm_to_cjs) {
+                                        p.printSemicolonAfterStatement();
+
+                                        if (class.class.class_name) |name| {
+                                            p.printIndent();
+                                            p.printSpaceBeforeIdentifier();
+                                            p.printSymbol(p.options.runtime_imports.__export.?);
+                                            p.print(".default = ");
+                                            p.printSymbol(name.ref.?);
+                                            p.printSemicolonAfterStatement();
+                                        }
+                                    } else {
+                                        p.printNewline();
+                                    }
                                 },
                                 else => {
                                     Global.panic("Internal error: unexpected export default stmt data {s}", .{s});
@@ -2346,11 +2434,12 @@ pub fn NewPrinter(
                                 const last = s.items.len - 1;
                                 for (s.items) |item, i| {
                                     const name = p.renamer.nameForSymbol(item.name.ref.?);
-                                    p.printIdentifier(name);
+                                    p.printClauseAlias(item.alias);
+
                                     if (!strings.eql(name, item.alias)) {
                                         p.print(":");
                                         p.printSpace();
-                                        p.printClauseAlias(item.alias);
+                                        p.printIdentifier(name);
                                     }
 
                                     if (i < last) {
@@ -2434,6 +2523,7 @@ pub fn NewPrinter(
                             p.printSymbol(p.options.runtime_imports.lazy_export.?);
                             p.print("(");
                             p.printSymbol(p.options.runtime_imports.__export.?);
+                            p.print(",");
 
                             // Avoid initializing an entire component library because you imported one icon
                             p.printLoadFromBundleWithoutCall(s.import_record_index);
@@ -2778,6 +2868,46 @@ pub fn NewPrinter(
 
                             return;
                         }
+                    } else if (record.is_bundled) {
+                        p.print("import {");
+                        p.printLoadFromBundleWithoutCall(s.import_record_index);
+                        p.print(" as ");
+                        p.printSymbol(s.namespace_ref);
+                        p.print("} from ");
+                        p.printQuotedUTF8(record.path.text, false);
+                        p.printSemicolonAfterStatement();
+
+                        if (s.items.len > 0) {
+                            p.printIndent();
+                            p.printSpaceBeforeIdentifier();
+                            p.print("var {");
+                            for (s.items) |item, i| {
+                                p.print(item.alias);
+                                const name = p.renamer.nameForSymbol(item.name.ref.?);
+                                if (!strings.eql(name, item.alias)) {
+                                    p.print(":");
+                                    p.printSymbol(item.name.ref.?);
+                                }
+
+                                if (i < s.items.len - 1) {
+                                    p.print(", ");
+                                }
+                            }
+                            p.print("} = ");
+                            p.printSymbol(s.namespace_ref);
+                            p.print("()");
+                            p.printSemicolonAfterStatement();
+                        } else if (s.default_name) |default_name| {
+                            p.printIndent();
+                            p.printSpaceBeforeIdentifier();
+                            p.print("var {default: ");
+                            p.printSymbol(default_name.ref.?);
+                            p.print("} = ");
+                            p.printSymbol(s.namespace_ref);
+                            p.print("()");
+                            p.printSemicolonAfterStatement();
+                        }
+                        return;
                     }
 
                     p.print("import");

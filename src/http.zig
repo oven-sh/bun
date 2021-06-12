@@ -20,7 +20,7 @@ const Response = picohttp.Response;
 const Headers = picohttp.Headers;
 const MimeType = @import("http/mime_type.zig");
 const Bundler = bundler.ServeBundler;
-
+const Websocket = @import("./http/websocket.zig");
 const js_printer = @import("js_printer.zig");
 const SOCKET_FLAGS = os.SOCK_CLOEXEC;
 
@@ -34,7 +34,7 @@ pub fn println(comptime fmt: string, args: anytype) void {
     // }
 }
 
-const HTTPStatusCode = u9;
+const HTTPStatusCode = u10;
 
 pub const URLPath = struct {
     extname: string = "",
@@ -160,6 +160,7 @@ pub const RequestContext = struct {
     url: URLPath,
     conn: *tcp.Connection,
     allocator: *std.mem.Allocator,
+    arena: std.heap.ArenaAllocator,
     log: logger.Log,
     bundler: *Bundler,
     keep_alive: bool = true,
@@ -167,15 +168,24 @@ pub const RequestContext = struct {
     has_written_last_header: bool = false,
     has_called_done: bool = false,
     mime_type: MimeType = MimeType.other,
+    controlled: bool = false,
 
     res_headers_count: usize = 0,
 
     pub const bundle_prefix = "__speedy";
 
     pub fn header(ctx: *RequestContext, comptime name: anytype) ?Header {
-        for (ctx.request.headers) |head| {
-            if (strings.eqlComptime(head.name, name)) {
-                return head;
+        if (name.len < 17) {
+            for (ctx.request.headers) |head| {
+                if (strings.eqlComptime(head.name, name)) {
+                    return head;
+                }
+            }
+        } else {
+            for (ctx.request.headers) |head| {
+                if (strings.eql(head.name, name)) {
+                    return head;
+                }
             }
         }
 
@@ -184,6 +194,7 @@ pub const RequestContext = struct {
 
     pub fn printStatusLine(comptime code: HTTPStatusCode) []const u8 {
         const status_text = switch (code) {
+            101 => "ACTIVATING WEBSOCKET",
             200...299 => "OK",
             300...399 => "=>",
             400...499 => "DID YOU KNOW YOU CAN MAKE THIS SAY WHATEVER YOU WANT",
@@ -258,16 +269,19 @@ pub const RequestContext = struct {
         ctx.status = code;
     }
 
-    pub fn init(req: Request, allocator: *std.mem.Allocator, conn: *tcp.Connection, bundler_: *Bundler) !RequestContext {
-        return RequestContext{
+    pub fn init(req: Request, arena: std.heap.ArenaAllocator, conn: *tcp.Connection, bundler_: *Bundler) !RequestContext {
+        var ctx = RequestContext{
             .request = req,
-            .allocator = allocator,
+            .arena = arena,
             .bundler = bundler_,
             .url = URLPath.parse(req.path),
-            .log = logger.Log.init(allocator),
+            .log = undefined,
             .conn = conn,
+            .allocator = undefined,
             .method = Method.which(req.method) orelse return error.InvalidMethod,
         };
+
+        return ctx;
     }
 
     pub fn sendNotFound(req: *RequestContext) !void {
@@ -362,10 +376,161 @@ pub const RequestContext = struct {
         );
     }
 
+    pub const WebsocketHandler = struct {
+        accept_key: [28]u8 = undefined,
+        ctx: RequestContext,
+
+        pub fn handle(self: WebsocketHandler) void {
+            var this = self;
+            _handle(&this) catch {};
+        }
+
+        fn _handle(handler: *WebsocketHandler) !void {
+            var ctx = &handler.ctx;
+            defer ctx.arena.deinit();
+            defer ctx.conn.deinit();
+            defer Output.flush();
+
+            handler.checkUpgradeHeaders() catch |err| {
+                switch (err) {
+                    error.BadRequest => {
+                        try ctx.sendBadRequest();
+                        ctx.done();
+                    },
+                    else => {
+                        return err;
+                    },
+                }
+            };
+
+            switch (try handler.getWebsocketVersion()) {
+                7, 8, 13 => {},
+                else => {
+                    // Unsupported version
+                    // Set header to indicate to the client which versions are supported
+                    ctx.appendHeader("Sec-WebSocket-Version", "7,8,13");
+                    try ctx.writeStatus(426);
+                    try ctx.flushHeaders();
+                    ctx.done();
+                    return;
+                },
+            }
+
+            const key = try handler.getWebsocketAcceptKey();
+
+            ctx.appendHeader("Connection", "Upgrade");
+            ctx.appendHeader("Upgrade", "websocket");
+            ctx.appendHeader("Sec-WebSocket-Accept", key);
+            try ctx.writeStatus(101);
+            try ctx.flushHeaders();
+            Output.println("101 - Websocket connected.", .{});
+            Output.flush();
+
+            var websocket = Websocket.Websocket.create(ctx, SOCKET_FLAGS);
+            _ = try websocket.writeText("Hello!");
+
+            while (true) {
+                defer Output.flush();
+                var frame = websocket.read() catch |err| {
+                    switch (err) {
+                        error.ConnectionClosed => {
+                            Output.prettyln("Websocket closed.", .{});
+                            return;
+                        },
+                        else => {
+                            Output.prettyErrorln("<r><red>ERR:<r> <b>{s}<r>", .{err});
+                        },
+                    }
+                    return;
+                };
+                switch (frame.header.opcode) {
+                    .Close => {
+                        Output.prettyln("Websocket closed.", .{});
+                        return;
+                    },
+                    .Text => {
+                        Output.print("Data: {s}", .{frame.data});
+                        _ = try websocket.writeText(frame.data);
+                    },
+                    .Ping => {
+                        var pong = frame;
+                        pong.header.opcode = .Pong;
+                        _ = try websocket.writeDataFrame(pong);
+                    },
+                    else => {
+                        Output.prettyErrorln("Websocket unknown opcode: {s}", .{@tagName(frame.header.opcode)});
+                    },
+                }
+            }
+        }
+
+        fn checkUpgradeHeaders(
+            self: *WebsocketHandler,
+        ) !void {
+            var request: *RequestContext = &self.ctx;
+            const upgrade_header = request.header("Upgrade") orelse return error.BadRequest;
+
+            if (!std.ascii.eqlIgnoreCase(upgrade_header.value, "websocket")) {
+                return error.BadRequest; // Can only upgrade to websocket
+            }
+
+            // Some proxies/load balancers will mess with the connection header
+            // and browsers also send multiple values here
+            const connection_header = request.header("Connection") orelse return error.BadRequest;
+            var it = std.mem.split(connection_header.value, ",");
+            while (it.next()) |part| {
+                const conn = std.mem.trim(u8, part, " ");
+                if (std.ascii.eqlIgnoreCase(conn, "upgrade")) {
+                    return;
+                }
+            }
+            return error.BadRequest; // Connection must be upgrade
+        }
+
+        fn getWebsocketVersion(
+            self: *WebsocketHandler,
+        ) !u8 {
+            var request: *RequestContext = &self.ctx;
+            const v = request.header("Sec-WebSocket-Version") orelse return error.BadRequest;
+            return std.fmt.parseInt(u8, v.value, 10) catch error.BadRequest;
+        }
+
+        fn getWebsocketAcceptKey(
+            self: *WebsocketHandler,
+        ) ![]const u8 {
+            var request: *RequestContext = &self.ctx;
+            const key = (request.header("Sec-WebSocket-Key") orelse return error.BadRequest).value;
+            if (key.len < 8) {
+                return error.BadRequest;
+            }
+
+            var hash = std.crypto.hash.Sha1.init(.{});
+            var out: [20]u8 = undefined;
+            hash.update(key);
+            hash.update("258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
+            hash.final(&out);
+
+            // Encode it
+            return std.base64.standard_encoder.encode(&self.accept_key, &out);
+        }
+    };
+
+    pub fn handleWebsocket(ctx: *RequestContext) anyerror!void {
+        ctx.controlled = true;
+        var handler = WebsocketHandler{ .ctx = ctx.* };
+        _ = try std.Thread.spawn(WebsocketHandler.handle, handler);
+    }
+
     pub fn handleGet(ctx: *RequestContext) !void {
         if (strings.eqlComptime(ctx.url.extname, "jsb") and ctx.bundler.options.node_modules_bundle != null) {
             return try ctx.sendJSB();
         }
+
+        if (strings.eqlComptime(ctx.url.path, "_api")) {
+            try ctx.handleWebsocket();
+            return;
+        }
+
         const result = try ctx.bundler.buildFile(
             &ctx.log,
             ctx.allocator,
@@ -787,7 +952,8 @@ pub const Server = struct {
         try listener.listen(1280);
         const addr = try listener.getLocalAddress();
 
-        Output.println("Started Speedy at http://{s}", .{addr});
+        Output.prettyln("<r>Started Speedy at <b><cyan>http://{s}<r>", .{addr});
+        Output.flush();
         // var listener_handle = try std.os.kqueue();
         // var change_list = std.mem.zeroes([2]os.Kevent);
 
@@ -796,6 +962,7 @@ pub const Server = struct {
 
         // var eventlist: [128]os.Kevent = undefined;
         while (true) {
+            defer Output.flush();
             var conn = listener.accept(.{ .close_on_exec = true }) catch |err| {
                 continue;
             };
@@ -831,13 +998,20 @@ pub const Server = struct {
         };
 
         var request_arena = std.heap.ArenaAllocator.init(server.allocator);
-        defer request_arena.deinit();
-
-        var req_ctx = RequestContext.init(req, &request_arena.allocator, conn, &server.bundler) catch |err| {
-            Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
+        var req_ctx: RequestContext = undefined;
+        defer {
+            if (!req_ctx.controlled) {
+                req_ctx.arena.deinit();
+            }
+        }
+        req_ctx = RequestContext.init(req, request_arena, conn, &server.bundler) catch |err| {
+            Output.printErrorln("<r>[<red>{s}<r>] - <b>{s}<r>: {s}", .{ @errorName(err), req.method, req.path });
             conn.client.deinit();
             return;
         };
+
+        req_ctx.allocator = &req_ctx.arena.allocator;
+        req_ctx.log = logger.Log.init(req_ctx.allocator);
 
         if (FeatureFlags.keep_alive) {
             if (req_ctx.header("Connection")) |connection| {
@@ -861,16 +1035,18 @@ pub const Server = struct {
             }
         };
 
-        const status = req_ctx.status orelse @intCast(HTTPStatusCode, 500);
+        if (!req_ctx.controlled) {
+            const status = req_ctx.status orelse @intCast(HTTPStatusCode, 500);
 
-        if (req_ctx.log.msgs.items.len == 0) {
-            println("{d} – {s} {s} as {s}", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
-        } else {
-            println("{s} {s}", .{ @tagName(req_ctx.method), req.path });
-            for (req_ctx.log.msgs.items) |msg| {
-                msg.writeFormat(Output.errorWriter()) catch continue;
+            if (req_ctx.log.msgs.items.len == 0) {
+                println("{d} – {s} {s} as {s}", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
+            } else {
+                println("{s} {s}", .{ @tagName(req_ctx.method), req.path });
+                for (req_ctx.log.msgs.items) |msg| {
+                    msg.writeFormat(Output.errorWriter()) catch continue;
+                }
+                req_ctx.log.deinit();
             }
-            req_ctx.log.deinit();
         }
     }
 

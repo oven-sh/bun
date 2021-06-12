@@ -48,6 +48,8 @@ pub const FeatureFlags = struct {
 
     pub const tracing = true;
 
+    pub const verbose_watcher = true;
+
     pub const CSSModulePolyfill = enum {
         // When you import a .css file and you reference the import in JavaScript
         // Just return whatever the property key they referenced was
@@ -59,7 +61,7 @@ pub const isDebug = std.builtin.Mode.Debug == std.builtin.mode;
 pub const isTest = std.builtin.is_test;
 
 pub const Output = struct {
-    var source: *Source = undefined;
+    threadlocal var source: *Source = undefined;
     pub const Source = struct {
         const StreamType = {
             if (isWasm) {

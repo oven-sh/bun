@@ -759,17 +759,21 @@ pub const FileSystem = struct {
                 shared_buffer.reset();
                 try shared_buffer.growBy(size);
                 shared_buffer.list.expandToCapacity();
-                var read_count = file.readAll(shared_buffer.list.items) catch |err| {
+                // We use pread to ensure if the file handle was open, it doesn't seek from the last position
+                var read_count = file.preadAll(shared_buffer.list.items, 0) catch |err| {
                     fs.readFileError(path, err);
                     return err;
                 };
                 shared_buffer.list.items = shared_buffer.list.items[0..read_count];
                 file_contents = shared_buffer.list.items;
             } else {
-                file_contents = file.readToEndAllocOptions(fs.allocator, size, size, @alignOf(u8), null) catch |err| {
+                // We use pread to ensure if the file handle was open, it doesn't seek from the last position
+                var buf = try fs.allocator.alloc(u8, size);
+                var read_count = file.preadAll(buf, 0) catch |err| {
                     fs.readFileError(path, err);
                     return err;
                 };
+                file_contents = buf[0..read_count];
             }
 
             if (fs.watcher) |*watcher| {

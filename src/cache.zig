@@ -69,6 +69,7 @@ pub fn NewCache(comptime cache_files: bool) type {
                 path: string,
                 dirname_fd: StoredFileDescriptorType,
                 comptime use_shared_buffer: bool,
+                _file_handle: ?StoredFileDescriptorType,
             ) !Entry {
                 var rfs = _fs.fs;
 
@@ -82,16 +83,18 @@ pub fn NewCache(comptime cache_files: bool) type {
                     }
                 }
 
-                var file_handle: std.fs.File = undefined;
+                var file_handle: std.fs.File = if (_file_handle) |__file| std.fs.File{ .handle = __file } else undefined;
 
-                if (FeatureFlags.store_file_descriptors and dirname_fd > 0) {
-                    file_handle = try std.fs.Dir.openFile(std.fs.Dir{ .fd = dirname_fd }, std.fs.path.basename(path), .{ .read = true });
-                } else {
-                    file_handle = try std.fs.openFileAbsolute(path, .{ .read = true });
+                if (_file_handle == null) {
+                    if (FeatureFlags.store_file_descriptors and dirname_fd > 0) {
+                        file_handle = try std.fs.Dir.openFile(std.fs.Dir{ .fd = dirname_fd }, std.fs.path.basename(path), .{ .read = true });
+                    } else {
+                        file_handle = try std.fs.openFileAbsolute(path, .{ .read = true });
+                    }
                 }
 
                 defer {
-                    if (rfs.needToCloseFiles()) {
+                    if (rfs.needToCloseFiles() and _file_handle == null) {
                         file_handle.close();
                     }
                 }

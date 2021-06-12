@@ -236,16 +236,19 @@ struct Log {
 
 
 // The WebSocket protocol
-// Server: "hey, this file changed. Do you want it?"
+// Server: "hey, this file changed. Does anyone want it?"
 // Client: *checks hash table* "uhh yeah, ok. rebuild that for me"
 // Server: "here u go"
 // This makes the client responsible for tracking which files it needs to listen for.
+// From a server perspective, this means the filesystem watching thread can send the same WebSocket message
+// to every client, which is good for performance. It means if you have 5 tabs open it won't really be different than one tab
+// The clients can just ignore files they don't care about
 smol WebsocketMessageType {
-  visibility_status_change = 1,
-  build_status_update = 2,
-
+  file_change = 1,
+  build_success = 2,
+  build_fail = 3,
 }
 
-message WebsocketMessageContainer {
-  
+struct WeboscketMessage {
+
 }

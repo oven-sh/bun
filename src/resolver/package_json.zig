@@ -59,7 +59,13 @@ pub const PackageJSON = struct {
         const package_json_path_ = r.fs.abs(&parts);
         const package_json_path = r.fs.filename_store.append(package_json_path_) catch unreachable;
 
-        const entry = r.caches.fs.readFile(r.fs, package_json_path, dirname_fd, false) catch |err| {
+        const entry = r.caches.fs.readFile(
+            r.fs,
+            package_json_path,
+            dirname_fd,
+            false,
+            null,
+        ) catch |err| {
             if (err != error.IsDir) {
                 r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Cannot read file \"{s}\": {s}", .{ r.prettyPath(fs.Path.init(input_path)), @errorName(err) }) catch unreachable;
             }

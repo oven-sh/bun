@@ -856,6 +856,7 @@ pub fn NewResolver(cache_files: bool) type {
                 file,
                 dirname_fd,
                 false,
+                null,
             );
             const key_path = Path.init(file);
 

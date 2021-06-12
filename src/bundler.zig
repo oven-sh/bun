@@ -101,6 +101,7 @@ pub const ParseResult = struct {
     source: logger.Source,
     loader: options.Loader,
     ast: js_ast.Ast,
+    input_fd: ?StoredFileDescriptorType = null,
 };
 
 pub const ScanResult = struct {
@@ -489,6 +490,7 @@ pub fn NewBundler(cache_files: bool) type {
                                 file_path.text,
                                 resolve.dirname_fd,
                                 true,
+                                null,
                             );
                             const source = logger.Source.initFile(Fs.File{ .path = file_path, .contents = entry.contents }, bundler.allocator) catch return null;
                             const source_dir = file_path.name.dirWithTrailingSlash();
@@ -743,6 +745,7 @@ pub fn NewBundler(cache_files: bool) type {
                                 file_path.text,
                                 resolve.dirname_fd,
                                 true,
+                                null,
                             ) catch return;
 
                             const source = logger.Source.initFile(Fs.File{ .path = file_path, .contents = entry.contents }, bundler.allocator) catch return null;
@@ -826,6 +829,10 @@ pub fn NewBundler(cache_files: bool) type {
             }
         };
 
+        pub const BuildResolveResultPair = struct {
+            written: usize,
+            input_fd: ?StoredFileDescriptorType,
+        };
         pub fn buildWithResolveResult(
             bundler: *ThisBundler,
             resolve_result: _resolver.Result,
@@ -834,9 +841,13 @@ pub fn NewBundler(cache_files: bool) type {
             comptime Writer: type,
             writer: Writer,
             comptime import_path_format: options.BundleOptions.ImportPathFormat,
-        ) !usize {
+            file_descriptor: ?StoredFileDescriptorType,
+        ) !BuildResolveResultPair {
             if (resolve_result.is_external) {
-                return 0;
+                return BuildResolveResultPair{
+                    .written = 0,
+                    .input_fd = null,
+                };
             }
 
             errdefer bundler.resetStore();
@@ -847,20 +858,26 @@ pub fn NewBundler(cache_files: bool) type {
             var old_bundler_allocator = bundler.allocator;
             bundler.allocator = allocator;
             defer bundler.allocator = old_bundler_allocator;
-            var result = bundler.parse(allocator, file_path, loader, resolve_result.dirname_fd) orelse {
+            var result = bundler.parse(allocator, file_path, loader, resolve_result.dirname_fd, file_descriptor) orelse {
                 bundler.resetStore();
-                return 0;
+                return BuildResolveResultPair{
+                    .written = 0,
+                    .input_fd = null,
+                };
             };
             var old_linker_allocator = bundler.linker.allocator;
             defer bundler.linker.allocator = old_linker_allocator;
             bundler.linker.allocator = allocator;
             try bundler.linker.link(file_path, &result, import_path_format);
 
-            return try bundler.print(
-                result,
-                Writer,
-                writer,
-            );
+            return BuildResolveResultPair{
+                .written = try bundler.print(
+                    result,
+                    Writer,
+                    writer,
+                ),
+                .input_fd = result.input_fd,
+            };
             // output_file.version = if (resolve_result.is_from_node_modules) resolve_result.package_json_version else null;
 
         }
@@ -883,7 +900,7 @@ pub fn NewBundler(cache_files: bool) type {
 
             switch (loader) {
                 .jsx, .tsx, .js, .ts, .json => {
-                    var result = bundler.parse(bundler.allocator, file_path, loader, resolve_result.dirname_fd) orelse {
+                    var result = bundler.parse(bundler.allocator, file_path, loader, resolve_result.dirname_fd, null) orelse {
                         return null;
                     };
 
@@ -965,6 +982,7 @@ pub fn NewBundler(cache_files: bool) type {
                         file_path.text,
                         resolve_result.dirname_fd,
                         !cache_files,
+                        null,
                     ) catch return null;
 
                     const source = logger.Source.initFile(Fs.File{ .path = file_path, .contents = entry.contents }, bundler.allocator) catch return null;
@@ -1033,7 +1051,14 @@ pub fn NewBundler(cache_files: bool) type {
             );
         }
 
-        pub fn parse(bundler: *ThisBundler, allocator: *std.mem.Allocator, path: Fs.Path, loader: options.Loader, dirname_fd: StoredFileDescriptorType) ?ParseResult {
+        pub fn parse(
+            bundler: *ThisBundler,
+            allocator: *std.mem.Allocator,
+            path: Fs.Path,
+            loader: options.Loader,
+            dirname_fd: StoredFileDescriptorType,
+            file_descriptor: ?StoredFileDescriptorType,
+        ) ?ParseResult {
             if (FeatureFlags.tracing) {
                 bundler.timer.start();
             }
@@ -1044,7 +1069,13 @@ pub fn NewBundler(cache_files: bool) type {
                 }
             }
             var result: ParseResult = undefined;
-            const entry = bundler.resolver.caches.fs.readFile(bundler.fs, path.text, dirname_fd, !cache_files) catch return null;
+            const entry = bundler.resolver.caches.fs.readFile(
+                bundler.fs,
+                path.text,
+                dirname_fd,
+                !cache_files,
+                file_descriptor,
+            ) catch return null;
 
             const source = logger.Source.initFile(Fs.File{ .path = path, .contents = entry.contents }, bundler.allocator) catch return null;
 
@@ -1065,6 +1096,7 @@ pub fn NewBundler(cache_files: bool) type {
                         .ast = value,
                         .source = source,
                         .loader = loader,
+                        .input_fd = entry.fd,
                     };
                 },
                 .json => {
@@ -1082,6 +1114,7 @@ pub fn NewBundler(cache_files: bool) type {
                         .ast = js_ast.Ast.initTest(parts),
                         .source = source,
                         .loader = loader,
+                        .input_fd = entry.fd,
                     };
                 },
                 .css => {
@@ -1091,17 +1124,6 @@ pub fn NewBundler(cache_files: bool) type {
             }
 
             return null;
-        }
-
-        pub fn buildServeResultOutput(bundler: *ThisBundler, resolve: _resolver.Result, loader: options.Loader) !ServeResult.Output {
-            switch (loader) {
-                .js, .jsx, .ts, .tsx, .json => {
-                    return ServeResult.Output{ .built = bundler.buildWithResolveResult(resolve) orelse error.BuildFailed };
-                },
-                else => {
-                    return ServeResult.Output{ .file = ServeResult.Output.File{ .absolute_path = resolve.path_pair.primary.text } };
-                },
-            }
         }
 
         threadlocal var tmp_buildfile_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;

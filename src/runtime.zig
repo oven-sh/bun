@@ -2,12 +2,12 @@ const options = @import("./options.zig");
 usingnamespace @import("ast/base.zig");
 usingnamespace @import("global.zig");
 const std = @import("std");
-pub const ProdSourceContent = @embedFile("./runtime.js");
+pub const ProdSourceContent = @embedFile("./runtime.out.js");
 
 pub const Runtime = struct {
     pub fn sourceContent() string {
         if (isDebug) {
-            var runtime_path = std.fs.path.join(std.heap.c_allocator, &[_]string{ std.fs.path.dirname(@src().file).?, "runtime.js" }) catch unreachable;
+            var runtime_path = std.fs.path.join(std.heap.c_allocator, &[_]string{ std.fs.path.dirname(@src().file).?, "runtime.out.js" }) catch unreachable;
             const file = std.fs.openFileAbsolute(runtime_path, .{}) catch unreachable;
             defer file.close();
             return file.readToEndAlloc(std.heap.c_allocator, (file.stat() catch unreachable).size) catch unreachable;
@@ -19,7 +19,8 @@ pub const Runtime = struct {
     pub fn version() string {
         return version_hash;
     }
-    pub const Features = packed struct {
+
+    pub const Features = struct {
         react_fast_refresh: bool = false,
         hot_module_reloading: bool = false,
         keep_names_for_arrow_functions: bool = true,

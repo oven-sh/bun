@@ -7,7 +7,9 @@ pub const options = @import("../options.zig");
 pub const alloc = @import("../alloc.zig");
 pub const js_printer = @import("../js_printer.zig");
 pub const renamer = @import("../renamer.zig");
-pub const RuntimeImports = @import("../runtime.zig").Runtime.Imports;
+const _runtime = @import("../runtime.zig");
+pub const RuntimeImports = _runtime.Runtime.Imports;
+pub const RuntimeFeatures = _runtime.Runtime.Features;
 pub const fs = @import("../fs.zig");
 const _hash_map = @import("../hash_map.zig");
 pub usingnamespace @import("../global.zig");
@@ -23,6 +25,7 @@ pub const ExprNodeIndex = js_ast.ExprNodeIndex;
 pub const ExprNodeList = js_ast.ExprNodeList;
 pub const StmtNodeList = js_ast.StmtNodeList;
 pub const BindingNodeList = js_ast.BindingNodeList;
+
 pub const assert = std.debug.assert;
 
 pub const LocRef = js_ast.LocRef;

@@ -301,12 +301,12 @@ pub fn NewLinker(comptime BundlerType: type) type {
 
             // Change the import order so that any bundled imports appear last
             // This is to make it so the bundle (which should be quite large) is least likely to block rendering
-            if (needs_bundle) {
-                const sorter = ImportStatementSorter{ .import_records = result.ast.import_records };
-                for (result.ast.parts) |*part, i| {
-                    std.sort.sort(js_ast.Stmt, part.stmts, sorter, ImportStatementSorter.lessThan);
-                }
-            }
+            // if (needs_bundle) {
+            //     const sorter = ImportStatementSorter{ .import_records = result.ast.import_records };
+            //     for (result.ast.parts) |*part, i| {
+            //         std.sort.sort(js_ast.Stmt, part.stmts, sorter, ImportStatementSorter.lessThan);
+            //     }
+            // }
         }
 
         const ImportPathsList = allocators.BSSStringList(512, 128);

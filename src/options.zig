@@ -540,7 +540,9 @@ pub const BundleOptions = struct {
     loaders: std.StringHashMap(Loader),
     resolve_dir: string = "/",
     jsx: JSX.Pragma = JSX.Pragma{},
+
     react_fast_refresh: bool = false,
+    hot_module_reloading: bool = false,
     inject: ?[]string = null,
     public_url: string = "",
     public_dir: string = "public",
@@ -685,6 +687,7 @@ pub const BundleOptions = struct {
             if (isWindows and opts.public_dir_handle != null) {
                 opts.public_dir_handle.?.close();
             }
+            opts.hot_module_reloading = true;
         }
 
         if (opts.write and opts.output_dir.len > 0) {

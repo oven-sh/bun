@@ -243,12 +243,65 @@ struct Log {
 // From a server perspective, this means the filesystem watching thread can send the same WebSocket message
 // to every client, which is good for performance. It means if you have 5 tabs open it won't really be different than one tab
 // The clients can just ignore files they don't care about
-smol WebsocketMessageType {
-  file_change = 1,
-  build_success = 2,
-  build_fail = 3,
+smol WebsocketMessageKind {
+  welcome = 1;
+  file_change_notification = 2;
+  build_success = 3;
+  build_fail = 4;
 }
 
-struct WeboscketMessage {
-
+smol WebsocketCommandKind {
+  build = 1;
 }
+
+// Each websocket message has two messages in it!
+// This is the first.
+struct WebsocketMessage {
+  uint32 timestamp;
+  WebsocketMessageKind kind;
+}
+
+// This is the first.
+struct WebsocketMessageWelcome {
+  uint32 epoch;
+}
+
+struct WebsocketMessageFileChangeNotification {
+  uint32 id;
+  Loader loader;
+}
+
+struct WebsocketCommand {
+  WebsocketCommandKind kind;
+  uint32 timestamp;
+}
+
+// The timestamp is used for client-side deduping
+struct WebsocketCommandBuild {
+  uint32 id;
+}
+
+// We copy the module_path here incase they don't already have it
+struct WebsocketMessageBuildSuccess {
+  uint32 id;
+  uint32 from_timestamp;
+
+  Loader loader;
+  alphanumeric module_path;
+  
+  Log log;
+  byte[] bytes;
+}
+
+struct WebsocketMessageBuildFailure {
+  uint32 id;
+  uint32 from_timestamp;
+  Loader loader;
+
+  alphanumeric module_path;
+  Log log;
+}
+
+
+
+

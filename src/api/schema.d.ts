@@ -119,6 +119,29 @@ type uint32 = number;
     4: "debug",
     debug: "debug"
   }
+  export enum WebsocketMessageKind {
+    welcome = 1,
+    file_change_notification = 2,
+    build_success = 3,
+    build_fail = 4
+  }
+  export const WebsocketMessageKindKeys = {
+    1: "welcome",
+    welcome: "welcome",
+    2: "file_change_notification",
+    file_change_notification: "file_change_notification",
+    3: "build_success",
+    build_success: "build_success",
+    4: "build_fail",
+    build_fail: "build_fail"
+  }
+  export enum WebsocketCommandKind {
+    build = 1
+  }
+  export const WebsocketCommandKindKeys = {
+    1: "build",
+    build: "build"
+  }
   export interface JSX {
     factory: string;
     runtime: JSXRuntime;
@@ -262,6 +285,46 @@ type uint32 = number;
     msgs: Message[];
   }
 
+  export interface WebsocketMessage {
+    timestamp: uint32;
+    kind: WebsocketMessageKind;
+  }
+
+  export interface WebsocketMessageWelcome {
+    epoch: uint32;
+  }
+
+  export interface WebsocketMessageFileChangeNotification {
+    id: uint32;
+    loader: Loader;
+  }
+
+  export interface WebsocketCommand {
+    kind: WebsocketCommandKind;
+    timestamp: uint32;
+  }
+
+  export interface WebsocketCommandBuild {
+    id: uint32;
+  }
+
+  export interface WebsocketMessageBuildSuccess {
+    id: uint32;
+    from_timestamp: uint32;
+    loader: Loader;
+    module_path: alphanumeric;
+    log: Log;
+    bytes: Uint8Array;
+  }
+
+  export interface WebsocketMessageBuildFailure {
+    id: uint32;
+    from_timestamp: uint32;
+    loader: Loader;
+    module_path: alphanumeric;
+    log: Log;
+  }
+
   export declare function  encodeJSX(message: JSX, bb: ByteBuffer): void;
   export declare function decodeJSX(buffer: ByteBuffer): JSX;
   export declare function  encodeStringPointer(message: StringPointer, bb: ByteBuffer): void;
@@ -300,3 +363,17 @@ type uint32 = number;
   export declare function decodeMessage(buffer: ByteBuffer): Message;
   export declare function  encodeLog(message: Log, bb: ByteBuffer): void;
   export declare function decodeLog(buffer: ByteBuffer): Log;
+  export declare function  encodeWebsocketMessage(message: WebsocketMessage, bb: ByteBuffer): void;
+  export declare function decodeWebsocketMessage(buffer: ByteBuffer): WebsocketMessage;
+  export declare function  encodeWebsocketMessageWelcome(message: WebsocketMessageWelcome, bb: ByteBuffer): void;
+  export declare function decodeWebsocketMessageWelcome(buffer: ByteBuffer): WebsocketMessageWelcome;
+  export declare function  encodeWebsocketMessageFileChangeNotification(message: WebsocketMessageFileChangeNotification, bb: ByteBuffer): void;
+  export declare function decodeWebsocketMessageFileChangeNotification(buffer: ByteBuffer): WebsocketMessageFileChangeNotification;
+  export declare function  encodeWebsocketCommand(message: WebsocketCommand, bb: ByteBuffer): void;
+  export declare function decodeWebsocketCommand(buffer: ByteBuffer): WebsocketCommand;
+  export declare function  encodeWebsocketCommandBuild(message: WebsocketCommandBuild, bb: ByteBuffer): void;
+  export declare function decodeWebsocketCommandBuild(buffer: ByteBuffer): WebsocketCommandBuild;
+  export declare function  encodeWebsocketMessageBuildSuccess(message: WebsocketMessageBuildSuccess, bb: ByteBuffer): void;
+  export declare function decodeWebsocketMessageBuildSuccess(buffer: ByteBuffer): WebsocketMessageBuildSuccess;
+  export declare function  encodeWebsocketMessageBuildFailure(message: WebsocketMessageBuildFailure, bb: ByteBuffer): void;
+  export declare function decodeWebsocketMessageBuildFailure(buffer: ByteBuffer): WebsocketMessageBuildFailure;

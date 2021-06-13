@@ -1236,6 +1236,266 @@ function encodeLog(message, bb) {
   }
 
 }
+const WebsocketMessageKind = {
+  "1": 1,
+  "2": 2,
+  "3": 3,
+  "4": 4,
+  "welcome": 1,
+  "file_change_notification": 2,
+  "build_success": 3,
+  "build_fail": 4
+};
+const WebsocketMessageKindKeys = {
+  "1": "welcome",
+  "2": "file_change_notification",
+  "3": "build_success",
+  "4": "build_fail",
+  "welcome": "welcome",
+  "file_change_notification": "file_change_notification",
+  "build_success": "build_success",
+  "build_fail": "build_fail"
+};
+const WebsocketCommandKind = {
+  "1": 1,
+  "build": 1
+};
+const WebsocketCommandKindKeys = {
+  "1": "build",
+  "build": "build"
+};
+
+function decodeWebsocketMessage(bb) {
+  var result = {};
+
+  result["timestamp"] = bb.readUint32();
+  result["kind"] = WebsocketMessageKind[bb.readByte()];
+  return result;
+}
+
+function encodeWebsocketMessage(message, bb) {
+
+  var value = message["timestamp"];
+  if (value != null) {
+    bb.writeUint32(value);
+  } else {
+    throw new Error("Missing required field \"timestamp\"");
+  }
+
+  var value = message["kind"];
+  if (value != null) {
+    var encoded = WebsocketMessageKind[value];
+if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + " for enum \"WebsocketMessageKind\"");
+bb.writeByte(encoded);
+  } else {
+    throw new Error("Missing required field \"kind\"");
+  }
+
+}
+
+function decodeWebsocketMessageWelcome(bb) {
+  var result = {};
+
+  result["epoch"] = bb.readUint32();
+  return result;
+}
+
+function encodeWebsocketMessageWelcome(message, bb) {
+
+  var value = message["epoch"];
+  if (value != null) {
+    bb.writeUint32(value);
+  } else {
+    throw new Error("Missing required field \"epoch\"");
+  }
+
+}
+
+function decodeWebsocketMessageFileChangeNotification(bb) {
+  var result = {};
+
+  result["id"] = bb.readUint32();
+  result["loader"] = Loader[bb.readByte()];
+  return result;
+}
+
+function encodeWebsocketMessageFileChangeNotification(message, bb) {
+
+  var value = message["id"];
+  if (value != null) {
+    bb.writeUint32(value);
+  } else {
+    throw new Error("Missing required field \"id\"");
+  }
+
+  var value = message["loader"];
+  if (value != null) {
+    var encoded = Loader[value];
+if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + " for enum \"Loader\"");
+bb.writeByte(encoded);
+  } else {
+    throw new Error("Missing required field \"loader\"");
+  }
+
+}
+
+function decodeWebsocketCommand(bb) {
+  var result = {};
+
+  result["kind"] = WebsocketCommandKind[bb.readByte()];
+  result["timestamp"] = bb.readUint32();
+  return result;
+}
+
+function encodeWebsocketCommand(message, bb) {
+
+  var value = message["kind"];
+  if (value != null) {
+    var encoded = WebsocketCommandKind[value];
+if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + " for enum \"WebsocketCommandKind\"");
+bb.writeByte(encoded);
+  } else {
+    throw new Error("Missing required field \"kind\"");
+  }
+
+  var value = message["timestamp"];
+  if (value != null) {
+    bb.writeUint32(value);
+  } else {
+    throw new Error("Missing required field \"timestamp\"");
+  }
+
+}
+
+function decodeWebsocketCommandBuild(bb) {
+  var result = {};
+
+  result["id"] = bb.readUint32();
+  return result;
+}
+
+function encodeWebsocketCommandBuild(message, bb) {
+
+  var value = message["id"];
+  if (value != null) {
+    bb.writeUint32(value);
+  } else {
+    throw new Error("Missing required field \"id\"");
+  }
+
+}
+
+function decodeWebsocketMessageBuildSuccess(bb) {
+  var result = {};
+
+  result["id"] = bb.readUint32();
+  result["from_timestamp"] = bb.readUint32();
+  result["loader"] = Loader[bb.readByte()];
+  result["module_path"] = bb.readAlphanumeric();
+  result["log"] = decodeLog(bb);
+  result["bytes"] = bb.readByteArray();
+  return result;
+}
+
+function encodeWebsocketMessageBuildSuccess(message, bb) {
+
+  var value = message["id"];
+  if (value != null) {
+    bb.writeUint32(value);
+  } else {
+    throw new Error("Missing required field \"id\"");
+  }
+
+  var value = message["from_timestamp"];
+  if (value != null) {
+    bb.writeUint32(value);
+  } else {
+    throw new Error("Missing required field \"from_timestamp\"");
+  }
+
+  var value = message["loader"];
+  if (value != null) {
+    var encoded = Loader[value];
+if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + " for enum \"Loader\"");
+bb.writeByte(encoded);
+  } else {
+    throw new Error("Missing required field \"loader\"");
+  }
+
+  var value = message["module_path"];
+  if (value != null) {
+    bb.writeAlphanumeric(value);
+  } else {
+    throw new Error("Missing required field \"module_path\"");
+  }
+
+  var value = message["log"];
+  if (value != null) {
+    encodeLog(value, bb);
+  } else {
+    throw new Error("Missing required field \"log\"");
+  }
+
+  var value = message["bytes"];
+  if (value != null) {
+   bb.writeByteArray(value);
+  } else {
+    throw new Error("Missing required field \"bytes\"");
+  }
+
+}
+
+function decodeWebsocketMessageBuildFailure(bb) {
+  var result = {};
+
+  result["id"] = bb.readUint32();
+  result["from_timestamp"] = bb.readUint32();
+  result["loader"] = Loader[bb.readByte()];
+  result["module_path"] = bb.readAlphanumeric();
+  result["log"] = decodeLog(bb);
+  return result;
+}
+
+function encodeWebsocketMessageBuildFailure(message, bb) {
+
+  var value = message["id"];
+  if (value != null) {
+    bb.writeUint32(value);
+  } else {
+    throw new Error("Missing required field \"id\"");
+  }
+
+  var value = message["from_timestamp"];
+  if (value != null) {
+    bb.writeUint32(value);
+  } else {
+    throw new Error("Missing required field \"from_timestamp\"");
+  }
+
+  var value = message["loader"];
+  if (value != null) {
+    var encoded = Loader[value];
+if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + " for enum \"Loader\"");
+bb.writeByte(encoded);
+  } else {
+    throw new Error("Missing required field \"loader\"");
+  }
+
+  var value = message["module_path"];
+  if (value != null) {
+    bb.writeAlphanumeric(value);
+  } else {
+    throw new Error("Missing required field \"module_path\"");
+  }
+
+  var value = message["log"];
+  if (value != null) {
+    encodeLog(value, bb);
+  } else {
+    throw new Error("Missing required field \"log\"");
+  }
+
+}
 
 export { Loader }
 export { LoaderKeys }
@@ -1291,3 +1551,21 @@ export { decodeMessage }
 export { encodeMessage }
 export { decodeLog }
 export { encodeLog }
+export { WebsocketMessageKind }
+export { WebsocketMessageKindKeys }
+export { WebsocketCommandKind }
+export { WebsocketCommandKindKeys }
+export { decodeWebsocketMessage }
+export { encodeWebsocketMessage }
+export { decodeWebsocketMessageWelcome }
+export { encodeWebsocketMessageWelcome }
+export { decodeWebsocketMessageFileChangeNotification }
+export { encodeWebsocketMessageFileChangeNotification }
+export { decodeWebsocketCommand }
+export { encodeWebsocketCommand }
+export { decodeWebsocketCommandBuild }
+export { encodeWebsocketCommandBuild }
+export { decodeWebsocketMessageBuildSuccess }
+export { encodeWebsocketMessageBuildSuccess }
+export { decodeWebsocketMessageBuildFailure }
+export { encodeWebsocketMessageBuildFailure }

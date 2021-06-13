@@ -1091,6 +1091,7 @@ pub fn NewBundler(cache_files: bool) type {
                     opts.enable_bundling = bundler.options.node_modules_bundle != null;
                     opts.transform_require_to_import = true;
                     opts.can_import_from_bundle = bundler.options.node_modules_bundle != null;
+                    opts.features.hot_module_reloading = bundler.options.hot_module_reloading;
                     const value = (bundler.resolver.caches.js.parse(allocator, opts, bundler.options.define, bundler.log, &source) catch null) orelse return null;
                     return ParseResult{
                         .ast = value,

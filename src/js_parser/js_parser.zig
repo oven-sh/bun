@@ -1552,6 +1552,8 @@ pub const Parser = struct {
         use_define_for_class_fields: bool = false,
         suppress_warnings_about_weird_code: bool = true,
 
+        features: RuntimeFeatures = RuntimeFeatures{},
+
         // Used when bundling node_modules
         enable_bundling: bool = false,
         transform_require_to_import: bool = true,
@@ -1889,7 +1891,7 @@ pub const Parser = struct {
 
                 jsx_part_stmts[stmt_i] = p.s(S.Local{ .kind = .k_var, .decls = decls }, loc);
 
-                after.append(js_ast.Part{
+                before.append(js_ast.Part{
                     .stmts = jsx_part_stmts,
                     .declared_symbols = declared_symbols,
                     .import_record_indices = import_records,
@@ -1947,7 +1949,7 @@ pub const Parser = struct {
                 };
             }
 
-            after.append(js_ast.Part{
+            before.append(js_ast.Part{
                 .stmts = p.cjs_import_stmts.items,
                 .declared_symbols = declared_symbols,
                 .import_record_indices = import_records,
@@ -4418,6 +4420,41 @@ pub fn NewParser(
                 .is_export = opts.is_export,
             }, loc);
         }
+
+        // For HMR, we must convert syntax like this:
+        // export function leftPad() {
+        // export const guy = GUY_FIERI_ASCII_ART;
+        // export class Bacon {}
+        // export default GuyFieriAsciiArt;
+        // export {Bacon};
+        // export {Bacon as default};
+        // to:
+        // var __hmr__module = new __hmr_HMRModule(file_id, import.meta);
+        // (__hmr__module._load = function() {
+        //      __hmr__module.exports.leftPad = function () {};
+        //      __hmr__module.exports.npmProgressBar33 = true;
+        //      __hmr__module.exports.Bacon = class {};
+        // })();
+        // export { __hmr__module.exports.leftPad as leftPad, __hmr__module.exports.npmProgressBar33 as npmProgressBar33, __hmr__module }
+        //
+        //
+        //
+        // At bottom of the file:
+        // -
+        // var __hmr__exports = new HMRModule({
+        //  leftPad: () => leftPad,
+        //  npmProgressBar33 () => npmProgressBar33,
+        //  default: () => GuyFieriAsciiArt,
+        //  [__hmr_ModuleIDSymbol]:
+        //});
+        // export { __hmr__exports.leftPad as leftPad, __hmr__  }
+        // -
+        // Then:
+        // if () {
+        //
+        // }
+
+        // pub fn maybeRewriteExportSymbol(p: *P, )
 
         pub fn parseStmt(p: *P, opts: *ParseStatementOptions) anyerror!Stmt {
             var loc = p.lexer.loc();

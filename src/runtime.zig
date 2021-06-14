@@ -23,7 +23,12 @@ pub const Runtime = struct {
     pub const Features = struct {
         react_fast_refresh: bool = false,
         hot_module_reloading: bool = false,
+        hot_module_reloading_entry: bool = false,
         keep_names_for_arrow_functions: bool = true,
+    };
+
+    pub const Names = struct {
+        pub const ActivateFunction = "activate";
     };
 
     pub const Imports = struct {
@@ -37,6 +42,8 @@ pub const Runtime = struct {
         load_from_bundle: ?Ref = null,
         register: ?Ref = null,
         lazy_export: ?Ref = null,
+        __HMRModule: ?Ref = null,
+        __HMRClient: ?Ref = null,
 
         pub const all = [_][]const u8{
             "__name",
@@ -51,6 +58,8 @@ pub const Runtime = struct {
             //
             "register",
             "lazy_export",
+            "__HMRModule",
+            "__HMRClient",
         };
         pub const Name = "<RUNTIME";
 
@@ -119,6 +128,16 @@ pub const Runtime = struct {
                                 return Entry{ .key = 9, .value = val };
                             }
                         },
+                        10 => {
+                            if (@field(this.runtime_imports, all[10])) |val| {
+                                return Entry{ .key = 10, .value = val };
+                            }
+                        },
+                        11 => {
+                            if (@field(this.runtime_imports, all[11])) |val| {
+                                return Entry{ .key = 11, .value = val };
+                            }
+                        },
 
                         else => {
                             return null;
@@ -174,6 +193,8 @@ pub const Runtime = struct {
                 7 => @field(imports, all[7]),
                 8 => @field(imports, all[8]),
                 9 => @field(imports, all[9]),
+                10 => @field(imports, all[10]),
+                11 => @field(imports, all[11]),
                 else => null,
             };
         }

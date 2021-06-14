@@ -2,6 +2,7 @@ const Fs = @import("./fs.zig");
 const std = @import("std");
 usingnamespace @import("global.zig");
 const sync = @import("sync.zig");
+const options = @import("./options.zig");
 
 const os = std.os;
 const KEvent = std.os.Kevent;
@@ -11,6 +12,7 @@ pub const WatchItem = struct {
     // filepath hash for quick comparison
     hash: u32,
     eventlist_index: u32,
+    loader: options.Loader,
     fd: StoredFileDescriptorType,
 };
 
@@ -67,6 +69,10 @@ pub fn NewWatcher(comptime ContextType: type) type {
         ctx: ContextType,
         allocator: *std.mem.Allocator,
         watchloop_handle: ?u64 = null,
+
+        pub fn getHash(filepath: string) u32 {
+            return @truncate(u32, std.hash.Wyhash.hash(0, filepath));
+        }
 
         pub fn init(ctx: ContextType, fs: *Fs.FileSystem, allocator: *std.mem.Allocator) !*Watcher {
             var watcher = try allocator.create(Watcher);
@@ -155,9 +161,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 this.ctx.onFileUpdate(watchevents, this.watchlist);
             }
         }
-        pub fn getHash(filepath: string) u32 {
-            return @truncate(u32, std.hash.Wyhash.hash(0, filepath));
-        }
+
         pub fn indexOf(this: *Watcher, hash: u32) ?usize {
             for (this.watchlist.items(.hash)) |other, i| {
                 if (hash == other) {
@@ -172,6 +176,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
             fd: StoredFileDescriptorType,
             file_path: string,
             hash: u32,
+            loader: options.Loader,
             comptime copy_file_path: bool,
         ) !void {
             if (this.indexOf(hash) != null) {
@@ -222,6 +227,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 .fd = fd,
                 .hash = hash,
                 .eventlist_index = @truncate(u32, index),
+                .loader = loader,
             });
 
             if (FeatureFlags.verbose_watcher) {

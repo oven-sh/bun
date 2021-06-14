@@ -3701,6 +3701,56 @@ const FileWriterInternal = struct {
     ) anyerror!void {}
 };
 
+pub const BufferWriter = struct {
+    buffer: MutableString = undefined,
+    written: []const u8 = "",
+
+    pub fn init(allocator: *std.mem.Allocator) !BufferWriter {
+        return BufferWriter{
+            .buffer = MutableString.init(
+                allocator,
+                0,
+            ) catch unreachable,
+        };
+    }
+    pub fn writeByte(ctx: *BufferWriter, byte: u8) anyerror!usize {
+        try ctx.buffer.appendChar(byte);
+        return 1;
+    }
+    pub fn writeAll(ctx: *BufferWriter, bytes: anytype) anyerror!usize {
+        try ctx.buffer.append(bytes);
+        return bytes.len;
+    }
+
+    pub fn getLastByte(ctx: *const BufferWriter) u8 {
+        return if (ctx.buffer.list.items.len > 0) ctx.buffer.list.items[ctx.buffer.list.items.len - 1] else 0;
+    }
+
+    pub fn getLastLastByte(ctx: *const BufferWriter) u8 {
+        return if (ctx.buffer.list.items.len > 1) ctx.buffer.list.items[ctx.buffer.list.items.len - 2] else 0;
+    }
+
+    pub fn reset(ctx: *BufferWriter) void {
+        ctx.buffer.reset();
+    }
+
+    pub fn done(
+        ctx: *BufferWriter,
+    ) anyerror!void {
+        ctx.written = ctx.buffer.toOwnedSliceLeaky();
+    }
+
+    pub fn flush(
+        ctx: *BufferWriter,
+    ) anyerror!void {}
+};
+pub const BufferPrinter = NewWriter(
+    BufferWriter,
+    BufferWriter.writeByte,
+    BufferWriter.writeAll,
+    BufferWriter.getLastByte,
+    BufferWriter.getLastLastByte,
+);
 pub const FileWriter = NewWriter(FileWriterInternal, FileWriterInternal.writeByte, FileWriterInternal.writeAll, FileWriterInternal.getLastByte, FileWriterInternal.getLastLastByte);
 pub fn NewFileWriter(file: std.fs.File) FileWriter {
     var internal = FileWriterInternal.init(file);

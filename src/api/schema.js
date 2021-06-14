@@ -1393,7 +1393,7 @@ function decodeWebsocketMessageBuildSuccess(bb) {
   result["loader"] = Loader[bb.readByte()];
   result["module_path"] = bb.readAlphanumeric();
   result["log"] = decodeLog(bb);
-  result["bytes"] = bb.readByteArray();
+  result["blob_length"] = bb.readUint32();
   return result;
 }
 
@@ -1436,11 +1436,11 @@ bb.writeByte(encoded);
     throw new Error("Missing required field \"log\"");
   }
 
-  var value = message["bytes"];
+  var value = message["blob_length"];
   if (value != null) {
-   bb.writeByteArray(value);
+    bb.writeUint32(value);
   } else {
-    throw new Error("Missing required field \"bytes\"");
+    throw new Error("Missing required field \"blob_length\"");
   }
 
 }

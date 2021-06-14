@@ -10,6 +10,7 @@ pub const renamer = @import("../renamer.zig");
 const _runtime = @import("../runtime.zig");
 pub const RuntimeImports = _runtime.Runtime.Imports;
 pub const RuntimeFeatures = _runtime.Runtime.Features;
+pub const RuntimeNames = _runtime.Runtime.Names;
 pub const fs = @import("../fs.zig");
 const _hash_map = @import("../hash_map.zig");
 pub usingnamespace @import("../global.zig");

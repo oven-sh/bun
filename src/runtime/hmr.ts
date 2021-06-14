@@ -1,14 +1,15 @@
 import { ByteBuffer } from "peechy/bb";
-import * as Schema from "../api/schema";
+import * as API from "../api/schema";
 
 var runOnce = false;
 var clientStartTime = 0;
 
 function formatDuration(duration: number) {
-  return Math.round(duration * 100000) / 100;
+  return Math.round(duration * 1000) / 1000;
 }
 
-export class Client {
+class HMRClient {
+  static client: HMRClient;
   socket: WebSocket;
   hasWelcomed: boolean = false;
   reconnect: number = 0;
@@ -18,8 +19,8 @@ export class Client {
 
   start() {
     if (runOnce) {
-      console.warn(
-        "[speedy] Attempted to start HMR client multiple times. This may be a bug."
+      __hmrlog.warn(
+        "Attempted to start HMR client multiple times. This may be a bug."
       );
       return;
     }
@@ -30,10 +31,12 @@ export class Client {
 
   connect() {
     clientStartTime = performance.now();
-
-    this.socket = new WebSocket("/_api", ["speedy-hmr"]);
+    const baseURL = new URL(location.origin + "/_api");
+    baseURL.protocol = location.protocol === "https" ? "wss" : "ws";
+    this.socket = new WebSocket(baseURL.toString(), ["speedy-hmr"]);
     this.socket.binaryType = "arraybuffer";
     this.socket.onclose = this.handleClose;
+    this.socket.onerror = this.handleError;
     this.socket.onopen = this.handleOpen;
     this.socket.onmessage = this.handleMessage;
   }
@@ -43,7 +46,18 @@ export class Client {
   builds = new Map<number, number>();
 
   indexOfModuleId(id: number): number {
-    return Module.dependencies.graph.indexOf(id);
+    return HMRModule.dependencies.graph.indexOf(id);
+  }
+
+  static activate(verbose: boolean = false) {
+    if (this.client) {
+      return;
+    }
+
+    this.client = new HMRClient();
+    this.client.verbose = verbose;
+    this.client.start();
+    globalThis["SPEEDY_HMR"] = this.client;
   }
 
   handleBuildFailure(buffer: ByteBuffer, timestamp: number) {
@@ -65,12 +79,21 @@ export class Client {
     if (!minTimestamp) {
       return;
     }
-    const fail = Schema.decodeWebsocketMessageBuildFailure(buffer);
+    const fail = API.decodeWebsocketMessageBuildFailure(buffer);
     // TODO: finish this.
-    console.error("[speedy] Build failed", fail.module_path);
+    __hmrlog.error("Build failed", fail.module_path);
   }
 
-  verbose = process.env.SPEEDY_HMR_VERBOSE;
+  verbose = false;
+
+  handleError = (error: ErrorEvent) => {
+    __hmrlog.error("Websocket error", error.error);
+    if (this.reconnect !== 0) {
+      return;
+    }
+
+    this.reconnect = setInterval(this.connect, 500) as any as number;
+  };
 
   handleBuildSuccess(buffer: ByteBuffer, timestamp: number) {
     // 0: ID
@@ -84,8 +107,8 @@ export class Client {
     // Ignore builds of modules that are not loaded
     if (index === -1) {
       if (this.verbose) {
-        console.debug(
-          `[speedy] Skipping reload for unknown module id:`,
+        __hmrlog.debug(
+          `Skipping reload for unknown module id:`,
           header_data[0]
         );
       }
@@ -97,8 +120,8 @@ export class Client {
     const currentVersion = this.builds.get(header_data[0]) || -Infinity;
     if (currentVersion > header_data[1]) {
       if (this.verbose) {
-        console.debug(
-          `[speedy] Ignoring module update for "${Module.dependencies.modules[index].url.pathname}" due to timestamp mismatch.\n  Expected: >=`,
+        __hmrlog.debug(
+          `Ignoring outdated update for "${HMRModule.dependencies.modules[index].file_path}".\n  Expected: >=`,
           currentVersion,
           `\n   Received:`,
           header_data[1]
@@ -108,24 +131,32 @@ export class Client {
     }
 
     if (this.verbose) {
-      console.debug(
-        "[speedy] Preparing to reload",
-        Module.dependencies.modules[index].url.pathname
+      __hmrlog.debug(
+        "Preparing to reload",
+        HMRModule.dependencies.modules[index].file_path
       );
     }
 
-    const build = Schema.decodeWebsocketMessageBuildSuccess(buffer);
-    var reload = new HotReload(header_data[0], index, build);
+    const build = API.decodeWebsocketMessageBuildSuccess(buffer);
+    var reload = new HotReload(
+      header_data[0],
+      index,
+      build,
+      // These are the bytes!!
+      buffer.data.length > buffer._index
+        ? buffer.data.subarray(buffer._index)
+        : new Uint8Array(0)
+    );
     reload.timings.notify = timestamp - build.from_timestamp;
     reload.run().then(
       ([module, timings]) => {
-        console.log(
-          `[speedy] Reloaded in ${formatDuration(timings.total)}ms :`,
-          module.url.pathname
+        __hmrlog.log(
+          `Reloaded in ${formatDuration(timings.total)}ms :`,
+          module.file_path
         );
       },
       (err) => {
-        console.error("[speedy] Hot Module Reload failed!", err);
+        __hmrlog.error("Hot Module Reload failed!", err);
         debugger;
       }
     );
@@ -133,39 +164,40 @@ export class Client {
 
   handleFileChangeNotification(buffer: ByteBuffer, timestamp: number) {
     const notification =
-      Schema.decodeWebsocketMessageFileChangeNotification(buffer);
-    const index = Module.dependencies.graph.indexOf(notification.id);
+      API.decodeWebsocketMessageFileChangeNotification(buffer);
+    const index = HMRModule.dependencies.graph.indexOf(notification.id);
 
     if (index === -1) {
       if (this.verbose) {
-        console.debug("[speedy] Unknown module changed, skipping");
+        __hmrlog.debug("Unknown module changed, skipping");
       }
       return;
     }
 
     if ((this.builds.get(notification.id) || -Infinity) > timestamp) {
-      console.debug(
-        `[speedy] Received update for ${Module.dependencies.modules[index].url.pathname}`
+      __hmrlog.debug(
+        `Received update for ${HMRModule.dependencies.modules[index].file_path}`
       );
       return;
     }
 
     if (this.verbose) {
-      console.debug(
-        `[speedy] Requesting update for ${Module.dependencies.modules[index].url.pathname}`
+      __hmrlog.debug(
+        `Requesting update for ${HMRModule.dependencies.modules[index].file_path}`
       );
     }
 
     this.builds.set(notification.id, timestamp);
-    this.buildCommandBuf[0] = Schema.WebsocketCommandKind.build;
+    this.buildCommandBuf[0] = API.WebsocketCommandKind.build;
     this.buildCommandUArray[0] = timestamp;
-    this.buildCommandBuf.set(new Uint8Array(this.buildCommandUArray), 1);
+    this.buildCommandBuf.set(this.buildCommandUArrayEight, 1);
     this.buildCommandUArray[0] = notification.id;
-    this.buildCommandBuf.set(new Uint8Array(this.buildCommandUArray), 5);
+    this.buildCommandBuf.set(this.buildCommandUArrayEight, 5);
     this.socket.send(this.buildCommandBuf);
   }
   buildCommandBuf = new Uint8Array(9);
   buildCommandUArray = new Uint32Array(1);
+  buildCommandUArrayEight = new Uint8Array(this.buildCommandUArray.buffer);
 
   handleOpen = (event: Event) => {
     globalThis.clearInterval(this.reconnect);
@@ -175,37 +207,37 @@ export class Client {
   handleMessage = (event: MessageEvent) => {
     const data = new Uint8Array(event.data);
     const message_header_byte_buffer = new ByteBuffer(data);
-    const header = Schema.decodeWebsocketMessage(message_header_byte_buffer);
+    const header = API.decodeWebsocketMessage(message_header_byte_buffer);
     const buffer = new ByteBuffer(
       data.subarray(message_header_byte_buffer._index)
     );
 
     switch (header.kind) {
-      case Schema.WebsocketMessageKind.build_fail: {
+      case API.WebsocketMessageKind.build_fail: {
         this.handleBuildFailure(buffer, header.timestamp);
         break;
       }
-      case Schema.WebsocketMessageKind.build_success: {
+      case API.WebsocketMessageKind.build_success: {
         this.handleBuildSuccess(buffer, header.timestamp);
         break;
       }
-      case Schema.WebsocketMessageKind.file_change_notification: {
+      case API.WebsocketMessageKind.file_change_notification: {
         this.handleFileChangeNotification(buffer, header.timestamp);
         break;
       }
-      case Schema.WebsocketMessageKind.welcome: {
+      case API.WebsocketMessageKind.welcome: {
         const now = performance.now();
-        console.log(
-          "[speedy] HMR connected in",
+        __hmrlog.log(
+          "HMR connected in",
           formatDuration(now - clientStartTime),
           "ms"
         );
         clientStartTime = now;
         this.hasWelcomed = true;
-        const welcome = Schema.decodeWebsocketMessageWelcome(buffer);
+        const welcome = API.decodeWebsocketMessageWelcome(buffer);
         this.epoch = welcome.epoch;
         if (!this.epoch) {
-          console.warn("[speedy] Internal HMR error");
+          __hmrlog.warn("Internal HMR error");
         }
         break;
       }
@@ -218,14 +250,16 @@ export class Client {
     }
 
     this.reconnect = setInterval(this.connect, 500) as any as number;
-    console.warn("[speedy] HMR disconnected. Attempting to reconnect.");
+    __hmrlog.warn("HMR disconnected. Attempting to reconnect.");
   };
 }
+
+export { HMRClient as __HMRClient };
 
 class HotReload {
   module_id: number = 0;
   module_index: number = 0;
-  build: Schema.WebsocketMessageBuildSuccess;
+  build: API.WebsocketMessageBuildSuccess;
   timings = {
     notify: 0,
     decode: 0,
@@ -234,39 +268,51 @@ class HotReload {
     total: 0,
     start: 0,
   };
+  static VERBOSE = false;
+  bytes: Uint8Array;
 
   constructor(
     module_id: HotReload["module_id"],
     module_index: HotReload["module_index"],
-    build: HotReload["build"]
+    build: HotReload["build"],
+    bytes: Uint8Array
   ) {
     this.module_id = module_id;
     this.module_index = module_index;
     this.build = build;
+    this.bytes = bytes;
   }
 
-  async run(): Promise<[Module, HotReload["timings"]]> {
+  async run(): Promise<[HMRModule, HotReload["timings"]]> {
     const importStart = performance.now();
-    let orig_deps = Module.dependencies;
-    Module.dependencies = orig_deps.fork(this.module_index);
+    let orig_deps = HMRModule.dependencies;
+    // we must preserve the updater since that holds references to the real exports.
+    // this is a fundamental limitation of using esmodules for HMR.
+    // we cannot export new modules. we can only mutate existing ones.
+
+    HMRModule.dependencies = orig_deps.fork(this.module_index);
     var blobURL = null;
     try {
-      const blob = new Blob([this.build.bytes], { type: "text/javascript" });
+      const blob = new Blob([this.bytes], { type: "text/javascript" });
       blobURL = URL.createObjectURL(blob);
       await import(blobURL);
       this.timings.import = performance.now() - importStart;
     } catch (exception) {
-      Module.dependencies = orig_deps;
+      HMRModule.dependencies = orig_deps;
       URL.revokeObjectURL(blobURL);
+      // Ensure we don't keep the bytes around longer than necessary
+      this.bytes = null;
       throw exception;
     }
 
     URL.revokeObjectURL(blobURL);
+    // Ensure we don't keep the bytes around longer than necessary
+    this.bytes = null;
 
-    if (process.env.SPEEDY_HMR_VERBOSE) {
-      console.debug(
-        "[speedy] Re-imported",
-        Module.dependencies.modules[this.module_index].url.pathname,
+    if (HotReload.VERBOSE) {
+      __hmrlog.debug(
+        "Re-imported",
+        HMRModule.dependencies.modules[this.module_index].file_path,
         "in",
         formatDuration(this.timings.import),
         ". Running callbacks"
@@ -277,37 +323,41 @@ class HotReload {
     try {
       // ES Modules delay execution until all imports are parsed
       // They execute depth-first
-      // If you load N modules and append each module ID to the array, 0 is the *last* module imported.
+      // If you load N modules and append each module ID to the array, 0 is the *last* unique module imported.
       // modules.length - 1 is the first.
       // Therefore, to reload all the modules in the correct order, we traverse the graph backwards
       // This only works when the graph is up to date.
       // If the import order changes, we need to regenerate the entire graph
       // Which sounds expensive, until you realize that we are mostly talking about an array that will be typically less than 1024 elements
-      // Computers can do that in < 1ms easy!
-      for (let i = Module.dependencies.graph_used; i > this.module_index; i--) {
-        let handled = !Module.dependencies.modules[i].exports.__hmrDisable;
-        if (typeof Module.dependencies.modules[i].dispose === "function") {
-          Module.dependencies.modules[i].dispose();
+      // Computers can create an array of < 1024 pointer-sized elements in < 1ms easy!
+      for (
+        let i = HMRModule.dependencies.graph_used;
+        i > this.module_index;
+        i--
+      ) {
+        let handled = !HMRModule.dependencies.modules[i].exports.__hmrDisable;
+        if (typeof HMRModule.dependencies.modules[i].dispose === "function") {
+          HMRModule.dependencies.modules[i].dispose();
           handled = true;
         }
-        if (typeof Module.dependencies.modules[i].accept === "function") {
-          Module.dependencies.modules[i].accept();
+        if (typeof HMRModule.dependencies.modules[i].accept === "function") {
+          HMRModule.dependencies.modules[i].accept();
           handled = true;
         }
         if (!handled) {
-          Module.dependencies.modules[i]._load();
+          HMRModule.dependencies.modules[i]._load();
         }
       }
     } catch (exception) {
-      Module.dependencies = orig_deps;
+      HMRModule.dependencies = orig_deps;
       throw exception;
     }
     this.timings.callbacks = performance.now() - callbacksStart;
 
-    if (process.env.SPEEDY_HMR_VERBOSE) {
-      console.debug(
-        "[speedy] Ran callbacks",
-        Module.dependencies.modules[this.module_index].url.pathname,
+    if (HotReload.VERBOSE) {
+      __hmrlog.debug(
+        "Ran callbacks",
+        HMRModule.dependencies.modules[this.module_index].file_path,
         "in",
         formatDuration(this.timings.callbacks),
         "ms"
@@ -318,74 +368,110 @@ class HotReload {
     this.timings.total =
       this.timings.import + this.timings.callbacks + this.build.from_timestamp;
     return Promise.resolve([
-      Module.dependencies.modules[this.module_index],
+      HMRModule.dependencies.modules[this.module_index],
       this.timings,
     ]);
   }
 }
-var client: Client;
-if ("SPEEDY_HMR_CLIENT" in globalThis) {
-  console.warn(
-    "[speedy] Attempted to load multiple copies of HMR. This may be a bug."
-  );
-} else if (process.env.SPEEDY_HMR_ENABLED) {
-  client = new Client();
-  client.start();
-  globalThis.SPEEDY_HMR_CLIENT = client;
-}
 
-export class Module {
-  constructor(id: number, url: URL) {
-    // Ensure V8 knows this is a U32
-    this.id = id | 0;
-    this.url = url;
+class HMRModule {
+  constructor(id: number, file_path: string) {
+    this.id = id;
+    this.file_path = file_path;
 
-    if (!Module._dependencies) {
-      Module.dependencies = Module._dependencies;
+    if (!HMRModule.dependencies) {
+      HMRModule.dependencies = HMRModule._dependencies;
     }
 
-    this.graph_index = Module.dependencies.graph_used++;
+    this.graph_index = HMRModule.dependencies.graph_used++;
 
     // Grow the dependencies graph
-    if (Module.dependencies.graph.length <= this.graph_index) {
-      const new_graph = new Uint32Array(Module.dependencies.graph.length * 4);
-      new_graph.set(Module.dependencies.graph);
-      Module.dependencies.graph = new_graph;
+    if (HMRModule.dependencies.graph.length <= this.graph_index) {
+      const new_graph = new Uint32Array(
+        HMRModule.dependencies.graph.length * 4
+      );
+      new_graph.set(HMRModule.dependencies.graph);
+      HMRModule.dependencies.graph = new_graph;
 
       // In-place grow. This creates a holey array, which is bad, but less bad than pushing potentially 1000 times
-      Module.dependencies.modules.length = new_graph.length;
+      HMRModule.dependencies.modules.length = new_graph.length;
     }
 
-    Module.dependencies.modules[this.graph_index] = this;
-    Module.dependencies.graph[this.graph_index] = this.id | 0;
-  }
-  additional_files = [];
+    if (
+      typeof HMRModule.dependencies.modules[this.graph_index] === "object" &&
+      HMRModule.dependencies.modules[this.graph_index] instanceof HMRModule &&
+      HMRModule.dependencies.modules[this.graph_index].id === id &&
+      typeof HMRModule.dependencies.modules[this.graph_index]._update ===
+        "function"
+    ) {
+      this.additional_updaters.push(
+        HMRModule.dependencies.modules[this.graph_index]._update
+      );
+    }
 
-  // When a module updates, we need to re-initialize each dependent, recursively
-  // To do so:
-  // 1. Track which modules are imported by which *at runtime*
-  // 2. When A updates, loop through each dependent of A in insertion order
-  // 3. For each old dependent, call .dispose() if exists
-  // 3. For each new dependent, call .accept() if exists
-  // 4.
+    HMRModule.dependencies.modules[this.graph_index] = this;
+    HMRModule.dependencies.graph[this.graph_index] = this.id;
+  }
+
+  additional_files = [];
+  additional_updaters = [];
+  _update: (exports: Object) => void;
+  update() {
+    for (let update of this.additional_updaters) {
+      update(this.exports);
+    }
+
+    this._update(this.exports);
+  }
+
   static _dependencies = {
-    modules: new Array<Module>(32),
+    modules: new Array<HMRModule>(32),
     graph: new Uint32Array(32),
     graph_used: 0,
 
     fork(offset: number) {
       return {
-        modules: Module._dependencies.modules.slice(),
-        graph: Module._dependencies.graph.slice(),
+        modules: HMRModule._dependencies.modules.slice(),
+        graph: HMRModule._dependencies.graph.slice(),
         graph_used: offset - 1,
       };
     },
   };
-  static dependencies: Module["_dependencies"];
-  url: URL;
+
+  exportAll(object: Object) {
+    // object[alias] must be a function
+    for (let alias in object) {
+      this._exports[alias] = object[alias];
+      Object.defineProperty(this.exports, alias, {
+        get: this._exports[alias],
+        configurable: true,
+        enumerable: true,
+      });
+    }
+  }
+
+  static dependencies: HMRModule["_dependencies"];
+  file_path: string;
   _load = function () {};
   id = 0;
   graph_index = 0;
   _exports = {};
   exports = {};
 }
+
+var __hmrlog = {
+  debug(...args) {
+    console.debug("[speedy]", ...args);
+  },
+  error(...args) {
+    console.error("[speedy]", ...args);
+  },
+  log(...args) {
+    console.log("[speedy]", ...args);
+  },
+  warn(...args) {
+    console.warn("[speedy]", ...args);
+  },
+};
+
+export { HMRModule as __HMRModule };

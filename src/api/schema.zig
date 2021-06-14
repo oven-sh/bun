@@ -206,13 +206,16 @@ pub fn Writer(comptime WritableStream: type) type {
 
         pub fn writeValue(this: *Self, slice: anytype) !void {
             switch (@TypeOf(slice)) {
-                []u8,
+                []u8, []const u8 => {
+                    try this.writeArray(u8, slice);
+                },
+
                 []u16,
                 []u32,
                 []i16,
                 []i32,
                 []i8,
-                []const u8,
+
                 []const u16,
                 []const u32,
                 []const i16,
@@ -276,7 +279,7 @@ pub fn Writer(comptime WritableStream: type) type {
     };
 }
 
-pub const ByteWriter = Writer(std.io.FixedBufferStream([]u8));
+pub const ByteWriter = Writer(*std.io.FixedBufferStream([]u8));
 pub const FileWriter = Writer(std.fs.File);
 
 pub const Api = struct {
@@ -1413,8 +1416,8 @@ pub const Api = struct {
         /// log
         log: Log,
 
-        /// bytes
-        bytes: []const u8,
+        /// blob_length
+        blob_length: u32 = 0,
 
         pub fn decode(reader: anytype) anyerror!WebsocketMessageBuildSuccess {
             var this = std.mem.zeroes(WebsocketMessageBuildSuccess);
@@ -1424,7 +1427,7 @@ pub const Api = struct {
             this.loader = try reader.readValue(Loader);
             this.module_path = try reader.readValue([]const u8);
             this.log = try reader.readValue(Log);
-            this.bytes = try reader.readArray(u8);
+            this.blob_length = try reader.readValue(u32);
             return this;
         }
 
@@ -1432,9 +1435,9 @@ pub const Api = struct {
             try writer.writeInt(this.id);
             try writer.writeInt(this.from_timestamp);
             try writer.writeEnum(this.loader);
-            try writer.writeValue(this.module_path);
+            try writer.writeArray(u8, this.module_path);
             try writer.writeValue(this.log);
-            try writer.writeArray(u8, this.bytes);
+            try writer.writeInt(this.blob_length);
         }
     };
 
@@ -1469,7 +1472,7 @@ pub const Api = struct {
             try writer.writeInt(this.id);
             try writer.writeInt(this.from_timestamp);
             try writer.writeEnum(this.loader);
-            try writer.writeValue(this.module_path);
+            try writer.writeArray(u8, this.module_path);
             try writer.writeValue(this.log);
         }
     };

@@ -290,8 +290,11 @@ struct WebsocketMessageBuildSuccess {
   alphanumeric module_path;
   
   Log log;
-  byte[] bytes;
+
+  // This is the length of the blob that immediately follows this message.
+  uint32 blob_length;
 }
+
 
 struct WebsocketMessageBuildFailure {
   uint32 id;

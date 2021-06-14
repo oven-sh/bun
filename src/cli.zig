@@ -23,10 +23,6 @@ const bundler = @import("bundler.zig");
 
 const fs = @import("fs.zig");
 
-pub fn constStrToU8(s: string) []u8 {
-    return @intToPtr([*]u8, @ptrToInt(s.ptr))[0..s.len];
-}
-
 const NodeModuleBundle = @import("./node_module_bundle.zig").NodeModuleBundle;
 
 pub const Cli = struct {

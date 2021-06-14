@@ -165,7 +165,12 @@ pub fn NewBundler(cache_files: bool) type {
             js_ast.Expr.Data.Store.reset();
             js_ast.Stmt.Data.Store.reset();
             var fs = try Fs.FileSystem.init1(allocator, opts.absolute_working_dir, opts.serve orelse false);
-            const bundle_options = try options.BundleOptions.fromApi(allocator, fs, log, opts);
+            const bundle_options = try options.BundleOptions.fromApi(
+                allocator,
+                fs,
+                log,
+                opts,
+            );
 
             // var pool = try allocator.create(ThreadPool);
             // try pool.init(ThreadPool.InitConfig{
@@ -842,6 +847,7 @@ pub fn NewBundler(cache_files: bool) type {
             writer: Writer,
             comptime import_path_format: options.BundleOptions.ImportPathFormat,
             file_descriptor: ?StoredFileDescriptorType,
+            filepath_hash: u32,
         ) !BuildResolveResultPair {
             if (resolve_result.is_external) {
                 return BuildResolveResultPair{
@@ -858,7 +864,7 @@ pub fn NewBundler(cache_files: bool) type {
             var old_bundler_allocator = bundler.allocator;
             bundler.allocator = allocator;
             defer bundler.allocator = old_bundler_allocator;
-            var result = bundler.parse(allocator, file_path, loader, resolve_result.dirname_fd, file_descriptor) orelse {
+            var result = bundler.parse(allocator, file_path, loader, resolve_result.dirname_fd, file_descriptor, filepath_hash) orelse {
                 bundler.resetStore();
                 return BuildResolveResultPair{
                     .written = 0,
@@ -900,7 +906,14 @@ pub fn NewBundler(cache_files: bool) type {
 
             switch (loader) {
                 .jsx, .tsx, .js, .ts, .json => {
-                    var result = bundler.parse(bundler.allocator, file_path, loader, resolve_result.dirname_fd, null) orelse {
+                    var result = bundler.parse(
+                        bundler.allocator,
+                        file_path,
+                        loader,
+                        resolve_result.dirname_fd,
+                        null,
+                        null,
+                    ) orelse {
                         return null;
                     };
 
@@ -1056,8 +1069,10 @@ pub fn NewBundler(cache_files: bool) type {
             allocator: *std.mem.Allocator,
             path: Fs.Path,
             loader: options.Loader,
+            // only used when file_descriptor is null
             dirname_fd: StoredFileDescriptorType,
             file_descriptor: ?StoredFileDescriptorType,
+            file_hash: ?u32,
         ) ?ParseResult {
             if (FeatureFlags.tracing) {
                 bundler.timer.start();
@@ -1088,10 +1103,11 @@ pub fn NewBundler(cache_files: bool) type {
                     var jsx = bundler.options.jsx;
                     jsx.parse = loader.isJSX();
                     var opts = js_parser.Parser.Options.init(jsx, loader);
-                    opts.enable_bundling = bundler.options.node_modules_bundle != null;
+                    opts.enable_bundling = false;
                     opts.transform_require_to_import = true;
                     opts.can_import_from_bundle = bundler.options.node_modules_bundle != null;
                     opts.features.hot_module_reloading = bundler.options.hot_module_reloading;
+                    opts.filepath_hash_for_hmr = file_hash orelse 0;
                     const value = (bundler.resolver.caches.js.parse(allocator, opts, bundler.options.define, bundler.log, &source) catch null) orelse return null;
                     return ParseResult{
                         .ast = value,
@@ -1555,7 +1571,7 @@ pub const Transformer = struct {
         js_ast.Expr.Data.Store.create(allocator);
         js_ast.Stmt.Data.Store.create(allocator);
 
-        var define = try options.definesFromTransformOptions(allocator, log, opts.define);
+        var define = try options.definesFromTransformOptions(allocator, log, opts.define, false);
 
         const cwd = if (opts.absolute_working_dir) |workdir| try std.fs.realpathAlloc(allocator, workdir) else try std.process.getCwdAlloc(allocator);
 

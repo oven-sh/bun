@@ -314,7 +314,7 @@ type uint32 = number;
     loader: Loader;
     module_path: alphanumeric;
     log: Log;
-    bytes: Uint8Array;
+    blob_length: uint32;
   }
 
   export interface WebsocketMessageBuildFailure {

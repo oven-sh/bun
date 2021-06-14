@@ -23,6 +23,11 @@ pub const MutableString = struct {
         try self.list.ensureUnusedCapacity(self.allocator, amount);
     }
 
+    pub fn write(self: *MutableString, bytes: anytype) !usize {
+        try self.list.appendSlice(self.allocator, bytes);
+        return bytes.len;
+    }
+
     pub fn writeAll(self: *MutableString, bytes: string) !usize {
         try self.list.appendSlice(self.allocator, bytes);
         return self.list.items.len;

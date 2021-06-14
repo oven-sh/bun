@@ -1,4 +1,5 @@
 const std = @import("std");
+const Api = @import("./api/schema.zig").Api;
 
 usingnamespace @import("global.zig");
 
@@ -23,6 +24,16 @@ pub const Kind = enum {
             .note => "note",
             .debug => "debug",
             .verbose => "verbose",
+        };
+    }
+
+    pub fn toAPI(kind: Kind) Api.MessageKind {
+        return switch (kind) {
+            .err => err,
+            .warn => warn,
+            .note => note,
+            .debug => debug,
+            .verbose => verbose,
         };
     }
 };
@@ -155,6 +166,32 @@ pub const Msg = struct {
     data: Data,
     notes: ?[]Data = null,
 
+    pub fn toAPI(this: *const Msg, allocator: *std.mem.Allocator) Api.Message {
+        var msg = Api.Message{
+            .kind = this.kind.toAPI(),
+            .data = this.data.toAPI(),
+        };
+
+        if (this.notes) |notes| {
+            if (notes.len > 0) {
+                msg.notes = try allocator.alloc(Api.MessageData, notes.len);
+                for (notes) |note, i| {
+                    msg.notes[i] = note.toAPI();
+                }
+            }
+        }
+
+        return msg;
+    }
+    pub fn toAPIFromList(comptime ListType: type, list: ListType, allocator: *std.mem.Allocator) ![]Api.Message {
+        var out_list = try allocator.alloc(Api.Msg, list.items.len);
+        for (list.items) |item, i| {
+            out_list[i] = try item.toAPI(allocator);
+        }
+
+        return out_list;
+    }
+
     pub fn deinit(msg: *Msg, allocator: *std.mem.Allocator) void {
         msg.data.deinit(allocator);
         if (msg.notes) |notes| {
@@ -230,6 +267,14 @@ pub const Log = struct {
     errors: usize = 0,
     msgs: ArrayList(Msg),
     level: Level = Level.debug,
+
+    pub fn toAPI(this: *const Log, allocator: *std.mem.Allocator) !Api.Log {
+        return Api.Log{
+            .warnings = this.warnings,
+            .errors = this.errors,
+            .msgs = try Msg.toAPIFromList(@TypeOf(this.msgs), this.msgs, allocator),
+        };
+    }
 
     pub const Level = enum {
         verbose,

@@ -96,14 +96,19 @@ pub fn NewLinker(comptime BundlerType: type) type {
                     for (result.ast.import_records) |*import_record, _record_index| {
                         const record_index = @truncate(u32, _record_index);
                         if (strings.eqlComptime(import_record.path.text, Runtime.Imports.Name)) {
-                            import_record.path = try linker.generateImportPath(
-                                source_dir,
-                                linker.runtime_source_path,
-                                Runtime.version(),
-                                import_path_format,
-                            );
-                            result.ast.runtime_import_record_id = record_index;
-                            result.ast.needs_runtime = true;
+                            // runtime is included in the bundle, so we don't need to dynamically import it
+                            if (linker.options.node_modules_bundle) |node_modules_bundle| {
+                                import_record.path.text = node_modules_bundle.bundle.import_from_name;
+                            } else {
+                                import_record.path = try linker.generateImportPath(
+                                    source_dir,
+                                    linker.runtime_source_path,
+                                    Runtime.version(),
+                                    import_path_format,
+                                );
+                                result.ast.runtime_import_record_id = record_index;
+                                result.ast.needs_runtime = true;
+                            }
                             continue;
                         }
 

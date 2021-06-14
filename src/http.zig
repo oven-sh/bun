@@ -2,8 +2,19 @@
 const std = @import("std");
 usingnamespace @import("global.zig");
 const Api = @import("./api/schema.zig").Api;
+const ApiReader = @import("./api/schema.zig").Reader;
+const ApiWriter = @import("./api/schema.zig").Writer;
+const ByteApiWriter = @import("./api/schema.zig").ByteWriter;
+const NewApiWriter = @import("./api/schema.zig").Writer;
+const js_ast = @import("./js_ast.zig");
 const bundler = @import("bundler.zig");
 const logger = @import("logger.zig");
+const Fs = @import("./fs.zig");
+pub fn constStrToU8(s: string) []u8 {
+    return @intToPtr([*]u8, @ptrToInt(s.ptr))[0..s.len];
+}
+
+pub const MutableStringAPIWriter = NewApiWriter(*MutableString);
 
 const tcp = std.x.net.tcp;
 const ip = std.x.net.ip;
@@ -26,6 +37,7 @@ const SOCKET_FLAGS = os.SOCK_CLOEXEC;
 const watcher = @import("./watcher.zig");
 threadlocal var req_headers_buf: [100]picohttp.Header = undefined;
 threadlocal var res_headers_buf: [100]picohttp.Header = undefined;
+const sync = @import("./sync.zig");
 
 const Watcher = watcher.NewWatcher(*Server);
 
@@ -172,6 +184,7 @@ pub const RequestContext = struct {
     mime_type: MimeType = MimeType.other,
     controlled: bool = false,
     watcher: *Watcher,
+    timer: std.time.Timer,
 
     res_headers_count: usize = 0,
 
@@ -278,6 +291,7 @@ pub const RequestContext = struct {
         conn: *tcp.Connection,
         bundler_: *Bundler,
         watcher_: *Watcher,
+        timer: std.time.Timer,
     ) !RequestContext {
         var ctx = RequestContext{
             .request = req,
@@ -289,6 +303,7 @@ pub const RequestContext = struct {
             .allocator = undefined,
             .method = Method.which(req.method) orelse return error.InvalidMethod,
             .watcher = watcher_,
+            .timer = timer,
         };
 
         return ctx;
@@ -386,12 +401,203 @@ pub const RequestContext = struct {
         );
     }
 
+    pub const WatchBuilder = struct {
+        watcher: *Watcher,
+        bundler: *Bundler,
+        allocator: *std.mem.Allocator,
+        printer: js_printer.BufferPrinter,
+        timer: std.time.Timer,
+
+        pub const WatchBuildResult = struct {
+            value: Value,
+            id: u32,
+            timestamp: u32,
+            bytes: []const u8 = "",
+            pub const Value = union(Tag) {
+                success: Api.WebsocketMessageBuildSuccess,
+                fail: Api.WebsocketMessageBuildFailure,
+            };
+            pub const Tag = enum {
+                success,
+                fail,
+            };
+        };
+        pub fn build(this: *WatchBuilder, id: u32, from_timestamp: u32) !WatchBuildResult {
+            var log = logger.Log.init(this.allocator);
+            errdefer log.deinit();
+
+            const index = std.mem.indexOfScalar(u32, this.watcher.watchlist.items(.hash), id) orelse {
+
+                // log.addErrorFmt(null, logger.Loc.Empty, this, "File missing from watchlist: {d}. Please refresh :(", .{hash}) catch unreachable;
+                return WatchBuildResult{
+                    .value = .{ .fail = std.mem.zeroes(Api.WebsocketMessageBuildFailure) },
+                    .id = id,
+                    .timestamp = WebsocketHandler.toTimestamp(this.timer.read()),
+                };
+            };
+
+            const file_path_str = this.watcher.watchlist.items(.file_path)[index];
+            const fd = this.watcher.watchlist.items(.fd)[index];
+            const loader = this.watcher.watchlist.items(.loader)[index];
+
+            switch (loader) {
+                .json, .ts, .tsx, .js, .jsx => {
+                    // Since we already have:
+                    // - The file descriptor
+                    // - The path
+                    // - The loader
+                    // We can skip resolving. We will need special handling for renaming where basically we:
+                    // - Update the watch item.
+                    // - Clear directory cache
+                    const path = Fs.Path.init(file_path_str);
+                    var old_log = this.bundler.log;
+                    defer this.bundler.log = old_log;
+                    this.bundler.log = &log;
+                    this.bundler.resetStore();
+                    var parse_result = this.bundler.parse(
+                        this.bundler.allocator,
+                        path,
+                        loader,
+                        0,
+                        fd,
+                        id,
+                    ) orelse {
+                        return WatchBuildResult{
+                            .value = .{ .fail = std.mem.zeroes(Api.WebsocketMessageBuildFailure) },
+                            .id = id,
+                            .timestamp = WebsocketHandler.toTimestamp(this.timer.read()),
+                        };
+                    };
+
+                    this.printer.ctx.reset();
+
+                    var written = this.bundler.print(parse_result, @TypeOf(this.printer), this.printer) catch |err| {
+                        return WatchBuildResult{
+                            .value = .{ .fail = std.mem.zeroes(Api.WebsocketMessageBuildFailure) },
+                            .id = id,
+                            .timestamp = WebsocketHandler.toTimestamp(this.timer.read()),
+                        };
+                    };
+
+                    return WatchBuildResult{
+                        .value = .{
+                            .success = .{
+                                .id = id,
+                                .from_timestamp = from_timestamp,
+                                .loader = parse_result.loader.toAPI(),
+                                .module_path = file_path_str,
+                                .blob_length = @truncate(u32, written),
+                                .log = std.mem.zeroes(Api.Log),
+                            },
+                        },
+                        .id = id,
+                        .bytes = this.printer.ctx.written,
+                        .timestamp = WebsocketHandler.toTimestamp(this.timer.read()),
+                    };
+                },
+                else => {
+                    return WatchBuildResult{
+                        .value = .{ .fail = std.mem.zeroes(Api.WebsocketMessageBuildFailure) },
+                        .id = id,
+                        .timestamp = WebsocketHandler.toTimestamp(this.timer.read()),
+                    };
+                },
+            }
+        }
+    };
+
     pub const WebsocketHandler = struct {
         accept_key: [28]u8 = undefined,
         ctx: RequestContext,
+        websocket: Websocket.Websocket,
+        conn: tcp.Connection,
+        tombstone: bool = false,
+        builder: WatchBuilder,
+        message_buffer: MutableString,
+        pub var open_websockets: std.ArrayList(*WebsocketHandler) = undefined;
+        var open_websockets_lock = sync.RwLock.init();
+        pub fn addWebsocket(ctx: *RequestContext) !*WebsocketHandler {
+            open_websockets_lock.lock();
+            defer open_websockets_lock.unlock();
+            var clone = try ctx.allocator.create(WebsocketHandler);
+            clone.ctx = ctx.*;
+            clone.conn = ctx.conn.*;
+            clone.message_buffer = try MutableString.init(ctx.allocator, 0);
+            clone.ctx.conn = &clone.conn;
+            var printer_writer = try js_printer.BufferWriter.init(ctx.allocator);
 
-        pub fn handle(self: WebsocketHandler) void {
-            var this = self;
+            clone.builder = WatchBuilder{
+                .allocator = ctx.allocator,
+                .bundler = ctx.bundler,
+                .printer = js_printer.BufferPrinter.init(printer_writer),
+                .timer = ctx.timer,
+                .watcher = ctx.watcher,
+            };
+
+            clone.websocket = Websocket.Websocket.create(ctx, SOCKET_FLAGS);
+            clone.tombstone = false;
+            try open_websockets.append(clone);
+            return clone;
+        }
+        pub var to_close_buf: [100]*WebsocketHandler = undefined;
+        pub var to_close: []*WebsocketHandler = &[_]*WebsocketHandler{};
+
+        pub fn generateTimestamp(handler: *WebsocketHandler) u32 {
+            return @truncate(u32, handler.ctx.timer.read() / std.time.ns_per_ms);
+        }
+
+        pub fn toTimestamp(timestamp: u64) u32 {
+            return @truncate(u32, timestamp / std.time.ns_per_ms);
+        }
+
+        pub fn broadcast(message: []const u8) !void {
+            {
+                open_websockets_lock.lockShared();
+                defer open_websockets_lock.unlockShared();
+                var markForClosing = false;
+                for (open_websockets.items) |item| {
+                    var socket: *WebsocketHandler = item;
+                    const written = socket.websocket.writeBinary(message) catch |err| brk: {
+                        Output.prettyError("<r>WebSocket error: <b>{d}", .{@errorName(err)});
+                        markForClosing = true;
+                        break :brk 0;
+                    };
+
+                    if (written < message.len) {
+                        markForClosing = true;
+                    }
+
+                    if (markForClosing) {
+                        to_close_buf[to_close.len] = item;
+                        to_close = to_close_buf[0 .. to_close.len + 1];
+                    }
+                }
+            }
+
+            if (to_close.len > 0) {
+                open_websockets_lock.lock();
+                defer open_websockets_lock.unlock();
+                for (to_close) |item| {
+                    WebsocketHandler.removeBulkWebsocket(item);
+                }
+                to_close = &[_]*WebsocketHandler{};
+            }
+        }
+
+        pub fn removeWebsocket(socket: *WebsocketHandler) void {
+            open_websockets_lock.lock();
+            defer open_websockets_lock.unlock();
+            removeBulkWebsocket(socket);
+        }
+
+        pub fn removeBulkWebsocket(socket: *WebsocketHandler) void {
+            if (std.mem.indexOfScalar(*WebsocketHandler, open_websockets.items, socket)) |id| {
+                socket.tombstone = true;
+                _ = open_websockets.swapRemove(id);
+            }
+        }
+
+        pub fn handle(self: *WebsocketHandler) void {
             var stdout = std.io.getStdOut();
             // var stdout = std.io.bufferedWriter(stdout_file.writer());
             var stderr = std.io.getStdErr();
@@ -401,12 +607,16 @@ pub const RequestContext = struct {
             // defer stderr.flush() catch {};
             Output.Source.set(&output_source);
             Output.enable_ansi_colors = stderr.isTty();
-
-            _handle(&this) catch {};
+            js_ast.Stmt.Data.Store.create(self.ctx.allocator);
+            js_ast.Expr.Data.Store.create(self.ctx.allocator);
+            _handle(self) catch {};
         }
 
         fn _handle(handler: *WebsocketHandler) !void {
             var ctx = &handler.ctx;
+            defer handler.message_buffer.deinit();
+            defer handler.tombstone = true;
+            defer removeWebsocket(handler);
             defer ctx.arena.deinit();
             defer ctx.conn.deinit();
             defer Output.flush();
@@ -441,21 +651,45 @@ pub const RequestContext = struct {
             ctx.appendHeader("Connection", "Upgrade");
             ctx.appendHeader("Upgrade", "websocket");
             ctx.appendHeader("Sec-WebSocket-Accept", key);
+            ctx.appendHeader("Sec-WebSocket-Protocol", "speedy-hmr");
             try ctx.writeStatus(101);
             try ctx.flushHeaders();
             Output.println("101 - Websocket connected.", .{});
             Output.flush();
 
-            var websocket = Websocket.Websocket.create(ctx, SOCKET_FLAGS);
-            _ = try websocket.writeText("Hello!");
+            var cmd: Api.WebsocketCommand = undefined;
+            var msg: Api.WebsocketMessage = .{
+                .timestamp = handler.generateTimestamp(),
+                .kind = .welcome,
+            };
+            var cmd_reader: ApiReader = undefined;
+            var byte_buf: [32]u8 = undefined;
+            var fbs = std.io.fixedBufferStream(&byte_buf);
+            var writer = ByteApiWriter.init(&fbs);
 
-            while (true) {
+            try msg.encode(&writer);
+            const welcome_message = Api.WebsocketMessageWelcome{
+                .epoch = WebsocketHandler.toTimestamp(handler.ctx.timer.start_time),
+            };
+            try welcome_message.encode(&writer);
+            if ((try handler.websocket.writeBinary(fbs.getWritten())) == 0) {
+                handler.tombstone = true;
+                Output.prettyErrorln("<r><red>ERR:<r> <b>Websocket failed to write.<r>", .{});
+            }
+
+            while (!handler.tombstone) {
                 defer Output.flush();
-                var frame = websocket.read() catch |err| {
+                handler.conn.client.getError() catch |err| {
+                    Output.prettyErrorln("<r><red>ERR:<r> <b>{s}<r>", .{err});
+                    handler.tombstone = true;
+                };
+
+                var frame = handler.websocket.read() catch |err| {
                     switch (err) {
                         error.ConnectionClosed => {
                             Output.prettyln("Websocket closed.", .{});
-                            return;
+                            handler.tombstone = true;
+                            continue;
                         },
                         else => {
                             Output.prettyErrorln("<r><red>ERR:<r> <b>{s}<r>", .{err});
@@ -469,12 +703,74 @@ pub const RequestContext = struct {
                         return;
                     },
                     .Text => {
-                        _ = try websocket.writeText(frame.data);
+                        _ = try handler.websocket.writeText(frame.data);
+                    },
+                    .Binary => {
+                        var cnst_frame = constStrToU8(frame.data);
+                        cmd_reader = ApiReader.init(cnst_frame, ctx.allocator);
+                        cmd = try Api.WebsocketCommand.decode(&cmd_reader);
+                        switch (cmd.kind) {
+                            .build => {
+                                var request = try Api.WebsocketCommandBuild.decode(&cmd_reader);
+                                var build_result = try handler.builder.build(request.id, cmd.timestamp);
+                                const file_path = switch (build_result.value) {
+                                    .fail => |fail| fail.module_path,
+                                    .success => |fail| fail.module_path,
+                                };
+
+                                Output.prettyln(
+                                    "<r>[{s}] Built <b>{s}<r><b>{d}ms",
+                                    .{
+                                        @tagName(std.meta.activeTag(build_result.value)),
+                                        file_path,
+                                        build_result.timestamp - cmd.timestamp,
+                                    },
+                                );
+
+                                defer Output.flush();
+                                msg.timestamp = build_result.timestamp;
+                                msg.kind = switch (build_result.value) {
+                                    .success => .build_success,
+                                    else => .build_fail,
+                                };
+                                handler.message_buffer.reset();
+                                var buffer_writer = MutableStringAPIWriter.init(&handler.message_buffer);
+                                try msg.encode(&buffer_writer);
+                                var head = Websocket.WebsocketHeader{
+                                    .final = true,
+                                    .opcode = .Binary,
+                                    .mask = false,
+                                    .len = 0,
+                                };
+
+                                switch (build_result.value) {
+                                    .success => |success| {
+                                        try success.encode(&buffer_writer);
+                                        const total = handler.message_buffer.list.items.len + build_result.bytes.len;
+                                        head.len = Websocket.WebsocketHeader.packLength(total);
+                                        try handler.websocket.writeHeader(head, total);
+                                        _ = try handler.conn.client.write(handler.message_buffer.list.items, SOCKET_FLAGS);
+                                        if (build_result.bytes.len > 0) {
+                                            _ = try handler.conn.client.write(build_result.bytes, SOCKET_FLAGS);
+                                        }
+                                    },
+                                    .fail => |fail| {
+                                        try fail.encode(&buffer_writer);
+                                        head.len = Websocket.WebsocketHeader.packLength(handler.message_buffer.list.items.len);
+                                        try handler.websocket.writeHeader(head, handler.message_buffer.list.items.len);
+                                        _ = try handler.conn.client.write(handler.message_buffer.list.items, SOCKET_FLAGS);
+                                    },
+                                }
+                            },
+                            else => {
+                                Output.prettyErrorln("<r>[Websocket]: Unknown cmd: <b>{d}<r>. This might be a version mismatch. Try updating your node_modules.jsb", .{@enumToInt(cmd.kind)});
+                            },
+                        }
                     },
                     .Ping => {
                         var pong = frame;
                         pong.header.opcode = .Pong;
-                        _ = try websocket.writeDataFrame(pong);
+                        _ = try handler.websocket.writeDataFrame(pong);
                     },
                     else => {
                         Output.prettyErrorln("Websocket unknown opcode: {s}", .{@tagName(frame.header.opcode)});
@@ -536,7 +832,7 @@ pub const RequestContext = struct {
 
     pub fn handleWebsocket(ctx: *RequestContext) anyerror!void {
         ctx.controlled = true;
-        var handler = WebsocketHandler{ .ctx = ctx.* };
+        var handler = try WebsocketHandler.addWebsocket(ctx);
         _ = try std.Thread.spawn(WebsocketHandler.handle, handler);
     }
 
@@ -679,9 +975,16 @@ pub const RequestContext = struct {
                     chunked_encoder,
                     .absolute_url,
                     input_fd,
+                    hash,
                 );
                 if (written.input_fd) |written_fd| {
-                    try ctx.watcher.addFile(written_fd, result.file.input.text, hash, true);
+                    try ctx.watcher.addFile(
+                        written_fd,
+                        result.file.input.text,
+                        hash,
+                        loader,
+                        true,
+                    );
                     if (ctx.watcher.watchloop_handle == null) {
                         try ctx.watcher.start();
                     }
@@ -693,7 +996,13 @@ pub const RequestContext = struct {
             .copy, .move => |file| {
                 // defer std.os.close(file.fd);
                 defer {
-                    if (ctx.watcher.addFile(file.fd, result.file.input.text, Watcher.getHash(result.file.input.text), true)) {
+                    if (ctx.watcher.addFile(
+                        file.fd,
+                        result.file.input.text,
+                        Watcher.getHash(result.file.input.text),
+                        result.file.loader,
+                        true,
+                    )) {
                         if (ctx.watcher.watchloop_handle == null) {
                             ctx.watcher.start() catch |err| {
                                 Output.prettyErrorln("Failed to start watcher: {s}", .{@errorName(err)});
@@ -809,6 +1118,32 @@ pub const RequestContext = struct {
     }
 };
 
+// // u32 == File ID from Watcher
+// pub const WatcherBuildChannel = sync.Channel(u32, .Dynamic);
+// pub const WatcherBuildQueue = struct {
+//     channel: WatcherBuildChannel,
+//     bundler: *Bundler,
+//     watcher: *Watcher,
+//     allocator: *std.mem.Allocator,
+
+//     pub fn start(queue: *@This()) void {
+//         var stdout = std.io.getStdOut();
+//         var stderr = std.io.getStdErr();
+//         var output_source = Output.Source.init(stdout, stderr);
+
+//         Output.Source.set(&output_source);
+//         Output.enable_ansi_colors = stderr.isTty();
+//         defer Output.flush();
+//         queue.loop();
+//     }
+
+//     pub fn loop(queue: *@This()) !void {
+//         while (true) {
+
+//         }
+//     }
+// };
+
 // This is a tiny HTTP server.
 // It needs to support:
 // - Static files
@@ -826,6 +1161,7 @@ pub const Server = struct {
     allocator: *std.mem.Allocator,
     bundler: Bundler,
     watcher: *Watcher,
+    timer: std.time.Timer = undefined,
 
     pub fn adjustUlimit() !void {
         var limit = try std.os.getrlimit(.NOFILE);
@@ -845,10 +1181,38 @@ pub const Server = struct {
         server.handleConnection(&conn);
     }
 
+    threadlocal var filechange_buf: [32]u8 = undefined;
+
     pub fn onFileUpdate(ctx: *Server, events: []watcher.WatchEvent, watchlist: watcher.Watchlist) void {
+        var fbs = std.io.fixedBufferStream(&filechange_buf);
+        var writer = ByteApiWriter.init(&fbs);
+        const message_type = Api.WebsocketMessage{
+            .timestamp = RequestContext.WebsocketHandler.toTimestamp(ctx.timer.read()),
+            .kind = .file_change_notification,
+        };
+        message_type.encode(&writer) catch unreachable;
+        var header = fbs.getWritten();
+
         for (events) |event| {
-            const item = watchlist.items(.file_path)[event.index];
-            Output.prettyln("File changed: \"<b>{s}<r>\"", .{item});
+            const file_path = watchlist.items(.file_path)[event.index];
+            // so it's consistent with the rest
+            // if we use .extname we might run into an issue with whether or not the "." is included.
+            const path = Fs.PathName.init(file_path);
+            const id = watchlist.items(.hash)[event.index];
+            var content_fbs = std.io.fixedBufferStream(filechange_buf[header.len..]);
+            const change_message = Api.WebsocketMessageFileChangeNotification{
+                .id = id,
+                .loader = (ctx.bundler.options.loaders.get(path.ext) orelse .file).toAPI(),
+            };
+            var content_writer = ByteApiWriter.init(&content_fbs);
+            change_message.encode(&content_writer) catch unreachable;
+            const change_buf = content_fbs.getWritten();
+            const written_buf = filechange_buf[0 .. header.len + change_buf.len];
+            defer Output.flush();
+            RequestContext.WebsocketHandler.broadcast(written_buf) catch |err| {
+                Output.prettyln("Error writing change notification: {s}", .{@errorName(err)});
+            };
+            Output.prettyln("Detected file change: {s}", .{file_path});
         }
     }
 
@@ -856,6 +1220,9 @@ pub const Server = struct {
         adjustUlimit() catch {};
         const listener = try tcp.Listener.init(.ip, .{ .close_on_exec = true });
         defer listener.deinit();
+        RequestContext.WebsocketHandler.open_websockets = @TypeOf(
+            RequestContext.WebsocketHandler.open_websockets,
+        ).init(server.allocator);
 
         listener.setReuseAddress(true) catch {};
         listener.setReusePort(true) catch {};
@@ -927,6 +1294,7 @@ pub const Server = struct {
             conn,
             &server.bundler,
             server.watcher,
+            server.timer,
         ) catch |err| {
             Output.printErrorln("<r>[<red>{s}<r>] - <b>{s}<r>: {s}", .{ @errorName(err), req.method, req.path });
             conn.client.deinit();
@@ -984,6 +1352,7 @@ pub const Server = struct {
             .log = log,
             .bundler = undefined,
             .watcher = undefined,
+            .timer = try std.time.Timer.start(),
         };
         server.bundler = try Bundler.init(allocator, &server.log, options);
         server.bundler.configureLinker();

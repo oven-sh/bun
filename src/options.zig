@@ -340,6 +340,18 @@ pub const Loader = enum {
     file,
     json,
 
+    pub fn toAPI(loader: Loader) Api.Loader {
+        return switch (loader) {
+            .jsx => .jsx,
+            .js => .js,
+            .ts => .ts,
+            .tsx => .tsx,
+            .css => .css,
+            .json => .json,
+            else => .file,
+        };
+    }
+
     pub fn isJSX(loader: Loader) bool {
         return loader == .jsx or loader == .tsx;
     }
@@ -472,6 +484,14 @@ pub const Timings = struct {
 };
 
 pub const DefaultUserDefines = struct {
+    pub const HotModuleReloading = struct {
+        pub const Key = "process.env.SPEEDY_HMR_ENABLED";
+        pub const Value = "true";
+    };
+    pub const HotModuleReloadingVerbose = struct {
+        pub const Key = "process.env.SPEEDY_HMR_VERBOSE";
+        pub const Value = "true";
+    };
     // This must be globally scoped so it doesn't disappear
     pub const NodeEnv = struct {
         pub const Key = "process.env.NODE_ENV";
@@ -479,7 +499,7 @@ pub const DefaultUserDefines = struct {
     };
 };
 
-pub fn definesFromTransformOptions(allocator: *std.mem.Allocator, log: *logger.Log, _input_define: ?Api.StringMap) !*defines.Define {
+pub fn definesFromTransformOptions(allocator: *std.mem.Allocator, log: *logger.Log, _input_define: ?Api.StringMap, hmr: bool) !*defines.Define {
     var input_user_define = _input_define orelse std.mem.zeroes(Api.StringMap);
 
     var user_defines = try stringHashMapFromArrays(
@@ -490,6 +510,10 @@ pub fn definesFromTransformOptions(allocator: *std.mem.Allocator, log: *logger.L
     );
     if (input_user_define.keys.len == 0) {
         try user_defines.put(DefaultUserDefines.NodeEnv.Key, DefaultUserDefines.NodeEnv.Value);
+    }
+
+    if (hmr) {
+        try user_defines.put(DefaultUserDefines.HotModuleReloading.Key, DefaultUserDefines.HotModuleReloading.Value);
     }
 
     var resolved_defines = try defines.DefineData.from_input(user_defines, log, allocator);
@@ -595,7 +619,7 @@ pub const BundleOptions = struct {
         var opts: BundleOptions = BundleOptions{
             .log = log,
             .resolve_mode = transform.resolve orelse .dev,
-            .define = try definesFromTransformOptions(allocator, log, transform.define),
+            .define = try definesFromTransformOptions(allocator, log, transform.define, transform.serve orelse false),
             .loaders = try loadersFromTransformOptions(allocator, transform.loaders),
             .output_dir = try fs.absAlloc(allocator, &output_dir_parts),
             .platform = Platform.from(transform.platform),

@@ -195,6 +195,10 @@ pub const Flags = struct {
         // Only applicable to function statements.
         is_export: bool = false,
 
+        // Used for Hot Module Reloading's wrapper function
+        // "iife" stands for "immediately invoked function expression"
+        print_as_iife: bool = false,
+
         const None = Flags.Function{};
     };
 };
@@ -3530,7 +3534,7 @@ pub const Ast = struct {
     export_star_import_records: []u32 = &([_]u32{}),
 
     pub const NamedImports = std.ArrayHashMap(Ref, NamedImport, RefHashCtx, true);
-    pub const NamedExports = StringHashMap(NamedExport);
+    pub const NamedExports = std.StringArrayHashMap(NamedExport);
 
     pub fn initTest(parts: []Part) Ast {
         return Ast{

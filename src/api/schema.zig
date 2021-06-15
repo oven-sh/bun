@@ -206,16 +206,11 @@ pub fn Writer(comptime WritableStream: type) type {
 
         pub fn writeValue(this: *Self, slice: anytype) !void {
             switch (@TypeOf(slice)) {
-                []u8, []const u8 => {
-                    try this.writeArray(u8, slice);
-                },
-
                 []u16,
                 []u32,
                 []i16,
                 []i32,
                 []i8,
-
                 []const u16,
                 []const u32,
                 []const i16,
@@ -223,6 +218,10 @@ pub fn Writer(comptime WritableStream: type) type {
                 []const i8,
                 => {
                     try this.writeArray(@TypeOf(slice), slice);
+                },
+
+                []u8, []const u8 => {
+                    try this.writeArray(u8, slice);
                 },
 
                 u8 => {
@@ -1413,9 +1412,6 @@ pub const Api = struct {
         /// module_path
         module_path: []const u8,
 
-        /// log
-        log: Log,
-
         /// blob_length
         blob_length: u32 = 0,
 
@@ -1426,7 +1422,6 @@ pub const Api = struct {
             this.from_timestamp = try reader.readValue(u32);
             this.loader = try reader.readValue(Loader);
             this.module_path = try reader.readValue([]const u8);
-            this.log = try reader.readValue(Log);
             this.blob_length = try reader.readValue(u32);
             return this;
         }
@@ -1435,8 +1430,7 @@ pub const Api = struct {
             try writer.writeInt(this.id);
             try writer.writeInt(this.from_timestamp);
             try writer.writeEnum(this.loader);
-            try writer.writeArray(u8, this.module_path);
-            try writer.writeValue(this.log);
+            try writer.writeValue(this.module_path);
             try writer.writeInt(this.blob_length);
         }
     };
@@ -1472,7 +1466,7 @@ pub const Api = struct {
             try writer.writeInt(this.id);
             try writer.writeInt(this.from_timestamp);
             try writer.writeEnum(this.loader);
-            try writer.writeArray(u8, this.module_path);
+            try writer.writeValue(this.module_path);
             try writer.writeValue(this.log);
         }
     };

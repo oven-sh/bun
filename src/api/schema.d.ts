@@ -312,8 +312,7 @@ type uint32 = number;
     id: uint32;
     from_timestamp: uint32;
     loader: Loader;
-    module_path: alphanumeric;
-    log: Log;
+    module_path: string;
     blob_length: uint32;
   }
 
@@ -321,7 +320,7 @@ type uint32 = number;
     id: uint32;
     from_timestamp: uint32;
     loader: Loader;
-    module_path: alphanumeric;
+    module_path: string;
     log: Log;
   }
 

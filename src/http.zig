@@ -413,6 +413,7 @@ pub const RequestContext = struct {
             id: u32,
             timestamp: u32,
             bytes: []const u8 = "",
+            approximate_newline_count: usize = 0,
             pub const Value = union(Tag) {
                 success: Api.WebsocketMessageBuildSuccess,
                 fail: Api.WebsocketMessageBuildFailure,
@@ -471,7 +472,16 @@ pub const RequestContext = struct {
 
                     this.printer.ctx.reset();
 
-                    var written = this.bundler.print(parse_result, @TypeOf(this.printer), this.printer) catch |err| {
+                    var old_linker_allocator = this.bundler.linker.allocator;
+                    defer this.bundler.linker.allocator = old_linker_allocator;
+                    this.bundler.linker.allocator = this.allocator;
+                    try this.bundler.linker.link(
+                        Fs.Path.init(file_path_str),
+                        &parse_result,
+                        .absolute_url,
+                    );
+
+                    var written = this.bundler.print(parse_result, @TypeOf(&this.printer), &this.printer) catch |err| {
                         return WatchBuildResult{
                             .value = .{ .fail = std.mem.zeroes(Api.WebsocketMessageBuildFailure) },
                             .id = id,
@@ -485,13 +495,14 @@ pub const RequestContext = struct {
                                 .id = id,
                                 .from_timestamp = from_timestamp,
                                 .loader = parse_result.loader.toAPI(),
-                                .module_path = file_path_str,
+                                .module_path = this.bundler.fs.relativeTo(file_path_str),
                                 .blob_length = @truncate(u32, written),
-                                .log = std.mem.zeroes(Api.Log),
+                                // .log = std.mem.zeroes(Api.Log),
                             },
                         },
                         .id = id,
                         .bytes = this.printer.ctx.written,
+                        .approximate_newline_count = parse_result.ast.approximate_newline_count,
                         .timestamp = WebsocketHandler.toTimestamp(this.timer.read()),
                     };
                 },
@@ -614,7 +625,6 @@ pub const RequestContext = struct {
 
         fn _handle(handler: *WebsocketHandler) !void {
             var ctx = &handler.ctx;
-            defer handler.message_buffer.deinit();
             defer handler.tombstone = true;
             defer removeWebsocket(handler);
             defer ctx.arena.deinit();
@@ -718,14 +728,26 @@ pub const RequestContext = struct {
                                     .success => |fail| fail.module_path,
                                 };
 
-                                Output.prettyln(
-                                    "<r>[{s}] Built <b>{s}<r><b>{d}ms",
-                                    .{
-                                        @tagName(std.meta.activeTag(build_result.value)),
-                                        file_path,
-                                        build_result.timestamp - cmd.timestamp,
+                                switch (build_result.value) {
+                                    .fail => {
+                                        Output.errorLn(
+                                            "Error: <b>{s}<r><b>",
+                                            .{
+                                                file_path,
+                                            },
+                                        );
                                     },
-                                );
+                                    .success => {
+                                        Output.prettyln(
+                                            "<r><b><green>{d}ms<r> <d>built<r> <b>{s}<r><b> <r><d>({d}+ LOC)",
+                                            .{
+                                                build_result.timestamp - cmd.timestamp,
+                                                file_path,
+                                                build_result.approximate_newline_count,
+                                            },
+                                        );
+                                    },
+                                }
 
                                 defer Output.flush();
                                 msg.timestamp = build_result.timestamp;
@@ -1212,7 +1234,7 @@ pub const Server = struct {
             RequestContext.WebsocketHandler.broadcast(written_buf) catch |err| {
                 Output.prettyln("Error writing change notification: {s}", .{@errorName(err)});
             };
-            Output.prettyln("Detected file change: {s}", .{file_path});
+            Output.prettyln("<r><d>Detected file change: {s}", .{ctx.bundler.fs.relativeTo(file_path)});
         }
     }
 

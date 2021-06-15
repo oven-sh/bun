@@ -1,3 +1,5 @@
+usingnamespace @import("string_types.zig");
+
 const std = @import("std");
 const expectString = std.testing.expectEqualStrings;
 const expect = std.testing.expect;
@@ -201,8 +203,6 @@ pub const StrictModeReservedWords = std.ComptimeStringMap(bool, .{
     .{ "yield", true },
 });
 
-pub const CodePoint = i32;
-
 pub const PropertyModifierKeyword = enum {
     p_abstract,
     p_async,
@@ -240,7 +240,7 @@ pub const TypeScriptAccessibilityModifier = std.ComptimeStringMap(u1, .{
 
 pub const TokenEnumType = std.EnumArray(T, []u8);
 
-pub const tokenToString = comptime {
+pub const tokenToString = {
     var TEndOfFile = "end of file".*;
     var TSyntaxError = "syntax error".*;
     var THashbang = "hashbang comment".*;

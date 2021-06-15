@@ -2,6 +2,7 @@ const std = @import("std");
 const expect = std.testing.expect;
 
 usingnamespace @import("string_types.zig");
+const strings = @import("string_immutable.zig");
 const js_lexer = @import("js_lexer.zig");
 
 pub const MutableString = struct {
@@ -90,7 +91,7 @@ pub const MutableString = struct {
                 } else if (!needs_gap) {
                     needs_gap = true;
                     // skip the code point, replace it with a single _
-                    i += std.math.max(js_lexer.utf8ByteSequenceLength(slice[i]), 1) - 1;
+                    i += std.math.max(strings.utf8ByteSequenceLength(slice[i]), 1) - 1;
                 }
             }
 

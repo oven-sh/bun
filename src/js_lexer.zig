@@ -12,24 +12,12 @@ const unicode = std.unicode;
 
 const Source = logger.Source;
 pub const T = tables.T;
-pub const CodePoint = tables.CodePoint;
 pub const Keywords = tables.Keywords;
 pub const tokenToString = tables.tokenToString;
 pub const StrictModeReservedWords = tables.StrictModeReservedWords;
 pub const PropertyModifierKeyword = tables.PropertyModifierKeyword;
 pub const TypescriptStmtKeyword = tables.TypescriptStmtKeyword;
 pub const TypeScriptAccessibilityModifier = tables.TypeScriptAccessibilityModifier;
-
-pub fn utf8ByteSequenceLength(first_byte: u8) u3 {
-    // The switch is optimized much better than a "smart" approach using @clz
-    return switch (first_byte) {
-        0b0000_0000...0b0111_1111 => 1,
-        0b1100_0000...0b1101_1111 => 2,
-        0b1110_0000...0b1110_1111 => 3,
-        0b1111_0000...0b1111_0111 => 4,
-        else => 0,
-    };
-}
 
 fn notimpl() noreturn {
     Global.panic("not implemented yet!", .{});
@@ -68,7 +56,7 @@ pub const Lexer = struct {
     start: usize = 0,
     end: usize = 0,
     did_panic: bool = false,
-    approximate_newline_count: i32 = 0,
+    approximate_newline_count: usize = 0,
     previous_backslash_quote_in_jsx: logger.Range = logger.Range.None,
     token: T = T.t_end_of_file,
     has_newline_before: bool = false,
@@ -137,15 +125,7 @@ pub const Lexer = struct {
     inline fn nextCodepointSlice(it: *LexerType) []const u8 {
         @setRuntimeSafety(false);
 
-        // if (it.current >= it.source.contents.len) {
-        //     // without this line, strings cut off one before the last characte
-        //     it.end = it.current;
-        //     @setRuntimeSafety(false);
-
-        //     return null;
-        // }
-
-        const cp_len = utf8ByteSequenceLength(it.source.contents[it.current]);
+        const cp_len = strings.utf8ByteSequenceLength(it.source.contents[it.current]);
         it.end = it.current;
         it.current += cp_len;
 
@@ -643,9 +623,7 @@ pub const Lexer = struct {
         // This count is approximate because it handles "\n" and "\r\n" (the common
         // cases) but not "\r" or "\u2028" or "\u2029". Getting this wrong is harmless
         // because it's only a preallocation. The array will just grow if it's too small.
-        if (lexer.code_point == '\n') {
-            lexer.approximate_newline_count += 1;
-        }
+        lexer.approximate_newline_count += @boolToInt(lexer.code_point == '\n');
     }
 
     pub fn expect(self: *LexerType, comptime token: T) !void {

@@ -98,7 +98,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
                         if (strings.eqlComptime(import_record.path.text, Runtime.Imports.Name)) {
                             // runtime is included in the bundle, so we don't need to dynamically import it
                             if (linker.options.node_modules_bundle) |node_modules_bundle| {
-                                import_record.path.text = node_modules_bundle.bundle.import_from_name;
+                                import_record.path.text = if (linker.options.node_modules_bundle_url.len > 0) linker.options.node_modules_bundle_url else node_modules_bundle.bundle.import_from_name;
                             } else {
                                 import_record.path = try linker.generateImportPath(
                                     source_dir,
@@ -171,7 +171,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
                                             };
 
                                             import_record.is_bundled = true;
-                                            import_record.path.text = node_modules_bundle.bundle.import_from_name;
+                                            import_record.path.text = if (linker.options.node_modules_bundle_url.len > 0) linker.options.node_modules_bundle_url else node_modules_bundle.bundle.import_from_name;
                                             import_record.module_id = found_module.id;
                                             needs_bundle = true;
                                             continue;

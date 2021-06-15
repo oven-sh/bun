@@ -1391,8 +1391,7 @@ function decodeWebsocketMessageBuildSuccess(bb) {
   result["id"] = bb.readUint32();
   result["from_timestamp"] = bb.readUint32();
   result["loader"] = Loader[bb.readByte()];
-  result["module_path"] = bb.readAlphanumeric();
-  result["log"] = decodeLog(bb);
+  result["module_path"] = bb.readString();
   result["blob_length"] = bb.readUint32();
   return result;
 }
@@ -1424,16 +1423,9 @@ bb.writeByte(encoded);
 
   var value = message["module_path"];
   if (value != null) {
-    bb.writeAlphanumeric(value);
+    bb.writeString(value);
   } else {
     throw new Error("Missing required field \"module_path\"");
-  }
-
-  var value = message["log"];
-  if (value != null) {
-    encodeLog(value, bb);
-  } else {
-    throw new Error("Missing required field \"log\"");
   }
 
   var value = message["blob_length"];
@@ -1451,7 +1443,7 @@ function decodeWebsocketMessageBuildFailure(bb) {
   result["id"] = bb.readUint32();
   result["from_timestamp"] = bb.readUint32();
   result["loader"] = Loader[bb.readByte()];
-  result["module_path"] = bb.readAlphanumeric();
+  result["module_path"] = bb.readString();
   result["log"] = decodeLog(bb);
   return result;
 }
@@ -1483,7 +1475,7 @@ bb.writeByte(encoded);
 
   var value = message["module_path"];
   if (value != null) {
-    bb.writeAlphanumeric(value);
+    bb.writeString(value);
   } else {
     throw new Error("Missing required field \"module_path\"");
   }

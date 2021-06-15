@@ -50,7 +50,13 @@ class HMRClient {
   }
 
   static activate(verbose: boolean = false) {
-    if (this.client) {
+    // Support browser-like envirnments where location and WebSocket exist
+    // Maybe it'll work in Deno! Who knows.
+    if (
+      this.client ||
+      typeof location === "undefined" ||
+      typeof WebSocket === "undefined"
+    ) {
       return;
     }
 
@@ -61,14 +67,10 @@ class HMRClient {
   }
 
   handleBuildFailure(buffer: ByteBuffer, timestamp: number) {
-    // 0: ID
-    // 1: Timestamp
-    const header_data = new Uint32Array(
-      buffer._data.buffer,
-      buffer._data.byteOffset,
-      buffer._data.byteOffset + 8
-    );
-    const index = this.indexOfModuleId(header_data[0]);
+    const build = API.decodeWebsocketMessageBuildFailure(buffer);
+    const id = build.id;
+
+    const index = this.indexOfModuleId(id);
     // Ignore build failures of modules that are not loaded
     if (index === -1) {
       return;
@@ -96,35 +98,28 @@ class HMRClient {
   };
 
   handleBuildSuccess(buffer: ByteBuffer, timestamp: number) {
-    // 0: ID
-    // 1: Timestamp
-    const header_data = new Uint32Array(
-      buffer._data.buffer,
-      buffer._data.byteOffset,
-      buffer._data.byteOffset + 8
-    );
-    const index = this.indexOfModuleId(header_data[0]);
+    const build = API.decodeWebsocketMessageBuildSuccess(buffer);
+    const id = build.id;
+    const index = this.indexOfModuleId(id);
     // Ignore builds of modules that are not loaded
     if (index === -1) {
       if (this.verbose) {
-        __hmrlog.debug(
-          `Skipping reload for unknown module id:`,
-          header_data[0]
-        );
+        __hmrlog.debug(`Skipping reload for unknown module id:`, id);
       }
 
       return;
     }
 
     // Ignore builds of modules we expect a later version of
-    const currentVersion = this.builds.get(header_data[0]) || -Infinity;
-    if (currentVersion > header_data[1]) {
+    const currentVersion = this.builds.get(id) || -Infinity;
+
+    if (currentVersion > build.from_timestamp) {
       if (this.verbose) {
         __hmrlog.debug(
           `Ignoring outdated update for "${HMRModule.dependencies.modules[index].file_path}".\n  Expected: >=`,
           currentVersion,
           `\n   Received:`,
-          header_data[1]
+          build.from_timestamp
         );
       }
       return;
@@ -137,14 +132,13 @@ class HMRClient {
       );
     }
 
-    const build = API.decodeWebsocketMessageBuildSuccess(buffer);
     var reload = new HotReload(
-      header_data[0],
+      build.id,
       index,
       build,
       // These are the bytes!!
-      buffer.data.length > buffer._index
-        ? buffer.data.subarray(buffer._index)
+      buffer._data.length > buffer._index
+        ? buffer._data.subarray(buffer._index)
         : new Uint8Array(0)
     );
     reload.timings.notify = timestamp - build.from_timestamp;
@@ -366,11 +360,37 @@ class HotReload {
 
     orig_deps = null;
     this.timings.total =
-      this.timings.import + this.timings.callbacks + this.build.from_timestamp;
+      this.timings.import + this.timings.callbacks + this.timings.notify;
     return Promise.resolve([
       HMRModule.dependencies.modules[this.module_index],
       this.timings,
     ]);
+  }
+}
+
+class DependencyGraph {
+  modules: HMRModule[];
+  graph: Uint32Array;
+  graph_used = 0;
+
+  loadDefaults() {
+    this.modules = new Array<HMRModule>(32);
+    this.graph = new Uint32Array(32);
+    this.graph_used = 0;
+  }
+
+  static loadWithDefaults() {
+    const graph = new DependencyGraph();
+    graph.loadDefaults();
+    return graph;
+  }
+
+  fork(offset: number) {
+    const graph = new DependencyGraph();
+    graph.modules = this.modules.slice();
+    graph.graph_used = offset > 0 ? offset - 1 : 0;
+    graph.graph = this.graph.slice();
+    return graph;
   }
 }
 
@@ -424,20 +444,7 @@ class HMRModule {
     this._update(this.exports);
   }
 
-  static _dependencies = {
-    modules: new Array<HMRModule>(32),
-    graph: new Uint32Array(32),
-    graph_used: 0,
-
-    fork(offset: number) {
-      return {
-        modules: HMRModule._dependencies.modules.slice(),
-        graph: HMRModule._dependencies.graph.slice(),
-        graph_used: offset - 1,
-      };
-    },
-  };
-
+  static _dependencies = DependencyGraph.loadWithDefaults();
   exportAll(object: Object) {
     // object[alias] must be a function
     for (let alias in object) {
@@ -450,7 +457,7 @@ class HMRModule {
     }
   }
 
-  static dependencies: HMRModule["_dependencies"];
+  static dependencies: DependencyGraph;
   file_path: string;
   _load = function () {};
   id = 0;
@@ -461,16 +468,20 @@ class HMRModule {
 
 var __hmrlog = {
   debug(...args) {
-    console.debug("[speedy]", ...args);
+    // console.debug("[speedy]", ...args);
+    console.debug(...args);
   },
   error(...args) {
-    console.error("[speedy]", ...args);
+    // console.error("[speedy]", ...args);
+    console.error(...args);
   },
   log(...args) {
-    console.log("[speedy]", ...args);
+    // console.log("[speedy]", ...args);
+    console.log(...args);
   },
   warn(...args) {
-    console.warn("[speedy]", ...args);
+    // console.warn("[speedy]", ...args);
+    console.warn(...args);
   },
 };
 

@@ -406,6 +406,67 @@ pub fn sortDesc(in: []string) void {
     std.sort.sort([]const u8, in, {}, cmpStringsDesc);
 }
 
+pub fn utf8ByteSequenceLength(first_byte: u8) u3 {
+    // The switch is optimized much better than a "smart" approach using @clz
+    return switch (first_byte) {
+        0b0000_0000...0b0111_1111 => 1,
+        0b1100_0000...0b1101_1111 => 2,
+        0b1110_0000...0b1110_1111 => 3,
+        0b1111_0000...0b1111_0111 => 4,
+        else => 0,
+    };
+}
+
+pub const CodepointIterator = struct {
+    bytes: []const u8,
+    i: usize,
+    width: u3 = 0,
+    c: CodePoint = 0,
+
+    inline fn nextCodepointSlice(it: *CodepointIterator) []const u8 {
+        @setRuntimeSafety(false);
+
+        const cp_len = utf8ByteSequenceLength(it.source.contents[it.current]);
+        it.end = it.current;
+        it.current += cp_len;
+
+        return if (!(it.current > it.source.contents.len)) it.source.contents[it.current - cp_len .. it.current] else "";
+    }
+
+    pub fn nextCodepoint(it: *CodepointIterator) CodePoint {
+        const slice = it.nextCodepointSlice();
+        it.width = @intCast(u3, slice.len);
+        @setRuntimeSafety(false);
+
+        it.c = switch (it.width) {
+            0 => -1,
+            1 => @intCast(CodePoint, slice[0]),
+            2 => @intCast(CodePoint, std.unicode.utf8Decode2(slice) catch unreachable),
+            3 => @intCast(CodePoint, std.unicode.utf8Decode3(slice) catch unreachable),
+            4 => @intCast(CodePoint, std.unicode.utf8Decode4(slice) catch unreachable),
+            else => unreachable,
+        };
+
+        return it.c;
+    }
+
+    /// Look ahead at the next n codepoints without advancing the iterator.
+    /// If fewer than n codepoints are available, then return the remainder of the string.
+    pub fn peek(it: *CodepointIterator, n: usize) []const u8 {
+        const original_i = it.i;
+        defer it.i = original_i;
+
+        var end_ix = original_i;
+        var found: usize = 0;
+        while (found < n) : (found += 1) {
+            const next_codepoint = it.nextCodepointSlice() orelse return it.bytes[original_i..];
+            end_ix += next_codepoint.len;
+        }
+
+        return it.bytes[original_i..end_ix];
+    }
+};
+
 test "join" {
     var string_list = &[_]string{ "abc", "def", "123", "hello" };
     const list = try join(string_list, "-", std.heap.page_allocator);

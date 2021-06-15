@@ -3485,7 +3485,7 @@ pub const ArrayBinding = struct {
 };
 
 pub const Ast = struct {
-    approximate_line_count: i32 = 0,
+    approximate_newline_count: usize = 0,
     has_lazy_export: bool = false,
     runtime_imports: Runtime.Imports,
 

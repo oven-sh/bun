@@ -573,6 +573,7 @@ pub const BundleOptions = struct {
     public_dir_enabled: bool = true,
     output_dir: string = "",
     output_dir_handle: ?std.fs.Dir = null,
+    node_modules_bundle_url: string = "",
     public_dir_handle: ?std.fs.Dir = null,
     write: bool = false,
     preserve_symlinks: bool = false,
@@ -734,6 +735,14 @@ pub const BundleOptions = struct {
                             var node_module_bundle = try allocator.create(NodeModuleBundle);
                             node_module_bundle.* = bundle;
                             opts.node_modules_bundle = node_module_bundle;
+                            if (opts.public_url.len > 0) {
+                                var relative = node_module_bundle.bundle.import_from_name;
+                                if (relative[0] == std.fs.path.sep) {
+                                    relative = relative[1..];
+                                }
+
+                                opts.node_modules_bundle_url = try std.fmt.allocPrint(allocator, "{s}{s}", .{ opts.public_url, relative });
+                            }
                             const elapsed = @intToFloat(f64, (std.time.nanoTimestamp() - time_start)) / std.time.ns_per_ms;
                             Output.prettyErrorln(
                                 "<r><b><d>\"{s}\"<r><d> - {d} modules, {d} packages <b>[{d:>.2}ms]<r>",

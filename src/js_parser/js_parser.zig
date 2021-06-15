@@ -13794,7 +13794,7 @@ pub fn NewParser(
                 .import_records = p.import_records.items,
                 .export_star_import_records = p.export_star_import_records.items,
                 .top_level_symbol_to_parts = p.top_level_symbol_to_parts,
-                .approximate_line_count = p.lexer.approximate_newline_count + 1,
+                .approximate_newline_count = p.lexer.approximate_newline_count,
                 .exports_kind = exports_kind,
                 .named_imports = p.named_imports,
                 .named_exports = p.named_exports,

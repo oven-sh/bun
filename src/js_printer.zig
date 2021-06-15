@@ -3704,6 +3704,7 @@ const FileWriterInternal = struct {
 pub const BufferWriter = struct {
     buffer: MutableString = undefined,
     written: []const u8 = "",
+    approximate_newline_count: usize = 0,
 
     pub fn init(allocator: *std.mem.Allocator) !BufferWriter {
         return BufferWriter{
@@ -3715,10 +3716,12 @@ pub const BufferWriter = struct {
     }
     pub fn writeByte(ctx: *BufferWriter, byte: u8) anyerror!usize {
         try ctx.buffer.appendChar(byte);
+        ctx.approximate_newline_count += @boolToInt(byte == '\n');
         return 1;
     }
     pub fn writeAll(ctx: *BufferWriter, bytes: anytype) anyerror!usize {
         try ctx.buffer.append(bytes);
+        ctx.approximate_newline_count += @boolToInt(bytes.len > 0 and bytes[bytes.len - 1] == '\n');
         return bytes.len;
     }
 
@@ -3732,6 +3735,7 @@ pub const BufferWriter = struct {
 
     pub fn reset(ctx: *BufferWriter) void {
         ctx.buffer.reset();
+        ctx.approximate_newline_count = 0;
     }
 
     pub fn done(

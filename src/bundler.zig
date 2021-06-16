@@ -30,6 +30,8 @@ const hash_map = @import("hash_map.zig");
 const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 const DebugLogs = _resolver.DebugLogs;
 
+const Css = @import("css_scanner.zig");
+
 pub const ServeResult = struct {
     file: options.OutputFile,
     mime_type: MimeType,
@@ -904,6 +906,25 @@ pub fn NewBundler(cache_files: bool) type {
             var file_path = resolve_result.path_pair.primary;
             file_path.pretty = Linker.relative_paths_list.append(bundler.fs.relativeTo(file_path.text)) catch unreachable;
 
+            var output_file = options.OutputFile{
+                .input = file_path,
+                .loader = loader,
+                .value = undefined,
+            };
+
+            var file: std.fs.File = undefined;
+
+            if (Outstream == std.fs.Dir) {
+                const output_dir = outstream;
+
+                if (std.fs.path.dirname(file_path.pretty)) |dirname| {
+                    try output_dir.makePath(dirname);
+                }
+                file = try output_dir.createFile(file_path.pretty, .{});
+            } else {
+                file = outstream;
+            }
+
             switch (loader) {
                 .jsx, .tsx, .js, .ts, .json => {
                     var result = bundler.parse(
@@ -922,52 +943,50 @@ pub fn NewBundler(cache_files: bool) type {
                         &result,
                         import_path_format,
                     );
-                    var output_file = options.OutputFile{
-                        .input = file_path,
-                        .loader = loader,
-                        .value = undefined,
-                    };
-
-                    var file: std.fs.File = undefined;
-
-                    if (Outstream == std.fs.Dir) {
-                        const output_dir = outstream;
-
-                        if (std.fs.path.dirname(file_path.pretty)) |dirname| {
-                            try output_dir.makePath(dirname);
-                        }
-                        file = try output_dir.createFile(file_path.pretty, .{});
-                    } else {
-                        file = outstream;
-                    }
 
                     output_file.size = try bundler.print(
                         result,
                         js_printer.FileWriter,
                         js_printer.NewFileWriter(file),
                     );
+                },
+                .css => {
+                    const CSSWriter = Css.NewWriter(@TypeOf(file), @TypeOf(bundler.linker), import_path_format);
+                    const entry = bundler.resolver.caches.fs.readFile(
+                        bundler.fs,
+                        file_path.text,
+                        resolve_result.dirname_fd,
+                        !cache_files,
+                        null,
+                    ) catch return null;
 
-                    var file_op = options.OutputFile.FileOperation.fromFile(file.handle, file_path.pretty);
+                    const _file = Fs.File{ .path = file_path, .contents = entry.contents };
+                    const source = try logger.Source.initFile(_file, bundler.allocator);
 
-                    file_op.fd = file.handle;
-
-                    file_op.is_tmpdir = false;
-                    output_file.value = .{ .move = file_op };
-                    if (Outstream == std.fs.Dir) {
-                        file_op.dir = outstream.fd;
-
-                        if (bundler.fs.fs.needToCloseFiles()) {
-                            file.close();
-                            file_op.fd = 0;
-                        }
-                    }
-                    return output_file;
+                    var css_writer = CSSWriter.init(&source, file, bundler.linker);
+                    try css_writer.run(bundler.log, bundler.allocator);
+                    output_file.size = css_writer.written;
                 },
                 // TODO:
-                else => {
-                    return null;
-                },
+                else => {},
             }
+
+            var file_op = options.OutputFile.FileOperation.fromFile(file.handle, file_path.pretty);
+
+            file_op.fd = file.handle;
+
+            file_op.is_tmpdir = false;
+            output_file.value = .{ .move = file_op };
+            if (Outstream == std.fs.Dir) {
+                file_op.dir = outstream.fd;
+
+                if (bundler.fs.fs.needToCloseFiles()) {
+                    file.close();
+                    file_op.fd = 0;
+                }
+            }
+
+            return output_file;
         }
 
         pub fn scanWithResolveResult(

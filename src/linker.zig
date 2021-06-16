@@ -17,7 +17,9 @@ const Resolver = @import("./resolver/resolver.zig");
 const sync = @import("sync.zig");
 const ThreadPool = sync.ThreadPool;
 const ThreadSafeHashMap = @import("./thread_safe_hash_map.zig");
-const ImportRecord = @import("./import_record.zig").ImportRecord;
+const _import_record = @import("./import_record.zig");
+const ImportRecord = _import_record.ImportRecord;
+const ImportKind = _import_record.ImportKind;
 const allocators = @import("./allocators.zig");
 const MimeType = @import("./http/mime_type.zig");
 const resolve_path = @import("./resolver/resolve_path.zig");
@@ -67,6 +69,37 @@ pub fn NewLinker(comptime BundlerType: type) type {
         // TODO:
         pub fn requireOrImportMetaForSource(c: ThisLinker, source_index: Ref.Int) RequireOrImportMeta {
             return RequireOrImportMeta{};
+        }
+
+        pub fn resolveCSS(
+            this: *ThisLinker,
+            path: Fs.Path,
+            url: string,
+            range: logger.Range,
+            comptime kind: ImportKind,
+            comptime import_path_format: Options.BundleOptions.ImportPathFormat,
+        ) !string {
+            switch (kind) {
+                .at => {
+                    var resolve_result = try this.resolver.resolve(path.name.dir, url, .at);
+                    var import_record = ImportRecord{ .range = range, .path = resolve_result.path_pair.primary, .kind = kind };
+                    try this.processImportRecord(path.name.dir, &resolve_result, &import_record, import_path_format);
+                    return import_record.path.text;
+                },
+                .at_conditional => {
+                    var resolve_result = try this.resolver.resolve(path.name.dir, url, .at_conditional);
+                    var import_record = ImportRecord{ .range = range, .path = resolve_result.path_pair.primary, .kind = kind };
+                    try this.processImportRecord(path.name.dir, &resolve_result, &import_record, import_path_format);
+                    return import_record.path.text;
+                },
+                .url => {
+                    var resolve_result = try this.resolver.resolve(path.name.dir, url, .url);
+                    var import_record = ImportRecord{ .range = range, .path = resolve_result.path_pair.primary, .kind = kind };
+                    try this.processImportRecord(path.name.dir, &resolve_result, &import_record, import_path_format);
+                    return import_record.path.text;
+                },
+                else => unreachable,
+            }
         }
 
         // pub const Scratch = struct {

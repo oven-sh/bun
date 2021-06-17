@@ -40,3 +40,5 @@ esbuilddir
 *.jsb
 parceldist
 esbuilddir
+outdir/
+outcss

@@ -457,15 +457,7 @@ pub const Cli = struct {
                             // try f.moveTo(result.outbase, constStrToU8(rel_path), root_dir.fd);
                         },
                         .copy => |value| {
-                            const rel_path_base = resolve_path.relativeToCommonPath(
-                                from_path,
-                                from_path,
-                                f.input.text,
-                                filepath_buf[2..],
-                                comptime resolve_path.Platform.auto.separator(),
-                                false,
-                            );
-                            rel_path = filepath_buf[0 .. rel_path_base.len + 2];
+                            rel_path = value.pathname;
 
                             try f.copyTo(result.outbase, constStrToU8(rel_path), root_dir.fd);
                         },

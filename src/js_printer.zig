@@ -482,7 +482,7 @@ pub fn NewPrinter(
                 // In JavaScript, numbers are represented as 64 bit floats
                 // However, they could also be signed or unsigned int 32 (when doing bit shifts)
                 // In this case, it's always going to unsigned since that conversion has already happened.
-                std.fmt.formatInt(@floatToInt(u32, float), 10, true, .{}, p) catch unreachable;
+                std.fmt.formatInt(@floatToInt(u32, float), 10, .upper, .{}, p) catch unreachable;
                 return;
             }
 
@@ -3274,7 +3274,7 @@ pub fn NewPrinter(
         pub fn printLoadFromBundleWithoutCall(p: *Printer, import_record_index: u32) void {
             const record = p.import_records[import_record_index];
             p.print("$");
-            std.fmt.formatInt(record.module_id, 16, false, .{}, p) catch unreachable;
+            std.fmt.formatInt(record.module_id, 16, .lower, .{}, p) catch unreachable;
         }
         pub fn printBundledRequire(p: *Printer, require: E.Require) void {
             if (p.import_records[require.import_record_index].is_internal) {
@@ -3426,7 +3426,7 @@ pub fn NewPrinter(
                     p.print("// ");
                     p.print(p.options.source_path.?.pretty);
                     p.print("\nexport var $");
-                    std.fmt.formatInt(p.options.module_hash, 16, false, .{}, p) catch unreachable;
+                    std.fmt.formatInt(p.options.module_hash, 16, .lower, .{}, p) catch unreachable;
                     p.print(" = ");
                     p.printExpr(decls[0].value.?, .comma, ExprFlag.None());
                     p.printSemicolonAfterStatement();

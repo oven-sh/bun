@@ -1,6 +1,6 @@
 const tester = @import("../test/tester.zig");
 
-const FeatureFlags = @import("../global.zig").FeatureFlags;
+const FeatureFlags = @import("../feature_flags.zig");
 const std = @import("std");
 
 threadlocal var parser_join_input_buffer: [1024]u8 = undefined;
@@ -259,7 +259,7 @@ pub fn relativeToCommonPath(
     var out_slice: []u8 = buf[0..0];
 
     if (normalized_from.len > 0) {
-        var i: usize = @boolToInt(normalized_from[0] == separator) + 1 + last_common_separator;
+        var i: usize = @intCast(usize, @boolToInt(normalized_from[0] == separator)) + 1 + last_common_separator;
 
         while (i <= normalized_from.len) : (i += 1) {
             if (i == normalized_from.len or (normalized_from[i] == separator and i + 1 < normalized_from.len)) {

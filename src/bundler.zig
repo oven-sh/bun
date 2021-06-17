@@ -151,7 +151,7 @@ pub fn NewBundler(cache_files: bool) type {
         linker: Linker,
         timer: Timer = Timer{},
 
-        pub const RuntimeCode = @embedFile("./runtime.js");
+        pub const isCacheEnabled = cache_files;
 
         // to_bundle:
 
@@ -949,9 +949,30 @@ pub fn NewBundler(cache_files: bool) type {
                         js_printer.FileWriter,
                         js_printer.NewFileWriter(file),
                     );
+
+                    var file_op = options.OutputFile.FileOperation.fromFile(file.handle, file_path.pretty);
+
+                    file_op.fd = file.handle;
+
+                    file_op.is_tmpdir = false;
+
+                    if (Outstream == std.fs.Dir) {
+                        file_op.dir = outstream.fd;
+
+                        if (bundler.fs.fs.needToCloseFiles()) {
+                            file.close();
+                            file_op.fd = 0;
+                        }
+                    }
+
+                    output_file.value = .{ .move = file_op };
                 },
                 .css => {
-                    const CSSWriter = Css.NewWriter(@TypeOf(file), @TypeOf(bundler.linker), import_path_format);
+                    const CSSWriter = Css.NewWriter(
+                        std.fs.File,
+                        @TypeOf(&bundler.linker),
+                        import_path_format,
+                    );
                     const entry = bundler.resolver.caches.fs.readFile(
                         bundler.fs,
                         file_path.text,
@@ -963,27 +984,48 @@ pub fn NewBundler(cache_files: bool) type {
                     const _file = Fs.File{ .path = file_path, .contents = entry.contents };
                     const source = try logger.Source.initFile(_file, bundler.allocator);
 
-                    var css_writer = CSSWriter.init(&source, file, bundler.linker);
+                    var css_writer = CSSWriter.init(
+                        &source,
+                        file,
+                        &bundler.linker,
+                    );
                     try css_writer.run(bundler.log, bundler.allocator);
                     output_file.size = css_writer.written;
+                    var file_op = options.OutputFile.FileOperation.fromFile(file.handle, file_path.pretty);
+
+                    file_op.fd = file.handle;
+
+                    file_op.is_tmpdir = false;
+
+                    if (Outstream == std.fs.Dir) {
+                        file_op.dir = outstream.fd;
+
+                        if (bundler.fs.fs.needToCloseFiles()) {
+                            file.close();
+                            file_op.fd = 0;
+                        }
+                    }
+
+                    output_file.value = .{ .move = file_op };
                 },
-                // TODO:
-                else => {},
-            }
+                .file => {
+                    var hashed_name = try bundler.linker.getHashedFilename(file_path, null);
+                    var pathname = try bundler.allocator.alloc(u8, hashed_name.len + file_path.name.ext.len);
+                    std.mem.copy(u8, pathname, hashed_name);
+                    std.mem.copy(u8, pathname[hashed_name.len..], file_path.name.ext);
+                    const dir = if (bundler.options.output_dir_handle) |output_handle| output_handle.fd else 0;
 
-            var file_op = options.OutputFile.FileOperation.fromFile(file.handle, file_path.pretty);
+                    output_file.value = .{
+                        .copy = options.OutputFile.FileOperation{
+                            .pathname = pathname,
+                            .dir = dir,
+                            .is_outdir = true,
+                        },
+                    };
+                },
 
-            file_op.fd = file.handle;
-
-            file_op.is_tmpdir = false;
-            output_file.value = .{ .move = file_op };
-            if (Outstream == std.fs.Dir) {
-                file_op.dir = outstream.fd;
-
-                if (bundler.fs.fs.needToCloseFiles()) {
-                    file.close();
-                    file_op.fd = 0;
-                }
+                // // TODO:
+                // else => {},
             }
 
             return output_file;

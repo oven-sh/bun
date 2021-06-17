@@ -462,6 +462,34 @@ pub const FileSystem = struct {
             mtime: i128 = 0,
             mode: std.fs.File.Mode = 0,
 
+            threadlocal var hash_bytes: [32]u8 = undefined;
+            threadlocal var hash_name_buf: [1024]u8 = undefined;
+
+            pub fn hashName(
+                this: *const ModKey,
+                basename: string,
+            ) !string {
+
+                // We shouldn't just read the contents of the ModKey into memory
+                // The hash should be deterministic across computers and operating systems.
+                // inode is non-deterministic across volumes within the same compuiter
+                // so if we're not going to do a full content hash, we should use mtime and size.
+                // even mtime is debatable.
+                var hash_bytes_remain: []u8 = hash_bytes[0..];
+                std.mem.writeIntNative(@TypeOf(this.size), hash_bytes_remain[0..@sizeOf(@TypeOf(this.size))], this.size);
+                hash_bytes_remain = hash_bytes_remain[@sizeOf(@TypeOf(this.size))..];
+                std.mem.writeIntNative(@TypeOf(this.mtime), hash_bytes_remain[0..@sizeOf(@TypeOf(this.mtime))], this.mtime);
+
+                return try std.fmt.bufPrint(
+                    &hash_name_buf,
+                    "{s}-{x}",
+                    .{
+                        basename,
+                        @truncate(u32, std.hash.Wyhash.hash(1, &hash_bytes)),
+                    },
+                );
+            }
+
             pub fn generate(fs: *RealFS, path: string, file: std.fs.File) anyerror!ModKey {
                 const stat = try file.stat();
 

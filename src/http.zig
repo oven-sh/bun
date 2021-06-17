@@ -237,7 +237,7 @@ pub const RequestContext = struct {
             ctx.appendHeader("Transfer-Encoding", "Chunked");
         } else {
             const length_str = try ctx.allocator.alloc(u8, 64);
-            ctx.appendHeader("Content-Length", length_str[0..std.fmt.formatIntBuf(length_str, length, 10, true, .{})]);
+            ctx.appendHeader("Content-Length", length_str[0..std.fmt.formatIntBuf(length_str, length, 10, .upper, .{})]);
         }
 
         try ctx.flushHeaders();
@@ -952,7 +952,7 @@ pub const RequestContext = struct {
                         if (FeatureFlags.strong_etags_for_built_files) {
                             if (buf.len < 16 * 16 * 16 * 16) {
                                 const strong_etag = std.hash.Wyhash.hash(1, buf);
-                                const etag_content_slice = std.fmt.bufPrintIntToSlice(strong_etag_buffer[0..49], strong_etag, 16, true, .{});
+                                const etag_content_slice = std.fmt.bufPrintIntToSlice(strong_etag_buffer[0..49], strong_etag, 16, .upper, .{});
 
                                 chunky.rctx.appendHeader("ETag", etag_content_slice);
 
@@ -1047,7 +1047,7 @@ pub const RequestContext = struct {
                     weak_etag.update(weak_etag_tmp_buffer[0..16]);
                 }
 
-                const etag_content_slice = std.fmt.bufPrintIntToSlice(weak_etag_buffer[2..], weak_etag.final(), 16, true, .{});
+                const etag_content_slice = std.fmt.bufPrintIntToSlice(weak_etag_buffer[2..], weak_etag.final(), 16, .upper, .{});
                 const complete_weak_etag = weak_etag_buffer[0 .. etag_content_slice.len + 2];
 
                 ctx.appendHeader("ETag", complete_weak_etag);
@@ -1101,7 +1101,7 @@ pub const RequestContext = struct {
                 if (FeatureFlags.strong_etags_for_built_files) {
                     // TODO: don't hash runtime.js
                     const strong_etag = std.hash.Wyhash.hash(1, buffer);
-                    const etag_content_slice = std.fmt.bufPrintIntToSlice(strong_etag_buffer[0..49], strong_etag, 16, true, .{});
+                    const etag_content_slice = std.fmt.bufPrintIntToSlice(strong_etag_buffer[0..49], strong_etag, 16, .upper, .{});
 
                     ctx.appendHeader("ETag", etag_content_slice);
 

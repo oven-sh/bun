@@ -2,63 +2,9 @@ const std = @import("std");
 pub usingnamespace @import("strings.zig");
 
 pub const C = @import("c.zig");
-pub const BuildTarget = enum { native, wasm, wasi };
-pub const build_target: BuildTarget = comptime {
-    if (std.Target.current.isWasm() and std.Target.current.getOsTag() == .wasi) {
-        return BuildTarget.wasi;
-    } else if (std.Target.current.isWasm()) {
-        return BuildTarget.wasm;
-    } else {
-        return BuildTarget.native;
-    }
-};
+pub usingnamespace @import("env.zig");
 
-pub const isWasm = build_target == .wasm;
-pub const isNative = build_target == .native;
-pub const isWasi = build_target == .wasi;
-pub const isMac = build_target == .native and std.Target.current.os.tag == .macos;
-pub const isBrowser = !isWasi and isWasm;
-pub const isWindows = std.Target.current.os.tag == .windows;
-
-pub const FeatureFlags = struct {
-    pub const strong_etags_for_built_files = true;
-    pub const keep_alive = true;
-
-    // it just doesn't work well.
-    pub const use_std_path_relative = false;
-    pub const use_std_path_join = false;
-
-    // Debug helpers
-    pub const print_ast = false;
-    pub const disable_printing_null = false;
-
-    // This was a ~5% performance improvement
-    pub const store_file_descriptors = !isWindows and !isBrowser;
-
-    // This doesn't really seem to do anything for us
-    pub const disable_filesystem_cache = false and std.Target.current.os.tag == .macos;
-
-    pub const css_in_js_import_behavior = CSSModulePolyfill.facade;
-
-    pub const only_output_esm = true;
-
-    pub const jsx_runtime_is_cjs = true;
-
-    pub const bundle_node_modules = true;
-
-    pub const tracing = true;
-
-    pub const verbose_watcher = true;
-
-    pub const CSSModulePolyfill = enum {
-        // When you import a .css file and you reference the import in JavaScript
-        // Just return whatever the property key they referenced was
-        facade,
-    };
-};
-
-pub const isDebug = std.builtin.Mode.Debug == std.builtin.mode;
-pub const isTest = std.builtin.is_test;
+pub const FeatureFlags = @import("feature_flags.zig");
 
 pub const Output = struct {
     threadlocal var source: *Source = undefined;

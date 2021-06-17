@@ -4,7 +4,7 @@ const resolve_path = @import("./src/resolver/resolve_path.zig");
 pub fn addPicoHTTP(step: *std.build.LibExeObjStep, dir: []const u8) void {
     const picohttp = step.addPackage(.{
         .name = "picohttp",
-        .path = "src/deps/picohttp.zig",
+        .path = .{ .path = "src/deps/picohttp.zig" },
     });
 
     step.addObjectFile(
@@ -35,7 +35,7 @@ pub fn build(b: *std.build.Builder) void {
     if (target.getOsTag() == .wasi) {
         exe.enable_wasmtime = true;
         exe = b.addExecutable("esdev", "src/main_wasi.zig");
-        exe.is_dynamic = true;
+        exe.linkage = .dynamic;
         exe.setOutputDir(output_dir);
     } else if (target.getCpuArch().isWasm()) {
         // exe = b.addExecutable(
@@ -60,15 +60,15 @@ pub fn build(b: *std.build.Builder) void {
 
         lib.setOutputDir(output_dir);
         lib.want_lto = true;
-        b.install_path = lib.getOutputPath();
+        b.install_path = lib.getOutputSource().getPath(b);
 
-        std.debug.print("Build: ./{s}\n", .{lib.getOutputPath()});
+        std.debug.print("Build: ./{s}\n", .{b.install_path});
         b.default_step.dependOn(&lib.step);
         b.verbose_link = true;
         lib.setTarget(target);
         lib.setBuildMode(mode);
 
-        std.fs.deleteTreeAbsolute(std.fs.path.join(std.heap.page_allocator, &.{ cwd, lib.getOutputPath() }) catch unreachable) catch {};
+        std.fs.deleteTreeAbsolute(std.fs.path.join(std.heap.page_allocator, &.{ cwd, lib.getOutputSource().getPath(b) }) catch unreachable) catch {};
         var install = b.getInstallStep();
         lib.strip = false;
         lib.install();
@@ -92,11 +92,11 @@ pub fn build(b: *std.build.Builder) void {
 
     exe.addPackage(.{
         .name = "clap",
-        .path = "src/deps/zig-clap/clap.zig",
+        .path = .{ .path = "src/deps/zig-clap/clap.zig" },
     });
 
     exe.setOutputDir(output_dir);
-    std.debug.print("Build: ./{s}\n", .{exe.getOutputPath()});
+
     var walker = std.fs.walkPath(std.heap.page_allocator, cwd) catch unreachable;
     if (std.builtin.is_test) {
         while (walker.next() catch unreachable) |entry| {
@@ -141,4 +141,6 @@ pub fn build(b: *std.build.Builder) void {
 
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
+
+    std.debug.print("Build: ./{s}/{s}\n", .{ output_dir, "esdev" });
 }

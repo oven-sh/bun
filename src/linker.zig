@@ -28,8 +28,11 @@ const Bundler = _bundler.Bundler;
 const ResolveQueue = _bundler.ResolveQueue;
 const Runtime = @import("./runtime.zig").Runtime;
 
+pub const CSSResolveError = error{ResolveError};
+
 pub fn NewLinker(comptime BundlerType: type) type {
     return struct {
+        const HashedFileNameMap = std.AutoHashMap(u64, string);
         const ThisLinker = @This();
         allocator: *std.mem.Allocator,
         options: *Options.BundleOptions,
@@ -41,6 +44,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
         any_needs_runtime: bool = false,
         runtime_import_record: ?ImportRecord = null,
         runtime_source_path: string,
+        hashed_filenames: HashedFileNameMap,
 
         pub fn init(
             allocator: *std.mem.Allocator,
@@ -62,6 +66,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
                 .resolver = resolver,
                 .resolve_results = resolve_results,
                 .runtime_source_path = fs.absAlloc(allocator, &([_]string{"__runtime.js"})) catch unreachable,
+                .hashed_filenames = HashedFileNameMap.init(allocator),
             };
         }
 
@@ -71,35 +76,87 @@ pub fn NewLinker(comptime BundlerType: type) type {
             return RequireOrImportMeta{};
         }
 
-        pub fn resolveCSS(
+        pub fn getHashedFilename(
             this: *ThisLinker,
+            file_path: Fs.Path,
+            fd: ?FileDescriptorType,
+        ) !string {
+            if (BundlerType.isCacheEnabled) {
+                var hashed = std.hash.Wyhash.hash(0, file_path.text);
+                var hashed_result = try this.hashed_filenames.getOrPut(hashed);
+                if (hashed_result.found_existing) {
+                    return hashed_result.value_ptr.*;
+                }
+            }
+
+            var file: std.fs.File = if (fd) |_fd| std.fs.File{ .handle = _fd } else try std.fs.openFileAbsolute(file_path.text, .{ .read = true });
+            Fs.FileSystem.setMaxFd(file.handle);
+            var modkey = try Fs.FileSystem.RealFS.ModKey.generate(&this.fs.fs, file_path.text, file);
+            const hash_name = try modkey.hashName(file_path.name.base);
+
+            if (BundlerType.isCacheEnabled) {
+                var hashed = std.hash.Wyhash.hash(0, file_path.text);
+                try this.hashed_filenames.put(hashed, try this.allocator.dupe(u8, hash_name));
+            }
+
+            if (this.fs.fs.needToCloseFiles() and fd == null) {
+                file.close();
+            }
+
+            return hash_name;
+        }
+
+        pub fn resolveCSS(
+            this: anytype,
             path: Fs.Path,
             url: string,
             range: logger.Range,
-            comptime kind: ImportKind,
+            kind: ImportKind,
             comptime import_path_format: Options.BundleOptions.ImportPathFormat,
         ) !string {
+            const dir = path.name.dirWithTrailingSlash();
+
             switch (kind) {
                 .at => {
-                    var resolve_result = try this.resolver.resolve(path.name.dir, url, .at);
+                    var resolve_result = try this.resolver.resolve(dir, url, .at);
+                    if (resolve_result.is_external) {
+                        return resolve_result.path_pair.primary.text;
+                    }
+
                     var import_record = ImportRecord{ .range = range, .path = resolve_result.path_pair.primary, .kind = kind };
-                    try this.processImportRecord(path.name.dir, &resolve_result, &import_record, import_path_format);
+
+                    const loader = this.options.loaders.get(resolve_result.path_pair.primary.name.ext) orelse .file;
+
+                    this.processImportRecord(loader, dir, &resolve_result, &import_record, import_path_format) catch unreachable;
                     return import_record.path.text;
                 },
                 .at_conditional => {
-                    var resolve_result = try this.resolver.resolve(path.name.dir, url, .at_conditional);
+                    var resolve_result = try this.resolver.resolve(dir, url, .at_conditional);
+                    if (resolve_result.is_external) {
+                        return resolve_result.path_pair.primary.text;
+                    }
+
                     var import_record = ImportRecord{ .range = range, .path = resolve_result.path_pair.primary, .kind = kind };
-                    try this.processImportRecord(path.name.dir, &resolve_result, &import_record, import_path_format);
+                    const loader = this.options.loaders.get(resolve_result.path_pair.primary.name.ext) orelse .file;
+
+                    this.processImportRecord(loader, dir, &resolve_result, &import_record, import_path_format) catch unreachable;
                     return import_record.path.text;
                 },
                 .url => {
-                    var resolve_result = try this.resolver.resolve(path.name.dir, url, .url);
+                    var resolve_result = try this.resolver.resolve(dir, url, .url);
+                    if (resolve_result.is_external) {
+                        return resolve_result.path_pair.primary.text;
+                    }
+
                     var import_record = ImportRecord{ .range = range, .path = resolve_result.path_pair.primary, .kind = kind };
-                    try this.processImportRecord(path.name.dir, &resolve_result, &import_record, import_path_format);
+                    const loader = this.options.loaders.get(resolve_result.path_pair.primary.name.ext) orelse .file;
+
+                    this.processImportRecord(loader, dir, &resolve_result, &import_record, import_path_format) catch unreachable;
                     return import_record.path.text;
                 },
                 else => unreachable,
             }
+            unreachable;
         }
 
         // pub const Scratch = struct {
@@ -137,6 +194,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
                                     source_dir,
                                     linker.runtime_source_path,
                                     Runtime.version(),
+                                    false,
                                     import_path_format,
                                 );
                                 result.ast.runtime_import_record_id = record_index;
@@ -214,6 +272,8 @@ pub fn NewLinker(comptime BundlerType: type) type {
                             }
 
                             linker.processImportRecord(
+                                linker.options.loaders.get(resolved_import.path_pair.primary.name.ext) orelse .file,
+
                                 // Include trailing slash
                                 file_path.text[0 .. source_dir.len + 1],
                                 resolved_import,
@@ -290,6 +350,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
                         source_dir,
                         linker.runtime_source_path,
                         Runtime.version(),
+                        false,
                         import_path_format,
                     ),
                     .range = logger.Range{ .loc = logger.Loc{ .start = 0 }, .len = 0 },
@@ -355,18 +416,54 @@ pub fn NewLinker(comptime BundlerType: type) type {
             source_dir: string,
             source_path: string,
             package_version: ?string,
+            use_hashed_name: bool,
             comptime import_path_format: Options.BundleOptions.ImportPathFormat,
         ) !Fs.Path {
             switch (import_path_format) {
                 .relative => {
-                    var pretty = try linker.allocator.dupe(u8, linker.fs.relative(source_dir, source_path));
-                    var pathname = Fs.PathName.init(pretty);
-                    return Fs.Path.initWithPretty(pretty, pretty);
+                    var relative_name = linker.fs.relative(source_dir, source_path);
+                    var pretty: string = undefined;
+                    if (use_hashed_name) {
+                        var basepath = Fs.Path.init(source_path);
+                        const basename = try linker.getHashedFilename(basepath, null);
+                        var dir = basepath.name.dirWithTrailingSlash();
+                        var _pretty = try linker.allocator.alloc(u8, dir.len + basename.len + basepath.name.ext.len);
+                        std.mem.copy(u8, _pretty, dir);
+                        var remaining_pretty = _pretty[dir.len..];
+                        std.mem.copy(u8, remaining_pretty, basename);
+                        remaining_pretty = remaining_pretty[basename.len..];
+                        std.mem.copy(u8, remaining_pretty, basepath.name.ext);
+                        pretty = _pretty;
+                        relative_name = try linker.allocator.dupe(u8, relative_name);
+                    } else {
+                        pretty = try linker.allocator.dupe(u8, relative_name);
+                        relative_name = pretty;
+                    }
+
+                    return Fs.Path.initWithPretty(pretty, relative_name);
                 },
                 .relative_nodejs => {
-                    var pretty = try linker.allocator.dupe(u8, linker.fs.relative(source_dir, source_path));
+                    var relative_name = linker.fs.relative(source_dir, source_path);
+                    var pretty: string = undefined;
+                    if (use_hashed_name) {
+                        var basepath = Fs.Path.init(source_path);
+                        const basename = try linker.getHashedFilename(basepath, null);
+                        var dir = basepath.name.dirWithTrailingSlash();
+                        var _pretty = try linker.allocator.alloc(u8, dir.len + basename.len + basepath.name.ext.len);
+                        std.mem.copy(u8, _pretty, dir);
+                        var remaining_pretty = _pretty[dir.len..];
+                        std.mem.copy(u8, remaining_pretty, basename);
+                        remaining_pretty = remaining_pretty[basename.len..];
+                        std.mem.copy(u8, remaining_pretty, basepath.name.ext);
+                        pretty = _pretty;
+                        relative_name = try linker.allocator.dupe(u8, relative_name);
+                    } else {
+                        pretty = try linker.allocator.dupe(u8, relative_name);
+                        relative_name = pretty;
+                    }
+
                     var pathname = Fs.PathName.init(pretty);
-                    var path = Fs.Path.initWithPretty(pretty, pretty);
+                    var path = Fs.Path.initWithPretty(pretty, relative_name);
                     path.text = path.text[0 .. path.text.len - path.name.ext.len];
                     return path;
                 },
@@ -385,33 +482,27 @@ pub fn NewLinker(comptime BundlerType: type) type {
                         base = base[0..dot];
                     }
 
-                    if (linker.options.append_package_version_in_query_string and package_version != null) {
-                        const absolute_url =
-                            try std.fmt.allocPrint(
-                            linker.allocator,
-                            "{s}{s}{s}?v={s}",
-                            .{
-                                linker.options.public_url,
-                                base,
-                                absolute_pathname.ext,
-                                package_version.?,
-                            },
-                        );
+                    var dirname = std.fs.path.dirname(base) orelse "";
 
-                        return Fs.Path.initWithPretty(absolute_url, absolute_url);
-                    } else {
-                        const absolute_url = try std.fmt.allocPrint(
-                            linker.allocator,
-                            "{s}{s}{s}",
-                            .{
-                                linker.options.public_url,
-                                base,
-                                absolute_pathname.ext,
-                            },
-                        );
+                    var basename = std.fs.path.basename(base);
 
-                        return Fs.Path.initWithPretty(absolute_url, absolute_url);
+                    if (use_hashed_name) {
+                        var basepath = Fs.Path.init(source_path);
+                        basename = try linker.getHashedFilename(basepath, null);
                     }
+
+                    const absolute_url = try std.fmt.allocPrint(
+                        linker.allocator,
+                        "{s}{s}{s}{s}",
+                        .{
+                            linker.options.public_url,
+                            dirname,
+                            basename,
+                            absolute_pathname.ext,
+                        },
+                    );
+
+                    return Fs.Path.initWithPretty(absolute_url, absolute_url);
                 },
 
                 else => unreachable,
@@ -420,6 +511,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
 
         pub fn processImportRecord(
             linker: *ThisLinker,
+            loader: Options.Loader,
             source_dir: string,
             resolve_result: *Resolver.Result,
             import_record: *ImportRecord,
@@ -440,6 +532,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
                 source_dir,
                 resolve_result.path_pair.primary.text,
                 if (resolve_result.package_json) |package_json| package_json.version else "",
+                BundlerType.isCacheEnabled and loader == .file,
                 import_path_format,
             );
         }

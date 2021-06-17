@@ -607,7 +607,7 @@ pub const BundleOptions = struct {
     };
 
     pub const Defaults = struct {
-        pub var ExtensionOrder = [_]string{ ".tsx", ".ts", ".jsx", ".js", ".json" };
+        pub var ExtensionOrder = [_]string{ ".tsx", ".ts", ".jsx", ".js", ".json", ".css" };
     };
 
     pub fn fromApi(
@@ -860,6 +860,7 @@ pub const OutputFile = struct {
         fd: FileDescriptorType = 0,
         dir: FileDescriptorType = 0,
         is_tmpdir: bool = false,
+        is_outdir: bool = false,
 
         pub fn fromFile(fd: FileDescriptorType, pathname: string) FileOperation {
             return .{
@@ -939,16 +940,6 @@ pub const OutputFile = struct {
 
     pub fn copyTo(file: *const OutputFile, base_path: string, rel_path: []u8, dir: FileDescriptorType) !void {
         var copy = file.value.copy;
-        if (isMac and copy.fd > 0) {
-            // First try using a copy-on-write clonefile()
-            // this will fail if the destination already exists
-            rel_path.ptr[rel_path.len + 1] = 0;
-            var rel_c_path = rel_path.ptr[0..rel_path.len :0];
-            const success = C.fclonefileat(copy.fd, dir, rel_c_path, 0) == 0;
-            if (success) {
-                return;
-            }
-        }
 
         var dir_obj = std.fs.Dir{ .fd = dir };
         const file_out = (try dir_obj.createFile(rel_path, .{}));
@@ -956,7 +947,7 @@ pub const OutputFile = struct {
         const fd_out = file_out.handle;
         var do_close = false;
         // TODO: close file_out on error
-        const fd_in = if (copy.fd > 0) copy.fd else (try std.fs.openFileAbsolute(copy.getPathname(), .{ .read = true })).handle;
+        const fd_in = (try std.fs.openFileAbsolute(file.input.text, .{ .read = true })).handle;
 
         if (isNative) {
             Fs.FileSystem.setMaxFd(fd_out);

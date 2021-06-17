@@ -17,7 +17,12 @@
       "request": "launch",
       "name": "Dev Launch",
       "program": "${workspaceFolder}/build/debug/macos-x86_64/esdev",
-      "args": ["optional-chain-polyfill.js", "--resolve=disable"],
+      "args": [
+        "./simple.css",
+        "--resolve=dev",
+        "--outdir=outcss",
+        "--public-url=https://localhost:9000/"
+      ],
       "cwd": "${workspaceFolder}/src/test/fixtures",
       "console": "internalConsole"
     },

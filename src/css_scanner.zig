@@ -5,9 +5,9 @@ const options = @import("./options.zig");
 const import_record = @import("import_record.zig");
 const logger = @import("./logger.zig");
 const Options = options;
-
+const resolver = @import("./resolver/resolver.zig");
 const _linker = @import("./linker.zig");
-
+const alloc = @import("./alloc.zig");
 const replacementCharacter: CodePoint = 0xFFFD;
 
 pub const Chunk = struct {
@@ -316,7 +316,7 @@ pub const Scanner = struct {
         return text;
     }
 
-    pub fn next(scanner: *Scanner, comptime WriterType: type, writer: WriterType, writeChunk: (fn (ctx: WriterType, Chunk) anyerror!void)) !void {
+    pub fn next(scanner: *Scanner, comptime import_behavior: ImportBehavior, comptime WriterType: type, writer: WriterType, writeChunk: (fn (ctx: WriterType, Chunk) anyerror!void)) !void {
         scanner.has_newline_before = scanner.end == 0;
         scanner.has_delimiter_before = false;
         scanner.step();
@@ -359,8 +359,18 @@ pub const Scanner = struct {
                     ':', ',' => {
                         scanner.has_delimiter_before = true;
                     },
+                    '{', '}' => {
+                        scanner.has_delimiter_before = false;
+
+                        // Heuristic:
+                        // If we're only scanning the imports, as soon as there's a curly brace somewhere we can assume that @import is done.
+                        // @import only appears at the top of the file. Only @charset is allowed to be above it.
+                        if (import_behavior == .scan) {
+                            return;
+                        }
+                    },
                     // this is a little hacky, but it should work since we're not parsing scopes
-                    '{', '}', ';' => {
+                    ';' => {
                         scanner.has_delimiter_before = false;
                     },
                     'u', 'U' => {
@@ -421,11 +431,13 @@ pub const Scanner = struct {
                         chunk.content = .{ .t_verbatim = .{} };
                         // flush the pending chunk
                         try writeChunk(writer, chunk);
+
                         chunk.range.loc.start = @intCast(i32, url_start);
                         chunk.range.len = @intCast(i32, scanner.end) - chunk.range.loc.start;
                         chunk.content = .{ .t_url = url_text };
                         try writeChunk(writer, chunk);
                         scanner.has_delimiter_before = false;
+
                         continue :restart;
                     },
 
@@ -590,9 +602,11 @@ pub const Scanner = struct {
                             }
                             scanner.step();
                         }
-                        chunk.range.len = @intCast(i32, scanner.end) - std.math.max(chunk.range.loc.start, 0);
-                        chunk.content = .{ .t_import = import };
-                        try writeChunk(writer, chunk);
+                        if (import_behavior == .scan or import_behavior == .keep) {
+                            chunk.range.len = @intCast(i32, scanner.end) - std.math.max(chunk.range.loc.start, 0);
+                            chunk.content = .{ .t_import = import };
+                            try writeChunk(writer, chunk);
+                        }
                         scanner.step();
                         continue :restart;
                     },
@@ -751,10 +765,13 @@ pub fn isHex(c: CodePoint) ?CodePoint {
     };
 }
 
+pub const ImportBehavior = enum { keep, omit, scan };
+
 pub fn NewWriter(
     comptime WriterType: type,
     comptime LinkerType: type,
     comptime import_path_format: Options.BundleOptions.ImportPathFormat,
+    comptime BuildContextType: type,
 ) type {
     return struct {
         const Writer = @This();
@@ -763,6 +780,7 @@ pub fn NewWriter(
         linker: LinkerType,
         source: *const logger.Source,
         written: usize = 0,
+        buildCtx: BuildContextType = undefined,
 
         pub fn init(
             source: *const logger.Source,
@@ -777,6 +795,28 @@ pub fn NewWriter(
             };
         }
 
+        pub fn scan(writer: *Writer, log: *logger.Log, allocator: *std.mem.Allocator) !void {
+            var scanner = Scanner.init(
+                log,
+
+                allocator,
+                writer.source,
+            );
+
+            try scanner.next(.scan, @TypeOf(writer), writer, scanChunk);
+        }
+
+        pub fn append(writer: *Writer, log: *logger.Log, allocator: *std.mem.Allocator) !void {
+            var scanner = Scanner.init(
+                log,
+
+                allocator,
+                writer.source,
+            );
+
+            try scanner.next(.omit, @TypeOf(writer), writer, writeBundledChunk);
+        }
+
         pub fn run(writer: *Writer, log: *logger.Log, allocator: *std.mem.Allocator) !void {
             var scanner = Scanner.init(
                 log,
@@ -785,7 +825,7 @@ pub fn NewWriter(
                 writer.source,
             );
 
-            try scanner.next(@TypeOf(writer), writer, writeChunk);
+            try scanner.next(.keep, @TypeOf(writer), writer, commitChunk);
         }
 
         fn writeString(writer: *Writer, str: string, quote: Chunk.TextContent.Quote) !void {
@@ -847,7 +887,34 @@ pub fn NewWriter(
             }
         }
 
-        pub fn writeChunk(writer: *Writer, chunk: Chunk) !void {
+        pub fn scanChunk(writer: *Writer, chunk: Chunk) !void {
+            switch (chunk.content) {
+                .t_url => |url| {},
+                .t_import => |import| {
+                    try writer.buildCtx.addCSSImport(
+                        try writer.linker.resolveCSS(
+                            writer.source.path,
+                            import.text.utf8,
+                            chunk.range,
+                            import_record.ImportKind.at,
+                            Options.BundleOptions.ImportPathFormat.absolute_path,
+                            true,
+                        ),
+                    );
+                },
+                .t_verbatim => |verbatim| {},
+            }
+        }
+
+        pub fn commitChunk(writer: *Writer, chunk: Chunk) !void {
+            return try writeChunk(writer, chunk, false);
+        }
+
+        pub fn writeBundledChunk(writer: *Writer, chunk: Chunk) !void {
+            return try writeChunk(writer, chunk, true);
+        }
+
+        pub fn writeChunk(writer: *Writer, chunk: Chunk, comptime omit_imports: bool) !void {
             switch (chunk.content) {
                 .t_url => |url| {
                     const url_str = try writer.linker.resolveCSS(
@@ -856,31 +923,36 @@ pub fn NewWriter(
                         chunk.range,
                         import_record.ImportKind.url,
                         import_path_format,
+                        true,
                     );
                     try writer.writeURL(url_str, url);
                 },
                 .t_import => |import| {
-                    const url_str = try writer.linker.resolveCSS(
-                        writer.source.path,
-                        import.text.utf8,
-                        chunk.range,
-                        import_record.ImportKind.at,
-                        import_path_format,
-                    );
+                    if (!omit_imports) {
+                        const url_str = try writer.linker.resolveCSS(
+                            writer.source.path,
+                            import.text.utf8,
+                            chunk.range,
+                            import_record.ImportKind.at,
+                            import_path_format,
+                            false,
+                        );
 
-                    try writer.ctx.writeAll("@import ");
-                    writer.written += "@import ".len;
+                        try writer.ctx.writeAll("@import ");
+                        writer.written += "@import ".len;
 
-                    if (import.url) {
-                        try writer.writeURL(url_str, import.text);
-                    } else {
-                        try writer.writeString(url_str, import.text.quote);
+                        if (import.url) {
+                            try writer.writeURL(url_str, import.text);
+                        } else {
+                            try writer.writeString(url_str, import.text.quote);
+                        }
+
+                        try writer.ctx.writeAll(import.suffix);
+                        writer.written += import.suffix.len;
+                        try writer.ctx.writeAll("\n");
+
+                        writer.written += 1;
                     }
-
-                    try writer.ctx.writeAll(import.suffix);
-                    writer.written += import.suffix.len;
-                    try writer.ctx.writeAll("\n");
-                    writer.written += 1;
                 },
                 .t_verbatim => |verbatim| {
                     defer writer.written += @intCast(usize, chunk.range.len);
@@ -891,7 +963,7 @@ pub fn NewWriter(
                                 usize,
                                 @intCast(
                                     usize,
-                                    chunk.range.len + chunk.range.loc.start,
+                                    chunk.range.len,
                                 ),
                             ),
                         );
@@ -906,5 +978,142 @@ pub fn NewWriter(
                 },
             }
         }
+    };
+}
+
+const ImportQueueFifo = std.fifo.LinearFifo(u32, .Dynamic);
+const QueuedList = std.ArrayList(u32);
+threadlocal var global_queued: QueuedList = undefined;
+threadlocal var global_import_queud: ImportQueueFifo = undefined;
+threadlocal var global_bundle_queud: QueuedList = undefined;
+threadlocal var has_set_global_queue = false;
+threadlocal var int_buf_print: [256]u8 = undefined;
+pub fn NewBundler(
+    comptime Writer: type,
+    comptime Linker: type,
+    comptime FileReader: type,
+    comptime Watcher: type,
+    comptime FSType: type,
+) type {
+    return struct {
+        const CSSBundler = @This();
+        queued: *QueuedList,
+        import_queue: *ImportQueueFifo,
+        bundle_queue: *QueuedList,
+        writer: Writer,
+        watcher: *Watcher,
+        fs_reader: FileReader,
+        fs: FSType,
+        allocator: *std.mem.Allocator,
+        pub fn runWithResolveResult(
+            resolve_result: resolver.Result,
+            fs: FSType,
+            writer: Writer,
+            watcher: *Watcher,
+            fs_reader: FileReader,
+            hash: u32,
+            input_fd: ?StoredFileDescriptorType,
+            allocator: *std.mem.Allocator,
+            log: *logger.Log,
+            linker: Linker,
+        ) !usize {
+            if (!has_set_global_queue) {
+                global_queued = QueuedList.init(alloc.static);
+                global_import_queud = ImportQueueFifo.init(alloc.static);
+                global_bundle_queud = QueuedList.init(alloc.static);
+                has_set_global_queue = true;
+            } else {
+                global_queued.clearRetainingCapacity();
+                global_import_queud.head = 0;
+                global_import_queud.count = 0;
+                global_bundle_queud.clearRetainingCapacity();
+            }
+
+            var this = CSSBundler{
+                .queued = &global_queued,
+                .import_queue = &global_import_queud,
+                .bundle_queue = &global_bundle_queud,
+                .writer = writer,
+                .fs_reader = fs_reader,
+                .fs = fs,
+
+                .allocator = allocator,
+                .watcher = watcher,
+            };
+            const CSSWriter = NewWriter(*CSSBundler, Linker, .absolute_url, *CSSBundler);
+
+            var css = CSSWriter.init(
+                undefined,
+                &this,
+                linker,
+            );
+            css.buildCtx = &this;
+
+            try this.addCSSImport(resolve_result.path_pair.primary.text);
+
+            while (this.import_queue.readItem()) |item| {
+                const watcher_id = this.watcher.indexOf(item) orelse unreachable;
+                const watch_item = this.watcher.watchlist.get(watcher_id);
+                const source = try this.getSource(watch_item.file_path, watch_item.fd);
+                css.source = &source;
+                try css.scan(log, allocator);
+            }
+
+            // We LIFO
+            var i: i32 = @intCast(i32, this.bundle_queue.items.len - 1);
+            while (i >= 0) : (i -= 1) {
+                const item = this.bundle_queue.items[@intCast(usize, i)];
+                const watcher_id = this.watcher.indexOf(item) orelse unreachable;
+                const watch_item = this.watcher.watchlist.get(watcher_id);
+                const source = try this.getSource(watch_item.file_path, watch_item.fd);
+                css.source = &source;
+                const file_path = fs.relativeTo(watch_item.file_path);
+                if (FeatureFlags.css_supports_fence) {
+                    try this.writeAll("\n@supports (hmr-watch-id:");
+                    const int_buf_size = std.fmt.formatIntBuf(&int_buf_print, item, 10, .upper, .{});
+                    try this.writeAll(int_buf_print[0..int_buf_size]);
+                    try this.writeAll(") and (hmr-file:\"");
+                    try this.writeAll(file_path);
+                    try this.writeAll("\") {}\n");
+                }
+                try this.writeAll("/* ");
+                try this.writeAll(file_path);
+                try this.writeAll("*/\n");
+                try css.append(log, allocator);
+            }
+
+            try this.writer.done();
+            return css.written;
+        }
+
+        pub fn getSource(this: *CSSBundler, url: string, input_fd: StoredFileDescriptorType) !logger.Source {
+            const entry = try this.fs_reader.readFile(this.fs, url, 0, true, input_fd);
+            const file = Fs.File{ .path = Fs.Path.init(url), .contents = entry.contents };
+            return logger.Source.initFile(file, this.allocator);
+        }
+
+        pub fn addCSSImport(this: *CSSBundler, absolute_path: string) !void {
+            const hash = Watcher.getHash(absolute_path);
+            if (this.queued.items.len > 0 and std.mem.indexOfScalar(u32, this.queued.items, hash) != null) {
+                return;
+            }
+
+            const watcher_index = this.watcher.indexOf(hash);
+
+            if (watcher_index == null) {
+                var file = try std.fs.openFileAbsolute(absolute_path, .{ .read = true });
+                try this.watcher.appendFile(file.handle, absolute_path, hash, .css, true);
+            }
+
+            try this.import_queue.writeItem(hash);
+            try this.queued.append(hash);
+            try this.bundle_queue.append(hash);
+        }
+
+        pub fn writeAll(this: *CSSBundler, buf: anytype) !void {
+            _ = try this.writer.writeAll(buf);
+        }
+
+        // pub fn copyFileRange(this: *CSSBundler, buf: anytype) !void {}
     };
 }

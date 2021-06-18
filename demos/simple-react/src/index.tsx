@@ -8,10 +8,7 @@ const Base = ({}) => {
     <main className={classNames("main")}>
       <h3 className={classNames("hi")}>Here is some text</h3>
       <h3 className={classNames("extremely")}></h3>
-      <>
-        Fargment!1239899080909123123123123123poaksdpoaksdpopokasdpokasdpokaspodkapsodk
-        poaksdpok123123
-      </>
+      <>Fargment!1239899s</>
 
       <Button
         label="Do notencoding! cl1ick."

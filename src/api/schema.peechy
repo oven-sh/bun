@@ -248,10 +248,13 @@ smol WebsocketMessageKind {
   file_change_notification = 2;
   build_success = 3;
   build_fail = 4;
+  manifest_success = 5;
+  manifest_fail = 6;
 }
 
 smol WebsocketCommandKind {
   build = 1;
+  manifest = 2;
 }
 
 // Each websocket message has two messages in it!
@@ -281,6 +284,10 @@ struct WebsocketCommandBuild {
   uint32 id;
 }
 
+struct WebsocketCommandManifest {
+  uint32 id;
+}
+
 // We copy the module_path here incase they don't already have it
 struct WebsocketMessageBuildSuccess {
   uint32 id;
@@ -303,6 +310,37 @@ struct WebsocketMessageBuildFailure {
   Log log;
 }
 
+// CSS @import only for now!
+struct DependencyManifest {
+  uint32[] ids;
+}
 
+struct FileList {
+  StringPointer[] ptrs;
+  string files;
+}
 
+struct WebsocketMessageResolveIDs {
+  uint32[] id;
+  FileList list;
+}
 
+struct WebsocketCommandResolveIDs {
+  StringPointer[] ptrs;
+  string files;
+}
+
+struct WebsocketMessageManifestSuccess {
+  uint32 id;
+  string module_path;
+  Loader loader;
+
+  DependencyManifest manifest;
+}
+
+struct WebsocketMessageManifestFailure {
+  uint32 id;
+  uint32 from_timestamp;
+  Loader loader;
+  Log log;
+}

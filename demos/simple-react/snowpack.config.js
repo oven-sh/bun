@@ -3,14 +3,12 @@
 
 /** @type {import("snowpack").SnowpackUserConfig } */
 module.exports = {
+  root: "src",
   mount: {
-    src: "/dist",
-    public: { url: "/", static: true, resolve: false },
-    resolve: true,
+    public: "/",
+    src: "/",
   },
-  plugins: [
-    /* ... */
-  ],
+  plugins: ["@snowpack/plugin-react-refresh"],
   packageOptions: {
     /* ... */
   },

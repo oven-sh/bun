@@ -85,6 +85,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 .watchlist = Watchlist{},
                 .mutex = sync.Mutex.init(),
             };
+
             return watcher;
         }
 
@@ -183,6 +184,17 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 return;
             }
 
+            try this.appendFile(fd, file_path, hash, loader, copy_file_path);
+        }
+
+        pub fn appendFile(
+            this: *Watcher,
+            fd: StoredFileDescriptorType,
+            file_path: string,
+            hash: u32,
+            loader: options.Loader,
+            comptime copy_file_path: bool,
+        ) !void {
             try this.watchlist.ensureUnusedCapacity(this.allocator, 1);
 
             // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html

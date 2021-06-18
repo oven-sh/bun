@@ -113,13 +113,14 @@ pub fn NewLinker(comptime BundlerType: type) type {
             range: logger.Range,
             kind: ImportKind,
             comptime import_path_format: Options.BundleOptions.ImportPathFormat,
+            comptime resolve_only: bool,
         ) !string {
             const dir = path.name.dirWithTrailingSlash();
 
             switch (kind) {
                 .at => {
                     var resolve_result = try this.resolver.resolve(dir, url, .at);
-                    if (resolve_result.is_external) {
+                    if (resolve_only or resolve_result.is_external) {
                         return resolve_result.path_pair.primary.text;
                     }
 
@@ -132,7 +133,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
                 },
                 .at_conditional => {
                     var resolve_result = try this.resolver.resolve(dir, url, .at_conditional);
-                    if (resolve_result.is_external) {
+                    if (resolve_only or resolve_result.is_external) {
                         return resolve_result.path_pair.primary.text;
                     }
 
@@ -144,7 +145,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
                 },
                 .url => {
                     var resolve_result = try this.resolver.resolve(dir, url, .url);
-                    if (resolve_result.is_external) {
+                    if (resolve_only or resolve_result.is_external) {
                         return resolve_result.path_pair.primary.text;
                     }
 
@@ -420,6 +421,11 @@ pub fn NewLinker(comptime BundlerType: type) type {
             comptime import_path_format: Options.BundleOptions.ImportPathFormat,
         ) !Fs.Path {
             switch (import_path_format) {
+                .absolute_path => {
+                    var relative_name = linker.fs.relative(source_dir, source_path);
+
+                    return Fs.Path.initWithPretty(source_path, relative_name);
+                },
                 .relative => {
                     var relative_name = linker.fs.relative(source_dir, source_path);
                     var pretty: string = undefined;
@@ -491,18 +497,35 @@ pub fn NewLinker(comptime BundlerType: type) type {
                         basename = try linker.getHashedFilename(basepath, null);
                     }
 
-                    const absolute_url = try std.fmt.allocPrint(
-                        linker.allocator,
-                        "{s}{s}{s}{s}",
-                        .{
-                            linker.options.public_url,
-                            dirname,
-                            basename,
-                            absolute_pathname.ext,
-                        },
-                    );
+                    const needs_slash = dirname.len > 0 and dirname[dirname.len - 1] != '/';
 
-                    return Fs.Path.initWithPretty(absolute_url, absolute_url);
+                    if (needs_slash) {
+                        const absolute_url = try std.fmt.allocPrint(
+                            linker.allocator,
+                            "{s}{s}/{s}{s}",
+                            .{
+                                linker.options.public_url,
+                                dirname,
+                                basename,
+                                absolute_pathname.ext,
+                            },
+                        );
+
+                        return Fs.Path.initWithPretty(absolute_url, absolute_url);
+                    } else {
+                        const absolute_url = try std.fmt.allocPrint(
+                            linker.allocator,
+                            "{s}{s}{s}{s}",
+                            .{
+                                linker.options.public_url,
+                                dirname,
+                                basename,
+                                absolute_pathname.ext,
+                            },
+                        );
+
+                        return Fs.Path.initWithPretty(absolute_url, absolute_url);
+                    }
                 },
 
                 else => unreachable,

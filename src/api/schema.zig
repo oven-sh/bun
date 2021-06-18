@@ -1285,6 +1285,12 @@ pub const Api = struct {
         /// build_fail
         build_fail,
 
+        /// manifest_success
+        manifest_success,
+
+        /// manifest_fail
+        manifest_fail,
+
         _,
 
         pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
@@ -1296,6 +1302,9 @@ pub const Api = struct {
         _none,
         /// build
         build,
+
+        /// manifest
+        manifest,
 
         _,
 
@@ -1399,6 +1408,22 @@ pub const Api = struct {
         }
     };
 
+    pub const WebsocketCommandManifest = packed struct {
+        /// id
+        id: u32 = 0,
+
+        pub fn decode(reader: anytype) anyerror!WebsocketCommandManifest {
+            var this = std.mem.zeroes(WebsocketCommandManifest);
+
+            this.id = try reader.readValue(u32);
+            return this;
+        }
+
+        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+            try writer.writeInt(this.id);
+        }
+    };
+
     pub const WebsocketMessageBuildSuccess = struct {
         /// id
         id: u32 = 0,
@@ -1467,6 +1492,84 @@ pub const Api = struct {
             try writer.writeInt(this.from_timestamp);
             try writer.writeEnum(this.loader);
             try writer.writeValue(this.module_path);
+            try writer.writeValue(this.log);
+        }
+    };
+
+    pub const DependencyManifest = struct {
+        /// ids
+        ids: []const u32,
+
+        pub fn decode(reader: anytype) anyerror!DependencyManifest {
+            var this = std.mem.zeroes(DependencyManifest);
+
+            this.ids = try reader.readArray(u32);
+            return this;
+        }
+
+        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+            try writer.writeArray(u32, this.ids);
+        }
+    };
+
+    pub const WebsocketMessageManifestSuccess = struct {
+        /// id
+        id: u32 = 0,
+
+        /// module_path
+        module_path: []const u8,
+
+        /// loader
+        loader: Loader,
+
+        /// manifest
+        manifest: DependencyManifest,
+
+        pub fn decode(reader: anytype) anyerror!WebsocketMessageManifestSuccess {
+            var this = std.mem.zeroes(WebsocketMessageManifestSuccess);
+
+            this.id = try reader.readValue(u32);
+            this.module_path = try reader.readValue([]const u8);
+            this.loader = try reader.readValue(Loader);
+            this.manifest = try reader.readValue(DependencyManifest);
+            return this;
+        }
+
+        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+            try writer.writeInt(this.id);
+            try writer.writeValue(this.module_path);
+            try writer.writeEnum(this.loader);
+            try writer.writeValue(this.manifest);
+        }
+    };
+
+    pub const WebsocketMessageManifestFailure = struct {
+        /// id
+        id: u32 = 0,
+
+        /// from_timestamp
+        from_timestamp: u32 = 0,
+
+        /// loader
+        loader: Loader,
+
+        /// log
+        log: Log,
+
+        pub fn decode(reader: anytype) anyerror!WebsocketMessageManifestFailure {
+            var this = std.mem.zeroes(WebsocketMessageManifestFailure);
+
+            this.id = try reader.readValue(u32);
+            this.from_timestamp = try reader.readValue(u32);
+            this.loader = try reader.readValue(Loader);
+            this.log = try reader.readValue(Log);
+            return this;
+        }
+
+        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+            try writer.writeInt(this.id);
+            try writer.writeInt(this.from_timestamp);
+            try writer.writeEnum(this.loader);
             try writer.writeValue(this.log);
         }
     };

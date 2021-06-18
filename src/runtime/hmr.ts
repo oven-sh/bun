@@ -8,6 +8,120 @@ function formatDuration(duration: number) {
   return Math.round(duration * 1000) / 1000;
 }
 
+class StringListPointer {
+  ptr: API.StringPointer;
+  source_index: number;
+}
+
+// How this works
+// The first time you load a <link rel="stylesheet">
+// It loads via @import. The natural way.
+// Then, you change a file. Say, button.css:
+// @import chain:
+// index.css -> link.css -> button.css -> foo.css
+// HTML:
+// <link rel="stylesheet" href="./index.css">
+// Now, we need to update "button.css". But, we can't control that.
+// Instead, we replace '<link rel="stylesheet" href="./index.css">'
+// With:
+// - <link rel="stylesheet" href="/_assets/1290123980123.css?noimport">
+// - <link rel="stylesheet" href="/_assets/1290123980123.css?noimport">
+// - <link rel="stylesheet" href="/_assets/1290123980123.css?noimport">
+// - <link rel="stylesheet" href="/_assets/1290123980123.css?noimport">
+// Now, say you update "link.css".
+// This time, we replace:
+// <link rel="stylesheet" href="./link.css?noimport">
+// With:
+// <link rel="stylesheet" href="./link.css?noimport&${from_timestamp}">
+export class CSSLoader {
+  hmr: HMRClient;
+  manifest?: API.DependencyManifest;
+
+  stringList: string[] = [];
+  idMap: Map<number, StringListPointer> = new Map();
+
+  selectorForId(id: number) {
+    return `hmr__${id.toString(10)}`;
+  }
+
+  fetchLinkTagById(id: number) {
+    const selector = this.selectorForId(id);
+    var element: HTMLLinkElement = document.querySelector(selector);
+
+    if (!element) {
+      element = document.createElement("link");
+      element.setAttribute("rel", "stylesheet");
+      element.setAttribute("id", selector);
+      element.setAttribute("href", `/_assets/${id}.css?noimport`);
+    }
+
+    return element;
+  }
+
+  handleManifestSuccess(buffer: ByteBuffer, timestamp: number) {
+    const success = API.decodeWebsocketMessageManifestSuccess(buffer);
+    if (success.loader !== API.Loader.css) {
+      __hmrlog.warn(
+        "Ignoring unimplemented loader:",
+        API.LoaderKeys[success.loader]
+      );
+      return;
+    }
+
+    const rootSelector = this.selectorForId(success.id);
+    let rootLinkTag: HTMLLinkElement = document.querySelector(rootSelector);
+    if (!rootLinkTag) {
+      for (let linkTag of document.querySelectorAll("link")) {
+        if (
+          new URL(linkTag.href, location.href).pathname.substring(1) ===
+          success.module_path
+        ) {
+          rootLinkTag = linkTag;
+          break;
+        }
+      }
+    }
+
+    if (!rootLinkTag) {
+      __hmrlog.debug("Skipping unknown CSS file", success.module_path);
+      return;
+    }
+
+    const elementList: HTMLLinkElement = new Array();
+    for (let i = 0; i < success.manifest.files.length; i++) {}
+  }
+  handleManifestFail(buffer: ByteBuffer, timestamp: number) {}
+  static request_manifest_buf: Uint8Array = undefined;
+  handleFileChangeNotification(
+    file_change_notification: API.WebsocketMessageFileChangeNotification,
+    timestamp: number
+  ) {
+    if (!CSSLoader.request_manifest_buf) {
+      CSSLoader.request_manifest_buf = new Uint8Array(255);
+    }
+    var buf = new ByteBuffer(CSSLoader.request_manifest_buf);
+    API.encodeWebsocketCommand(
+      {
+        kind: API.WebsocketCommandKind.manifest,
+        timestamp,
+      },
+      buf
+    );
+    API.encodeWebsocketCommandManifest(
+      {
+        id: file_change_notification.id,
+      },
+      buf
+    );
+
+    try {
+      this.hmr.socket.send(buf._data.subarray(0, buf._index));
+    } catch (exception) {
+      __hmrlog.error(exception);
+    }
+  }
+}
+
 class HMRClient {
   static client: HMRClient;
   socket: WebSocket;
@@ -17,6 +131,9 @@ class HMRClient {
   // This so we can send timestamps as uint32 instead of 128-bit integers
   epoch: number = 0;
 
+  loaders = {
+    css: new CSSLoader(),
+  };
   start() {
     if (runOnce) {
       __hmrlog.warn(
@@ -25,6 +142,7 @@ class HMRClient {
       return;
     }
 
+    this.loaders.css.hmr = this;
     runOnce = true;
     this.connect();
   }
@@ -159,6 +277,22 @@ class HMRClient {
   handleFileChangeNotification(buffer: ByteBuffer, timestamp: number) {
     const notification =
       API.decodeWebsocketMessageFileChangeNotification(buffer);
+    if (notification.loader === API.Loader.css) {
+      if (typeof window === "undefined") {
+        __hmrlog.debug(`Skipping CSS on non-webpage environment`);
+        return;
+      }
+
+      if ((this.builds.get(notification.id) || -Infinity) > timestamp) {
+        __hmrlog.debug(`Skipping outdated update`);
+        return;
+      }
+
+      this.loaders.css.handleFileChangeNotification(notification, timestamp);
+      this.builds.set(notification.id, timestamp);
+      return;
+    }
+
     const index = HMRModule.dependencies.graph.indexOf(notification.id);
 
     if (index === -1) {
@@ -213,6 +347,14 @@ class HMRClient {
       }
       case API.WebsocketMessageKind.build_success: {
         this.handleBuildSuccess(buffer, header.timestamp);
+        break;
+      }
+      case API.WebsocketMessageKind.manifest_success: {
+        this.loaders.css.handleManifestSuccess(buffer, header.timestamp);
+        break;
+      }
+      case API.WebsocketMessageKind.manifest_fail: {
+        this.loaders.css.handleManifestFail(buffer, header.timestamp);
         break;
       }
       case API.WebsocketMessageKind.file_change_notification: {

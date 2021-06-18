@@ -10,6 +10,7 @@ const js_ast = @import("./js_ast.zig");
 const bundler = @import("bundler.zig");
 const logger = @import("logger.zig");
 const Fs = @import("./fs.zig");
+const Options = @import("./options.zig");
 pub fn constStrToU8(s: string) []u8 {
     return @intToPtr([*]u8, @ptrToInt(s.ptr))[0..s.len];
 }
@@ -310,12 +311,13 @@ pub const RequestContext = struct {
     }
 
     pub fn sendNotFound(req: *RequestContext) !void {
+        defer req.done();
         try req.writeStatus(404);
         try req.flushHeaders();
-        req.done();
     }
 
     pub fn sendInternalError(ctx: *RequestContext, err: anytype) !void {
+        defer ctx.done();
         try ctx.writeStatus(500);
         const printed = std.fmt.bufPrint(&error_buf, "Error: {s}", .{@errorName(err)}) catch |err2| brk: {
             if (isDebug or isTest) {
@@ -332,15 +334,15 @@ pub const RequestContext = struct {
     threadlocal var error_buf: [4096]u8 = undefined;
 
     pub fn sendNotModified(ctx: *RequestContext) !void {
+        defer ctx.done();
         try ctx.writeStatus(304);
         try ctx.flushHeaders();
-        ctx.done();
     }
 
     pub fn sendNoContent(ctx: *RequestContext) !void {
+        defer ctx.done();
         try ctx.writeStatus(204);
         try ctx.flushHeaders();
-        ctx.done();
     }
 
     pub fn appendHeader(ctx: *RequestContext, comptime key: string, value: string) void {
@@ -858,6 +860,22 @@ pub const RequestContext = struct {
         _ = try std.Thread.spawn(WebsocketHandler.handle, handler);
     }
 
+    pub fn auto500(ctx: *RequestContext) void {
+        if (ctx.has_called_done) {
+            return;
+        }
+
+        defer ctx.done();
+
+        if (ctx.status == null) {
+            ctx.writeStatus(500) catch {};
+        }
+
+        if (!ctx.has_written_last_header) {
+            ctx.flushHeaders() catch {};
+        }
+    }
+
     pub fn handleGet(ctx: *RequestContext) !void {
         if (strings.eqlComptime(ctx.url.extname, "jsb") and ctx.bundler.options.node_modules_bundle != null) {
             return try ctx.sendJSB();
@@ -867,6 +885,8 @@ pub const RequestContext = struct {
             try ctx.handleWebsocket();
             return;
         }
+
+        // errdefer ctx.auto500();
 
         const result = try ctx.bundler.buildFile(
             &ctx.log,
@@ -902,10 +922,11 @@ pub const RequestContext = struct {
                 const SocketPrinterInternal = struct {
                     const SocketPrinterInternal = @This();
                     rctx: *RequestContext,
+                    _loader: Options.Loader,
                     threadlocal var buffer: MutableString = undefined;
                     threadlocal var has_loaded_buffer: bool = false;
 
-                    pub fn init(rctx: *RequestContext) SocketPrinterInternal {
+                    pub fn init(rctx: *RequestContext, _loader: Options.Loader) SocketPrinterInternal {
                         // if (isMac) {
                         //     _ = std.os.fcntl(file.handle, std.os.F_NOCACHE, 1) catch 0;
                         // }
@@ -919,6 +940,7 @@ pub const RequestContext = struct {
 
                         return SocketPrinterInternal{
                             .rctx = rctx,
+                            ._loader = _loader,
                         };
                     }
                     pub fn writeByte(_ctx: *SocketPrinterInternal, byte: u8) anyerror!usize {
@@ -950,7 +972,9 @@ pub const RequestContext = struct {
                         }
 
                         if (FeatureFlags.strong_etags_for_built_files) {
-                            if (buf.len < 16 * 16 * 16 * 16) {
+                            // Always cache css & json files, even big ones
+                            // css is especially important because we want to try and skip having the browser parse it whenever we can
+                            if (buf.len < 16 * 16 * 16 * 16 or chunky._loader == .css or chunky._loader == .json) {
                                 const strong_etag = std.hash.Wyhash.hash(1, buf);
                                 const etag_content_slice = std.fmt.bufPrintIntToSlice(strong_etag_buffer[0..49], strong_etag, 16, .upper, .{});
 
@@ -983,13 +1007,15 @@ pub const RequestContext = struct {
                     SocketPrinterInternal.getLastByte,
                     SocketPrinterInternal.getLastLastByte,
                 );
+                const loader = ctx.bundler.options.loaders.get(result.file.input.name.ext) orelse .file;
 
-                var chunked_encoder = SocketPrinter.init(SocketPrinterInternal.init(ctx));
+                var chunked_encoder = SocketPrinter.init(
+                    SocketPrinterInternal.init(ctx, loader),
+                );
 
                 // It will call flush for us automatically
                 defer ctx.bundler.resetStore();
-                const loader = ctx.bundler.options.loaders.get(resolve_result.path_pair.primary.name.ext) orelse .file;
-                var written = try ctx.bundler.buildWithResolveResult(
+                var written = ctx.bundler.buildWithResolveResult(
                     resolve_result,
                     ctx.allocator,
                     loader,
@@ -998,17 +1024,32 @@ pub const RequestContext = struct {
                     .absolute_url,
                     input_fd,
                     hash,
-                );
-                if (written.input_fd) |written_fd| {
-                    try ctx.watcher.addFile(
-                        written_fd,
-                        result.file.input.text,
-                        hash,
-                        loader,
-                        true,
-                    );
-                    if (ctx.watcher.watchloop_handle == null) {
-                        try ctx.watcher.start();
+                    Watcher,
+                    ctx.watcher,
+                ) catch |err| {
+                    ctx.sendInternalError(err) catch {};
+                    return;
+                };
+
+                // CSS handles this specially
+                if (loader != .css) {
+                    if (written.input_fd) |written_fd| {
+                        try ctx.watcher.addFile(
+                            written_fd,
+                            result.file.input.text,
+                            hash,
+                            loader,
+                            true,
+                        );
+                        if (ctx.watcher.watchloop_handle == null) {
+                            try ctx.watcher.start();
+                        }
+                    }
+                } else {
+                    if (written.written > 0) {
+                        if (ctx.watcher.watchloop_handle == null) {
+                            try ctx.watcher.start();
+                        }
                     }
                 }
             },

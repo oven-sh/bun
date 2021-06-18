@@ -26,7 +26,7 @@ pub const Category = enum {
 };
 
 pub const other = MimeType.init("application/octet-stream", .other);
-pub const css = MimeType.init("application/octet-stream", .other);
+pub const css = MimeType.init("text/css", .css);
 pub const javascript = MimeType.init("text/javascript;charset=utf-8", .javascript);
 pub const ico = MimeType.init("image/vnd.microsoft.icon", .image);
 

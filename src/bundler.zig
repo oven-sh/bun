@@ -611,7 +611,7 @@ pub fn NewBundler(cache_files: bool) type {
 
                             var part = &ast.parts[ast.parts.len - 1];
                             var new_stmts: [1]Stmt = undefined;
-                            var register_args: [4]Expr = undefined;
+                            var register_args: [3]Expr = undefined;
 
                             var package_json_string = E.String{ .utf8 = package.name };
                             var module_path_string = E.String{ .utf8 = package_relative_path };
@@ -850,6 +850,8 @@ pub fn NewBundler(cache_files: bool) type {
             comptime import_path_format: options.BundleOptions.ImportPathFormat,
             file_descriptor: ?StoredFileDescriptorType,
             filepath_hash: u32,
+            comptime WatcherType: type,
+            watcher: *WatcherType,
         ) !BuildResolveResultPair {
             if (resolve_result.is_external) {
                 return BuildResolveResultPair{
@@ -866,28 +868,59 @@ pub fn NewBundler(cache_files: bool) type {
             var old_bundler_allocator = bundler.allocator;
             bundler.allocator = allocator;
             defer bundler.allocator = old_bundler_allocator;
-            var result = bundler.parse(allocator, file_path, loader, resolve_result.dirname_fd, file_descriptor, filepath_hash) orelse {
-                bundler.resetStore();
-                return BuildResolveResultPair{
-                    .written = 0,
-                    .input_fd = null,
-                };
-            };
             var old_linker_allocator = bundler.linker.allocator;
             defer bundler.linker.allocator = old_linker_allocator;
             bundler.linker.allocator = allocator;
-            try bundler.linker.link(file_path, &result, import_path_format);
 
-            return BuildResolveResultPair{
-                .written = try bundler.print(
-                    result,
-                    Writer,
-                    writer,
-                ),
-                .input_fd = result.input_fd,
-            };
-            // output_file.version = if (resolve_result.is_from_node_modules) resolve_result.package_json_version else null;
+            switch (loader) {
+                .css => {
+                    const CSSBundler = Css.NewBundler(
+                        Writer,
+                        @TypeOf(&bundler.linker),
+                        @TypeOf(&bundler.resolver.caches.fs),
+                        WatcherType,
+                        @TypeOf(bundler.fs),
+                    );
 
+                    return BuildResolveResultPair{
+                        .written = try CSSBundler.runWithResolveResult(
+                            resolve_result,
+                            bundler.fs,
+                            writer,
+                            watcher,
+                            &bundler.resolver.caches.fs,
+                            filepath_hash,
+                            file_descriptor,
+                            allocator,
+                            bundler.log,
+                            &bundler.linker,
+                        ),
+                        .input_fd = file_descriptor,
+                    };
+                },
+                else => {
+                    var result = bundler.parse(allocator, file_path, loader, resolve_result.dirname_fd, file_descriptor, filepath_hash) orelse {
+                        bundler.resetStore();
+                        return BuildResolveResultPair{
+                            .written = 0,
+                            .input_fd = null,
+                        };
+                    };
+
+                    try bundler.linker.link(file_path, &result, import_path_format);
+
+                    return BuildResolveResultPair{
+                        .written = try bundler.print(
+                            result,
+                            Writer,
+                            writer,
+                        ),
+                        .input_fd = result.input_fd,
+                    };
+                    // output_file.version = if (resolve_result.is_from_node_modules) resolve_result.package_json_version else null;
+
+                },
+            }
         }
 
         pub fn buildWithResolveResultEager(
@@ -972,6 +1005,7 @@ pub fn NewBundler(cache_files: bool) type {
                         std.fs.File,
                         @TypeOf(&bundler.linker),
                         import_path_format,
+                        void,
                     );
                     const entry = bundler.resolver.caches.fs.readFile(
                         bundler.fs,
@@ -1149,7 +1183,7 @@ pub fn NewBundler(cache_files: bool) type {
                 bundler.fs,
                 path.text,
                 dirname_fd,
-                !cache_files,
+                true,
                 file_descriptor,
             ) catch return null;
 
@@ -1195,9 +1229,7 @@ pub fn NewBundler(cache_files: bool) type {
                         .input_fd = entry.fd,
                     };
                 },
-                .css => {
-                    return null;
-                },
+                .css => {},
                 else => Global.panic("Unsupported loader {s} for path: {s}", .{ loader, source.path.text }),
             }
 
@@ -1348,7 +1380,7 @@ pub fn NewBundler(cache_files: bool) type {
             const loader = bundler.options.loaders.get(resolved.path_pair.primary.name.ext) orelse .file;
 
             switch (loader) {
-                .js, .jsx, .ts, .tsx, .json => {
+                .js, .jsx, .ts, .tsx, .json, .css => {
                     return ServeResult{
                         .file = options.OutputFile.initPending(loader, resolved),
                         .mime_type = MimeType.byLoader(

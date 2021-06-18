@@ -3556,6 +3556,18 @@ pub fn NewWriter(
             };
         }
 
+        pub fn isCopyFileRangeSupported() bool {
+            return comptime std.meta.trait.hasFn("copyFileRange")(ContextType);
+        }
+
+        pub fn copyFileRange(ctx: ContextType, in_file: StoredFileDescriptorType, start: usize, end: usize) !void {
+            ctx.sendfile(
+                in_file,
+                start,
+                end,
+            );
+        }
+
         pub fn getError(writer: *const Self) anyerror!void {
             if (writer.orig_err) |orig_err| {
                 return orig_err;
@@ -3577,9 +3589,9 @@ pub fn NewWriter(
         pub const Error = error{FormatError};
 
         pub fn writeAll(writer: *Self, bytes: anytype) Error!usize {
-            const written = writer.written;
+            const written = std.math.max(writer.written, 0);
             writer.print(@TypeOf(bytes), bytes);
-            return writer.written - written;
+            return @intCast(usize, writer.written) - @intCast(usize, written);
         }
 
         pub inline fn print(writer: *Self, comptime ValueType: type, str: ValueType) void {

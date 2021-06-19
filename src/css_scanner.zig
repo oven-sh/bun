@@ -994,6 +994,7 @@ pub fn NewBundler(
     comptime FileReader: type,
     comptime Watcher: type,
     comptime FSType: type,
+    comptime hot_module_reloading: bool,
 ) type {
     return struct {
         const CSSBundler = @This();
@@ -1005,8 +1006,8 @@ pub fn NewBundler(
         fs_reader: FileReader,
         fs: FSType,
         allocator: *std.mem.Allocator,
-        pub fn runWithResolveResult(
-            resolve_result: resolver.Result,
+        pub fn bundle(
+            absolute_path: string,
             fs: FSType,
             writer: Writer,
             watcher: *Watcher,
@@ -1049,7 +1050,7 @@ pub fn NewBundler(
             );
             css.buildCtx = &this;
 
-            try this.addCSSImport(resolve_result.path_pair.primary.text);
+            try this.addCSSImport(absolute_path);
 
             while (this.import_queue.readItem()) |item| {
                 const watcher_id = this.watcher.indexOf(item) orelse unreachable;
@@ -1057,6 +1058,19 @@ pub fn NewBundler(
                 const source = try this.getSource(watch_item.file_path, watch_item.fd);
                 css.source = &source;
                 try css.scan(log, allocator);
+            }
+
+            // This exists to identify the entry point
+            // When we do HMR, ask the entire bundle to be regenerated
+            // But, we receive a file change event for a file within the bundle
+            // So the inner ID is used to say "does this bundle need to be reloaded?"
+            // The outer ID is used to say "go ahead and reload this"
+
+            if (hot_module_reloading and FeatureFlags.css_supports_fence and this.bundle_queue.items.len > 0) {
+                try this.writeAll("\n@supports (hmr-bid:");
+                const int_buf_size = std.fmt.formatIntBuf(&int_buf_print, hash, 10, .upper, .{});
+                try this.writeAll(int_buf_print[0..int_buf_size]);
+                try this.writeAll(") {}\n");
             }
 
             // We LIFO
@@ -1068,8 +1082,8 @@ pub fn NewBundler(
                 const source = try this.getSource(watch_item.file_path, watch_item.fd);
                 css.source = &source;
                 const file_path = fs.relativeTo(watch_item.file_path);
-                if (FeatureFlags.css_supports_fence) {
-                    try this.writeAll("\n@supports (hmr-watch-id:");
+                if (hot_module_reloading and FeatureFlags.css_supports_fence) {
+                    try this.writeAll("\n@supports (hmr-wid:");
                     const int_buf_size = std.fmt.formatIntBuf(&int_buf_print, item, 10, .upper, .{});
                     try this.writeAll(int_buf_print[0..int_buf_size]);
                     try this.writeAll(") and (hmr-file:\"");

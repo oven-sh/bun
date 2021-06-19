@@ -874,27 +874,54 @@ pub fn NewBundler(cache_files: bool) type {
 
             switch (loader) {
                 .css => {
+                    const CSSBundlerHMR = Css.NewBundler(
+                        Writer,
+                        @TypeOf(&bundler.linker),
+                        @TypeOf(&bundler.resolver.caches.fs),
+                        WatcherType,
+                        @TypeOf(bundler.fs),
+                        true,
+                    );
+
                     const CSSBundler = Css.NewBundler(
                         Writer,
                         @TypeOf(&bundler.linker),
                         @TypeOf(&bundler.resolver.caches.fs),
                         WatcherType,
                         @TypeOf(bundler.fs),
+                        false,
                     );
 
                     return BuildResolveResultPair{
-                        .written = try CSSBundler.runWithResolveResult(
-                            resolve_result,
-                            bundler.fs,
-                            writer,
-                            watcher,
-                            &bundler.resolver.caches.fs,
-                            filepath_hash,
-                            file_descriptor,
-                            allocator,
-                            bundler.log,
-                            &bundler.linker,
-                        ),
+                        .written = brk: {
+                            if (bundler.options.hot_module_reloading) {
+                                break :brk try CSSBundlerHMR.bundle(
+                                    resolve_result.path_pair.primary.text,
+                                    bundler.fs,
+                                    writer,
+                                    watcher,
+                                    &bundler.resolver.caches.fs,
+                                    filepath_hash,
+                                    file_descriptor,
+                                    allocator,
+                                    bundler.log,
+                                    &bundler.linker,
+                                );
+                            } else {
+                                break :brk try CSSBundler.bundle(
+                                    resolve_result.path_pair.primary.text,
+                                    bundler.fs,
+                                    writer,
+                                    watcher,
+                                    &bundler.resolver.caches.fs,
+                                    filepath_hash,
+                                    file_descriptor,
+                                    allocator,
+                                    bundler.log,
+                                    &bundler.linker,
+                                );
+                            }
+                        },
                         .input_fd = file_descriptor,
                     };
                 },

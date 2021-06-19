@@ -8,117 +8,238 @@ function formatDuration(duration: number) {
   return Math.round(duration * 1000) / 1000;
 }
 
-class StringListPointer {
-  ptr: API.StringPointer;
-  source_index: number;
-}
+type CSSHMRInsertionPoint = {
+  id: number;
+  node: HTMLLinkElement;
+  file: string;
+  bundle_id: number;
+};
 
 // How this works
-// The first time you load a <link rel="stylesheet">
-// It loads via @import. The natural way.
-// Then, you change a file. Say, button.css:
-// @import chain:
-// index.css -> link.css -> button.css -> foo.css
-// HTML:
-// <link rel="stylesheet" href="./index.css">
-// Now, we need to update "button.css". But, we can't control that.
-// Instead, we replace '<link rel="stylesheet" href="./index.css">'
-// With:
-// - <link rel="stylesheet" href="/_assets/1290123980123.css?noimport">
-// - <link rel="stylesheet" href="/_assets/1290123980123.css?noimport">
-// - <link rel="stylesheet" href="/_assets/1290123980123.css?noimport">
-// - <link rel="stylesheet" href="/_assets/1290123980123.css?noimport">
-// Now, say you update "link.css".
-// This time, we replace:
-// <link rel="stylesheet" href="./link.css?noimport">
-// With:
-// <link rel="stylesheet" href="./link.css?noimport&${from_timestamp}">
+// We keep
 export class CSSLoader {
   hmr: HMRClient;
-  manifest?: API.DependencyManifest;
+  private static cssLoadId: CSSHMRInsertionPoint = {
+    id: 0,
+    bundle_id: 0,
+    node: null,
+    file: "",
+  };
 
-  stringList: string[] = [];
-  idMap: Map<number, StringListPointer> = new Map();
-
-  selectorForId(id: number) {
-    return `hmr__${id.toString(10)}`;
-  }
-
-  fetchLinkTagById(id: number) {
-    const selector = this.selectorForId(id);
-    var element: HTMLLinkElement = document.querySelector(selector);
-
-    if (!element) {
-      element = document.createElement("link");
-      element.setAttribute("rel", "stylesheet");
-      element.setAttribute("id", selector);
-      element.setAttribute("href", `/_assets/${id}.css?noimport`);
-    }
-
-    return element;
-  }
-
-  handleManifestSuccess(buffer: ByteBuffer, timestamp: number) {
-    const success = API.decodeWebsocketMessageManifestSuccess(buffer);
-    if (success.loader !== API.Loader.css) {
-      __hmrlog.warn(
-        "Ignoring unimplemented loader:",
-        API.LoaderKeys[success.loader]
-      );
-      return;
-    }
-
-    const rootSelector = this.selectorForId(success.id);
-    let rootLinkTag: HTMLLinkElement = document.querySelector(rootSelector);
-    if (!rootLinkTag) {
-      for (let linkTag of document.querySelectorAll("link")) {
-        if (
-          new URL(linkTag.href, location.href).pathname.substring(1) ===
-          success.module_path
-        ) {
-          rootLinkTag = linkTag;
-          break;
+  // This is a separate function because calling a small function 2000 times is more likely to cause it to be JIT'd
+  // We want it to be JIT'd
+  // It's possible that returning null may be a de-opt though.
+  private findMatchingSupportsRule(
+    rule: CSSSupportsRule,
+    id: number,
+    sheet: CSSStyleSheet
+  ): CSSHMRInsertionPoint | null {
+    switch (rule.type) {
+      // 12 is result.SUPPORTS_RULE
+      case 12: {
+        if (!rule.conditionText.startsWith("(hmr-wid:")) {
+          return null;
         }
+
+        const startIndex = "hmr-wid:".length + 1;
+        const endIDRegion = rule.conditionText.indexOf(")", startIndex);
+        if (endIDRegion === -1) return null;
+
+        const int = parseInt(
+          rule.conditionText.substring(startIndex, endIDRegion),
+          10
+        );
+
+        if (int !== id) {
+          return null;
+        }
+
+        let startFileRegion = rule.conditionText.indexOf(
+          '(hmr-file:"',
+          endIDRegion
+        );
+        if (startFileRegion === -1) return null;
+        startFileRegion += '(hmr-file:"'.length + 1;
+
+        const endFileRegion = rule.conditionText.indexOf('"', startFileRegion);
+        if (endFileRegion === -1) return null;
+        // Empty file strings are invalid
+        if (endFileRegion - startFileRegion <= 0) return null;
+
+        CSSLoader.cssLoadId.id = int;
+        CSSLoader.cssLoadId.node = sheet.ownerNode as HTMLLinkElement;
+        CSSLoader.cssLoadId.file = rule.conditionText.substring(
+          startFileRegion - 1,
+          endFileRegion
+        );
+
+        return CSSLoader.cssLoadId;
+      }
+      default: {
+        return null;
+      }
+    }
+  }
+
+  bundleId(): number {
+    return CSSLoader.cssLoadId.bundle_id;
+  }
+
+  private findCSSLinkTag(id: number): CSSHMRInsertionPoint | null {
+    const count = document.styleSheets.length;
+    let match: CSSHMRInsertionPoint = null;
+    for (let i = 0; i < count && match === null; i++) {
+      let cssRules: CSSRuleList;
+      let sheet: CSSStyleSheet;
+      let ruleCount = 0;
+      // Non-same origin stylesheets will potentially throw "Security error"
+      // We will ignore those stylesheets and look at others.
+      try {
+        sheet = document.styleSheets.item(i);
+        cssRules = sheet.rules;
+        ruleCount = sheet.rules.length;
+      } catch (exception) {
+        continue;
+      }
+
+      if (
+        sheet.disabled ||
+        !sheet.href ||
+        sheet.href.length === 0 ||
+        sheet.rules.length === 0
+      ) {
+        continue;
+      }
+
+      const bundleIdRule = cssRules[0] as CSSSupportsRule;
+      if (
+        bundleIdRule.type !== 12 ||
+        !bundleIdRule.conditionText.startsWith("(hmr-bid:")
+      ) {
+        continue;
+      }
+
+      const bundleIdEnd = bundleIdRule.conditionText.indexOf(
+        ")",
+        "(hmr-bid:".length + 1
+      );
+      if (bundleIdEnd === -1) continue;
+
+      CSSLoader.cssLoadId.bundle_id = parseInt(
+        bundleIdRule.conditionText.substring("(hmr-bid:".length, bundleIdEnd),
+        10
+      );
+
+      for (let j = 1; j < ruleCount && match === null; j++) {
+        match = this.findMatchingSupportsRule(
+          cssRules[j] as CSSSupportsRule,
+          id,
+          sheet
+        );
       }
     }
 
-    if (!rootLinkTag) {
-      __hmrlog.debug("Skipping unknown CSS file", success.module_path);
+    // Ensure we don't leak the HTMLLinkElement
+    if (match === null) {
+      CSSLoader.cssLoadId.file = "";
+      CSSLoader.cssLoadId.bundle_id = CSSLoader.cssLoadId.id = 0;
+      CSSLoader.cssLoadId.node = null;
+    }
+
+    return match;
+  }
+
+  handleBuildSuccess(
+    buffer: ByteBuffer,
+    build: API.WebsocketMessageBuildSuccess,
+    timestamp: number
+  ) {
+    const start = performance.now();
+    var update = this.findCSSLinkTag(build.id);
+    if (update === null) {
+      __hmrlog.debug("Skipping unused CSS.");
       return;
     }
 
-    const elementList: HTMLLinkElement = new Array();
-    for (let i = 0; i < success.manifest.files.length; i++) {}
-  }
-  handleManifestFail(buffer: ByteBuffer, timestamp: number) {}
-  static request_manifest_buf: Uint8Array = undefined;
-  handleFileChangeNotification(
-    file_change_notification: API.WebsocketMessageFileChangeNotification,
-    timestamp: number
-  ) {
-    if (!CSSLoader.request_manifest_buf) {
-      CSSLoader.request_manifest_buf = new Uint8Array(255);
-    }
-    var buf = new ByteBuffer(CSSLoader.request_manifest_buf);
-    API.encodeWebsocketCommand(
-      {
-        kind: API.WebsocketCommandKind.manifest,
-        timestamp,
-      },
-      buf
+    let blob = new Blob(
+      [
+        buffer._data.length > buffer._index
+          ? buffer._data.subarray(buffer._index)
+          : new Uint8Array(0),
+      ],
+      { type: "text/css" }
     );
-    API.encodeWebsocketCommandManifest(
-      {
-        id: file_change_notification.id,
-      },
-      buf
-    );
+    buffer = null;
+    const blobURL = URL.createObjectURL(blob);
+    let filepath = update.file;
+    const _timestamp = timestamp;
+    const from_timestamp = build.from_timestamp;
+    function onLoadHandler(load: Event) {
+      const localDuration = formatDuration(performance.now() - start);
+      const fsDuration = _timestamp - from_timestamp;
+      __hmrlog.log(
+        "Reloaded in",
+        `${localDuration + fsDuration}ms`,
+        "-",
+        filepath
+      );
 
-    try {
-      this.hmr.socket.send(buf._data.subarray(0, buf._index));
-    } catch (exception) {
-      __hmrlog.error(exception);
+      blob = null;
+      update = null;
+      filepath = null;
+
+      if (this.href.includes("blob:")) {
+        URL.revokeObjectURL(this.href);
+      }
     }
+    // onLoad doesn't fire in Chrome.
+    // I'm not sure why.
+    // Guessing it only triggers when an element is added/removed, not when the href just changes
+    // So we say on the next tick, we're loaded.
+    setTimeout(onLoadHandler.bind(update.node), 0);
+    if (update.node.href.includes("blob:")) {
+      URL.revokeObjectURL(update.node.href);
+    }
+    update.node.setAttribute("href", blobURL);
+    URL.revokeObjectURL(blobURL);
+  }
+
+  reload(timestamp: number) {
+    // function onLoadHandler(load: Event) {
+    //   const localDuration = formatDuration(performance.now() - start);
+    //   const fsDuration = _timestamp - from_timestamp;
+    //   __hmrlog.log(
+    //     "Reloaded in",
+    //     `${localDuration + fsDuration}ms`,
+    //     "-",
+    //     filepath
+    //   );
+
+    //   blob = null;
+    //   update = null;
+    //   filepath = null;
+
+    //   if (this.href.includes("blob:")) {
+    //     URL.revokeObjectURL(this.href);
+    //   }
+    // }
+
+    const url = new URL(CSSLoader.cssLoadId.node.href, location.href);
+    url.searchParams.set("v", timestamp.toString(10));
+    CSSLoader.cssLoadId.node.setAttribute("href", url.toString());
+  }
+
+  filePath(
+    file_change_notification: API.WebsocketMessageFileChangeNotification
+  ): string | null {
+    if (file_change_notification.loader !== API.Loader.css) return null;
+    const tag = this.findCSSLinkTag(file_change_notification.id);
+
+    if (!tag) {
+      return null;
+    }
+
+    return tag.file;
   }
 }
 
@@ -217,6 +338,26 @@ class HMRClient {
 
   handleBuildSuccess(buffer: ByteBuffer, timestamp: number) {
     const build = API.decodeWebsocketMessageBuildSuccess(buffer);
+
+    // Ignore builds of modules we expect a later version of
+    const currentVersion = this.builds.get(build.id) || -Infinity;
+
+    if (currentVersion > build.from_timestamp) {
+      if (this.verbose) {
+        __hmrlog.debug(
+          `Ignoring outdated update for "${build.module_path}".\n  Expected: >=`,
+          currentVersion,
+          `\n   Received:`,
+          build.from_timestamp
+        );
+      }
+      return;
+    }
+
+    if (build.loader === API.Loader.css) {
+      return this.loaders.css.handleBuildSuccess(buffer, build, timestamp);
+    }
+
     const id = build.id;
     const index = this.indexOfModuleId(id);
     // Ignore builds of modules that are not loaded
@@ -225,21 +366,6 @@ class HMRClient {
         __hmrlog.debug(`Skipping reload for unknown module id:`, id);
       }
 
-      return;
-    }
-
-    // Ignore builds of modules we expect a later version of
-    const currentVersion = this.builds.get(id) || -Infinity;
-
-    if (currentVersion > build.from_timestamp) {
-      if (this.verbose) {
-        __hmrlog.debug(
-          `Ignoring outdated update for "${HMRModule.dependencies.modules[index].file_path}".\n  Expected: >=`,
-          currentVersion,
-          `\n   Received:`,
-          build.from_timestamp
-        );
-      }
       return;
     }
 
@@ -277,25 +403,26 @@ class HMRClient {
   handleFileChangeNotification(buffer: ByteBuffer, timestamp: number) {
     const notification =
       API.decodeWebsocketMessageFileChangeNotification(buffer);
-    if (notification.loader === API.Loader.css) {
-      if (typeof window === "undefined") {
-        __hmrlog.debug(`Skipping CSS on non-webpage environment`);
-        return;
+    let file_path = "";
+    switch (notification.loader) {
+      case API.Loader.css: {
+        file_path = this.loaders.css.filePath(notification);
+        break;
       }
 
-      if ((this.builds.get(notification.id) || -Infinity) > timestamp) {
-        __hmrlog.debug(`Skipping outdated update`);
-        return;
-      }
+      default: {
+        const index = HMRModule.dependencies.graph.indexOf(notification.id);
 
-      this.loaders.css.handleFileChangeNotification(notification, timestamp);
-      this.builds.set(notification.id, timestamp);
-      return;
+        if (index > -1) {
+          file_path = HMRModule.dependencies.modules[index].file_path;
+        }
+        break;
+      }
     }
 
-    const index = HMRModule.dependencies.graph.indexOf(notification.id);
+    const accept = file_path && file_path.length > 0;
 
-    if (index === -1) {
+    if (!accept) {
       if (this.verbose) {
         __hmrlog.debug("Unknown module changed, skipping");
       }
@@ -303,19 +430,24 @@ class HMRClient {
     }
 
     if ((this.builds.get(notification.id) || -Infinity) > timestamp) {
-      __hmrlog.debug(
-        `Received update for ${HMRModule.dependencies.modules[index].file_path}`
-      );
+      __hmrlog.debug(`Received update for ${file_path}`);
       return;
     }
 
     if (this.verbose) {
-      __hmrlog.debug(
-        `Requesting update for ${HMRModule.dependencies.modules[index].file_path}`
-      );
+      __hmrlog.debug(`Requesting update for ${file_path}`);
     }
 
     this.builds.set(notification.id, timestamp);
+
+    // When we're dealing with CSS, even though the watch event happened for a file in the bundle
+    // We want it to regenerate the entire bundle
+    // So we must swap out the ID we send for the ID of the corresponding bundle.
+    if (notification.loader === API.Loader.css) {
+      notification.id = this.loaders.css.bundleId();
+      this.builds.set(notification.id, timestamp);
+    }
+
     this.buildCommandBuf[0] = API.WebsocketCommandKind.build;
     this.buildCommandUArray[0] = timestamp;
     this.buildCommandBuf.set(this.buildCommandUArrayEight, 1);
@@ -349,14 +481,7 @@ class HMRClient {
         this.handleBuildSuccess(buffer, header.timestamp);
         break;
       }
-      case API.WebsocketMessageKind.manifest_success: {
-        this.loaders.css.handleManifestSuccess(buffer, header.timestamp);
-        break;
-      }
-      case API.WebsocketMessageKind.manifest_fail: {
-        this.loaders.css.handleManifestFail(buffer, header.timestamp);
-        break;
-      }
+
       case API.WebsocketMessageKind.file_change_notification: {
         this.handleFileChangeNotification(buffer, header.timestamp);
         break;
@@ -385,7 +510,7 @@ class HMRClient {
       return;
     }
 
-    this.reconnect = setInterval(this.connect, 500) as any as number;
+    this.reconnect = globalThis.setInterval(this.connect, 500) as any as number;
     __hmrlog.warn("HMR disconnected. Attempting to reconnect.");
   };
 }

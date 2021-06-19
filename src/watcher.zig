@@ -111,12 +111,8 @@ pub fn NewWatcher(comptime ContextType: type) type {
         pub fn watchLoop(this: *Watcher) !void {
             this.watchloop_handle = std.Thread.getCurrentThreadId();
             var stdout = std.io.getStdOut();
-            // var stdout = std.io.bufferedWriter(stdout_file.writer());
             var stderr = std.io.getStdErr();
-            // var stderr = std.io.bufferedWriter(stderr_file.writer());
             var output_source = Output.Source.init(stdout, stderr);
-            // defer stdout.flush() catch {};
-            // defer stderr.flush() catch {};
             Output.Source.set(&output_source);
             Output.enable_ansi_colors = stderr.isTty();
 

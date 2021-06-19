@@ -1,21 +1,20 @@
 body {
-  background-color: yellow;
+  background-color: green;
+  border: 10px solid pink;
+  color: pink;
+  box-shadow: 10px 10px 32px red;
 }
 
 body {
-  background-color: yellow;
+  background-color: blue;
 }
 
 body {
-  background-color: yellow;
+  background-color: aliceblue;
 }
 
 body {
-  background-color: yellow;
-}
-
-body {
-  background-color: yellow;
+  background-color: red;
 }
 
 body {

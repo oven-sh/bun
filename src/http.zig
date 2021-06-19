@@ -11,6 +11,8 @@ const bundler = @import("bundler.zig");
 const logger = @import("logger.zig");
 const Fs = @import("./fs.zig");
 const Options = @import("./options.zig");
+const Css = @import("css_scanner.zig");
+
 pub fn constStrToU8(s: string) []u8 {
     return @intToPtr([*]u8, @ptrToInt(s.ptr))[0..s.len];
 }
@@ -443,6 +445,11 @@ pub const RequestContext = struct {
             const fd = this.watcher.watchlist.items(.fd)[index];
             const loader = this.watcher.watchlist.items(.loader)[index];
 
+            const path = Fs.Path.init(file_path_str);
+            var old_log = this.bundler.log;
+            defer this.bundler.log = old_log;
+            this.bundler.log = &log;
+
             switch (loader) {
                 .json, .ts, .tsx, .js, .jsx => {
                     // Since we already have:
@@ -452,11 +459,8 @@ pub const RequestContext = struct {
                     // We can skip resolving. We will need special handling for renaming where basically we:
                     // - Update the watch item.
                     // - Clear directory cache
-                    const path = Fs.Path.init(file_path_str);
-                    var old_log = this.bundler.log;
-                    defer this.bundler.log = old_log;
-                    this.bundler.log = &log;
                     this.bundler.resetStore();
+
                     var parse_result = this.bundler.parse(
                         this.bundler.allocator,
                         path,
@@ -508,6 +512,75 @@ pub const RequestContext = struct {
                         .timestamp = WebsocketHandler.toTimestamp(this.timer.read()),
                     };
                 },
+                .css => {
+                    const CSSBundlerHMR = Css.NewBundler(
+                        @TypeOf(&this.printer),
+                        @TypeOf(&this.bundler.linker),
+                        @TypeOf(&this.bundler.resolver.caches.fs),
+                        Watcher,
+                        @TypeOf(this.bundler.fs),
+                        true,
+                    );
+
+                    const CSSBundler = Css.NewBundler(
+                        @TypeOf(&this.printer),
+                        @TypeOf(&this.bundler.linker),
+                        @TypeOf(&this.bundler.resolver.caches.fs),
+                        Watcher,
+                        @TypeOf(this.bundler.fs),
+                        false,
+                    );
+
+                    this.printer.ctx.reset();
+
+                    const written = brk: {
+                        if (this.bundler.options.hot_module_reloading) {
+                            break :brk try CSSBundlerHMR.bundle(
+                                file_path_str,
+                                this.bundler.fs,
+                                &this.printer,
+                                this.watcher,
+                                &this.bundler.resolver.caches.fs,
+                                this.watcher.watchlist.items(.hash)[index],
+                                fd,
+                                this.allocator,
+                                &log,
+                                &this.bundler.linker,
+                            );
+                        } else {
+                            break :brk try CSSBundler.bundle(
+                                file_path_str,
+                                this.bundler.fs,
+                                &this.printer,
+                                this.watcher,
+                                &this.bundler.resolver.caches.fs,
+                                this.watcher.watchlist.items(.hash)[index],
+                                fd,
+                                this.allocator,
+                                &log,
+                                &this.bundler.linker,
+                            );
+                        }
+                    };
+
+                    return WatchBuildResult{
+                        .value = .{
+                            .success = .{
+                                .id = id,
+                                .from_timestamp = from_timestamp,
+                                .loader = .css,
+                                .module_path = this.bundler.fs.relativeTo(file_path_str),
+                                .blob_length = @truncate(u32, written),
+                                // .log = std.mem.zeroes(Api.Log),
+                            },
+                        },
+                        .id = id,
+                        .bytes = this.printer.ctx.written,
+                        .approximate_newline_count = 0,
+                        // .approximate_newline_count = parse_result.ast.approximate_newline_count,
+                        .timestamp = WebsocketHandler.toTimestamp(this.timer.read()),
+                    };
+                },
                 else => {
                     return WatchBuildResult{
                         .value = .{ .fail = std.mem.zeroes(Api.WebsocketMessageBuildFailure) },
@@ -547,7 +620,7 @@ pub const RequestContext = struct {
                 .watcher = ctx.watcher,
             };
 
-            clone.websocket = Websocket.Websocket.create(ctx, SOCKET_FLAGS);
+            clone.websocket = Websocket.Websocket.create(&clone.conn, SOCKET_FLAGS);
             clone.tombstone = false;
             try open_websockets.append(clone);
             return clone;
@@ -570,13 +643,17 @@ pub const RequestContext = struct {
                 var markForClosing = false;
                 for (open_websockets.items) |item| {
                     var socket: *WebsocketHandler = item;
+                    if (socket.tombstone) {
+                        continue;
+                    }
+
                     const written = socket.websocket.writeBinary(message) catch |err| brk: {
                         Output.prettyError("<r>WebSocket error: <b>{d}", .{@errorName(err)});
                         markForClosing = true;
                         break :brk 0;
                     };
 
-                    if (written < message.len) {
+                    if (socket.tombstone or written < message.len) {
                         markForClosing = true;
                     }
 
@@ -977,7 +1054,6 @@ pub const RequestContext = struct {
                             if (buf.len < 16 * 16 * 16 * 16 or chunky._loader == .css or chunky._loader == .json) {
                                 const strong_etag = std.hash.Wyhash.hash(1, buf);
                                 const etag_content_slice = std.fmt.bufPrintIntToSlice(strong_etag_buffer[0..49], strong_etag, 16, .upper, .{});
-
                                 chunky.rctx.appendHeader("ETag", etag_content_slice);
 
                                 if (chunky.rctx.header("If-None-Match")) |etag_header| {

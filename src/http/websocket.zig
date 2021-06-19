@@ -100,7 +100,7 @@ pub const Websocket = struct {
         EndOfStream,
     } || std.fs.File.WriteError;
 
-    request: *RequestContext,
+    conn: *tcp.Connection,
 
     err: ?anyerror = null,
     buf: [4096]u8 = undefined,
@@ -108,7 +108,7 @@ pub const Websocket = struct {
     reader: ReadStream.Reader,
     flags: u32 = 0,
     pub fn create(
-        ctx: *RequestContext,
+        conn: *tcp.Connection,
         comptime flags: u32,
     ) Websocket {
         var stream = ReadStream{
@@ -118,7 +118,7 @@ pub const Websocket = struct {
         var socket = Websocket{
             .read_stream = undefined,
             .reader = undefined,
-            .request = ctx,
+            .conn = conn,
             .flags = flags,
         };
 
@@ -187,7 +187,7 @@ pub const Websocket = struct {
     }
 
     pub fn writeHeader(self: *Websocket, header: WebsocketHeader, n: usize) anyerror!void {
-        var stream = self.request.conn.client.writer(self.flags);
+        var stream = self.conn.client.writer(self.flags);
 
         try stream.writeIntBig(u16, @bitCast(u16, header));
 
@@ -203,7 +203,7 @@ pub const Websocket = struct {
     }
 
     pub fn writeIterator(self: *Websocket, header: WebsocketHeader, count: usize, comptime BodyIterator: type, body_iter: BodyIterator) anyerror!usize {
-        var stream = self.request.conn.client.writer(self.flags);
+        var stream = self.conn.client.writer(self.flags);
 
         if (!dataframe.isValid()) return error.InvalidMessage;
 
@@ -233,7 +233,7 @@ pub const Websocket = struct {
 
     // Write a raw data frame
     pub fn writeDataFrame(self: *Websocket, dataframe: WebsocketDataFrame) anyerror!usize {
-        var stream = self.request.conn.client.writer(self.flags);
+        var stream = self.conn.client.writer(self.flags);
 
         if (!dataframe.isValid()) return error.InvalidMessage;
 
@@ -271,7 +271,7 @@ pub const Websocket = struct {
         @memset(&self.buf, 0, self.buf.len);
 
         // Read and retry if we hit the end of the stream buffer
-        var start = try self.request.conn.client.read(&self.buf, self.flags);
+        var start = try self.conn.client.read(&self.buf, self.flags);
         if (start == 0) {
             return error.ConnectionClosed;
         }
@@ -329,7 +329,7 @@ pub const Websocket = struct {
         const end = start + length;
 
         if (end > self.read_stream.pos) {
-            var extend_length = try self.request.conn.client.read(self.buf[self.read_stream.pos..], self.flags);
+            var extend_length = try self.conn.client.read(self.buf[self.read_stream.pos..], self.flags);
             if (self.read_stream.pos + extend_length > self.buf.len) {
                 return error.MessageTooLarge;
             }

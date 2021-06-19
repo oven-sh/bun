@@ -107,7 +107,7 @@ pub fn build(b: *std.build.Builder) void {
         }
     }
 
-    const runtime_hash = std.hash.Wyhash.hash(0, @embedFile("./src/runtime.js"));
+    const runtime_hash = std.hash.Wyhash.hash(0, @embedFile("./src/runtime.out.js"));
     const runtime_version_file = std.fs.cwd().openFile("src/runtime.version", .{ .write = true }) catch unreachable;
     runtime_version_file.writer().print("{x}", .{runtime_hash}) catch unreachable;
     defer runtime_version_file.close();

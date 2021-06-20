@@ -1,21 +1,11 @@
 import ReactDOM from "react-dom";
 import React from "react";
-import { Button } from "./components/button";
+import { Main } from "./main";
 import classNames from "classnames";
 
 const Base = ({}) => {
-  return (
-    <main className={classNames("main")}>
-      <h3 className={classNames("hi")}>Here is some text</h3>
-      <h3 className={classNames("extremely")}></h3>
-      <>Fargment!1239899s</>
-
-      <Button
-        label="Do notencoding! cl1ick."
-        onClick={() => alert("I told u not to click!")}
-      ></Button>
-    </main>
-  );
+  const name = decodeURIComponent(location.search.substring(1));
+  return <Main productName={name || "Bundler"} />;
 };
 
 function startReact() {

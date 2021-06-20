@@ -389,11 +389,36 @@ pub const JSX = struct {
         /// /** @jsxImportSource @emotion/core */
         import_source: string = "react/jsx-dev-runtime",
         classic_import_source: string = "react",
+        package_name: []const u8 = "react",
+        supports_fast_refresh: bool = false,
 
         jsx: string = "jsxDEV",
 
         development: bool = true,
         parse: bool = true,
+
+        pub fn parsePackageName(str: string) string {
+            if (str[0] == '@') {
+                if (strings.indexOfChar(str[1..], '/')) |first_slash| {
+                    var remainder = str[1 + first_slash + 1 ..];
+
+                    if (strings.indexOfChar(remainder, '/')) |last_slash| {
+                        return str[0 .. first_slash + 1 + last_slash + 1];
+                    }
+                }
+            }
+
+            if (strings.indexOfChar(str, '/')) |first_slash| {
+                return str[0..first_slash];
+            }
+
+            return str;
+        }
+
+        pub fn isReactLike(pragma: *const Pragma) bool {
+            return strings.eqlComptime(pragma.package_name, "react") or strings.eqlComptime(pragma.package_name, "@emotion/jsx") or strings.eqlComptime(pragma.package_name, "@emotion/react");
+        }
+
         pub const Defaults = struct {
             pub var Factory = [_]string{ "React", "createElement" };
             pub var Fragment = [_]string{ "React", "Fragment" };
@@ -453,12 +478,17 @@ pub const JSX = struct {
 
             if (jsx.import_source.len > 0) {
                 pragma.import_source = jsx.import_source;
+                pragma.package_name = parsePackageName(pragma.import_source);
+                pragma.supports_fast_refresh = pragma.development and pragma.isReactLike();
             } else if (jsx.development) {
                 pragma.import_source = Defaults.ImportSourceDev;
                 pragma.jsx = Defaults.JSXFunctionDev;
+                pragma.supports_fast_refresh = true;
+                pragma.package_name = "react";
             } else {
                 pragma.import_source = Defaults.ImportSource;
                 pragma.jsx = Defaults.JSXFunction;
+                pragma.supports_fast_refresh = false;
             }
 
             pragma.development = jsx.development;
@@ -565,7 +595,6 @@ pub const BundleOptions = struct {
     resolve_dir: string = "/",
     jsx: JSX.Pragma = JSX.Pragma{},
 
-    react_fast_refresh: bool = false,
     hot_module_reloading: bool = false,
     inject: ?[]string = null,
     public_url: string = "",

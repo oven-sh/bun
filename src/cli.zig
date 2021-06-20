@@ -123,7 +123,7 @@ pub const Cli = struct {
                 clap.parseParam("--jsx-runtime <STR>               \"automatic\" (default) or \"classic\"") catch unreachable,
                 clap.parseParam("--jsx-production                  Use jsx instead of jsxDEV (default) for the automatic runtime") catch unreachable,
                 clap.parseParam("--extension-order <STR>...        defaults to: .tsx,.ts,.jsx,.js,.json ") catch unreachable,
-                clap.parseParam("--react-fast-refresh              Enable React Fast Refresh (not implemented yet)") catch unreachable,
+                clap.parseParam("--disable-react-fast-refresh      Disable React Fast Refresh. Enabled if --serve is set and --jsx-production is not set. Otherwise, it's a noop.") catch unreachable,
                 clap.parseParam("--tsconfig-override <STR>         Load tsconfig from path instead of cwd/tsconfig.json") catch unreachable,
                 clap.parseParam("--platform <STR>                  \"browser\" or \"node\". Defaults to \"browser\"") catch unreachable,
                 clap.parseParam("--main-fields <STR>...            Main fields to lookup in package.json. Defaults to --platform dependent") catch unreachable,
@@ -181,7 +181,15 @@ pub const Cli = struct {
             var jsx_import_source = args.option("--jsx-import-source");
             var jsx_runtime = args.option("--jsx-runtime");
             var jsx_production = args.flag("--jsx-production");
-            var react_fast_refresh = args.flag("--react-fast-refresh");
+            var react_fast_refresh = false;
+
+            if (serve or args.flag("--new-jsb")) {
+                react_fast_refresh = true;
+                if (args.flag("--disable-react-fast-refresh") or jsx_production) {
+                    react_fast_refresh = false;
+                }
+            }
+
             var main_fields = args.options("--main-fields");
 
             var node_modules_bundle_path = args.option("--jsb") orelse brk: {

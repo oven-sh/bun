@@ -225,6 +225,7 @@ pub fn NewBundler(cache_files: bool) type {
             log: *logger.Log,
             tmpfile_byte_offset: u32 = 0,
             code_end_byte_offset: u32 = 0,
+            has_jsx: bool = false,
 
             pub const current_version: u32 = 1;
 
@@ -317,6 +318,19 @@ pub fn NewBundler(cache_files: bool) type {
                 while (this.resolve_queue.readItem()) |resolved| {
                     try this.processFile(resolved);
                 }
+
+                if (this.has_jsx and this.bundler.options.jsx.supports_fast_refresh) {
+                    if (this.bundler.resolver.resolve(
+                        this.bundler.fs.top_level_dir,
+                        "react-refresh/runtime",
+                        .require,
+                    )) |refresh_runtime| {
+                        if (!this.resolved_paths.contains(refresh_runtime.path_pair.primary.text)) {
+                            try this.processFile(refresh_runtime);
+                        }
+                    } else |err| {}
+                }
+
                 // Ensure we never overflow
                 this.code_end_byte_offset = @truncate(
                     u32,
@@ -719,6 +733,7 @@ pub fn NewBundler(cache_files: bool) type {
                                         .hash = package.hash,
                                     },
                                 );
+                                this.has_jsx = this.has_jsx or strings.eql(package.name, this.bundler.options.jsx.package_name);
                             }
 
                             var path_extname_length = @truncate(u8, std.fs.path.extension(package_relative_path).len);
@@ -1229,6 +1244,7 @@ pub fn NewBundler(cache_files: bool) type {
                     opts.transform_require_to_import = true;
                     opts.can_import_from_bundle = bundler.options.node_modules_bundle != null;
                     opts.features.hot_module_reloading = bundler.options.hot_module_reloading;
+                    opts.features.react_fast_refresh = opts.features.hot_module_reloading and jsx.parse and bundler.options.jsx.supports_fast_refresh;
                     opts.filepath_hash_for_hmr = file_hash orelse 0;
                     const value = (bundler.resolver.caches.js.parse(allocator, opts, bundler.options.define, bundler.log, &source) catch null) orelse return null;
                     return ParseResult{

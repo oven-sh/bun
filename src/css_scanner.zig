@@ -806,7 +806,7 @@ pub fn NewWriter(
             try scanner.next(.scan, @TypeOf(writer), writer, scanChunk);
         }
 
-        pub fn append(writer: *Writer, log: *logger.Log, allocator: *std.mem.Allocator) !void {
+        pub fn append(writer: *Writer, log: *logger.Log, allocator: *std.mem.Allocator) !usize {
             var scanner = Scanner.init(
                 log,
 
@@ -815,6 +815,7 @@ pub fn NewWriter(
             );
 
             try scanner.next(.omit, @TypeOf(writer), writer, writeBundledChunk);
+            return scanner.approximate_newline_count;
         }
 
         pub fn run(writer: *Writer, log: *logger.Log, allocator: *std.mem.Allocator) !void {
@@ -981,6 +982,11 @@ pub fn NewWriter(
     };
 }
 
+pub const CodeCount = struct {
+    approximate_newline_count: usize = 0,
+    written: usize = 0,
+};
+
 const ImportQueueFifo = std.fifo.LinearFifo(u32, .Dynamic);
 const QueuedList = std.ArrayList(u32);
 threadlocal var global_queued: QueuedList = undefined;
@@ -1017,7 +1023,7 @@ pub fn NewBundler(
             allocator: *std.mem.Allocator,
             log: *logger.Log,
             linker: Linker,
-        ) !usize {
+        ) !CodeCount {
             if (!has_set_global_queue) {
                 global_queued = QueuedList.init(alloc.static);
                 global_import_queud = ImportQueueFifo.init(alloc.static);
@@ -1072,6 +1078,7 @@ pub fn NewBundler(
                 try this.writeAll(int_buf_print[0..int_buf_size]);
                 try this.writeAll(") {}\n");
             }
+            var lines_of_code: usize = 0;
 
             // We LIFO
             var i: i32 = @intCast(i32, this.bundle_queue.items.len - 1);
@@ -1093,11 +1100,15 @@ pub fn NewBundler(
                 try this.writeAll("/* ");
                 try this.writeAll(file_path);
                 try this.writeAll("*/\n");
-                try css.append(log, allocator);
+                lines_of_code += try css.append(log, allocator);
             }
 
             try this.writer.done();
-            return css.written;
+
+            return CodeCount{
+                .written = css.written,
+                .approximate_newline_count = lines_of_code,
+            };
         }
 
         pub fn getSource(this: *CSSBundler, url: string, input_fd: StoredFileDescriptorType) !logger.Source {

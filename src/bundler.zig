@@ -895,7 +895,7 @@ pub fn NewBundler(cache_files: bool) type {
                     return BuildResolveResultPair{
                         .written = brk: {
                             if (bundler.options.hot_module_reloading) {
-                                break :brk try CSSBundlerHMR.bundle(
+                                break :brk (try CSSBundlerHMR.bundle(
                                     resolve_result.path_pair.primary.text,
                                     bundler.fs,
                                     writer,
@@ -906,9 +906,9 @@ pub fn NewBundler(cache_files: bool) type {
                                     allocator,
                                     bundler.log,
                                     &bundler.linker,
-                                );
+                                )).written;
                             } else {
-                                break :brk try CSSBundler.bundle(
+                                break :brk (try CSSBundler.bundle(
                                     resolve_result.path_pair.primary.text,
                                     bundler.fs,
                                     writer,
@@ -919,7 +919,7 @@ pub fn NewBundler(cache_files: bool) type {
                                     allocator,
                                     bundler.log,
                                     &bundler.linker,
-                                );
+                                )).written;
                             }
                         },
                         .input_fd = file_descriptor,

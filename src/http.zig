@@ -533,7 +533,7 @@ pub const RequestContext = struct {
 
                     this.printer.ctx.reset();
 
-                    const written = brk: {
+                    const count = brk: {
                         if (this.bundler.options.hot_module_reloading) {
                             break :brk try CSSBundlerHMR.bundle(
                                 file_path_str,
@@ -570,13 +570,13 @@ pub const RequestContext = struct {
                                 .from_timestamp = from_timestamp,
                                 .loader = .css,
                                 .module_path = this.bundler.fs.relativeTo(file_path_str),
-                                .blob_length = @truncate(u32, written),
+                                .blob_length = @truncate(u32, count.written),
                                 // .log = std.mem.zeroes(Api.Log),
                             },
                         },
                         .id = id,
                         .bytes = this.printer.ctx.written,
-                        .approximate_newline_count = 0,
+                        .approximate_newline_count = count.approximate_newline_count,
                         // .approximate_newline_count = parse_result.ast.approximate_newline_count,
                         .timestamp = WebsocketHandler.toTimestamp(this.timer.read()),
                     };

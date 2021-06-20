@@ -8,12 +8,22 @@ function formatDuration(duration: number) {
   return Math.round(duration * 1000) / 1000;
 }
 
+type HTMLStylableElement = HTMLLinkElement | HTMLStyleElement;
 type CSSHMRInsertionPoint = {
   id: number;
-  node: HTMLLinkElement;
+  node?: HTMLStylableElement;
   file: string;
   bundle_id: number;
+  sheet: CSSStyleSheet;
 };
+
+enum CSSUpdateMethod {
+  // CSS OM allows synchronous style updates
+  cssObjectModel,
+  // Blob URLs allow us to skip converting to JavaScript strings
+  // However, they run asynchronously. Frequent updates cause FOUC
+  blobURL,
+}
 
 // How this works
 // We keep
@@ -24,7 +34,19 @@ export class CSSLoader {
     bundle_id: 0,
     node: null,
     file: "",
+    sheet: null,
   };
+
+  updateMethod: CSSUpdateMethod;
+  decoder: TextDecoder;
+
+  constructor() {
+    if ("replaceSync" in CSSStyleSheet.prototype) {
+      this.updateMethod = CSSUpdateMethod.cssObjectModel;
+    } else {
+      this.updateMethod = CSSUpdateMethod.blobURL;
+    }
+  }
 
   // This is a separate function because calling a small function 2000 times is more likely to cause it to be JIT'd
   // We want it to be JIT'd
@@ -67,7 +89,8 @@ export class CSSLoader {
         if (endFileRegion - startFileRegion <= 0) return null;
 
         CSSLoader.cssLoadId.id = int;
-        CSSLoader.cssLoadId.node = sheet.ownerNode as HTMLLinkElement;
+        CSSLoader.cssLoadId.node = sheet.ownerNode as HTMLStylableElement;
+        CSSLoader.cssLoadId.sheet = sheet;
         CSSLoader.cssLoadId.file = rule.conditionText.substring(
           startFileRegion - 1,
           endFileRegion
@@ -86,8 +109,66 @@ export class CSSLoader {
   }
 
   private findCSSLinkTag(id: number): CSSHMRInsertionPoint | null {
-    const count = document.styleSheets.length;
+    let count = 0;
     let match: CSSHMRInsertionPoint = null;
+
+    if (this.updateMethod === CSSUpdateMethod.cssObjectModel) {
+      if (document.adoptedStyleSheets.length > 0) {
+        count = document.adoptedStyleSheets.length;
+
+        for (let i = 0; i < count && match === null; i++) {
+          let cssRules: CSSRuleList;
+          let sheet: CSSStyleSheet;
+          let ruleCount = 0;
+          // Non-same origin stylesheets will potentially throw "Security error"
+          // We will ignore those stylesheets and look at others.
+          try {
+            sheet = document.adoptedStyleSheets[i];
+            cssRules = sheet.rules;
+            ruleCount = sheet.rules.length;
+          } catch (exception) {
+            continue;
+          }
+
+          if (sheet.disabled || sheet.rules.length === 0) {
+            continue;
+          }
+
+          const bundleIdRule = cssRules[0] as CSSSupportsRule;
+          if (
+            bundleIdRule.type !== 12 ||
+            !bundleIdRule.conditionText.startsWith("(hmr-bid:")
+          ) {
+            continue;
+          }
+
+          const bundleIdEnd = bundleIdRule.conditionText.indexOf(
+            ")",
+            "(hmr-bid:".length + 1
+          );
+          if (bundleIdEnd === -1) continue;
+
+          CSSLoader.cssLoadId.bundle_id = parseInt(
+            bundleIdRule.conditionText.substring(
+              "(hmr-bid:".length,
+              bundleIdEnd
+            ),
+            10
+          );
+
+          for (let j = 1; j < ruleCount && match === null; j++) {
+            match = this.findMatchingSupportsRule(
+              cssRules[j] as CSSSupportsRule,
+              id,
+              sheet
+            );
+          }
+        }
+      }
+    }
+
+    count = document.styleSheets.length;
+
     for (let i = 0; i < count && match === null; i++) {
       let cssRules: CSSRuleList;
       let sheet: CSSStyleSheet;
@@ -102,12 +183,7 @@ export class CSSLoader {
         continue;
       }
 
-      if (
-        sheet.disabled ||
-        !sheet.href ||
-        sheet.href.length === 0 ||
-        sheet.rules.length === 0
-      ) {
+      if (sheet.disabled || sheet.rules.length === 0) {
         continue;
       }
 
@@ -144,6 +220,7 @@ export class CSSLoader {
       CSSLoader.cssLoadId.file = "";
       CSSLoader.cssLoadId.bundle_id = CSSLoader.cssLoadId.id = 0;
       CSSLoader.cssLoadId.node = null;
+      CSSLoader.cssLoadId.sheet = null;
     }
 
     return match;
@@ -156,25 +233,24 @@ export class CSSLoader {
   ) {
     const start = performance.now();
     var update = this.findCSSLinkTag(build.id);
+    let bytes =
+      buffer._data.length > buffer._index
+        ? buffer._data.subarray(buffer._index)
+        : new Uint8Array(0);
     if (update === null) {
       __hmrlog.debug("Skipping unused CSS.");
       return;
     }
 
-    let blob = new Blob(
-      [
-        buffer._data.length > buffer._index
-          ? buffer._data.subarray(buffer._index)
-          : new Uint8Array(0),
-      ],
-      { type: "text/css" }
-    );
-    buffer = null;
-    const blobURL = URL.createObjectURL(blob);
+    if (bytes.length === 0) {
+      __hmrlog.debug("Skipping empty file");
+      return;
+    }
+
     let filepath = update.file;
     const _timestamp = timestamp;
     const from_timestamp = build.from_timestamp;
-    function onLoadHandler(load: Event) {
+    function onLoadHandler() {
       const localDuration = formatDuration(performance.now() - start);
       const fsDuration = _timestamp - from_timestamp;
       __hmrlog.log(
@@ -184,24 +260,51 @@ export class CSSLoader {
         filepath
       );
 
-      blob = null;
       update = null;
       filepath = null;
+    }
 
-      if (this.href.includes("blob:")) {
-        URL.revokeObjectURL(this.href);
+    // Whenever
+    switch (this.updateMethod) {
+      case CSSUpdateMethod.blobURL: {
+        let blob = new Blob([bytes], { type: "text/css" });
+
+        const blobURL = URL.createObjectURL(blob);
+        // onLoad doesn't fire in Chrome.
+        // I'm not sure why.
+        // Guessing it only triggers when an element is added/removed, not when the href just changes
+        // So we say on the next tick, we're loaded.
+        setTimeout(onLoadHandler.bind(update.node), 0);
+        update.node.setAttribute("href", blobURL);
+        blob = null;
+        URL.revokeObjectURL(blobURL);
+        break;
+      }
+      case CSSUpdateMethod.cssObjectModel: {
+        if (!this.decoder) {
+          this.decoder = new TextDecoder("UTF8");
+        }
+
+        // This is an adoptedStyleSheet, call replaceSync and be done with it.
+        if (!update.node || update.node.tagName === "HTML") {
+          update.sheet.replaceSync(this.decoder.decode(bytes));
+        } else if (
+          update.node.tagName === "LINK" ||
+          update.node.tagName === "STYLE"
+        ) {
+          // This might cause CSS specifity issues....
+          // I'm not 100% sure this is a safe operation
+          const sheet = new CSSStyleSheet();
+          sheet.replaceSync(this.decoder.decode(bytes));
+          update.node.remove();
+          document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+        }
+        break;
       }
     }
-    // onLoad doesn't fire in Chrome.
-    // I'm not sure why.
-    // Guessing it only triggers when an element is added/removed, not when the href just changes
-    // So we say on the next tick, we're loaded.
-    setTimeout(onLoadHandler.bind(update.node), 0);
-    if (update.node.href.includes("blob:")) {
-      URL.revokeObjectURL(update.node.href);
-    }
-    update.node.setAttribute("href", blobURL);
-    URL.revokeObjectURL(blobURL);
+
+    buffer = null;
+    bytes = null;
   }
 
   reload(timestamp: number) {

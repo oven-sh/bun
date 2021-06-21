@@ -1236,6 +1236,22 @@ function encodeLog(message, bb) {
   }
 
 }
+const Reloader = {
+  "1": 1,
+  "2": 2,
+  "3": 3,
+  "disable": 1,
+  "live": 2,
+  "fast_refresh": 3
+};
+const ReloaderKeys = {
+  "1": "disable",
+  "2": "live",
+  "3": "fast_refresh",
+  "disable": "disable",
+  "live": "live",
+  "fast_refresh": "fast_refresh"
+};
 const WebsocketMessageKind = {
   "1": 1,
   "2": 2,
@@ -1309,6 +1325,7 @@ function decodeWebsocketMessageWelcome(bb) {
   var result = {};
 
   result["epoch"] = bb.readUint32();
+  result["javascriptReloader"] = Reloader[bb.readByte()];
   return result;
 }
 
@@ -1319,6 +1336,15 @@ function encodeWebsocketMessageWelcome(message, bb) {
     bb.writeUint32(value);
   } else {
     throw new Error("Missing required field \"epoch\"");
+  }
+
+  var value = message["javascriptReloader"];
+  if (value != null) {
+    var encoded = Reloader[value];
+if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + " for enum \"Reloader\"");
+bb.writeByte(encoded);
+  } else {
+    throw new Error("Missing required field \"javascriptReloader\"");
   }
 
 }
@@ -1537,6 +1563,98 @@ function encodeDependencyManifest(message, bb) {
 
 }
 
+function decodeFileList(bb) {
+  var result = {};
+
+  var length = bb.readVarUint();
+  var values = result["ptrs"] = Array(length);
+  for (var i = 0; i < length; i++) values[i] = decodeStringPointer(bb);
+  result["files"] = bb.readString();
+  return result;
+}
+
+function encodeFileList(message, bb) {
+
+  var value = message["ptrs"];
+  if (value != null) {
+    var values = value, n = values.length;
+    bb.writeVarUint(n);
+    for (var i = 0; i < n; i++) {
+      value = values[i];
+      encodeStringPointer(value, bb);
+    }
+  } else {
+    throw new Error("Missing required field \"ptrs\"");
+  }
+
+  var value = message["files"];
+  if (value != null) {
+    bb.writeString(value);
+  } else {
+    throw new Error("Missing required field \"files\"");
+  }
+
+}
+
+function decodeWebsocketMessageResolveIDs(bb) {
+  var result = {};
+
+  result["id"] = bb.readUint32ByteArray();
+  result["list"] = decodeFileList(bb);
+  return result;
+}
+
+function encodeWebsocketMessageResolveIDs(message, bb) {
+
+  var value = message["id"];
+  if (value != null) {
+   bb.writeUint32ByteArray(value);
+  } else {
+    throw new Error("Missing required field \"id\"");
+  }
+
+  var value = message["list"];
+  if (value != null) {
+    encodeFileList(value, bb);
+  } else {
+    throw new Error("Missing required field \"list\"");
+  }
+
+}
+
+function decodeWebsocketCommandResolveIDs(bb) {
+  var result = {};
+
+  var length = bb.readVarUint();
+  var values = result["ptrs"] = Array(length);
+  for (var i = 0; i < length; i++) values[i] = decodeStringPointer(bb);
+  result["files"] = bb.readString();
+  return result;
+}
+
+function encodeWebsocketCommandResolveIDs(message, bb) {
+
+  var value = message["ptrs"];
+  if (value != null) {
+    var values = value, n = values.length;
+    bb.writeVarUint(n);
+    for (var i = 0; i < n; i++) {
+      value = values[i];
+      encodeStringPointer(value, bb);
+    }
+  } else {
+    throw new Error("Missing required field \"ptrs\"");
+  }
+
+  var value = message["files"];
+  if (value != null) {
+    bb.writeString(value);
+  } else {
+    throw new Error("Missing required field \"files\"");
+  }
+
+}
+
 function decodeWebsocketMessageManifestSuccess(bb) {
   var result = {};
 
@@ -1679,6 +1797,8 @@ export { decodeMessage }
 export { encodeMessage }
 export { decodeLog }
 export { encodeLog }
+export { Reloader }
+export { ReloaderKeys }
 export { WebsocketMessageKind }
 export { WebsocketMessageKindKeys }
 export { WebsocketCommandKind }
@@ -1701,6 +1821,12 @@ export { decodeWebsocketMessageBuildFailure }
 export { encodeWebsocketMessageBuildFailure }
 export { decodeDependencyManifest }
 export { encodeDependencyManifest }
+export { decodeFileList }
+export { encodeFileList }
+export { decodeWebsocketMessageResolveIDs }
+export { encodeWebsocketMessageResolveIDs }
+export { decodeWebsocketCommandResolveIDs }
+export { encodeWebsocketCommandResolveIDs }
 export { decodeWebsocketMessageManifestSuccess }
 export { encodeWebsocketMessageManifestSuccess }
 export { decodeWebsocketMessageManifestFailure }

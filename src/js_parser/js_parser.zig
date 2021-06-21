@@ -1677,12 +1677,27 @@ pub const Parser = struct {
 
     pub fn parse(self: *Parser) !js_ast.Result {
         if (self.options.ts and self.options.jsx.parse) {
+            if (self.options.features.react_fast_refresh) {
+                return try self._parse(TSXParserFastRefresh);
+            }
             return try self._parse(TSXParser);
         } else if (self.options.ts) {
+            if (self.options.features.react_fast_refresh) {
+                return try self._parse(TypeScriptParserFastRefresh);
+            }
+
             return try self._parse(TypeScriptParser);
         } else if (self.options.jsx.parse) {
+            if (self.options.features.react_fast_refresh) {
+                return try self._parse(JSXParserFastRefresh);
+            }
+
             return try self._parse(JSXParser);
         } else {
+            if (self.options.features.react_fast_refresh) {
+                return try self._parse(JavaScriptParserFastRefresh);
+            }
+
             return try self._parse(JavaScriptParser);
         }
     }
@@ -2194,11 +2209,73 @@ pub const ImportOrRequireScanResults = struct {
     import_records: List(ImportRecord),
 };
 
+const ParserFeatures = struct {
+    typescript: bool = false,
+    jsx: bool = false,
+    scan_only: bool = false,
+
+    // *** How React Fast Refresh works ***
+    //
+    //  Implmenetations:
+    //   [0]: https://github.com/facebook/react/blob/master/packages/react-refresh/src/ReactFreshBabelPlugin.js
+    //   [1]: https://github.com/swc-project/swc/blob/master/ecmascript/transforms/react/src/refresh/mod.rs
+    //
+    //  Additional reading:
+    //   - https://github.com/facebook/react/issues/16604#issuecomment-528663101
+    //   - https://github.com/facebook/react/blob/master/packages/react-refresh/src/__tests__/ReactFreshIntegration-test.js
+    //
+    //  From reading[0] and Dan Abramov's comment, there are really five parts.
+    //  1. At the top of the file:
+    //      1. Declare a $RefreshReg$ if it doesn't exist
+    //         - This really just does "RefreshRuntime.register(ComponentIdentifier, ComponentIdentifier.name);"
+    //      2. Run "var _s${componentIndex} = $RefreshSig$()" to generate a function for updating react refresh scoped to the component. So it's one per *component*.
+    //         - This really just does "RefreshRuntime.createSignatureFunctionForTransform();"
+    //  2. Register all React components[2] defined in the module scope by calling the equivalent of $RefreshReg$(ComponentIdentifier, "ComponentName")
+    //  3. For each registered component:
+    //    1. Call "_s()" to mark the first render of this component for "react-refresh/runtime". Call this at the start of the React component's function body
+    //    2. Track every call expression to a hook[3] inside the component, including:
+    //        - Identifier of the hook function
+    //        - Arguments passed
+    //    3. For each hook's call expression, generate a signature key which is
+    //        - The hook's identifier ref
+    //        - The S.Decl ("VariableDeclarator")'s source
+    //           "var [foo, bar] = useFooBar();"
+    //                ^--------^ This region, I think. Judging from this line: https://github.com/facebook/react/blob/master/packages/react-refresh/src/ReactFreshBabelPlugin.js#L407
+    //        - For the "useState" hook, also hash the source of the first argument if it exists e.g. useState(foo => true);
+    //        - For the "useReducer" hook, also hash the source of the second argument if it exists e.g. useReducer({}, () => ({}));
+    //    4. If the hook component is not builtin and is defined inside a component, always reset the component state
+    //        - See this test: https://github.com/facebook/react/blob/568dc3532e25b30eee5072de08503b1bbc4f065d/packages/react-refresh/src/__tests__/ReactFreshIntegration-test.js#L909
+    //  4. From the signature key generated in 3., call one of the following:
+    //     - _s(ComponentIdentifier, hash(signature));
+    //     - _s(ComponentIdentifier, hash(signature), true /* forceReset */);
+    //     - _s(ComponentIdentifier, hash(signature), false /* forceReset */, () => [customHook1, customHook2, customHook3]);
+    //     Note: This step is only strictly required on rebuild.
+    //  5. if (isReactComponentBoundary(exports)) enqueueUpdateAndHandleErrors();
+    // **** FAQ ****
+    //  [2]: Q: From a parser's perspective, what's a component?
+    //       A: typeof name === 'string' && name[0] >= 'A' && name[0] <= 'Z -- https://github.com/facebook/react/blob/568dc3532e25b30eee5072de08503b1bbc4f065d/packages/react-refresh/src/ReactFreshBabelPlugin.js#L42-L44
+    //  [3]: Q: From a parser's perspective, what's a hook?
+    //       A: /^use[A-Z]/ -- https://github.com/facebook/react/blob/568dc3532e25b30eee5072de08503b1bbc4f065d/packages/react-refresh/src/ReactFreshBabelPlugin.js#L390
+    //
+    //
+    //
+
+    react_fast_refresh: bool = false,
+};
+
+// Our implementation diverges somewhat from the official implementation
+// Specifically, we use a subclass of HMRModule - FastRefreshModule
+// Instead of creating a globally-scoped
+const FastRefresh = struct {};
+
 pub fn NewParser(
-    comptime is_typescript_enabled: bool,
-    comptime is_jsx_enabled: bool,
-    comptime only_scan_imports_and_do_not_visit: bool,
+    comptime js_parser_features: ParserFeatures,
 ) type {
+    const is_typescript_enabled = js_parser_features.typescript;
+    const is_jsx_enabled = js_parser_features.jsx;
+    const only_scan_imports_and_do_not_visit = js_parser_features.scan_only;
+    const is_react_fast_refresh_enabled = js_parser_features.react_fast_refresh;
+
     const ImportRecordList = if (only_scan_imports_and_do_not_visit) *std.ArrayList(ImportRecord) else std.ArrayList(ImportRecord);
     const NamedImportsType = if (only_scan_imports_and_do_not_visit) *js_ast.Ast.NamedImports else js_ast.Ast.NamedImports;
     const NeedsJSXType = if (only_scan_imports_and_do_not_visit) bool else void;
@@ -13905,15 +13982,20 @@ pub fn NewParser(
 //   Range (min … max):    24.1 ms …  39.7 ms    500 runs
 // '../../build/macos-x86_64/esdev node_modules/react-dom/cjs/react-dom.development.js --resolve=disable' ran
 // 1.02 ± 0.07 times faster than '../../esdev.before-comptime-js-parser node_modules/react-dom/cjs/react-dom.development.js --resolve=disable'
-const JavaScriptParser = NewParser(false, false, false);
-const JSXParser = NewParser(false, true, false);
-const TSXParser = NewParser(true, true, false);
-const TypeScriptParser = NewParser(true, false, false);
+const JavaScriptParser = NewParser(.{});
+const JSXParser = NewParser(.{ .jsx = true });
+const TSXParser = NewParser(.{ .jsx = true, .typescript = true });
+const TypeScriptParser = NewParser(.{ .typescript = true });
 
-const JavaScriptImportScanner = NewParser(false, false, true);
-const JSXImportScanner = NewParser(false, true, true);
-const TSXImportScanner = NewParser(true, true, true);
-const TypeScriptImportScanner = NewParser(true, false, true);
+const JavaScriptParserFastRefresh = NewParser(.{ .react_fast_refresh = true });
+const JSXParserFastRefresh = NewParser(.{ .jsx = true, .react_fast_refresh = true });
+const TSXParserFastRefresh = NewParser(.{ .jsx = true, .typescript = true, .react_fast_refresh = true });
+const TypeScriptParserFastRefresh = NewParser(.{ .typescript = true, .react_fast_refresh = true });
+
+const JavaScriptImportScanner = NewParser(.{ .scan_only = true });
+const JSXImportScanner = NewParser(.{ .jsx = true, .scan_only = true });
+const TSXImportScanner = NewParser(.{ .jsx = true, .typescript = true, .scan_only = true });
+const TypeScriptImportScanner = NewParser(.{ .typescript = true, .scan_only = true });
 
 // The "await" and "yield" expressions are never allowed in argument lists but
 // may or may not be allowed otherwise depending on the details of the enclosing

@@ -119,6 +119,19 @@ type uint32 = number;
     4: "debug",
     debug: "debug"
   }
+  export enum Reloader {
+    disable = 1,
+    live = 2,
+    fast_refresh = 3
+  }
+  export const ReloaderKeys = {
+    1: "disable",
+    disable: "disable",
+    2: "live",
+    live: "live",
+    3: "fast_refresh",
+    fast_refresh: "fast_refresh"
+  }
   export enum WebsocketMessageKind {
     welcome = 1,
     file_change_notification = 2,
@@ -301,6 +314,7 @@ type uint32 = number;
 
   export interface WebsocketMessageWelcome {
     epoch: uint32;
+    javascriptReloader: Reloader;
   }
 
   export interface WebsocketMessageFileChangeNotification {
@@ -339,6 +353,21 @@ type uint32 = number;
 
   export interface DependencyManifest {
     ids: Uint32Array;
+  }
+
+  export interface FileList {
+    ptrs: StringPointer[];
+    files: string;
+  }
+
+  export interface WebsocketMessageResolveIDs {
+    id: Uint32Array;
+    list: FileList;
+  }
+
+  export interface WebsocketCommandResolveIDs {
+    ptrs: StringPointer[];
+    files: string;
   }
 
   export interface WebsocketMessageManifestSuccess {
@@ -411,6 +440,12 @@ type uint32 = number;
   export declare function decodeWebsocketMessageBuildFailure(buffer: ByteBuffer): WebsocketMessageBuildFailure;
   export declare function  encodeDependencyManifest(message: DependencyManifest, bb: ByteBuffer): void;
   export declare function decodeDependencyManifest(buffer: ByteBuffer): DependencyManifest;
+  export declare function  encodeFileList(message: FileList, bb: ByteBuffer): void;
+  export declare function decodeFileList(buffer: ByteBuffer): FileList;
+  export declare function  encodeWebsocketMessageResolveIDs(message: WebsocketMessageResolveIDs, bb: ByteBuffer): void;
+  export declare function decodeWebsocketMessageResolveIDs(buffer: ByteBuffer): WebsocketMessageResolveIDs;
+  export declare function  encodeWebsocketCommandResolveIDs(message: WebsocketCommandResolveIDs, bb: ByteBuffer): void;
+  export declare function decodeWebsocketCommandResolveIDs(buffer: ByteBuffer): WebsocketCommandResolveIDs;
   export declare function  encodeWebsocketMessageManifestSuccess(message: WebsocketMessageManifestSuccess, bb: ByteBuffer): void;
   export declare function decodeWebsocketMessageManifestSuccess(buffer: ByteBuffer): WebsocketMessageManifestSuccess;
   export declare function  encodeWebsocketMessageManifestFailure(message: WebsocketMessageManifestFailure, bb: ByteBuffer): void;

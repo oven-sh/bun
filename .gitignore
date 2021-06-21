@@ -43,3 +43,4 @@ esbuilddir
 outdir/
 outcss
 .next
+txt.js

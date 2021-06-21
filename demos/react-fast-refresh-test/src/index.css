@@ -42,18 +42,6 @@ body {
   height: 100%;
 }
 
-.Subtitle {
-  text-align: center;
-  font-size: 4em;
-  margin: 0;
-  padding: 0;
-  margin-bottom: 0.25em;
-
-  align-items: center;
-  display: flex;
-  flex-direction: row;
-}
-
 #reactroot,
 #__next,
 body,
@@ -61,176 +49,50 @@ html {
   height: 100%;
 }
 
-.Title {
-  color: var(--color-brand);
-  font-family: var(--heading-font);
-  font-weight: 700;
-  margin-top: 48px;
-  font-size: 48px;
-  text-transform: capitalize;
-  text-align: center;
+.RenderCounter {
+  border: 10px solid var(--snippets_container-background-focused);
+  margin: 10px;
+  padding: 10px;
+  animation: flash 0.2s linear;
+  animation-fill-mode: forwards;
 }
 
-.Description {
-  text-align: center;
-}
-
-.main {
+.RenderCounter-meta {
   display: flex;
-  flex-direction: column;
-  height: 100%;
-}
-
-header,
-.main {
-  width: 650px;
-  margin: 0 auto;
-}
-
-section {
-  width: 650px;
-}
-
-header {
-  margin-bottom: 48px;
-}
-
-footer {
-  flex-shrink: 0;
-}
-
-#reactroot,
-#__next {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-}
-
-section {
-  height: 300px;
-  display: flex;
-  flex-direction: column;
-}
-
-.timer {
-  font-weight: normal;
-}
-
-.ProgressBar-container {
-  width: 100%;
-  display: block;
-  position: relative;
-  border: 1px solid var(--color-brand-muted);
-  border-radius: 4px;
-
-  height: 92px;
-}
-
-.ProgressBar {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  right: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  display: block;
-  background-color: var(--color-brand);
-  transform-origin: top left;
-  border-radius: 4px;
-  transform: scaleX(var(--progress-bar, 0%));
-}
-
-.Bundler-container {
-  background-color: var(--snippets_container-background-focused);
-  font-size: 64px;
-  font-weight: bold;
-  color: white;
-  left: 0;
-  right: 0;
-  padding: 0.8em 0.8em;
-}
-
-.Bundler-updateRate {
-  font-size: 0.8em;
-  font-weight: normal;
-  display: flex;
-  color: var(--result__muted-color);
-}
-
-.interval:before {
-  content: var(--interval, "16");
-}
-
-.highlight {
-  color: white;
-}
-
-.timer:after {
-  content: var(--timestamp);
-  font-variant-numeric: tabular-nums;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen,
-    Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif;
-  display: inline;
-  font-weight: 500;
-  color: white;
-  width: 100%;
-}
-
-.SectionLabel {
-  font-weight: 300;
-  font-family: var(--heading-font);
-  text-align: center;
-  width: 100%;
-  font-weight: 700;
-  margin-top: 24px;
-}
-
-.FooterLabel {
-  margin-top: 0;
-  margin-bottom: 12px;
-}
-
-.Spinner-container {
-  --spinner-muted: rgb(0, 255, 0);
-  --spinner-primary: rgb(0, 60, 255);
-
-  width: 96px;
-  height: 96px;
-  border-radius: 50%;
-  background-color: var(--page-background);
-  border-top: 1.1em solid var(--spinner-muted);
-  border-right: 1.1em solid var(--spinner-muted);
-  border-bottom: 1.1em solid var(--spinner-muted);
-  border-left: 1.1em solid var(--spinner-primary);
-
-  transform: rotate(var(--spinner-rotate, 12deg));
-}
-
-.Spinners {
-  display: grid;
-  grid-auto-flow: column;
+  flex-direction: row;
   justify-content: space-between;
-
-  width: 100%;
+  margin: -10px;
+  padding: 10px;
+  background-color: #111;
 }
 
-.Spinner-1.Spinner-container {
-  --spinner-muted: var(--spinner-1-muted);
-  --spinner-primary: var(--spinner-1-primary);
+.RenderCounter-lastRender,
+.RenderCounter-title {
+  white-space: nowrap;
+  color: rgb(153, 153, 153);
 }
 
-.Spinner-2.Spinner-container {
-  --spinner-muted: var(--spinner-2-muted);
-  --spinner-primary: var(--spinner-2-primary);
+@keyframes flash {
+  from {
+    border-color: var(--snippets_container-background-focused);
+  }
+
+  to {
+    border-color: var(--snippets_container-background-unfocused);
+  }
 }
 
-.Spinner-3.Spinner-container {
-  --spinner-muted: var(--spinner-3-muted);
-  --spinner-primary: var(--spinner-3-primary);
-}
+.Button {
+  display: block;
 
-.Spinner-4.Spinner-container {
-  --spinner-muted: var(--spinner-4-muted);
-  --spinner-primary: var(--spinner-4-primary);
+  border: 1px solid rgb(20, 180, 0);
+  background-color: rgb(2, 150, 0);
+  color: white;
+  font-weight: 500;
+  padding: 10px 12px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  text-align: center;
+  width: fit-content;
+  cursor: pointer;
 }

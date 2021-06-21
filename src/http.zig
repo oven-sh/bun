@@ -757,8 +757,20 @@ pub const RequestContext = struct {
             var writer = ByteApiWriter.init(&fbs);
 
             try msg.encode(&writer);
+            var reloader = Api.Reloader.disable;
+            if (ctx.bundler.options.hot_module_reloading) {
+                reloader = Api.Reloader.live;
+                if (ctx.bundler.options.jsx.supports_fast_refresh) {
+                    if (ctx.bundler.options.node_modules_bundle) |bundle| {
+                        if (bundle.hasFastRefresh()) {
+                            reloader = Api.Reloader.fast_refresh;
+                        }
+                    }
+                }
+            }
             const welcome_message = Api.WebsocketMessageWelcome{
                 .epoch = WebsocketHandler.toTimestamp(handler.ctx.timer.start_time),
+                .javascript_reloader = reloader,
             };
             try welcome_message.encode(&writer);
             if ((try handler.websocket.writeBinary(fbs.getWritten())) == 0) {

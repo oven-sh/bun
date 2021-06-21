@@ -31,6 +31,7 @@ pub const Runtime = struct {
         pub const ActivateFunction = "activate";
     };
 
+    // If you change this, remember to update "runtime.footer.js" and rebuild the runtime.js
     pub const Imports = struct {
         __name: ?Ref = null,
         __toModule: ?Ref = null,

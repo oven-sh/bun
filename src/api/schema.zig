@@ -1271,6 +1271,24 @@ pub const Api = struct {
         }
     };
 
+    pub const Reloader = enum(u8) {
+        _none,
+        /// disable
+        disable,
+
+        /// live
+        live,
+
+        /// fast_refresh
+        fast_refresh,
+
+        _,
+
+        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
+            return try std.json.stringify(@tagName(self), opts, o);
+        }
+    };
+
     pub const WebsocketMessageKind = enum(u8) {
         _none,
         /// welcome
@@ -1334,19 +1352,24 @@ pub const Api = struct {
         }
     };
 
-    pub const WebsocketMessageWelcome = packed struct {
+    pub const WebsocketMessageWelcome = struct {
         /// epoch
         epoch: u32 = 0,
+
+        /// javascriptReloader
+        javascript_reloader: Reloader,
 
         pub fn decode(reader: anytype) anyerror!WebsocketMessageWelcome {
             var this = std.mem.zeroes(WebsocketMessageWelcome);
 
             this.epoch = try reader.readValue(u32);
+            this.javascript_reloader = try reader.readValue(Reloader);
             return this;
         }
 
         pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
             try writer.writeInt(this.epoch);
+            try writer.writeEnum(this.javascript_reloader);
         }
     };
 
@@ -1509,6 +1532,69 @@ pub const Api = struct {
 
         pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
             try writer.writeArray(u32, this.ids);
+        }
+    };
+
+    pub const FileList = struct {
+        /// ptrs
+        ptrs: []const StringPointer,
+
+        /// files
+        files: []const u8,
+
+        pub fn decode(reader: anytype) anyerror!FileList {
+            var this = std.mem.zeroes(FileList);
+
+            this.ptrs = try reader.readArray(StringPointer);
+            this.files = try reader.readValue([]const u8);
+            return this;
+        }
+
+        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+            try writer.writeArray(StringPointer, this.ptrs);
+            try writer.writeValue(this.files);
+        }
+    };
+
+    pub const WebsocketMessageResolveIDs = struct {
+        /// id
+        id: []const u32,
+
+        /// list
+        list: FileList,
+
+        pub fn decode(reader: anytype) anyerror!WebsocketMessageResolveIDs {
+            var this = std.mem.zeroes(WebsocketMessageResolveIDs);
+
+            this.id = try reader.readArray(u32);
+            this.list = try reader.readValue(FileList);
+            return this;
+        }
+
+        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+            try writer.writeArray(u32, this.id);
+            try writer.writeValue(this.list);
+        }
+    };
+
+    pub const WebsocketCommandResolveIDs = struct {
+        /// ptrs
+        ptrs: []const StringPointer,
+
+        /// files
+        files: []const u8,
+
+        pub fn decode(reader: anytype) anyerror!WebsocketCommandResolveIDs {
+            var this = std.mem.zeroes(WebsocketCommandResolveIDs);
+
+            this.ptrs = try reader.readArray(StringPointer);
+            this.files = try reader.readValue([]const u8);
+            return this;
+        }
+
+        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+            try writer.writeArray(StringPointer, this.ptrs);
+            try writer.writeValue(this.files);
         }
     };
 

@@ -36,6 +36,11 @@ pub const NodeModuleBundle = struct {
     pub const magic_bytes = "#!/usr/bin/env speedy\n\n";
     threadlocal var jsbundle_prefix: [magic_bytes.len + 5]u8 = undefined;
 
+    // TODO: support preact-refresh, others by not hard coding
+    pub fn hasFastRefresh(this: *const NodeModuleBundle) bool {
+        return this.package_name_map.contains("react-refresh");
+    }
+
     pub fn loadPackageMap(this: *NodeModuleBundle) !void {
         this.package_name_map = PackageNameMap.init(this.allocator);
         var ids = PackageIDMap.init(this.allocator);

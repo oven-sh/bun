@@ -758,6 +758,21 @@ pub const Symbol = struct {
     pub fn isKindFunction(kind: Symbol.Kind) bool {
         return kind == Symbol.Kind.hoisted_function or kind == Symbol.Kind.generator_or_async_function;
     }
+
+    pub fn isReactComponentishName(symbol: *const Symbol) bool {
+        switch (symbol.kind) {
+            .hoisted, .hoisted_function, .cconst, .class, .other => {
+                return switch (symbol.original_name[0]) {
+                    'A'...'Z' => true,
+                    else => false,
+                };
+            },
+
+            else => {
+                return false;
+            },
+        }
+    }
 };
 
 pub const OptionalChain = packed enum(u2) {

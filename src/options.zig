@@ -244,9 +244,10 @@ pub const ModuleType = enum {
 };
 
 pub const Platform = enum {
-    node,
-    browser,
     neutral,
+    browser,
+    speedy,
+    node,
 
     pub const Extensions = struct {
         pub const In = struct {

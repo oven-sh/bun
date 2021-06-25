@@ -27,6 +27,7 @@ pub fn build(b: *std.build.Builder) void {
     var cwd_buf = [_]u8{0} ** 4096;
     var cwd = std.os.getcwd(&cwd_buf) catch unreachable;
     var exe: *std.build.LibExeObjStep = undefined;
+    var javascript: *std.build.LibExeObjStep = undefined;
 
     var output_dir_buf = std.mem.zeroes([4096]u8);
     var bin_label = if (mode == std.builtin.Mode.Debug) "/debug/" else "/";

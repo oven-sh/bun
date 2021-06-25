@@ -305,12 +305,17 @@ pub fn encodeWTF8Rune(p: []u8, r: i32) u3 {
 }
 
 pub fn toUTF16Buf(in: string, out: []u16) usize {
-    var utf8Iterator = std.unicode.Utf8Iterator{ .bytes = in, .i = 0 };
+    var utf8Iterator = CodepointIterator{ .bytes = in, .i = 0 };
 
     var c: u21 = 0;
     var i: usize = 0;
-    while (utf8Iterator.nextCodepoint()) |code_point| {
+    while (true) {
+        const code_point = utf8Iterator.nextCodepoint();
+
         switch (code_point) {
+            -1 => {
+                return i;
+            },
             0...0xFFFF => {
                 out[i] = @intCast(u16, code_point);
                 i += 1;
@@ -329,7 +334,7 @@ pub fn toUTF16Buf(in: string, out: []u16) usize {
 }
 
 pub fn toUTF16Alloc(in: string, allocator: *std.mem.Allocator) !JavascriptString {
-    var utf8Iterator = std.unicode.Utf8Iterator{ .bytes = in, .i = 0 };
+    var utf8Iterator = CodepointIterator{ .bytes = in, .i = 0 };
     var out = try std.ArrayList(u16).initCapacity(allocator, in.len);
 
     var c: u21 = 0;

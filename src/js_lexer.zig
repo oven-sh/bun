@@ -2625,31 +2625,28 @@ pub const CodepointIterator = struct {
     width: u3 = 0,
     c: CodePoint = 0,
 
-    pub fn nextCodepointSlice(it: *CodepointIterator) ?[]const u8 {
-        if (it.i >= it.bytes.len) {
-            return null;
-        }
+    pub fn nextCodepointSlice(it: *CodepointIterator) []const u8 {
+        @setRuntimeSafety(false);
 
-        const cp_len = std
-            .unicode.utf8ByteSequenceLength(it.bytes[it.i]) catch unreachable;
+        const cp_len = strings.utf8ByteSequenceLength(it.bytes[it.i]);
         it.i += cp_len;
-        return it.bytes[it.i - cp_len .. it.i];
+
+        return if (!(it.i > it.bytes.len)) it.bytes[it.i - cp_len .. it.i] else "";
     }
 
     pub fn nextCodepoint(it: *CodepointIterator) ?CodePoint {
-        const slice = it.nextCodepointSlice() orelse return null;
-        it.width = @intCast(u3, slice.len);
-        @setRuntimeSafety(false);
+        const slice = it.nextCodepointSlice();
 
-        it.c = switch (it.width) {
-            1 => @intCast(CodePoint, slice[0]),
-            2 => @intCast(CodePoint, std.unicode.utf8Decode2(slice) catch unreachable),
-            3 => @intCast(CodePoint, std.unicode.utf8Decode3(slice) catch unreachable),
-            4 => @intCast(CodePoint, std.unicode.utf8Decode4(slice) catch unreachable),
+        it.c = switch (slice.len) {
+            0 => it.c,
+            1 => @as(CodePoint, slice[0]),
+            2 => @as(CodePoint, unicode.utf8Decode2(slice) catch unreachable),
+            3 => @as(CodePoint, unicode.utf8Decode3(slice) catch unreachable),
+            4 => @as(CodePoint, unicode.utf8Decode4(slice) catch unreachable),
             else => unreachable,
         };
 
-        return it.c;
+        return if (slice.len > 0) it.c else null;
     }
 
     /// Look ahead at the next n codepoints without advancing the iterator.

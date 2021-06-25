@@ -2259,7 +2259,6 @@ const ParserFeatures = struct {
     //
     //
     //
-
     react_fast_refresh: bool = false,
 };
 

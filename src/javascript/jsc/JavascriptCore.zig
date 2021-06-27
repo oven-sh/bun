@@ -1,19 +1,21 @@
+const generic = opaque {};
+pub const Private = c_void;
 pub const struct_OpaqueJSContextGroup = opaque {};
 pub const JSContextGroupRef = ?*const struct_OpaqueJSContextGroup;
 pub const struct_OpaqueJSContext = opaque {};
 pub const JSContextRef = ?*const struct_OpaqueJSContext;
 pub const JSGlobalContextRef = ?*struct_OpaqueJSContext;
-pub const struct_OpaqueJSString = opaque {};
+pub const struct_OpaqueJSString = generic;
 pub const JSStringRef = ?*struct_OpaqueJSString;
-pub const struct_OpaqueJSClass = opaque {};
+pub const struct_OpaqueJSClass = generic;
 pub const JSClassRef = ?*struct_OpaqueJSClass;
-pub const struct_OpaqueJSPropertyNameArray = opaque {};
+pub const struct_OpaqueJSPropertyNameArray = generic;
 pub const JSPropertyNameArrayRef = ?*struct_OpaqueJSPropertyNameArray;
-pub const struct_OpaqueJSPropertyNameAccumulator = opaque {};
+pub const struct_OpaqueJSPropertyNameAccumulator = generic;
 pub const JSPropertyNameAccumulatorRef = ?*struct_OpaqueJSPropertyNameAccumulator;
 pub const JSTypedArrayBytesDeallocator = ?fn (?*c_void, ?*c_void) callconv(.C) void;
-pub const struct_OpaqueJSValue = opaque {};
-pub const JSValueRef = ?*const struct_OpaqueJSValue;
+pub const struct_OpaqueJSValue = generic;
+pub const JSValueRef = ?*struct_OpaqueJSValue;
 pub const JSObjectRef = ?*struct_OpaqueJSValue;
 pub extern fn JSEvaluateScript(ctx: JSContextRef, script: JSStringRef, thisObject: JSObjectRef, sourceURL: JSStringRef, startingLineNumber: c_int, exception: [*c]JSValueRef) JSValueRef;
 pub extern fn JSCheckScriptSyntax(ctx: JSContextRef, script: JSStringRef, sourceURL: JSStringRef, startingLineNumber: c_int, exception: [*c]JSValueRef) bool;
@@ -115,7 +117,15 @@ pub const JSObjectGetPropertyCallback = ?fn (JSContextRef, JSObjectRef, JSString
 pub const JSObjectSetPropertyCallback = ?fn (JSContextRef, JSObjectRef, JSStringRef, JSValueRef, [*c]JSValueRef) callconv(.C) bool;
 pub const JSObjectDeletePropertyCallback = ?fn (JSContextRef, JSObjectRef, JSStringRef, [*c]JSValueRef) callconv(.C) bool;
 pub const JSObjectGetPropertyNamesCallback = ?fn (JSContextRef, JSObjectRef, JSPropertyNameAccumulatorRef) callconv(.C) void;
-pub const JSObjectCallAsFunctionCallback = ?fn (ctx: JSContextRef, function: JSObjectRef, thisObject: JSObjectRef, argumentCount: usize, arguments: [*c]const JSValueRef, exception: [*c]JSValueRef) callconv(.C) JSValueRef;
+
+pub const JSObjectCallAsFunctionCallback = ?fn (
+    ctx: JSContextRef,
+    function: JSObjectRef,
+    thisObject: JSObjectRef,
+    argumentCount: usize,
+    arguments: [*c]const JSValueRef,
+    exception: [*c]JSValueRef,
+) callconv(.C) JSValueRef;
 pub const JSObjectCallAsConstructorCallback = ?fn (JSContextRef, JSObjectRef, usize, [*c]const JSValueRef, [*c]JSValueRef) callconv(.C) JSObjectRef;
 pub const JSObjectHasInstanceCallback = ?fn (JSContextRef, JSObjectRef, JSValueRef, [*c]JSValueRef) callconv(.C) bool;
 pub const JSObjectConvertToTypeCallback = ?fn (JSContextRef, JSObjectRef, JSType, [*c]JSValueRef) callconv(.C) JSValueRef;
@@ -150,54 +160,54 @@ pub const JSClassDefinition = extern struct {
     convertToType: JSObjectConvertToTypeCallback,
 };
 pub extern const kJSClassDefinitionEmpty: JSClassDefinition;
-pub extern fn JSClassCreate(definition: [*c]const JSClassDefinition) JSClassRef;
-pub extern fn JSClassRetain(jsClass: JSClassRef) JSClassRef;
-pub extern fn JSClassRelease(jsClass: JSClassRef) void;
-pub extern fn JSObjectMake(ctx: JSContextRef, jsClass: JSClassRef, data: ?*c_void) JSObjectRef;
-pub extern fn JSObjectMakeFunctionWithCallback(ctx: JSContextRef, name: JSStringRef, callAsFunction: JSObjectCallAsFunctionCallback) JSObjectRef;
-pub extern fn JSObjectMakeConstructor(ctx: JSContextRef, jsClass: JSClassRef, callAsConstructor: JSObjectCallAsConstructorCallback) JSObjectRef;
-pub extern fn JSObjectMakeArray(ctx: JSContextRef, argumentCount: usize, arguments: [*c]const JSValueRef, exception: [*c]JSValueRef) JSObjectRef;
-pub extern fn JSObjectMakeDate(ctx: JSContextRef, argumentCount: usize, arguments: [*c]const JSValueRef, exception: [*c]JSValueRef) JSObjectRef;
-pub extern fn JSObjectMakeError(ctx: JSContextRef, argumentCount: usize, arguments: [*c]const JSValueRef, exception: [*c]JSValueRef) JSObjectRef;
-pub extern fn JSObjectMakeRegExp(ctx: JSContextRef, argumentCount: usize, arguments: [*c]const JSValueRef, exception: [*c]JSValueRef) JSObjectRef;
-pub extern fn JSObjectMakeDeferredPromise(ctx: JSContextRef, resolve: [*c]JSObjectRef, reject: [*c]JSObjectRef, exception: [*c]JSValueRef) JSObjectRef;
-pub extern fn JSObjectMakeFunction(ctx: JSContextRef, name: JSStringRef, parameterCount: c_uint, parameterNames: [*c]const JSStringRef, body: JSStringRef, sourceURL: JSStringRef, startingLineNumber: c_int, exception: [*c]JSValueRef) JSObjectRef;
-pub extern fn JSObjectGetPrototype(ctx: JSContextRef, object: JSObjectRef) JSValueRef;
-pub extern fn JSObjectSetPrototype(ctx: JSContextRef, object: JSObjectRef, value: JSValueRef) void;
-pub extern fn JSObjectHasProperty(ctx: JSContextRef, object: JSObjectRef, propertyName: JSStringRef) bool;
-pub extern fn JSObjectGetProperty(ctx: JSContextRef, object: JSObjectRef, propertyName: JSStringRef, exception: [*c]JSValueRef) JSValueRef;
-pub extern fn JSObjectSetProperty(ctx: JSContextRef, object: JSObjectRef, propertyName: JSStringRef, value: JSValueRef, attributes: JSPropertyAttributes, exception: [*c]JSValueRef) void;
-pub extern fn JSObjectDeleteProperty(ctx: JSContextRef, object: JSObjectRef, propertyName: JSStringRef, exception: [*c]JSValueRef) bool;
-pub extern fn JSObjectHasPropertyForKey(ctx: JSContextRef, object: JSObjectRef, propertyKey: JSValueRef, exception: [*c]JSValueRef) bool;
-pub extern fn JSObjectGetPropertyForKey(ctx: JSContextRef, object: JSObjectRef, propertyKey: JSValueRef, exception: [*c]JSValueRef) JSValueRef;
-pub extern fn JSObjectSetPropertyForKey(ctx: JSContextRef, object: JSObjectRef, propertyKey: JSValueRef, value: JSValueRef, attributes: JSPropertyAttributes, exception: [*c]JSValueRef) void;
-pub extern fn JSObjectDeletePropertyForKey(ctx: JSContextRef, object: JSObjectRef, propertyKey: JSValueRef, exception: [*c]JSValueRef) bool;
-pub extern fn JSObjectGetPropertyAtIndex(ctx: JSContextRef, object: JSObjectRef, propertyIndex: c_uint, exception: [*c]JSValueRef) JSValueRef;
-pub extern fn JSObjectSetPropertyAtIndex(ctx: JSContextRef, object: JSObjectRef, propertyIndex: c_uint, value: JSValueRef, exception: [*c]JSValueRef) void;
-pub extern fn JSObjectGetPrivate(object: JSObjectRef) ?*c_void;
-pub extern fn JSObjectSetPrivate(object: JSObjectRef, data: ?*c_void) bool;
-pub extern fn JSObjectIsFunction(ctx: JSContextRef, object: JSObjectRef) bool;
-pub extern fn JSObjectCallAsFunction(ctx: JSContextRef, object: JSObjectRef, thisObject: JSObjectRef, argumentCount: usize, arguments: [*c]const JSValueRef, exception: [*c]JSValueRef) JSValueRef;
-pub extern fn JSObjectIsConstructor(ctx: JSContextRef, object: JSObjectRef) bool;
-pub extern fn JSObjectCallAsConstructor(ctx: JSContextRef, object: JSObjectRef, argumentCount: usize, arguments: [*c]const JSValueRef, exception: [*c]JSValueRef) JSObjectRef;
-pub extern fn JSObjectCopyPropertyNames(ctx: JSContextRef, object: JSObjectRef) JSPropertyNameArrayRef;
-pub extern fn JSPropertyNameArrayRetain(array: JSPropertyNameArrayRef) JSPropertyNameArrayRef;
-pub extern fn JSPropertyNameArrayRelease(array: JSPropertyNameArrayRef) void;
-pub extern fn JSPropertyNameArrayGetCount(array: JSPropertyNameArrayRef) usize;
-pub extern fn JSPropertyNameArrayGetNameAtIndex(array: JSPropertyNameArrayRef, index: usize) JSStringRef;
-pub extern fn JSPropertyNameAccumulatorAddName(accumulator: JSPropertyNameAccumulatorRef, propertyName: JSStringRef) void;
-pub extern fn JSContextGroupCreate() JSContextGroupRef;
-pub extern fn JSContextGroupRetain(group: JSContextGroupRef) JSContextGroupRef;
-pub extern fn JSContextGroupRelease(group: JSContextGroupRef) void;
-pub extern fn JSGlobalContextCreate(globalObjectClass: JSClassRef) JSGlobalContextRef;
-pub extern fn JSGlobalContextCreateInGroup(group: JSContextGroupRef, globalObjectClass: JSClassRef) JSGlobalContextRef;
-pub extern fn JSGlobalContextRetain(ctx: JSGlobalContextRef) JSGlobalContextRef;
-pub extern fn JSGlobalContextRelease(ctx: JSGlobalContextRef) void;
-pub extern fn JSContextGetGlobalObject(ctx: JSContextRef) JSObjectRef;
-pub extern fn JSContextGetGroup(ctx: JSContextRef) JSContextGroupRef;
-pub extern fn JSContextGetGlobalContext(ctx: JSContextRef) JSGlobalContextRef;
-pub extern fn JSGlobalContextCopyName(ctx: JSGlobalContextRef) JSStringRef;
-pub extern fn JSGlobalContextSetName(ctx: JSGlobalContextRef, name: JSStringRef) void;
+pub extern "c" fn JSClassCreate(definition: [*c]const JSClassDefinition) JSClassRef;
+pub extern "c" fn JSClassRetain(jsClass: JSClassRef) JSClassRef;
+pub extern "c" fn JSClassRelease(jsClass: JSClassRef) void;
+pub extern "c" fn JSObjectMake(ctx: JSContextRef, jsClass: JSClassRef, data: ?*c_void) JSObjectRef;
+pub extern "c" fn JSObjectMakeFunctionWithCallback(ctx: JSContextRef, name: JSStringRef, callAsFunction: JSObjectCallAsFunctionCallback) JSObjectRef;
+pub extern "c" fn JSObjectMakeConstructor(ctx: JSContextRef, jsClass: JSClassRef, callAsConstructor: JSObjectCallAsConstructorCallback) JSObjectRef;
+pub extern "c" fn JSObjectMakeArray(ctx: JSContextRef, argumentCount: usize, arguments: [*c]const JSValueRef, exception: [*c]JSValueRef) JSObjectRef;
+pub extern "c" fn JSObjectMakeDate(ctx: JSContextRef, argumentCount: usize, arguments: [*c]const JSValueRef, exception: [*c]JSValueRef) JSObjectRef;
+pub extern "c" fn JSObjectMakeError(ctx: JSContextRef, argumentCount: usize, arguments: [*c]const JSValueRef, exception: [*c]JSValueRef) JSObjectRef;
+pub extern "c" fn JSObjectMakeRegExp(ctx: JSContextRef, argumentCount: usize, arguments: [*c]const JSValueRef, exception: [*c]JSValueRef) JSObjectRef;
+pub extern "c" fn JSObjectMakeDeferredPromise(ctx: JSContextRef, resolve: [*c]JSObjectRef, reject: [*c]JSObjectRef, exception: [*c]JSValueRef) JSObjectRef;
+pub extern "c" fn JSObjectMakeFunction(ctx: JSContextRef, name: JSStringRef, parameterCount: c_uint, parameterNames: [*c]const JSStringRef, body: JSStringRef, sourceURL: JSStringRef, startingLineNumber: c_int, exception: [*c]JSValueRef) JSObjectRef;
+pub extern "c" fn JSObjectGetPrototype(ctx: JSContextRef, object: JSObjectRef) JSValueRef;
+pub extern "c" fn JSObjectSetPrototype(ctx: JSContextRef, object: JSObjectRef, value: JSValueRef) void;
+pub extern "c" fn JSObjectHasProperty(ctx: JSContextRef, object: JSObjectRef, propertyName: JSStringRef) bool;
+pub extern "c" fn JSObjectGetProperty(ctx: JSContextRef, object: JSObjectRef, propertyName: JSStringRef, exception: [*c]JSValueRef) JSValueRef;
+pub extern "c" fn JSObjectSetProperty(ctx: JSContextRef, object: JSObjectRef, propertyName: JSStringRef, value: JSValueRef, attributes: c_uint, exception: [*c]JSValueRef) void;
+pub extern "c" fn JSObjectDeleteProperty(ctx: JSContextRef, object: JSObjectRef, propertyName: JSStringRef, exception: [*c]JSValueRef) bool;
+pub extern "c" fn JSObjectHasPropertyForKey(ctx: JSContextRef, object: JSObjectRef, propertyKey: JSValueRef, exception: [*c]JSValueRef) bool;
+pub extern "c" fn JSObjectGetPropertyForKey(ctx: JSContextRef, object: JSObjectRef, propertyKey: JSValueRef, exception: [*c]JSValueRef) JSValueRef;
+pub extern "c" fn JSObjectSetPropertyForKey(ctx: JSContextRef, object: JSObjectRef, propertyKey: JSValueRef, value: JSValueRef, attributes: JSPropertyAttributes, exception: [*c]JSValueRef) void;
+pub extern "c" fn JSObjectDeletePropertyForKey(ctx: JSContextRef, object: JSObjectRef, propertyKey: JSValueRef, exception: [*c]JSValueRef) bool;
+pub extern "c" fn JSObjectGetPropertyAtIndex(ctx: JSContextRef, object: JSObjectRef, propertyIndex: c_uint, exception: [*c]JSValueRef) JSValueRef;
+pub extern "c" fn JSObjectSetPropertyAtIndex(ctx: JSContextRef, object: JSObjectRef, propertyIndex: c_uint, value: JSValueRef, exception: [*c]JSValueRef) void;
+pub extern "c" fn JSObjectGetPrivate(object: JSObjectRef) ?*c_void;
+pub extern "c" fn JSObjectSetPrivate(object: JSObjectRef, data: ?*c_void) bool;
+pub extern "c" fn JSObjectIsFunction(ctx: JSContextRef, object: JSObjectRef) bool;
+pub extern "c" fn JSObjectCallAsFunction(ctx: JSContextRef, object: JSObjectRef, thisObject: JSObjectRef, argumentCount: usize, arguments: [*c]const JSValueRef, exception: [*c]JSValueRef) JSValueRef;
+pub extern "c" fn JSObjectIsConstructor(ctx: JSContextRef, object: JSObjectRef) bool;
+pub extern "c" fn JSObjectCallAsConstructor(ctx: JSContextRef, object: JSObjectRef, argumentCount: usize, arguments: [*c]const JSValueRef, exception: [*c]JSValueRef) JSObjectRef;
+pub extern "c" fn JSObjectCopyPropertyNames(ctx: JSContextRef, object: JSObjectRef) JSPropertyNameArrayRef;
+pub extern "c" fn JSPropertyNameArrayRetain(array: JSPropertyNameArrayRef) JSPropertyNameArrayRef;
+pub extern "c" fn JSPropertyNameArrayRelease(array: JSPropertyNameArrayRef) void;
+pub extern "c" fn JSPropertyNameArrayGetCount(array: JSPropertyNameArrayRef) usize;
+pub extern "c" fn JSPropertyNameArrayGetNameAtIndex(array: JSPropertyNameArrayRef, index: usize) JSStringRef;
+pub extern "c" fn JSPropertyNameAccumulatorAddName(accumulator: JSPropertyNameAccumulatorRef, propertyName: JSStringRef) void;
+pub extern "c" fn JSContextGroupCreate() JSContextGroupRef;
+pub extern "c" fn JSContextGroupRetain(group: JSContextGroupRef) JSContextGroupRef;
+pub extern "c" fn JSContextGroupRelease(group: JSContextGroupRef) void;
+pub extern "c" fn JSGlobalContextCreate(globalObjectClass: JSClassRef) JSGlobalContextRef;
+pub extern "c" fn JSGlobalContextCreateInGroup(group: JSContextGroupRef, globalObjectClass: JSClassRef) JSGlobalContextRef;
+pub extern "c" fn JSGlobalContextRetain(ctx: JSGlobalContextRef) JSGlobalContextRef;
+pub extern "c" fn JSGlobalContextRelease(ctx: JSGlobalContextRef) void;
+pub extern "c" fn JSContextGetGlobalObject(ctx: JSContextRef) JSObjectRef;
+pub extern "c" fn JSContextGetGroup(ctx: JSContextRef) JSContextGroupRef;
+pub extern "c" fn JSContextGetGlobalContext(ctx: JSContextRef) JSGlobalContextRef;
+pub extern "c" fn JSGlobalContextCopyName(ctx: JSGlobalContextRef) JSStringRef;
+pub extern "c" fn JSGlobalContextSetName(ctx: JSGlobalContextRef, name: JSStringRef) void;
 pub const JSChar = c_ushort;
 pub extern fn JSStringCreateWithCharacters(chars: [*c]const JSChar, numChars: usize) JSStringRef;
 pub extern fn JSStringCreateWithUTF8CString(string: [*c]const u8) JSStringRef;
@@ -235,4 +245,4 @@ pub const OpaqueJSValue = struct_OpaqueJSValue;
 // StringImpl::createWithoutCopying
 // https://github.com/WebKit/webkit/blob/main/Source/JavaScriptCore/API/JSStringRef.cpp#L62
 pub extern fn JSStringCreateWithCharactersNoCopy(string: [*c]const JSChar, numChars: size_t) JSStringRef;
-
+const size_t = usize;

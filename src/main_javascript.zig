@@ -1,6 +1,3 @@
-    usingnamespace @import("global.zig");
-
-usingnamespace @import("./http.zig");
 const std = @import("std");
 const lex = @import("js_lexer.zig");
 const logger = @import("logger.zig");
@@ -13,17 +10,48 @@ const js_ast = @import("js_ast.zig");
 const linker = @import("linker.zig");
 usingnamespace @import("ast/base.zig");
 usingnamespace @import("defines.zig");
+usingnamespace @import("global.zig");
 const panicky = @import("panic_handler.zig");
+pub const MainPanicHandler = panicky.NewPanicHandler(panicky.default_panic);
 const Api = @import("api/schema.zig").Api;
 const resolve_path = @import("./resolver/resolve_path.zig");
-
 const clap = @import("clap");
-
 const bundler = @import("bundler.zig");
-
 const fs = @import("fs.zig");
-
 const NodeModuleBundle = @import("./node_module_bundle.zig").NodeModuleBundle;
+const js = @import("javascript/jsc/javascript.zig");
+const allocators = @import("allocators.zig");
+pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace) noreturn {
+    if (MainPanicHandler.Singleton) |singleton| {
+        MainPanicHandler.handle_panic(msg, error_return_trace);
+    } else {
+        panicky.default_panic(msg, error_return_trace);
+    }
+}
+const constStrToU8 = allocators.constStrToU8;
+pub fn main() anyerror!void {
+    // The memory allocator makes a massive difference.
+    // std.heap.raw_c_allocator and std.heap.c_allocator perform similarly.
+    // std.heap.GeneralPurposeAllocator makes this about 3x _slower_ than esbuild.
+    // var root_alloc = std.heap.ArenaAllocator.init(std.heap.raw_c_allocator);
+    // var root_alloc_ = &root_alloc.allocator;
+    try alloc.setup(std.heap.c_allocator);
+    var stdout = std.io.getStdOut();
+    // var stdout = std.io.bufferedWriter(stdout_file.writer());
+    var stderr = std.io.getStdErr();
+    // var stderr = std.io.bufferedWriter(stderr_file.writer());
+    var output_source = Output.Source.init(stdout, stderr);
+    // defer stdout.flush() catch {};
+    // defer stderr.flush() catch {};
+    Output.Source.set(&output_source);
+    Output.enable_ansi_colors = stderr.isTty();
+    defer Output.flush();
+    try Cli.start(
+        std.heap.c_allocator,
+        stdout,
+        stderr,
+    );
+}
 
 pub const Cli = struct {
     const LoaderMatcher = strings.ExactSizeMatcher(4);
@@ -161,7 +189,7 @@ pub const Cli = struct {
             var entry_points = args.positionals();
             var inject = args.options("--inject");
             var output_dir = args.option("--outdir");
-            const serve = args.flag("--serve");
+            const serve = false;
 
             var write = entry_points.len > 1 or output_dir != null;
             if (write and output_dir == null) {
@@ -299,12 +327,12 @@ pub const Cli = struct {
                 .node_modules_bundle_path = node_modules_bundle_path,
                 .public_dir = if (args.option("--public-dir")) |public_dir| allocator.dupe(u8, public_dir) catch unreachable else null,
                 .write = write,
+                .platform = .speedy,
                 .serve = serve,
                 .inject = inject,
                 .entry_points = entry_points,
                 .extension_order = args.options("--extension-order"),
                 .main_fields = args.options("--main-fields"),
-                .platform = platform,
                 .only_scan_dependencies = if (args.flag("--scan")) Api.ScanDependencyMode.all else Api.ScanDependencyMode._none,
                 .generate_node_module_bundle = if (args.flag("--new-jsb")) true else false,
             };
@@ -326,193 +354,21 @@ pub const Cli = struct {
         Output.printError("\nJSON printing took: {d}\n", .{std.time.nanoTimestamp() - print_start});
     }
     pub fn startTransform(allocator: *std.mem.Allocator, args: Api.TransformOptions, log: *logger.Log) anyerror!void {}
-    pub fn start(allocator: *std.mem.Allocator, stdout: anytype, stderr: anytype, comptime MainPanicHandler: type) anyerror!void {
+    pub fn start(allocator: *std.mem.Allocator, stdout: anytype, stderr: anytype) anyerror!void {
         const start_time = std.time.nanoTimestamp();
         var log = logger.Log.init(allocator);
         var panicker = MainPanicHandler.init(&log);
         MainPanicHandler.Singleton = &panicker;
 
-        var args = try Arguments.parse(alloc.static, stdout, stderr);
-        if ((args.entry_points.len == 1 and args.entry_points[0].len > ".jsb".len and args.entry_points[0][args.entry_points[0].len - ".jsb".len] == '.' and strings.eqlComptime(args.entry_points[0][args.entry_points[0].len - "jsb".len ..], "jsb"))) {
-            var out_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-            var input = try std.fs.openFileAbsolute(try std.os.realpath(args.entry_points[0], &out_buffer), .{ .read = true });
+        // var args = try Arguments.parse(alloc.static, stdout, stderr);
+        // var serve_bundler = try bundler.ServeBundler.init(allocator, &log, args);
+        // var res = try serve_bundler.buildFile(&log, allocator, args.entry_points[0], std.fs.path.extension(args.entry_points[0]));
 
-            const params = comptime [_]clap.Param(clap.Help){
-                clap.parseParam("--summary    Print a summary") catch unreachable,
-                clap.parseParam("<POS>...     ") catch unreachable,
-            };
+        // var results = try bundler.Bundler.bundle(allocator, &log, args);
+        // var file = results.output_files[0];
+        var vm = try js.VirtualMachine.init(allocator);
 
-            var jsBundleArgs = clap.parse(clap.Help, &params, .{}) catch |err| {
-                try NodeModuleBundle.printBundle(std.fs.File, input, @TypeOf(stdout), stdout);
-                return;
-            };
-
-            if (jsBundleArgs.flag("--summary")) {
-                try NodeModuleBundle.printSummaryFromDisk(std.fs.File, input, @TypeOf(stdout), stdout, allocator);
-            } else {
-                try NodeModuleBundle.printBundle(std.fs.File, input, @TypeOf(stdout), stdout);
-            }
-
-            return;
-        }
-
-        if (args.serve orelse false) {
-            try Server.start(allocator, args);
-
-            return;
-        }
-
-        if ((args.only_scan_dependencies orelse ._none) == .all) {
-            return try printScanResults(try bundler.Bundler.scanDependencies(allocator, &log, args), allocator);
-        }
-
-        if ((args.generate_node_module_bundle orelse false)) {
-            var this_bundler = try bundler.ServeBundler.init(allocator, &log, args);
-            this_bundler.configureLinker();
-            var filepath = "node_modules.jsb";
-            var node_modules = try bundler.ServeBundler.GenerateNodeModuleBundle.generate(&this_bundler, allocator, filepath);
-            var elapsed = @divTrunc(std.time.nanoTimestamp() - start_time, @as(i128, std.time.ns_per_ms));
-            var bundle = NodeModuleBundle.init(node_modules, allocator);
-
-            bundle.printSummary();
-            const indent = comptime " ";
-            Output.prettyln(indent ++ "<d>{d:6}ms elapsed", .{@intCast(u32, elapsed)});
-            Output.prettyln(indent ++ "<r>Saved to ./{s}", .{filepath});
-            return;
-        }
-
-        var result: options.TransformResult = undefined;
-        switch (args.resolve orelse Api.ResolveMode.dev) {
-            Api.ResolveMode.disable => {
-                result = try bundler.Transformer.transform(
-                    allocator,
-                    &log,
-                    args,
-                );
-            },
-            .lazy => {
-                result = try bundler.ServeBundler.bundle(
-                    allocator,
-                    &log,
-                    args,
-                );
-            },
-            else => {
-                result = try bundler.Bundler.bundle(
-                    allocator,
-                    &log,
-                    args,
-                );
-            },
-        }
-        var did_write = false;
-        var stderr_writer = stderr.writer();
-        var buffered_writer = std.io.bufferedWriter(stderr_writer);
-        defer buffered_writer.flush() catch {};
-        var writer = buffered_writer.writer();
-        var err_writer = writer;
-
-        var open_file_limit: usize = 32;
-        if (args.write) |write| {
-            if (write) {
-                const root_dir = result.root_dir orelse unreachable;
-                if (std.os.getrlimit(.NOFILE)) |limit| {
-                    open_file_limit = limit.cur;
-                } else |err| {}
-
-                var all_paths = try allocator.alloc([]const u8, result.output_files.len);
-                var max_path_len: usize = 0;
-                var max_padded_size: usize = 0;
-                for (result.output_files) |f, i| {
-                    all_paths[i] = f.input.text;
-                }
-
-                var from_path = resolve_path.longestCommonPath(all_paths);
-
-                for (result.output_files) |f, i| {
-                    max_path_len = std.math.max(
-                        std.math.max(from_path.len, f.input.text.len) + 2 - from_path.len,
-                        max_path_len,
-                    );
-                }
-
-                did_write = true;
-
-                // On posix, file handles automatically close on process exit by the OS
-                // Closing files shows up in profiling.
-                // So don't do that unless we actually need to.
-                const do_we_need_to_close = !FeatureFlags.store_file_descriptors or (@intCast(usize, root_dir.fd) + open_file_limit) < result.output_files.len;
-
-                var filepath_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-                filepath_buf[0] = '.';
-                filepath_buf[1] = '/';
-
-                for (result.output_files) |f, i| {
-                    var rel_path: []const u8 = undefined;
-                    switch (f.value) {
-                        // easy mode: write the buffer
-                        .buffer => |value| {
-                            rel_path = resolve_path.relative(from_path, f.input.text);
-
-                            try root_dir.writeFile(rel_path, value);
-                        },
-                        .move => |value| {
-                            // const primary = f.input.text[from_path.len..];
-                            // std.mem.copy(u8, filepath_buf[2..], primary);
-                            // rel_path = filepath_buf[0 .. primary.len + 2];
-                            rel_path = value.pathname;
-
-                            // try f.moveTo(result.outbase, constStrToU8(rel_path), root_dir.fd);
-                        },
-                        .copy => |value| {
-                            rel_path = value.pathname;
-
-                            try f.copyTo(result.outbase, constStrToU8(rel_path), root_dir.fd);
-                        },
-                        .noop => {},
-                        .pending => |value| {
-                            unreachable;
-                        },
-                    }
-
-                    // Print summary
-                    _ = try writer.write("\n");
-                    const padding_count = 2 + (std.math.max(rel_path.len, max_path_len) - rel_path.len);
-                    try writer.writeByteNTimes(' ', 2);
-                    try writer.writeAll(rel_path);
-                    try writer.writeByteNTimes(' ', padding_count);
-                    const size = @intToFloat(f64, f.size) / 1000.0;
-                    try std.fmt.formatFloatDecimal(size, .{ .precision = 2 }, writer);
-                    try writer.writeAll(" KB\n");
-                }
-            }
-        }
-
-        if (isDebug) {
-            err_writer.print("\nExpr count:       {d}\n", .{js_ast.Expr.icount}) catch {};
-            err_writer.print("Stmt count:       {d}\n", .{js_ast.Stmt.icount}) catch {};
-            err_writer.print("Binding count:    {d}\n", .{js_ast.Binding.icount}) catch {};
-            err_writer.print("File Descriptors: {d} / {d}\n", .{
-                fs.FileSystem.max_fd,
-                open_file_limit,
-            }) catch {};
-        }
-
-        for (result.errors) |err| {
-            try err.writeFormat(err_writer);
-            _ = try err_writer.write("\n");
-        }
-
-        for (result.warnings) |err| {
-            try err.writeFormat(err_writer);
-            _ = try err_writer.write("\n");
-        }
-
-        const duration = std.time.nanoTimestamp() - start_time;
-
-        if (did_write and duration < @as(i128, @as(i128, std.time.ns_per_s) * @as(i128, 2))) {
-            var elapsed = @divTrunc(duration, @as(i128, std.time.ns_per_ms));
-            try err_writer.print("\nCompleted in {d}ms", .{elapsed});
-        }
+        _ = try vm.evalUtf8("test.js", "console.log(Number(10.1));"[0.. :0]);
+        Output.print("Done", .{});
     }
 };

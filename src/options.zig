@@ -286,6 +286,7 @@ pub const Platform = enum {
         return switch (plat orelse api.Api.Platform._none) {
             .node => .node,
             .browser => .browser,
+            .speedy => .speedy,
             else => .browser,
         };
     }
@@ -674,12 +675,25 @@ pub const BundleOptions = struct {
         }
 
         if (transform.platform) |plat| {
-            opts.platform = if (plat == .browser) .browser else .node;
+            opts.platform = switch (plat) {
+                .speedy => speedy,
+                .neutral => .neutral,
+                .browser => .browser,
+                .node => .node,
+            };
             opts.main_fields = Platform.DefaultMainFields.get(opts.platform);
         }
 
-        if (opts.platform == .node) {
-            opts.import_path_format = .relative_nodejs;
+        switch (opts.platform) {
+            .node => {
+                opts.import_path_format = .relative_nodejs;
+            },
+            .speedy => {
+                // If we're doing SSR, we want all the URLs to be the same as what it would be in the browser
+                // If we're not doing SSR, we want all the import paths to be absolute
+                opts.import_path_format = if (opts.import_path_format == .absolute_url) .absolute_url else .absolute_path;
+            },
+            else => {},
         }
 
         if (transform.main_fields.len > 0) {

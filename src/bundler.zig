@@ -131,7 +131,7 @@ pub const ScanResult = struct {
 
 pub fn NewBundler(cache_files: bool) type {
     return struct {
-        const Linker = if (cache_files) linker.Linker else linker.ServeLinker;
+        pub const Linker = if (cache_files) linker.Linker else linker.ServeLinker;
         pub const Resolver = if (cache_files) _resolver.Resolver else _resolver.ResolverUncached;
 
         const ThisBundler = @This();
@@ -164,8 +164,6 @@ pub fn NewBundler(cache_files: bool) type {
         ) !ThisBundler {
             js_ast.Expr.Data.Store.create(allocator);
             js_ast.Stmt.Data.Store.create(allocator);
-            js_ast.Expr.Data.Store.reset();
-            js_ast.Stmt.Data.Store.reset();
             var fs = try Fs.FileSystem.init1(allocator, opts.absolute_working_dir, opts.serve orelse false);
             const bundle_options = try options.BundleOptions.fromApi(
                 allocator,
@@ -941,7 +939,14 @@ pub fn NewBundler(cache_files: bool) type {
                     };
                 },
                 else => {
-                    var result = bundler.parse(allocator, file_path, loader, resolve_result.dirname_fd, file_descriptor, filepath_hash) orelse {
+                    var result = bundler.parse(
+                        allocator,
+                        file_path,
+                        loader,
+                        resolve_result.dirname_fd,
+                        file_descriptor,
+                        filepath_hash,
+                    ) orelse {
                         bundler.resetStore();
                         return BuildResolveResultPair{
                             .written = 0,
@@ -1241,9 +1246,9 @@ pub fn NewBundler(cache_files: bool) type {
                     jsx.parse = loader.isJSX();
                     var opts = js_parser.Parser.Options.init(jsx, loader);
                     opts.enable_bundling = false;
-                    opts.transform_require_to_import = true;
+                    opts.transform_require_to_import = bundler.options.platform != .speedy;
                     opts.can_import_from_bundle = bundler.options.node_modules_bundle != null;
-                    opts.features.hot_module_reloading = bundler.options.hot_module_reloading;
+                    opts.features.hot_module_reloading = bundler.options.hot_module_reloading and bundler.options.platform != .speedy;
                     opts.features.react_fast_refresh = opts.features.hot_module_reloading and jsx.parse and bundler.options.jsx.supports_fast_refresh;
                     opts.filepath_hash_for_hmr = file_hash orelse 0;
                     const value = (bundler.resolver.caches.js.parse(allocator, opts, bundler.options.define, bundler.log, &source) catch null) orelse return null;

@@ -139,7 +139,7 @@ pub const WTFStringMutable = struct {
         self.list.appendAssumeCapacity(char);
     }
     pub inline fn append(self: *WTFStringMutable, str: []const u8) !void {
-        self.growIfNeeded(str.len);
+        try self.growIfNeeded(str.len);
 
         var iter = strings.CodepointIterator{ .bytes = str, .i = 0 };
         while (true) {
@@ -148,12 +148,12 @@ pub const WTFStringMutable = struct {
                     return;
                 },
                 0...0xFFFF => {
-                    try self.list.append(@intCast(u16, iter.c));
+                    try self.list.append(self.allocator, @intCast(u16, iter.c));
                 },
                 else => {
                     const c = iter.c - 0x10000;
-                    try self.list.append(@intCast(u16, 0xD800 + ((c >> 10) & 0x3FF)));
-                    try self.list.append(@intCast(u16, 0xDC00 + (c & 0x3FF)));
+                    try self.list.append(self.allocator, @intCast(u16, 0xD800 + ((c >> 10) & 0x3FF)));
+                    try self.list.append(self.allocator, @intCast(u16, 0xDC00 + (c & 0x3FF)));
                 },
             }
         }
@@ -186,15 +186,15 @@ pub const WTFStringMutable = struct {
         return @intCast(i32, self.list.items.len);
     }
 
-    pub fn toOwnedSlice(self: *WTFStringMutable) string {
+    pub fn toOwnedSlice(self: *WTFStringMutable) []u16 {
         return self.list.toOwnedSlice(self.allocator);
     }
 
-    pub fn toOwnedSliceLeaky(self: *WTFStringMutable) string {
+    pub fn toOwnedSliceLeaky(self: *WTFStringMutable) []u16 {
         return self.list.items;
     }
 
-    pub fn toOwnedSliceLength(self: *WTFStringMutable, length: usize) string {
+    pub fn toOwnedSliceLength(self: *WTFStringMutable, length: usize)  {
         self.list.shrinkAndFree(self.allocator, length);
         return self.list.toOwnedSlice(self.allocator);
     }

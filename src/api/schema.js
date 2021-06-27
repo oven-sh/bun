@@ -53,14 +53,18 @@ const ResolveModeKeys = {
 const Platform = {
   "1": 1,
   "2": 2,
+  "3": 3,
   "browser": 1,
-  "node": 2
+  "node": 2,
+  "speedy": 3
 };
 const PlatformKeys = {
   "1": "browser",
   "2": "node",
+  "3": "speedy",
   "browser": "browser",
-  "node": "node"
+  "node": "node",
+  "speedy": "speedy"
 };
 const JSXRuntime = {
   "1": 1,

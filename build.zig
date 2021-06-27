@@ -27,7 +27,6 @@ pub fn build(b: *std.build.Builder) void {
     var cwd_buf = [_]u8{0} ** 4096;
     var cwd = std.os.getcwd(&cwd_buf) catch unreachable;
     var exe: *std.build.LibExeObjStep = undefined;
-    var javascript: *std.build.LibExeObjStep = undefined;
 
     var output_dir_buf = std.mem.zeroes([4096]u8);
     var bin_label = if (mode == std.builtin.Mode.Debug) "/debug/" else "/";
@@ -90,7 +89,7 @@ pub fn build(b: *std.build.Builder) void {
     }
     // exe.setLibCFile("libc.txt");
     exe.linkLibC();
-
+    exe.linkLibCpp();
     exe.addPackage(.{
         .name = "clap",
         .path = .{ .path = "src/deps/zig-clap/clap.zig" },
@@ -130,6 +129,20 @@ pub fn build(b: *std.build.Builder) void {
         //     exe.addSystemIncludeDir(sys);
         // }
         addPicoHTTP(exe, cwd);
+        var javascript = b.addExecutable("spjs", "src/main_javascript.zig");
+        javascript.packages = exe.packages;
+        javascript.setOutputDir(output_dir);
+        javascript.setBuildMode(mode);
+        javascript.linkLibC();
+        javascript.linkLibCpp();
+
+        if (target.getOsTag() == .macos) {
+            javascript.linkFramework("JavaScriptCore");
+            exe.linkFramework("JavascriptCore");
+        }
+
+        javascript.strip = false;
+        javascript.install();
     }
 
     exe.install();

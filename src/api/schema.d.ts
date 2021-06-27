@@ -55,13 +55,16 @@ type uint32 = number;
   }
   export enum Platform {
     browser = 1,
-    node = 2
+    node = 2,
+    speedy = 3
   }
   export const PlatformKeys = {
     1: "browser",
     browser: "browser",
     2: "node",
-    node: "node"
+    node: "node",
+    3: "speedy",
+    speedy: "speedy"
   }
   export enum JSXRuntime {
     automatic = 1,

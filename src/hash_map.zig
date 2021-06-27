@@ -234,6 +234,13 @@ pub fn HashMap(
             return self.unmanaged.putAssumeCapacityNoClobber(key, value);
         }
 
+        /// Asserts there is enough capacity to store the new key-value pair.
+        /// Asserts that it does not clobber any existing data.
+        /// To detect if a put would clobber existing data, see `getOrPutAssumeCapacity`.
+        pub fn putAssumeCapacityNoClobberWithHash(self: *Self, key: K, hash: u64, value: V) void {
+            return self.unmanaged.putAssumeCapacityNoClobberWithHash(key, hash, value);
+        }
+
         /// Inserts a new `Entry` into the hash map, returning the previous one, if any.
         pub fn fetchPut(self: *Self, key: K, value: V) !?Entry {
             return self.unmanaged.fetchPut(self.allocator, key, value);
@@ -537,6 +544,12 @@ pub fn HashMapUnmanaged(
             assert(!self.contains(key));
 
             const hash = hashFn(key);
+            putAssumeCapacityNoClobberWithHash(self, key, hash, value);
+        }
+
+        /// Insert an entry in the map. Assumes it is not already present,
+        /// and that no allocation is needed.
+        pub fn putAssumeCapacityNoClobberWithHash(self: *Self, key: K, hash: u64, value: V) void {
             const mask = self.capacity() - 1;
             var idx = @truncate(usize, hash & mask);
 

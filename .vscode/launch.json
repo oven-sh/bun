@@ -11,6 +11,20 @@
     //   "cwd": "${workspaceFolder}",
     //   "console": "internalConsole"
     // },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Eval",
+      "program": "${workspaceFolder}/build/debug/macos-x86_64/spjs",
+      "args": [
+        "./simple.css",
+        "--resolve=dev",
+        "--outdir=outcss",
+        "--public-url=https://localhost:9000/"
+      ],
+      "cwd": "${workspaceFolder}/src/test/fixtures",
+      "console": "internalConsole"
+    },
 
     {
       "type": "lldb",

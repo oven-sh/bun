@@ -431,11 +431,10 @@ pub const CodepointIterator = struct {
     inline fn nextCodepointSlice(it: *CodepointIterator) []const u8 {
         @setRuntimeSafety(false);
 
-        const cp_len = utf8ByteSequenceLength(it.source.contents[it.current]);
-        it.end = it.current;
-        it.current += cp_len;
+        const cp_len = utf8ByteSequenceLength(it.bytes[it.i]);
+        it.i += cp_len;
 
-        return if (!(it.current > it.source.contents.len)) it.source.contents[it.current - cp_len .. it.current] else "";
+        return if (!(it.i > it.bytes.len)) it.bytes[it.i - cp_len .. it.i] else "";
     }
 
     pub fn nextCodepoint(it: *CodepointIterator) CodePoint {

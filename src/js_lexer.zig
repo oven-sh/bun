@@ -2630,14 +2630,15 @@ pub const CodepointIterator = struct {
 
         const cp_len = strings.utf8ByteSequenceLength(it.bytes[it.i]);
         it.i += cp_len;
+        // without branching, 
+        it.width = @intCast(u3, @boolToInt(it.i <= it.bytes.len)) * cp_len;
 
         return if (!(it.i > it.bytes.len)) it.bytes[it.i - cp_len .. it.i] else "";
     }
 
     pub fn nextCodepoint(it: *CodepointIterator) ?CodePoint {
         const slice = it.nextCodepointSlice();
-
-        it.c = switch (slice.len) {
+        it.c = switch (it.width) {
             0 => it.c,
             1 => @as(CodePoint, slice[0]),
             2 => @as(CodePoint, unicode.utf8Decode2(slice) catch unreachable),

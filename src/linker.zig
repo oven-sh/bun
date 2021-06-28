@@ -204,6 +204,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
                             continue;
                         }
 
+                        
                         if (linker.resolver.resolve(source_dir, import_record.path.text, import_record.kind)) |*_resolved_import| {
                             var resolved_import: *Resolver.Result = _resolved_import;
                             if (resolved_import.is_external) {

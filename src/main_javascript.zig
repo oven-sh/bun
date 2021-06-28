@@ -229,8 +229,13 @@ pub const Cli = struct {
                 std.fs.accessAbsolute(node_modules_bundle_path_absolute, .{}) catch |err| {
                     break :brk null;
                 };
-                break :brk try allocator.dupe(u8, node_modules_bundle_path_absolute);
+
+                break :brk node_modules_bundle_path_absolute;
             };
+
+            if (node_modules_bundle_path != null) {
+                node_modules_bundle_path = try std.fs.realpathAlloc(allocator, node_modules_bundle_path.?);
+            }
 
             if (args.flag("--new-jsb")) {
                 node_modules_bundle_path = null;
@@ -360,15 +365,19 @@ pub const Cli = struct {
         var panicker = MainPanicHandler.init(&log);
         MainPanicHandler.Singleton = &panicker;
 
-        // var args = try Arguments.parse(alloc.static, stdout, stderr);
+        var args = try Arguments.parse(alloc.static, stdout, stderr);
         // var serve_bundler = try bundler.ServeBundler.init(allocator, &log, args);
         // var res = try serve_bundler.buildFile(&log, allocator, args.entry_points[0], std.fs.path.extension(args.entry_points[0]));
 
         // var results = try bundler.Bundler.bundle(allocator, &log, args);
         // var file = results.output_files[0];
-        var vm = try js.VirtualMachine.init(allocator);
-
-        _ = try vm.evalUtf8("test.js", "console.log(Number(10.1));"[0.. :0]);
-        Output.print("Done", .{});
+        var vm = try js.VirtualMachine.init(allocator, args, null, &log);
+        var resolved_entry_point = try vm.bundler.resolver.resolve(
+            vm.bundler.fs.top_level_dir,
+            vm.bundler.normalizeEntryPointPath(vm.bundler.options.entry_points[0]),
+            .entry_point,
+        );
+        var exception: js.JSValueRef = null;
+        var result = try js.Module.loadFromResolveResult(vm, vm.global.ctx, resolved_entry_point, &exception);
     }
 };

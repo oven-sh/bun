@@ -125,6 +125,7 @@ pub fn NewPrinter(
     comptime Writer: type,
     comptime Linker: type,
     comptime rewrite_esm_to_cjs: bool,
+    comptime speedy: bool,
 ) type {
     // comptime const comptime_buf_len = 64;
     // comptime var comptime_buf = [comptime_buf_len]u8{};
@@ -3129,7 +3130,10 @@ pub fn NewPrinter(
                     p.printSymbol(s.default_name.?.ref.?);
                     p.print(" = ");
                     p.printLoadFromBundle(s.import_record_index);
-                    p.print(".default");
+                    if (!speedy) {
+                        p.print(".default");
+                    }
+
                     p.printSemicolonAfterStatement();
                 },
                 .import_star_and_import_default => {
@@ -3141,7 +3145,9 @@ pub fn NewPrinter(
                     p.printSymbol(s.default_name.?.ref.?);
                     p.print(" = ");
                     p.printSymbol(s.namespace_ref);
-                    p.print(".default");
+                    if (!speedy) {
+                        p.print(".default");
+                    }
                     p.printSemicolonAfterStatement();
                 },
                 .import_items => {
@@ -3268,8 +3274,15 @@ pub fn NewPrinter(
             }
         }
         pub fn printLoadFromBundle(p: *Printer, import_record_index: u32) void {
-            p.printLoadFromBundleWithoutCall(import_record_index);
-            p.print("()");
+            if (speedy) {
+                const record = p.import_records[import_record_index];
+                p.print("module.require(\"");
+                p.print(record.path.text);
+                p.print("\")");
+            } else {
+                p.printLoadFromBundleWithoutCall(import_record_index);
+                p.print("()");
+            }
         }
         pub fn printLoadFromBundleWithoutCall(p: *Printer, import_record_index: u32) void {
             const record = p.import_records[import_record_index];
@@ -3715,7 +3728,9 @@ const FileWriterInternal = struct {
 
 pub const BufferWriter = struct {
     buffer: MutableString = undefined,
-    written: []const u8 = "",
+    written: []u8 = "",
+    sentinel: [:0]u8 = "",
+    append_null_byte: bool = false,
     approximate_newline_count: usize = 0,
 
     pub fn init(allocator: *std.mem.Allocator) !BufferWriter {
@@ -3753,7 +3768,11 @@ pub const BufferWriter = struct {
     pub fn done(
         ctx: *BufferWriter,
     ) anyerror!void {
-        ctx.written = ctx.buffer.toOwnedSliceLeaky();
+        if (ctx.append_null_byte) {
+            ctx.sentinel = ctx.buffer.toOwnedSentinelLeaky();
+        } else {
+            ctx.written = ctx.buffer.toOwnedSliceLeaky();
+        }
     }
 
     pub fn flush(
@@ -3772,6 +3791,9 @@ pub fn NewFileWriter(file: std.fs.File) FileWriter {
     var internal = FileWriterInternal.init(file);
     return FileWriter.init(internal);
 }
+
+pub const Format = enum { esm, cjs, speedy };
+
 pub fn printAst(
     comptime Writer: type,
     _writer: Writer,
@@ -3783,7 +3805,7 @@ pub fn printAst(
     comptime LinkerType: type,
     linker: ?*LinkerType,
 ) !usize {
-    const PrinterType = NewPrinter(false, Writer, LinkerType, false);
+    const PrinterType = NewPrinter(false, Writer, LinkerType, false, false);
     var writer = _writer;
     var printer = try PrinterType.init(
         writer,
@@ -3818,7 +3840,7 @@ pub fn printCommonJS(
     comptime LinkerType: type,
     linker: ?*LinkerType,
 ) !usize {
-    const PrinterType = NewPrinter(false, Writer, LinkerType, true);
+    const PrinterType = NewPrinter(false, Writer, LinkerType, true, false);
     var writer = _writer;
     var printer = try PrinterType.init(
         writer,
@@ -3839,6 +3861,41 @@ pub fn printCommonJS(
 
     // Add a couple extra newlines at the end
     printer.writer.print(@TypeOf("\n\n"), "\n\n");
+
+    try printer.writer.done();
+
+    return @intCast(usize, std.math.max(printer.writer.written, 0));
+}
+
+pub fn printSpeedyCJS(
+    comptime Writer: type,
+    _writer: Writer,
+    tree: Ast,
+    symbols: js_ast.Symbol.Map,
+    source: *const logger.Source,
+    ascii_only: bool,
+    opts: Options,
+    comptime LinkerType: type,
+    linker: ?*LinkerType,
+) !usize {
+    const PrinterType = NewPrinter(false, Writer, LinkerType, true, true);
+    var writer = _writer;
+    var printer = try PrinterType.init(
+        writer,
+        &tree,
+        source,
+        symbols,
+        opts,
+        linker,
+    );
+    for (tree.parts) |part| {
+        for (part.stmts) |stmt| {
+            try printer.printStmt(stmt);
+            if (printer.writer.getError()) {} else |err| {
+                return err;
+            }
+        }
+    }
 
     try printer.writer.done();
 

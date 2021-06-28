@@ -84,12 +84,11 @@ pub fn build(b: *std.build.Builder) void {
 
         return;
     } else {
-        exe = b.addExecutable("esdev", "src/main.zig");
-        exe.linkLibC();
+        exe = b.addExecutable("spjs", "src/main_javascript.zig");
     }
     // exe.setLibCFile("libc.txt");
     exe.linkLibC();
-    exe.linkLibCpp();
+    // exe.linkLibCpp();
     exe.addPackage(.{
         .name = "clap",
         .path = .{ .path = "src/deps/zig-clap/clap.zig" },
@@ -118,31 +117,21 @@ pub fn build(b: *std.build.Builder) void {
 
     // exe.want_lto = true;
     if (!target.getCpuArch().isWasm()) {
-        // exe.addLibPath("/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/lib");
-        // exe.addIncludeDir("/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/");
-
-        const env = std.process.getEnvMap(std.heap.c_allocator) catch unreachable;
-
-        // if (env.get("SDKROOT")) |sdkroot| {
-        //     const joined = resolve_path.joinAbs2(cwd, .auto, sdkroot, "usr/include");
-        //     const sys = std.heap.c_allocator.dupe(u8, joined) catch unreachable;
-        //     exe.addSystemIncludeDir(sys);
-        // }
         addPicoHTTP(exe, cwd);
-        var javascript = b.addExecutable("spjs", "src/main_javascript.zig");
-        javascript.packages = exe.packages;
-        javascript.setOutputDir(output_dir);
-        javascript.setBuildMode(mode);
-        javascript.linkLibC();
-        javascript.linkLibCpp();
+        // var javascript = b.addExecutable("spjs", "src/main_javascript.zig");
+        // javascript.packages = std.ArrayList(std.build.Pkg).fromOwnedSlice(std.heap.c_allocator, std.heap.c_allocator.dupe(std.build.Pkg, exe.packages.items) catch unreachable);
+        // javascript.setOutputDir(output_dir);
+        // javascript.setBuildMode(mode);
+        // javascript.linkLibC();
+        // javascript.linkLibCpp();
 
         if (target.getOsTag() == .macos) {
-            javascript.linkFramework("JavaScriptCore");
+            // javascript.linkFramework("JavaScriptCore");
             exe.linkFramework("JavascriptCore");
         }
 
-        javascript.strip = false;
-        javascript.install();
+        // javascript.strip = false;
+        // javascript.install();
     }
 
     exe.install();

@@ -17,8 +17,8 @@ pub const JSTypedArrayBytesDeallocator = ?fn (?*c_void, ?*c_void) callconv(.C) v
 pub const struct_OpaqueJSValue = generic;
 pub const JSValueRef = ?*struct_OpaqueJSValue;
 pub const JSObjectRef = ?*struct_OpaqueJSValue;
-pub extern fn JSEvaluateScript(ctx: JSContextRef, script: JSStringRef, thisObject: JSObjectRef, sourceURL: JSStringRef, startingLineNumber: c_int, exception: [*c]JSValueRef) JSValueRef;
-pub extern fn JSCheckScriptSyntax(ctx: JSContextRef, script: JSStringRef, sourceURL: JSStringRef, startingLineNumber: c_int, exception: [*c]JSValueRef) bool;
+pub extern fn JSEvaluateScript(ctx: JSContextRef, script: JSStringRef, thisObject: JSObjectRef, sourceURL: JSStringRef, startingLineNumber: c_int, exception: ExceptionRef) JSValueRef;
+pub extern fn JSCheckScriptSyntax(ctx: JSContextRef, script: JSStringRef, sourceURL: JSStringRef, startingLineNumber: c_int, exception: ExceptionRef) bool;
 pub extern fn JSGarbageCollect(ctx: JSContextRef) void;
 pub const JSType = enum(c_uint) {
     kJSTypeUndefined,
@@ -73,10 +73,10 @@ pub extern fn JSValueIsObject(ctx: JSContextRef, value: JSValueRef) bool;
 pub extern fn JSValueIsObjectOfClass(ctx: JSContextRef, value: JSValueRef, jsClass: JSClassRef) bool;
 pub extern fn JSValueIsArray(ctx: JSContextRef, value: JSValueRef) bool;
 pub extern fn JSValueIsDate(ctx: JSContextRef, value: JSValueRef) bool;
-pub extern fn JSValueGetTypedArrayType(ctx: JSContextRef, value: JSValueRef, exception: [*c]JSValueRef) JSTypedArrayType;
-pub extern fn JSValueIsEqual(ctx: JSContextRef, a: JSValueRef, b: JSValueRef, exception: [*c]JSValueRef) bool;
+pub extern fn JSValueGetTypedArrayType(ctx: JSContextRef, value: JSValueRef, exception: ExceptionRef) JSTypedArrayType;
+pub extern fn JSValueIsEqual(ctx: JSContextRef, a: JSValueRef, b: JSValueRef, exception: ExceptionRef) bool;
 pub extern fn JSValueIsStrictEqual(ctx: JSContextRef, a: JSValueRef, b: JSValueRef) bool;
-pub extern fn JSValueIsInstanceOfConstructor(ctx: JSContextRef, value: JSValueRef, constructor: JSObjectRef, exception: [*c]JSValueRef) bool;
+pub extern fn JSValueIsInstanceOfConstructor(ctx: JSContextRef, value: JSValueRef, constructor: JSObjectRef, exception: ExceptionRef) bool;
 pub extern fn JSValueMakeUndefined(ctx: JSContextRef) JSValueRef;
 pub extern fn JSValueMakeNull(ctx: JSContextRef) JSValueRef;
 pub extern fn JSValueMakeBoolean(ctx: JSContextRef, boolean: bool) JSValueRef;
@@ -84,11 +84,11 @@ pub extern fn JSValueMakeNumber(ctx: JSContextRef, number: f64) JSValueRef;
 pub extern fn JSValueMakeString(ctx: JSContextRef, string: JSStringRef) JSValueRef;
 pub extern fn JSValueMakeSymbol(ctx: JSContextRef, description: JSStringRef) JSValueRef;
 pub extern fn JSValueMakeFromJSONString(ctx: JSContextRef, string: JSStringRef) JSValueRef;
-pub extern fn JSValueCreateJSONString(ctx: JSContextRef, value: JSValueRef, indent: c_uint, exception: [*c]JSValueRef) JSStringRef;
+pub extern fn JSValueCreateJSONString(ctx: JSContextRef, value: JSValueRef, indent: c_uint, exception: ExceptionRef) JSStringRef;
 pub extern fn JSValueToBoolean(ctx: JSContextRef, value: JSValueRef) bool;
-pub extern fn JSValueToNumber(ctx: JSContextRef, value: JSValueRef, exception: [*c]JSValueRef) f64;
-pub extern fn JSValueToStringCopy(ctx: JSContextRef, value: JSValueRef, exception: [*c]JSValueRef) JSStringRef;
-pub extern fn JSValueToObject(ctx: JSContextRef, value: JSValueRef, exception: [*c]JSValueRef) JSObjectRef;
+pub extern fn JSValueToNumber(ctx: JSContextRef, value: JSValueRef, exception: ExceptionRef) f64;
+pub extern fn JSValueToStringCopy(ctx: JSContextRef, value: JSValueRef, exception: ExceptionRef) JSStringRef;
+pub extern fn JSValueToObject(ctx: JSContextRef, value: JSValueRef, exception: ExceptionRef) JSObjectRef;
 pub extern fn JSValueProtect(ctx: JSContextRef, value: JSValueRef) void;
 pub extern fn JSValueUnprotect(ctx: JSContextRef, value: JSValueRef) void;
 pub const JSPropertyAttributes = enum(c_uint) {
@@ -113,22 +113,22 @@ pub const kJSClassAttributeNoAutomaticPrototype = @enumToInt(JSClassAttributes.k
 pub const JSObjectInitializeCallback = ?fn (JSContextRef, JSObjectRef) callconv(.C) void;
 pub const JSObjectFinalizeCallback = ?fn (JSObjectRef) callconv(.C) void;
 pub const JSObjectHasPropertyCallback = ?fn (JSContextRef, JSObjectRef, JSStringRef) callconv(.C) bool;
-pub const JSObjectGetPropertyCallback = ?fn (JSContextRef, JSObjectRef, JSStringRef, [*c]JSValueRef) callconv(.C) JSValueRef;
-pub const JSObjectSetPropertyCallback = ?fn (JSContextRef, JSObjectRef, JSStringRef, JSValueRef, [*c]JSValueRef) callconv(.C) bool;
-pub const JSObjectDeletePropertyCallback = ?fn (JSContextRef, JSObjectRef, JSStringRef, [*c]JSValueRef) callconv(.C) bool;
+pub const JSObjectGetPropertyCallback = ?fn (JSContextRef, JSObjectRef, JSStringRef, ExceptionRef) callconv(.C) JSValueRef;
+pub const JSObjectSetPropertyCallback = ?fn (JSContextRef, JSObjectRef, JSStringRef, JSValueRef, ExceptionRef) callconv(.C) bool;
+pub const JSObjectDeletePropertyCallback = ?fn (JSContextRef, JSObjectRef, JSStringRef, ExceptionRef) callconv(.C) bool;
 pub const JSObjectGetPropertyNamesCallback = ?fn (JSContextRef, JSObjectRef, JSPropertyNameAccumulatorRef) callconv(.C) void;
-
+pub const ExceptionRef = [*c]JSValueRef;
 pub const JSObjectCallAsFunctionCallback = ?fn (
     ctx: JSContextRef,
     function: JSObjectRef,
     thisObject: JSObjectRef,
     argumentCount: usize,
     arguments: [*c]const JSValueRef,
-    exception: [*c]JSValueRef,
+    exception: ExceptionRef,
 ) callconv(.C) JSValueRef;
-pub const JSObjectCallAsConstructorCallback = ?fn (JSContextRef, JSObjectRef, usize, [*c]const JSValueRef, [*c]JSValueRef) callconv(.C) JSObjectRef;
-pub const JSObjectHasInstanceCallback = ?fn (JSContextRef, JSObjectRef, JSValueRef, [*c]JSValueRef) callconv(.C) bool;
-pub const JSObjectConvertToTypeCallback = ?fn (JSContextRef, JSObjectRef, JSType, [*c]JSValueRef) callconv(.C) JSValueRef;
+pub const JSObjectCallAsConstructorCallback = ?fn (JSContextRef, JSObjectRef, usize, [*c]const JSValueRef, ExceptionRef) callconv(.C) JSObjectRef;
+pub const JSObjectHasInstanceCallback = ?fn (JSContextRef, JSObjectRef, JSValueRef, ExceptionRef) callconv(.C) bool;
+pub const JSObjectConvertToTypeCallback = ?fn (JSContextRef, JSObjectRef, JSType, ExceptionRef) callconv(.C) JSValueRef;
 pub const JSStaticValue = extern struct {
     name: [*c]const u8,
     getProperty: JSObjectGetPropertyCallback,
@@ -166,30 +166,30 @@ pub extern "c" fn JSClassRelease(jsClass: JSClassRef) void;
 pub extern "c" fn JSObjectMake(ctx: JSContextRef, jsClass: JSClassRef, data: ?*c_void) JSObjectRef;
 pub extern "c" fn JSObjectMakeFunctionWithCallback(ctx: JSContextRef, name: JSStringRef, callAsFunction: JSObjectCallAsFunctionCallback) JSObjectRef;
 pub extern "c" fn JSObjectMakeConstructor(ctx: JSContextRef, jsClass: JSClassRef, callAsConstructor: JSObjectCallAsConstructorCallback) JSObjectRef;
-pub extern "c" fn JSObjectMakeArray(ctx: JSContextRef, argumentCount: usize, arguments: [*c]const JSValueRef, exception: [*c]JSValueRef) JSObjectRef;
-pub extern "c" fn JSObjectMakeDate(ctx: JSContextRef, argumentCount: usize, arguments: [*c]const JSValueRef, exception: [*c]JSValueRef) JSObjectRef;
-pub extern "c" fn JSObjectMakeError(ctx: JSContextRef, argumentCount: usize, arguments: [*c]const JSValueRef, exception: [*c]JSValueRef) JSObjectRef;
-pub extern "c" fn JSObjectMakeRegExp(ctx: JSContextRef, argumentCount: usize, arguments: [*c]const JSValueRef, exception: [*c]JSValueRef) JSObjectRef;
-pub extern "c" fn JSObjectMakeDeferredPromise(ctx: JSContextRef, resolve: [*c]JSObjectRef, reject: [*c]JSObjectRef, exception: [*c]JSValueRef) JSObjectRef;
-pub extern "c" fn JSObjectMakeFunction(ctx: JSContextRef, name: JSStringRef, parameterCount: c_uint, parameterNames: [*c]const JSStringRef, body: JSStringRef, sourceURL: JSStringRef, startingLineNumber: c_int, exception: [*c]JSValueRef) JSObjectRef;
+pub extern "c" fn JSObjectMakeArray(ctx: JSContextRef, argumentCount: usize, arguments: [*c]const JSValueRef, exception: ExceptionRef) JSObjectRef;
+pub extern "c" fn JSObjectMakeDate(ctx: JSContextRef, argumentCount: usize, arguments: [*c]const JSValueRef, exception: ExceptionRef) JSObjectRef;
+pub extern "c" fn JSObjectMakeError(ctx: JSContextRef, argumentCount: usize, arguments: [*c]const JSValueRef, exception: ExceptionRef) JSObjectRef;
+pub extern "c" fn JSObjectMakeRegExp(ctx: JSContextRef, argumentCount: usize, arguments: [*c]const JSValueRef, exception: ExceptionRef) JSObjectRef;
+pub extern "c" fn JSObjectMakeDeferredPromise(ctx: JSContextRef, resolve: [*c]JSObjectRef, reject: [*c]JSObjectRef, exception: ExceptionRef) JSObjectRef;
+pub extern "c" fn JSObjectMakeFunction(ctx: JSContextRef, name: JSStringRef, parameterCount: c_uint, parameterNames: [*c]const JSStringRef, body: JSStringRef, sourceURL: JSStringRef, startingLineNumber: c_int, exception: ExceptionRef) JSObjectRef;
 pub extern "c" fn JSObjectGetPrototype(ctx: JSContextRef, object: JSObjectRef) JSValueRef;
 pub extern "c" fn JSObjectSetPrototype(ctx: JSContextRef, object: JSObjectRef, value: JSValueRef) void;
 pub extern "c" fn JSObjectHasProperty(ctx: JSContextRef, object: JSObjectRef, propertyName: JSStringRef) bool;
-pub extern "c" fn JSObjectGetProperty(ctx: JSContextRef, object: JSObjectRef, propertyName: JSStringRef, exception: [*c]JSValueRef) JSValueRef;
-pub extern "c" fn JSObjectSetProperty(ctx: JSContextRef, object: JSObjectRef, propertyName: JSStringRef, value: JSValueRef, attributes: c_uint, exception: [*c]JSValueRef) void;
-pub extern "c" fn JSObjectDeleteProperty(ctx: JSContextRef, object: JSObjectRef, propertyName: JSStringRef, exception: [*c]JSValueRef) bool;
-pub extern "c" fn JSObjectHasPropertyForKey(ctx: JSContextRef, object: JSObjectRef, propertyKey: JSValueRef, exception: [*c]JSValueRef) bool;
-pub extern "c" fn JSObjectGetPropertyForKey(ctx: JSContextRef, object: JSObjectRef, propertyKey: JSValueRef, exception: [*c]JSValueRef) JSValueRef;
-pub extern "c" fn JSObjectSetPropertyForKey(ctx: JSContextRef, object: JSObjectRef, propertyKey: JSValueRef, value: JSValueRef, attributes: JSPropertyAttributes, exception: [*c]JSValueRef) void;
-pub extern "c" fn JSObjectDeletePropertyForKey(ctx: JSContextRef, object: JSObjectRef, propertyKey: JSValueRef, exception: [*c]JSValueRef) bool;
-pub extern "c" fn JSObjectGetPropertyAtIndex(ctx: JSContextRef, object: JSObjectRef, propertyIndex: c_uint, exception: [*c]JSValueRef) JSValueRef;
-pub extern "c" fn JSObjectSetPropertyAtIndex(ctx: JSContextRef, object: JSObjectRef, propertyIndex: c_uint, value: JSValueRef, exception: [*c]JSValueRef) void;
+pub extern "c" fn JSObjectGetProperty(ctx: JSContextRef, object: JSObjectRef, propertyName: JSStringRef, exception: ExceptionRef) JSValueRef;
+pub extern "c" fn JSObjectSetProperty(ctx: JSContextRef, object: JSObjectRef, propertyName: JSStringRef, value: JSValueRef, attributes: c_uint, exception: ExceptionRef) void;
+pub extern "c" fn JSObjectDeleteProperty(ctx: JSContextRef, object: JSObjectRef, propertyName: JSStringRef, exception: ExceptionRef) bool;
+pub extern "c" fn JSObjectHasPropertyForKey(ctx: JSContextRef, object: JSObjectRef, propertyKey: JSValueRef, exception: ExceptionRef) bool;
+pub extern "c" fn JSObjectGetPropertyForKey(ctx: JSContextRef, object: JSObjectRef, propertyKey: JSValueRef, exception: ExceptionRef) JSValueRef;
+pub extern "c" fn JSObjectSetPropertyForKey(ctx: JSContextRef, object: JSObjectRef, propertyKey: JSValueRef, value: JSValueRef, attributes: JSPropertyAttributes, exception: ExceptionRef) void;
+pub extern "c" fn JSObjectDeletePropertyForKey(ctx: JSContextRef, object: JSObjectRef, propertyKey: JSValueRef, exception: ExceptionRef) bool;
+pub extern "c" fn JSObjectGetPropertyAtIndex(ctx: JSContextRef, object: JSObjectRef, propertyIndex: c_uint, exception: ExceptionRef) JSValueRef;
+pub extern "c" fn JSObjectSetPropertyAtIndex(ctx: JSContextRef, object: JSObjectRef, propertyIndex: c_uint, value: JSValueRef, exception: ExceptionRef) void;
 pub extern "c" fn JSObjectGetPrivate(object: JSObjectRef) ?*c_void;
 pub extern "c" fn JSObjectSetPrivate(object: JSObjectRef, data: ?*c_void) bool;
 pub extern "c" fn JSObjectIsFunction(ctx: JSContextRef, object: JSObjectRef) bool;
-pub extern "c" fn JSObjectCallAsFunction(ctx: JSContextRef, object: JSObjectRef, thisObject: JSObjectRef, argumentCount: usize, arguments: [*c]const JSValueRef, exception: [*c]JSValueRef) JSValueRef;
+pub extern "c" fn JSObjectCallAsFunction(ctx: JSContextRef, object: JSObjectRef, thisObject: JSObjectRef, argumentCount: usize, arguments: [*c]const JSValueRef, exception: ExceptionRef) JSValueRef;
 pub extern "c" fn JSObjectIsConstructor(ctx: JSContextRef, object: JSObjectRef) bool;
-pub extern "c" fn JSObjectCallAsConstructor(ctx: JSContextRef, object: JSObjectRef, argumentCount: usize, arguments: [*c]const JSValueRef, exception: [*c]JSValueRef) JSObjectRef;
+pub extern "c" fn JSObjectCallAsConstructor(ctx: JSContextRef, object: JSObjectRef, argumentCount: usize, arguments: [*c]const JSValueRef, exception: ExceptionRef) JSObjectRef;
 pub extern "c" fn JSObjectCopyPropertyNames(ctx: JSContextRef, object: JSObjectRef) JSPropertyNameArrayRef;
 pub extern "c" fn JSPropertyNameArrayRetain(array: JSPropertyNameArrayRef) JSPropertyNameArrayRef;
 pub extern "c" fn JSPropertyNameArrayRelease(array: JSPropertyNameArrayRef) void;
@@ -219,18 +219,18 @@ pub extern fn JSStringGetMaximumUTF8CStringSize(string: JSStringRef) usize;
 pub extern fn JSStringGetUTF8CString(string: JSStringRef, buffer: [*c]u8, bufferSize: usize) usize;
 pub extern fn JSStringIsEqual(a: JSStringRef, b: JSStringRef) bool;
 pub extern fn JSStringIsEqualToUTF8CString(a: JSStringRef, b: [*c]const u8) bool;
-pub extern fn JSObjectMakeTypedArray(ctx: JSContextRef, arrayType: JSTypedArrayType, length: usize, exception: [*c]JSValueRef) JSObjectRef;
-pub extern fn JSObjectMakeTypedArrayWithBytesNoCopy(ctx: JSContextRef, arrayType: JSTypedArrayType, bytes: ?*c_void, byteLength: usize, bytesDeallocator: JSTypedArrayBytesDeallocator, deallocatorContext: ?*c_void, exception: [*c]JSValueRef) JSObjectRef;
-pub extern fn JSObjectMakeTypedArrayWithArrayBuffer(ctx: JSContextRef, arrayType: JSTypedArrayType, buffer: JSObjectRef, exception: [*c]JSValueRef) JSObjectRef;
-pub extern fn JSObjectMakeTypedArrayWithArrayBufferAndOffset(ctx: JSContextRef, arrayType: JSTypedArrayType, buffer: JSObjectRef, byteOffset: usize, length: usize, exception: [*c]JSValueRef) JSObjectRef;
-pub extern fn JSObjectGetTypedArrayBytesPtr(ctx: JSContextRef, object: JSObjectRef, exception: [*c]JSValueRef) ?*c_void;
-pub extern fn JSObjectGetTypedArrayLength(ctx: JSContextRef, object: JSObjectRef, exception: [*c]JSValueRef) usize;
-pub extern fn JSObjectGetTypedArrayByteLength(ctx: JSContextRef, object: JSObjectRef, exception: [*c]JSValueRef) usize;
-pub extern fn JSObjectGetTypedArrayByteOffset(ctx: JSContextRef, object: JSObjectRef, exception: [*c]JSValueRef) usize;
-pub extern fn JSObjectGetTypedArrayBuffer(ctx: JSContextRef, object: JSObjectRef, exception: [*c]JSValueRef) JSObjectRef;
-pub extern fn JSObjectMakeArrayBufferWithBytesNoCopy(ctx: JSContextRef, bytes: ?*c_void, byteLength: usize, bytesDeallocator: JSTypedArrayBytesDeallocator, deallocatorContext: ?*c_void, exception: [*c]JSValueRef) JSObjectRef;
-pub extern fn JSObjectGetArrayBufferBytesPtr(ctx: JSContextRef, object: JSObjectRef, exception: [*c]JSValueRef) ?*c_void;
-pub extern fn JSObjectGetArrayBufferByteLength(ctx: JSContextRef, object: JSObjectRef, exception: [*c]JSValueRef) usize;
+pub extern fn JSObjectMakeTypedArray(ctx: JSContextRef, arrayType: JSTypedArrayType, length: usize, exception: ExceptionRef) JSObjectRef;
+pub extern fn JSObjectMakeTypedArrayWithBytesNoCopy(ctx: JSContextRef, arrayType: JSTypedArrayType, bytes: ?*c_void, byteLength: usize, bytesDeallocator: JSTypedArrayBytesDeallocator, deallocatorContext: ?*c_void, exception: ExceptionRef) JSObjectRef;
+pub extern fn JSObjectMakeTypedArrayWithArrayBuffer(ctx: JSContextRef, arrayType: JSTypedArrayType, buffer: JSObjectRef, exception: ExceptionRef) JSObjectRef;
+pub extern fn JSObjectMakeTypedArrayWithArrayBufferAndOffset(ctx: JSContextRef, arrayType: JSTypedArrayType, buffer: JSObjectRef, byteOffset: usize, length: usize, exception: ExceptionRef) JSObjectRef;
+pub extern fn JSObjectGetTypedArrayBytesPtr(ctx: JSContextRef, object: JSObjectRef, exception: ExceptionRef) ?*c_void;
+pub extern fn JSObjectGetTypedArrayLength(ctx: JSContextRef, object: JSObjectRef, exception: ExceptionRef) usize;
+pub extern fn JSObjectGetTypedArrayByteLength(ctx: JSContextRef, object: JSObjectRef, exception: ExceptionRef) usize;
+pub extern fn JSObjectGetTypedArrayByteOffset(ctx: JSContextRef, object: JSObjectRef, exception: ExceptionRef) usize;
+pub extern fn JSObjectGetTypedArrayBuffer(ctx: JSContextRef, object: JSObjectRef, exception: ExceptionRef) JSObjectRef;
+pub extern fn JSObjectMakeArrayBufferWithBytesNoCopy(ctx: JSContextRef, bytes: ?*c_void, byteLength: usize, bytesDeallocator: JSTypedArrayBytesDeallocator, deallocatorContext: ?*c_void, exception: ExceptionRef) JSObjectRef;
+pub extern fn JSObjectGetArrayBufferBytesPtr(ctx: JSContextRef, object: JSObjectRef, exception: ExceptionRef) ?*c_void;
+pub extern fn JSObjectGetArrayBufferByteLength(ctx: JSContextRef, object: JSObjectRef, exception: ExceptionRef) usize;
 pub extern fn JSStringCreateWithCFString(string: CFStringRef) JSStringRef;
 pub const OpaqueJSContextGroup = struct_OpaqueJSContextGroup;
 pub const OpaqueJSContext = struct_OpaqueJSContext;

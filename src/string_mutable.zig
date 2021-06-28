@@ -154,8 +154,19 @@ pub const MutableString = struct {
         return self.list.toOwnedSlice(self.allocator);
     }
 
-    pub fn toOwnedSliceLeaky(self: *MutableString) string {
+    pub fn toOwnedSliceLeaky(self: *MutableString) []u8 {
         return self.list.items;
+    }
+
+    pub fn toOwnedSentinelLeaky(self: *MutableString) [:0]u8 {
+        if (self.list.items.len > 0 and self.list.items[self.list.items.len - 1] != 0) {
+            self.list.append(
+                self.allocator,
+                0,
+            ) catch unreachable;
+        }
+
+        return self.list.items[0 .. self.list.items.len - 1 :0];
     }
 
     pub fn toOwnedSliceLength(self: *MutableString, length: usize) string {

@@ -186,10 +186,6 @@ pub fn NewCache(comptime cache_files: bool) type {
             ) anyerror!?js_ast.Ast {
                 var temp_log = logger.Log.init(allocator);
                 defer temp_log.appendTo(log) catch {};
-                if (isDebug) {
-                    Output.println("Parse!", .{});
-                }
-
                 var parser = js_parser.Parser.init(opts, &temp_log, source, defines, allocator) catch |err| {
                     return null;
                 };

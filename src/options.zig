@@ -313,6 +313,7 @@ pub const Platform = enum {
         // that some packages may break if you do this.
         var list = [_]string{ MAIN_FIELD_NAMES[1], MAIN_FIELD_NAMES[2] };
         array.set(Platform.node, &list);
+        array.set(Platform.speedy, &list);
 
         // Note that this means if a package specifies "main", "module", and
         // "browser" then "browser" will win out over "module". This is the
@@ -641,12 +642,7 @@ pub const BundleOptions = struct {
         pub var ExtensionOrder = [_]string{ ".tsx", ".ts", ".jsx", ".js", ".json", ".css" };
     };
 
-    pub fn fromApi(
-        allocator: *std.mem.Allocator,
-        fs: *Fs.FileSystem,
-        log: *logger.Log,
-        transform: Api.TransformOptions,
-    ) !BundleOptions {
+    pub fn fromApi(allocator: *std.mem.Allocator, fs: *Fs.FileSystem, log: *logger.Log, transform: Api.TransformOptions, node_modules_bundle_existing: ?*NodeModuleBundle) !BundleOptions {
         const output_dir_parts = [_]string{ try std.process.getCwdAlloc(allocator), transform.output_dir orelse "out" };
         var opts: BundleOptions = BundleOptions{
             .log = log,
@@ -675,12 +671,7 @@ pub const BundleOptions = struct {
         }
 
         if (transform.platform) |plat| {
-            opts.platform = switch (plat) {
-                .speedy => speedy,
-                .neutral => .neutral,
-                .browser => .browser,
-                .node => .node,
-            };
+            opts.platform = Platform.from(plat);
             opts.main_fields = Platform.DefaultMainFields.get(opts.platform);
         }
 
@@ -764,7 +755,14 @@ pub const BundleOptions = struct {
         }
 
         if (opts.resolve_mode == .lazy and !(transform.generate_node_module_bundle orelse false)) {
-            if (transform.node_modules_bundle_path) |bundle_path| {
+            if (node_modules_bundle_existing) |node_mods| {
+                opts.node_modules_bundle = node_mods;
+                const pretty_path = fs.relativeTo(transform.node_modules_bundle_path.?);
+                opts.node_modules_bundle_url = try std.fmt.allocPrint(allocator, "{s}{s}", .{
+                    opts.public_url,
+                    pretty_path,
+                });
+            } else if (transform.node_modules_bundle_path) |bundle_path| {
                 if (bundle_path.len > 0) {
                     load_bundle: {
                         const pretty_path = fs.relativeTo(bundle_path);

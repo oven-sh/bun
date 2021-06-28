@@ -17,8 +17,9 @@
       "name": "Eval",
       "program": "${workspaceFolder}/build/debug/macos-x86_64/spjs",
       "args": [
-        "./simple.css",
+        "./console.log.js",
         "--resolve=dev",
+        // "--jsb=../../../demos/css-stress-test/node_modules.jsb",
         "--outdir=outcss",
         "--public-url=https://localhost:9000/"
       ],

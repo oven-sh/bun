@@ -1,4 +1,4 @@
-    usingnamespace @import("global.zig");
+usingnamespace @import("global.zig");
 
 usingnamespace @import("./http.zig");
 const std = @import("std");
@@ -201,7 +201,7 @@ pub const Cli = struct {
                 std.fs.accessAbsolute(node_modules_bundle_path_absolute, .{}) catch |err| {
                     break :brk null;
                 };
-                break :brk try allocator.dupe(u8, node_modules_bundle_path_absolute);
+                break :brk try std.fs.realpathAlloc(allocator, node_modules_bundle_path_absolute);
             };
 
             if (args.flag("--new-jsb")) {
@@ -367,7 +367,7 @@ pub const Cli = struct {
         }
 
         if ((args.generate_node_module_bundle orelse false)) {
-            var this_bundler = try bundler.ServeBundler.init(allocator, &log, args);
+            var this_bundler = try bundler.ServeBundler.init(allocator, &log, args, null);
             this_bundler.configureLinker();
             var filepath = "node_modules.jsb";
             var node_modules = try bundler.ServeBundler.GenerateNodeModuleBundle.generate(&this_bundler, allocator, filepath);

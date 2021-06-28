@@ -29,6 +29,7 @@ const Timer = @import("./timer.zig");
 const hash_map = @import("hash_map.zig");
 const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 const DebugLogs = _resolver.DebugLogs;
+const NodeModuleBundle = @import("./node_module_bundle.zig").NodeModuleBundle;
 
 const Css = @import("css_scanner.zig");
 
@@ -161,6 +162,7 @@ pub fn NewBundler(cache_files: bool) type {
             allocator: *std.mem.Allocator,
             log: *logger.Log,
             opts: Api.TransformOptions,
+            existing_bundle: ?*NodeModuleBundle,
         ) !ThisBundler {
             js_ast.Expr.Data.Store.create(allocator);
             js_ast.Stmt.Data.Store.create(allocator);
@@ -170,6 +172,7 @@ pub fn NewBundler(cache_files: bool) type {
                 fs,
                 log,
                 opts,
+                existing_bundle,
             );
 
             // var pool = try allocator.create(ThreadPool);
@@ -961,6 +964,7 @@ pub fn NewBundler(cache_files: bool) type {
                             result,
                             Writer,
                             writer,
+                            .esm,
                         ),
                         .input_fd = result.input_fd,
                     };
@@ -1028,6 +1032,7 @@ pub fn NewBundler(cache_files: bool) type {
                         result,
                         js_printer.FileWriter,
                         js_printer.NewFileWriter(file),
+                        .esm,
                     );
 
                     var file_op = options.OutputFile.FileOperation.fromFile(file.handle, file_path.pretty);
@@ -1185,25 +1190,58 @@ pub fn NewBundler(cache_files: bool) type {
             result: ParseResult,
             comptime Writer: type,
             writer: Writer,
+            comptime format: js_printer.Format,
         ) !usize {
             const ast = result.ast;
             var symbols: [][]js_ast.Symbol = &([_][]js_ast.Symbol{ast.symbols});
 
-            return try js_printer.printAst(
-                Writer,
-                writer,
-                ast,
-                js_ast.Symbol.Map.initList(symbols),
-                &result.source,
-                false,
-                js_printer.Options{
-                    .to_module_ref = Ref.RuntimeRef,
-                    .externals = ast.externals,
-                    .runtime_imports = ast.runtime_imports,
-                },
-                Linker,
-                &bundler.linker,
-            );
+            return switch (format) {
+                .cjs => try js_printer.printCommonJS(
+                    Writer,
+                    writer,
+                    ast,
+                    js_ast.Symbol.Map.initList(symbols),
+                    &result.source,
+                    false,
+                    js_printer.Options{
+                        .to_module_ref = Ref.RuntimeRef,
+                        .externals = ast.externals,
+                        .runtime_imports = ast.runtime_imports,
+                    },
+                    Linker,
+                    &bundler.linker,
+                ),
+                .esm => try js_printer.printAst(
+                    Writer,
+                    writer,
+                    ast,
+                    js_ast.Symbol.Map.initList(symbols),
+                    &result.source,
+                    false,
+                    js_printer.Options{
+                        .to_module_ref = Ref.RuntimeRef,
+                        .externals = ast.externals,
+                        .runtime_imports = ast.runtime_imports,
+                    },
+                    Linker,
+                    &bundler.linker,
+                ),
+                .speedy => try js_printer.printSpeedyCJS(
+                    Writer,
+                    writer,
+                    ast,
+                    js_ast.Symbol.Map.initList(symbols),
+                    &result.source,
+                    false,
+                    js_printer.Options{
+                        .to_module_ref = Ref.RuntimeRef,
+                        .externals = ast.externals,
+                        .runtime_imports = ast.runtime_imports,
+                    },
+                    Linker,
+                    &bundler.linker,
+                ),
+            };
         }
 
         pub fn parse(
@@ -1246,7 +1284,8 @@ pub fn NewBundler(cache_files: bool) type {
                     jsx.parse = loader.isJSX();
                     var opts = js_parser.Parser.Options.init(jsx, loader);
                     opts.enable_bundling = false;
-                    opts.transform_require_to_import = bundler.options.platform != .speedy;
+                    opts.transform_require_to_import = false;
+                    opts.force_commonjs = bundler.options.platform == .speedy;
                     opts.can_import_from_bundle = bundler.options.node_modules_bundle != null;
                     opts.features.hot_module_reloading = bundler.options.hot_module_reloading and bundler.options.platform != .speedy;
                     opts.features.react_fast_refresh = opts.features.hot_module_reloading and jsx.parse and bundler.options.jsx.supports_fast_refresh;
@@ -1489,7 +1528,7 @@ pub fn NewBundler(cache_files: bool) type {
         ) !ScanResult.Summary {
             var opts = _opts;
             opts.resolve = .dev;
-            var bundler = try ThisBundler.init(allocator, log, opts);
+            var bundler = try ThisBundler.init(allocator, log, opts, null);
 
             bundler.configureLinker();
 
@@ -1571,7 +1610,7 @@ pub fn NewBundler(cache_files: bool) type {
             log: *logger.Log,
             opts: Api.TransformOptions,
         ) !options.TransformResult {
-            var bundler = try ThisBundler.init(allocator, log, opts);
+            var bundler = try ThisBundler.init(allocator, log, opts, null);
             bundler.configureLinker();
 
             if (bundler.options.write and bundler.options.output_dir.len > 0) {}

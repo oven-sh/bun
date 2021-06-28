@@ -1611,6 +1611,9 @@ pub const Parser = struct {
         filepath_hash_for_hmr: u32 = 0,
         features: RuntimeFeatures = RuntimeFeatures{},
 
+        // When platform is set to "speedy"
+        force_commonjs: bool = false,
+
         // Used when bundling node_modules
         enable_bundling: bool = false,
         transform_require_to_import: bool = true,
@@ -3132,8 +3135,13 @@ pub fn NewParser(
 
             p.hoistSymbols(p.module_scope);
 
-            p.exports_ref = try p.declareSymbol(.hoisted, logger.Loc.Empty, "exports");
-            p.module_ref = try p.declareSymbol(.hoisted, logger.Loc.Empty, "module");
+            if (p.options.force_commonjs) {
+                p.exports_ref = try p.declareCommonJSSymbol(.unbound, "exports");
+                p.module_ref = try p.declareCommonJSSymbol(.unbound, "module");
+            } else {
+                p.exports_ref = try p.declareSymbol(.hoisted, logger.Loc.Empty, "exports");
+                p.module_ref = try p.declareSymbol(.hoisted, logger.Loc.Empty, "module");
+            }
 
             if (p.options.enable_bundling) {
                 p.bundle_export_ref = try p.declareSymbol(.unbound, logger.Loc.Empty, "IF_YOU_SEE_THIS_ITS_A_BUNDLER_BUG_PLEASE_FILE_AN_ISSUE_THX");

@@ -42,7 +42,7 @@ threadlocal var req_headers_buf: [100]picohttp.Header = undefined;
 threadlocal var res_headers_buf: [100]picohttp.Header = undefined;
 const sync = @import("./sync.zig");
 
-const Watcher = watcher.NewWatcher(*Server);
+pub const Watcher = watcher.NewWatcher(*Server);
 
 const ENABLE_LOGGER = false;
 pub fn println(comptime fmt: string, args: anytype) void {
@@ -487,7 +487,7 @@ pub const RequestContext = struct {
                         .absolute_url,
                     );
 
-                    var written = this.bundler.print(parse_result, @TypeOf(&this.printer), &this.printer) catch |err| {
+                    var written = this.bundler.print(parse_result, @TypeOf(&this.printer), &this.printer, .esm) catch |err| {
                         return WatchBuildResult{
                             .value = .{ .fail = std.mem.zeroes(Api.WebsocketMessageBuildFailure) },
                             .id = id,
@@ -1505,7 +1505,7 @@ pub const Server = struct {
             .watcher = undefined,
             .timer = try std.time.Timer.start(),
         };
-        server.bundler = try Bundler.init(allocator, &server.log, options);
+        server.bundler = try Bundler.init(allocator, &server.log, options, null);
         server.bundler.configureLinker();
 
         try server.initWatcher();

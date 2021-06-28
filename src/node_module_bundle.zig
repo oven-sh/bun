@@ -162,6 +162,18 @@ pub const NodeModuleBundle = struct {
         package: *const Api.JavascriptBundledPackage,
         _query: string,
     ) ?*const Api.JavascriptBundledModule {
+        if (this.findModuleIDInPackage(package, _query)) |id| {
+            return &this.bundle.modules[id];
+        }
+
+        return null;
+    }
+
+    pub fn findModuleIDInPackage(
+        this: *const NodeModuleBundle,
+        package: *const Api.JavascriptBundledPackage,
+        _query: string,
+    ) ?u32 {
         const ModuleFinder = struct {
             const Self = @This();
             ctx: *const NodeModuleBundle,
@@ -204,14 +216,13 @@ pub const NodeModuleBundle = struct {
         var finder = ModuleFinder{ .ctx = this, .pkg = package, .query = _query };
 
         const modules = modulesIn(&this.bundle, package);
-        const module_id = std.sort.binarySearch(
+        return @intCast(u32, std.sort.binarySearch(
             Api.JavascriptBundledModule,
             to_find,
             modules,
             finder,
             ModuleFinder.cmpAsc,
-        ) orelse return null;
-        return &modules[module_id];
+        ) orelse return null);
     }
 
     pub fn init(container: Api.JavascriptBundleContainer, allocator: *std.mem.Allocator) NodeModuleBundle {

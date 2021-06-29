@@ -313,7 +313,6 @@ pub const Platform = enum {
         // that some packages may break if you do this.
         var list = [_]string{ MAIN_FIELD_NAMES[1], MAIN_FIELD_NAMES[2] };
         array.set(Platform.node, &list);
-        array.set(Platform.speedy, &list);
 
         // Note that this means if a package specifies "main", "module", and
         // "browser" then "browser" will win out over "module". This is the
@@ -324,6 +323,7 @@ pub const Platform = enum {
         // which will crash or fail to be bundled when targeting the browser.
         var listc = [_]string{ MAIN_FIELD_NAMES[0], MAIN_FIELD_NAMES[1], MAIN_FIELD_NAMES[2] };
         array.set(Platform.browser, &listc);
+        array.set(Platform.speedy, &listc);
 
         // The neutral platform is for people that don't want esbuild to try to
         // pick good defaults for their platform. In that case, the list of main

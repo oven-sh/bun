@@ -84,7 +84,7 @@ pub fn build(b: *std.build.Builder) void {
 
         return;
     } else {
-        exe = b.addExecutable("spjs", "src/main_javascript.zig");
+        exe = b.addExecutable("esdev", "src/main.zig");
     }
     // exe.setLibCFile("libc.txt");
     exe.linkLibC();
@@ -118,20 +118,20 @@ pub fn build(b: *std.build.Builder) void {
     // exe.want_lto = true;
     if (!target.getCpuArch().isWasm()) {
         addPicoHTTP(exe, cwd);
-        // var javascript = b.addExecutable("spjs", "src/main_javascript.zig");
-        // javascript.packages = std.ArrayList(std.build.Pkg).fromOwnedSlice(std.heap.c_allocator, std.heap.c_allocator.dupe(std.build.Pkg, exe.packages.items) catch unreachable);
-        // javascript.setOutputDir(output_dir);
-        // javascript.setBuildMode(mode);
-        // javascript.linkLibC();
+        var javascript = b.addExecutable("spjs", "src/main_javascript.zig");
+        javascript.packages = std.ArrayList(std.build.Pkg).fromOwnedSlice(std.heap.c_allocator, std.heap.c_allocator.dupe(std.build.Pkg, exe.packages.items) catch unreachable);
+        javascript.setOutputDir(output_dir);
+        javascript.setBuildMode(mode);
+        javascript.linkLibC();
         // javascript.linkLibCpp();
 
         if (target.getOsTag() == .macos) {
-            // javascript.linkFramework("JavaScriptCore");
+            javascript.linkFramework("JavaScriptCore");
             exe.linkFramework("JavascriptCore");
         }
 
-        // javascript.strip = false;
-        // javascript.install();
+        javascript.strip = false;
+        javascript.install();
     }
 
     exe.install();

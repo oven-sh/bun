@@ -3537,6 +3537,7 @@ pub const Ast = struct {
     exports_ref: ?Ref = null,
     module_ref: ?Ref = null,
     wrapper_ref: ?Ref = null,
+    require_ref: ?Ref = null,
 
     bundle_namespace_ref: ?Ref = null,
 

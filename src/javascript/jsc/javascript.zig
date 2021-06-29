@@ -149,8 +149,10 @@ pub const VirtualMachine = struct {
         existing_bundle: ?*NodeModuleBundle,
         _log: ?*logger.Log,
     ) !*VirtualMachine {
-        var group = js.JSContextGroupCreate();
-        var ctx = js.JSGlobalContextCreateInGroup(group, null);
+        var group = js.JSContextGroupRetain(js.JSContextGroupCreate());
+
+        var ctx = js.JSGlobalContextRetain(js.JSGlobalContextCreateInGroup(group, null));
+
         var log: *logger.Log = undefined;
         if (_log) |__log| {
             log = __log;
@@ -168,7 +170,7 @@ pub const VirtualMachine = struct {
                 try configureTransformOptionsForSpeedy(allocator, _args),
                 existing_bundle,
             ),
-            .node_module_list = undefined,
+            .node_module_list = try allocator.create(Module.NodeModuleList),
             .log = log,
             .group = group,
             .root = ctx,
@@ -187,7 +189,7 @@ pub const VirtualMachine = struct {
         Properties.init();
         if (vm.bundler.options.node_modules_bundle) |bundle| {
             vm.node_modules = bundle;
-            vm.node_module_list = try Module.NodeModuleList.init(vm, bundle);
+            try Module.NodeModuleList.create(vm, bundle, vm.node_module_list.?);
         }
 
         return vm;
@@ -398,6 +400,8 @@ pub const Module = struct {
 
     vm: *VirtualMachine,
     require_func: js.JSObjectRef = null,
+    loaded: bool = false,
+    exports_function: js.JSValueRef = null,
 
     pub var module_class: js.JSClassRef = undefined;
     pub var module_global_class: js.JSClassRef = undefined;
@@ -407,9 +411,10 @@ pub const Module = struct {
     pub const NodeModuleList = struct {
         tempbuf: []u8,
         property_names: [*]u8,
+        module_property_map: []u64,
         static_functions: [1]js.JSStaticFunction,
         property_getters: []js.JSObjectRef,
-        module_property_map: ModuleIDMap,
+
         node_module_global_class: js.JSClassRef,
         node_module_global_class_def: js.JSClassDefinition,
         vm: *VirtualMachine,
@@ -419,18 +424,31 @@ pub const Module = struct {
 
         require_cache: []?*Module,
 
-        pub fn loadBundledModuleById(node_module_list: *NodeModuleList, id: u32) !*Module {
+        exports_function_call: js.JSObjectRef = null,
+
+        const RequireBundleClassName = "requireFromBundle";
+        var require_bundle_class_def: js.JSClassDefinition = undefined;
+        var require_bundle_class_ref: js.JSClassRef = undefined;
+        var require_bundle_class_loaded = false;
+
+        pub fn loadBundledModuleById(node_module_list: *NodeModuleList, id: u32, call_ctx: js.JSContextRef) !*Module {
             if (node_module_list.require_cache[id]) |mod| {
                 return mod;
             }
 
-            var module = try Module.NodeModuleList.Instance.evalBundledModule(
+            var module = try node_module_list.vm.allocator.create(Module);
+            node_module_list.require_cache[id] = module;
+            errdefer node_module_list.vm.allocator.destroy(module);
+
+            try Module.NodeModuleList.Instance.evalBundledModule(
+                module,
                 node_module_list.vm.allocator,
                 node_module_list.vm,
                 node_module_list,
                 id,
+                call_ctx,
             );
-            node_module_list.require_cache[id] = module;
+
             return module;
         }
 
@@ -442,11 +460,13 @@ pub const Module = struct {
             threadlocal var source_code_buffer_loaded = false;
 
             pub fn evalBundledModule(
+                module: *Module,
                 allocator: *std.mem.Allocator,
                 vm: *VirtualMachine,
                 node_module_list: *NodeModuleList,
                 id: u32,
-            ) !*Module {
+                call_ctx: js.JSContextRef,
+            ) !void {
                 const bundled_module = &vm.node_modules.?.bundle.modules[id];
                 const total_length = bundled_module.code.length + 1;
                 if (!source_code_buffer_loaded) {
@@ -461,32 +481,61 @@ pub const Module = struct {
 
                 var node_module_file = std.fs.File{ .handle = vm.node_modules.?.fd };
                 const read = try node_module_file.pread(source_code_buffer.list.items, bundled_module.code.offset);
-                source_code_buffer.list.items[read] = 0;
-                var buf = source_code_buffer.list.items[0..read :0];
+                var buf = source_code_buffer.list.items[0..read];
 
                 const bundled_package = &vm.node_modules.?.bundle.packages[bundled_module.package_id];
                 // We want linear because we expect it to virtually always be at 0
                 // However, out of caution we check.
+
                 var start_at: usize = std.mem.indexOfPosLinear(u8, buf, 0, "export var $") orelse return error.FailedCorruptNodeModuleMissingExport;
                 start_at += "export var $".len;
                 // export var $fooo = $$m("packageName", "id", (module, exports) => {
                 //                                    ^
-                start_at = std.mem.indexOfPosLinear(u8, "\",", start_at, buf) orelse return error.FailedCorruptNodeModuleMissingModuleWrapper;
+                start_at = std.mem.indexOfPosLinear(
+                    u8,
+                    buf,
+                    start_at,
+                    "\",",
+                ) orelse return error.FailedCorruptNodeModuleMissingModuleWrapper;
                 start_at += 1;
 
                 // export var $fooo = $$m("packageName", "id", (module, exports) => {
                 //                                          ^
-                start_at = std.mem.indexOfPosLinear(u8, "\",", start_at, buf) orelse return error.FailedCorruptNodeModuleMissingModuleWrapper;
+                start_at = std.mem.indexOfPosLinear(
+                    u8,
+                    buf,
+                    start_at,
+                    "\",",
+                ) orelse return error.FailedCorruptNodeModuleMissingModuleWrapper;
                 start_at += 1;
-                // ((module, exports) => {
-                buf[start_at] = '(';
-
-                var source_buf = source_code_buffer.list.items[start_at..read :0];
-                var source_string = js.JSStringCreateWithUTF8CString(source_buf.ptr);
-                defer js.JSStringRelease(source_string);
-                var source_url_buf = try std.fmt.allocPrintZ(
+                start_at = std.mem.indexOfPosLinear(
+                    u8,
+                    buf,
+                    start_at,
+                    "=>",
+                ) orelse return error.FailedCorruptNodeModuleMissingModuleWrapper;
+                start_at += 2;
+                // (module, exports) => {
+                //                   ^
+                start_at = std.mem.indexOfPosLinear(
+                    u8,
+                    buf,
+                    start_at,
+                    "{",
+                ) orelse return error.FailedCorruptNodeModuleMissingModuleWrapper;
+                start_at += 1;
+                // (module, exports) => {
+                //
+                // ^
+                var curr_buf = buf[start_at..];
+                curr_buf = curr_buf[0 .. std.mem.lastIndexOfScalar(u8, curr_buf, ';') orelse return error.FailedCorruptNodeModuleMissingModuleWrapper];
+                curr_buf = curr_buf[0 .. std.mem.lastIndexOfScalar(u8, curr_buf, ')') orelse return error.FailedCorruptNodeModuleMissingModuleWrapper];
+                curr_buf = curr_buf[0 .. std.mem.lastIndexOfScalar(u8, curr_buf, '}') orelse return error.FailedCorruptNodeModuleMissingModuleWrapper];
+                curr_buf.ptr[curr_buf.len] = 0;
+                var source_buf = curr_buf.ptr[0..curr_buf.len :0];
+                var source_url_buf = try std.fmt.allocPrint(
                     allocator,
-                    "node_modules.jsb/{s}/{s}",
+                    "{s}/{s}",
                     .{
                         vm.node_modules.?.str(bundled_package.name),
                         vm.node_modules.?.str(bundled_module.path),
@@ -494,76 +543,19 @@ pub const Module = struct {
                 );
                 errdefer allocator.free(source_url_buf);
 
-                var source_url = js.JSStringCreateWithUTF8CString(source_url_buf);
-                defer js.JSStringRelease(source_url);
                 var exception: js.JSValueRef = null;
-                var return_value: js.JSObjectRef = null;
-                var module: *Module = undefined;
-                go: {
-                    // Compile the wrapper function
-                    var function = js.JSEvaluateScript(
-                        node_module_list.bundle_ctx,
-                        source_string,
-                        null,
-                        source_url,
-                        1,
-                        &exception,
-                    );
-                    if (exception != null) break :go;
-                    if (!js.JSValueIsObject(node_module_list.bundle_ctx, function)) {
-                        return error.ExpectedFunction;
-                    }
-
-                    // Don't create the instance / module if the script has a syntax error
-                    module = try allocator.create(Module);
-                    module.* = Module{
-                        .path = Fs.Path.initWithPretty(source_url_buf, source_url_buf),
-                        .ref = undefined,
-                        .vm = vm,
-                    };
-                    module.ref = js.JSObjectMake(node_module_list.bundle_ctx, Module.module_class, module);
-                    var args = try allocator.alloc(js.JSValueRef, 2);
-                    args[0] = module.ref;
-                    args[1] = module.internalGetExports();
-
-                    // Run the wrapper
-                    _ = js.JSObjectCallAsFunction(
-                        node_module_list.bundle_ctx,
-                        function,
-                        args[1],
-                        2,
-                        args.ptr,
-                        &exception,
-                    );
-                    if (exception != null) {
-                        allocator.destroy(module);
-                        allocator.free(source_url_buf);
-                    }
-                    break :go;
-                }
-
-                if (exception != null) {
-                    var message = js.JSValueToStringCopy(node_module_list.bundle_ctx, exception.?, null);
-                    defer js.JSStringRelease(message);
-                    var message_str_size = js.JSStringGetMaximumUTF8CStringSize(message);
-                    var message_str_buf = try allocator.alloc(u8, message_str_size);
-                    defer allocator.free(message_str_buf);
-                    var message_str_read = js.JSStringGetUTF8CString(message, message_str_buf.ptr, message_str_size);
-                    defer Output.flush();
-                    vm.log.addErrorFmt(null, logger.Loc.Empty, allocator, "Error loading \"{s}/{s}\":\n{s}", .{
-                        vm.node_modules.?.str(bundled_package.name),
-                        vm.node_modules.?.str(bundled_module.path),
-                        message_str_buf[0..message_str_read],
-                    }) catch {};
-                    Output.prettyErrorln("<r>{s}\n--<r><red>error<r> loading <cyan>\"{s}/{s}\"<r>--", .{
-                        message_str_buf[0..message_str_read],
-                        vm.node_modules.?.str(bundled_package.name),
-                        vm.node_modules.?.str(bundled_module.path),
-                    });
-                    return error.FailedException;
-                }
-
-                return module;
+                try Module.load(
+                    module,
+                    vm,
+                    allocator,
+                    vm.log,
+                    source_buf,
+                    Fs.Path.initWithPretty(source_url_buf, source_url_buf),
+                    node_module_list.bundle_ctx,
+                    call_ctx,
+                    call_ctx,
+                    &exception,
+                );
             }
         };
 
@@ -597,20 +589,28 @@ pub const Module = struct {
                 ),
             );
 
+            std.mem.set(u8, this.tempbuf, 0);
             const size = js.JSStringGetUTF8CString(prop, this.tempbuf.ptr, this.tempbuf.len);
-            const key = std.hash.Wyhash.hash(0, this.tempbuf[0..size]);
-            const id = this.module_property_map.get(key) orelse return null;
+            const key = std.hash.Wyhash.hash(0, this.tempbuf);
+            const id = @intCast(u32, std.mem.indexOfScalar(u64, this.module_property_map, key) orelse return null);
 
             if (this.property_getters[id] == null) {
-                var require_bundled = this.vm.allocator.create(RequireBundledModule) catch unreachable;
-                require_bundled.* = RequireBundledModule{ .id = id, .list = this };
-                this.property_getters[id] = To.JS.functionWithCallback(
-                    RequireBundledModule,
-                    require_bundled,
-                    prop,
-                    ctx,
-                    requireBundledModule,
-                );
+                if (!require_bundle_class_loaded) {
+                    require_bundle_class_def = js.kJSClassDefinitionEmpty;
+                    require_bundle_class_def.className = RequireBundleClassName[0.. :0];
+                    require_bundle_class_def.callAsFunction = To.JS.Callback(RequireBundledModule, requireBundledModule).rfn;
+                    require_bundle_class_ref = js.JSClassRetain(js.JSClassCreate(&require_bundle_class_def));
+                    require_bundle_class_loaded = true;
+                }
+
+                // TODO: remove this allocation by ptr casting
+                var require_from_bundle = this.vm.allocator.create(RequireBundledModule) catch unreachable;
+                require_from_bundle.* = RequireBundledModule{
+                    .list = this,
+                    .id = id,
+                };
+                this.property_getters[id] = js.JSObjectMake(this.bundle_ctx, require_bundle_class_ref, require_from_bundle);
+                js.JSValueProtect(this.bundle_ctx, this.property_getters[id]);
             }
 
             return this.property_getters[id];
@@ -628,8 +628,7 @@ pub const Module = struct {
             const bundle = &obj.list.vm.node_modules.?.bundle;
             const bundled_module = &bundle.modules[obj.id];
             const bundled_pkg = &bundle.packages[bundled_module.package_id];
-
-            const result = loadBundledModuleById(obj.list, obj.id) catch |err| {
+            var module = loadBundledModuleById(obj.list, obj.id, obj.list.bundle_ctx) catch |err| {
                 Output.prettyErrorln("<r><red>RequireError<r>: <b>{s}<r> in \"<cyan>{s}/{s}<r>\"", .{
                     @errorName(err),
                     obj.list.vm.node_modules.?.str(bundled_pkg.name),
@@ -648,74 +647,58 @@ pub const Module = struct {
                 return js.JSValueMakeUndefined(ctx);
             };
 
-            return result.internalGetExports();
+            return module.internalGetExports(js.JSContextGetGlobalContext(ctx));
         }
 
-        pub fn init(vm: *VirtualMachine, bundle: *const NodeModuleBundle) !*NodeModuleList {
+        pub fn create(vm: *VirtualMachine, bundle: *const NodeModuleBundle, node_module_list: *NodeModuleList) !void {
             var size: usize = 0;
             var longest_size: usize = 0;
             for (bundle.bundle.modules) |module, i| {
-                var hasher = std.hash.Wyhash.init(0);
-                hasher.update(bundle.str(module.path));
-                hasher.update(
-                    std.mem.asBytes(
-                        &bundle.bundle.packages[module.package_id].hash,
-                    ),
-                );
                 // Add one for null-terminated string offset
                 const this_size = std.fmt.count(
                     "${x}" ++ "\\x0",
                     .{
-                        @truncate(
-                            u32,
-                            hasher.final(),
-                        ),
+                        module.id,
                     },
                 );
                 size += this_size;
                 longest_size = std.math.max(this_size, longest_size);
             }
-            var static_properties = try vm.allocator.alloc(js.JSStaticValue, bundle.bundle.modules.len);
-            var utf8 = try vm.allocator.alloc(u8, size + longest_size);
-
+            var static_properties = try vm.allocator.alloc(js.JSStaticValue, bundle.bundle.modules.len + 1);
+            static_properties[static_properties.len - 1] = std.mem.zeroes(js.JSStaticValue);
+            var utf8 = try vm.allocator.alloc(u8, size + std.math.max(longest_size, 32));
+            std.mem.set(u8, utf8, 0);
             var tempbuf = utf8[size..];
 
             var names_buf = utf8[0..size];
-            var module_property_map = ModuleIDMap.init(vm.allocator);
-            try module_property_map.ensureCapacity(@truncate(u32, bundle.bundle.modules.len));
+            var module_property_map = try vm.allocator.alloc(u64, bundle.bundle.modules.len);
 
             for (bundle.bundle.modules) |module, i| {
                 var hasher = std.hash.Wyhash.init(0);
-                hasher.update(bundle.str(module.path));
-                hasher.update(
-                    std.mem.asBytes(
-                        &bundle.bundle.packages[module.package_id].hash,
-                    ),
-                );
 
                 const hash = @truncate(
                     u32,
-                    hasher.final(),
+                    module.id,
                 );
 
                 // The variable name is the hash of the module path
-                var name = std.fmt.bufPrintZ(names_buf, "${x}", .{hash}) catch unreachable;
+                var name = std.fmt.bufPrint(names_buf, "${x}", .{hash}) catch unreachable;
+                std.mem.set(u8, tempbuf, 0);
+                std.mem.copy(u8, tempbuf, name);
+                name.ptr[name.len] = 0;
 
                 // But we don't store that for the hash map. Instead, we store the hash of name.
                 // This lets us avoid storing pointers to the name in the hash table, so if we free it later
                 // or something it won't cause issues.
-                hasher = std.hash.Wyhash.init(0);
-                hasher.update(name[0..]);
-                var property_key = hasher.final();
 
+                module_property_map[i] = std.hash.Wyhash.hash(0, tempbuf);
                 static_properties[i] = js.JSStaticValue{
                     .name = name.ptr,
                     .getProperty = getRequireFromBundleProperty,
                     .setProperty = null,
                     .attributes = .kJSPropertyAttributeReadOnly,
                 };
-                names_buf = names_buf[name.len..];
-                module_property_map.putAssumeCapacityNoClobberWithHash(property_key, property_key, @truncate(u32, i));
+                names_buf = names_buf[name.len + 1 ..];
             }
 
             var node_module_global_class_def = js.kJSClassDefinitionEmpty;
@@ -725,14 +708,13 @@ pub const Module = struct {
 
             var property_getters = try vm.allocator.alloc(js.JSObjectRef, bundle.bundle.modules.len);
             std.mem.set(js.JSObjectRef, property_getters, null);
-            var node_module_list = try vm.allocator.create(NodeModuleList);
 
             node_module_list.* = NodeModuleList{
                 .module_property_map = module_property_map,
                 .node_module_global_class_def = node_module_global_class_def,
                 .vm = vm,
                 .tempbuf = tempbuf,
-                .property_names = names_buf.ptr,
+                .property_names = utf8.ptr,
                 .bundle_ctx = undefined,
                 .property_getters = property_getters,
                 .node_module_global_class = undefined,
@@ -748,16 +730,30 @@ pub const Module = struct {
             // };
             // node_module_global_class_def.staticFunctions = &node_module_list.static_functions;
             node_module_list.node_module_global_class_def = node_module_global_class_def;
-            node_module_list.node_module_global_class = js.JSClassCreate(&node_module_list.node_module_global_class_def);
-            node_module_list.bundle_ctx = js.JSGlobalContextCreateInGroup(vm.group, node_module_list.node_module_global_class);
-
-            return node_module_list;
+            node_module_list.node_module_global_class = js.JSClassRetain(js.JSClassCreate(&node_module_list.node_module_global_class_def));
+            node_module_list.bundle_ctx = js.JSGlobalContextRetain(js.JSGlobalContextCreateInGroup(vm.group, node_module_list.node_module_global_class));
+            _ = js.JSObjectSetPrivate(js.JSContextGetGlobalObject(node_module_list.bundle_ctx), node_module_list);
         }
     };
     pub const node_module_global_class_name = "NodeModuleGlobal";
 
     threadlocal var require_buf: MutableString = undefined;
     threadlocal var require_buf_loaded: bool = false;
+
+    pub fn callExportsAsFunction(
+        this: *Module,
+        ctx: js.JSContextRef,
+        function: js.JSObjectRef,
+        thisObject: js.JSObjectRef,
+        arguments: []const js.JSValueRef,
+        exception: js.ExceptionRef,
+    ) js.JSValueRef {
+        if (js.JSObjectIsFunction(ctx, this.exports_function)) {
+            return js.JSObjectCallAsFunction(ctx, this.exports_function, this.ref, arguments.len, arguments.ptr, exception);
+        }
+
+        return this.exports;
+    }
 
     pub fn require(
         this: *Module,
@@ -784,18 +780,20 @@ pub const Module = struct {
 
         const len = js.JSStringGetLength(arguments[0]);
 
-        if (!require_buf_loaded) {
-            require_buf = MutableString.init(this.vm.allocator, len + 1) catch unreachable;
-            require_buf_loaded = true;
-        } else {
-            require_buf.reset();
-            require_buf.growIfNeeded(len + 1) catch {};
-        }
+        // if (!require_buf_loaded) {
+        //     require_buf = MutableString.init(this.vm.allocator, len + 1) catch unreachable;
+        //     require_buf_loaded = true;
+        // } else {
+        //     require_buf.reset();
+        //     require_buf.growIfNeeded(len + 1) catch {};
+        // }
 
-        require_buf.list.resize(this.vm.allocator, len + 1) catch unreachable;
+        // require_buf.list.resize(this.vm.allocator, len + 1) catch unreachable;
 
-        var end = js.JSStringGetUTF8CString(arguments[0], require_buf.list.items.ptr, require_buf.list.items.len);
-        var import_path = require_buf.list.items[0 .. end - 1];
+        var require_buf_ = this.vm.allocator.alloc(u8, len + 1) catch unreachable;
+        var end = js.JSStringGetUTF8CString(arguments[0], require_buf_.ptr, require_buf_.len);
+        // var end = js.JSStringGetUTF8CString(arguments[0], require_buf.list.items.ptr, require_buf.list.items.len);
+        var import_path = require_buf_[0 .. end - 1];
         var module = this;
 
         if (this.vm.bundler.linker.resolver.resolve(module.path.name.dirWithTrailingSlash(), import_path, .require)) |resolved| {
@@ -805,7 +803,14 @@ pub const Module = struct {
 
             switch (load_result) {
                 .Module => |new_module| {
-                    return new_module.internalGetExports();
+                    if (isDebug) {
+                        Output.prettyln(
+                            "Input: {s}\nOutput: {s}",
+                            .{ import_path, load_result.Module.path.text },
+                        );
+                        Output.flush();
+                    }
+                    return new_module.internalGetExports(js.JSContextGetGlobalContext(ctx));
                 },
                 .Path => |path| {
                     return js.JSStringCreateWithUTF8CString(path.text.ptr);
@@ -831,6 +836,10 @@ pub const Module = struct {
                 .get = getId,
                 .ro = true,
             },
+            .@"loaded" = .{
+                .get = getLoaded,
+                .ro = true,
+            },
             .@"exports" = .{
                 .get = getExports,
                 .set = setExports,
@@ -848,6 +857,8 @@ pub const Module = struct {
     pub fn boot(vm: *VirtualMachine) void {
         ExportsClass = std.mem.zeroes(js.JSClassDefinition);
         ExportsClass.className = ExportsClassName[0.. :0];
+        ExportsClass.callAsFunction = To.JS.Callback(Module, callExportsAsFunction).rfn;
+        // ExportsClass.callAsConstructor = To.JS.Callback(Module, callExportsAsConstructor);
 
         exports_class_ref = js.JSClassRetain(js.JSClassCreate(&ExportsClass));
 
@@ -869,22 +880,26 @@ pub const Module = struct {
     threadlocal var source_code_printer_loaded: bool = false;
     var require_module_params: [3]js.JSStringRef = undefined;
     var require_module_params_loaded: bool = false;
+    threadlocal var module_wrapper_params: [2]js.JSStringRef = undefined;
+    threadlocal var module_wrapper_loaded = false;
 
     pub fn load(
+        module: *Module,
         vm: *VirtualMachine,
         allocator: *std.mem.Allocator,
         log: *logger.Log,
         source: [:0]u8,
         path: Fs.Path,
+        global_ctx: js.JSContextRef,
         call_ctx: js.JSContextRef,
         function_ctx: js.JSContextRef,
         exception: js.ExceptionRef,
-    ) !*Module {
-        var source_code_ref = js.JSStringRetain(js.JSStringCreateWithUTF8CString(source.ptr));
+    ) !void {
+        var source_code_ref = js.JSStringCreateWithUTF8CString(source.ptr);
         defer js.JSStringRelease(source_code_ref);
         var source_url = try allocator.dupeZ(u8, path.text);
         defer allocator.free(source_url);
-        var source_url_ref = js.JSStringRetain(js.JSStringCreateWithUTF8CString(source_url.ptr));
+        var source_url_ref = js.JSStringCreateWithUTF8CString(source_url.ptr);
         defer js.JSStringRelease(source_url_ref);
 
         if (isDebug) {
@@ -892,43 +907,49 @@ pub const Module = struct {
             Output.flush();
         }
 
-        var module = try allocator.create(Module);
         module.* = Module{
             .path = path,
             .ref = undefined,
             .vm = vm,
         };
-        module.ref = js.JSObjectMake(function_ctx, Module.module_class, module);
+        module.ref = js.JSObjectMake(global_ctx, Module.module_class, module);
 
-        js.JSValueProtect(function_ctx, module.ref);
+        js.JSValueProtect(global_ctx, module.ref);
 
-        // TODO: move these allocations to only occur once
-        var args = try allocator.alloc(js.JSValueRef, 2);
-        var params = try allocator.alloc(js.JSStringRef, 2);
-        params[0] = js.JSStringCreateWithUTF8CString(Properties.UTF8.module[0.. :0]);
-        params[1] = js.JSStringCreateWithUTF8CString(Properties.UTF8.exports[0.. :0]);
-        args[0] = module.ref;
-        args[1] = module.internalGetExports();
-        js.JSValueProtect(function_ctx, args[1]);
+        if (!module_wrapper_loaded) {
+            module_wrapper_params[0] = js.JSStringCreateWithUTF8CString(Properties.UTF8.module[0.. :0]);
+            module_wrapper_params[1] = js.JSStringCreateWithUTF8CString(Properties.UTF8.exports[0.. :0]);
+            module_wrapper_loaded = true;
+        }
 
-        defer allocator.free(args);
+        var module_wrapper_args: [2]js.JSValueRef = undefined;
+        module_wrapper_args[0] = module.ref;
+        module_wrapper_args[1] = module.internalGetExports(global_ctx);
+        js.JSValueProtect(global_ctx, module_wrapper_args[1]);
         var except: js.JSValueRef = null;
         go: {
             var commonjs_wrapper = js.JSObjectMakeFunction(
-                function_ctx,
+                global_ctx,
                 null,
-                @truncate(c_uint, params.len),
-                params.ptr,
+                @truncate(c_uint, module_wrapper_params.len),
+                &module_wrapper_params,
                 source_code_ref,
                 null,
                 1,
                 &except,
             );
+            js.JSValueProtect(global_ctx, commonjs_wrapper);
             if (except != null) {
                 break :go;
             }
+            // var module = {exports: {}}; ((module, exports) => {
+            _ = js.JSObjectCallAsFunction(call_ctx, commonjs_wrapper, null, 2, &module_wrapper_args, &except);
+            // module.exports = exports;
+            // })(module, module.exports);
 
-            _ = js.JSObjectCallAsFunction(call_ctx, commonjs_wrapper, null, 2, args.ptr, &except);
+            // module.exports = module_wrapper_args[1];
+            js.JSValueProtect(global_ctx, module.exports);
+            js.JSValueUnprotect(global_ctx, commonjs_wrapper);
         }
         if (except != null) {
             var message = js.JSValueToStringCopy(function_ctx, except.?, null);
@@ -948,7 +969,8 @@ pub const Module = struct {
             });
             return error.FailedException;
         }
-        return module;
+
+        module.loaded = true;
     }
 
     pub fn loadFromResolveResult(
@@ -963,7 +985,14 @@ pub const Module = struct {
         }
 
         const path = resolved.path_pair.primary;
-        const loader = vm.bundler.options.loaders.get(path.name.ext) orelse .file;
+        const loader: options.Loader = brk: {
+            if (resolved.is_external) {
+                break :brk options.Loader.file;
+            }
+
+            break :brk vm.bundler.options.loaders.get(path.name.ext) orelse .file;
+        };
+
         switch (loader) {
             .js,
             .jsx,
@@ -971,21 +1000,42 @@ pub const Module = struct {
             .tsx,
             .json,
             => {
-                if (resolved.package_json) |package_json| {
+                const package_json_ = resolved.package_json orelse brk: {
+                    // package_json is sometimes null when we're loading as an absolute path
+                    if (resolved.isLikelyNodeModule()) {
+                        break :brk vm.bundler.resolver.packageJSONForResolvedNodeModule(&resolved);
+                    }
+                    break :brk null;
+                };
+
+                if (package_json_) |package_json| {
                     if (package_json.hash > 0) {
                         if (vm.node_modules) |node_modules| {
-                            if (node_modules.getPackageIDByHash(package_json.hash)) |package_id| {
-                                const package_relative_path = vm.bundler.fs.relative(
-                                    package_json.source.path.name.dirWithTrailingSlash(),
-                                    path.text,
-                                );
+                            if (node_modules.getPackageIDByName(package_json.name)) |possible_package_ids| {
+                                const package_id: ?u32 = brk: {
+                                    for (possible_package_ids) |pid| {
+                                        const pkg = node_modules.bundle.packages[pid];
+                                        if (pkg.hash == package_json.hash) {
+                                            break :brk pid;
+                                        }
+                                    }
 
-                                if (node_modules.findModuleIDInPackage(
-                                    &node_modules.bundle.packages[package_id],
-                                    package_relative_path,
-                                )) |id| {
-                                    var list = vm.node_module_list.?;
-                                    return LoadResult{ .Module = try list.loadBundledModuleById(id) };
+                                    break :brk null;
+                                };
+
+                                if (package_id) |pid| {
+                                    const package_relative_path = vm.bundler.fs.relative(
+                                        package_json.source.path.name.dirWithTrailingSlash(),
+                                        path.text,
+                                    );
+
+                                    if (node_modules.findModuleIDInPackage(
+                                        &node_modules.bundle.packages[pid],
+                                        package_relative_path,
+                                    )) |id| {
+                                        var list = vm.node_module_list.?;
+                                        return LoadResult{ .Module = try list.loadBundledModuleById(id + node_modules.bundle.packages[pid].modules_offset, ctx) };
+                                    }
                                 }
                             }
                         }
@@ -1044,18 +1094,23 @@ pub const Module = struct {
                 if (written == 0) {
                     return error.PrintingErrorWriteFailed;
                 }
+                var module = try vm.allocator.create(Module);
+                errdefer vm.allocator.destroy(module);
+                try vm.require_cache.put(hash, module);
 
-                var module = try Module.load(
+                try Module.load(
+                    module,
                     vm,
                     vm.allocator,
                     vm.log,
                     source_code_printer.ctx.sentinel,
                     path,
-                    ctx,
                     vm.global.ctx,
+                    ctx,
+                    ctx,
                     exception,
                 );
-                try vm.require_cache.put(hash, module);
+
                 return LoadResult{ .Module = module };
             },
 
@@ -1119,6 +1174,16 @@ pub const Module = struct {
         }
     }
 
+    pub fn getLoaded(
+        this: *Module,
+        ctx: js.JSContextRef,
+        thisObject: js.JSValueRef,
+        prop: js.JSStringRef,
+        exception: js.ExceptionRef,
+    ) callconv(.C) js.JSValueRef {
+        return js.JSValueMakeBoolean(ctx, this.loaded);
+    }
+
     pub fn getId(
         this: *Module,
         ctx: js.JSContextRef,
@@ -1140,12 +1205,12 @@ pub const Module = struct {
         prop: js.JSStringRef,
         exception: js.ExceptionRef,
     ) callconv(.C) js.JSValueRef {
-        return this.internalGetExports();
+        return this.exports;
     }
 
-    pub fn internalGetExports(this: *Module) js.JSValueRef {
+    pub fn internalGetExports(this: *Module, globalContext: js.JSContextRef) js.JSValueRef {
         if (this.exports == null) {
-            this.exports = js.JSObjectMake(this.vm.global.ctx, exports_class_ref, this);
+            this.exports = js.JSObjectMake(globalContext, exports_class_ref, this);
         }
 
         return this.exports;
@@ -1178,8 +1243,35 @@ pub const Module = struct {
                 js.JSStringRelease(this.exports);
             }
         }
+        switch (js.JSValueGetType(ctx, value)) {
+            .kJSTypeObject => {
+                if (js.JSValueIsObjectOfClass(ctx, value, exports_class_ref)) {
+                    var other = @ptrCast(
+                        *Module,
+                        @alignCast(
+                            @alignOf(
+                                *Module,
+                            ),
+                            js.JSObjectGetPrivate(value).?,
+                        ),
+                    );
+
+                    if (other != this) {
+                        this.exports = other.exports;
+                    }
+
+                    return true;
+                } else {
+                    if (js.JSObjectIsFunction(ctx, value)) {
+                        this.exports_function = value;
+                    }
+                }
+            },
+            else => {},
+        }
 
         this.exports = value;
+
         return true;
     }
 
@@ -1264,9 +1356,15 @@ pub const GlobalObject = struct {
 
         std.debug.assert(js.JSObjectSetPrivate(js.JSContextGetGlobalObject(global.ctx), private));
         global.ref = js.JSContextGetGlobalObject(global.ctx);
+
+        if (!printer_buf_loaded) {
+            printer_buf_loaded = true;
+            printer_buf = try MutableString.init(global.vm.allocator, 0);
+        }
     }
 
-    threadlocal var printer_buf: [4092]u8 = undefined;
+    threadlocal var printer_buf: MutableString = undefined;
+    threadlocal var printer_buf_loaded: bool = false;
     fn valuePrinter(comptime ValueType: js.JSType, ctx: js.JSContextRef, arg: js.JSValueRef, writer: anytype) !void {
         switch (ValueType) {
             .kJSTypeUndefined => {
@@ -1289,8 +1387,17 @@ pub const GlobalObject = struct {
                 );
             },
             .kJSTypeString => {
-                const used = js.JSStringGetUTF8CString(arg, (&printer_buf), printer_buf.len);
-                try writer.writeAll(printer_buf[0..used]);
+                printer_buf.reset();
+                var string_ref = js.JSValueToStringCopy(ctx, arg, null);
+                const len = js.JSStringGetMaximumUTF8CStringSize(string_ref) + 1;
+
+                printer_buf.growIfNeeded(len) catch {};
+                printer_buf.inflate(len) catch {};
+                var slice = printer_buf.toOwnedSliceLeaky();
+
+                defer js.JSStringRelease(string_ref);
+                const used = js.JSStringGetUTF8CString(string_ref, slice.ptr, slice.len);
+                try writer.writeAll(slice[0..used]);
             },
             .kJSTypeObject => {
                 // TODO:

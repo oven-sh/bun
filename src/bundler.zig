@@ -692,7 +692,6 @@ pub fn NewBundler(cache_files: bool) type {
                             new_stmts[0] = Stmt{ .loc = register_expr.loc, .data = .{ .s_local = &export_var } };
                             part.stmts = &new_stmts;
 
-                            const code_offset = this.tmpfile_byte_offset - code_start_byte_offset;
                             var writer = js_printer.NewFileWriter(this.tmpfile);
                             var symbols: [][]js_ast.Symbol = &([_][]js_ast.Symbol{ast.symbols});
                             hasher = std.hash.Wyhash.init(0);
@@ -700,7 +699,8 @@ pub fn NewBundler(cache_files: bool) type {
                             hasher.update(std.mem.asBytes(&package.hash)[0..4]);
                             const module_id = @truncate(u32, hasher.final());
 
-                            const code_length = @truncate(
+                            const code_offset = @truncate(u32, try this.tmpfile.getPos());
+                            const written = @truncate(
                                 u32,
                                 try js_printer.printCommonJS(
                                     @TypeOf(writer),
@@ -722,8 +722,11 @@ pub fn NewBundler(cache_files: bool) type {
                                     &bundler.linker,
                                 ),
                             );
-                            this.tmpfile_byte_offset += code_length;
-
+                            // Faster to _not_ do the syscall
+                            // But there's some off-by-one error somewhere and more reliable to just do the lseek
+                            this.tmpfile_byte_offset = @truncate(u32, try this.tmpfile.getPos());
+                            const code_length = this.tmpfile_byte_offset - code_offset;
+                            // std.debug.assert(code_length == written);
                             var package_get_or_put_entry = try this.package_list_map.getOrPut(package.hash);
                             if (!package_get_or_put_entry.found_existing) {
                                 package_get_or_put_entry.value_ptr.* = @truncate(u32, this.package_list.items.len);

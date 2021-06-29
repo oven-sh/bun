@@ -155,6 +155,11 @@ pub const Result = struct {
     dirname_fd: StoredFileDescriptorType = 0,
     file_fd: StoredFileDescriptorType = 0,
 
+    pub fn isLikelyNodeModule(this: *const Result) bool {
+        const dir = this.path_pair.primary.name.dirWithTrailingSlash();
+        return strings.indexOf(dir, "/node_modules/") != null;
+    }
+
     // Most NPM modules are CommonJS
     // If unspecified, assume CommonJS.
     // If internal app code, assume ESM.

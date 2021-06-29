@@ -204,6 +204,7 @@ pub const PackageJSON = struct {
         // TODO: exports map
 
         if (generate_hash) {
+            std.mem.set(u8, &hashed_buf, 0);
             std.mem.copy(u8, &hashed_buf, package_json.name);
             hashed_buf[package_json.name.len + 1] = '@';
             std.mem.copy(u8, hashed_buf[package_json.name.len + 1 ..], package_json.version);

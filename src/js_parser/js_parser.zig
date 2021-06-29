@@ -1827,31 +1827,33 @@ pub const Parser = struct {
                     require_call_args_i += 1;
 
                     var require_call_args = require_call_args_base[0..require_call_args_i];
-                    var require_call = p.callRequireOrBundledRequire(require_call_args);
 
                     declared_symbols[declared_symbols_i] = .{ .ref = p.jsx_runtime_ref, .is_top_level = true };
                     declared_symbols_i += 1;
                     declared_symbols[declared_symbols_i] = .{ .ref = automatic_namespace_ref, .is_top_level = true };
                     declared_symbols_i += 1;
+                    if (!p.options.force_commonjs) {
+                        var require_call = p.callRequireOrBundledRequire(require_call_args);
 
-                    decls[decl_i] = G.Decl{
-                        .binding = p.b(
-                            B.Identifier{
-                                .ref = p.jsx_runtime_ref,
-                            },
-                            loc,
-                        ),
-                        .value = p.e(
-                            E.Dot{
-                                .target = require_call,
-                                .name = p.options.jsx.jsx,
-                                .name_loc = loc,
-                                .can_be_removed_if_unused = true,
-                            },
-                            loc,
-                        ),
-                    };
-                    decl_i += 1;
+                        decls[decl_i] = G.Decl{
+                            .binding = p.b(
+                                B.Identifier{
+                                    .ref = p.jsx_runtime_ref,
+                                },
+                                loc,
+                            ),
+                            .value = p.e(
+                                E.Dot{
+                                    .target = require_call,
+                                    .name = p.options.jsx.jsx,
+                                    .name_loc = loc,
+                                    .can_be_removed_if_unused = true,
+                                },
+                                loc,
+                            ),
+                        };
+                        decl_i += 1;
+                    }
 
                     if (jsx_filename_symbol.use_count_estimate > 0) {
                         declared_symbols[declared_symbols_i] = .{ .ref = p.jsx_filename_ref, .is_top_level = true };
@@ -1869,12 +1871,38 @@ pub const Parser = struct {
                     }
 
                     const import_record_id = p.addImportRecord(.internal, loc, p.options.jsx.import_source);
-                    jsx_part_stmts[stmt_i] = p.s(S.Import{
-                        .namespace_ref = automatic_namespace_ref,
-                        .star_name_loc = loc,
-                        .is_single_line = true,
-                        .import_record_index = import_record_id,
-                    }, loc);
+                    // When everything is CommonJS
+                    // We import JSX like this:
+                    // var {jsxDev} = require("react/jsx-dev")
+                    if (p.options.force_commonjs) {
+                        var clause_items = p.allocator.alloc(js_ast.ClauseItem, 1) catch unreachable;
+                        clause_items[0] = js_ast.ClauseItem{
+                            .alias = p.options.jsx.jsx,
+                            .alias_loc = loc,
+                            .name = LocRef{ .loc = loc, .ref = p.jsx_runtime_ref },
+                            .original_name = "",
+                        };
+                        jsx_part_stmts[stmt_i] = p.s(
+                            S.Import{
+                                .namespace_ref = automatic_namespace_ref,
+                                .items = clause_items,
+                                .star_name_loc = loc,
+                                .is_single_line = true,
+                                .import_record_index = import_record_id,
+                            },
+                            loc,
+                        );
+                    // Otherwise, it looks like this
+                    // var 
+                    } else {
+                        jsx_part_stmts[stmt_i] = p.s(S.Import{
+                            .namespace_ref = automatic_namespace_ref,
+                            .star_name_loc = loc,
+                            .is_single_line = true,
+                            .import_record_index = import_record_id,
+                        }, loc);
+                    }
+
                     stmt_i += 1;
                     p.named_imports.put(
                         automatic_namespace_ref,
@@ -1964,10 +1992,11 @@ pub const Parser = struct {
                     declared_symbols_i += 1;
                 }
 
-                jsx_part_stmts[stmt_i] = p.s(S.Local{ .kind = .k_var, .decls = decls }, loc);
+                jsx_part_stmts[stmt_i] = p.s(S.Local{ .kind = .k_var, .decls = decls[0..decl_i] }, loc);
+                stmt_i += 1;
 
                 before.append(js_ast.Part{
-                    .stmts = jsx_part_stmts,
+                    .stmts = jsx_part_stmts[0..stmt_i],
                     .declared_symbols = declared_symbols,
                     .import_record_indices = import_records,
                     .symbol_uses = SymbolUseMap.init(p.allocator),
@@ -2816,8 +2845,11 @@ pub fn NewParser(
 
         // If we're auto-importing JSX and it's bundled, we use the bundled version
         // This means we need to transform from require(react) to react()
+        // unless we're building inside of speedy, then it's just normal commonjs
         pub fn callRequireOrBundledRequire(p: *P, require_args: []Expr) Expr {
-            if (p.options.can_import_from_bundle) {
+            if (p.options.force_commonjs) {
+                return require_args[0];
+            } else if (p.options.can_import_from_bundle) {
                 return p.e(E.Call{ .target = require_args[0] }, require_args[0].loc);
             } else {
                 return p.callRuntime(require_args[0].loc, "__require", require_args);
@@ -3138,9 +3170,11 @@ pub fn NewParser(
             if (p.options.force_commonjs) {
                 p.exports_ref = try p.declareCommonJSSymbol(.unbound, "exports");
                 p.module_ref = try p.declareCommonJSSymbol(.unbound, "module");
+                p.require_ref = try p.declareSymbol(.hoisted, logger.Loc.Empty, "require");
             } else {
                 p.exports_ref = try p.declareSymbol(.hoisted, logger.Loc.Empty, "exports");
                 p.module_ref = try p.declareSymbol(.hoisted, logger.Loc.Empty, "module");
+                p.require_ref = try p.declareCommonJSSymbol(.unbound, "require");
             }
 
             if (p.options.enable_bundling) {
@@ -3151,8 +3185,6 @@ pub fn NewParser(
 
                 p.runtime_imports.__export = p.exports_ref;
             } else {}
-
-            p.require_ref = try p.declareCommonJSSymbol(.unbound, "require");
 
             if (p.options.features.hot_module_reloading) {
                 p.hmr_module_ref = try p.declareSymbol(.hoisted, logger.Loc.Empty, "__hmrModule");
@@ -13885,6 +13917,7 @@ pub fn NewParser(
                 .import_keyword = p.es6_import_keyword,
                 .export_keyword = p.es6_export_keyword,
                 .bundle_export_ref = p.bundle_export_ref,
+                .require_ref = if (p.symbols.items[p.require_ref.inner_index].use_count_estimate > 0) p.require_ref else null,
                 // .top_Level_await_keyword = p.top_level_await_keyword,
             };
         }

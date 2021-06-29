@@ -12,7 +12,7 @@ pub const NodeEnvBufMap = struct {
     pub fn get(this: *const NodeEnvBufMap, key: string) ?string {
         return this.backing.get(key);
     }
-    pub threadlocal var bufkeybuf: [1024]u8 = undefined;
+    pub threadlocal var bufkeybuf: [4096]u8 = undefined;
     pub threadlocal var bufkeybuf_first = true;
 
     pub fn iterator(this: *NodeEnvBufMap) @typeInfo(@TypeOf(std.BufMap.iterator)).Fn.return_type.? {

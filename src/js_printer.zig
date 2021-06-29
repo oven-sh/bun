@@ -355,6 +355,13 @@ pub fn NewPrinter(
         pub fn printSymbol(p: *Printer, ref: Ref) void {
             debug("<printSymbol>\n   {s}", .{ref});
             defer debugl("</printSymbol>");
+            if (speedy) {
+                if (p.options.require_ref) |require| {
+                    if (ref.eql(require)) {
+                        return p.printIdentifier("module.require");
+                    }
+                }
+            }
             const name = p.renamer.nameForSymbol(ref);
 
             p.printIdentifier(name);
@@ -434,6 +441,14 @@ pub fn NewPrinter(
             p.options.unindent();
             p.printIndent();
             p.print("}");
+        }
+
+        pub fn bestQuoteCharForEString(p: *Printer, str: *const E.String, allow_backtick: bool) u8 {
+            if (str.isUTF8()) {
+                return p.bestQuoteCharForString(str.utf8, allow_backtick);
+            } else {
+                return p.bestQuoteCharForString(str.value, allow_backtick);
+            }
         }
 
         pub fn bestQuoteCharForString(p: *Printer, str: anytype, allow_backtick: bool) u8 {
@@ -697,8 +712,13 @@ pub fn NewPrinter(
 
                     p.printSpaceBeforeIdentifier();
 
+                    if (speedy) {
+                        p.print("module.require(");
+                    } else {
+                        p.print("require(");
+                    }
                     // if (p.options.platform == .node) {
-                    p.print("require(");
+
                     p.printQuotedUTF8(record.path.text, true);
                     p.print(")");
                     // } else {
@@ -1286,7 +1306,7 @@ pub fn NewPrinter(
                         return;
                     }
 
-                    const c = p.bestQuoteCharForString(e.value, true);
+                    const c = p.bestQuoteCharForEString(e, true);
                     p.print(c);
                     p.printStringContent(e, c);
                     p.print(c);

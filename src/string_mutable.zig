@@ -132,6 +132,10 @@ pub const MutableString = struct {
         self.list.shrinkRetainingCapacity(0);
     }
 
+    pub fn inflate(self: *MutableString, amount: usize) !void {
+        try self.list.resize(self.allocator, amount);
+    }
+
     pub inline fn appendChar(self: *MutableString, char: u8) !void {
         try self.list.append(self.allocator, char);
     }

@@ -43,13 +43,13 @@ pub const NodeModuleBundle = struct {
 
     pub fn loadPackageMap(this: *NodeModuleBundle) !void {
         this.package_name_map = PackageNameMap.init(this.allocator);
-        var ids = PackageIDMap.init(this.allocator);
+        this.package_id_map = PackageIDMap.init(this.allocator);
 
         const package_count = @truncate(u32, this.bundle.packages.len);
 
         // this.package_has_multiple_versions = try std.bit_set.DynamicBitSet.initFull(package_count, this.allocator);
 
-        try ids.ensureCapacity(
+        try this.package_id_map.ensureCapacity(
             package_count,
         );
         this.package_name_ids_ptr = try this.allocator.alloc(BundledPackageID, this.bundle.packages.len);
@@ -62,7 +62,7 @@ pub const NodeModuleBundle = struct {
         for (this.bundle.packages) |package, _package_id| {
             const package_id = @truncate(u32, _package_id);
             std.debug.assert(package.hash != 0);
-            ids.putAssumeCapacityNoClobber(package.hash, @truncate(u32, package_id));
+            this.package_id_map.putAssumeCapacityNoClobber(package.hash, @truncate(u32, package_id));
 
             const package_name = this.str(package.name);
             var entry = this.package_name_map.getOrPutAssumeCapacity(package_name);
@@ -101,8 +101,6 @@ pub const NodeModuleBundle = struct {
                 remaining_names = remaining_names[1..];
             }
         }
-
-        this.package_id_map = ids;
     }
 
     pub fn getPackageIDByHash(this: *const NodeModuleBundle, hash: BundledPackageID) ?u32 {
@@ -164,6 +162,20 @@ pub const NodeModuleBundle = struct {
     ) ?*const Api.JavascriptBundledModule {
         if (this.findModuleIDInPackage(package, _query)) |id| {
             return &this.bundle.modules[id];
+        }
+
+        return null;
+    }
+
+    pub fn findModuleIDInPackageStupid(
+        this: *const NodeModuleBundle,
+        package: *const Api.JavascriptBundledPackage,
+        _query: string,
+    ) ?u32 {
+        for (this.bundle.modules[package.modules_offset..][0..package.modules_length]) |mod, i| {
+            if (strings.eql(this.str(mod.path), _query)) {
+                return @truncate(u32, i);
+            }
         }
 
         return null;
@@ -303,7 +315,7 @@ pub const NodeModuleBundle = struct {
                 .{ this.str(pkg.name), this.str(pkg.version) },
             );
 
-            for (modules) |module| {
+            for (modules) |module, module_i| {
                 const size_level: SizeLevel =
                     switch (module.code.length) {
                     0...5_000 => .good,
@@ -314,10 +326,11 @@ pub const NodeModuleBundle = struct {
                 Output.print(indent, .{});
                 prettySize(module.code.length, size_level, ">");
                 Output.prettyln(
-                    indent ++ "<d>{s}</r>" ++ std.fs.path.sep_str ++ "{s}\n",
+                    indent ++ "<d>{s}</r>" ++ std.fs.path.sep_str ++ "{s} <r><d>[{d}]<r>\n",
                     .{
                         this.str(pkg.name),
                         this.str(module.path),
+                        module_i + pkg.modules_offset,
                     },
                 );
             }

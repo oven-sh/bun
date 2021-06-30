@@ -249,6 +249,13 @@ pub const Platform = enum {
     speedy,
     node,
 
+    pub fn implementsRequire(platform: Platform) bool {
+        return switch (platform) {
+            .speedy, .node => true,
+            else => false,
+        };
+    }
+
     pub const Extensions = struct {
         pub const In = struct {
             pub const JavaScript = [_]string{ ".js", ".ts", ".tsx", ".jsx", ".json" };
@@ -754,7 +761,7 @@ pub const BundleOptions = struct {
             opts.output_dir_handle = try openOutputDir(opts.output_dir);
         }
 
-        if (opts.resolve_mode == .lazy and !(transform.generate_node_module_bundle orelse false)) {
+        if (!(transform.generate_node_module_bundle orelse false)) {
             if (node_modules_bundle_existing) |node_mods| {
                 opts.node_modules_bundle = node_mods;
                 const pretty_path = fs.relativeTo(transform.node_modules_bundle_path.?);
@@ -768,6 +775,7 @@ pub const BundleOptions = struct {
                         const pretty_path = fs.relativeTo(bundle_path);
                         var bundle_file = std.fs.openFileAbsolute(bundle_path, .{ .read = true, .write = true }) catch |err| {
                             Output.disableBuffering();
+                            defer Output.enableBuffering();
                             Output.prettyErrorln("<r>error opening <d>\"<r><b>{s}<r><d>\":<r> <b><red>{s}<r>", .{ pretty_path, @errorName(err) });
                             break :load_bundle;
                         };

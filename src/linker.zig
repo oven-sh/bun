@@ -204,16 +204,21 @@ pub fn NewLinker(comptime BundlerType: type) type {
                             continue;
                         }
 
-                        
                         if (linker.resolver.resolve(source_dir, import_record.path.text, import_record.kind)) |*_resolved_import| {
-                            var resolved_import: *Resolver.Result = _resolved_import;
+                            const resolved_import: *const Resolver.Result = _resolved_import;
                             if (resolved_import.is_external) {
                                 externals.append(record_index) catch unreachable;
                                 continue;
                             }
+                            if (linker.options.node_modules_bundle) |node_modules_bundle| {
+                                const package_json_ = resolved_import.package_json orelse brk: {
+                                    if (resolved_import.isLikelyNodeModule()) {
+                                        break :brk linker.resolver.packageJSONForResolvedNodeModule(resolved_import);
+                                    }
 
-                            if (resolved_import.package_json) |package_json| {
-                                if (linker.options.node_modules_bundle) |node_modules_bundle| {
+                                    break :brk null;
+                                };
+                                if (package_json_) |package_json| {
                                     if (strings.contains(package_json.source.path.name.dirWithTrailingSlash(), "node_modules")) {
                                         if (node_modules_bundle.getPackageIDByName(package_json.name)) |possible_pkg_ids| {
                                             const pkg_id: u32 = brk: {
@@ -537,13 +542,10 @@ pub fn NewLinker(comptime BundlerType: type) type {
             linker: *ThisLinker,
             loader: Options.Loader,
             source_dir: string,
-            resolve_result: *Resolver.Result,
+            resolve_result: *const Resolver.Result,
             import_record: *ImportRecord,
             comptime import_path_format: Options.BundleOptions.ImportPathFormat,
         ) !void {
-
-            // extremely naive.
-            resolve_result.is_from_node_modules = resolve_result.package_json != null or strings.contains(resolve_result.path_pair.primary.text, "/node_modules");
 
             // lazy means:
             // Run the resolver

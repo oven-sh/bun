@@ -1892,8 +1892,8 @@ pub const Parser = struct {
                             },
                             loc,
                         );
-                    // Otherwise, it looks like this
-                    // var 
+                        // Otherwise, it looks like this
+                        // var
                     } else {
                         jsx_part_stmts[stmt_i] = p.s(S.Import{
                             .namespace_ref = automatic_namespace_ref,
@@ -2196,6 +2196,7 @@ pub const Prefill = struct {
     };
     pub const Value = struct {
         pub var EThis = E.This{};
+        pub var Zero = E.Number{ .value = 0.0 };
     };
     pub const String = struct {
         pub var Key = E.String{ .value = &Prefill.StringLiteral.Key };
@@ -2218,6 +2219,7 @@ pub const Prefill = struct {
         pub var LineNumber = Expr.Data{ .e_string = &Prefill.String.LineNumber };
         pub var ColumnNumber = Expr.Data{ .e_string = &Prefill.String.ColumnNumber };
         pub var This = Expr.Data{ .e_this = E.This{} };
+        pub var Zero = Expr.Data{ .e_number = &Value.Zero };
     };
     pub const Runtime = struct {
         pub var JSXFilename = "__jsxFilename";
@@ -10781,7 +10783,19 @@ pub fn NewParser(
                 .e_unary => |e_| {
                     switch (e_.op) {
                         .un_typeof => {
+                            const id_before = std.meta.activeTag(e_.value.data) == Expr.Tag.e_identifier;
                             e_.value = p.visitExprInOut(e_.value, ExprIn{ .assign_target = e_.op.unaryAssignTarget() });
+                            const id_after = std.meta.activeTag(e_.value.data) == Expr.Tag.e_identifier;
+
+                            // The expression "typeof (0, x)" must not become "typeof x" if "x"
+                            // is unbound because that could suppress a ReferenceError from "x"
+                            if (!id_before and id_after and p.symbols.items[e_.value.data.e_identifier.ref.inner_index].kind == .unbound) {
+                                e_.value = Expr.joinWithComma(
+                                    Expr{ .loc = e_.value.loc, .data = Prefill.Data.Zero },
+                                    e_.value,
+                                    p.allocator,
+                                );
+                            }
 
                             if (SideEffects.toTypeof(e_.value.data)) |typeof| {
                                 return p.e(E.String{ .utf8 = typeof }, expr.loc);

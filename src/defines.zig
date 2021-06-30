@@ -78,17 +78,33 @@ pub const DefineData = struct {
             }
 
             if (js_lexer.isIdentifier(entry.value_ptr.*) and !js_lexer.Keywords.has(entry.value_ptr.*)) {
-                var ident: *js_ast.E.Identifier = try allocator.create(js_ast.E.Identifier);
-                ident.ref = Ref.None;
-                ident.can_be_removed_if_unused = true;
-                user_defines.putAssumeCapacity(
-                    entry.key_ptr.*,
-                    DefineData{
-                        .value = js_ast.Expr.Data{ .e_identifier = ident },
-                        .original_name = entry.value_ptr.*,
-                        .can_be_removed_if_unused = true,
-                    },
-                );
+
+                // Special-case undefined. it's not an identifier here
+                // https://github.com/evanw/esbuild/issues/1407
+                if (strings.eqlComptime(entry.value_ptr.*, "undefined")) {
+                    user_defines.putAssumeCapacity(
+                        entry.key_ptr.*,
+                        DefineData{
+                            .value = js_ast.Expr.Data{ .e_undefined = js_ast.E.Undefined{} },
+                            .original_name = entry.value_ptr.*,
+                            .can_be_removed_if_unused = true,
+                        },
+                    );
+                } else {
+                    var ident: *js_ast.E.Identifier = try allocator.create(js_ast.E.Identifier);
+                    ident.ref = Ref.None;
+                    ident.can_be_removed_if_unused = true;
+
+                    user_defines.putAssumeCapacity(
+                        entry.key_ptr.*,
+                        DefineData{
+                            .value = js_ast.Expr.Data{ .e_identifier = ident },
+                            .original_name = entry.value_ptr.*,
+                            .can_be_removed_if_unused = true,
+                        },
+                    );
+                }
+
                 // user_defines.putAssumeCapacity(
                 //     entry.key_ptr,
                 //     DefineData{ .value = js_ast.Expr.Data{.e_identifier = } },

@@ -1,3 +1,3 @@
-import { isJavaScriptCore } from "./export-check";
+import React from "react";
 
-console.log("Is this JavaScriptCore?", isJavaScriptCore);
+console.log("Is this JavaScriptCore?", JSON.stringify(<div>hello</div>));

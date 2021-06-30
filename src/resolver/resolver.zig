@@ -729,8 +729,6 @@ pub fn NewResolver(cache_files: bool) type {
                     if (remapped.len == 0) {
                         path.is_disabled = true;
                     } else if (r.resolveWithoutRemapping(dir_info, remapped, kind)) |remapped_result| {
-                        result.is_from_node_modules = remapped_result.is_node_module;
-
                         switch (iter.index) {
                             0 => {
                                 result.path_pair.primary = remapped_result.path_pair.primary;
@@ -893,10 +891,17 @@ pub fn NewResolver(cache_files: bool) type {
         }
 
         pub fn parsePackageJSON(r: *ThisResolver, file: string, dirname_fd: StoredFileDescriptorType) !?*PackageJSON {
-            const pkg = PackageJSON.parse(ThisResolver, r, file, dirname_fd, !cache_files) orelse return null;
-            var _pkg = try r.allocator.create(PackageJSON);
-            _pkg.* = pkg;
-            return _pkg;
+            if (!cache_files or r.opts.node_modules_bundle != null) {
+                const pkg = PackageJSON.parse(ThisResolver, r, file, dirname_fd, true) orelse return null;
+                var _pkg = try r.allocator.create(PackageJSON);
+                _pkg.* = pkg;
+                return _pkg;
+            } else {
+                const pkg = PackageJSON.parse(ThisResolver, r, file, dirname_fd, false) orelse return null;
+                var _pkg = try r.allocator.create(PackageJSON);
+                _pkg.* = pkg;
+                return _pkg;
+            }
         }
 
         fn dirInfoCached(r: *ThisResolver, path: string) !?*DirInfo {

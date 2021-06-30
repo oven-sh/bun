@@ -1,2 +1,2 @@
-export const isJavaScriptCore: boolean =
+export const isJavaScriptCore =
   !("process" in globalThis) && !("location" in globalThis);

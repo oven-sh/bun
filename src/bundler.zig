@@ -491,7 +491,7 @@ pub fn NewBundler(cache_files: bool) type {
                 var resolve = _resolve;
                 if (resolve.is_external) return;
 
-                resolve.is_from_node_modules = strings.contains(resolve.path_pair.primary.text, node_module_root_string);
+                const is_from_node_modules = resolve.isLikelyNodeModule();
                 const loader = this.bundler.options.loaders.get(resolve.path_pair.primary.name.ext) orelse .file;
                 var bundler = this.bundler;
                 defer this.scan_pass_result.reset();
@@ -500,7 +500,7 @@ pub fn NewBundler(cache_files: bool) type {
                 var hasher = std.hash.Wyhash.init(0);
 
                 // If we're in a node_module, build that almost normally
-                if (resolve.is_from_node_modules) {
+                if (is_from_node_modules) {
                     switch (loader) {
                         .jsx,
                         .tsx,
@@ -971,8 +971,6 @@ pub fn NewBundler(cache_files: bool) type {
                         ),
                         .input_fd = result.input_fd,
                     };
-                    // output_file.version = if (resolve_result.is_from_node_modules) resolve_result.package_json_version else null;
-
                 },
             }
         }
@@ -1158,7 +1156,7 @@ pub fn NewBundler(cache_files: bool) type {
                     var result = ScanResult{
                         .path = file_path,
                         .file_size = @truncate(u32, source.contents.len),
-                        .is_node_module = resolve_result.is_from_node_modules or strings.contains(file_path.text, "node_modules" ++ std.fs.path.sep_str),
+                        .is_node_module = resolve_result.isLikelyNodeModule(),
                         .import_record_start = @truncate(u32, import_records.items.len),
                         .import_record_length = 0,
                     };
@@ -1290,7 +1288,7 @@ pub fn NewBundler(cache_files: bool) type {
                     jsx.parse = loader.isJSX();
                     var opts = js_parser.Parser.Options.init(jsx, loader);
                     opts.enable_bundling = false;
-                    opts.transform_require_to_import = false;
+                    opts.transform_require_to_import = !bundler.options.platform.implementsRequire();
                     opts.force_commonjs = bundler.options.platform == .speedy;
                     opts.can_import_from_bundle = bundler.options.node_modules_bundle != null;
                     opts.features.hot_module_reloading = bundler.options.hot_module_reloading and bundler.options.platform != .speedy;

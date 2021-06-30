@@ -43,6 +43,15 @@ pub fn JSStringMap(comptime V: type) type {
     return std.HashMap(js.JSStringRef, V, JSStringMapContext, 60);
 }
 
+const DefaultSpeedyDefines = struct {
+    pub const Keys = struct {
+        const window = "window";
+    };
+    pub const Values = struct {
+        const window = "undefined";
+    };
+};
+
 pub fn configureTransformOptionsForSpeedy(allocator: *std.mem.Allocator, _args: Api.TransformOptions) !Api.TransformOptions {
     var args = _args;
 
@@ -63,6 +72,7 @@ pub fn configureTransformOptionsForSpeedy(allocator: *std.mem.Allocator, _args: 
         }
     }
     var needs_node_env = env_map.get("NODE_ENV") == null;
+    var needs_window_undefined = true;
 
     var needs_regenerate = args.define == null and env_count > 0;
     if (args.define) |def| {
@@ -72,12 +82,16 @@ pub fn configureTransformOptionsForSpeedy(allocator: *std.mem.Allocator, _args: 
         for (def.keys) |key| {
             if (strings.eql(key, "process.env.NODE_ENV")) {
                 needs_node_env = false;
+            } else if (strings.eql(key, "window")) {
+                needs_window_undefined = false;
             }
         }
     }
 
+    var extras_count = @intCast(usize, @boolToInt(needs_node_env)) + @intCast(usize, @boolToInt(needs_window_undefined));
+
     if (needs_regenerate) {
-        var new_list = try allocator.alloc([]const u8, env_count * 2 + @intCast(usize, @boolToInt(needs_node_env)) * 2);
+        var new_list = try allocator.alloc([]const u8, env_count * 2 + extras_count * 2);
         var keys = new_list[0 .. new_list.len / 2];
         var values = new_list[keys.len..];
         var new_map = Api.StringMap{
@@ -119,7 +133,16 @@ pub fn configureTransformOptionsForSpeedy(allocator: *std.mem.Allocator, _args: 
         if (needs_node_env) {
             keys[last] = options.DefaultUserDefines.NodeEnv.Key;
             values[last] = options.DefaultUserDefines.NodeEnv.Value;
+            last += 1;
         }
+
+        if (needs_window_undefined) {
+            keys[last] = DefaultSpeedyDefines.Keys.window;
+            values[last] = DefaultSpeedyDefines.Values.window;
+            last += 1;
+        }
+
+        args.define = new_map;
     }
 
     return args;
@@ -130,7 +153,7 @@ pub fn configureTransformOptionsForSpeedy(allocator: *std.mem.Allocator, _args: 
 // Its unavailable on Linux
 pub const VirtualMachine = struct {
     const RequireCacheType = std.AutoHashMap(u32, *Module);
-    root: js.JSGlobalContextRef,
+    // root: js.JSGlobalContextRef,
     ctx: js.JSGlobalContextRef = undefined,
     group: js.JSContextGroupRef,
     allocator: *std.mem.Allocator,
@@ -151,8 +174,6 @@ pub const VirtualMachine = struct {
     ) !*VirtualMachine {
         var group = js.JSContextGroupRetain(js.JSContextGroupCreate());
 
-        var ctx = js.JSGlobalContextRetain(js.JSGlobalContextCreateInGroup(group, null));
-
         var log: *logger.Log = undefined;
         if (_log) |__log| {
             log = __log;
@@ -170,10 +191,10 @@ pub const VirtualMachine = struct {
                 try configureTransformOptionsForSpeedy(allocator, _args),
                 existing_bundle,
             ),
-            .node_module_list = try allocator.create(Module.NodeModuleList),
+            .node_module_list = null,
             .log = log,
             .group = group,
-            .root = ctx,
+
             .require_cache = RequireCacheType.init(allocator),
             .global = global,
         };
@@ -189,7 +210,9 @@ pub const VirtualMachine = struct {
         Properties.init();
         if (vm.bundler.options.node_modules_bundle) |bundle| {
             vm.node_modules = bundle;
+            vm.node_module_list = try allocator.create(Module.NodeModuleList);
             try Module.NodeModuleList.create(vm, bundle, vm.node_module_list.?);
+            vm.global.ctx = vm.node_module_list.?.bundle_ctx;
         }
 
         return vm;
@@ -425,6 +448,7 @@ pub const Module = struct {
         require_cache: []?*Module,
 
         exports_function_call: js.JSObjectRef = null,
+        console: js.JSObjectRef = null,
 
         const RequireBundleClassName = "requireFromBundle";
         var require_bundle_class_def: js.JSClassDefinition = undefined;
@@ -650,6 +674,24 @@ pub const Module = struct {
             return module.internalGetExports(js.JSContextGetGlobalContext(ctx));
         }
 
+        pub fn getConsole(
+            ctx: js.JSContextRef,
+            thisObject: js.JSObjectRef,
+            prop: js.JSStringRef,
+            exception: js.ExceptionRef,
+        ) callconv(.C) js.JSValueRef {
+            var this = @ptrCast(
+                *NodeModuleList,
+                @alignCast(@alignOf(*NodeModuleList), js.JSObjectGetPrivate(thisObject) orelse return null),
+            );
+
+            if (this.console == null) {
+                this.console = js.JSObjectMake(js.JSContextGetGlobalContext(ctx), this.vm.global.console_class, this.vm.global);
+            }
+
+            return this.console;
+        }
+
         pub fn create(vm: *VirtualMachine, bundle: *const NodeModuleBundle, node_module_list: *NodeModuleList) !void {
             var size: usize = 0;
             var longest_size: usize = 0;
@@ -664,7 +706,13 @@ pub const Module = struct {
                 size += this_size;
                 longest_size = std.math.max(this_size, longest_size);
             }
-            var static_properties = try vm.allocator.alloc(js.JSStaticValue, bundle.bundle.modules.len + 1);
+            var static_properties = try vm.allocator.alloc(js.JSStaticValue, bundle.bundle.modules.len + 2);
+            static_properties[static_properties.len - 2] = js.JSStaticValue{
+                .name = Properties.UTF8.console[0.. :0],
+                .getProperty = getConsole,
+                .setProperty = null,
+                .attributes = .kJSPropertyAttributeNone,
+            };
             static_properties[static_properties.len - 1] = std.mem.zeroes(js.JSStaticValue);
             var utf8 = try vm.allocator.alloc(u8, size + std.math.max(longest_size, 32));
             std.mem.set(u8, utf8, 0);
@@ -780,20 +828,20 @@ pub const Module = struct {
 
         const len = js.JSStringGetLength(arguments[0]);
 
-        // if (!require_buf_loaded) {
-        //     require_buf = MutableString.init(this.vm.allocator, len + 1) catch unreachable;
-        //     require_buf_loaded = true;
-        // } else {
-        //     require_buf.reset();
-        //     require_buf.growIfNeeded(len + 1) catch {};
-        // }
+        if (!require_buf_loaded) {
+            require_buf = MutableString.init(this.vm.allocator, len + 1) catch unreachable;
+            require_buf_loaded = true;
+        } else {
+            require_buf.reset();
+            require_buf.growIfNeeded(len + 1) catch {};
+        }
 
-        // require_buf.list.resize(this.vm.allocator, len + 1) catch unreachable;
+        require_buf.list.resize(this.vm.allocator, len + 1) catch unreachable;
 
-        var require_buf_ = this.vm.allocator.alloc(u8, len + 1) catch unreachable;
-        var end = js.JSStringGetUTF8CString(arguments[0], require_buf_.ptr, require_buf_.len);
-        // var end = js.JSStringGetUTF8CString(arguments[0], require_buf.list.items.ptr, require_buf.list.items.len);
-        var import_path = require_buf_[0 .. end - 1];
+        // var require_buf_ = this.vm.allocator.alloc(u8, len + 1) catch unreachable;
+        // var end = js.JSStringGetUTF8CString(arguments[0], require_buf_.ptr, require_buf_.len);
+        var end = js.JSStringGetUTF8CString(arguments[0], require_buf.list.items.ptr, require_buf.list.items.len);
+        var import_path = require_buf.list.items[0 .. end - 1];
         var module = this;
 
         if (this.vm.bundler.linker.resolver.resolve(module.path.name.dirWithTrailingSlash(), import_path, .require)) |resolved| {
@@ -803,13 +851,13 @@ pub const Module = struct {
 
             switch (load_result) {
                 .Module => |new_module| {
-                    if (isDebug) {
-                        Output.prettyln(
-                            "Input: {s}\nOutput: {s}",
-                            .{ import_path, load_result.Module.path.text },
-                        );
-                        Output.flush();
-                    }
+                    // if (isDebug) {
+                    //     Output.prettyln(
+                    //         "Input: {s}\nOutput: {s}",
+                    //         .{ import_path, load_result.Module.path.text },
+                    //     );
+                    //     Output.flush();
+                    // }
                     return new_module.internalGetExports(js.JSContextGetGlobalContext(ctx));
                 },
                 .Path => |path| {
@@ -862,7 +910,7 @@ pub const Module = struct {
 
         exports_class_ref = js.JSClassRetain(js.JSClassCreate(&ExportsClass));
 
-        module_class_def = ModuleClass.define(vm.root);
+        module_class_def = ModuleClass.define();
         module_class = js.JSClassRetain(js.JSClassCreate(&module_class_def));
     }
 
@@ -913,19 +961,18 @@ pub const Module = struct {
             .vm = vm,
         };
         module.ref = js.JSObjectMake(global_ctx, Module.module_class, module);
-
         js.JSValueProtect(global_ctx, module.ref);
-
-        if (!module_wrapper_loaded) {
-            module_wrapper_params[0] = js.JSStringCreateWithUTF8CString(Properties.UTF8.module[0.. :0]);
-            module_wrapper_params[1] = js.JSStringCreateWithUTF8CString(Properties.UTF8.exports[0.. :0]);
-            module_wrapper_loaded = true;
-        }
+        // if (!module_wrapper_loaded) {
+        module_wrapper_params[0] = js.JSStringRetain(js.JSStringCreateWithUTF8CString(Properties.UTF8.module[0.. :0]));
+        module_wrapper_params[1] = js.JSStringRetain(js.JSStringCreateWithUTF8CString(Properties.UTF8.exports[0.. :0]));
+        //     module_wrapper_loaded = true;
+        // }
 
         var module_wrapper_args: [2]js.JSValueRef = undefined;
         module_wrapper_args[0] = module.ref;
         module_wrapper_args[1] = module.internalGetExports(global_ctx);
         js.JSValueProtect(global_ctx, module_wrapper_args[1]);
+
         var except: js.JSValueRef = null;
         go: {
             var commonjs_wrapper = js.JSObjectMakeFunction(
@@ -942,13 +989,14 @@ pub const Module = struct {
             if (except != null) {
                 break :go;
             }
+
             // var module = {exports: {}}; ((module, exports) => {
             _ = js.JSObjectCallAsFunction(call_ctx, commonjs_wrapper, null, 2, &module_wrapper_args, &except);
             // module.exports = exports;
             // })(module, module.exports);
 
             // module.exports = module_wrapper_args[1];
-            js.JSValueProtect(global_ctx, module.exports);
+
             js.JSValueUnprotect(global_ctx, commonjs_wrapper);
         }
         if (except != null) {
@@ -1000,17 +1048,17 @@ pub const Module = struct {
             .tsx,
             .json,
             => {
-                const package_json_ = resolved.package_json orelse brk: {
-                    // package_json is sometimes null when we're loading as an absolute path
-                    if (resolved.isLikelyNodeModule()) {
-                        break :brk vm.bundler.resolver.packageJSONForResolvedNodeModule(&resolved);
-                    }
-                    break :brk null;
-                };
+                if (vm.node_modules) |node_modules| {
+                    const package_json_ = resolved.package_json orelse brk: {
+                        // package_json is sometimes null when we're loading as an absolute path
+                        if (resolved.isLikelyNodeModule()) {
+                            break :brk vm.bundler.resolver.packageJSONForResolvedNodeModule(&resolved);
+                        }
+                        break :brk null;
+                    };
 
-                if (package_json_) |package_json| {
-                    if (package_json.hash > 0) {
-                        if (vm.node_modules) |node_modules| {
+                    if (package_json_) |package_json| {
+                        if (package_json.hash > 0) {
                             if (node_modules.getPackageIDByName(package_json.name)) |possible_package_ids| {
                                 const package_id: ?u32 = brk: {
                                     for (possible_package_ids) |pid| {
@@ -1105,7 +1153,7 @@ pub const Module = struct {
                     vm.log,
                     source_code_printer.ctx.sentinel,
                     path,
-                    vm.global.ctx,
+                    js.JSContextGetGlobalContext(ctx),
                     ctx,
                     ctx,
                     exception,
@@ -1287,7 +1335,6 @@ pub const GlobalObject = struct {
     console_definition: js.JSClassDefinition = undefined,
     global_class_def: js.JSClassDefinition = undefined,
     global_class: js.JSClassRef = undefined,
-    root_obj: js.JSObjectRef = undefined,
 
     pub const ConsoleClass = NewClass(
         GlobalObject,
@@ -1324,42 +1371,28 @@ pub const GlobalObject = struct {
         obj: js.JSObjectRef,
         exception: js.ExceptionRef,
     ) js.JSValueRef {
-        return global.console;
-    }
+        // if (global.console == null) {
+        //     global.console = js.JSObjectMake(js.JSContextGetGlobalContext(ctx), global.console_class, global);
+        //     js.JSValueProtect(js.JSContextGetGlobalContext(ctx), global.console);
+        // }
 
-    pub fn onMissingProperty(
-        global: *GlobalObject,
-        ctx: js.JSContextRef,
-        obj: js.JSObjectRef,
-        prop: js.JSStringRef,
-        exception: js.ExceptionRef,
-    ) js.JSValueRef {
-        if (js.JSObjectHasProperty(ctx, global.root_obj, prop)) {
-            return js.JSObjectGetProperty(ctx, global.root_obj, prop, exception);
-        } else {
-            return js.JSValueMakeUndefined(ctx);
-        }
+        return js.JSObjectMake(js.JSContextGetGlobalContext(ctx), global.console_class, global);
     }
 
     pub fn boot(global: *GlobalObject) !void {
-        var private: ?*c_void = global;
-        global.root_obj = js.JSContextGetGlobalObject(global.vm.root);
-
-        global.console_definition = ConsoleClass.define(global.vm.root);
+        global.console_definition = ConsoleClass.define();
         global.console_class = js.JSClassRetain(js.JSClassCreate(&global.console_definition));
-        global.console = js.JSObjectMake(global.vm.root, global.console_class, private);
 
-        global.global_class_def = GlobalClass.define(global.vm.root);
+        global.global_class_def = GlobalClass.define();
         global.global_class = js.JSClassRetain(js.JSClassCreate(&global.global_class_def));
 
         global.ctx = js.JSGlobalContextRetain(js.JSGlobalContextCreateInGroup(global.vm.group, global.global_class));
 
-        std.debug.assert(js.JSObjectSetPrivate(js.JSContextGetGlobalObject(global.ctx), private));
-        global.ref = js.JSContextGetGlobalObject(global.ctx);
+        std.debug.assert(js.JSObjectSetPrivate(js.JSContextGetGlobalObject(global.ctx), global));
 
         if (!printer_buf_loaded) {
             printer_buf_loaded = true;
-            printer_buf = try MutableString.init(global.vm.allocator, 0);
+            printer_buf = try MutableString.init(global.vm.allocator, 4096);
         }
     }
 
@@ -1562,7 +1595,7 @@ pub fn NewClass(
             exception: js.ExceptionRef,
         ) callconv(.C) js.JSValueRef {
             var instance_pointer_ = js.JSObjectGetPrivate(obj);
-            if (instance_pointer_ == null) return js.JSValueMakeUndefined(ctx);
+            if (instance_pointer_ == null) return null;
             var instance_pointer = instance_pointer_.?;
             var ptr = @ptrCast(
                 *ZigType,
@@ -1610,7 +1643,7 @@ pub fn NewClass(
                     exception: js.ExceptionRef,
                 ) callconv(.C) js.JSValueRef {
                     var instance_pointer_ = js.JSObjectGetPrivate(obj);
-                    if (instance_pointer_ == null) return js.JSValueMakeUndefined(ctx);
+                    if (instance_pointer_ == null) return null;
                     var this: *ZigType = @ptrCast(
                         *ZigType,
                         @alignCast(
@@ -1634,7 +1667,7 @@ pub fn NewClass(
                             )(
                                 this,
                                 ctx,
-                                this.ref,
+                                obj,
                                 exception,
                             );
                         },
@@ -1648,7 +1681,7 @@ pub fn NewClass(
                             )(
                                 this,
                                 ctx,
-                                this.ref,
+                                obj,
                                 prop,
                                 exception,
                             );
@@ -1692,7 +1725,7 @@ pub fn NewClass(
                             )(
                                 this,
                                 ctx,
-                                this.ref,
+                                obj,
                                 prop,
                                 value,
                                 exception,
@@ -1704,16 +1737,14 @@ pub fn NewClass(
             };
         }
 
-        pub fn define(ctx: js.JSContextRef) js.JSClassDefinition {
+        pub fn define() js.JSClassDefinition {
             var def = js.kJSClassDefinitionEmpty;
 
             if (static_functions.len > 0) {
+                std.mem.set(js.JSStaticFunction, &static_functions, std.mem.zeroes(js.JSStaticFunction));
+
                 inline for (function_name_literals) |function_name, i| {
                     var callback = To.JS.Callback(ZigType, @field(staticFunctions, function_names[i])).rfn;
-                    function_name_refs[i] = js.JSStringCreateWithCharactersNoCopy(
-                        function_name.ptr,
-                        function_name.len,
-                    );
 
                     static_functions[i] = js.JSStaticFunction{
                         .name = (function_names[i][0.. :0]).ptr,
@@ -1725,6 +1756,7 @@ pub fn NewClass(
                     //     instance_functions[i] = function;
                     // }
                 }
+
                 def.staticFunctions = &static_functions;
             }
 

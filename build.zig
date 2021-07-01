@@ -114,11 +114,12 @@ pub fn build(b: *std.build.Builder) void {
     exe.setTarget(target);
     exe.setBuildMode(mode);
     b.install_path = output_dir;
-
+    var javascript: @TypeOf(exe) = undefined;
     // exe.want_lto = true;
     if (!target.getCpuArch().isWasm()) {
         addPicoHTTP(exe, cwd);
-        var javascript = b.addExecutable("spjs", "src/main_javascript.zig");
+        javascript = b.addExecutable("spjs", "src/main_javascript.zig");
+        addPicoHTTP(javascript, cwd);
         javascript.packages = std.ArrayList(std.build.Pkg).fromOwnedSlice(std.heap.c_allocator, std.heap.c_allocator.dupe(std.build.Pkg, exe.packages.items) catch unreachable);
         javascript.setOutputDir(output_dir);
         javascript.setBuildMode(mode);
@@ -131,10 +132,13 @@ pub fn build(b: *std.build.Builder) void {
         }
 
         javascript.strip = false;
-        javascript.install();
     }
 
     exe.install();
+
+    if (!target.getCpuArch().isWasm()) {
+        javascript.install();
+    }
 
     const run_cmd = exe.run();
     run_cmd.step.dependOn(b.getInstallStep());

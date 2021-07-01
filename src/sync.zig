@@ -465,7 +465,7 @@ pub fn Channel(
                     if (self.is_closed)
                         return error.Closed;
 
-                    self.buffer.writeItem(item) catch |err| {
+                    self.buffer.write(items) catch |err| {
                         if (buffer_type == .Dynamic)
                             return err;
                         break :blk false;

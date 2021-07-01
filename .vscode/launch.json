@@ -1,6 +1,8 @@
 {
   "version": "0.2.0",
   "configurations": [
+    
+
     // {
     //   "type": "lldb",
     //   "request": "launch",
@@ -65,9 +67,10 @@
         "--resolve=lazy",
         "--outdir=public",
         "--serve",
-        "--public-url=http://localhost:9000/"
+        "--public-url=http://localhost:9000/",
+        "--framework=./framework.tsx"
       ],
-      "cwd": "${workspaceFolder}/demos/simple-react",
+      "cwd": "${workspaceFolder}/demos/css-stress-test",
       "console": "internalConsole"
     },
     {

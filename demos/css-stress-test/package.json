@@ -27,6 +27,7 @@
     }
   },
   "devDependencies": {
+    "@microsoft/fetch-event-source": "^2.0.1",
     "@snowpack/plugin-react-refresh": "^2.5.0",
     "typescript": "^4.3.4"
   }

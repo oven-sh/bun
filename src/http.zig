@@ -12,6 +12,7 @@ const logger = @import("logger.zig");
 const Fs = @import("./fs.zig");
 const Options = @import("./options.zig");
 const Css = @import("css_scanner.zig");
+const NodeModuleBundle = @import("./node_module_bundle.zig").NodeModuleBundle;
 
 pub fn constStrToU8(s: string) []u8 {
     return @intToPtr([*]u8, @ptrToInt(s.ptr))[0..s.len];
@@ -31,8 +32,8 @@ const picohttp = @import("picohttp");
 const Header = picohttp.Header;
 const Request = picohttp.Request;
 const Response = picohttp.Response;
-const Headers = picohttp.Headers;
-const MimeType = @import("http/mime_type.zig");
+pub const Headers = picohttp.Headers;
+pub const MimeType = @import("http/mime_type.zig");
 const Bundler = bundler.ServeBundler;
 const Websocket = @import("./http/websocket.zig");
 const js_printer = @import("js_printer.zig");
@@ -41,6 +42,8 @@ const watcher = @import("./watcher.zig");
 threadlocal var req_headers_buf: [100]picohttp.Header = undefined;
 threadlocal var res_headers_buf: [100]picohttp.Header = undefined;
 const sync = @import("./sync.zig");
+const JavaScript = @import("./javascript/jsc/JavaScript.zig");
+const js = @import("javascript/jsc/javascript.zig");
 
 pub const Watcher = watcher.NewWatcher(*Server);
 
@@ -189,9 +192,22 @@ pub const RequestContext = struct {
     watcher: *Watcher,
     timer: std.time.Timer,
 
+    full_url: [:0]const u8 = "",
     res_headers_count: usize = 0,
 
     pub const bundle_prefix = "__speedy";
+
+    pub fn getFullURL(this: *RequestContext) [:0]const u8 {
+        if (this.full_url.len == 0) {
+            if (this.bundler.options.public_url.len > 0) {
+                this.full_url = std.fmt.allocPrintZ(this.allocator, "{s}{s}", .{ this.bundler.options.public_url, this.request.path }) catch unreachable;
+            } else {
+                this.full_url = this.allocator.dupeZ(u8, this.request.path) catch unreachable;
+            }
+        }
+
+        return this.full_url;
+    }
 
     pub fn header(ctx: *RequestContext, comptime name: anytype) ?Header {
         if (name.len < 17) {
@@ -246,6 +262,17 @@ pub const RequestContext = struct {
         try ctx.flushHeaders();
     }
 
+    pub fn clearHeaders(
+        this: *RequestContext,
+    ) !void {
+        this.res_headers_count = 0;
+    }
+
+    pub fn appendHeaderSlow(this: *RequestContext, name: string, value: string) !void {
+        res_headers_buf[this.res_headers_count] = picohttp.Header{ .name = name, .value = value };
+        this.res_headers_count += 1;
+    }
+
     threadlocal var resp_header_out_buf: [4096]u8 = undefined;
     pub fn flushHeaders(ctx: *RequestContext) !void {
         if (ctx.res_headers_count == 0) return;
@@ -286,6 +313,20 @@ pub const RequestContext = struct {
     pub fn writeStatus(ctx: *RequestContext, comptime code: HTTPStatusCode) !void {
         _ = try ctx.writeSocket(comptime printStatusLine(code), SOCKET_FLAGS);
         ctx.status = code;
+    }
+
+    threadlocal var status_buf: [std.fmt.count("HTTP/1.1 {d} {s}\r\n", .{ 200, "OK" })]u8 = undefined;
+    pub fn writeStatusSlow(ctx: *RequestContext, code: u16) !void {
+        _ = try ctx.writeSocket(
+            try std.fmt.bufPrint(
+                &status_buf,
+                "HTTP/1.1 {d} {s}\r\n",
+                .{ code, if (code > 299) "HM" else "OK" },
+            ),
+            SOCKET_FLAGS,
+        );
+
+        ctx.status = @truncate(HTTPStatusCode, code);
     }
 
     pub fn init(
@@ -589,6 +630,132 @@ pub const RequestContext = struct {
                     };
                 },
             }
+        }
+    };
+
+    pub const JavaScriptHandler = struct {
+        ctx: RequestContext,
+        conn: tcp.Connection,
+
+        pub const HandlerThread = struct {
+            args: Api.TransformOptions,
+            existing_bundle: ?*NodeModuleBundle,
+            log: ?*logger.Log = null,
+        };
+
+        pub const Channel = sync.Channel(*JavaScriptHandler, .{ .Static = 100 });
+        pub var channel: Channel = undefined;
+        var has_loaded_channel = false;
+        pub var javascript_disabled = false;
+        var thread: std.Thread = undefined;
+        pub fn spawnThread(handler: HandlerThread) !void {
+            _ = try std.Thread.spawn(spawn, handler);
+        }
+
+        pub fn spawn(handler: HandlerThread) void {
+            var _handler = handler;
+            _spawn(&_handler) catch {};
+        }
+
+        pub fn _spawn(handler: *HandlerThread) !void {
+            defer {
+                javascript_disabled = true;
+            }
+
+            var stdout = std.io.getStdOut();
+            // var stdout = std.io.bufferedWriter(stdout_file.writer());
+            var stderr = std.io.getStdErr();
+            // var stderr = std.io.bufferedWriter(stderr_file.writer());
+            var output_source = Output.Source.init(stdout, stderr);
+            // defer stdout.flush() catch {};
+            // defer stderr.flush() catch {};
+            Output.Source.set(&output_source);
+            Output.enable_ansi_colors = stderr.isTty();
+            js_ast.Stmt.Data.Store.create(std.heap.c_allocator);
+            js_ast.Expr.Data.Store.create(std.heap.c_allocator);
+
+            defer Output.flush();
+            var boot = handler.args.javascript_framework_file.?;
+            var vm = try JavaScript.VirtualMachine.init(std.heap.c_allocator, handler.args, handler.existing_bundle, handler.log);
+            defer vm.deinit();
+
+            var resolved_entry_point = try vm.bundler.resolver.resolve(
+                std.fs.path.dirname(boot).?,
+                boot,
+                .entry_point,
+            );
+            JavaScript.VirtualMachine.instance = vm;
+            var exception: js.JSValueRef = null;
+            var load_result = try JavaScript.Module.loadFromResolveResult(vm, vm.ctx, resolved_entry_point, &exception);
+
+            // We've already printed the exception here!
+            if (exception != null) {
+                Output.prettyErrorln(
+                    "JavaScript VM failed to start",
+                    .{},
+                );
+                Output.flush();
+
+                return;
+            }
+
+            switch (load_result) {
+                .Module => {
+                    Output.prettyln(
+                        "Loaded JavaScript VM: \"{s}\"",
+                        .{vm.bundler.fs.relativeTo(boot)},
+                    );
+                    Output.flush();
+                },
+                .Path => {
+                    Output.prettyErrorln(
+                        "Error loading JavaScript VM: Expected framework to be a path to a JavaScript-like file but received \"{s}\"",
+                        .{boot},
+                    );
+                    Output.flush();
+                    return;
+                },
+            }
+
+            js_ast.Stmt.Data.Store.reset();
+            js_ast.Expr.Data.Store.reset();
+
+            try runLoop(vm);
+        }
+
+        pub fn runLoop(vm: *JavaScript.VirtualMachine) !void {
+            while (true) {
+                defer {
+                    js_ast.Stmt.Data.Store.reset();
+                    js_ast.Expr.Data.Store.reset();
+                }
+                var handler: *JavaScriptHandler = try channel.readItem();
+                try JavaScript.EventListenerMixin.emitFetchEvent(vm, &handler.ctx);
+            }
+        }
+
+        var one: [1]*JavaScriptHandler = undefined;
+        pub fn enqueue(ctx: *RequestContext, server: *Server) !void {
+            var clone = try ctx.allocator.create(JavaScriptHandler);
+            clone.ctx = ctx.*;
+            clone.conn = ctx.conn.*;
+            clone.ctx.conn = &clone.conn;
+
+            if (!has_loaded_channel) {
+                has_loaded_channel = true;
+                channel = Channel.init();
+                try JavaScriptHandler.spawnThread(
+                    HandlerThread{
+                        .args = server.transform_options,
+                        .existing_bundle = server.bundler.options.node_modules_bundle,
+                        .log = &server.log,
+                    },
+                );
+            }
+
+            defer ctx.controlled = true;
+            one[0] = clone;
+            _ = try channel.write(&one);
         }
     };
 
@@ -943,6 +1110,22 @@ pub const RequestContext = struct {
         }
     };
 
+    pub fn writeETag(this: *RequestContext, buffer: anytype) !bool {
+        const strong_etag = std.hash.Wyhash.hash(1, buffer);
+        const etag_content_slice = std.fmt.bufPrintIntToSlice(strong_etag_buffer[0..49], strong_etag, 16, .upper, .{});
+
+        this.appendHeader("ETag", etag_content_slice);
+
+        if (this.header("If-None-Match")) |etag_header| {
+            if (std.mem.eql(u8, etag_content_slice, etag_header.value)) {
+                try this.sendNotModified();
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     pub fn handleWebsocket(ctx: *RequestContext) anyerror!void {
         ctx.controlled = true;
         var handler = try WebsocketHandler.addWebsocket(ctx);
@@ -1228,18 +1411,8 @@ pub const RequestContext = struct {
                 }
 
                 if (FeatureFlags.strong_etags_for_built_files) {
-                    // TODO: don't hash runtime.js
-                    const strong_etag = std.hash.Wyhash.hash(1, buffer);
-                    const etag_content_slice = std.fmt.bufPrintIntToSlice(strong_etag_buffer[0..49], strong_etag, 16, .upper, .{});
-
-                    ctx.appendHeader("ETag", etag_content_slice);
-
-                    if (ctx.header("If-None-Match")) |etag_header| {
-                        if (std.mem.eql(u8, etag_content_slice, etag_header.value)) {
-                            try ctx.sendNotModified();
-                            return;
-                        }
-                    }
+                    const did_send = ctx.writeETag(buffer) catch false;
+                    if (did_send) return;
                 }
 
                 if (buffer.len == 0) {
@@ -1313,6 +1486,7 @@ pub const Server = struct {
     bundler: Bundler,
     watcher: *Watcher,
     timer: std.time.Timer = undefined,
+    transform_options: Api.TransformOptions,
 
     pub fn adjustUlimit() !void {
         var limit = try std.os.getrlimit(.NOFILE);
@@ -1465,17 +1639,25 @@ pub const Server = struct {
             req_ctx.keep_alive = false;
         }
 
-        req_ctx.handleRequest() catch |err| {
-            switch (err) {
-                error.ModuleNotFound => {
-                    req_ctx.sendNotFound() catch {};
-                },
-                else => {
-                    Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
-                    return;
-                },
+        if (req_ctx.url.extname.len == 0 and !RequestContext.JavaScriptHandler.javascript_disabled) {
+            if (server.transform_options.javascript_framework_file != null) {
+                RequestContext.JavaScriptHandler.enqueue(&req_ctx, server) catch unreachable;
             }
-        };
+        }
+
+        if (!req_ctx.controlled) {
+            req_ctx.handleRequest() catch |err| {
+                switch (err) {
+                    error.ModuleNotFound => {
+                        req_ctx.sendNotFound() catch {};
+                    },
+                    else => {
+                        Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
+                        return;
+                    },
+                }
+            };
+        }
 
         if (!req_ctx.controlled) {
             const status = req_ctx.status orelse @intCast(HTTPStatusCode, 500);
@@ -1503,10 +1685,29 @@ pub const Server = struct {
             .log = log,
             .bundler = undefined,
             .watcher = undefined,
+            .transform_options = options,
             .timer = try std.time.Timer.start(),
         };
         server.bundler = try Bundler.init(allocator, &server.log, options, null);
         server.bundler.configureLinker();
+
+        load_framework: {
+            if (options.javascript_framework_file) |framework_file_path| {
+                var framework_file = server.bundler.normalizeEntryPointPath(framework_file_path);
+                var resolved = server.bundler.resolver.resolve(
+                    server.bundler.fs.top_level_dir,
+                    framework_file,
+                    .entry_point,
+                ) catch |err| {
+                    Output.prettyError("Failed to load framework: {s}", .{@errorName(err)});
+                    Output.flush();
+                    server.transform_options.javascript_framework_file = null;
+                    break :load_framework;
+                };
+
+                server.transform_options.javascript_framework_file = try server.allocator.dupe(u8, resolved.path_pair.primary.text);
+            }
+        }
 
         try server.initWatcher();
 

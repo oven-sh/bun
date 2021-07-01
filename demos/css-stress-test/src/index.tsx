@@ -1,5 +1,3 @@
-import ReactDOMServer from "react-dom/server.browser";
-
 import { Main } from "./main";
 import classNames from "classnames";
 const Base = ({}) => {
@@ -15,10 +13,6 @@ function startReact() {
   ReactDOM.render(<Base />, document.querySelector("#reactroot"));
 }
 
-function ssr() {
-  console.log(ReactDOMServer.renderToString(<Base />));
-}
-
 if (typeof window !== "undefined") {
   console.log("HERE!!");
   globalThis.addEventListener("DOMContentLoaded", () => {
@@ -26,8 +20,6 @@ if (typeof window !== "undefined") {
   });
 
   startReact();
-} else {
-  ssr();
 }
 
 export { Base };

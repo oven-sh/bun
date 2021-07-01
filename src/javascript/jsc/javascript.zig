@@ -14,6 +14,7 @@ const http = @import("../../http.zig");
 
 usingnamespace @import("./node_env_buf_map.zig");
 usingnamespace @import("./base.zig");
+usingnamespace @import("./webcore/response.zig");
 
 const DefaultSpeedyDefines = struct {
     pub const Keys = struct {
@@ -138,6 +139,15 @@ pub const VirtualMachine = struct {
     log: *logger.Log,
     watcher: ?*http.Watcher = null,
 
+    event_listeners: EventListenerMixin.Map,
+
+    pub threadlocal var instance: *VirtualMachine = undefined;
+
+    pub fn deinit(vm: *VirtualMachine) void {
+        js.JSGlobalContextRelease(vm.ctx);
+        js.JSContextGroupRelease(vm.group);
+    }
+
     pub fn init(
         allocator: *std.mem.Allocator,
         _args: Api.TransformOptions,
@@ -167,6 +177,8 @@ pub const VirtualMachine = struct {
             .log = log,
             .group = group,
 
+            .event_listeners = EventListenerMixin.Map.init(allocator),
+
             .require_cache = RequireCacheType.init(allocator),
             .global = global,
         };
@@ -190,8 +202,6 @@ pub const VirtualMachine = struct {
         return vm;
     }
 };
-
-
 
 pub const Object = struct {
     ref: js.jsObjectRef,
@@ -525,13 +535,41 @@ pub const Module = struct {
                 size += this_size;
                 longest_size = std.math.max(this_size, longest_size);
             }
-            var static_properties = try vm.allocator.alloc(js.JSStaticValue, bundle.bundle.modules.len + 2);
-            static_properties[static_properties.len - 2] = js.JSStaticValue{
+            var static_properties = try vm.allocator.alloc(js.JSStaticValue, bundle.bundle.modules.len + 1 + GlobalObject.GlobalClass.static_value_count);
+            var copied_static_values = static_properties[bundle.bundle.modules.len..];
+            copied_static_values = copied_static_values[0 .. copied_static_values.len - 1];
+
+            copied_static_values[0] = js.JSStaticValue{
                 .name = Properties.UTF8.console[0.. :0],
                 .getProperty = getConsole,
                 .setProperty = null,
                 .attributes = .kJSPropertyAttributeNone,
             };
+
+            copied_static_values[1] = js.JSStaticValue{
+                .name = Response.Class.definition.className,
+                .getProperty = Response.Class.RawGetter(NodeModuleList).getter,
+                .setProperty = null,
+                .attributes = .kJSPropertyAttributeNone,
+            };
+
+            copied_static_values[2] = js.JSStaticValue{
+                .name = Headers.Class.definition.className,
+                .getProperty = Headers.Class.RawGetter(NodeModuleList).getter,
+                .setProperty = null,
+                .attributes = .kJSPropertyAttributeNone,
+            };
+
+            copied_static_values[3] = js.JSStaticValue{
+                .name = Request.Class.definition.className,
+                .getProperty = Request.Class.RawGetter(NodeModuleList).getter,
+                .setProperty = null,
+                .attributes = .kJSPropertyAttributeNone,
+            };
+
+            // copied_static_values must match GlobalObject.GlobalClass.static_value_count
+            std.debug.assert(copied_static_values.len == 4);
+
             static_properties[static_properties.len - 1] = std.mem.zeroes(js.JSStaticValue);
             var utf8 = try vm.allocator.alloc(u8, size + std.math.max(longest_size, 32));
             std.mem.set(u8, utf8, 0);
@@ -571,6 +609,7 @@ pub const Module = struct {
             var node_module_global_class_def = js.kJSClassDefinitionEmpty;
             node_module_global_class_def.staticValues = static_properties.ptr;
             node_module_global_class_def.className = node_module_global_class_name[0.. :0];
+            node_module_global_class_def.staticFunctions = GlobalObject.GlobalClass.definition.staticFunctions;
             // node_module_global_class_def.parentClass = vm.global.global_class;
 
             var property_getters = try vm.allocator.alloc(js.JSObjectRef, bundle.bundle.modules.len);
@@ -1145,6 +1184,142 @@ pub const Module = struct {
     pub const RequireObject = struct {};
 };
 
+pub const EventListenerMixin = struct {
+    threadlocal var event_listener_names_buf: [128]u8 = undefined;
+    pub const List = std.ArrayList(js.JSObjectRef);
+    pub const Map = std.AutoHashMap(EventListenerMixin.EventType, EventListenerMixin.List);
+
+    pub const EventType = enum {
+        fetch,
+
+        pub fn match(str: string) ?EventType {
+            if (strings.eqlComptime(str, "fetch")) {
+                return EventType.fetch;
+            }
+
+            return null;
+        }
+    };
+
+    pub fn emitFetchEventError(
+        request: *http.RequestContext,
+        comptime fmt: string,
+        args: anytype,
+    ) void {
+        Output.prettyErrorln(fmt, args);
+        request.sendInternalError(error.FetchEventError) catch {};
+    }
+
+    pub fn emitFetchEvent(
+        vm: *VirtualMachine,
+        request_context: *http.RequestContext,
+    ) !void {
+        var listeners = vm.event_listeners.get(EventType.fetch) orelse return emitFetchEventError(
+            request_context,
+            "Missing \"fetch\" handler. Did you run \"addEventListener(\"fetch\", (event) => {{}})\"?",
+            .{},
+        );
+        if (listeners.items.len == 0) return emitFetchEventError(
+            request_context,
+            "Missing \"fetch\" handler. Did you run \"addEventListener(\"fetch\", (event) => {{}})\"?",
+            .{},
+        );
+
+        var exception: js.JSValueRef = null;
+        var fetch_event = try vm.allocator.create(FetchEvent);
+        fetch_event.* = FetchEvent{
+            .request_context = request_context,
+            .request = Request{ .request_context = request_context },
+        };
+
+        var fetch_args: [1]js.JSObjectRef = undefined;
+        for (listeners.items) |listener| {
+            fetch_args[0] = js.JSObjectMake(
+                vm.ctx,
+                FetchEvent.Class.get().*,
+                fetch_event,
+            );
+
+            _ = js.JSObjectCallAsFunction(
+                vm.ctx,
+                listener,
+                js.JSContextGetGlobalObject(vm.ctx),
+                1,
+                &fetch_args,
+                &exception,
+            );
+            if (request_context.has_called_done) {
+                break;
+            }
+        }
+
+        if (exception != null) {
+            var message = js.JSValueToStringCopy(vm.ctx, exception, null);
+            defer js.JSStringRelease(message);
+            var buf = vm.allocator.alloc(u8, js.JSStringGetLength(message) + 1) catch unreachable;
+            defer vm.allocator.free(buf);
+            var note = buf[0 .. js.JSStringGetUTF8CString(message, buf.ptr, buf.len) - 1];
+
+            Output.prettyErrorln("<r><red>error<r>: <b>{s}<r>", .{note});
+            Output.flush();
+
+            if (!request_context.has_called_done) {
+                request_context.sendInternalError(error.JavaScriptError) catch {};
+            }
+            return;
+        }
+
+        if (!request_context.has_called_done) {
+            return emitFetchEventError(
+                request_context,
+                "\"fetch\" handler never called event.respondWith()",
+                .{},
+            );
+        }
+    }
+
+    pub fn addEventListener(
+        comptime Struct: type,
+    ) type {
+        const Handler = struct {
+            pub fn addListener(
+                ptr: *Struct,
+                ctx: js.JSContextRef,
+                function: js.JSObjectRef,
+                thisObject: js.JSObjectRef,
+                arguments: []const js.JSValueRef,
+                exception: js.ExceptionRef,
+            ) js.JSValueRef {
+                if (arguments.len == 0 or arguments.len == 1 or !js.JSValueIsString(ctx, arguments[0]) or !js.JSValueIsObject(ctx, arguments[arguments.len - 1]) or !js.JSObjectIsFunction(ctx, arguments[arguments.len - 1])) {
+                    return js.JSValueMakeUndefined(ctx);
+                }
+
+                const name_len = js.JSStringGetLength(arguments[0]);
+                if (name_len > event_listener_names_buf.len) {
+                    return js.JSValueMakeUndefined(ctx);
+                }
+
+                const name_used_len = js.JSStringGetUTF8CString(arguments[0], &event_listener_names_buf, event_listener_names_buf.len);
+                const name = event_listener_names_buf[0 .. name_used_len - 1];
+                const event = EventType.match(name) orelse return js.JSValueMakeUndefined(ctx);
+                var entry = VirtualMachine.instance.event_listeners.getOrPut(event) catch unreachable;
+
+                if (!entry.found_existing) {
+                    entry.value_ptr.* = List.initCapacity(VirtualMachine.instance.allocator, 1) catch unreachable;
+                }
+
+                var callback = arguments[arguments.len - 1];
+                js.JSValueProtect(ctx, callback);
+                entry.value_ptr.append(callback) catch unreachable;
+
+                return js.JSValueMakeUndefined(ctx);
+            }
+        };
+
+        return Handler;
+    }
+};
+
 pub const GlobalObject = struct {
     ref: js.JSObjectRef = undefined,
     vm: *VirtualMachine,
@@ -1176,9 +1351,14 @@ pub const GlobalObject = struct {
     pub const GlobalClass = NewClass(
         GlobalObject,
         "Global",
-        .{},
+        .{
+            .@"addEventListener" = EventListenerMixin.addEventListener(GlobalObject).addListener,
+        },
         .{
             .@"console" = getConsole,
+            .@"Request" = Request.Class.GetClass(GlobalObject).getter,
+            .@"Response" = Response.Class.GetClass(GlobalObject).getter,
+            .@"Headers" = Headers.Class.GetClass(GlobalObject).getter,
         },
         false,
         false,
@@ -1195,18 +1375,11 @@ pub const GlobalObject = struct {
         //     js.JSValueProtect(js.JSContextGetGlobalContext(ctx), global.console);
         // }
 
-        return js.JSObjectMake(js.JSContextGetGlobalContext(ctx), global.console_class, global);
+        return js.JSObjectMake(js.JSContextGetGlobalContext(ctx), ConsoleClass.get().*, global);
     }
 
     pub fn boot(global: *GlobalObject) !void {
-        global.console_definition = ConsoleClass.define();
-        global.console_class = js.JSClassRetain(js.JSClassCreate(&global.console_definition));
-
-        global.global_class_def = GlobalClass.define();
-        global.global_class = js.JSClassRetain(js.JSClassCreate(&global.global_class_def));
-
-        global.ctx = js.JSGlobalContextRetain(js.JSGlobalContextCreateInGroup(global.vm.group, global.global_class));
-
+        global.ctx = js.JSGlobalContextRetain(js.JSGlobalContextCreateInGroup(global.vm.group, GlobalObject.GlobalClass.get().*));
         std.debug.assert(js.JSObjectSetPrivate(js.JSContextGetGlobalObject(global.ctx), global));
 
         if (!printer_buf_loaded) {

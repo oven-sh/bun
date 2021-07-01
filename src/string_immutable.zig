@@ -367,6 +367,15 @@ pub fn containsNonBmpCodePoint(text: string) bool {
     return false;
 }
 
+// this is std.mem.trim except it doesn't forcibly change the slice to be const
+pub fn trim(slice: anytype, values_to_strip: []const u8) @TypeOf(slice) {
+    var begin: usize = 0;
+    var end: usize = slice.len;
+    while (begin < end and std.mem.indexOfScalar(u8, values_to_strip, slice[begin]) != null) : (begin += 1) {}
+    while (end > begin and std.mem.indexOfScalar(u8, values_to_strip, slice[end - 1]) != null) : (end -= 1) {}
+    return slice[begin..end];
+}
+
 pub fn containsNonBmpCodePointUTF16(_text: JavascriptString) bool {
     const n = _text.len;
     if (n > 0) {

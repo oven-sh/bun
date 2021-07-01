@@ -256,6 +256,7 @@ type uint32 = number;
     only_scan_dependencies?: ScanDependencyMode;
     generate_node_module_bundle?: boolean;
     node_modules_bundle_path?: string;
+    javascript_framework_file?: string;
   }
 
   export interface FileHandle {

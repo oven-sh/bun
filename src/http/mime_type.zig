@@ -29,6 +29,8 @@ pub const other = MimeType.init("application/octet-stream", .other);
 pub const css = MimeType.init("text/css", .css);
 pub const javascript = MimeType.init("text/javascript;charset=utf-8", .javascript);
 pub const ico = MimeType.init("image/vnd.microsoft.icon", .image);
+pub const html = MimeType.init("text/html;charset=utf-8", .html);
+pub const json = MimeType.init("application/json;charset=utf-8", .json);
 
 fn init(comptime str: string, t: Category) MimeType {
     return MimeType{
@@ -89,11 +91,11 @@ pub fn byExtension(ext: string) MimeType {
         },
         4 => {
             return switch (Four.match(ext)) {
-                Four.case("json") => MimeType.init("application/json;charset=utf-8", .json),
+                Four.case("json") => MimeType.json,
                 Four.case("jpeg") => MimeType.init("image/jpeg", .image),
                 Four.case("aiff") => MimeType.init("image/png", .image),
                 Four.case("tiff") => MimeType.init("image/tiff", .image),
-                Four.case("html") => MimeType.init("text/html;charset=utf-8", .html),
+                Four.case("html") => MimeType.html,
                 Four.case("wasm") => MimeType.init(
                     "application/wasm",
                     .wasm,

@@ -671,6 +671,10 @@ function decodeTransformOptions(bb) {
       result["node_modules_bundle_path"] = bb.readString();
       break;
 
+    case 22:
+      result["javascript_framework_file"] = bb.readString();
+      break;
+
     default:
       throw new Error("Attempted to parse invalid message");
     }
@@ -833,6 +837,12 @@ bb.writeByte(encoded);
   var value = message["node_modules_bundle_path"];
   if (value != null) {
     bb.writeByte(21);
+    bb.writeString(value);
+  }
+
+  var value = message["javascript_framework_file"];
+  if (value != null) {
+    bb.writeByte(22);
     bb.writeString(value);
   }
   bb.writeByte(0);

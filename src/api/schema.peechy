@@ -168,6 +168,8 @@ message TransformOptions {
   bool generate_node_module_bundle = 20;
 
   string node_modules_bundle_path = 21;
+
+  string javascript_framework_file = 22;
 }
 
 struct FileHandle {

@@ -33,6 +33,79 @@ pub const To = struct {
             return function;
         }
 
+        pub fn Finalize(
+            comptime ZigContextType: type,
+            comptime ctxfn: fn (
+                this: *ZigContextType,
+                object: js.JSObjectRef,
+            ) void,
+        ) type {
+            return struct {
+                pub fn rfn(
+                    object: js.JSObjectRef,
+                ) callconv(.C) void {
+                    var object_ptr_ = js.JSObjectGetPrivate(object);
+                    if (object_ptr_ == null) return;
+
+                    return ctxfn(
+                        @ptrCast(*ZigContextType, @alignCast(@alignOf(*ZigContextType), object_ptr_.?)),
+                        object,
+                    );
+                }
+            };
+        }
+
+        pub fn Constructor(
+            comptime ctxfn: fn (
+                ctx: js.JSContextRef,
+                function: js.JSObjectRef,
+                arguments: []const js.JSValueRef,
+                exception: js.ExceptionRef,
+            ) js.JSValueRef,
+        ) type {
+            return struct {
+                pub fn rfn(
+                    ctx: js.JSContextRef,
+                    function: js.JSObjectRef,
+                    argumentCount: usize,
+                    arguments: [*c]const js.JSValueRef,
+                    exception: js.ExceptionRef,
+                ) callconv(.C) js.JSValueRef {
+                    return ctxfn(
+                        ctx,
+                        function,
+                        if (arguments) |args| args[0..argumentCount] else &[_]js.JSValueRef{},
+                        exception,
+                    );
+                }
+            };
+        }
+        pub fn ConstructorCallback(
+            comptime ctxfn: fn (
+                ctx: js.JSContextRef,
+                function: js.JSObjectRef,
+                arguments: []const js.JSValueRef,
+                exception: js.ExceptionRef,
+            ) js.JSValueRef,
+        ) type {
+            return struct {
+                pub fn rfn(
+                    ctx: js.JSContextRef,
+                    function: js.JSObjectRef,
+                    argumentCount: usize,
+                    arguments: [*c]const js.JSValueRef,
+                    exception: js.ExceptionRef,
+                ) callconv(.C) js.JSValueRef {
+                    return ctxfn(
+                        ctx,
+                        function,
+                        if (arguments) |args| args[0..argumentCount] else &[_]js.JSValueRef{},
+                        exception,
+                    );
+                }
+            };
+        }
+
         pub fn Callback(
             comptime ZigContextType: type,
             comptime ctxfn: fn (
@@ -107,6 +180,18 @@ pub const Properties = struct {
         pub const initialize_bundled_module = "$$m";
         pub const load_module_function = "$lOaDuRcOdE$";
         pub const window = "window";
+        pub const default = "default";
+        pub const include = "include";
+
+        pub const GET = "GET";
+        pub const PUT = "PUT";
+        pub const POST = "POST";
+        pub const PATCH = "PATCH";
+        pub const HEAD = "HEAD";
+        pub const OPTIONS = "OPTIONS";
+
+        pub const navigate = "navigate";
+        pub const follow = "follow";
     };
 
     pub const UTF16 = struct {
@@ -125,24 +210,50 @@ pub const Properties = struct {
         pub const initialize_bundled_module = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.initialize_bundled_module);
         pub const load_module_function: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.load_module_function);
         pub const window: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.window);
+        pub const default: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.default);
+        pub const include: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.include);
+
+        pub const GET: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.GET);
+        pub const PUT: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.PUT);
+        pub const POST: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.POST);
+        pub const PATCH: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.PATCH);
+        pub const HEAD: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.HEAD);
+        pub const OPTIONS: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.OPTIONS);
+
+        pub const navigate: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.navigate);
+        pub const follow: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.follow);
     };
 
     pub const Refs = struct {
-        pub var module: js.JSStringRef = null;
-        pub var globalThis: js.JSStringRef = null;
-        pub var exports: js.JSStringRef = null;
-        pub var log: js.JSStringRef = null;
-        pub var debug: js.JSStringRef = null;
-        pub var info: js.JSStringRef = null;
-        pub var error_: js.JSStringRef = null;
-        pub var warn: js.JSStringRef = null;
-        pub var console: js.JSStringRef = null;
-        pub var require: js.JSStringRef = null;
-        pub var description: js.JSStringRef = null;
-        pub var name: js.JSStringRef = null;
-        pub var initialize_bundled_module: js.JSStringRef = null;
-        pub var load_module_function: js.JSStringRef = null;
-        pub var window: js.JSStringRef = null;
+        pub var module: js.JSStringRef = undefined;
+        pub var globalThis: js.JSStringRef = undefined;
+        pub var exports: js.JSStringRef = undefined;
+        pub var log: js.JSStringRef = undefined;
+        pub var debug: js.JSStringRef = undefined;
+        pub var info: js.JSStringRef = undefined;
+        pub var error_: js.JSStringRef = undefined;
+        pub var warn: js.JSStringRef = undefined;
+        pub var console: js.JSStringRef = undefined;
+        pub var require: js.JSStringRef = undefined;
+        pub var description: js.JSStringRef = undefined;
+        pub var name: js.JSStringRef = undefined;
+        pub var initialize_bundled_module: js.JSStringRef = undefined;
+        pub var load_module_function: js.JSStringRef = undefined;
+        pub var window: js.JSStringRef = undefined;
+        pub var default: js.JSStringRef = undefined;
+        pub var include: js.JSStringRef = undefined;
+        pub var GET: js.JSStringRef = undefined;
+        pub var PUT: js.JSStringRef = undefined;
+        pub var POST: js.JSStringRef = undefined;
+        pub var PATCH: js.JSStringRef = undefined;
+        pub var HEAD: js.JSStringRef = undefined;
+        pub var OPTIONS: js.JSStringRef = undefined;
+
+        pub var empty_string_ptr = [_]u8{0};
+        pub var empty_string: js.JSStringRef = undefined;
+
+        pub var navigate: js.JSStringRef = undefined;
+        pub var follow: js.JSStringRef = undefined;
     };
 
     pub fn init() void {
@@ -160,9 +271,13 @@ pub const Properties = struct {
                 );
             }
         }
+
+        Refs.empty_string = js.JSStringCreateWithUTF8CString(&Refs.empty_string_ptr);
     }
 };
 
+const hasSetter = std.meta.trait.hasField("set");
+const hasFinalize = std.meta.trait.hasField("finalize");
 pub fn NewClass(
     comptime ZigType: type,
     comptime name: string,
@@ -214,6 +329,65 @@ pub fn NewClass(
             break :brk list;
         };
         var static_properties: [property_names.len]js.JSStaticValue = undefined;
+
+        pub var ref: js.JSClassRef = null;
+        pub var loaded = false;
+        pub var definition: js.JSClassDefinition = undefined;
+        const ConstructorWrapper = struct {
+            pub fn rfn(
+                ctx: js.JSContextRef,
+                function: js.JSObjectRef,
+                thisObject: js.JSObjectRef,
+                argumentCount: usize,
+                arguments: [*c]const js.JSValueRef,
+                exception: js.ExceptionRef,
+            ) callconv(.C) js.JSValueRef {
+                return definition.callAsConstructor.?(ctx, function, argumentCount, arguments, exception);
+            }
+        };
+
+        pub const Constructor = ConstructorWrapper.rfn;
+
+        pub const static_value_count = static_properties.len;
+
+        pub fn get() callconv(.C) [*c]js.JSClassRef {
+            if (!loaded) {
+                loaded = true;
+                definition = define();
+                ref = js.JSClassRetain(js.JSClassCreate(&definition));
+            }
+            return &ref;
+        }
+
+        pub fn RawGetter(comptime ReceiverType: type) type {
+            const ClassGetter = struct {
+                pub fn getter(
+                    ctx: js.JSContextRef,
+                    obj: js.JSObjectRef,
+                    prop: js.JSStringRef,
+                    exception: js.ExceptionRef,
+                ) callconv(.C) js.JSValueRef {
+                    return js.JSObjectMake(ctx, get().*, null);
+                }
+            };
+
+            return ClassGetter;
+        }
+
+        pub fn GetClass(comptime ReceiverType: type) type {
+            const ClassGetter = struct {
+                pub fn getter(
+                    receiver: *ReceiverType,
+                    ctx: js.JSContextRef,
+                    obj: js.JSObjectRef,
+                    exception: js.ExceptionRef,
+                ) js.JSValueRef {
+                    return js.JSObjectMake(ctx, get().*, null);
+                }
+            };
+
+            return ClassGetter;
+        }
 
         pub fn getPropertyCallback(
             ctx: js.JSContextRef,
@@ -281,7 +455,7 @@ pub fn NewClass(
                         ),
                     );
 
-                    var exc: js.ExceptionRef = null;
+                    var exc: js.JSValueRef = null;
 
                     switch (comptime @typeInfo(@TypeOf(@field(
                         properties,
@@ -372,15 +546,18 @@ pub fn NewClass(
                 var count: usize = 0;
                 inline for (function_name_literals) |function_name, i| {
                     if (comptime strings.eqlComptime(function_names[i], "constructor")) {
-                        def.callAsConstructor = @field(staticFunctions, function_names[i]);
+                        def.callAsConstructor = To.JS.Constructor(@field(staticFunctions, function_names[i])).rfn;
+                    } else if (comptime strings.eqlComptime(function_names[i], "finalize")) {
+                        def.finalize = To.JS.Finalize(ZigType, staticFunctions.finalize).rfn;
                     } else {
-                        count += 1;
                         var callback = To.JS.Callback(ZigType, @field(staticFunctions, function_names[i])).rfn;
                         static_functions[count] = js.JSStaticFunction{
                             .name = (function_names[i][0.. :0]).ptr,
                             .callAsFunction = callback,
                             .attributes = comptime if (read_only) js.JSPropertyAttributes.kJSPropertyAttributeReadOnly else js.JSPropertyAttributes.kJSPropertyAttributeNone,
                         };
+
+                        count += 1;
                     }
 
                     // if (singleton) {
@@ -402,7 +579,7 @@ pub fn NewClass(
                     static_properties[i].getProperty = StaticProperty(i).getter;
 
                     const field = comptime @field(properties, property_names[i]);
-                    const hasSetter = std.meta.trait.hasField("set");
+
                     if (comptime hasSetter(@TypeOf(field))) {
                         static_properties[i].setProperty = StaticProperty(i).setter;
                     }
@@ -414,8 +591,6 @@ pub fn NewClass(
 
             def.className = class_name_str;
             // def.getProperty = getPropertyCallback;
-
-            def.finalize
 
             return def;
         }
@@ -437,20 +612,18 @@ pub fn JSError(
         exception.* = js.JSObjectMakeError(ctx, 1, &error_args, null);
     } else {
         var buf = std.fmt.allocPrintZ(allocator, fmt, args) catch unreachable;
+        defer allocator.free(buf);
+
         var message = js.JSStringCreateWithUTF8CString(buf);
         defer js.JSStringRelease(message);
-        defer allocator.free(buf);
+
         error_args[0] = js.JSValueMakeString(ctx, message);
         exception.* = js.JSObjectMakeError(ctx, 1, &error_args, null);
     }
 }
 
 pub fn getAllocator(ctx: js.JSContextRef) *std.mem.Allocator {
-    var global_obj = js.JSContextGetGlobalObject(ctx);
-    var priv = js.JSObjectGetPrivate(global_obj).?;
-    var global = @ptrCast(*javascript.GlobalObject, @alignCast(@alignOf(*javascript.GlobalObject), priv));
-
-    return global.vm.allocator;
+    return std.heap.c_allocator;
 }
 
 pub const JSStringList = std.ArrayList(js.JSStringRef);
@@ -465,3 +638,10 @@ pub const ArrayBuffer = struct {
 
     typed_array_type: js.JSTypedArrayType,
 };
+
+pub fn castObj(obj: js.JSObjectRef, comptime Type: type) *Type {
+    return @ptrCast(
+        *Type,
+        @alignCast(@alignOf(*Type), js.JSObjectGetPrivate(obj).?),
+    );
+}

@@ -823,6 +823,9 @@ generate_node_module_bundle: ?bool = null,
 /// node_modules_bundle_path
 node_modules_bundle_path: ?[]const u8 = null,
 
+/// javascript_framework_file
+javascript_framework_file: ?[]const u8 = null,
+
 
 pub fn decode(reader: anytype) anyerror!TransformOptions {
   var this = std.mem.zeroes(TransformOptions);
@@ -893,6 +896,9 @@ pub fn decode(reader: anytype) anyerror!TransformOptions {
 },
       21 => {
         this.node_modules_bundle_path = try reader.readValue([]const u8); 
+},
+      22 => {
+        this.javascript_framework_file = try reader.readValue([]const u8); 
 },
       else => {
       return error.InvalidMessage;
@@ -986,6 +992,10 @@ if (this.generate_node_module_bundle) |generate_node_module_bundle| {
 if (this.node_modules_bundle_path) |node_modules_bundle_path| {
   try writer.writeFieldID(21);
    try writer.writeValue(node_modules_bundle_path);
+}
+if (this.javascript_framework_file) |javascript_framework_file| {
+  try writer.writeFieldID(22);
+   try writer.writeValue(javascript_framework_file);
 }
 try writer.endMessage();
 }

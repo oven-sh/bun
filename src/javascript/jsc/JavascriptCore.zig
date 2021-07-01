@@ -246,3 +246,26 @@ pub const OpaqueJSValue = struct_OpaqueJSValue;
 // https://github.com/WebKit/webkit/blob/main/Source/JavaScriptCore/API/JSStringRef.cpp#L62
 pub extern fn JSStringCreateWithCharactersNoCopy(string: [*c]const JSChar, numChars: size_t) JSStringRef;
 const size_t = usize;
+
+const then_key = "then";
+var thenable_string: JSStringRef = null;
+pub fn isObjectOfClassAndResolveIfNeeded(ctx: JSContextRef, obj: JSObjectRef, class: JSClassRef) ?JSObjectRef {
+    if (JSValueIsObjectOfClass(ctx, obj, class)) {
+        return obj;
+    }
+
+    if (!JSValueIsObject(ctx, obj)) {
+        return null;
+    }
+
+    if (thenable_string == null) {
+        thenable_string = JSStringCreateWithUTF8CString(then_key[0.. :0]);
+    }
+
+    var prop = JSObjectGetPropertyForKey(ctx, obj, JSValueMakeString(ctx, thenable_string), null);
+    if (prop == null) {
+        return null;
+    }
+
+    
+}

@@ -255,6 +255,12 @@ pub const Module = struct {
     loaded: bool = false,
     exports_function: js.JSValueRef = null,
 
+    // When the Watcher detects the source file changed, we bust the require cache
+    // However, we want to lazily bust the require cache.
+    // We don't want to actually reload the references until the code is next executed
+    // reload_pending should not be applied to bundled modules
+    reload_pending: bool = false,
+
     pub var module_class: js.JSClassRef = undefined;
     pub var module_global_class: js.JSClassRef = undefined;
     pub var module_global_class_def: js.JSClassDefinition = undefined;
@@ -408,6 +414,7 @@ pub const Module = struct {
                     call_ctx,
                     call_ctx,
                     &exception,
+                    false,
                 );
             }
         };
@@ -728,15 +735,131 @@ pub const Module = struct {
                 .{ import_path, module.path.name.dirWithTrailingSlash(), @errorName(err) },
             );
             Output.flush();
-            exception.* = js.JSObjectMakeError(ctx, 0, null, null);
+            JSError(
+                getAllocator(ctx),
+                "{s}: failed to load module \"{s}\" from \"{s}\"",
+                .{
+                    @errorName(err),
+                    import_path,
+                    module.path.name.dirWithTrailingSlash(),
+                },
+                ctx,
+                exception,
+            );
             return null;
         }
+    }
+
+    pub fn requireFirst(
+        this: *Module,
+        ctx: js.JSContextRef,
+        function: js.JSObjectRef,
+        thisObject: js.JSObjectRef,
+        arguments: []const js.JSValueRef,
+        exception: js.ExceptionRef,
+    ) js.JSValueRef {
+        if (arguments.len == 0 or js.JSStringGetMaximumUTF8CStringSize(arguments[0]) == 0) {
+            defer Output.flush();
+            if (arguments.len == 0) {
+                Output.prettyErrorln("<r><red>error<r>: <b>requireFirst<r> needs a string, e.g. requireFirst(\"left-pad\")", .{});
+            } else {
+                Output.prettyErrorln("<r><red>error<r>: <b>requireFirst(\"\")<r> string cannot be empty.", .{});
+            }
+            return null;
+        }
+
+        var total_len: usize = 0;
+        for (arguments) |argument| {
+            const len = js.JSStringGetLength(argument);
+
+            if (!require_buf_loaded) {
+                require_buf = MutableString.init(this.vm.allocator, len + 1) catch unreachable;
+                require_buf_loaded = true;
+            } else {
+                require_buf.reset();
+                require_buf.growIfNeeded(len + 1) catch {};
+            }
+
+            require_buf.list.resize(this.vm.allocator, len + 1) catch unreachable;
+
+            const end = js.JSStringGetUTF8CString(argument, require_buf.list.items.ptr, require_buf.list.items.len);
+            total_len += end;
+            const import_path = require_buf.list.items[0 .. end - 1];
+            var module = this;
+
+            if (this.vm.bundler.linker.resolver.resolve(module.path.name.dirWithTrailingSlash(), import_path, .require)) |resolved| {
+                var load_result = Module.loadFromResolveResult(this.vm, ctx, resolved, exception) catch |err| {
+                    return null;
+                };
+
+                switch (load_result) {
+                    .Module => |new_module| {
+                        // if (isDebug) {
+                        //     Output.prettyln(
+                        //         "Input: {s}\nOutput: {s}",
+                        //         .{ import_path, load_result.Module.path.text },
+                        //     );
+                        //     Output.flush();
+                        // }
+                        return new_module.internalGetExports(js.JSContextGetGlobalContext(ctx));
+                    },
+                    .Path => |path| {
+                        return js.JSStringCreateWithUTF8CString(path.text.ptr);
+                    },
+                }
+            } else |err| {
+                switch (err) {
+                    error.ModuleNotFound => {},
+                    else => {
+                        JSError(
+                            getAllocator(ctx),
+                            "{s}: failed to resolve module \"{s}\" from \"{s}\"",
+                            .{
+                                @errorName(err),
+                                import_path,
+                                module.path.name.dirWithTrailingSlash(),
+                            },
+                            ctx,
+                            exception,
+                        );
+                        return null;
+                    },
+                }
+            }
+        }
+
+        require_buf.reset();
+        require_buf.growIfNeeded(total_len) catch {};
+        var used_len: usize = 0;
+        var remainder = require_buf.list.items;
+        for (arguments) |argument| {
+            const end = js.JSStringGetUTF8CString(argument, remainder.ptr, total_len - used_len);
+            used_len += end;
+            remainder[end - 1] = ",";
+            remainder = remainder[end..];
+        }
+
+        // If we get this far, it means there were no matches
+        JSError(
+            getAllocator(ctx),
+            "RequireError: failed to resolve modules \"{s}\" from \"{s}\"",
+            .{
+                require_buf.list.items[0..used_len],
+                module.path.name.dirWithTrailingSlash(),
+            },
+            ctx,
+            exception,
+        );
+        return null;
     }
 
     const ModuleClass = NewClass(
         Module,
         "Module",
-        .{ .@"require" = require },
+        .{
+            .@"require" = require,
+            .@"requireFirst" = requireFirst,
+        },
         .{
             .@"id" = .{
                 .get = getId,
@@ -789,18 +912,7 @@ pub const Module = struct {
     threadlocal var module_wrapper_params: [2]js.JSStringRef = undefined;
     threadlocal var module_wrapper_loaded = false;
 
-    pub fn load(
-        module: *Module,
-        vm: *VirtualMachine,
-        allocator: *std.mem.Allocator,
-        log: *logger.Log,
-        source: [:0]u8,
-        path: Fs.Path,
-        global_ctx: js.JSContextRef,
-        call_ctx: js.JSContextRef,
-        function_ctx: js.JSContextRef,
-        exception: js.ExceptionRef,
-    ) !void {
+    pub fn load(module: *Module, vm: *VirtualMachine, allocator: *std.mem.Allocator, log: *logger.Log, source: [:0]u8, path: Fs.Path, global_ctx: js.JSContextRef, call_ctx: js.JSContextRef, function_ctx: js.JSContextRef, exception: js.ExceptionRef, comptime is_reload: bool) !void {
         var source_code_ref = js.JSStringCreateWithUTF8CString(source.ptr);
         defer js.JSStringRelease(source_code_ref);
         var source_url = try allocator.dupeZ(u8, path.text);
@@ -813,13 +925,18 @@ pub const Module = struct {
             Output.flush();
         }
 
-        module.* = Module{
-            .path = path,
-            .ref = undefined,
-            .vm = vm,
-        };
-        module.ref = js.JSObjectMake(global_ctx, Module.module_class, module);
-        js.JSValueProtect(global_ctx, module.ref);
+        if (comptime !is_reload) {
+            module.* = Module{
+                .path = path,
+                .ref = undefined,
+                .vm = vm,
+            };
+            module.ref = js.JSObjectMake(global_ctx, Module.module_class, module);
+            js.JSValueProtect(global_ctx, module.ref);
+        } else {
+            js.JSValueUnprotect(global_ctx, module.exports.?);
+        }
+
         // if (!module_wrapper_loaded) {
         module_wrapper_params[0] = js.JSStringRetain(js.JSStringCreateWithUTF8CString(Properties.UTF8.module[0.. :0]));
         module_wrapper_params[1] = js.JSStringRetain(js.JSStringCreateWithUTF8CString(Properties.UTF8.exports[0.. :0]));
@@ -886,8 +1003,15 @@ pub const Module = struct {
         exception: js.ExceptionRef,
     ) !LoadResult {
         const hash = http.Watcher.getHash(resolved.path_pair.primary.text);
+        var reload_pending = false;
         if (vm.require_cache.get(hash)) |mod| {
-            return LoadResult{ .Module = mod };
+            // require_cache should only contain local modules, not bundled ones.
+            // so we don't need to check for node_modlues here
+            reload_pending = mod.reload_pending;
+
+            if (!reload_pending) {
+                return LoadResult{ .Module = mod };
+            }
         }
 
         const path = resolved.path_pair.primary;
@@ -1000,22 +1124,50 @@ pub const Module = struct {
                 if (written == 0) {
                     return error.PrintingErrorWriteFailed;
                 }
-                var module = try vm.allocator.create(Module);
-                errdefer vm.allocator.destroy(module);
-                try vm.require_cache.put(hash, module);
+                var module: *Module = undefined;
 
-                try Module.load(
-                    module,
-                    vm,
-                    vm.allocator,
-                    vm.log,
-                    source_code_printer.ctx.sentinel,
-                    path,
-                    js.JSContextGetGlobalContext(ctx),
-                    ctx,
-                    ctx,
-                    exception,
-                );
+                if (needs_reload) {
+                    module = vm.require_cache.get(hash).?;
+                } else {
+                    module = try vm.allocator.create(Module);
+                    try vm.require_cache.put(hash, module);
+                }
+
+                errdefer {
+                    if (!needs_reload) {
+                        vm.allocator.destroy(module);
+                    }
+                }
+
+                if (needs_reload) {
+                    try Module.load(
+                        module,
+                        vm,
+                        vm.allocator,
+                        vm.log,
+                        source_code_printer.ctx.sentinel,
+                        path,
+                        js.JSContextGetGlobalContext(ctx),
+                        ctx,
+                        ctx,
+                        exception,
+                        true,
+                    );
+                } else {
+                    try Module.load(
+                        module,
+                        vm,
+                        vm.allocator,
+                        vm.log,
+                        source_code_printer.ctx.sentinel,
+                        path,
+                        js.JSContextGetGlobalContext(ctx),
+                        ctx,
+                        ctx,
+                        exception,
+                        false,
+                    );
+                }
 
                 return LoadResult{ .Module = module };
             },
@@ -1191,13 +1343,16 @@ pub const EventListenerMixin = struct {
 
     pub const EventType = enum {
         fetch,
+        err,
+
+        const SizeMatcher = strings.ExactSizeMatcher("fetch".len);
 
         pub fn match(str: string) ?EventType {
-            if (strings.eqlComptime(str, "fetch")) {
-                return EventType.fetch;
-            }
-
-            return null;
+            return switch (SizeMatcher.match(str)) {
+                SizeMatcher.case("fetch") => EventType.fetch,
+                SizeMatcher.case("error") => EventType.err,
+                else => null,
+            };
         }
     };
 
@@ -1226,6 +1381,7 @@ pub const EventListenerMixin = struct {
         );
 
         var exception: js.JSValueRef = null;
+        // Rely on JS finalizer
         var fetch_event = try vm.allocator.create(FetchEvent);
         fetch_event.* = FetchEvent{
             .request_context = request_context,

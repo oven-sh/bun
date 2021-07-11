@@ -120,7 +120,7 @@ pub fn build(b: *std.build.Builder) void {
         addPicoHTTP(exe, cwd);
         javascript = b.addExecutable("spjs", "src/main_javascript.zig");
         addPicoHTTP(javascript, cwd);
-        javascript.packages = std.ArrayList(std.build.Pkg).fromOwnedSlice(std.heap.c_allocator, std.heap.c_allocator.dupe(std.build.Pkg, exe.packages.items) catch unreachable);
+        javascript.packages = std.ArrayList(std.build.Pkg).fromOwnedSlice(std.heap.page_allocator, std.heap.page_allocator.dupe(std.build.Pkg, exe.packages.items) catch unreachable);
         javascript.setOutputDir(output_dir);
         javascript.setBuildMode(mode);
         javascript.linkLibC();

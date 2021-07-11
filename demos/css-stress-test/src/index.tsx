@@ -20,6 +20,9 @@ if (typeof window !== "undefined") {
   });
 
   startReact();
+} else {
+  const ReactDOMServer = require("react-dom/server.browser");
+  console.log(ReactDOMServer.renderToString(<Base />));
 }
 
 export { Base };

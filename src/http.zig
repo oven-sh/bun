@@ -637,6 +637,8 @@ pub const RequestContext = struct {
         ctx: RequestContext,
         conn: tcp.Connection,
 
+        pub var javascript_vm: *JavaScript.VirtualMachine = undefined;
+
         pub const HandlerThread = struct {
             args: Api.TransformOptions,
             existing_bundle: ?*NodeModuleBundle,
@@ -685,6 +687,7 @@ pub const RequestContext = struct {
                 .entry_point,
             );
             JavaScript.VirtualMachine.instance = vm;
+            javascript_vm = JavaScript.VirtualMachine.instance;
             var exception: js.JSValueRef = null;
             var load_result = try JavaScript.Module.loadFromResolveResult(vm, vm.ctx, resolved_entry_point, &exception);
 
@@ -1488,6 +1491,8 @@ pub const Server = struct {
     timer: std.time.Timer = undefined,
     transform_options: Api.TransformOptions,
 
+    javascript_enabled: bool = false,
+
     pub fn adjustUlimit() !void {
         var limit = try std.os.getrlimit(.NOFILE);
         if (limit.cur < limit.max) {
@@ -1509,6 +1514,19 @@ pub const Server = struct {
     threadlocal var filechange_buf: [32]u8 = undefined;
 
     pub fn onFileUpdate(ctx: *Server, events: []watcher.WatchEvent, watchlist: watcher.Watchlist) void {
+        if (ctx.javascript_enabled) {
+            _onFileUpdate(ctx, events, watchlist, true);
+        } else {
+            _onFileUpdate(ctx, events, watchlist, false);
+        }
+    }
+
+    fn _onFileUpdate(
+        ctx: *Server,
+        events: []watcher.WatchEvent,
+        watchlist: watcher.Watchlist,
+        comptime is_javascript_enabled: bool,
+    ) void {
         var fbs = std.io.fixedBufferStream(&filechange_buf);
         var writer = ByteApiWriter.init(&fbs);
         const message_type = Api.WebsocketMessage{
@@ -1517,18 +1535,28 @@ pub const Server = struct {
         };
         message_type.encode(&writer) catch unreachable;
         var header = fbs.getWritten();
-
         for (events) |event| {
             const file_path = watchlist.items(.file_path)[event.index];
+
             // so it's consistent with the rest
             // if we use .extname we might run into an issue with whether or not the "." is included.
             const path = Fs.PathName.init(file_path);
             const id = watchlist.items(.hash)[event.index];
             var content_fbs = std.io.fixedBufferStream(filechange_buf[header.len..]);
+
+            defer {
+                if (comptime is_javascript_enabled) {
+                    // TODO: does this need a lock?
+                    if (RequestContext.JavaScriptHandler.javascript_vm.require_cache.get(id)) |module| {
+                        module.reload_pending = true;
+                    }
+                }
+            }
             const change_message = Api.WebsocketMessageFileChangeNotification{
                 .id = id,
                 .loader = (ctx.bundler.options.loaders.get(path.ext) orelse .file).toAPI(),
             };
+
             var content_writer = ByteApiWriter.init(&content_fbs);
             change_message.encode(&content_writer) catch unreachable;
             const change_buf = content_fbs.getWritten();
@@ -1642,6 +1670,7 @@ pub const Server = struct {
         if (req_ctx.url.extname.len == 0 and !RequestContext.JavaScriptHandler.javascript_disabled) {
             if (server.transform_options.javascript_framework_file != null) {
                 RequestContext.JavaScriptHandler.enqueue(&req_ctx, server) catch unreachable;
+                server.javascript_enabled = !RequestContext.JavaScriptHandler.javascript_disabled;
             }
         }
 

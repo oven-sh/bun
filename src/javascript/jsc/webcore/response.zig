@@ -1129,4 +1129,5 @@ pub const FetchEvent = struct {
     ) js.JSValueRef {
         return js.JSValueMakeUndefined(ctx);
     }
+
 };

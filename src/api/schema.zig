@@ -759,6 +759,82 @@ pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
 
 };
 
+pub const FrameworkConfig = struct {
+/// entry_point
+entry_point: ?[]const u8 = null,
+
+
+pub fn decode(reader: anytype) anyerror!FrameworkConfig {
+  var this = std.mem.zeroes(FrameworkConfig);
+
+  while(true) {
+    switch (try reader.readByte()) {
+      0 => { return this; },
+
+      1 => {
+        this.entry_point = try reader.readValue([]const u8); 
+},
+      else => {
+      return error.InvalidMessage;
+      },
+      }
+      }
+unreachable;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+if (this.entry_point) |entry_point| {
+  try writer.writeFieldID(1);
+   try writer.writeValue(entry_point);
+}
+try writer.endMessage();
+}
+
+};
+
+pub const RouteConfig = struct {
+/// dir
+dir: ?[]const u8 = null,
+
+/// extensions
+extensions: []const []const u8,
+
+
+pub fn decode(reader: anytype) anyerror!RouteConfig {
+  var this = std.mem.zeroes(RouteConfig);
+
+  while(true) {
+    switch (try reader.readByte()) {
+      0 => { return this; },
+
+      1 => {
+        this.dir = try reader.readValue([]const u8); 
+},
+      2 => {
+        this.extensions = try reader.readArray([]const u8); 
+},
+      else => {
+      return error.InvalidMessage;
+      },
+      }
+      }
+unreachable;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+if (this.dir) |dir| {
+  try writer.writeFieldID(1);
+   try writer.writeValue(dir);
+}
+if (this.extensions) |extensions| {
+  try writer.writeFieldID(2);
+   try writer.writeArray([]const u8, extensions);
+}
+try writer.endMessage();
+}
+
+};
+
 pub const TransformOptions = struct {
 /// jsx
 jsx: ?Jsx = null,
@@ -823,8 +899,11 @@ generate_node_module_bundle: ?bool = null,
 /// node_modules_bundle_path
 node_modules_bundle_path: ?[]const u8 = null,
 
-/// javascript_framework_file
-javascript_framework_file: ?[]const u8 = null,
+/// framework
+framework: ?FrameworkConfig = null,
+
+/// router
+router: ?RouteConfig = null,
 
 
 pub fn decode(reader: anytype) anyerror!TransformOptions {
@@ -898,7 +977,10 @@ pub fn decode(reader: anytype) anyerror!TransformOptions {
         this.node_modules_bundle_path = try reader.readValue([]const u8); 
 },
       22 => {
-        this.javascript_framework_file = try reader.readValue([]const u8); 
+        this.framework = try reader.readValue(FrameworkConfig); 
+},
+      23 => {
+        this.router = try reader.readValue(RouteConfig); 
 },
       else => {
       return error.InvalidMessage;
@@ -993,9 +1075,13 @@ if (this.node_modules_bundle_path) |node_modules_bundle_path| {
   try writer.writeFieldID(21);
    try writer.writeValue(node_modules_bundle_path);
 }
-if (this.javascript_framework_file) |javascript_framework_file| {
+if (this.framework) |framework| {
   try writer.writeFieldID(22);
-   try writer.writeValue(javascript_framework_file);
+   try writer.writeValue(framework);
+}
+if (this.router) |router| {
+  try writer.writeFieldID(23);
+   try writer.writeValue(router);
 }
 try writer.endMessage();
 }

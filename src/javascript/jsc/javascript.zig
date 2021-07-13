@@ -768,6 +768,8 @@ pub const Module = struct {
             return null;
         }
 
+        var module = this;
+
         var total_len: usize = 0;
         for (arguments) |argument| {
             const len = js.JSStringGetLength(argument);
@@ -785,7 +787,6 @@ pub const Module = struct {
             const end = js.JSStringGetUTF8CString(argument, require_buf.list.items.ptr, require_buf.list.items.len);
             total_len += end;
             const import_path = require_buf.list.items[0 .. end - 1];
-            var module = this;
 
             if (this.vm.bundler.linker.resolver.resolve(module.path.name.dirWithTrailingSlash(), import_path, .require)) |resolved| {
                 var load_result = Module.loadFromResolveResult(this.vm, ctx, resolved, exception) catch |err| {
@@ -835,7 +836,7 @@ pub const Module = struct {
         for (arguments) |argument| {
             const end = js.JSStringGetUTF8CString(argument, remainder.ptr, total_len - used_len);
             used_len += end;
-            remainder[end - 1] = ",";
+            remainder[end - 1] = ',';
             remainder = remainder[end..];
         }
 
@@ -1126,7 +1127,7 @@ pub const Module = struct {
                 }
                 var module: *Module = undefined;
 
-                if (needs_reload) {
+                if (reload_pending) {
                     module = vm.require_cache.get(hash).?;
                 } else {
                     module = try vm.allocator.create(Module);
@@ -1134,12 +1135,12 @@ pub const Module = struct {
                 }
 
                 errdefer {
-                    if (!needs_reload) {
+                    if (!reload_pending) {
                         vm.allocator.destroy(module);
                     }
                 }
 
-                if (needs_reload) {
+                if (reload_pending) {
                     try Module.load(
                         module,
                         vm,
@@ -1345,7 +1346,7 @@ pub const EventListenerMixin = struct {
         fetch,
         err,
 
-        const SizeMatcher = strings.ExactSizeMatcher("fetch".len);
+        const SizeMatcher = strings.ExactSizeMatcher(8);
 
         pub fn match(str: string) ?EventType {
             return switch (SizeMatcher.match(str)) {

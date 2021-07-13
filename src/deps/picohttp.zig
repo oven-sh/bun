@@ -54,6 +54,9 @@ pub const Request = struct {
             0,
         );
 
+        // Leave a sentinel value, for JavaScriptCore support.
+        path.ptr[path.len] = 0;
+
         return switch (rc) {
             -1 => error.BadRequest,
             -2 => error.ShortRead,

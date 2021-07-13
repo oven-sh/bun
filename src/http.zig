@@ -59,6 +59,7 @@ const HTTPStatusCode = u10;
 pub const URLPath = struct {
     extname: string = "",
     path: string = "",
+    pathname: string = "",
     first_segment: string = "",
     query_string: string = "",
 
@@ -119,6 +120,7 @@ pub const URLPath = struct {
 
         return URLPath{
             .extname = extname,
+            .pathname = raw_path,
             .first_segment = first_segment,
             .path = if (raw_path.len == 1) "." else path,
             .query_string = if (question_mark_i > -1) raw_path[@intCast(usize, question_mark_i)..@intCast(usize, raw_path.len)] else "",
@@ -641,6 +643,7 @@ pub const RequestContext = struct {
 
         pub const HandlerThread = struct {
             args: Api.TransformOptions,
+            framework: Options.Framework,
             existing_bundle: ?*NodeModuleBundle,
             log: ?*logger.Log = null,
         };
@@ -677,8 +680,9 @@ pub const RequestContext = struct {
             js_ast.Expr.Data.Store.create(std.heap.c_allocator);
 
             defer Output.flush();
-            var boot = handler.args.javascript_framework_file.?;
             var vm = try JavaScript.VirtualMachine.init(std.heap.c_allocator, handler.args, handler.existing_bundle, handler.log);
+
+            const boot = handler.framework.entry_point;
             defer vm.deinit();
 
             var resolved_entry_point = try vm.bundler.resolver.resolve(
@@ -750,6 +754,7 @@ pub const RequestContext = struct {
                 try JavaScriptHandler.spawnThread(
                     HandlerThread{
                         .args = server.transform_options,
+                        .framework = server.bundler.options.framework.?,
                         .existing_bundle = server.bundler.options.node_modules_bundle,
                         .log = &server.log,
                     },
@@ -1668,7 +1673,7 @@ pub const Server = struct {
         }
 
         if (req_ctx.url.extname.len == 0 and !RequestContext.JavaScriptHandler.javascript_disabled) {
-            if (server.transform_options.javascript_framework_file != null) {
+            if (server.bundler.options.framework != null) {
                 RequestContext.JavaScriptHandler.enqueue(&req_ctx, server) catch unreachable;
                 server.javascript_enabled = !RequestContext.JavaScriptHandler.javascript_disabled;
             }
@@ -1719,24 +1724,7 @@ pub const Server = struct {
         };
         server.bundler = try Bundler.init(allocator, &server.log, options, null);
         server.bundler.configureLinker();
-
-        load_framework: {
-            if (options.javascript_framework_file) |framework_file_path| {
-                var framework_file = server.bundler.normalizeEntryPointPath(framework_file_path);
-                var resolved = server.bundler.resolver.resolve(
-                    server.bundler.fs.top_level_dir,
-                    framework_file,
-                    .entry_point,
-                ) catch |err| {
-                    Output.prettyError("Failed to load framework: {s}", .{@errorName(err)});
-                    Output.flush();
-                    server.transform_options.javascript_framework_file = null;
-                    break :load_framework;
-                };
-
-                server.transform_options.javascript_framework_file = try server.allocator.dupe(u8, resolved.path_pair.primary.text);
-            }
-        }
+        try server.bundler.configureRouter();
 
         try server.initWatcher();
 

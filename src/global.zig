@@ -74,7 +74,7 @@ pub const Output = struct {
     }
 
     pub fn printErrorable(comptime fmt: string, args: anytype) !void {
-        if (isWasm) {
+        if (comptime isWasm) {
             try source.stream.seekTo(0);
             try source.stream.writer().print(fmt, args);
             const root = @import("root");
@@ -105,7 +105,7 @@ pub const Output = struct {
     }
 
     pub fn print(comptime fmt: string, args: anytype) void {
-        if (isWasm) {
+        if (comptime isWasm) {
             source.stream.seekTo(0) catch return;
             source.stream.writer().print(fmt, args) catch return;
             const root = @import("root");
@@ -287,7 +287,7 @@ pub const Output = struct {
     }
 
     pub fn printError(comptime fmt: string, args: anytype) void {
-        if (isWasm) {
+        if (comptime isWasm) {
             source.error_stream.seekTo(0) catch return;
             source.error_stream.writer().print(fmt, args) catch unreachable;
             const root = @import("root");
@@ -300,13 +300,33 @@ pub const Output = struct {
 
 pub const Global = struct {
     pub fn panic(comptime fmt: string, args: anytype) noreturn {
-        if (isWasm) {
-            Output.print(fmt, args);
+        if (comptime isWasm) {
+            Output.printErrorln(fmt, args);
             Output.flush();
             @panic(fmt);
         } else {
+            Output.prettyErrorln(fmt, args);
             Output.flush();
             std.debug.panic(fmt, args);
+        }
+    }
+
+    // std.debug.assert but happens at runtime
+    pub fn invariant(condition: bool, comptime fmt: string, args: anytype) void {
+        if (!condition) {
+            _invariant(fmt, args);
+        }
+    }
+
+    inline fn _invariant(comptime fmt: string, args: anytype) noreturn {
+        if (comptime isWasm) {
+            Output.printErrorln(fmt, args);
+            Output.flush();
+            @panic(fmt);
+        } else {
+            Output.prettyErrorln(fmt, args);
+            Output.flush();
+            std.os.exit(1);
         }
     }
 
@@ -327,3 +347,32 @@ pub const FileDescriptorType = if (isBrowser) u0 else std.os.fd_t;
 // such is often the case with macOS
 // As a useful optimization, we can store file descriptors and just keep them open...forever
 pub const StoredFileDescriptorType = if (isWindows or isBrowser) u0 else std.os.fd_t;
+
+pub const PathBuilder = struct {
+    const StringBuilderType = NewStringBuilder(std.fs.MAX_PATH_BYTES);
+    builder: StringBuilderType = StringBuilderType.init(),
+
+    pub fn init() PathBuilder {
+        return PathBuilder{};
+    }
+
+    fn load(this: *PathBuilder) void {
+        return @call(.{ .modifier = .always_inline }, StringBuilderType.load, .{this.builder});
+    }
+
+    pub fn append(this: *PathBuilder, str: string) void {
+        return @call(.{ .modifier = .always_inline }, StringBuilderType.append, .{ this.builder, str });
+    }
+
+    pub fn pop(this: *PathBuilder, count: usize) void {
+        return @call(.{ .modifier = .always_inline }, StringBuilderType.pop, .{ this.builder, count });
+    }
+
+    pub fn str(this: *PathBuilder) string {
+        return @call(.{ .modifier = .always_inline }, StringBuilderType.str, .{this.builder});
+    }
+
+    pub fn reset(this: *PathBuilder) void {
+        return @call(.{ .modifier = .always_inline }, StringBuilderType.reset, .{this.builder});
+    }
+};

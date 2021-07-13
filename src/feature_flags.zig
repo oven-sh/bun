@@ -31,6 +31,8 @@ pub const verbose_watcher = true;
 
 pub const css_supports_fence = true;
 
+pub const disable_entry_cache = false;
+
 pub const CSSModulePolyfill = enum {
     // When you import a .css file and you reference the import in JavaScript
     // Just return whatever the property key they referenced was

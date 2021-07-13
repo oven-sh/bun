@@ -90,7 +90,8 @@
             CHECK_EOF();                                                                                                           \
         }                                                                                                                          \
         tok = tok_start;                                                                                                           \
-        toklen = buf - tok_start;                                                                                                  \
+        toklen = buf - tok_start;  
+                                                                                                        \
     } while (0)
 
 static const char *token_char_map = "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"

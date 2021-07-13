@@ -1,7 +1,20 @@
 {
   "version": "0.2.0",
   "configurations": [
-    
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Roujtes",
+      "program": "${workspaceFolder}/build/debug/macos-x86_64/esdev",
+      "args": [
+        "./routes",
+        "--resolve=dev",
+        "--outdir=out"
+        // "--public-url=https://localhost:9000/"
+      ],
+      "cwd": "${workspaceFolder}/demos/css-stress-test",
+      "console": "internalConsole"
+    },
 
     // {
     //   "type": "lldb",

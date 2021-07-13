@@ -132,6 +132,15 @@ struct LoaderMap {
   Loader[] loaders;
 }
 
+message FrameworkConfig {
+  string entry_point = 1;
+}
+
+message RouteConfig {
+  string dir = 1;
+  string[] extensions = 2;
+}
+
 message TransformOptions {
   JSX jsx = 1;
   string tsconfig_override = 2;
@@ -169,7 +178,8 @@ message TransformOptions {
 
   string node_modules_bundle_path = 21;
 
-  string javascript_framework_file = 22;
+  FrameworkConfig framework = 22;
+  RouteConfig router = 23;
 }
 
 struct FileHandle {

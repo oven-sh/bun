@@ -2,7 +2,7 @@ usingnamespace @import("../base.zig");
 const std = @import("std");
 const Api = @import("../../../api/schema.zig").Api;
 const http = @import("../../../http.zig");
-pub const JavaScript = @import("../javascript.zig");
+const JavaScript = @import("../javascript.zig");
 pub const Response = struct {
     pub const Class = NewClass(
         Response,
@@ -1129,5 +1129,4 @@ pub const FetchEvent = struct {
     ) js.JSValueRef {
         return js.JSValueMakeUndefined(ctx);
     }
-
 };

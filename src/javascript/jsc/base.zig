@@ -33,7 +33,7 @@ pub const To = struct {
             return function;
         }
 
-        pub fn Finalize(n
+        pub fn Finalize(
             comptime ZigContextType: type,
             comptime ctxfn: fn (
                 this: *ZigContextType,

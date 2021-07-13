@@ -234,6 +234,15 @@ type uint32 = number;
     loaders: Loader[];
   }
 
+  export interface FrameworkConfig {
+    entry_point?: string;
+  }
+
+  export interface RouteConfig {
+    dir?: string;
+    extensions?: string[];
+  }
+
   export interface TransformOptions {
     jsx?: JSX;
     tsconfig_override?: string;
@@ -256,7 +265,8 @@ type uint32 = number;
     only_scan_dependencies?: ScanDependencyMode;
     generate_node_module_bundle?: boolean;
     node_modules_bundle_path?: string;
-    javascript_framework_file?: string;
+    framework?: FrameworkConfig;
+    router?: RouteConfig;
   }
 
   export interface FileHandle {
@@ -408,6 +418,10 @@ type uint32 = number;
   export declare function decodeStringMap(buffer: ByteBuffer): StringMap;
   export declare function  encodeLoaderMap(message: LoaderMap, bb: ByteBuffer): void;
   export declare function decodeLoaderMap(buffer: ByteBuffer): LoaderMap;
+  export declare function  encodeFrameworkConfig(message: FrameworkConfig, bb: ByteBuffer): void;
+  export declare function decodeFrameworkConfig(buffer: ByteBuffer): FrameworkConfig;
+  export declare function  encodeRouteConfig(message: RouteConfig, bb: ByteBuffer): void;
+  export declare function decodeRouteConfig(buffer: ByteBuffer): RouteConfig;
   export declare function  encodeTransformOptions(message: TransformOptions, bb: ByteBuffer): void;
   export declare function decodeTransformOptions(buffer: ByteBuffer): TransformOptions;
   export declare function  encodeFileHandle(message: FileHandle, bb: ByteBuffer): void;

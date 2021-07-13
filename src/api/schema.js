@@ -569,6 +569,81 @@ bb.writeByte(encoded);
 
 }
 
+function decodeFrameworkConfig(bb) {
+  var result = {};
+
+  while (true) {
+    switch (bb.readByte()) {
+    case 0:
+      return result;
+
+    case 1:
+      result["entry_point"] = bb.readString();
+      break;
+
+    default:
+      throw new Error("Attempted to parse invalid message");
+    }
+  }
+}
+
+function encodeFrameworkConfig(message, bb) {
+
+  var value = message["entry_point"];
+  if (value != null) {
+    bb.writeByte(1);
+    bb.writeString(value);
+  }
+  bb.writeByte(0);
+
+}
+
+function decodeRouteConfig(bb) {
+  var result = {};
+
+  while (true) {
+    switch (bb.readByte()) {
+    case 0:
+      return result;
+
+    case 1:
+      result["dir"] = bb.readString();
+      break;
+
+    case 2:
+      var length = bb.readVarUint();
+      var values = result["extensions"] = Array(length);
+      for (var i = 0; i < length; i++) values[i] = bb.readString();
+      break;
+
+    default:
+      throw new Error("Attempted to parse invalid message");
+    }
+  }
+}
+
+function encodeRouteConfig(message, bb) {
+
+  var value = message["dir"];
+  if (value != null) {
+    bb.writeByte(1);
+    bb.writeString(value);
+  }
+
+  var value = message["extensions"];
+  if (value != null) {
+    bb.writeByte(2);
+    var values = value, n = values.length;
+    bb.writeVarUint(n);
+    for (var i = 0; i < n; i++) {
+      value = values[i];
+      bb.writeString(value);
+    }
+  }
+  bb.writeByte(0);
+
+}
+
 function decodeTransformOptions(bb) {
   var result = {};
 
@@ -672,7 +747,11 @@ function decodeTransformOptions(bb) {
       break;
 
     case 22:
-      result["javascript_framework_file"] = bb.readString();
+      result["framework"] = decodeFrameworkConfig(bb);
+      break;
+
+    case 23:
+      result["router"] = decodeRouteConfig(bb);
       break;
 
     default:
@@ -840,10 +919,16 @@ bb.writeByte(encoded);
     bb.writeString(value);
   }
 
-  var value = message["javascript_framework_file"];
+  var value = message["framework"];
   if (value != null) {
     bb.writeByte(22);
-    bb.writeString(value);
+    encodeFrameworkConfig(value, bb);
+  }
+
+  var value = message["router"];
+  if (value != null) {
+    bb.writeByte(23);
+    encodeRouteConfig(value, bb);
   }
   bb.writeByte(0);
 
@@ -1789,6 +1874,10 @@ export { decodeStringMap }
 export { encodeStringMap }
 export { decodeLoaderMap }
 export { encodeLoaderMap }
+export { decodeFrameworkConfig }
+export { encodeFrameworkConfig }
+export { decodeRouteConfig }
+export { encodeRouteConfig }
 export { decodeTransformOptions }
 export { encodeTransformOptions }
 export { decodeFileHandle }

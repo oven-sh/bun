@@ -130,9 +130,8 @@ pub const Cli = struct {
                 clap.parseParam("--scan                            Instead of bundling or transpiling, print a list of every file imported by an entry point, recursively") catch unreachable,
                 clap.parseParam("--new-jsb                         Generate a new node_modules.jsb file from node_modules and entry point(s)") catch unreachable,
                 clap.parseParam("--jsb <STR>                       Use a Speedy JavaScript Bundle (default: \"./node_modules.jsb\" if exists)") catch unreachable,
-                clap.parseParam("--framework <STR>                 Use a JavaScript framework (file path) with --serve") catch unreachable,
-                // clap.parseParam("--no-jsb                          Use a Speedy JavaScript Bundle (default: \"./node_modules.jsb\" if exists)") catch unreachable,
-                clap.parseParam("<POS>...                          Entry points to use") catch unreachable,
+                clap.parseParam("--framework <STR>                 Use a JavaScript framework (module path)") catch unreachable,
+                clap.parseParam("<POS>...                          Entry point(s) to use. Can be individual files, npm packages, or one directory. If one directory, it will auto-detect entry points using a filesystem router. If you're using a framework, passing entry points are optional.") catch unreachable,
             };
 
             var diag = clap.Diagnostic{};
@@ -184,7 +183,7 @@ pub const Cli = struct {
             var jsx_production = args.flag("--jsx-production");
             var react_fast_refresh = false;
 
-            var javascript_framework = args.option("--framework");
+            var framework_entry_point = args.option("--framework");
 
             if (serve or args.flag("--new-jsb")) {
                 react_fast_refresh = true;
@@ -277,14 +276,18 @@ pub const Cli = struct {
                 };
             }
 
-            if (entry_points.len == 0) {
+            var javascript_framework: ?Api.FrameworkConfig = null;
+
+            if (framework_entry_point) |entry| {
+                javascript_framework = Api.FrameworkConfig{
+                    .entry_point = entry,
+                };
+            }
+
+            if (entry_points.len == 0 and javascript_framework == null) {
                 try clap.help(stderr.writer(), &params);
                 try diag.report(stderr.writer(), error.MissingEntryPoint);
                 std.process.exit(1);
-            }
-
-            if (!serve) {
-                javascript_framework = null;
             }
 
             return Api.TransformOptions{
@@ -314,7 +317,7 @@ pub const Cli = struct {
                 .platform = platform,
                 .only_scan_dependencies = if (args.flag("--scan")) Api.ScanDependencyMode.all else Api.ScanDependencyMode._none,
                 .generate_node_module_bundle = if (args.flag("--new-jsb")) true else false,
-                .javascript_framework_file = javascript_framework,
+                .framework = javascript_framework,
             };
         }
     };

@@ -682,7 +682,7 @@ pub fn joinStringBuf(buf: []u8, _parts: anytype, comptime _platform: Platform) [
     }
 
     // Preserve leading separator
-    if (_parts[0][0] == _platform.separator()) {
+    if (_parts[0].len > 0 and _parts[0][0] == _platform.separator()) {
         const out = switch (platform) {
             .loose => normalizeStringLooseBuf(parser_join_input_buffer[0..written], buf[1..], false, false),
             .windows => normalizeStringWindows(parser_join_input_buffer[0..written], buf[1..], false, false),
@@ -769,7 +769,7 @@ pub fn joinAbsStringBuf(_cwd: []const u8, buf: []u8, _parts: anytype, comptime _
 
         const offset = out;
         out += normalized_part.len;
-        std.debug.assert(out < buf.len);
+        std.debug.assert(out <= buf.len);
         std.mem.copy(u8, buf[offset..out], normalized_part);
     }
 

@@ -123,10 +123,7 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
         pub var backing_buf_used: u16 = 0;
         const Allocator = std.mem.Allocator;
         const Self = @This();
-        pub const ListIndex = packed struct {
-            index: u31,
-            is_overflowing: bool = false,
-        };
+
         overflow_list: std.ArrayListUnmanaged(ValueType),
         allocator: *Allocator,
 
@@ -145,10 +142,10 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
             return backing_buf_used >= @as(u16, count);
         }
 
-        pub fn at(self: *const Self, index: ListIndex) ?*ValueType {
+        pub fn at(self: *const Self, index: IndexType) ?*ValueType {
             if (index.index == NotFound.index or index.index == Unassigned.index) return null;
 
-            if (index.is_overflowing) {
+            if (index.is_overflow) {
                 return &self.overflow_list.items[index.index];
             } else {
                 return &backing_buf[index.index];
@@ -159,9 +156,9 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
             return isSliceInBuffer(value, backing_buf);
         }
 
-        pub fn append(self: *Self, value: ValueType) !ListIndex {
-            var result = ListIndex{ .index = std.math.maxInt(u31), .is_overflowing = backing_buf_used > max_index };
-            if (result.is_overflowing) {
+        pub fn append(self: *Self, value: ValueType) !IndexType {
+            var result = IndexType{ .index = std.math.maxInt(u31), .is_overflow = backing_buf_used > max_index };
+            if (result.is_overflow) {
                 result.index = @intCast(u31, self.overflow_list.items.len);
                 try self.overflow_list.append(self.allocator, value);
             } else {
@@ -176,10 +173,10 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
             return result;
         }
 
-        pub fn update(self: *Self, result: *ListIndex, value: ValueType) !*ValueType {
+        pub fn update(self: *Self, result: *IndexType, value: ValueType) !*ValueType {
             if (result.index.index == NotFound.index or result.index.index == Unassigned.index) {
-                result.index.is_overflowing = backing_buf_used > max_index;
-                if (result.index.is_overflowing) {
+                result.index.is_overflow = backing_buf_used > max_index;
+                if (result.index.is_overflow) {
                     result.index.index = @intCast(u31, self.overflow_list.items.len);
                 } else {
                     result.index.index = backing_buf_used;
@@ -190,7 +187,7 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
                 }
             }
 
-            if (result.index.is_overflowing) {
+            if (result.index.is_overflow) {
                 if (self.overflow_list.items.len == result.index.index) {
                     const real_index = self.overflow_list.items.len;
                     try self.overflow_list.append(self.allocator, value);
@@ -206,7 +203,7 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
             }
         }
 
-        pub fn remove(self: *Self, index: ListIndex) void {
+        pub fn remove(self: *Self, index: IndexType) void {
             @compileError("Not implemented yet.");
             // switch (index) {
             //     Unassigned.index => {
@@ -234,7 +231,9 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
         }
     };
 }
-pub fn BSSStringList(comptime _count: usize, comptime item_length: usize) type {
+pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type {
+    // + 1 for sentinel
+    const item_length = _item_length + 1;
     const count = _count * 2;
     const max_index = count - 1;
     const ValueType = []const u8;
@@ -246,10 +245,7 @@ pub fn BSSStringList(comptime _count: usize, comptime item_length: usize) type {
         pub var backing_buf_used: u64 = undefined;
         const Allocator = std.mem.Allocator;
         const Self = @This();
-        pub const ListIndex = packed struct {
-            index: u31,
-            is_overflowing: bool = false,
-        };
+
         overflow_list: std.ArrayListUnmanaged(ValueType),
         allocator: *Allocator,
 
@@ -271,7 +267,7 @@ pub fn BSSStringList(comptime _count: usize, comptime item_length: usize) type {
         pub fn at(self: *const Self, index: IndexType) ?ValueType {
             if (index.index == NotFound.index or index.index == Unassigned.index) return null;
 
-            if (index.is_overflowing) {
+            if (index.is_overflow) {
                 return &self.overflow_list.items[index.index];
             } else {
                 return &slice_buf[index.index];
@@ -286,20 +282,67 @@ pub fn BSSStringList(comptime _count: usize, comptime item_length: usize) type {
             return constStrToU8(slice);
         }
 
-        pub fn append(self: *Self, _value: anytype) ![]const u8 {
-            var value = _value;
-            if (value.len + backing_buf_used < backing_buf.len - 1) {
+        pub fn append(self: *Self, comptime AppendType: type, _value: AppendType) ![]const u8 {
+            const value_len: usize = brk: {
+                switch (comptime AppendType) {
+                    []const u8, []u8 => {
+                        break :brk _value.len;
+                    },
+                    else => {
+                        var len: usize = 0;
+                        for (_value) |val| {
+                            len += val.len;
+                        }
+                        break :brk len;
+                    },
+                }
+                unreachable;
+            } + 1;
+
+            var value: [:0]u8 = undefined;
+            if (value_len + backing_buf_used < backing_buf.len - 1) {
                 const start = backing_buf_used;
-                backing_buf_used += value.len;
-                std.mem.copy(u8, backing_buf[start..backing_buf_used], _value);
-                value = backing_buf[start..backing_buf_used];
+                backing_buf_used += value_len;
+
+                switch (AppendType) {
+                    []const u8, []u8 => {
+                        std.mem.copy(u8, backing_buf[start .. backing_buf_used - 1], _value);
+                        backing_buf[backing_buf_used - 1] = 0;
+                    },
+                    else => {
+                        var remainder = backing_buf[start..];
+                        for (_value) |val| {
+                            std.mem.copy(u8, remainder, val);
+                            remainder = remainder[val.len..];
+                        }
+                        remainder[0] = 0;
+                    },
+                }
+
+                value = backing_buf[start .. backing_buf_used - 1 :0];
             } else {
-                value = try self.allocator.dupe(u8, _value);
+                var value_buf = try self.allocator.alloc(u8, value_len);
+
+                switch (comptime AppendType) {
+                    []const u8, []u8 => {
+                        std.mem.copy(u8, value_buf, _value);
+                    },
+                    else => {
+                        var remainder = value_buf;
+                        for (_value) |val| {
+                            std.mem.copy(u8, remainder, val);
+                            remainder = remainder[val.len..];
+                        }
+                    },
+                }
+
+                value_buf[value_len - 1] = 0;
+                value = value_buf[0 .. value_len - 1 :0];
             }
 
-            var result = ListIndex{ .index = std.math.maxInt(u31), .is_overflowing = slice_buf_used > max_index };
+            var result = IndexType{ .index = std.math.maxInt(u31), .is_overflow = slice_buf_used > max_index };
 
-            if (result.is_overflowing) {
+            if (result.is_overflow) {
                 result.index = @intCast(u31, self.overflow_list.items.len);
             } else {
                 result.index = slice_buf_used;
@@ -309,7 +352,7 @@ pub fn BSSStringList(comptime _count: usize, comptime item_length: usize) type {
                 }
             }
 
-            if (result.is_overflowing) {
+            if (result.is_overflow) {
                 if (self.overflow_list.items.len == result.index) {
                     const real_index = self.overflow_list.items.len;
                     try self.overflow_list.append(self.allocator, value);
@@ -325,7 +368,7 @@ pub fn BSSStringList(comptime _count: usize, comptime item_length: usize) type {
             }
         }
 
-        pub fn remove(self: *Self, index: ListIndex) void {
+        pub fn remove(self: *Self, index: IndexType) void {
             @compileError("Not implemented yet.");
             // switch (index) {
             //     Unassigned.index => {

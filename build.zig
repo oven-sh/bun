@@ -13,6 +13,8 @@ pub fn addPicoHTTP(step: *std.build.LibExeObjStep, dir: []const u8) void {
     step.addIncludeDir("src/deps");
 }
 
+const ENABLE_JAVASCRIPT_BUILD = false;
+
 pub fn build(b: *std.build.Builder) void {
     // Standard target options allows the person running `zig build` to choose
     // what target to build for. Here we do not override the defaults, which
@@ -118,26 +120,34 @@ pub fn build(b: *std.build.Builder) void {
     // exe.want_lto = true;
     if (!target.getCpuArch().isWasm()) {
         addPicoHTTP(exe, cwd);
-        javascript = b.addExecutable("spjs", "src/main_javascript.zig");
-        addPicoHTTP(javascript, cwd);
-        javascript.packages = std.ArrayList(std.build.Pkg).fromOwnedSlice(std.heap.page_allocator, std.heap.page_allocator.dupe(std.build.Pkg, exe.packages.items) catch unreachable);
-        javascript.setOutputDir(output_dir);
-        javascript.setBuildMode(mode);
-        javascript.linkLibC();
+        if (ENABLE_JAVASCRIPT_BUILD) {
+            javascript = b.addExecutable("spjs", "src/main_javascript.zig");
+            addPicoHTTP(javascript, cwd);
+            javascript.packages = std.ArrayList(std.build.Pkg).fromOwnedSlice(std.heap.page_allocator, std.heap.page_allocator.dupe(std.build.Pkg, exe.packages.items) catch unreachable);
+            javascript.setOutputDir(output_dir);
+            javascript.setBuildMode(mode);
+            javascript.linkLibC();
+        }
+
         // javascript.linkLibCpp();
 
         if (target.getOsTag() == .macos) {
-            javascript.linkFramework("JavaScriptCore");
+            if (ENABLE_JAVASCRIPT_BUILD) {
+                javascript.linkFramework("JavaScriptCore");
+            }
             exe.linkFramework("JavascriptCore");
         }
-
-        javascript.strip = false;
+        if (ENABLE_JAVASCRIPT_BUILD) {
+            javascript.strip = false;
+        }
     }
 
     exe.install();
 
     if (!target.getCpuArch().isWasm()) {
-        javascript.install();
+        if (ENABLE_JAVASCRIPT_BUILD) {
+            javascript.install();
+        }
     }
 
     const run_cmd = exe.run();

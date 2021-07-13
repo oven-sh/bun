@@ -30,6 +30,7 @@ const hash_map = @import("hash_map.zig");
 const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 const DebugLogs = _resolver.DebugLogs;
 const NodeModuleBundle = @import("./node_module_bundle.zig").NodeModuleBundle;
+const Router = @import("./router.zig");
 
 const Css = @import("css_scanner.zig");
 
@@ -149,6 +150,8 @@ pub fn NewBundler(cache_files: bool) type {
         resolve_queue: ResolveQueue,
         elapsed: i128 = 0,
         needs_runtime: bool = false,
+        router: ?Router = null,
+
         linker: Linker,
         timer: Timer = Timer{},
 
@@ -166,7 +169,10 @@ pub fn NewBundler(cache_files: bool) type {
         ) !ThisBundler {
             js_ast.Expr.Data.Store.create(allocator);
             js_ast.Stmt.Data.Store.create(allocator);
-            var fs = try Fs.FileSystem.init1(allocator, opts.absolute_working_dir, opts.serve orelse false);
+            var fs = try Fs.FileSystem.init1(
+                allocator,
+                opts.absolute_working_dir,
+            );
             const bundle_options = try options.BundleOptions.fromApi(
                 allocator,
                 fs,
@@ -204,6 +210,72 @@ pub fn NewBundler(cache_files: bool) type {
                 bundler.resolve_results,
                 bundler.fs,
             );
+        }
+
+        pub fn configureFramework(this: *ThisBundler) !void {
+            if (this.options.framework) |*framework| {
+                var framework_file = this.normalizeEntryPointPath(framework.entry_point);
+                var resolved = this.resolver.resolve(
+                    this.fs.top_level_dir,
+                    framework_file,
+                    .entry_point,
+                ) catch |err| {
+                    Output.prettyErrorln("Failed to load framework: {s}", .{@errorName(err)});
+                    Output.flush();
+                    this.options.framework = null;
+                    return;
+                };
+
+                framework.entry_point = try this.allocator.dupe(u8, resolved.path_pair.primary.text);
+            }
+        }
+        pub fn configureRouter(this: *ThisBundler) !void {
+            try this.configureFramework();
+
+            // if you pass just a directory, activate the router configured for the pages directory
+            // for now:
+            // - "." is not supported
+            // - multiple pages directories is not supported
+            if (this.options.route_config == null and this.options.entry_points.len == 1) {
+
+                // When inferring:
+                // - pages directory with a file extension is not supported. e.g. "pages.app/" won't work.
+                //     This is a premature optimization to avoid this magical auto-detection we do here from meaningfully increasing startup time if you're just passing a file
+                //     readDirInfo is a recursive lookup, top-down instead of bottom-up. It opens each folder handle and potentially reads the package.jsons
+                // So it is not fast! Unless it's already cached.
+                var paths = [_]string{std.mem.trimLeft(u8, this.options.entry_points[0], "./")};
+                if (std.mem.indexOfScalar(u8, paths[0], '.') == null) {
+                    var pages_dir_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+                    var entry = this.fs.absBuf(&paths, &pages_dir_buf);
+
+                    if (std.fs.path.extension(entry).len == 0) {
+                        allocators.constStrToU8(entry).ptr[entry.len] = '/';
+
+                        // Only throw if they actually passed in a route config and the directory failed to load
+                        var dir_info_ = this.resolver.readDirInfo(entry) catch return;
+                        var dir_info = dir_info_ orelse return;
+
+                        this.options.route_config = options.RouteConfig{
+                            .dir = dir_info.abs_path,
+                            .extensions = std.mem.span(&options.RouteConfig.DefaultExtensions),
+                        };
+                        this.router = try Router.init(this.fs, this.allocator, this.options.route_config.?);
+                        try this.router.?.loadRoutes(dir_info, Resolver, &this.resolver, std.math.maxInt(u16), true);
+                    }
+                }
+            } else if (this.options.route_config) |*route_config| {
+                var paths = [_]string{route_config.dir};
+                var entry = this.fs.abs(&paths);
+                var dir_info_ = try this.resolver.readDirInfo(entry);
+                var dir_info = dir_info_ orelse return error.MissingRoutesDir;
+
+                this.options.route_config = options.RouteConfig{
+                    .dir = dir_info.abs_path,
+                    .extensions = route_config.extensions,
+                };
+                this.router = try Router.init(this.fs, this.allocator, this.options.route_config.?);
+                try this.router.?.loadRoutes(dir_info, Resolver, &this.resolver, std.math.maxInt(u16), true);
+            }
         }
 
         pub fn resetStore(bundler: *ThisBundler) void {
@@ -989,7 +1061,7 @@ pub fn NewBundler(cache_files: bool) type {
             // Step 1. Parse & scan
             const loader = bundler.options.loaders.get(resolve_result.path_pair.primary.name.ext) orelse .file;
             var file_path = resolve_result.path_pair.primary;
-            file_path.pretty = Linker.relative_paths_list.append(bundler.fs.relativeTo(file_path.text)) catch unreachable;
+            file_path.pretty = Linker.relative_paths_list.append(string, bundler.fs.relativeTo(file_path.text)) catch unreachable;
 
             var output_file = options.OutputFile{
                 .input = file_path,
@@ -1134,7 +1206,7 @@ pub fn NewBundler(cache_files: bool) type {
             // Step 1. Parse & scan
             const loader = bundler.options.loaders.get(resolve_result.path_pair.primary.name.ext) orelse .file;
             var file_path = resolve_result.path_pair.primary;
-            file_path.pretty = Linker.relative_paths_list.append(bundler.fs.relativeTo(file_path.text)) catch unreachable;
+            file_path.pretty = Linker.relative_paths_list.append(string, bundler.fs.relativeTo(file_path.text)) catch unreachable;
 
             switch (loader) {
                 .jsx, .tsx, .js, .ts, .json => {
@@ -1609,32 +1681,11 @@ pub fn NewBundler(cache_files: bool) type {
             };
         }
 
-        pub fn bundle(
-            allocator: *std.mem.Allocator,
-            log: *logger.Log,
-            opts: Api.TransformOptions,
-        ) !options.TransformResult {
-            var bundler = try ThisBundler.init(allocator, log, opts, null);
-            bundler.configureLinker();
-
-            if (bundler.options.write and bundler.options.output_dir.len > 0) {}
-
-            //  100.00 µs std.fifo.LinearFifo(resolver.Result,std.fifo.LinearFifoBufferType { .Dynamic = {}}).writeItemAssumeCapacity
-            if (bundler.options.resolve_mode != .lazy) {
-                try bundler.resolve_queue.ensureUnusedCapacity(24);
-            }
-
-            var entry_points = try allocator.alloc(_resolver.Result, bundler.options.entry_points.len);
-
-            if (log.level == .verbose) {
-                bundler.resolver.debug_logs = try DebugLogs.init(allocator);
-            }
-
-            var rfs: *Fs.FileSystem.RealFS = &bundler.fs.fs;
-
+        fn enqueueEntryPoints(bundler: *ThisBundler, entry_points: []_resolver.Result, comptime normalize_entry_point: bool) void {
             var entry_point_i: usize = 0;
+
             for (bundler.options.entry_points) |_entry| {
-                var entry: string = bundler.normalizeEntryPointPath(_entry);
+                var entry: string = if (comptime normalize_entry_point) bundler.normalizeEntryPointPath(_entry) else _entry;
 
                 defer {
                     js_ast.Expr.Data.Store.reset();
@@ -1651,7 +1702,7 @@ pub fn NewBundler(cache_files: bool) type {
                     continue;
                 }
 
-                try bundler.resolve_results.put(key, result);
+                bundler.resolve_results.put(key, result) catch unreachable;
                 entry_points[entry_point_i] = result;
 
                 if (isDebug) {
@@ -1660,6 +1711,40 @@ pub fn NewBundler(cache_files: bool) type {
 
                 entry_point_i += 1;
                 bundler.resolve_queue.writeItem(result) catch unreachable;
+            }
+        }
+
+        pub fn bundle(
+            allocator: *std.mem.Allocator,
+            log: *logger.Log,
+            opts: Api.TransformOptions,
+        ) !options.TransformResult {
+            var bundler = try ThisBundler.init(allocator, log, opts, null);
+            bundler.configureLinker();
+            try bundler.configureRouter();
+
+            var skip_normalize = false;
+            if (bundler.router) |router| {
+                bundler.options.entry_points = try router.getEntryPoints(allocator);
+                skip_normalize = true;
+            }
+
+            if (bundler.options.write and bundler.options.output_dir.len > 0) {}
+
+            //  100.00 µs std.fifo.LinearFifo(resolver.Result,std.fifo.LinearFifoBufferType { .Dynamic = {}}).writeItemAssumeCapacity
+            if (bundler.options.resolve_mode != .lazy) {
+                try bundler.resolve_queue.ensureUnusedCapacity(24);
+            }
+
+            var entry_points = try allocator.alloc(_resolver.Result, bundler.options.entry_points.len);
+            if (skip_normalize) {
+                bundler.enqueueEntryPoints(entry_points, false);
+            } else {
+                bundler.enqueueEntryPoints(entry_points, true);
+            }
+
+            if (log.level == .verbose) {
+                bundler.resolver.debug_logs = try DebugLogs.init(allocator);
             }
 
             if (bundler.options.output_dir_handle == null) {

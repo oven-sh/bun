@@ -1,3 +1,5 @@
+/// This file is mostly the API schema but with all the options normalized.
+/// Normalization is necessary because most fields in the API schema are optional
 const std = @import("std");
 const logger = @import("logger.zig");
 const Fs = @import("fs.zig");
@@ -8,7 +10,6 @@ const Api = api.Api;
 const defines = @import("./defines.zig");
 const resolve_path = @import("./resolver/resolve_path.zig");
 const NodeModuleBundle = @import("./node_module_bundle.zig").NodeModuleBundle;
-
 usingnamespace @import("global.zig");
 
 const assert = std.debug.assert;
@@ -25,8 +26,8 @@ pub fn validatePath(log: *logger.Log, fs: *Fs.FileSystem.Implementation, cwd: st
     }
     const paths = [_]string{ cwd, rel_path };
     const out = std.fs.path.resolve(allocator, &paths) catch |err| {
-        log.addErrorFmt(null, logger.Loc{}, allocator, "Invalid {s}: {s}", .{ path_kind, rel_path }) catch unreachable;
-        Global.panic("", .{});
+        Global.invariant(false, "<r><red>{s}<r> resolving external: <b>\"{s}\"<r>", .{ @errorName(err), rel_path });
+        return "";
     };
 
     return out;
@@ -597,6 +598,8 @@ pub fn loadersFromTransformOptions(allocator: *std.mem.Allocator, _loaders: ?Api
     return loaders;
 }
 
+/// BundleOptions is used when ResolveMode is not set to "disable".
+/// BundleOptions is effectively webpack + babel
 pub const BundleOptions = struct {
     footer: string = "",
     banner: string = "",
@@ -632,6 +635,8 @@ pub const BundleOptions = struct {
     extension_order: []const string = &Defaults.ExtensionOrder,
     out_extensions: std.StringHashMap(string),
     import_path_format: ImportPathFormat = ImportPathFormat.relative,
+    framework: ?Framework = null,
+    route_config: ?RouteConfig = null,
 
     pub fn asJavascriptBundleConfig(this: *const BundleOptions) Api.JavascriptBundleConfig {}
 
@@ -701,6 +706,14 @@ pub const BundleOptions = struct {
         opts.external = ExternalModules.init(allocator, &fs.fs, fs.top_level_dir, transform.external, log, opts.platform);
         opts.out_extensions = opts.platform.outExtensions(allocator);
 
+        if (transform.framework) |_framework| {
+            opts.framework = try Framework.fromApi(_framework);
+        }
+
+        if (transform.router) |route_config| {
+            opts.route_config = try RouteConfig.fromApi(route_config, allocator);
+        }
+
         if (transform.serve orelse false) {
             opts.preserve_extensions = true;
             opts.append_package_version_in_query_string = true;
@@ -720,25 +733,25 @@ pub const BundleOptions = struct {
                             defer allocator.free(check_static);
 
                             std.fs.accessAbsolute(check_static, .{}) catch {
-                                Output.printError("warn: \"public\" folder missing. If there are external assets used in your project, pass --public-dir=\"public-folder-name\"", .{});
+                                Output.prettyErrorln("warn: \"public\" folder missing. If there are external assets used in your project, pass --public-dir=\"public-folder-name\"", .{});
                                 did_warn = true;
                             };
                         }
 
                         if (!did_warn) {
-                            Output.printError("warn: \"public\" folder missing. If you want to use \"static\" as the public folder, pass --public-dir=\"static\".", .{});
+                            Output.prettyErrorln("warn: \"public\" folder missing. If you want to use \"static\" as the public folder, pass --public-dir=\"static\".", .{});
                         }
                         opts.public_dir_enabled = false;
                     },
                     error.AccessDenied => {
-                        Output.printError(
+                        Output.prettyErrorln(
                             "error: access denied when trying to open public_dir: \"{s}\".\nPlease re-open Speedy with access to this folder or pass a different folder via \"--public-dir\". Note: --public-dir is relative to --cwd (or the process' current working directory).\n\nThe public folder is where static assets such as images, fonts, and .html files go.",
                             .{opts.public_dir},
                         );
                         std.process.exit(1);
                     },
                     else => {
-                        Output.printError(
+                        Output.prettyErrorln(
                             "error: \"{s}\" when accessing public folder: \"{s}\"",
                             .{ @errorName(err), opts.public_dir },
                         );
@@ -749,7 +762,7 @@ pub const BundleOptions = struct {
                 break :brk null;
             };
 
-            // Windows has weird locking rules for files
+            // Windows has weird locking rules for file access.
             // so it's a bad idea to keep a file handle open for a long time on Windows.
             if (isWindows and opts.public_dir_handle != null) {
                 opts.public_dir_handle.?.close();
@@ -1082,5 +1095,75 @@ pub const TransformResult = struct {
             .errors = errors.toOwnedSlice(),
             .warnings = warnings.toOwnedSlice(),
         };
+    }
+};
+
+pub const Framework = struct {
+    entry_point: string,
+
+    pub fn fromApi(
+        transform: Api.FrameworkConfig,
+    ) !Framework {
+        return Framework{
+            .entry_point = transform.entry_point.?,
+        };
+    }
+};
+
+pub const RouteConfig = struct {
+    /// 
+    dir: string,
+    // TODO: do we need a separate list for data-only extensions?
+    // e.g. /foo.json just to get the data for the route, without rendering the html
+    // I think it's fine to hardcode as .json for now, but if I personally were writing a framework
+    // I would consider using a custom binary format to minimize request size
+    // maybe like CBOR
+    extensions: []const string,
+
+    pub const DefaultDir = "pages";
+    pub const DefaultExtensions = [_]string{ "tsx", "ts", "mjs", "jsx", "js" };
+
+    pub fn fromApi(router_: Api.RouteConfig, allocator: *std.mem.Allocator) !RouteConfig {
+        var router = RouteConfig{
+            .dir = DefaultDir,
+            .extensions = std.mem.span(&DefaultExtensions),
+        };
+
+        var router_dir: string = std.mem.trimRight(u8, router_.dir orelse "", "/\\");
+
+        if (router_dir.len != 0) {
+            router.dir = router_dir;
+        }
+
+        if (router_.extensions.len > 0) {
+            var count: usize = 0;
+            for (router_.extensions) |_ext| {
+                const ext = std.mem.trimLeft(u8, _ext, ".");
+
+                if (ext.len == 0) {
+                    continue;
+                }
+
+                count += 1;
+            }
+
+            var extensions = try allocator.alloc(string, count);
+            var remainder = extensions;
+
+            for (router_.extensions) |_ext| {
+                const ext = std.mem.trimLeft(u8, _ext, ".");
+
+                if (ext.len == 0) {
+                    continue;
+                }
+
+                remainder[0] = ext;
+                remainder = remainder[1..];
+            }
+
+            router.extensions = extensions;
+        }
+
+        return router;
     }
 };

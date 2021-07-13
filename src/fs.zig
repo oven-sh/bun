@@ -68,7 +68,10 @@ pub const FileSystem = struct {
         ENOTDIR,
     };
 
-    pub fn init1(allocator: *std.mem.Allocator, top_level_dir: ?string, enable_watcher: bool) !*FileSystem {
+    pub fn init1(
+        allocator: *std.mem.Allocator,
+        top_level_dir: ?string,
+    ) !*FileSystem {
         var _top_level_dir = top_level_dir orelse (if (isBrowser) "/project/" else try std.process.getCwdAlloc(allocator));
 
         // Ensure there's a trailing separator in the top level directory
@@ -86,7 +89,10 @@ pub const FileSystem = struct {
         instance = FileSystem{
             .allocator = allocator,
             .top_level_dir = _top_level_dir,
-            .fs = Implementation.init(allocator, _top_level_dir, enable_watcher),
+            .fs = Implementation.init(
+                allocator,
+                _top_level_dir,
+            ),
             // .stats = std.StringHashMap(Stat).init(allocator),
             .dirname_store = DirnameStore.init(allocator),
             .filename_store = FilenameStore.init(allocator),
@@ -98,7 +104,7 @@ pub const FileSystem = struct {
     }
 
     pub const DirEntry = struct {
-        pub const EntryMap = hash_map.StringHashMap(EntryStore.ListIndex);
+        pub const EntryMap = hash_map.StringHashMap(allocators.IndexType);
         pub const EntryStore = allocators.BSSList(Entry, Preallocate.Counts.files);
         dir: string,
         fd: StoredFileDescriptorType = 0,
@@ -122,7 +128,20 @@ pub const FileSystem = struct {
                 },
             }
             // entry.name only lives for the duration of the iteration
-            var name = FileSystem.FilenameStore.editableSlice(try FileSystem.FilenameStore.instance.append(entry.name));
+
+            var name: []u8 = undefined;
+
+            switch (_kind) {
+                .file => {
+                    name = FileSystem.FilenameStore.editableSlice(try FileSystem.FilenameStore.instance.append(@TypeOf(entry.name), entry.name));
+                },
+                .dir => {
+                    // FileSystem.FilenameStore here because it's not an absolute path
+                    // it's a path relative to the parent directory
+                    // so it's a tiny path like "foo" instead of "/bar/baz/foo"
+                    name = FileSystem.FilenameStore.editableSlice(try FileSystem.FilenameStore.instance.append(@TypeOf(entry.name), entry.name));
+                },
+            }
 
             for (entry.name) |c, i| {
                 name[i] = std.ascii.toLower(c);
@@ -380,9 +399,9 @@ pub const FileSystem = struct {
 
     threadlocal var realpath_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
     pub fn resolveAlloc(f: *@This(), allocator: *std.mem.Allocator, parts: anytype) !string {
-        const joined = f.join(parts);
+        const joined = f.abs(parts);
 
-        const realpath = try std.fs.realpath(joined, (&realpath_buffer));
+        const realpath = f.resolvePath(joined);
 
         return try allocator.dupe(u8, realpath);
     }
@@ -395,10 +414,7 @@ pub const FileSystem = struct {
         entries_mutex: Mutex = Mutex.init(),
         entries: *EntriesOption.Map,
         allocator: *std.mem.Allocator,
-        do_not_cache_entries: bool = false,
         limiter: Limiter,
-        watcher: ?std.StringHashMap(WatchData) = null,
-        watcher_mutex: Mutex = Mutex.init(),
         cwd: string,
         parent_fs: *FileSystem = undefined,
         file_limit: usize = 32,
@@ -440,7 +456,10 @@ pub const FileSystem = struct {
             return limit.cur;
         }
 
-        pub fn init(allocator: *std.mem.Allocator, cwd: string, enable_watcher: bool) RealFS {
+        pub fn init(
+            allocator: *std.mem.Allocator,
+            cwd: string,
+        ) RealFS {
             const file_limit = adjustUlimit();
             return RealFS{
                 .entries = EntriesOption.Map.init(allocator),
@@ -449,7 +468,6 @@ pub const FileSystem = struct {
                 .file_limit = file_limit,
                 .file_quota = file_limit,
                 .limiter = Limiter.init(allocator, file_limit),
-                .watcher = if (enable_watcher) std.StringHashMap(WatchData).init(allocator) else null,
             };
         }
 
@@ -518,39 +536,8 @@ pub const FileSystem = struct {
             pub const SafetyGap = 3;
         };
 
-        fn modKeyError(fs: *RealFS, path: string, err: anyerror) void {
-            if (fs.watcher) |*watcher| {
-                fs.watcher_mutex.lock();
-                defer fs.watcher_mutex.unlock();
-                var state = WatchData.State.file_missing;
-
-                switch (err) {
-                    error.Unusable => {
-                        state = WatchData.State.file_unusable_mod_key;
-                    },
-                    else => {},
-                }
-
-                var entry = watcher.getOrPutValue(path, WatchData{ .state = state }) catch unreachable;
-                entry.value_ptr.state = state;
-            }
-        }
-
         pub fn modKeyWithFile(fs: *RealFS, path: string, file: anytype) anyerror!ModKey {
-            const key = ModKey.generate(fs, path, file) catch |err| {
-                fs.modKeyError(path, err);
-                return err;
-            };
-
-            if (fs.watcher) |*watcher| {
-                fs.watcher_mutex.lock();
-                defer fs.watcher_mutex.unlock();
-
-                var entry = watcher.getOrPutValue(path, WatchData{ .state = .file_has_mod_key, .mod_key = key }) catch unreachable;
-                entry.value_ptr.mod_key = key;
-            }
-
-            return key;
+            return try ModKey.generate(fs, path, file);
         }
 
         pub fn modKey(fs: *RealFS, path: string) anyerror!ModKey {
@@ -564,24 +551,6 @@ pub const FileSystem = struct {
             }
             return try fs.modKeyWithFile(path, file);
         }
-
-        pub const WatchData = struct {
-            dir_entries: []string = &([_]string{}),
-            file_contents: string = "",
-            mod_key: ModKey = ModKey{},
-            watch_mutex: Mutex = Mutex.init(),
-            state: State = State.none,
-
-            pub const State = enum {
-                none,
-                dir_has_entries,
-                dir_missing,
-                file_has_mod_key,
-                file_need_mod_key,
-                file_missing,
-                file_unusable_mod_key,
-            };
-        };
 
         pub const EntriesOption = union(Tag) {
             entries: DirEntry,
@@ -654,13 +623,7 @@ pub const FileSystem = struct {
         }
 
         fn readDirectoryError(fs: *RealFS, dir: string, err: anyerror) !*EntriesOption {
-            if (fs.watcher) |*watcher| {
-                fs.watcher_mutex.lock();
-                defer fs.watcher_mutex.unlock();
-                try watcher.put(dir, WatchData{ .state = .dir_missing });
-            }
-
-            if (!fs.do_not_cache_entries) {
+            if (FeatureFlags.disable_entry_cache) {
                 fs.entries_mutex.lock();
                 defer fs.entries_mutex.unlock();
                 var get_or_put_result = try fs.entries.getOrPut(dir);
@@ -679,11 +642,11 @@ pub const FileSystem = struct {
 
         threadlocal var temp_entries_option: EntriesOption = undefined;
 
-        pub fn readDirectory(fs: *RealFS, _dir: string, _handle: ?std.fs.Dir, recursive: bool) !*EntriesOption {
+        pub fn readDirectory(fs: *RealFS, _dir: string, _handle: ?std.fs.Dir) !*EntriesOption {
             var dir = _dir;
             var cache_result: ?allocators.Result = null;
 
-            if (!fs.do_not_cache_entries) {
+            if (FeatureFlags.disable_entry_cache) {
                 fs.entries_mutex.lock();
                 defer fs.entries_mutex.unlock();
 
@@ -706,7 +669,7 @@ pub const FileSystem = struct {
 
             // if we get this far, it's a real directory, so we can just store the dir name.
             if (_handle == null) {
-                dir = try FilenameStore.instance.append(_dir);
+                dir = try DirnameStore.instance.append(string, _dir);
             }
 
             // Cache miss: read the directory entries
@@ -717,23 +680,7 @@ pub const FileSystem = struct {
                 return fs.readDirectoryError(dir, err) catch unreachable;
             };
 
-            // if (fs.watcher) |*watcher| {
-            //     fs.watcher_mutex.lock();
-            //     defer fs.watcher_mutex.unlock();
-            //     var _entries = watcher.iterator();
-            //     const names = try fs.allocator.alloc([]const u8, _entries.len);
-            //     for (_entries) |entry, i| {
-            //         names[i] = try fs.allocator.dupe(u8, entry.key);
-            //     }
-            //     strings.sortAsc(names);
-
-            //     try watcher.put(
-            //         try fs.allocator.dupe(u8, dir),
-            //         WatchData{ .dir_entries = names, .state = .dir_has_entries },
-            //     );
-            // }
-
-            if (!fs.do_not_cache_entries) {
+            if (FeatureFlags.disable_entry_cache) {
                 fs.entries_mutex.lock();
                 defer fs.entries_mutex.unlock();
                 const result = EntriesOption{
@@ -748,14 +695,7 @@ pub const FileSystem = struct {
             return &temp_entries_option;
         }
 
-        fn readFileError(fs: *RealFS, path: string, err: anyerror) void {
-            if (fs.watcher) |*watcher| {
-                fs.watcher_mutex.lock();
-                defer fs.watcher_mutex.unlock();
-                var res = watcher.getOrPutValue(path, WatchData{ .state = .file_missing }) catch unreachable;
-                res.value_ptr.state = .file_missing;
-            }
-        }
+        fn readFileError(fs: *RealFS, path: string, err: anyerror) void {}
 
         pub fn readFileWithHandle(
             fs: *RealFS,
@@ -802,14 +742,6 @@ pub const FileSystem = struct {
                     return err;
                 };
                 file_contents = buf[0..read_count];
-            }
-
-            if (fs.watcher) |*watcher| {
-                fs.watcher_mutex.lock();
-                defer fs.watcher_mutex.unlock();
-                var res = watcher.getOrPutValue(path, WatchData{}) catch unreachable;
-                res.value_ptr.state = .file_need_mod_key;
-                res.value_ptr.file_contents = file_contents;
             }
 
             return File{ .path = Path.init(path), .contents = file_contents };

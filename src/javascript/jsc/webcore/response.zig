@@ -1015,7 +1015,7 @@ pub const FetchEvent = struct {
         .{
             .name = "FetchEvent",
             .read_only = true,
-            .ts = d.ts.class{ .interface = true },
+            .ts = .{ .class = d.ts.class{ .interface = true } },
         },
         .{
             .@"respondWith" = .{

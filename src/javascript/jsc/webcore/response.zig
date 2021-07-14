@@ -6,7 +6,7 @@ const JavaScript = @import("../javascript.zig");
 pub const Response = struct {
     pub const Class = NewClass(
         Response,
-        "Response",
+        .{ .name = "Response" },
         .{
             .@"constructor" = constructor,
         },
@@ -24,8 +24,6 @@ pub const Response = struct {
                 .ro = true,
             },
         },
-        false,
-        false,
     );
 
     allocator: *std.mem.Allocator,
@@ -304,21 +302,47 @@ pub const Headers = struct {
     };
     pub const Class = NewClass(
         Headers,
-        "Headers",
         .{
-            .@"get" = JS.get,
-            .@"set" = JS.set,
-            .@"append" = JS.append,
-            .@"delete" = JS.delete,
-            .@"entries" = JS.entries,
-            .@"keys" = JS.keys,
-            .@"values" = JS.values,
-            .@"constructor" = JS.constructor,
-            .@"finalize" = JS.finalize,
+            .name = "Headers",
+            .read_only = true,
+        },
+        .{
+            .@"get" = .{
+                .rfn = JS.get,
+            },
+            .@"set" = .{
+                .rfn = JS.set,
+                .ts = d.ts{},
+            },
+            .@"append" = .{
+                .rfn = JS.append,
+                .ts = d.ts{},
+            },
+            .@"delete" = .{
+                .rfn = JS.delete,
+                .ts = d.ts{},
+            },
+            .@"entries" = .{
+                .rfn = JS.entries,
+                .ts = d.ts{},
+            },
+            .@"keys" = .{
+                .rfn = JS.keys,
+                .ts = d.ts{},
+            },
+            .@"values" = .{
+                .rfn = JS.values,
+                .ts = d.ts{},
+            },
+            .@"constructor" = .{
+                .rfn = JS.constructor,
+                .ts = d.ts{},
+            },
+            .@"finalize" = .{
+                .rfn = JS.finalize,
+            },
         },
         .{},
-        true,
-        false,
     );
 
     // https://developer.mozilla.org/en-US/docs/Glossary/Guard
@@ -807,7 +831,10 @@ pub const Request = struct {
 
     pub const Class = NewClass(
         Request,
-        "Request",
+        .{
+            .name = "Request",
+            .read_only = true,
+        },
         .{},
         .{
             .@"cache" = .{
@@ -855,8 +882,6 @@ pub const Request = struct {
                 .@"ro" = true,
             },
         },
-        true,
-        false,
     );
 
     pub fn getCache(
@@ -987,14 +1012,42 @@ pub const FetchEvent = struct {
 
     pub const Class = NewClass(
         FetchEvent,
-        "FetchEvent",
-        .{ .@"respondWith" = respondWith, .@"waitUntil" = waitUntil },
         .{
-            .@"client" = .{ .@"get" = getClient, .ro = true },
-            .@"request" = .{ .@"get" = getRequest, .ro = true },
+            .name = "FetchEvent",
+            .read_only = true,
+            .ts = d.ts.class{ .interface = true },
         },
-        true,
-        false,
+        .{
+            .@"respondWith" = .{
+                .rfn = respondWith,
+                .ts = d.ts{
+                    .tsdoc = "Render the response in the active HTTP request",
+                    .@"return" = "void",
+                    .args = &[_]d.ts.arg{
+                        .{ .name = "response", .@"return" = "Response" },
+                    },
+                },
+            },
+            .@"waitUntil" = waitUntil,
+        },
+        .{
+            .@"client" = .{
+                .@"get" = getClient,
+                .ro = true,
+                .ts = d.ts{
+                    .tsdoc = "HTTP client metadata. This is not implemented yet, do not use.",
+                    .@"return" = "undefined",
+                },
+            },
+            .@"request" = .{
+                .@"get" = getRequest,
+                .ro = true,
+                .ts = d.ts{
+                    .tsdoc = "HTTP request",
+                    .@"return" = "InstanceType<Request>",
+                },
+            },
+        },
     );
 
     pub fn getClient(

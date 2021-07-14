@@ -1,7 +1,7 @@
 const std = @import("std");
 const resolve_path = @import("./src/resolver/resolve_path.zig");
 
-pub fn addPicoHTTP(step: *std.build.LibExeObjStep, dir: []const u8) void {
+pub fn addPicoHTTP(step: *std.build.LibExeObjStep) void {
     const picohttp = step.addPackage(.{
         .name = "picohttp",
         .path = .{ .path = "src/deps/picohttp.zig" },
@@ -119,10 +119,14 @@ pub fn build(b: *std.build.Builder) void {
     var javascript: @TypeOf(exe) = undefined;
     // exe.want_lto = true;
     if (!target.getCpuArch().isWasm()) {
-        addPicoHTTP(exe, cwd);
+        addPicoHTTP(
+            exe,
+        );
         if (ENABLE_JAVASCRIPT_BUILD) {
             javascript = b.addExecutable("spjs", "src/main_javascript.zig");
-            addPicoHTTP(javascript, cwd);
+            addPicoHTTP(
+                javascript,
+            );
             javascript.packages = std.ArrayList(std.build.Pkg).fromOwnedSlice(std.heap.page_allocator, std.heap.page_allocator.dupe(std.build.Pkg, exe.packages.items) catch unreachable);
             javascript.setOutputDir(output_dir);
             javascript.setBuildMode(mode);
@@ -142,7 +146,7 @@ pub fn build(b: *std.build.Builder) void {
         }
     }
 
-    exe.install();
+    b.default_step.dependOn(&exe.step);
 
     if (!target.getCpuArch().isWasm()) {
         if (ENABLE_JAVASCRIPT_BUILD) {
@@ -159,5 +163,23 @@ pub fn build(b: *std.build.Builder) void {
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
-    std.debug.print("Build: ./{s}/{s}\n", .{ output_dir, "esdev" });
+    var log_step = b.addLog("Destination: {s}/{s}\n", .{ output_dir, "esdev" });
+    log_step.step.dependOn(&exe.step);
+
+    var typings_exe = b.addExecutable("typescript-decls", "src/javascript/jsc/typescript.zig");
+    var typings_cmd = typings_exe.run();
+    typings_cmd.cwd = b.build_root;
+
+    typings_cmd.step.dependOn(&typings_exe.step);
+
+    typings_exe.linkLibC();
+    typings_exe.setMainPkgPath(cwd);
+    if (target.getOsTag() == .macos) {
+        typings_exe.linkFramework("JavascriptCore");
+    }
+    addPicoHTTP(
+        typings_exe,
+    );
+    const typings_step = b.step("types", "Build TypeScript types");
+    typings_step.dependOn(&typings_cmd.step);
 }

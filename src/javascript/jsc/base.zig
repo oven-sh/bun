@@ -163,6 +163,32 @@ pub const To = struct {
     };
 };
 
+pub const RuntimeImports = struct {
+    pub fn resolve(ctx: js.JSContextRef, str: string) ?js.JSObjectRef {
+        switch (ModuleList.Map.get(str) orelse ModuleList.none) {
+            .Router => {
+                const Router = @import("./api/router.zig");
+                return js.JSObjectMake(ctx, Router.Class.get().*, null);
+            },
+            else => {
+                return null;
+            },
+        }
+    }
+
+    pub const ModuleList = enum(u8) {
+        Router = 0,
+        none = std.math.maxInt(u8),
+
+        pub const Map = std.ComptimeStringMap(
+            ModuleList,
+            .{
+                .{ "speedy.js/router", ModuleList.Router },
+            },
+        );
+    };
+};
+
 pub const Properties = struct {
     pub const UTF8 = struct {
         pub const module = "module";
@@ -277,16 +303,331 @@ pub const Properties = struct {
 };
 
 const hasSetter = std.meta.trait.hasField("set");
+const hasReadOnly = std.meta.trait.hasField("ro");
 const hasFinalize = std.meta.trait.hasField("finalize");
+const hasTypeScript = std.meta.trait.hasField("ts");
+
+pub const d = struct {
+    pub const ts = struct {
+        @"return": string = "",
+        tsdoc: string = "",
+        name: string = "",
+        read_only: ?bool = null,
+        args: []const arg = &[_]arg{},
+        splat_args: bool = false,
+
+        pub const builder = struct {
+            classes: []class,
+        };
+
+        pub const class = struct {
+            path: string = "",
+            name: string = "",
+            tsdoc: string = "",
+            @"return": string = "",
+            read_only: ?bool = null,
+            interface: bool = true,
+            global: bool = false,
+
+            properties: []ts = &[_]ts{},
+            functions: []ts = &[_]ts{},
+
+            pub const Printer = struct {
+                const indent_level = 2;
+                pub fn printIndented(comptime fmt: string, args: anytype, comptime indent: usize) string {
+                    comptime var buf: string = "";
+                    comptime buf = buf ++ " " ** indent;
+
+                    return comptime buf ++ std.fmt.comptimePrint(fmt, args);
+                }
+
+                pub fn printVar(comptime property: d.ts, comptime indent: usize) string {
+                    comptime var buf: string = "";
+                    comptime buf = buf ++ " " ** indent;
+
+                    comptime {
+                        if (property.read_only orelse false) {
+                            buf = buf ++ "readonly ";
+                        }
+
+                        buf = buf ++ "var ";
+                        buf = buf ++ property.name;
+                        buf = buf ++ ": ";
+
+                        if (property.@"return".len > 0) {
+                            buf = buf ++ property.@"return";
+                        } else {
+                            buf = buf ++ "any";
+                        }
+
+                        buf = buf ++ ";\n";
+                    }
+
+                    comptime {
+                        if (property.tsdoc.len > 0) {
+                            buf = printTSDoc(property.tsdoc, indent) ++ buf;
+                        }
+                    }
+
+                    return buf;
+                }
+
+                pub fn printProperty(comptime property: d.ts, comptime indent: usize) string {
+                    comptime var buf: string = "";
+                    comptime buf = buf ++ " " ** indent;
+
+                    comptime {
+                        if (property.read_only orelse false) {
+                            buf = buf ++ "readonly ";
+                        }
+
+                        buf = buf ++ property.name;
+                        buf = buf ++ ": ";
+
+                        if (property.@"return".len > 0) {
+                            buf = buf ++ property.@"return";
+                        } else {
+                            buf = buf ++ "any";
+                        }
+
+                        buf = buf ++ ";\n";
+                    }
+
+                    comptime {
+                        if (property.tsdoc.len > 0) {
+                            buf = printTSDoc(property.tsdoc, indent) ++ buf;
+                        }
+                    }
+
+                    return buf;
+                }
+                pub fn printInstanceFunction(comptime func: d.ts, comptime _indent: usize, comptime no_type: bool) string {
+                    comptime var indent = _indent;
+                    comptime var buf: string = "";
+
+                    comptime {
+                        var args: string = "";
+                        for (func.args) |a, i| {
+                            if (i > 0) {
+                                args = args ++ ", ";
+                            }
+                            args = args ++ printArg(a);
+                        }
+
+                        if (no_type) {
+                            buf = buf ++ printIndented("{s}({s});\n", .{
+                                func.name,
+                                args,
+                            }, indent);
+                        } else {
+                            buf = buf ++ printIndented("{s}({s}): {s};\n", .{
+                                func.name,
+                                args,
+                                func.@"return",
+                            }, indent);
+                        }
+                    }
+
+                    comptime {
+                        if (func.tsdoc.len > 0) {
+                            buf = printTSDoc(func.tsdoc, indent) ++ buf;
+                        }
+                    }
+
+                    return buf;
+                }
+                pub fn printFunction(comptime func: d.ts, comptime _indent: usize, comptime no_type: bool) string {
+                    comptime var indent = _indent;
+                    comptime var buf: string = "";
+
+                    comptime {
+                        var args: string = "";
+                        for (func.args) |a, i| {
+                            if (i > 0) {
+                                args = args ++ ", ";
+                            }
+                            args = args ++ printArg(a);
+                        }
+
+                        if (no_type) {
+                            buf = buf ++ printIndented("function {s}({s});\n", .{
+                                func.name,
+                                args,
+                            }, indent);
+                        } else {
+                            buf = buf ++ printIndented("function {s}({s}): {s};\n", .{
+                                func.name,
+                                args,
+                                func.@"return",
+                            }, indent);
+                        }
+                    }
+
+                    comptime {
+                        if (func.tsdoc.len > 0) {
+                            buf = printTSDoc(func.tsdoc, indent) ++ buf;
+                        }
+                    }
+
+                    return buf;
+                }
+                pub fn printArg(
+                    comptime _arg: d.ts.arg,
+                ) string {
+                    comptime var buf: string = "";
+                    comptime {
+                        buf = buf ++ _arg.name;
+                        buf = buf ++ ": ";
+
+                        if (_arg.@"return".len == 0) {
+                            buf = buf ++ "any";
+                        } else {
+                            buf = buf ++ _arg.@"return";
+                        }
+                    }
+
+                    return buf;
+                }
+                pub fn printClass(comptime klass: d.ts.class, comptime _indent: usize) string {
+                    comptime var indent = _indent;
+                    comptime var buf: string = "";
+                    comptime brk: {
+                        if (klass.path.len > 0) {
+                            buf = buf ++ printIndented("declare module \"{s}\" {{\n\n", .{klass.path}, indent);
+                            indent += indent_level;
+                        }
+                        if (klass.tsdoc.len > 0) {
+                            buf = buf ++ printTSDoc(klass.tsdoc, indent);
+                        }
+
+                        const qualifier = if (klass.path.len == 0 and !klass.interface) "declare " else "";
+                        var stmt: string = qualifier;
+
+                        if (!klass.global) {
+                            if (klass.interface) {
+                                buf = buf ++ printIndented("export interface {s} {{\n", .{klass.name}, indent);
+                            } else {
+                                buf = buf ++ printIndented("{s}class {s} {{\n", .{ qualifier, klass.name }, indent);
+                            }
+
+                            indent += indent_level;
+                        }
+
+                        var did_print_constructor = false;
+                        for (klass.functions) |func, i| {
+                            if (!strings.eqlComptime(func.name, "constructor")) continue;
+                            did_print_constructor = true;
+                            buf = buf ++ printInstanceFunction(
+                                func,
+                                indent,
+                                !klass.interface,
+                            );
+                        }
+
+                        for (klass.properties) |property, i| {
+                            if (i > 0 or did_print_constructor) {
+                                buf = buf ++ "\n";
+                            }
+
+                            if (!klass.global) {
+                                buf = buf ++ printProperty(property, indent);
+                            } else {
+                                buf = buf ++ printVar(property, indent);
+                            }
+                        }
+
+                        buf = buf ++ "\n";
+
+                        for (klass.functions) |func, i| {
+                            if (i > 0) {
+                                buf = buf ++ "\n";
+                            }
+
+                            if (strings.eqlComptime(func.name, "constructor")) continue;
+
+                            if (!klass.global) {
+                                buf = buf ++ printInstanceFunction(
+                                    func,
+                                    indent,
+                                    false,
+                                );
+                            } else {
+                                buf = buf ++ printFunction(
+                                    func,
+                                    indent,
+                                    false,
+                                );
+                            }
+                        }
+
+                        indent -= indent_level;
+
+                        buf = buf ++ printIndented("}}\n", .{}, indent);
+
+                        if (klass.path.len > 0) {
+                            buf = buf ++ printIndented("export = {s};\n", .{klass.name}, indent);
+                            indent -= indent_level;
+                            buf = buf ++ printIndented("\n}}\n", .{}, indent);
+                        }
+
+                        break :brk;
+                    }
+                    return comptime buf;
+                }
+
+                pub fn printTSDoc(comptime str: string, comptime indent: usize) string {
+                    comptime var buf: string = "";
+
+                    comptime brk: {
+                        var splitter = std.mem.split(str, "\n");
+
+                        const first = splitter.next() orelse break :brk;
+                        const second = splitter.next() orelse {
+                            buf = buf ++ printIndented("/**  {s}  */\n", .{std.mem.trim(u8, first, " ")}, indent);
+                            break :brk;
+                        };
+                        buf = buf ++ printIndented("/**\n", .{}, indent);
+                        buf = buf ++ printIndented(" *  {s}\n", .{std.mem.trim(u8, first, " ")}, indent);
+                        buf = buf ++ printIndented(" *  {s}\n", .{std.mem.trim(u8, second, " ")}, indent);
+                        while (splitter.next()) |line| {
+                            buf = buf ++ printIndented(" *  {s}\n", .{std.mem.trim(u8, line, " ")}, indent);
+                        }
+                        buf = buf ++ printIndented("*/\n", .{}, indent);
+                    }
+
+                    return buf;
+                }
+            };
+        };
+
+        pub const arg = struct {
+            name: string = "",
+            @"return": string = "any",
+            optional: bool = false,
+        };
+    };
+};
+
+// This should only exist at compile-time.
+pub const ClassOptions = struct {
+    name: string,
+
+    read_only: bool = false,
+    singleton: bool = false,
+    ts: d.ts.class = d.ts.class{},
+};
+
 pub fn NewClass(
     comptime ZigType: type,
-    comptime name: string,
+    comptime options: ClassOptions,
     comptime staticFunctions: anytype,
     comptime properties: anytype,
-    comptime read_only: bool,
-    comptime singleton: bool,
 ) type {
+    const read_only = options.read_only;
+    const singleton = options.singleton;
+
     return struct {
+        const name = options.name;
         const ClassDefinitionCreator = @This();
         const function_names = std.meta.fieldNames(@TypeOf(staticFunctions));
         const names_buf = brk: {
@@ -538,6 +879,107 @@ pub fn NewClass(
             };
         }
 
+        // This should only be run at comptime
+        pub fn typescriptDeclaration() d.ts.class {
+            comptime var class = options.ts;
+
+            comptime {
+                if (class.name.len == 0) {
+                    class.name = options.name;
+                }
+
+                if (class.read_only == null) {
+                    class.read_only = options.read_only;
+                }
+
+                if (static_functions.len > 0) {
+                    var count: usize = 0;
+                    inline for (function_name_literals) |function_name, i| {
+                        const func = @field(staticFunctions, function_names[i]);
+                        const Func = @TypeOf(func);
+
+                        switch (@typeInfo(Func)) {
+                            .Struct => {
+                                if (hasTypeScript(Func)) {
+                                    count += 1;
+                                }
+                            },
+                            else => continue,
+                        }
+                    }
+
+                    var funcs = std.mem.zeroes([count]d.ts);
+                    class.functions = std.mem.span(&funcs);
+                    var func_i: usize = 0;
+
+                    inline for (function_name_literals) |function_name, i| {
+                        const func = @field(staticFunctions, function_names[i]);
+                        const Func = @TypeOf(func);
+
+                        switch (@typeInfo(Func)) {
+                            .Struct => {
+                                if (hasTypeScript(Func)) {
+                                    var ts_function: d.ts = func.ts;
+                                    if (ts_function.name.len == 0) {
+                                        ts_function.name = function_names[i];
+                                    }
+
+                                    if (ts_function.read_only == null) {
+                                        ts_function.read_only = class.read_only;
+                                    }
+
+                                    class.functions[func_i] = ts_function;
+
+                                    func_i += 1;
+                                }
+                            },
+                            else => continue,
+                        }
+                    }
+                }
+
+                if (property_names.len > 0) {
+                    var count: usize = 0;
+                    inline for (property_names) |property_name, i| {
+                        const field = @field(properties, property_names[i]);
+
+                        if (hasTypeScript(@TypeOf(field))) {
+                            count += 1;
+                        }
+                    }
+
+                    var props = std.mem.zeroes([count]d.ts);
+                    class.properties = std.mem.span(&props);
+                    var property_i: usize = 0;
+
+                    inline for (property_names) |property_name, i| {
+                        const field = @field(properties, property_names[i]);
+
+                        if (hasTypeScript(@TypeOf(field))) {
+                            var ts_field: d.ts = field.ts;
+                            if (ts_field.name.len == 0) {
+                                ts_field.name = property_name;
+                            }
+
+                            if (ts_field.read_only == null) {
+                                if (hasReadOnly(@TypeOf(field))) {
+                                    ts_field.read_only = field.ro;
+                                } else {
+                                    ts_field.read_only = class.read_only;
+                                }
+                            }
+
+                            class.properties[property_i] = ts_field;
+
+                            property_i += 1;
+                        }
+                    }
+                }
+            }
+
+            return comptime class;
+        }
+
         pub fn define() js.JSClassDefinition {
             var def = js.kJSClassDefinitionEmpty;
 
@@ -545,19 +987,46 @@ pub fn NewClass(
                 std.mem.set(js.JSStaticFunction, &static_functions, std.mem.zeroes(js.JSStaticFunction));
                 var count: usize = 0;
                 inline for (function_name_literals) |function_name, i| {
-                    if (comptime strings.eqlComptime(function_names[i], "constructor")) {
-                        def.callAsConstructor = To.JS.Constructor(@field(staticFunctions, function_names[i])).rfn;
-                    } else if (comptime strings.eqlComptime(function_names[i], "finalize")) {
-                        def.finalize = To.JS.Finalize(ZigType, staticFunctions.finalize).rfn;
-                    } else {
-                        var callback = To.JS.Callback(ZigType, @field(staticFunctions, function_names[i])).rfn;
-                        static_functions[count] = js.JSStaticFunction{
-                            .name = (function_names[i][0.. :0]).ptr,
-                            .callAsFunction = callback,
-                            .attributes = comptime if (read_only) js.JSPropertyAttributes.kJSPropertyAttributeReadOnly else js.JSPropertyAttributes.kJSPropertyAttributeNone,
-                        };
+                    switch (comptime @typeInfo(@TypeOf(@field(staticFunctions, function_names[i])))) {
+                        .Struct => {
+                            if (comptime strings.eqlComptime(function_names[i], "constructor")) {
+                                def.callAsConstructor = To.JS.Constructor(staticFunctions.constructor.rfn).rfn;
+                            } else if (comptime strings.eqlComptime(function_names[i], "finalize")) {
+                                def.finalize = To.JS.Finalize(ZigType, staticFunctions.finalize.rfn).rfn;
+                            } else {
+                                var callback = To.JS.Callback(
+                                    ZigType,
+                                    @field(staticFunctions, function_names[i]).rfn,
+                                ).rfn;
+                                static_functions[count] = js.JSStaticFunction{
+                                    .name = (function_names[i][0.. :0]).ptr,
+                                    .callAsFunction = callback,
+                                    .attributes = comptime if (read_only) js.JSPropertyAttributes.kJSPropertyAttributeReadOnly else js.JSPropertyAttributes.kJSPropertyAttributeNone,
+                                };
 
-                        count += 1;
+                                count += 1;
+                            }
+                        },
+                        .Fn => {
+                            if (comptime strings.eqlComptime(function_names[i], "constructor")) {
+                                def.callAsConstructor = To.JS.Constructor(staticFunctions.constructor).rfn;
+                            } else if (comptime strings.eqlComptime(function_names[i], "finalize")) {
+                                def.finalize = To.JS.Finalize(ZigType, staticFunctions.finalize).rfn;
+                            } else {
+                                var callback = To.JS.Callback(
+                                    ZigType,
+                                    @field(staticFunctions, function_names[i]),
+                                ).rfn;
+                                static_functions[count] = js.JSStaticFunction{
+                                    .name = (function_names[i][0.. :0]).ptr,
+                                    .callAsFunction = callback,
+                                    .attributes = comptime if (read_only) js.JSPropertyAttributes.kJSPropertyAttributeReadOnly else js.JSPropertyAttributes.kJSPropertyAttributeNone,
+                                };
+
+                                count += 1;
+                            }
+                        },
+                        else => unreachable,
                     }
 
                     // if (singleton) {

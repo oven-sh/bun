@@ -261,11 +261,6 @@ pub const Module = struct {
     // reload_pending should not be applied to bundled modules
     reload_pending: bool = false,
 
-    pub var module_class: js.JSClassRef = undefined;
-    pub var module_global_class: js.JSClassRef = undefined;
-    pub var module_global_class_def: js.JSClassDefinition = undefined;
-    pub var module_class_def: js.JSClassDefinition = undefined;
-
     pub const NodeModuleList = struct {
         tempbuf: []u8,
         property_names: [*]u8,
@@ -709,6 +704,10 @@ pub const Module = struct {
         var import_path = require_buf.list.items[0 .. end - 1];
         var module = this;
 
+        if (RuntimeImports.resolve(ctx, import_path)) |ref| {
+            return ref;
+        }
+
         if (this.vm.bundler.linker.resolver.resolve(module.path.name.dirWithTrailingSlash(), import_path, .require)) |resolved| {
             var load_result = Module.loadFromResolveResult(this.vm, ctx, resolved, exception) catch |err| {
                 return null;
@@ -856,7 +855,7 @@ pub const Module = struct {
 
     const ModuleClass = NewClass(
         Module,
-        "Module",
+        .{ .name = "Module" },
         .{
             .@"require" = require,
             .@"requireFirst" = requireFirst,
@@ -876,8 +875,6 @@ pub const Module = struct {
                 .ro = false,
             },
         },
-        false,
-        false,
     );
 
     const ExportsClassName = "module.exports";
@@ -891,9 +888,6 @@ pub const Module = struct {
         // ExportsClass.callAsConstructor = To.JS.Callback(Module, callExportsAsConstructor);
 
         exports_class_ref = js.JSClassRetain(js.JSClassCreate(&ExportsClass));
-
-        module_class_def = ModuleClass.define();
-        module_class = js.JSClassRetain(js.JSClassCreate(&module_class_def));
     }
 
     pub const LoadResult = union(Tag) {
@@ -932,7 +926,7 @@ pub const Module = struct {
                 .ref = undefined,
                 .vm = vm,
             };
-            module.ref = js.JSObjectMake(global_ctx, Module.module_class, module);
+            module.ref = js.JSObjectMake(global_ctx, Module.ModuleClass.get(), module);
             js.JSValueProtect(global_ctx, module.ref);
         } else {
             js.JSValueUnprotect(global_ctx, module.exports.?);
@@ -1489,7 +1483,7 @@ pub const GlobalObject = struct {
 
     pub const ConsoleClass = NewClass(
         GlobalObject,
-        "Console",
+        .{ .name = "Console", .singleton = true },
         .{
             .@"log" = stdout,
             .@"info" = stdout,
@@ -1500,25 +1494,43 @@ pub const GlobalObject = struct {
             .@"warn" = stderr,
         },
         .{},
-        // people sometimes modify console.log, let them.
-        false,
-        true,
     );
 
     pub const GlobalClass = NewClass(
         GlobalObject,
-        "Global",
         .{
-            .@"addEventListener" = EventListenerMixin.addEventListener(GlobalObject).addListener,
+            .name = "Global",
+            .ts = d.ts.class{
+                .global = true,
+            },
         },
         .{
-            .@"console" = getConsole,
-            .@"Request" = Request.Class.GetClass(GlobalObject).getter,
-            .@"Response" = Response.Class.GetClass(GlobalObject).getter,
-            .@"Headers" = Headers.Class.GetClass(GlobalObject).getter,
+            .@"addEventListener" = .{
+                .rfn = EventListenerMixin.addEventListener(GlobalObject).addListener,
+                .ts = d.ts{
+                    .args = &[_]d.ts.arg{
+                        .{ .name = "name", .@"return" = "\"fetch\"" },
+                        .{ .name = "callback", .@"return" = "(event: FetchEvent) => void" },
+                    },
+                    .@"return" = "void",
+                },
+            },
         },
-        false,
-        false,
+        .{
+            .@"console" = d.ts{ .@"return" = "console" },
+            .@"Request" = .{
+                .get = Request.Class.GetClass(GlobalObject).getter,
+                // .ts = d.ts{ .@"return" = "typeof Request" },
+            },
+            .@"Response" = .{
+                .get = Response.Class.GetClass(GlobalObject).getter,
+                // .ts = d.ts{ .@"return" = "typeof Response" },
+            },
+            .@"Headers" = .{
+                .get = Headers.Class.GetClass(GlobalObject).getter,
+                // .ts = d.ts{ .@"return" = "typeof Headers" },
+            },
+        },
     );
 
     pub fn getConsole(

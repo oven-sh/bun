@@ -4,131 +4,155 @@ const Api = @import("../../../api/schema.zig").Api;
 const FilesystemRouter = @import("../../../router.zig");
 const JavaScript = @import("../javascript.zig");
 
-pub const Router = struct {
-    match: FilesystemRouter.RouteMap.MatchedRoute,
-    file_path_str: js.JSStringRef = null,
-    pathname_str: js.JSStringRef = null,
+const Router = @This();
 
-    pub const Class = NewClass(
-        Router,
-        "Router",
-        .{
-            .finalize = finalize,
+match: FilesystemRouter.RouteMap.MatchedRoute,
+file_path_str: js.JSStringRef = null,
+pathname_str: js.JSStringRef = null,
+
+pub fn constructor(
+    ctx: js.JSContextRef,
+    function: js.JSObjectRef,
+    arguments: []const js.JSValueRef,
+    exception: js.ExceptionRef,
+) js.JSObjectRef {
+    return null;
+}
+
+pub const Class = NewClass(
+    Router,
+    .{
+        .name = "Router",
+        .read_only = true,
+        .ts = d.ts.class{ .path = "speedy.js/router", .tsdoc = 
+        \\Filesystem Router supporting dynamic routes, exact routes, catch-all routes, and optional catch-all routes. Implemented in native code and only available with Speedy.js.
         },
-        .{
-            .@"pathname" = .{
-                .get = getPathname,
-                .ro = true,
-                .ts = .{
-                    .@"return" = "string",
-                    .@"tsdoc" = "URL path as appears in a web browser's address bar",
+    },
+    .{
+        .finalize = .{
+            .rfn = finalize,
+        },
+        .constructor = .{
+            .rfn = constructor,
+            .ts = d.ts{
+                .tsdoc = 
+                \\Native filesystem router. Use with {@link https://developer.mozilla.org/en-US/docs/Web/API/FetchEvent FetchEvent}.
+                ,
+                .@"return" = "Router",
+                .args = &[_]d.ts.arg{
+                    d.ts.arg{ .name = "event", .@"return" = "FetchEvent" },
                 },
             },
-            .@"filepath" = .{
-                .get = getPageFilePath,
-                .ro = true,
-                .ts = .{
-                    .@"return" = "string",
-                    .@"tsdoc" = 
-                    \\Project-relative filesystem path to the route file
-                    \\
-                    \\@example
-                    \\
-                    \\```tsx
-                    \\const PageComponent = (await import(route.filepath)).default;
-                    \\ReactDOMServer.renderToString(<PageComponent query={route.query} />);
-                    \\```
-                    ,
-                },
-            },
-            .@"route" = .{
-                .@"get" = getRoute,
-                .ro = true,
-            },
-            .query = .{
-                .@"get" = getQuery,
-                .ro = true,
-            },
-            .pageFilePath = .{
-                .@"get" = getPageFilePath,
-                .ro = true,
+        },
+    },
+    .{
+        .@"pathname" = .{
+            .get = getPathname,
+            .ro = true,
+            .ts = d.ts{
+                .@"return" = "string",
+                .@"tsdoc" = "URL path as appears in a web browser's address bar",
             },
         },
-        false,
-        false,
-    );
+        .filepath = .{
+            .get = getFilePath,
+            .ro = true,
+            .ts = d.ts{
+                .@"return" = "string",
+                .tsdoc = 
+                \\Project-relative filesystem path to the route file. Useful for importing.
+                \\
+                \\@example ```tsx
+                \\await import(route.filepath);
+                \\```
+                ,
+            },
+        },
+        .@"route" = .{
+            .@"get" = getRoute,
+            .ro = true,
+            .ts = d.ts{
+                .@"return" = "string",
+                .tsdoc = 
+                \\Route name
+                \\@example
+                \\`"blog/posts/[id]"`
+                \\`"blog/posts/[id]/[[...slug]]"`
+                \\`"blog"`
+                ,
+            },
+        },
+        .query = .{
+            .@"get" = getQuery,
+            .ro = true,
+            .ts = d.ts{
+                .@"return" = "Record<string, string | string[]>",
+                .tsdoc = 
+                \\Route parameters as a key-value object
+                \\
+                \\@example 
+                \\```js
+                \\console.assert(router.query.id === "123");
+                \\console.assert(router.pathname === "/blog/posts/123");
+                \\console.assert(router.route === "blog/posts/[id]");
+                \\```
+                ,
+            },
+        },
+    },
+);
 
-    pub fn getPageFilePath(
-        this: *Router,
-        ctx: js.JSContextRef,
-        thisObject: js.JSObjectRef,
-        prop: js.JSStringRef,
-        exception: js.ExceptionRef,
-    ) js.JSValueRef {
-        if (this.file_path_str == null) {
-            this.file_path_str = js.JSStringCreateWithUTF8CString(this.match.file_path[0.. :0]);
-        }
-
-        return js.JSValueMakeString(ctx, this.file_path_str);
+pub fn getFilePath(
+    this: *Router,
+    ctx: js.JSContextRef,
+    thisObject: js.JSObjectRef,
+    prop: js.JSStringRef,
+    exception: js.ExceptionRef,
+) js.JSValueRef {
+    if (this.file_path_str == null) {
+        this.file_path_str = js.JSStringCreateWithUTF8CString(this.match.file_path.ptr);
     }
 
-    pub fn finalize(
-        this: *Router,
-        ctx: js.JSObjectRef,
-    ) void {
-        // this.deinit();
+    return js.JSValueMakeString(ctx, this.file_path_str);
+}
+
+pub fn finalize(
+    this: *Router,
+    ctx: js.JSObjectRef,
+) void {
+    // this.deinit();
+}
+
+pub fn getPathname(
+    this: *Router,
+    ctx: js.JSContextRef,
+    thisObject: js.JSObjectRef,
+    prop: js.JSStringRef,
+    exception: js.ExceptionRef,
+) js.JSValueRef {
+    if (this.pathname_str == null) {
+        this.pathname_str = js.JSStringCreateWithUTF8CString(this.match.pathname.ptr);
     }
 
-    pub fn requirePage(
-        this: *Router,
-        ctx: js.JSContextRef,
-        function: js.JSObjectRef,
-        thisObject: js.JSObjectRef,
-        arguments: []const js.JSValueRef,
-        exception: js.ExceptionRef,
-    ) js.JSValueRef {}
+    return js.JSValueMakeString(ctx, this.pathname_str);
+}
 
-    pub fn getPathname(
-        this: *Router,
-        ctx: js.JSContextRef,
-        thisObject: js.JSObjectRef,
-        prop: js.JSStringRef,
-        exception: js.ExceptionRef,
-    ) js.JSValueRef {
-        if (this.pathname_str == null) {
-            this.pathname_str = js.JSStringCreateWithUTF8CString(this.match.pathname[0.. :0]);
-        }
+pub fn getRoute(
+    this: *Router,
+    ctx: js.JSContextRef,
+    thisObject: js.JSObjectRef,
+    prop: js.JSStringRef,
+    exception: js.ExceptionRef,
+) js.JSValueRef {
+    return js.JSValueMakeString(ctx, Properties.Refs.default);
+}
 
-        return js.JSValueMakeString(ctx, this.pathname_str);
-    }
-
-    pub fn getAsPath(
-        this: *Router,
-        ctx: js.JSContextRef,
-        thisObject: js.JSObjectRef,
-        prop: js.JSStringRef,
-        exception: js.ExceptionRef,
-    ) js.JSValueRef {
-        return js.JSValueMakeString(ctx, Properties.Refs.default);
-    }
-
-    pub fn getRoute(
-        this: *Router,
-        ctx: js.JSContextRef,
-        thisObject: js.JSObjectRef,
-        prop: js.JSStringRef,
-        exception: js.ExceptionRef,
-    ) js.JSValueRef {
-        return js.JSValueMakeString(ctx, Properties.Refs.default);
-    }
-
-    pub fn getQuery(
-        this: *Router,
-        ctx: js.JSContextRef,
-        thisObject: js.JSObjectRef,
-        prop: js.JSStringRef,
-        exception: js.ExceptionRef,
-    ) js.JSValueRef {
-        return js.JSValueMakeString(ctx, Properties.Refs.default);
-    }
-};
+pub fn getQuery(
+    this: *Router,
+    ctx: js.JSContextRef,
+    thisObject: js.JSObjectRef,
+    prop: js.JSStringRef,
+    exception: js.ExceptionRef,
+) js.JSValueRef {
+    return js.JSValueMakeString(ctx, Properties.Refs.default);
+}

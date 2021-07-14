@@ -55,7 +55,7 @@ pub const Request = struct {
         );
 
         // Leave a sentinel value, for JavaScriptCore support.
-        path.ptr[path.len] = 0;
+        @intToPtr([*]u8, @ptrToInt(path.ptr))[path.len] = 0;
 
         return switch (rc) {
             -1 => error.BadRequest,

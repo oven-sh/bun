@@ -16,61 +16,54 @@ const Allocator = std.mem.Allocator;
 const resolve_path = @import("../../resolver/resolve_path.zig");
 usingnamespace @import("./webcore/response.zig");
 
+const modules = [_]d.ts.decl{
+    Router.Class.typescriptDeclaration(),
+};
+
+const hidden_globals = [_]d.ts.decl{
+    FetchEvent.Class.typescriptDeclaration(),
+};
+
+const global = JavaScript.GlobalObject.GlobalClass.typescriptDeclaration();
+
 pub fn main() anyerror!void {
-    var args_it = process.args();
-    var allocator = std.heap.c_allocator;
+    var argv = std.mem.span(std.os.argv);
+    var dest = [_]string{ argv[argv.len - 2], argv[argv.len - 1] };
 
-    _ = args_it.skip();
-    var stdout = io.getStdOut();
+    var dir_path = resolve_path.joinAbs(std.process.getCwdAlloc(allocator), .auto, &dest);
 
-    const modules = comptime [_]d.ts.class{
-        Router.Class.typescriptDeclaration(),
-    };
-    inline for (modules) |class, i| {
+    std.debug.assert(dir_path.len > 0 and strings.eqlComptime(std.fs.path.basename(dir_path), "types"));
+    try std.fs.deleteTreeAbsolute(dir_path);
+    try std.fs.makeDirAbsolute(dir_path);
+    var dir = try std.fs.openDirAbsolute(dir_path, std.fs.Dir.OpenDirOptions{});
+
+    var index_file = dir.openFile("index.d.ts", .{ .write = true });
+    try index_file.writeAll(comptime d.ts.class.Printer.printDecl(global, 0));
+
+    try index_file.writeAll("\n");
+
+    try index_file.writeAll("declare global {\n");
+
+    inline for (hidden_globals) |module, i| {
         if (i > 0) {
-            try stdout.writeAll("\n\n");
+            try index_file.writeAll("\n");
         }
-
-        try stdout.writeAll(comptime d.ts.class.Printer.printClass(class, 0));
+        try index_file.writeAll(comptime d.ts.class.Printer.printDecl(module, 2));
     }
 
-    try stdout.writeAll("\n\n");
+    try index_file.writeAll("}\n");
+    var stdout = std.io.getStdOut();
+    try stdout.writeAll("✔️ index.d.ts");
 
-    try stdout.writeAll("declare global {\n");
-
-    const global = comptime JavaScript.GlobalObject.GlobalClass.typescriptDeclaration();
-
-    inline for (global.properties) |property, i| {
-        if (i > 0) {
-            try stdout.writeAll("\n\n");
+    inline for (modules) |decl| {
+        var module: d.ts.module = comptime decl.module;
+        const basepath = comptime module.path["speedy.js/".len..];
+        if (std.fs.path.dirname(basepath)) |dirname| {
+            dir.makePath(dirname);
         }
 
-        try stdout.writeAll(comptime d.ts.class.Printer.printVar(property, 2));
+        var file = try dir.openFile(comptime basepath ++ ".d.ts", .{ .write = true });
+        try file.writeAll(comptime d.ts.class.Printer.printDecl(module, 0));
+        try stdout.writeAll(comptime "✔️ " ++ basepath);
     }
-
-    try stdout.writeAll("\n");
-
-    inline for (global.functions) |property, i| {
-        if (i > 0) {
-            try stdout.writeAll("\n\n");
-        }
-
-        try stdout.writeAll(comptime d.ts.class.Printer.printFunction(property, 2, false));
-    }
-
-    try stdout.writeAll("\n");
-
-    const globals = comptime [_]d.ts.class{
-        FetchEvent.Class.typescriptDeclaration(),
-    };
-
-    inline for (globals) |class, i| {
-        if (i > 0) {
-            try stdout.writeAll("\n\n");
-        }
-
-        try stdout.writeAll(comptime d.ts.class.Printer.printClass(class, 2));
-    }
-
-    try stdout.writeAll("}\n");
 }

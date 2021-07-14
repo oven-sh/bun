@@ -1500,9 +1500,7 @@ pub const GlobalObject = struct {
         GlobalObject,
         .{
             .name = "Global",
-            .ts = d.ts.class{
-                .global = true,
-            },
+            .ts = .{ .module = .{ .global = true } },
         },
         .{
             .@"addEventListener" = .{
@@ -1517,19 +1515,12 @@ pub const GlobalObject = struct {
             },
         },
         .{
-            .@"console" = d.ts{ .@"return" = "console" },
-            .@"Request" = .{
-                .get = Request.Class.GetClass(GlobalObject).getter,
-                // .ts = d.ts{ .@"return" = "typeof Request" },
+            .@"console" = .{
+                .get = getConsole,
             },
-            .@"Response" = .{
-                .get = Response.Class.GetClass(GlobalObject).getter,
-                // .ts = d.ts{ .@"return" = "typeof Response" },
-            },
-            .@"Headers" = .{
-                .get = Headers.Class.GetClass(GlobalObject).getter,
-                // .ts = d.ts{ .@"return" = "typeof Headers" },
-            },
+            .@"Request" = Request.Class.GetClass(GlobalObject){},
+            .@"Response" = Response.Class.GetClass(GlobalObject){},
+            .@"Headers" = Headers.Class.GetClass(GlobalObject){},
         },
     );
 

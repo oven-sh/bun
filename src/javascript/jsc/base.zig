@@ -126,16 +126,19 @@ pub const To = struct {
                     arguments: [*c]const js.JSValueRef,
                     exception: js.ExceptionRef,
                 ) callconv(.C) js.JSValueRef {
-                    var object_ptr_ = js.JSObjectGetPrivate(function);
-                    if (object_ptr_ == null) {
-                        object_ptr_ = js.JSObjectGetPrivate(thisObject);
-                    }
+                    var object_ptr: *c_void = undefined;
 
-                    if (object_ptr_ == null) {
-                        return js.JSValueMakeUndefined(ctx);
-                    }
+                    if (comptime ZigContextType != c_void) {
+                        var object_ptr_ = js.JSObjectGetPrivate(function);
+                        if (object_ptr_ == null) {
+                            object_ptr_ = js.JSObjectGetPrivate(thisObject);
+                        }
 
-                    var object_ptr = object_ptr_.?;
+                        if (object_ptr_ == null) {
+                            return js.JSValueMakeUndefined(ctx);
+                        }
+                        object_ptr = object_ptr_.?;
+                    }
 
                     return ctxfn(
                         @ptrCast(*ZigContextType, @alignCast(@alignOf(*ZigContextType), object_ptr)),
@@ -305,29 +308,72 @@ pub const Properties = struct {
 const hasSetter = std.meta.trait.hasField("set");
 const hasReadOnly = std.meta.trait.hasField("ro");
 const hasFinalize = std.meta.trait.hasField("finalize");
-const hasTypeScript = std.meta.trait.hasField("ts");
+
+const hasTypeScriptField = std.meta.trait.hasField("ts");
+fn hasTypeScript(comptime Type: type) bool {
+    if (hasTypeScriptField(Type)) {
+        return true;
+    }
+
+    return @hasDecl(d.ts, "ts");
+}
+
+fn getTypeScript(comptime Type: type, value: Type) d.ts.or_decl {
+    if (comptime hasTypeScriptField(Type)) {
+        if (comptime Type.ts == d.ts.decl) {
+            return d.ts.or_decl{ .decl = value };
+        } else {
+            return d.ts.or_decl{ .ts = value };
+        }
+    }
+
+    if (comptime Type.ts == d.ts.decl) {
+        return d.ts.or_decl{ .decl = value };
+    } else {
+        return d.ts.or_decl{ .ts = value };
+    }
+}
 
 pub const d = struct {
     pub const ts = struct {
-        @"return": string = "",
+        @"return": string = "unknown",
         tsdoc: string = "",
         name: string = "",
         read_only: ?bool = null,
         args: []const arg = &[_]arg{},
         splat_args: bool = false,
 
-        pub const builder = struct {
-            classes: []class,
+        pub const or_decl = union(Tag) {
+            ts: ts,
+            decl: decl,
+            pub const Tag = enum { ts, decl };
+        };
+
+        pub const decl = union(Tag) {
+            module: module,
+            class: class,
+            empty: u0,
+            pub const Tag = enum { module, class, empty };
+        };
+
+        pub const module = struct {
+            tsdoc: string = "",
+            read_only: ?bool = null,
+            path: string = "",
+            global: bool = false,
+
+            properties: []ts = &[_]ts{},
+            functions: []ts = &[_]ts{},
+            classes: []class = &[_]class{},
         };
 
         pub const class = struct {
-            path: string = "",
             name: string = "",
             tsdoc: string = "",
             @"return": string = "",
             read_only: ?bool = null,
             interface: bool = true,
-            global: bool = false,
+            default_export: bool = false,
 
             properties: []ts = &[_]ts{},
             functions: []ts = &[_]ts{},
@@ -488,30 +534,91 @@ pub const d = struct {
 
                     return buf;
                 }
-                pub fn printClass(comptime klass: d.ts.class, comptime _indent: usize) string {
+
+                pub fn printDecl(comptime klass: d.ts.decl, comptime _indent: usize) string {
+                    return comptime switch (klass) {
+                        .module => |mod| printModule(mod, _indent),
+                        .class => |cla| printClass(cla, _indent),
+                        .empty => "",
+                    };
+                }
+
+                pub fn printModule(comptime klass: d.ts.module, comptime _indent: usize) string {
                     comptime var indent = _indent;
                     comptime var buf: string = "";
                     comptime brk: {
-                        if (klass.path.len > 0) {
-                            buf = buf ++ printIndented("declare module \"{s}\" {{\n\n", .{klass.path}, indent);
-                            indent += indent_level;
-                        }
                         if (klass.tsdoc.len > 0) {
                             buf = buf ++ printTSDoc(klass.tsdoc, indent);
                         }
 
-                        const qualifier = if (klass.path.len == 0 and !klass.interface) "declare " else "";
-                        var stmt: string = qualifier;
+                        if (klass.global) {
+                            buf = buf ++ printIndented("declare global {{\n", .{}, indent);
+                        } else {
+                            buf = buf ++ printIndented("declare module \"{s}\" {{\n", .{klass.path}, indent);
+                        }
 
-                        if (!klass.global) {
-                            if (klass.interface) {
-                                buf = buf ++ printIndented("export interface {s} {{\n", .{klass.name}, indent);
-                            } else {
-                                buf = buf ++ printIndented("{s}class {s} {{\n", .{ qualifier, klass.name }, indent);
+                        indent += indent_level;
+
+                        for (klass.properties) |property, i| {
+                            if (i > 0) {
+                                buf = buf ++ "\n";
                             }
 
-                            indent += indent_level;
+                            buf = buf ++ printVar(property, indent);
                         }
+
+                        buf = buf ++ "\n";
+
+                        for (klass.functions) |func, i| {
+                            if (i > 0) {
+                                buf = buf ++ "\n";
+                            }
+
+                            buf = buf ++ printFunction(
+                                func,
+                                indent,
+                                false,
+                            );
+                        }
+
+                        for (klass.classes) |func, i| {
+                            if (i > 0) {
+                                buf = buf ++ "\n";
+                            }
+
+                            buf = buf ++ printClass(
+                                func,
+                                indent,
+                            );
+                        }
+
+                        indent -= indent_level;
+
+                        buf = buf ++ printIndented("}}\n", .{}, indent);
+
+                        break :brk;
+                    }
+                    return comptime buf;
+                }
+
+                pub fn printClass(comptime klass: d.ts.class, comptime _indent: usize) string {
+                    comptime var indent = _indent;
+                    comptime var buf: string = "";
+                    comptime brk: {
+                        if (klass.tsdoc.len > 0) {
+                            buf = buf ++ printTSDoc(klass.tsdoc, indent);
+                        }
+
+                        const qualifier = if (!klass.default_export) "export " else "";
+                        var stmt: string = qualifier;
+
+                        if (klass.interface) {
+                            buf = buf ++ printIndented("export interface {s} {{\n", .{klass.name}, indent);
+                        } else {
+                            buf = buf ++ printIndented("{s}class {s} {{\n", .{ qualifier, klass.name }, indent);
+                        }
+
+                        indent += indent_level;
 
                         var did_print_constructor = false;
                         for (klass.functions) |func, i| {
@@ -529,11 +636,7 @@ pub const d = struct {
                                 buf = buf ++ "\n";
                             }
 
-                            if (!klass.global) {
-                                buf = buf ++ printProperty(property, indent);
-                            } else {
-                                buf = buf ++ printVar(property, indent);
-                            }
+                            buf = buf ++ printProperty(property, indent);
                         }
 
                         buf = buf ++ "\n";
@@ -545,29 +648,19 @@ pub const d = struct {
 
                             if (strings.eqlComptime(func.name, "constructor")) continue;
 
-                            if (!klass.global) {
-                                buf = buf ++ printInstanceFunction(
-                                    func,
-                                    indent,
-                                    false,
-                                );
-                            } else {
-                                buf = buf ++ printFunction(
-                                    func,
-                                    indent,
-                                    false,
-                                );
-                            }
+                            buf = buf ++ printInstanceFunction(
+                                func,
+                                indent,
+                                false,
+                            );
                         }
 
                         indent -= indent_level;
 
                         buf = buf ++ printIndented("}}\n", .{}, indent);
 
-                        if (klass.path.len > 0) {
+                        if (klass.default_export) {
                             buf = buf ++ printIndented("export = {s};\n", .{klass.name}, indent);
-                            indent -= indent_level;
-                            buf = buf ++ printIndented("\n}}\n", .{}, indent);
                         }
 
                         break :brk;
@@ -614,7 +707,7 @@ pub const ClassOptions = struct {
 
     read_only: bool = false,
     singleton: bool = false,
-    ts: d.ts.class = d.ts.class{},
+    ts: d.ts.decl = d.ts.decl{ .empty = 0 },
 };
 
 pub fn NewClass(
@@ -691,6 +784,9 @@ pub fn NewClass(
 
         pub const static_value_count = static_properties.len;
 
+        /// only use with singletons
+        pub fn make(ctx: js.JSContextRef) js.JSObjectRef {}
+
         pub fn get() callconv(.C) [*c]js.JSClassRef {
             if (!loaded) {
                 loaded = true;
@@ -717,7 +813,16 @@ pub fn NewClass(
 
         pub fn GetClass(comptime ReceiverType: type) type {
             const ClassGetter = struct {
-                pub fn getter(
+                get: fn (
+                    *ReceiverType,
+                    js.JSContextRef,
+                    js.JSObjectRef,
+                    js.ExceptionRef,
+                ) js.JSValueRef = rfn,
+
+                pub const ts = typescriptDeclaration();
+
+                pub fn rfn(
                     receiver: *ReceiverType,
                     ctx: js.JSContextRef,
                     obj: js.JSObjectRef,
@@ -737,8 +842,11 @@ pub fn NewClass(
             exception: js.ExceptionRef,
         ) callconv(.C) js.JSValueRef {
             var instance_pointer_ = js.JSObjectGetPrivate(obj);
-            if (instance_pointer_ == null) return null;
-            var instance_pointer = instance_pointer_.?;
+            if (comptime ZigType != c_void) {
+                if (instance_pointer_ == null) return null;
+            }
+
+            var instance_pointer: *c_void = if (comptime ZigType == c_void) undefined else instance_pointer_.?;
             var ptr = @ptrCast(
                 *ZigType,
                 @alignCast(
@@ -880,8 +988,170 @@ pub fn NewClass(
         }
 
         // This should only be run at comptime
-        pub fn typescriptDeclaration() d.ts.class {
-            comptime var class = options.ts;
+        pub fn typescriptModuleDeclaration() d.ts.module {
+            comptime var class = options.ts.module;
+            comptime {
+                if (class.read_only == null) {
+                    class.read_only = options.read_only;
+                }
+
+                if (static_functions.len > 0) {
+                    var count: usize = 0;
+                    inline for (function_name_literals) |function_name, i| {
+                        const func = @field(staticFunctions, function_names[i]);
+                        const Func = @TypeOf(func);
+
+                        switch (@typeInfo(Func)) {
+                            .Struct => {
+                                if (hasTypeScript(Func)) {
+                                    if (std.meta.trait.isIndexable(@TypeOf(func.ts))) {
+                                        count += func.ts.len;
+                                    } else {
+                                        count += 1;
+                                    }
+                                }
+                            },
+                            else => continue,
+                        }
+                    }
+
+                    var funcs = std.mem.zeroes([count]d.ts);
+                    class.functions = std.mem.span(&funcs);
+                    var func_i: usize = 0;
+
+                    inline for (function_name_literals) |function_name, i| {
+                        const func = @field(staticFunctions, function_names[i]);
+                        const Func = @TypeOf(func);
+
+                        switch (@typeInfo(Func)) {
+                            .Struct => {
+                                if (hasTypeScript(Func)) {
+                                    var ts_functions: if (std.meta.trait.isIndexable(@TypeOf(func.ts))) @TypeOf(func.ts) else [1]@TypeOf(func.ts) = undefined;
+
+                                    if (std.meta.trait.isIndexable(@TypeOf(func.ts))) {
+                                        ts_functions = func.ts;
+                                    } else {
+                                        ts_functions = .{func.ts};
+                                    }
+
+                                    for (ts_functions) |ts_function_| {
+                                        var ts_function = ts_function_;
+                                        if (ts_function.name.len == 0) {
+                                            ts_function.name = function_names[i];
+                                        }
+
+                                        if (ts_function.read_only == null) {
+                                            ts_function.read_only = class.read_only;
+                                        }
+
+                                        class.functions[func_i] = ts_function;
+
+                                        func_i += 1;
+                                    }
+                                }
+                            },
+                            else => continue,
+                        }
+                    }
+                }
+
+                if (property_names.len > 0) {
+                    var count: usize = 0;
+                    var class_count: usize = 0;
+
+                    inline for (property_names) |property_name, i| {
+                        const field = @field(properties, property_names[i]);
+                        const Field = @TypeOf(field);
+
+                        if (hasTypeScript(Field)) {
+                            switch (getTypeScript(Field, field)) {
+                                .decl => |dec| {
+                                    switch (dec) {
+                                        .class => {
+                                            class_count += 1;
+                                        },
+                                        else => {},
+                                    }
+                                },
+                                .ts => {
+                                    count += 1;
+                                },
+                            }
+                        }
+                    }
+
+                    var props = std.mem.zeroes([count]d.ts);
+                    class.properties = std.mem.span(&props);
+                    var property_i: usize = 0;
+
+                    var classes = std.mem.zeroes([class_count + class.classes.len]d.ts.class);
+                    if (class.classes.len > 0) {
+                        std.mem.copy(d.ts.class, classes, class.classes);
+                    }
+
+                    var class_i: usize = class.classes.len;
+                    class.classes = std.mem.span(&classes);
+
+                    inline for (property_names) |property_name, i| {
+                        const field = @field(properties, property_names[i]);
+                        const Field = @TypeOf(field);
+
+                        if (hasTypeScript(Field)) {
+                            switch (getTypeScript(Field, field)) {
+                                .decl => |dec| {
+                                    switch (dec) {
+                                        .class => |ts_class| {
+                                            class.classes[class_i] = ts_class;
+                                            class_i += 1;
+                                        },
+                                        else => {},
+                                    }
+                                },
+                                .ts => |ts_field_| {
+                                    var ts_field: d.ts = ts_field_;
+                                    if (ts_field.name.len == 0) {
+                                        ts_field.name = property_name;
+                                    }
+
+                                    if (ts_field.read_only == null) {
+                                        if (hasReadOnly(Field)) {
+                                            ts_field.read_only = field.ro;
+                                        } else {
+                                            ts_field.read_only = class.read_only;
+                                        }
+                                    }
+
+                                    class.properties[property_i] = ts_field;
+
+                                    property_i += 1;
+                                },
+                            }
+                        }
+                    }
+                }
+            }
+
+            return class;
+        }
+
+        pub fn typescriptDeclaration() d.ts.decl {
+            comptime var decl = options.ts;
+            comptime switch (decl) {
+                .module => {
+                    decl.module = typescriptModuleDeclaration();
+                },
+                .class => {
+                    decl.class = typescriptClassDeclaration();
+                },
+                .empty => {},
+            };
+
+            return decl;
+        }
+
+        // This should only be run at comptime
+        pub fn typescriptClassDeclaration() d.ts.class {
+            comptime var class = options.ts.class;
 
             comptime {
                 if (class.name.len == 0) {
@@ -901,7 +1171,11 @@ pub fn NewClass(
                         switch (@typeInfo(Func)) {
                             .Struct => {
                                 if (hasTypeScript(Func)) {
-                                    count += 1;
+                                    if (std.meta.trait.isIndexable(@TypeOf(func.ts))) {
+                                        count += func.ts.len;
+                                    } else {
+                                        count += 1;
+                                    }
                                 }
                             },
                             else => continue,
@@ -919,18 +1193,27 @@ pub fn NewClass(
                         switch (@typeInfo(Func)) {
                             .Struct => {
                                 if (hasTypeScript(Func)) {
-                                    var ts_function: d.ts = func.ts;
-                                    if (ts_function.name.len == 0) {
-                                        ts_function.name = function_names[i];
+                                    var ts_functions = std.mem.zeroes([count]d.ts);
+                                    if (std.meta.trait.isIndexable(@TypeOf(func.ts))) {
+                                        ts_functions = func.ts;
+                                    } else {
+                                        ts_functions[0] = func.ts;
                                     }
 
-                                    if (ts_function.read_only == null) {
-                                        ts_function.read_only = class.read_only;
+                                    for (ts_functions) |ts_function_| {
+                                        var ts_function = ts_function_;
+                                        if (ts_function.name.len == 0) {
+                                            ts_function.name = function_names[i];
+                                        }
+
+                                        if (ts_function.read_only == null) {
+                                            ts_function.read_only = class.read_only;
+                                        }
+
+                                        class.functions[func_i] = ts_function;
+
+                                        func_i += 1;
                                     }
-
-                                    class.functions[func_i] = ts_function;
-
-                                    func_i += 1;
                                 }
                             },
                             else => continue,

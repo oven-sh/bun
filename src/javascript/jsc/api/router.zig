@@ -4,6 +4,7 @@ const Api = @import("../../../api/schema.zig").Api;
 const FilesystemRouter = @import("../../../router.zig");
 const JavaScript = @import("../javascript.zig");
 
+usingnamespace @import("../webcore/response.zig");
 const Router = @This();
 
 match: FilesystemRouter.RouteMap.MatchedRoute,
@@ -19,13 +20,116 @@ pub fn constructor(
     return null;
 }
 
+pub fn match(
+    obj: *c_void,
+    ctx: js.JSContextRef,
+    function: js.JSObjectRef,
+    arguments: []const js.JSValueRef,
+    exception: js.ExceptionRef,
+) js.JSObjectRef {
+    return null;
+}
+
+fn matcher(
+    obj: *c_void,
+    ctx: js.JSContextRef,
+    arg: js.JSValueRef,
+    exception: js.ExceptionRef,
+) js.JSObjectRef {
+    return null;
+}
+
+fn matchRequest(
+    ctx: js.JSContextRef,
+    request: *const Request,
+    exception: js.ExceptionRef,
+) js.JSObjectRef {
+    return null;
+}
+
+fn matchPathName(
+    ctx: js.JSContextRef,
+    pathname: string,
+    exception: js.ExceptionRef,
+) js.JSObjectRef {
+    return null;
+}
+
+fn matchFetchEvent(
+    ctx: js.JSContextRef,
+    fetch_event: *const FetchEvent,
+    exception: js.ExceptionRef,
+) js.JSObjectRef {
+    return null;
+}
+
+const match_type_definition = &[_]d.ts{
+    .{
+        .tsdoc = "Match a {@link https://developer.mozilla.org/en-US/docs/Web/API/Request Request} to a Route from the local filesystem.",
+        .args = &[_]d.ts.arg{
+            .{
+                .name = "request",
+                .@"return" = "Request",
+            },
+        },
+        .@"return" = "Route | null",
+    },
+    .{
+        .tsdoc = "Match a {@link https://developer.mozilla.org/en-US/docs/Web/API/FetchEvent FetchEvent} to a Route from the local filesystem.",
+        .args = &[_]d.ts.arg{
+            .{
+                .name = "event",
+                .@"return" = "FetchEvent",
+            },
+        },
+        .@"return" = "Route | null",
+    },
+    .{
+        .tsdoc = "Match a `pathname` to a Route from the local filesystem.",
+        .args = &[_]d.ts.arg{
+            .{
+                .name = "pathname",
+                .@"return" = "string",
+            },
+        },
+        .@"return" = "Route | null",
+    },
+};
+
 pub const Class = NewClass(
-    Router,
+    c_void,
     .{
         .name = "Router",
         .read_only = true,
-        .ts = d.ts.class{ .path = "speedy.js/router", .tsdoc = 
-        \\Filesystem Router supporting dynamic routes, exact routes, catch-all routes, and optional catch-all routes. Implemented in native code and only available with Speedy.js.
+        .ts = .{
+            .module = .{
+                .path = "speedy.js/router",
+                .tsdoc = "Filesystem Router supporting dynamic routes, exact routes, catch-all routes, and optional catch-all routes. Implemented in native code and only available with Speedy.js.",
+            },
+        },
+    },
+    .{
+        .match = .{
+            .get = match,
+            .ts = match_type_definition,
+        },
+    },
+    .{
+        .Route = Instance.GetClass(c_void){},
+    },
+);
+
+pub const Instance = NewClass(
+    Router,
+    .{
+        .name = "Route",
+        .read_only = true,
+        .ts = .{
+            .class = d.ts.class{
+                .tsdoc = 
+                \\Route matched from the filesystem.
+                ,
+            },
         },
     },
     .{
@@ -34,15 +138,7 @@ pub const Class = NewClass(
         },
         .constructor = .{
             .rfn = constructor,
-            .ts = d.ts{
-                .tsdoc = 
-                \\Native filesystem router. Use with {@link https://developer.mozilla.org/en-US/docs/Web/API/FetchEvent FetchEvent}.
-                ,
-                .@"return" = "Router",
-                .args = &[_]d.ts.arg{
-                    d.ts.arg{ .name = "event", .@"return" = "FetchEvent" },
-                },
-            },
+            .ts = match_type_definition,
         },
     },
     .{
@@ -68,7 +164,14 @@ pub const Class = NewClass(
                 ,
             },
         },
-        .@"route" = .{
+        .kind = .{
+            .get = getKind,
+            .ro = true,
+            .ts = d.ts{
+                .@"return" = "\"exact\" | \"dynamic\" | \"catch-all\" | \"optional-catch-all\"",
+            },
+        },
+        .@"name" = .{
             .@"get" = getRoute,
             .ro = true,
             .ts = d.ts{
@@ -138,6 +241,16 @@ pub fn getPathname(
 }
 
 pub fn getRoute(
+    this: *Router,
+    ctx: js.JSContextRef,
+    thisObject: js.JSObjectRef,
+    prop: js.JSStringRef,
+    exception: js.ExceptionRef,
+) js.JSValueRef {
+    return js.JSValueMakeString(ctx, Properties.Refs.default);
+}
+
+pub fn getKind(
     this: *Router,
     ctx: js.JSContextRef,
     thisObject: js.JSObjectRef,

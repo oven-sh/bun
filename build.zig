@@ -26,8 +26,8 @@ pub fn build(b: *std.build.Builder) void {
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
     const mode = b.standardReleaseOptions();
 
-    var cwd_buf = [_]u8{0} ** 4096;
-    var cwd = std.os.getcwd(&cwd_buf) catch unreachable;
+    var cwd_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+    var cwd = std.os.getFdPath(std.fs.cwd().fd, &cwd_buf) catch unreachable;
     var exe: *std.build.LibExeObjStep = undefined;
 
     var output_dir_buf = std.mem.zeroes([4096]u8);
@@ -167,8 +167,10 @@ pub fn build(b: *std.build.Builder) void {
     log_step.step.dependOn(&exe.step);
 
     var typings_exe = b.addExecutable("typescript-decls", "src/javascript/jsc/typescript.zig");
-    var typings_cmd = typings_exe.run();
-    typings_cmd.cwd = b.build_root;
+    var typings_cmd: *std.build.RunStep = typings_exe.run();
+    typings_cmd.cwd = cwd;
+    typings_cmd.addArg(cwd);
+    typings_cmd.addArg("types");
 
     typings_cmd.step.dependOn(&typings_exe.step);
 

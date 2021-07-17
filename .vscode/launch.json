@@ -16,6 +16,16 @@
       "console": "internalConsole"
     },
 
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "SPJS Lazy Build",
+      "program": "${workspaceFolder}/build/debug/macos-x86_64/spjs",
+      "args": ["src/test/fixtures/console.log.js"],
+      "cwd": "${workspaceFolder}",
+      "console": "internalConsole"
+    },
+
     // {
     //   "type": "lldb",
     //   "request": "launch",

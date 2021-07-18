@@ -4,7 +4,38 @@ speedy: speedy-prod-native speedy-prod-wasi speedy-prod-wasm
 api: 
 	peechy --schema src/api/schema.peechy --esm src/api/schema.js --ts src/api/schema.d.ts --zig src/api/schema.zig
 
+jsc: 
+	jsc-mac
 
+jsc-mac: jsc-build-mac jsc-bindings-mac
+
+jsc-build-mac:
+	cd src/javascript/jsc/WebKit && ICU_INCLUDE_DIRS="/usr/local/opt/icu4c/include" ./Tools/Scripts/build-jsc --jsc-only --cmakeargs="-DENABLE_STATIC_JSC=ON -DCMAKE_BUILD_TYPE=relwithdebinfo" && echo "Ignore the \"has no symbols\" errors"
+
+SRC_DIR := src/javascript/jsc/bindings
+OBJ_DIR := src/javascript/jsc/bindings-obj
+SRC_FILES := $(wildcard $(SRC_DIR)/*.cpp)
+OBJ_FILES := $(patsubst $(SRC_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(SRC_FILES))
+
+jsc-bindings-mac: $(OBJ_FILES)
+
+$(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
+	clang++ -c -o $@ $< \
+		-Isrc/JavaScript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/PrivateHeaders \
+		-Isrc/JavaScript/jsc/WebKit/WebKitBuild/Release/WTF/Headers \
+		-Isrc/javascript/jsc/WebKit/WebKitBuild/Release/ICU/Headers \
+		-DSTATICALLY_LINKED_WITH_JavaScriptCore=1 \
+		-DSTATICALLY_LINKED_WITH_WTF=1 \
+		-DBUILDING_WITH_CMAKE=1 \
+		-DNOMINMAX \
+		-DENABLE_INSPECTOR_ALTERNATE_DISPATCHERS=0 \
+		-DBUILDING_JSCONLY__ \
+		-DASSERT_ENABLED=0\
+		-Isrc/JavaScript/jsc/WebKit/WebKitBuild/Release/ \
+		-Isrc/JavaScript/jsc/bindings/ \
+		-Isrc/javascript/jsc/WebKit/Source/bmalloc \
+		-std=gnu++17
+		
 speedy-prod-native-macos: 
 	cd src/deps; clang -c picohttpparser.c; cd ../../
 	zig build -Drelease-fast -Dtarget=x86_64-macos-gnu

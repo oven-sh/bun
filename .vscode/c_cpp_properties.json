@@ -1,0 +1,48 @@
+{
+  "configurations": [
+    {
+      "name": "Mac",
+      "forcedInclude": [
+        "${workspaceFolder}/src/javascript/jsc/bindings/root.h"
+      ],
+      "includePath": [
+        "${workspaceFolder}/src/JavaScript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/PrivateHeaders/",
+        "${workspaceFolder}/src/JavaScript/jsc/WebKit/WebKitBuild/Release/WTF/Headers/**",
+        "${workspaceFolder}/src/JavaScript/jsc/WebKit/WebKitBuild/Release/*",
+        "${workspaceFolder}/src/JavaScript/jsc/bindings/**",
+        "${workspaceFolder}/src/JavaScript/jsc/WebKit/Source/bmalloc/**",
+        "${workspaceFolder}/src/javascript/jsc/WebKit/WebKitBuild/Release/ICU/Headers/"
+      ],
+      "browse": {
+        "path": [
+          "${workspaceFolder}/src/javascript/jsc/bindings/*",
+          "${workspaceFolder}/src/JavaScript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/PrivateHeaders/",
+          "${workspaceFolder}/src/JavaScript/jsc/WebKit/WebKitBuild/Release/WTF/Headers/**",
+          "${workspaceFolder}/src/JavaScript/jsc/WebKit/WebKitBuild/Release/*",
+          "${workspaceFolder}/src/JavaScript/jsc/bindings/**",
+          "${workspaceFolder}/src/JavaScript/jsc/WebKit/Source/bmalloc/**",
+          "${workspaceFolder}/src/javascript/jsc/WebKit/WebKitBuild/Release/ICU/Headers/"
+        ],
+        "limitSymbolsToIncludedHeaders": true,
+        "databaseFilename": ""
+      },
+      "defines": [
+        "STATICALLY_LINKED_WITH_JavaScriptCore=1",
+        "STATICALLY_LINKED_WITH_WTF=1",
+        "BUILDING_WITH_CMAKE=1",
+        "NOMINMAX",
+        "ENABLE_INSPECTOR_ALTERNATE_DISPATCHERS=0",
+        "BUILDING_JSCONLY__",
+        "USE_FOUNDATION=1"
+      ],
+      "macFrameworkPath": [
+        // "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.3.sdk/System/Library/Frameworks"
+      ],
+      "compilerPath": "/usr/local/opt/llvm/bin/clang",
+      "cStandard": "c17",
+      "cppStandard": "c++17",
+      "intelliSenseMode": "macos-clang-x64"
+    }
+  ],
+  "version": 4
+}

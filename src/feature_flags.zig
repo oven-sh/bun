@@ -38,3 +38,6 @@ pub const CSSModulePolyfill = enum {
     // Just return whatever the property key they referenced was
     facade,
 };
+
+// having issues compiling WebKit with this enabled
+pub const remote_inspector = false;

@@ -163,6 +163,17 @@ pub const To = struct {
         pub inline fn str(ref: anytype, buf: anytype) string {
             return buf[0..js.JSStringGetUTF8CString(Ref.str(ref), buf.ptr, buf.len)];
         }
+        pub inline fn ptr(comptime StructType: type, obj: js.JSObjectRef) *StructType {
+            return @ptrCast(
+                *StructType,
+                @alignCast(
+                    @alignOf(
+                        *StructType,
+                    ),
+                    js.JSObjectGetPrivate(obj).?,
+                ),
+            );
+        }
     };
 };
 
@@ -194,23 +205,23 @@ pub const RuntimeImports = struct {
 
 pub const Properties = struct {
     pub const UTF8 = struct {
-        pub const module = "module";
-        pub const globalThis = "globalThis";
-        pub const exports = "exports";
-        pub const log = "log";
-        pub const debug = "debug";
-        pub const name = "name";
-        pub const info = "info";
-        pub const error_ = "error";
-        pub const warn = "warn";
-        pub const console = "console";
-        pub const require = "require";
-        pub const description = "description";
-        pub const initialize_bundled_module = "$$m";
-        pub const load_module_function = "$lOaDuRcOdE$";
-        pub const window = "window";
-        pub const default = "default";
-        pub const include = "include";
+        pub const module: string = "module";
+        pub const globalThis: string = "globalThis";
+        pub const exports: string = "exports";
+        pub const log: string = "log";
+        pub const debug: string = "debug";
+        pub const name: string = "name";
+        pub const info: string = "info";
+        pub const error_: string = "error";
+        pub const warn: string = "warn";
+        pub const console: string = "console";
+        pub const require: string = "require";
+        pub const description: string = "description";
+        pub const initialize_bundled_module: string = "$$m";
+        pub const load_module_function: string = "$lOaDuRcOdE$";
+        pub const window: string = "window";
+        pub const default: string = "default";
+        pub const include: string = "include";
 
         pub const GET = "GET";
         pub const PUT = "PUT";
@@ -287,16 +298,14 @@ pub const Properties = struct {
 
     pub fn init() void {
         inline for (std.meta.fieldNames(UTF8)) |name| {
-            @field(Refs, name) = js.JSStringRetain(
-                js.JSStringCreateWithCharactersNoCopy(
-                    @field(StringStore.UTF16, name).ptr,
-                    @field(StringStore.UTF16, name).len - 1,
-                ),
+            @field(Refs, name) = js.JSStringCreateStatic(
+                @field(UTF8, name).ptr,
+                @field(UTF8, name).len,
             );
 
             if (isDebug) {
                 std.debug.assert(
-                    js.JSStringIsEqualToUTF8CString(@field(Refs, name), @field(UTF8, name)[0.. :0]),
+                    js.JSStringIsEqualToString(@field(Refs, name), @field(UTF8, name).ptr, @field(UTF8, name).len),
                 );
             }
         }
@@ -315,22 +324,22 @@ fn hasTypeScript(comptime Type: type) bool {
         return true;
     }
 
-    return @hasDecl(d.ts, "ts");
+    return @hasDecl(Type, "ts");
 }
 
 fn getTypeScript(comptime Type: type, value: Type) d.ts.or_decl {
     if (comptime hasTypeScriptField(Type)) {
-        if (comptime Type.ts == d.ts.decl) {
+        if (@TypeOf(Type.ts) == d.ts.decl) {
             return d.ts.or_decl{ .decl = value };
         } else {
-            return d.ts.or_decl{ .ts = value };
+            return d.ts.or_decl{ .ts = value.ts };
         }
     }
 
-    if (comptime Type.ts == d.ts.decl) {
-        return d.ts.or_decl{ .decl = value };
+    if (@TypeOf(Type.ts) == d.ts.decl) {
+        return d.ts.or_decl{ .decl = Type.ts };
     } else {
-        return d.ts.or_decl{ .ts = value };
+        return d.ts.or_decl{ .ts = value.ts };
     }
 }
 
@@ -723,30 +732,7 @@ pub fn NewClass(
         const name = options.name;
         const ClassDefinitionCreator = @This();
         const function_names = std.meta.fieldNames(@TypeOf(staticFunctions));
-        const names_buf = brk: {
-            var total_len: usize = 0;
-            for (function_names) |field, i| {
-                total_len += std.unicode.utf8ToUtf16LeStringLiteral(field).len;
-            }
-            var offset: usize = 0;
-            var names_buf_ = std.mem.zeroes([total_len]u16);
-            for (function_names) |field, i| {
-                var name_ = std.unicode.utf8ToUtf16LeStringLiteral(field);
-                std.mem.copy(u16, names_buf_[offset .. name_.len + offset], name_[0..]);
-                offset += name_.len;
-            }
-            break :brk names_buf_;
-        };
-        const function_name_literals: [function_names.len][]const js.JSChar = brk: {
-            var names = std.mem.zeroes([function_names.len][]const js.JSChar);
-            var len: usize = 0;
-            for (function_names) |field, i| {
-                const end = len + std.unicode.utf8ToUtf16LeStringLiteral(field).len;
-                names[i] = names_buf[len..end];
-                len = end;
-            }
-            break :brk names;
-        };
+        const function_name_literals = function_names;
         var function_name_refs: [function_names.len]js.JSStringRef = undefined;
         var class_name_str = name[0.. :0].ptr;
 
@@ -755,13 +741,7 @@ pub fn NewClass(
         var instance_functions: [function_names.len]js.JSObjectRef = undefined;
         const property_names = std.meta.fieldNames(@TypeOf(properties));
         var property_name_refs: [property_names.len]js.JSStringRef = undefined;
-        const property_name_literals: [property_names.len][]const js.JSChar = brk: {
-            var list = std.mem.zeroes([property_names.len][]const js.JSChar);
-            for (property_names) |prop_name, i| {
-                list[i] = std.unicode.utf8ToUtf16LeStringLiteral(prop_name);
-            }
-            break :brk list;
-        };
+        const property_name_literals = property_names;
         var static_properties: [property_names.len]js.JSStaticValue = undefined;
 
         pub var ref: js.JSClassRef = null;
@@ -784,15 +764,19 @@ pub fn NewClass(
 
         pub const static_value_count = static_properties.len;
 
-        /// only use with singletons
-        pub fn make(ctx: js.JSContextRef) js.JSObjectRef {}
+        pub fn new(ctx: js.JSContextRef, ptr: ?*ZigType) js.JSObjectRef {
+            return js.JSObjectMake(ctx, get().*, ptr);
+        }
 
         pub fn get() callconv(.C) [*c]js.JSClassRef {
             if (!loaded) {
                 loaded = true;
                 definition = define();
-                ref = js.JSClassRetain(js.JSClassCreate(&definition));
+                ref = js.JSClassCreate(&definition);
             }
+
+            _ = js.JSClassRetain(ref);
+
             return &ref;
         }
 
@@ -905,11 +889,11 @@ pub fn NewClass(
                     );
 
                     var exc: js.JSValueRef = null;
-
-                    switch (comptime @typeInfo(@TypeOf(@field(
+                    const Field = @TypeOf(@field(
                         properties,
                         property_names[id],
-                    )))) {
+                    ));
+                    switch (comptime @typeInfo(Field)) {
                         .Fn => {
                             return @field(
                                 properties,
@@ -922,19 +906,46 @@ pub fn NewClass(
                             );
                         },
                         .Struct => {
-                            return @field(
+                            const func = @field(
                                 @field(
                                     properties,
                                     property_names[id],
                                 ),
                                 "get",
-                            )(
-                                this,
-                                ctx,
-                                obj,
-                                prop,
-                                exception,
                             );
+
+                            const Func = @typeInfo(@TypeOf(func));
+                            const WithPropFn = fn (
+                                *ZigType,
+                                js.JSContextRef,
+                                js.JSObjectRef,
+                                js.JSStringRef,
+                                js.ExceptionRef,
+                            ) js.JSValueRef;
+
+                            const WithoutPropFn = fn (
+                                *ZigType,
+                                js.JSContextRef,
+                                js.JSObjectRef,
+                                js.ExceptionRef,
+                            ) js.JSValueRef;
+
+                            if (Func.Fn.args.len == @typeInfo(WithPropFn).Fn.args.len) {
+                                return func(
+                                    this,
+                                    ctx,
+                                    obj,
+                                    prop,
+                                    exception,
+                                );
+                            } else {
+                                return func(
+                                    this,
+                                    ctx,
+                                    obj,
+                                    exception,
+                                );
+                            }
                         },
                         else => unreachable,
                     }
@@ -1026,12 +1037,14 @@ pub fn NewClass(
                         switch (@typeInfo(Func)) {
                             .Struct => {
                                 if (hasTypeScript(Func)) {
-                                    var ts_functions: if (std.meta.trait.isIndexable(@TypeOf(func.ts))) @TypeOf(func.ts) else [1]@TypeOf(func.ts) = undefined;
+                                    var ts_functions: []const d.ts = &[_]d.ts{};
 
                                     if (std.meta.trait.isIndexable(@TypeOf(func.ts))) {
-                                        ts_functions = func.ts;
+                                        ts_functions = std.mem.span(func.ts);
                                     } else {
-                                        ts_functions = .{func.ts};
+                                        var funcs1 = std.mem.zeroes([1]d.ts);
+                                        funcs1[0] = func.ts;
+                                        ts_functions = std.mem.span(&funcs1);
                                     }
 
                                     for (ts_functions) |ts_function_| {
@@ -1193,17 +1206,24 @@ pub fn NewClass(
                         switch (@typeInfo(Func)) {
                             .Struct => {
                                 if (hasTypeScript(Func)) {
-                                    var ts_functions = std.mem.zeroes([count]d.ts);
+                                    var ts_functions: []const d.ts = &[_]d.ts{};
+
                                     if (std.meta.trait.isIndexable(@TypeOf(func.ts))) {
-                                        ts_functions = func.ts;
+                                        ts_functions = std.mem.span(func.ts);
                                     } else {
-                                        ts_functions[0] = func.ts;
+                                        var funcs1 = std.mem.zeroes([1]d.ts);
+                                        funcs1[0] = func.ts;
+                                        ts_functions = std.mem.span(&funcs1);
                                     }
 
                                     for (ts_functions) |ts_function_| {
                                         var ts_function = ts_function_;
                                         if (ts_function.name.len == 0) {
                                             ts_function.name = function_names[i];
+                                        }
+
+                                        if (class.interface and strings.eqlComptime(ts_function.name, "constructor")) {
+                                            ts_function.name = "new";
                                         }
 
                                         if (ts_function.read_only == null) {
@@ -1277,10 +1297,16 @@ pub fn NewClass(
                             } else if (comptime strings.eqlComptime(function_names[i], "finalize")) {
                                 def.finalize = To.JS.Finalize(ZigType, staticFunctions.finalize.rfn).rfn;
                             } else {
-                                var callback = To.JS.Callback(
-                                    ZigType,
-                                    @field(staticFunctions, function_names[i]).rfn,
+                                const ctxfn = @field(staticFunctions, function_names[i]).rfn;
+                                const Func: std.builtin.TypeInfo.Fn = @typeInfo(@TypeOf(ctxfn)).Fn;
+
+                                const PointerType = std.meta.Child(Func.args[0].arg_type.?);
+
+                                var callback = if (Func.calling_convention == .C) ctxfn else To.JS.Callback(
+                                    PointerType,
+                                    ctxfn,
                                 ).rfn;
+
                                 static_functions[count] = js.JSStaticFunction{
                                     .name = (function_names[i][0.. :0]).ptr,
                                     .callAsFunction = callback,
@@ -1323,7 +1349,7 @@ pub fn NewClass(
 
             if (property_names.len > 0) {
                 inline for (comptime property_name_literals) |prop_name, i| {
-                    property_name_refs[i] = js.JSStringCreateWithCharactersNoCopy(
+                    property_name_refs[i] = js.JSStringCreateStatic(
                         prop_name.ptr,
                         prop_name.len,
                     );
@@ -1335,7 +1361,7 @@ pub fn NewClass(
                     if (comptime hasSetter(@TypeOf(field))) {
                         static_properties[i].setProperty = StaticProperty(i).setter;
                     }
-                    static_properties[i].name = property_names[i][0.. :0];
+                    static_properties[i].name = property_names[i][0.. :0].ptr;
                 }
 
                 def.staticValues = (&static_properties);

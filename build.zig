@@ -7,13 +7,14 @@ pub fn addPicoHTTP(step: *std.build.LibExeObjStep) void {
         .path = .{ .path = "src/deps/picohttp.zig" },
     });
 
-    step.addObjectFile(
-        "src/deps/picohttpparser.o",
-    );
+    step.addObjectFile("src/deps/picohttpparser.o");
     step.addIncludeDir("src/deps");
-}
+    // step.add("/Users/jarred/Code/WebKit/WebKitBuild/Release/lib/libWTF.a");
 
-const ENABLE_JAVASCRIPT_BUILD = false;
+    // ./Tools/Scripts/build-jsc --jsc-only  --cmakeargs="-DENABLE_STATIC_JSC=ON"
+    // set -gx ICU_INCLUDE_DIRS "/usr/local/opt/icu4c/include"
+    // homebrew-provided icu4c
+}
 
 pub fn build(b: *std.build.Builder) void {
     // Standard target options allows the person running `zig build` to choose
@@ -21,15 +22,13 @@ pub fn build(b: *std.build.Builder) void {
     // means any target is allowed, and the default is native. Other options
     // for restricting supported target set are available.
     const target = b.standardTargetOptions(.{});
-
     // Standard release options allow the person running `zig build` to select
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
     const mode = b.standardReleaseOptions();
 
     var cwd_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-    var cwd = std.os.getFdPath(std.fs.cwd().fd, &cwd_buf) catch unreachable;
+    const cwd: []const u8 = b.pathFromRoot(".");
     var exe: *std.build.LibExeObjStep = undefined;
-
     var output_dir_buf = std.mem.zeroes([4096]u8);
     var bin_label = if (mode == std.builtin.Mode.Debug) "/debug/" else "/";
     const output_dir = std.fmt.bufPrint(&output_dir_buf, "build{s}{s}-{s}", .{ bin_label, @tagName(target.getOs().tag), @tagName(target.getCpuArch()) }) catch unreachable;
@@ -70,7 +69,7 @@ pub fn build(b: *std.build.Builder) void {
         lib.setTarget(target);
         lib.setBuildMode(mode);
 
-        std.fs.deleteTreeAbsolute(std.fs.path.join(std.heap.page_allocator, &.{ cwd, lib.getOutputSource().getPath(b) }) catch unreachable) catch {};
+        std.fs.deleteTreeAbsolute(std.fs.path.join(b.allocator, &.{ cwd, lib.getOutputSource().getPath(b) }) catch unreachable) catch {};
         var install = b.getInstallStep();
         lib.strip = false;
         lib.install();
@@ -98,7 +97,7 @@ pub fn build(b: *std.build.Builder) void {
 
     exe.setOutputDir(output_dir);
 
-    var walker = std.fs.walkPath(std.heap.page_allocator, cwd) catch unreachable;
+    var walker = std.fs.walkPath(b.allocator, cwd) catch unreachable;
     if (std.builtin.is_test) {
         while (walker.next() catch unreachable) |entry| {
             if (std.mem.endsWith(u8, entry.basename, "_test.zig")) {
@@ -116,43 +115,101 @@ pub fn build(b: *std.build.Builder) void {
     exe.setTarget(target);
     exe.setBuildMode(mode);
     b.install_path = output_dir;
-    var javascript: @TypeOf(exe) = undefined;
+
+    var javascript = b.addExecutable("spjs", "src/main_javascript.zig");
+    var typings_exe = b.addExecutable("typescript-decls", "src/javascript/jsc/typescript.zig");
+
     // exe.want_lto = true;
     if (!target.getCpuArch().isWasm()) {
-        addPicoHTTP(
-            exe,
-        );
-        if (ENABLE_JAVASCRIPT_BUILD) {
-            javascript = b.addExecutable("spjs", "src/main_javascript.zig");
-            addPicoHTTP(
-                javascript,
-            );
-            javascript.packages = std.ArrayList(std.build.Pkg).fromOwnedSlice(std.heap.page_allocator, std.heap.page_allocator.dupe(std.build.Pkg, exe.packages.items) catch unreachable);
-            javascript.setOutputDir(output_dir);
-            javascript.setBuildMode(mode);
-            javascript.linkLibC();
-        }
+        b.default_step.dependOn(&exe.step);
 
-        // javascript.linkLibCpp();
+        const bindings_dir = std.fs.path.join(
+            b.allocator,
+            &.{
+                cwd,
+                "src",
+                "javascript",
+                "jsc",
+                "bindings-obj",
+            },
+        ) catch unreachable;
 
-        if (target.getOsTag() == .macos) {
-            if (ENABLE_JAVASCRIPT_BUILD) {
-                javascript.linkFramework("JavaScriptCore");
+        var bindings_walker = std.fs.walkPath(b.allocator, bindings_dir) catch unreachable;
+        var bindings_files = std.ArrayList([]const u8).init(b.allocator);
+
+        while (bindings_walker.next() catch unreachable) |entry| {
+            if (std.mem.eql(u8, std.fs.path.extension(entry.basename), ".o")) {
+                bindings_files.append(b.allocator.dupe(u8, entry.path) catch unreachable) catch unreachable;
             }
-            exe.linkFramework("JavascriptCore");
         }
-        if (ENABLE_JAVASCRIPT_BUILD) {
-            javascript.strip = false;
+
+        // // References:
+        // // - https://github.com/mceSystems/node-jsc/blob/master/deps/jscshim/webkit.gyp
+        // // - https://github.com/mceSystems/node-jsc/blob/master/deps/jscshim/docs/webkit_fork_and_compilation.md#webkit-port-and-compilation
+        // const flags = [_][]const u8{
+        //     "-Isrc/JavaScript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/PrivateHeaders",
+        //     "-Isrc/JavaScript/jsc/WebKit/WebKitBuild/Release/WTF/Headers",
+        //     "-Isrc/javascript/jsc/WebKit/WebKitBuild/Release/ICU/Headers",
+        //     "-DSTATICALLY_LINKED_WITH_JavaScriptCore=1",
+        //     "-DSTATICALLY_LINKED_WITH_WTF=1",
+        //     "-DBUILDING_WITH_CMAKE=1",
+        //     "-DNOMINMAX",
+        //     "-DENABLE_INSPECTOR_ALTERNATE_DISPATCHERS=0",
+        //     "-DBUILDING_JSCONLY__",
+        //     "-DASSERT_ENABLED=0", // missing symbol errors like this will happen "JSC::DFG::DoesGCCheck::verifyCanGC(JSC::VM&)"
+        //     "-Isrc/JavaScript/jsc/WebKit/WebKitBuild/Release/", // config.h,
+        //     "-Isrc/JavaScript/jsc/bindings/",
+        //     "-Isrc/javascript/jsc/WebKit/Source/bmalloc",
+        //     "-std=gnu++17",
+        //     if (target.getOsTag() == .macos) "-DUSE_FOUNDATION=1" else "",
+        //     if (target.getOsTag() == .macos) "-DUSE_CF_RETAIN_PTR=1" else "",
+        // };
+        const headers_step = b.step("headers", "JSC headers");
+        var headers_exec: *std.build.LibExeObjStep = b.addExecutable("headers", "src/javascript/jsc/bindings/bindings-generator.zig");
+        var headers_runner = headers_exec.run();
+        headers_step.dependOn(&headers_runner.step);
+
+        b.default_step.dependOn(&exe.step);
+
+        var steps = [_]*std.build.LibExeObjStep{ exe, javascript, typings_exe };
+
+        for (steps) |step| {
+            step.linkLibC();
+            step.linkLibCpp();
+            addPicoHTTP(
+                step,
+            );
+
+            step.addObjectFile("src/JavaScript/jsc/WebKit/WebKitBuild/Release/lib/libJavaScriptCore.a");
+            step.addObjectFile("src/JavaScript/jsc/WebKit/WebKitBuild/Release/lib/libWTF.a");
+            step.addObjectFile("src/JavaScript/jsc/WebKit/WebKitBuild/Release/lib/libbmalloc.a");
+
+            // We must link ICU statically
+            step.addObjectFile("/usr/local/opt/icu4c/lib/libicudata.a");
+            step.addObjectFile("/usr/local/opt/icu4c/lib/libicui18n.a");
+            step.addObjectFile("/usr/local/opt/icu4c/lib/libicuuc.a");
+
+            if (target.getOsTag() == .macos) {
+                // icucore is a weird macOS only library
+                step.linkSystemLibrary("icucore");
+                step.addLibPath("/usr/local/opt/icu4c/lib");
+                step.addIncludeDir("/usr/local/opt/icu4c/include");
+            }
+
+            for (bindings_files.items) |binding| {
+                step.addObjectFile(
+                    binding,
+                );
+            }
         }
+    } else {
+        b.default_step.dependOn(&exe.step);
     }
 
-    b.default_step.dependOn(&exe.step);
-
-    if (!target.getCpuArch().isWasm()) {
-        if (ENABLE_JAVASCRIPT_BUILD) {
-            javascript.install();
-        }
-    }
+    javascript.strip = false;
+    javascript.packages = std.ArrayList(std.build.Pkg).fromOwnedSlice(b.allocator, b.allocator.dupe(std.build.Pkg, exe.packages.items) catch unreachable);
+    javascript.setOutputDir(output_dir);
+    javascript.setBuildMode(mode);
 
     const run_cmd = exe.run();
     run_cmd.step.dependOn(b.getInstallStep());
@@ -166,22 +223,19 @@ pub fn build(b: *std.build.Builder) void {
     var log_step = b.addLog("Destination: {s}/{s}\n", .{ output_dir, "esdev" });
     log_step.step.dependOn(&exe.step);
 
-    var typings_exe = b.addExecutable("typescript-decls", "src/javascript/jsc/typescript.zig");
     var typings_cmd: *std.build.RunStep = typings_exe.run();
     typings_cmd.cwd = cwd;
     typings_cmd.addArg(cwd);
     typings_cmd.addArg("types");
-
     typings_cmd.step.dependOn(&typings_exe.step);
 
     typings_exe.linkLibC();
+    typings_exe.linkLibCpp();
     typings_exe.setMainPkgPath(cwd);
-    if (target.getOsTag() == .macos) {
-        typings_exe.linkFramework("JavascriptCore");
-    }
-    addPicoHTTP(
-        typings_exe,
-    );
-    const typings_step = b.step("types", "Build TypeScript types");
+
+    var typings_step = b.step("types", "Build TypeScript types");
     typings_step.dependOn(&typings_cmd.step);
+
+    var javascript_cmd = b.step("spjs", "Build standalone JavaScript runtime. Must run \"make jsc\" first.");
+    javascript_cmd.dependOn(&javascript.step);
 }

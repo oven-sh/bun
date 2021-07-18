@@ -44,7 +44,7 @@ threadlocal var res_headers_buf: [100]picohttp.Header = undefined;
 const sync = @import("./sync.zig");
 const JavaScript = @import("./javascript/jsc/JavaScript.zig");
 const js = @import("javascript/jsc/javascript.zig");
-
+const Router = @import("./router.zig");
 pub const Watcher = watcher.NewWatcher(*Server);
 
 const ENABLE_LOGGER = false;
@@ -193,6 +193,7 @@ pub const RequestContext = struct {
     controlled: bool = false,
     watcher: *Watcher,
     timer: std.time.Timer,
+    matched_route: ?Router.Match = null,
 
     full_url: [:0]const u8 = "",
     res_headers_count: usize = 0,

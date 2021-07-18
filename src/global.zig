@@ -7,7 +7,7 @@ pub usingnamespace @import("env.zig");
 pub const FeatureFlags = @import("feature_flags.zig");
 
 pub const Output = struct {
-    threadlocal var source: *Source = undefined;
+    threadlocal var source: Source = undefined;
     pub const Source = struct {
         const StreamType = {
             if (isWasm) {
@@ -41,7 +41,7 @@ pub const Output = struct {
         }
 
         pub fn set(_source: *Source) void {
-            source = _source;
+            source = _source.*;
         }
     };
     pub var enable_ansi_colors = isNative;

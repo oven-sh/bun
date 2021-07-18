@@ -3790,6 +3790,7 @@ pub const BufferWriter = struct {
     ) anyerror!void {
         if (ctx.append_null_byte) {
             ctx.sentinel = ctx.buffer.toOwnedSentinelLeaky();
+            ctx.written = ctx.buffer.toOwnedSliceLeaky();
         } else {
             ctx.written = ctx.buffer.toOwnedSliceLeaky();
         }

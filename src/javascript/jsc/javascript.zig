@@ -163,6 +163,10 @@ pub const VirtualMachine = struct {
             log = try allocator.create(logger.Log);
         }
 
+        if (FeatureFlags.remote_inspector) {
+            js.JSRemoteInspectorSetInspectionEnabledByDefault(true);
+        }
+
         var vm = try allocator.create(VirtualMachine);
         var global = try allocator.create(GlobalObject);
         vm.* = .{
@@ -188,10 +192,9 @@ pub const VirtualMachine = struct {
         global.* = GlobalObject{ .vm = vm };
         try vm.global.boot();
         vm.ctx = vm.global.ctx;
-
+        Properties.init();
         Module.boot(vm);
 
-        Properties.init();
         if (vm.bundler.options.node_modules_bundle) |bundle| {
             vm.node_modules = bundle;
             vm.node_module_list = try allocator.create(Module.NodeModuleList);
@@ -200,6 +203,47 @@ pub const VirtualMachine = struct {
         }
 
         return vm;
+    }
+
+    pub fn require(
+        vm: *VirtualMachine,
+        ctx: js.JSContextRef,
+        source_dir: string,
+        import_path: string,
+        exception: js.ExceptionRef,
+    ) js.JSObjectRef {
+        if (vm.bundler.linker.resolver.resolve(source_dir, import_path, .require)) |resolved| {
+            var load_result = Module.loadFromResolveResult(vm, ctx, resolved, exception) catch |err| {
+                return null;
+            };
+
+            switch (load_result) {
+                .Module => |new_module| {
+                    return new_module.internalGetExports(js.JSContextGetGlobalContext(ctx));
+                },
+                .Path => |path| {
+                    return js.JSValueMakeString(ctx, js.JSStringCreateWithUTF8CString(path.text.ptr));
+                },
+            }
+        } else |err| {
+            Output.prettyErrorln(
+                "<r><red>RequireError<r>: Failed to load module <b>\"{s}\"<r> at \"{s}\": <red>{s}<r>",
+                .{ import_path, source_dir, @errorName(err) },
+            );
+            Output.flush();
+            JSError(
+                getAllocator(ctx),
+                "{s}: failed to load module \"{s}\" from \"{s}\"",
+                .{
+                    @errorName(err),
+                    import_path,
+                    source_dir,
+                },
+                ctx,
+                exception,
+            );
+            return null;
+        }
     }
 };
 
@@ -517,7 +561,8 @@ pub const Module = struct {
             );
 
             if (this.console == null) {
-                this.console = js.JSObjectMake(js.JSContextGetGlobalContext(ctx), this.vm.global.console_class, this.vm.global);
+                this.console = js.JSObjectMake(js.JSContextGetGlobalContext(ctx), GlobalObject.ConsoleClass.get().*, this.vm.global);
+                js.JSValueProtect(ctx, this.console);
             }
 
             return this.console;
@@ -611,8 +656,7 @@ pub const Module = struct {
             var node_module_global_class_def = js.kJSClassDefinitionEmpty;
             node_module_global_class_def.staticValues = static_properties.ptr;
             node_module_global_class_def.className = node_module_global_class_name[0.. :0];
-            node_module_global_class_def.staticFunctions = GlobalObject.GlobalClass.definition.staticFunctions;
-            // node_module_global_class_def.parentClass = vm.global.global_class;
+            node_module_global_class_def.parentClass = GlobalObject.GlobalClass.get().*;
 
             var property_getters = try vm.allocator.alloc(js.JSObjectRef, bundle.bundle.modules.len);
             std.mem.set(js.JSObjectRef, property_getters, null);
@@ -637,7 +681,6 @@ pub const Module = struct {
             //     .callAsFunction = To.JS.Callback(NodeModuleList, initializeNodeModule),
             // };
             // node_module_global_class_def.staticFunctions = &node_module_list.static_functions;
-            node_module_list.node_module_global_class_def = node_module_global_class_def;
             node_module_list.node_module_global_class = js.JSClassRetain(js.JSClassCreate(&node_module_list.node_module_global_class_def));
             node_module_list.bundle_ctx = js.JSGlobalContextRetain(js.JSGlobalContextCreateInGroup(vm.group, node_module_list.node_module_global_class));
             _ = js.JSObjectSetPrivate(js.JSContextGetGlobalObject(node_module_list.bundle_ctx), node_module_list);
@@ -708,45 +751,7 @@ pub const Module = struct {
             return ref;
         }
 
-        if (this.vm.bundler.linker.resolver.resolve(module.path.name.dirWithTrailingSlash(), import_path, .require)) |resolved| {
-            var load_result = Module.loadFromResolveResult(this.vm, ctx, resolved, exception) catch |err| {
-                return null;
-            };
-
-            switch (load_result) {
-                .Module => |new_module| {
-                    // if (isDebug) {
-                    //     Output.prettyln(
-                    //         "Input: {s}\nOutput: {s}",
-                    //         .{ import_path, load_result.Module.path.text },
-                    //     );
-                    //     Output.flush();
-                    // }
-                    return new_module.internalGetExports(js.JSContextGetGlobalContext(ctx));
-                },
-                .Path => |path| {
-                    return js.JSStringCreateWithUTF8CString(path.text.ptr);
-                },
-            }
-        } else |err| {
-            Output.prettyErrorln(
-                "<r><red>RequireError<r>: Failed to load module <b>\"{s}\"<r> at \"{s}\": <red>{s}<r>",
-                .{ import_path, module.path.name.dirWithTrailingSlash(), @errorName(err) },
-            );
-            Output.flush();
-            JSError(
-                getAllocator(ctx),
-                "{s}: failed to load module \"{s}\" from \"{s}\"",
-                .{
-                    @errorName(err),
-                    import_path,
-                    module.path.name.dirWithTrailingSlash(),
-                },
-                ctx,
-                exception,
-            );
-            return null;
-        }
+        return this.vm.require(ctx, module.path.name.dirWithTrailingSlash(), import_path, exception);
     }
 
     pub fn requireFirst(
@@ -853,9 +858,9 @@ pub const Module = struct {
         return null;
     }
 
-    const ModuleClass = NewClass(
+    pub const ModuleClass = NewClass(
         Module,
-        .{ .name = "Module" },
+        .{ .name = Properties.UTF8.module },
         .{
             .@"require" = require,
             .@"requireFirst" = requireFirst,
@@ -888,6 +893,7 @@ pub const Module = struct {
         // ExportsClass.callAsConstructor = To.JS.Callback(Module, callExportsAsConstructor);
 
         exports_class_ref = js.JSClassRetain(js.JSClassCreate(&ExportsClass));
+        _ = Module.ModuleClass.get().*;
     }
 
     pub const LoadResult = union(Tag) {
@@ -907,13 +913,26 @@ pub const Module = struct {
     threadlocal var module_wrapper_params: [2]js.JSStringRef = undefined;
     threadlocal var module_wrapper_loaded = false;
 
-    pub fn load(module: *Module, vm: *VirtualMachine, allocator: *std.mem.Allocator, log: *logger.Log, source: [:0]u8, path: Fs.Path, global_ctx: js.JSContextRef, call_ctx: js.JSContextRef, function_ctx: js.JSContextRef, exception: js.ExceptionRef, comptime is_reload: bool) !void {
-        var source_code_ref = js.JSStringCreateWithUTF8CString(source.ptr);
-        defer js.JSStringRelease(source_code_ref);
-        var source_url = try allocator.dupeZ(u8, path.text);
-        defer allocator.free(source_url);
-        var source_url_ref = js.JSStringCreateWithUTF8CString(source_url.ptr);
-        defer js.JSStringRelease(source_url_ref);
+    pub fn load(
+        module: *Module,
+        vm: *VirtualMachine,
+        allocator: *std.mem.Allocator,
+        log: *logger.Log,
+        source: string,
+        path: Fs.Path,
+        global_ctx: js.JSContextRef,
+        call_ctx: js.JSContextRef,
+        function_ctx: js.JSContextRef,
+        exception: js.ExceptionRef,
+        comptime is_reload: bool,
+    ) !void {
+        var source_code_ref = js.JSStringCreateStatic(source.ptr, source.len - 1);
+        var source_url_raw = try std.fmt.allocPrintZ(allocator, "file://{s}", .{path.text});
+        var source_url = js.JSStringCreateStatic(source_url_raw.ptr, source_url_raw.len);
+
+        if (FeatureFlags.remote_inspector) {
+            js.JSGlobalContextSetName(js.JSContextGetGlobalContext(global_ctx), source_url);
+        }
 
         if (isDebug) {
             Output.print("// {s}\n{s}", .{ path.pretty, source });
@@ -926,16 +945,16 @@ pub const Module = struct {
                 .ref = undefined,
                 .vm = vm,
             };
-            module.ref = js.JSObjectMake(global_ctx, Module.ModuleClass.get(), module);
+            module.ref = js.JSObjectMake(global_ctx, Module.ModuleClass.get().*, module);
             js.JSValueProtect(global_ctx, module.ref);
         } else {
             js.JSValueUnprotect(global_ctx, module.exports.?);
         }
 
         // if (!module_wrapper_loaded) {
-        module_wrapper_params[0] = js.JSStringRetain(js.JSStringCreateWithUTF8CString(Properties.UTF8.module[0.. :0]));
-        module_wrapper_params[1] = js.JSStringRetain(js.JSStringCreateWithUTF8CString(Properties.UTF8.exports[0.. :0]));
-        //     module_wrapper_loaded = true;
+        module_wrapper_params[0] = js.JSStringCreateStatic(Properties.UTF8.module.ptr, Properties.UTF8.module.len);
+        module_wrapper_params[1] = js.JSStringCreateStatic(Properties.UTF8.exports.ptr, Properties.UTF8.exports.len);
+        // module_wrapper_loaded = true;
         // }
 
         var module_wrapper_args: [2]js.JSValueRef = undefined;
@@ -951,7 +970,7 @@ pub const Module = struct {
                 @truncate(c_uint, module_wrapper_params.len),
                 &module_wrapper_params,
                 source_code_ref,
-                null,
+                source_url,
                 1,
                 &except,
             );
@@ -1140,7 +1159,7 @@ pub const Module = struct {
                         vm,
                         vm.allocator,
                         vm.log,
-                        source_code_printer.ctx.sentinel,
+                        source_code_printer.ctx.written,
                         path,
                         js.JSContextGetGlobalContext(ctx),
                         ctx,
@@ -1154,7 +1173,7 @@ pub const Module = struct {
                         vm,
                         vm.allocator,
                         vm.log,
-                        source_code_printer.ctx.sentinel,
+                        source_code_printer.ctx.written,
                         path,
                         js.JSContextGetGlobalContext(ctx),
                         ctx,
@@ -1245,7 +1264,7 @@ pub const Module = struct {
         exception: js.ExceptionRef,
     ) callconv(.C) js.JSValueRef {
         if (this.id == null) {
-            this.id = js.JSStringCreateWithUTF8CString(this.path.text.ptr);
+            this.id = js.JSStringCreateStatic(this.path.text.ptr, this.path.text.len);
         }
 
         return this.id;
@@ -1475,9 +1494,7 @@ pub const GlobalObject = struct {
     ref: js.JSObjectRef = undefined,
     vm: *VirtualMachine,
     ctx: js.JSGlobalContextRef = undefined,
-    console_class: js.JSClassRef = undefined,
-    console: js.JSObjectRef = undefined,
-    console_definition: js.JSClassDefinition = undefined,
+    console: js.JSObjectRef = null,
     global_class_def: js.JSClassDefinition = undefined,
     global_class: js.JSClassRef = undefined,
 
@@ -1530,12 +1547,12 @@ pub const GlobalObject = struct {
         obj: js.JSObjectRef,
         exception: js.ExceptionRef,
     ) js.JSValueRef {
-        // if (global.console == null) {
-        //     global.console = js.JSObjectMake(js.JSContextGetGlobalContext(ctx), global.console_class, global);
-        //     js.JSValueProtect(js.JSContextGetGlobalContext(ctx), global.console);
-        // }
+        if (global.console == null) {
+            global.console = js.JSObjectMake(js.JSContextGetGlobalContext(ctx), ConsoleClass.get().*, global);
+            js.JSValueProtect(ctx, global.console);
+        }
 
-        return js.JSObjectMake(js.JSContextGetGlobalContext(ctx), ConsoleClass.get().*, global);
+        return global.console;
     }
 
     pub fn boot(global: *GlobalObject) !void {

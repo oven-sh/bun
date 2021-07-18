@@ -27,43 +27,66 @@ const hidden_globals = [_]d.ts.decl{
 const global = JavaScript.GlobalObject.GlobalClass.typescriptDeclaration();
 
 pub fn main() anyerror!void {
+    var allocator = std.heap.c_allocator;
     var argv = std.mem.span(std.os.argv);
-    var dest = [_]string{ argv[argv.len - 2], argv[argv.len - 1] };
-
-    var dir_path = resolve_path.joinAbs(std.process.getCwdAlloc(allocator), .auto, &dest);
+    var dest = [_]string{ std.mem.span(argv[argv.len - 2]), std.mem.span(argv[argv.len - 1]) };
+    var stdout = std.io.getStdOut();
+    var writer = stdout.writer();
+    try writer.print("{s}/{s}\n", .{ dest[0], dest[1] });
+    var dir_path = resolve_path.joinAbsString(try std.process.getCwdAlloc(allocator), &dest, .auto);
 
     std.debug.assert(dir_path.len > 0 and strings.eqlComptime(std.fs.path.basename(dir_path), "types"));
-    try std.fs.deleteTreeAbsolute(dir_path);
+    std.fs.deleteTreeAbsolute(dir_path) catch {};
     try std.fs.makeDirAbsolute(dir_path);
     var dir = try std.fs.openDirAbsolute(dir_path, std.fs.Dir.OpenDirOptions{});
+    var index_file = try dir.createFile("index.d.ts", .{});
+    try index_file.writeAll(
+        \\/// <reference no-default-lib="true" />
+        \\/// <reference lib="esnext" />
+        \\/// <reference types="speedy.js/types/globals" />
+        \\/// <reference types="speedy.js/types/modules" />
+        \\
+    );
 
-    var index_file = dir.openFile("index.d.ts", .{ .write = true });
-    try index_file.writeAll(comptime d.ts.class.Printer.printDecl(global, 0));
+    var global_file = try dir.createFile("globals.d.ts", .{});
+    try global_file.writeAll(
+        \\// Speedy.js v
+        \\
+        \\
+    );
+    try global_file.writeAll(comptime d.ts.class.Printer.printDecl(global, 0));
 
-    try index_file.writeAll("\n");
+    var module_file = try dir.createFile("modules.d.ts", .{});
+    try module_file.writeAll(
+        \\// Speedy.js v
+        \\
+        \\
+    );
 
-    try index_file.writeAll("declare global {\n");
+    try global_file.writeAll("\n");
+
+    try global_file.writeAll("declare global {\n");
 
     inline for (hidden_globals) |module, i| {
         if (i > 0) {
-            try index_file.writeAll("\n");
+            try global_file.writeAll("\n");
         }
-        try index_file.writeAll(comptime d.ts.class.Printer.printDecl(module, 2));
+        try global_file.writeAll(comptime d.ts.class.Printer.printDecl(module, 2));
     }
 
-    try index_file.writeAll("}\n");
-    var stdout = std.io.getStdOut();
-    try stdout.writeAll("✔️ index.d.ts");
+    try global_file.writeAll("}\n\n");
+    try stdout.writeAll("  ✔️ index.d.ts\n");
 
     inline for (modules) |decl| {
-        var module: d.ts.module = comptime decl.module;
+        comptime var module: d.ts.module = decl.module;
         const basepath = comptime module.path["speedy.js/".len..];
         if (std.fs.path.dirname(basepath)) |dirname| {
-            dir.makePath(dirname);
+            try dir.makePath(dirname);
         }
 
-        var file = try dir.openFile(comptime basepath ++ ".d.ts", .{ .write = true });
-        try file.writeAll(comptime d.ts.class.Printer.printDecl(module, 0));
-        try stdout.writeAll(comptime "✔️ " ++ basepath);
+        try module_file.writeAll(comptime d.ts.class.Printer.printDecl(decl, 0));
+        try stdout.writeAll(comptime "  ✔️ " ++ basepath ++ " - modules.d.ts\n");
     }
+
+    try global_file.writeAll("export {};\n");
 }

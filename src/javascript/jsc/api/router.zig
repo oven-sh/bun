@@ -2,40 +2,57 @@ usingnamespace @import("../base.zig");
 const std = @import("std");
 const Api = @import("../../../api/schema.zig").Api;
 const FilesystemRouter = @import("../../../router.zig");
+const http = @import("../../../http.zig");
 const JavaScript = @import("../javascript.zig");
 
 usingnamespace @import("../webcore/response.zig");
 const Router = @This();
 
-match: FilesystemRouter.RouteMap.MatchedRoute,
+route: *const FilesystemRouter.Match,
 file_path_str: js.JSStringRef = null,
 pathname_str: js.JSStringRef = null,
 
-pub fn constructor(
+pub fn importRoute(
+    this: *Router,
     ctx: js.JSContextRef,
     function: js.JSObjectRef,
+    thisObject: js.JSObjectRef,
     arguments: []const js.JSValueRef,
     exception: js.ExceptionRef,
 ) js.JSObjectRef {
-    return null;
+    return JavaScript.VirtualMachine.instance.require(
+        ctx,
+        std.fs.path.dirname(this.route.file_path).?,
+        this.route.file_path,
+        exception,
+    );
 }
 
 pub fn match(
     obj: *c_void,
     ctx: js.JSContextRef,
     function: js.JSObjectRef,
+    thisObject: js.JSObjectRef,
     arguments: []const js.JSValueRef,
     exception: js.ExceptionRef,
 ) js.JSObjectRef {
-    return null;
-}
+    if (arguments.len == 0) {
+        JSError(getAllocator(ctx), "Expected string, FetchEvent, or Request but there were no arguments", .{}, ctx, exception);
+        return null;
+    }
 
-fn matcher(
-    obj: *c_void,
-    ctx: js.JSContextRef,
-    arg: js.JSValueRef,
-    exception: js.ExceptionRef,
-) js.JSObjectRef {
+    if (js.JSValueIsObjectOfClass(ctx, arguments[0], FetchEvent.Class.get().*)) {
+        return matchFetchEvent(ctx, To.Zig.ptr(FetchEvent, arguments[0]), exception);
+    }
+
+    if (js.JSValueIsString(ctx, arguments[0])) {
+        return matchPathName(ctx, arguments[0], exception);
+    }
+
+    if (js.JSValueIsObjectOfClass(ctx, arguments[0], Request.Class.get().*)) {
+        return matchRequest(ctx, To.Zig.ptr(Request, arguments[0]), exception);
+    }
+
     return null;
 }
 
@@ -44,12 +61,18 @@ fn matchRequest(
     request: *const Request,
     exception: js.ExceptionRef,
 ) js.JSObjectRef {
-    return null;
+    return createRouteObject(ctx, request.request_context, exception);
 }
+
+fn matchPathNameString(
+    ctx: js.JSContextRef,
+    pathname: string,
+    exception: js.ExceptionRef,
+) js.JSObjectRef {}
 
 fn matchPathName(
     ctx: js.JSContextRef,
-    pathname: string,
+    pathname: js.JSStringRef,
     exception: js.ExceptionRef,
 ) js.JSObjectRef {
     return null;
@@ -60,22 +83,25 @@ fn matchFetchEvent(
     fetch_event: *const FetchEvent,
     exception: js.ExceptionRef,
 ) js.JSObjectRef {
-    return null;
+    return createRouteObject(ctx, fetch_event.request_context, exception);
+}
+
+fn createRouteObject(ctx: js.JSContextRef, req: *const http.RequestContext, exception: js.ExceptionRef) js.JSValueRef {
+    const route = &(req.matched_route orelse {
+        return js.JSValueMakeNull(ctx);
+    });
+
+    var router = getAllocator(ctx).create(Router) catch unreachable;
+    router.* = Router{
+        .route = route,
+    };
+
+    return Class.new(ctx, router);
 }
 
 const match_type_definition = &[_]d.ts{
     .{
-        .tsdoc = "Match a {@link https://developer.mozilla.org/en-US/docs/Web/API/Request Request} to a Route from the local filesystem.",
-        .args = &[_]d.ts.arg{
-            .{
-                .name = "request",
-                .@"return" = "Request",
-            },
-        },
-        .@"return" = "Route | null",
-    },
-    .{
-        .tsdoc = "Match a {@link https://developer.mozilla.org/en-US/docs/Web/API/FetchEvent FetchEvent} to a Route from the local filesystem.",
+        .tsdoc = "Match a {@link https://developer.mozilla.org/en-US/docs/Web/API/FetchEvent FetchEvent} to a `Route` from the local filesystem. Returns `null` if there is no match.",
         .args = &[_]d.ts.arg{
             .{
                 .name = "event",
@@ -85,11 +111,21 @@ const match_type_definition = &[_]d.ts{
         .@"return" = "Route | null",
     },
     .{
-        .tsdoc = "Match a `pathname` to a Route from the local filesystem.",
+        .tsdoc = "Match a `pathname` to a `Route` from the local filesystem. Returns `null` if there is no match.",
         .args = &[_]d.ts.arg{
             .{
                 .name = "pathname",
                 .@"return" = "string",
+            },
+        },
+        .@"return" = "Route | null",
+    },
+    .{
+        .tsdoc = "Match a {@link https://developer.mozilla.org/en-US/docs/Web/API/Request Request} to a `Route` from the local filesystem. Returns `null` if there is no match.",
+        .args = &[_]d.ts.arg{
+            .{
+                .name = "request",
+                .@"return" = "Request",
             },
         },
         .@"return" = "Route | null",
@@ -110,7 +146,7 @@ pub const Class = NewClass(
     },
     .{
         .match = .{
-            .get = match,
+            .rfn = match,
             .ts = match_type_definition,
         },
     },
@@ -136,9 +172,14 @@ pub const Instance = NewClass(
         .finalize = .{
             .rfn = finalize,
         },
-        .constructor = .{
-            .rfn = constructor,
-            .ts = match_type_definition,
+        .import = .{
+            .rfn = importRoute,
+            .ts = d.ts{
+                .@"return" = "Object",
+                .tsdoc = 
+                \\Synchronously load & evaluate the file corresponding to the route. Returns the exports of the route. This is similar to `await import(route.filepath)`, except it's synchronous. It is recommended to use this function instead of `import`. 
+                ,
+            },
         },
     },
     .{
@@ -156,11 +197,7 @@ pub const Instance = NewClass(
             .ts = d.ts{
                 .@"return" = "string",
                 .tsdoc = 
-                \\Project-relative filesystem path to the route file. Useful for importing.
-                \\
-                \\@example ```tsx
-                \\await import(route.filepath);
-                \\```
+                \\Project-relative filesystem path to the route file.
                 ,
             },
         },
@@ -213,7 +250,7 @@ pub fn getFilePath(
     exception: js.ExceptionRef,
 ) js.JSValueRef {
     if (this.file_path_str == null) {
-        this.file_path_str = js.JSStringCreateWithUTF8CString(this.match.file_path.ptr);
+        this.file_path_str = js.JSStringCreateWithUTF8CString(this.route.file_path.ptr);
     }
 
     return js.JSValueMakeString(ctx, this.file_path_str);
@@ -234,7 +271,7 @@ pub fn getPathname(
     exception: js.ExceptionRef,
 ) js.JSValueRef {
     if (this.pathname_str == null) {
-        this.pathname_str = js.JSStringCreateWithUTF8CString(this.match.pathname.ptr);
+        this.pathname_str = js.JSStringCreateWithUTF8CString(this.route.pathname.ptr);
     }
 
     return js.JSValueMakeString(ctx, this.pathname_str);

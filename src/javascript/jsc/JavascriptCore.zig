@@ -240,6 +240,15 @@ pub const OpaqueJSPropertyNameArray = struct_OpaqueJSPropertyNameArray;
 pub const OpaqueJSPropertyNameAccumulator = struct_OpaqueJSPropertyNameAccumulator;
 pub const OpaqueJSValue = struct_OpaqueJSValue;
 
+// const JSProcessID = ;
+pub extern fn JSRemoteInspectorDisableAutoStart() void;
+pub extern fn JSRemoteInspectorStart() void;
+// JS_EXPORT void JSRemoteInspectorSetParentProcessInformation(JSProcessID, const uint8_t* auditData, size_t auditLength) JSC_API_AVAILABLE(macos(10.11), ios(9.0));
+
+pub extern fn JSRemoteInspectorSetLogToSystemConsole(enabled: bool) void;
+pub extern fn JSRemoteInspectorGetInspectionEnabledByDefault(void) bool;
+pub extern fn JSRemoteInspectorSetInspectionEnabledByDefault(enabled: bool) void;
+
 // -- Manual --
 
 // StringImpl::createWithoutCopying
@@ -266,6 +275,262 @@ pub fn isObjectOfClassAndResolveIfNeeded(ctx: JSContextRef, obj: JSObjectRef, cl
     if (prop == null) {
         return null;
     }
-
-    
 }
+
+pub const UTF8Ptr = [*c]const u8;
+pub const UTF16Ptr = [*c]const u16;
+
+// --- Custom Methods! ----
+pub const Encoding = enum(u8) {
+    empty = 0,
+    char8 = 8,
+    char16 = 16,
+};
+pub const JSCellValue = u64;
+pub const CellType = enum(u8) {
+    CellType = 0,
+    StringType = 1,
+    HeapBigIntType = 2,
+    LastMaybeFalsyCellPrimitive = 2,
+    SymbolType = 3,
+    GetterSetterType = 4,
+    CustomGetterSetterType = 5,
+    APIValueWrapperType = 6,
+    NativeExecutableType = 7,
+    ProgramExecutableType = 8,
+    ModuleProgramExecutableType = 9,
+    EvalExecutableType = 10,
+    FunctionExecutableType = 11,
+    UnlinkedFunctionExecutableType = 12,
+    UnlinkedProgramCodeBlockType = 13,
+    UnlinkedModuleProgramCodeBlockType = 14,
+    UnlinkedEvalCodeBlockType = 15,
+    UnlinkedFunctionCodeBlockType = 16,
+    CodeBlockType = 17,
+    JSImmutableButterflyType = 18,
+    JSSourceCodeType = 19,
+    JSScriptFetcherType = 20,
+    JSScriptFetchParametersType = 21,
+    ObjectType = 22,
+    FinalObjectType = 23,
+    JSCalleeType = 24,
+    JSFunctionType = 25,
+    InternalFunctionType = 26,
+    NullSetterFunctionType = 27,
+    BooleanObjectType = 28,
+    NumberObjectType = 29,
+    ErrorInstanceType = 30,
+    PureForwardingProxyType = 31,
+    DirectArgumentsType = 32,
+    ScopedArgumentsType = 33,
+    ClonedArgumentsType = 34,
+    ArrayType = 35,
+    DerivedArrayType = 36,
+    ArrayBufferType = 37,
+    Int8ArrayType = 38,
+    Uint8ArrayType = 39,
+    Uint8ClampedArrayType = 40,
+    Int16ArrayType = 41,
+    Uint16ArrayType = 42,
+    Int32ArrayType = 43,
+    Uint32ArrayType = 44,
+    Float32ArrayType = 45,
+    Float64ArrayType = 46,
+    BigInt64ArrayType = 47,
+    BigUint64ArrayType = 48,
+    DataViewType = 49,
+    GlobalObjectType = 50,
+    GlobalLexicalEnvironmentType = 51,
+    LexicalEnvironmentType = 52,
+    ModuleEnvironmentType = 53,
+    StrictEvalActivationType = 54,
+    WithScopeType = 55,
+    ModuleNamespaceObjectType = 56,
+    RegExpObjectType = 57,
+    JSDateType = 58,
+    ProxyObjectType = 59,
+    JSGeneratorType = 60,
+    JSAsyncGeneratorType = 61,
+    JSArrayIteratorType = 62,
+    JSMapIteratorType = 63,
+    JSSetIteratorType = 64,
+    JSStringIteratorType = 65,
+    JSPromiseType = 66,
+    JSMapType = 67,
+    JSSetType = 68,
+    JSWeakMapType = 69,
+    JSWeakSetType = 70,
+    WebAssemblyModuleType = 71,
+    StringObjectType = 72,
+    DerivedStringObjectType = 73,
+    LastJSCObjectType = 73,
+    MaxJSType = 255,
+    _,
+
+    pub fn isString(this: CellType) bool {
+        return switch (this) {
+            .StringType => true,
+            else => false,
+        };
+    }
+};
+pub const ExternalStringFinalizer = fn (finalize_ptr: ?*c_void, ref: JSStringRef, buffer: *c_void, byteLength: usize) callconv(.C) void;
+pub extern fn JSStringCreate(string: UTF8Ptr, length: usize) JSStringRef;
+pub extern fn JSStringCreateStatic(string: UTF8Ptr, length: usize) JSStringRef;
+pub extern fn JSStringCreateExternal(string: UTF8Ptr, length: usize, finalize_ptr: ?*c_void, finalizer: ExternalStringFinalizer) JSStringRef;
+pub extern fn JSStringIsEqualToString(a: JSStringRef, string: UTF8Ptr, length: usize) bool;
+pub extern fn JSStringEncoding(string: JSStringRef) Encoding;
+pub extern fn JSStringGetCharacters8Ptr(string: JSStringRef) UTF8Ptr;
+extern fn JSStringIterate(string: JSCellValue, iter: *JSStringIterator_) void;
+pub extern fn JSCellType(cell: JSCellValue) CellType;
+pub extern fn JSStringIsStatic(ref: JSStringRef) bool;
+pub extern fn JSStringIsExternal(ref: JSStringRef) bool;
+
+pub const JStringIteratorAppendCallback = fn (ctx: *JSStringIterator_, ptr: *c_void, length: u32) callconv(.C) c_void;
+pub const JStringIteratorWriteCallback = fn (ctx: *JSStringIterator_, ptr: *c_void, length: u32, offset: u32) callconv(.C) c_void;
+const JSStringIterator_ = extern struct {
+    ctx: *c_void,
+    stop: u8,
+
+    append8: JStringIteratorAppendCallback,
+    append16: JStringIteratorAppendCallback,
+    write8: JStringIteratorWriteCallback,
+    write16: JStringIteratorWriteCallback,
+};
+
+pub const JSString = struct {
+    pub const Callback = fn (finalize_ptr_: ?*c_void, ref: JSStringRef, buffer: *c_void, byteLength: usize) callconv(.C) void;
+    _ref: JSStringRef = null,
+    backing: Backing = .{ .gc = 0 },
+
+    pub const Backing = union(Ownership) {
+        external: ExternalString,
+        static: []const u8,
+        gc: u0,
+    };
+
+    pub fn deref(this: *JSString) void {
+        if (this._ref == null) return;
+
+        JSStringRetain(this._ref);
+    }
+
+    const ExternalString = struct {
+        callback: Callback,
+        external_callback: *c_void,
+        external_ptr: ?*c_void = null,
+        slice: []const u8,
+    };
+
+    pub fn External(comptime ExternalType: type, external_type: *ExternalType, str: []const u8, callback: fn (this: *ExternalType, buffer: []const u8) void) JSString {
+        const CallbackFunctionType = @TypeOf(callback);
+
+        const ExternalWrapper = struct {
+            pub fn finalizer_callback(finalize_ptr_: ?*c_void, buffer: *c_void, byteLength: usize) callconv(.C) void {
+                var finalize_ptr = finalize_ptr_ orelse return;
+
+                var jsstring = @ptrCast(
+                    *JSString,
+                    @alignCast(
+                        @alignOf(
+                            *JSString,
+                        ),
+                        finalize_ptr,
+                    ),
+                );
+
+                var cb = @as(CallbackFunctionType, jsstring.external_callback orelse return);
+                var raw_external_ptr = jsstring.external_ptr orelse return;
+
+                var external_ptr = @ptrCast(
+                    *ExternalType,
+                    @alignCast(
+                        @alignOf(
+                            *ExternalType,
+                        ),
+                        raw_external_ptr,
+                    ),
+                );
+
+                cb(external_ptr, @ptrCast([*]u8, buffer)[0..byteLength]);
+            }
+        };
+
+        return JSString{
+            .backing = .{
+                .external = .{
+                    .slice = str,
+                    .external_callback = callback,
+                    .external_ptr = external_type,
+                    .callback = ExternalWrapper.finalizer_callback,
+                },
+            },
+        };
+    }
+
+    // pub fn Iterator(comptime WriterType: type) type {
+    //     return struct {
+
+    //     };
+    // }
+
+    pub const Ownership = enum { external, static, gc };
+
+    pub fn Static(str: []const u8) JSString {
+        return JSString{ ._ref = null, .backing = .{ .static = str } };
+    }
+
+    pub fn ref(this: *JSString) JSStringRef {
+        if (this._ref == null) {
+            switch (this.backing) {
+                .External => |external| {
+                    this._ref = JSStringCreateExternal(external.slice, external.slice.len, this, this.external_callback.?);
+                },
+                .Static => |slice| {
+                    this._ref = JSStringCreateStatic(slice.ptr, slice.len);
+                },
+                .gc => {
+                    return null;
+                },
+            }
+        }
+
+        JSStringRetain(this._ref);
+
+        return this._ref;
+    }
+
+    pub fn fromStringRef(string_ref: JSStringRef) JSString {}
+
+    pub fn init(str: []const u8) JSString {}
+
+    pub fn static(str: []const u8) JSString {}
+
+    pub fn finalize(this: *JSString) void {
+        this.loaded = false;
+    }
+
+    pub fn value(this: *JSString, ctx: JSContextRef) JSValueRef {
+        return JSValueMakeString(ctx, this.ref());
+    }
+
+    pub fn len(this: *const JSString) usize {
+        return JSStringGetLength(this.ref);
+    }
+
+    pub fn encoding(this: *const JSString) Encoding {
+        return JSStringEncoding(this.ref);
+    }
+
+    // pub fn eql(this: *const JSString, str: string)  {
+
+    // }
+
+    pub fn eqlJS(this: *const JSString, ctx: JSContextRef, comptime Type: type, that: Type) bool {
+        switch (comptime Type) {
+            JSValueRef => {},
+            JSStringRef => {},
+            JSString => {},
+        }
+    }
+};

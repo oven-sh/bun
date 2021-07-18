@@ -180,6 +180,7 @@ const TinyPtr = packed struct {
 
 const Param = struct {
     key: string,
+    kind: RoutePart.Tag,
     value: string,
 
     pub const List = std.MultiArrayList(Param);
@@ -302,25 +303,6 @@ pub const RouteMap = struct {
         return written;
     }
 
-    pub const MatchedRoute = struct {
-        /// normalized url path from the request
-        path: string,
-        /// raw url path from the request
-        pathname: string,
-        /// absolute filesystem path to the entry point
-        file_path: string,
-        /// route name, like `"posts/[id]"`
-        name: string,
-
-        /// basename of the route in the file system, including file extension
-        basename: string,
-
-        hash: u32,
-        params: *Param.List,
-        redirect_path: ?string = null,
-        query_string: string = "",
-    };
-
     const MatchContext = struct {
         params: *Param.List,
         segments: []string,
@@ -339,7 +321,7 @@ pub const RouteMap = struct {
             this: *MatchContext,
             head_i: u16,
             segment_i: u16,
-        ) ?MatchedRoute {
+        ) ?Match {
             var match = this._matchDynamicRoute(head_i, segment_i) orelse return null;
             this.matched_route_name.append("/");
             this.matched_route_name.append(match.name);
@@ -350,7 +332,7 @@ pub const RouteMap = struct {
             this: *MatchContext,
             head_i: u16,
             segment_i: u16,
-        ) ?MatchedRoute {
+        ) ?Match {
             const start_len = this.params.len;
             var head = this.map.routes.get(head_i);
             const segment = this.segments[segment_i];
@@ -369,7 +351,7 @@ pub const RouteMap = struct {
                 else => {},
             }
 
-            var match_result: MatchedRoute = undefined;
+            var match_result: Match = undefined;
             if (head.children.len > 0 and remaining.len > 0) {
                 var child_i = head.children.offset;
                 const last = child_i + head.children.len;
@@ -391,7 +373,7 @@ pub const RouteMap = struct {
                 this.params.shrinkRetainingCapacity(start_len);
                 return null;
             } else {
-                match_result = MatchedRoute{
+                match_result = Match{
                     .path = head.path,
                     .name = head.name,
                     .params = this.params,
@@ -412,9 +394,10 @@ pub const RouteMap = struct {
                 .param => {
                     this.params.append(
                         this.allocator,
-                        .{
+                        Param{
                             .key = head.part.str(head.name),
                             .value = segment,
+                            .kind = head.part.tag,
                         },
                     ) catch unreachable;
                 },
@@ -427,7 +410,7 @@ pub const RouteMap = struct {
 
     // This makes many passes over the list of routes
     // However, most of those passes are basically array.indexOf(number) and then smallerArray.indexOf(number)
-    pub fn matchPage(this: *RouteMap, url_path: URLPath, params: *Param.List) ?MatchedRoute {
+    pub fn matchPage(this: *RouteMap, url_path: URLPath, params: *Param.List) ?Match {
         // Trim trailing slash
         var path = url_path.path;
         var redirect = false;
@@ -454,7 +437,7 @@ pub const RouteMap = struct {
 
         if (path.len == 0) {
             if (this.index) |index| {
-                return MatchedRoute{
+                return Match{
                     .params = params,
                     .name = "index",
                     .path = this.routes.items(.path)[index],
@@ -479,7 +462,7 @@ pub const RouteMap = struct {
                 const children = this.routes.items(.hash)[route.children.offset .. route.children.offset + route.children.len];
                 for (children) |child_hash, i| {
                     if (child_hash == index_route_hash) {
-                        return MatchedRoute{
+                        return Match{
                             .params = params,
                             .name = this.routes.items(.name)[i],
                             .path = this.routes.items(.path)[i],
@@ -492,7 +475,7 @@ pub const RouteMap = struct {
                 // It's an exact route, there are no params
                 // /foo/bar => /foo/bar.js
             } else {
-                return MatchedRoute{
+                return Match{
                     .params = params,
                     .name = route.name,
                     .path = route.path,
@@ -642,3 +625,22 @@ pub fn match(app: *Router, comptime RequestContextType: type, ctx: *RequestConte
 
     try ctx.handleRequest();
 }
+
+pub const Match = struct {
+    /// normalized url path from the request
+    path: string,
+    /// raw url path from the request
+    pathname: string,
+    /// absolute filesystem path to the entry point
+    file_path: string,
+    /// route name, like `"posts/[id]"`
+    name: string,
+
+    /// basename of the route in the file system, including file extension
+    basename: string,
+
+    hash: u32,
+    params: *Param.List,
+    redirect_path: ?string = null,
+    query_string: string = "",
+};

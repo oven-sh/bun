@@ -375,33 +375,38 @@ pub fn HeaderGen(comptime import: type, comptime fname: []const u8) type {
             validateGenerator(Generator);
 
             file.writeAll("#pragma once\n#include <stddef.h>\n#include <stdint.h>\n#include <stdbool.h>\n#define ZIG_DECL extern\n#define CPP_DECL extern \n\n") catch {};
-
+            var bufset = std.BufSet.init(std.heap.c_allocator);
             inline for (all_decls) |_decls| {
                 if (comptime _decls.is_pub) {
                     switch (_decls.data) {
                         .Type => |Type| {
                             @setEvalBranchQuota(99999);
                             if (@hasDecl(Type, "Extern")) {
-                                self.startFile(Type, Type.shim.name, file);
-                                var gen = C_Generator.init(Type.name, file);
-                                defer gen.deinit();
-                                inline for (Type.Extern) |extern_decl| {
-                                    if (@hasDecl(Type, extern_decl)) {
-                                        const normalized_name = comptime brk: {
-                                            var _normalized_name: [Type.name.len]u8 = undefined;
-                                            _ = std.mem.replace(u8, Type.name, ":", "_", std.mem.span(&_normalized_name));
-                                            break :brk _normalized_name;
-                                        };
+                                const identifier = comptime std.fmt.comptimePrint("{s}_{s}", .{ Type.shim.name, Type.shim.namespace });
+                                if (!bufset.contains(identifier)) {
+                                    self.startFile(Type, Type.shim.name, file);
+                                    bufset.insert(identifier) catch unreachable;
 
-                                        processDecl(
-                                            self,
-                                            file,
-                                            &gen,
-                                            Type,
-                                            comptime std.meta.declarationInfo(Type, extern_decl),
-                                            comptime extern_decl,
-                                            comptime std.mem.span(&normalized_name),
-                                        );
+                                    var gen = C_Generator.init(Type.name, file);
+                                    defer gen.deinit();
+                                    inline for (Type.Extern) |extern_decl| {
+                                        if (@hasDecl(Type, extern_decl)) {
+                                            const normalized_name = comptime brk: {
+                                                var _normalized_name: [Type.name.len]u8 = undefined;
+                                                _ = std.mem.replace(u8, Type.name, ":", "_", std.mem.span(&_normalized_name));
+                                                break :brk _normalized_name;
+                                            };
+
+                                            processDecl(
+                                                self,
+                                                file,
+                                                &gen,
+                                                Type,
+                                                comptime std.meta.declarationInfo(Type, extern_decl),
+                                                comptime extern_decl,
+                                                comptime std.mem.span(&normalized_name),
+                                            );
+                                        }
                                     }
                                 }
                             }

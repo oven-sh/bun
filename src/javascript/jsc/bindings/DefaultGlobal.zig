@@ -444,7 +444,7 @@ pub const JSFunction = opaque {
         function: *JSFunction,
         thisValue: *JSValue,
         globalThis: *JSGlobalObject,
-        arguments_ptr: **JSValue,
+        arguments_ptr: [*]*JSValue,
         arguments_len: usize,
         exception: *?*Exception,
         error_message: ?*const u8,
@@ -463,7 +463,7 @@ pub const JSFunction = opaque {
     pub fn callWithArguments(
         function: *JSFunction,
         globalThis: *JSGlobalObject,
-        arguments_ptr: **JSValue,
+        arguments_ptr: [*]*JSValue,
         arguments_len: usize,
         exception: *?*Exception,
         error_message: ?*const u8,
@@ -500,7 +500,7 @@ pub const JSFunction = opaque {
         function: *JSFunction,
         newTarget: *JSValue,
         globalThis: *JSGlobalObject,
-        arguments_ptr: **JSValue,
+        arguments_ptr: [*]*JSValue,
         arguments_len: usize,
         exception: *?*Exception,
         error_message: ?*const u8,
@@ -519,7 +519,7 @@ pub const JSFunction = opaque {
     pub fn constructWithArguments(
         function: *JSFunction,
         globalThis: *JSGlobalObject,
-        arguments_ptr: **JSValue,
+        arguments_ptr: [*]*JSValue,
         arguments_len: usize,
         exception: *?*Exception,
         error_message: ?*const u8,
@@ -984,6 +984,9 @@ pub const JSValue = opaque {
     pub fn isNumber(this: *JSValue) bool {
         return cppFn("isNumber", .{this});
     }
+    pub fn isError(this: *JSValue) bool {
+        return cppFn("isError", .{this});
+    }
     pub fn isString(this: *JSValue) bool {
         return cppFn("isString", .{this});
     }
@@ -1059,7 +1062,31 @@ pub const JSValue = opaque {
         return cppFn("eqlCell", .{ this, other });
     }
 
-    pub const Extern = [_][]const u8{ "jsNull", "jsUndefined", "jsTDZValue", "jsBoolean", "jsDoubleNumber", "jsNumberFromDouble", "jsNumberFromChar", "jsNumberFromU16", "jsNumberFromInt32", "jsNumberFromInt64", "jsNumberFromUint64", "isUndefined", "isNull", "isUndefinedOrNull", "isBoolean", "isAnyInt", "isUInt32AsAnyInt", "isInt32AsAnyInt", "isNumber", "isString", "isBigInt", "isHeapBigInt", "isBigInt32", "isSymbol", "isPrimitive", "isGetterSetter", "isCustomGetterSetter", "isObject", "isCell", "asCell", "toString", "toStringOrNull", "toPropertyKey", "toPropertyKeyValue", "toObject", "toWTFString", "getPrototype", "getPropertyByPropertyName", "eqlValue", "eqlCell" };
+    pub fn asString(this: *JSValue) *JSString {
+        return cppFn("asString", .{
+            this,
+        });
+    }
+
+    pub fn asObject(this: *JSValue) *JSString {
+        return cppFn("asString", .{
+            this,
+        });
+    }
+
+    pub fn asNumber(this: *JSValue) *JSString {
+        return cppFn("asNumber", .{
+            this,
+        });
+    }
+
+    pub fn encode(this: *JSValue) u64 {
+        return cppFn("encode", .{
+            this,
+        });
+    }
+
+    pub const Extern = [_][]const u8{ "encode", "asString", "asObject", "asNumber", "isError", "jsNull", "jsUndefined", "jsTDZValue", "jsBoolean", "jsDoubleNumber", "jsNumberFromDouble", "jsNumberFromChar", "jsNumberFromU16", "jsNumberFromInt32", "jsNumberFromInt64", "jsNumberFromUint64", "isUndefined", "isNull", "isUndefinedOrNull", "isBoolean", "isAnyInt", "isUInt32AsAnyInt", "isInt32AsAnyInt", "isNumber", "isString", "isBigInt", "isHeapBigInt", "isBigInt32", "isSymbol", "isPrimitive", "isGetterSetter", "isCustomGetterSetter", "isObject", "isCell", "asCell", "toString", "toStringOrNull", "toPropertyKey", "toPropertyKeyValue", "toObject", "toWTFString", "getPrototype", "getPropertyByPropertyName", "eqlValue", "eqlCell" };
 };
 
 pub const PropertyName = opaque {
@@ -1071,13 +1098,27 @@ pub const PropertyName = opaque {
     pub const name = "JSC::PropertyName";
     pub const namespace = "JSC";
 
-    pub fn eqlToPropertyName(property_name: *PropertyName, other: *PropertyName) bool {
+    pub fn eqlToPropertyName(property_name: *PropertyName, other: *const PropertyName) bool {
         return cppFn("eqlToPropertyName", .{ property_name, other });
     }
 
-    pub fn eqlToIdentifier(property_name: *PropertyName, other: *Identifier) bool {
+    pub fn eqlToIdentifier(property_name: *PropertyName, other: *const Identifier) bool {
         return cppFn("eqlToIdentifier", .{ property_name, other });
     }
+
+    pub fn publicName(property_name: *PropertyName) ?*StringImpl {
+        return cppFn("publicName", .{
+            property_name,
+        });
+    }
+
+    pub fn uid(property_name: *PropertyName) ?*StringImpl {
+        return cppFn("uid", .{
+            property_name,
+        });
+    }
+
+    pub const Extern = [_][]const u8{ "eqlToPropertyName", "eqlToIdentifier", "publicName", "uid" };
 };
 
 pub const Error = opaque {
@@ -1161,7 +1202,7 @@ pub const VM = opaque {
         SmallHeap = 0,
         LargeHeap = 1,
     };
-    pub fn create(heap_type: *HeapType) *VM {
+    pub fn create(heap_type: HeapType) *VM {
         return cppFn("create", .{@enumToInt(heap_type)});
     }
 
@@ -1184,7 +1225,65 @@ pub const VM = opaque {
             vm,
         });
     }
+
+    pub fn throwError(vm: *VM, scope: *ThrowScope, message: [*]const u8, len: usize) bool {
+        return cppFn("throwError", .{
+            vm,
+        });
+    }
+
+    pub const Extern = [_][]const u8{ "create", "deinit", "setExecutionForbidden", "executionForbidden", "isEntered", "throwError" };
 };
+
+pub const ExceptionScope = opaque {
+    pub const shim = Shimmer("JSC", "ExceptionScope", @This());
+
+    const cppFn = shim.cppFn;
+
+    pub const include = "<JavaScriptCore/ExceptionScope.h>";
+    pub const name = "JSC::ExceptionScope";
+    pub const namespace = "JSC";
+
+    pub fn declareThrowScope(
+        vm: *VM,
+        function_name: [*]u8,
+        file: [*]u8,
+        line: usize,
+    ) *ThrowScope {
+        return cppFn("declareThrowScope", .{ vm, file, line });
+    }
+
+    pub fn declareCatchScope(
+        vm: *VM,
+        function_name: [*]u8,
+        file: [*]u8,
+        line: usize,
+    ) *CatchScope {
+        return cppFn("declareCatchScope", .{ vm, file, line });
+    }
+
+    pub fn release(this: *ExceptionScope) void {
+        return cppFn("release", .{this});
+    }
+
+    pub fn exception(this: *ExceptionScope) ?*Exception {
+        return cppFn("exception", .{this});
+    }
+
+    pub fn clearException(this: *ExceptionScope) void {
+        return cppFn("clearException", .{this});
+    }
+
+    pub const Extern = [_][]const u8{
+         "release",
+        "declareThrowScope", "declareCatchScope",
+        "release",           "exception",
+        "clearException",
+    };
+};
+
+pub const ThrowScope = ExceptionScope;
+pub const CatchScope = ExceptionScope;
 
 pub const CallFrame = opaque {
     pub const shim = Shimmer("JSC", "CallFrame", @This());
@@ -1195,30 +1294,30 @@ pub const CallFrame = opaque {
     pub const name = "JSC::CallFrame";
     pub const namespace = "JSC";
 
-    pub fn argumentsCount(call_frame: *const CallFrame) usize {
+    pub inline fn argumentsCount(call_frame: *const CallFrame) usize {
         return cppFn("argumentsCount", .{
             call_frame,
         });
     }
-    pub fn uncheckedArgument(call_frame: *const CallFrame, i: u16) *JSValue {
+    pub inline fn uncheckedArgument(call_frame: *const CallFrame, i: u16) *JSValue {
         return cppFn("uncheckedArgument", .{ call_frame, i });
     }
-    pub fn argument(call_frame: *const CallFrame, i: u16) *JSValue {
+    pub inline fn argument(call_frame: *const CallFrame, i: u16) *JSValue {
         return cppFn("argument", .{
             call_frame,
         });
     }
-    pub fn thisValue(call_frame: *const CallFrame) ?*JSValue {
+    pub inline fn thisValue(call_frame: *const CallFrame) ?*JSValue {
         return cppFn("thisValue", .{
             call_frame,
         });
     }
-    pub fn newTarget(call_frame: *const CallFrame) ?*JSValue {
+    pub inline fn newTarget(call_frame: *const CallFrame) ?*JSValue {
         return cppFn("newTarget", .{
             call_frame,
         });
     }
-    pub fn jsCallee(call_frame: *const CallFrame) *JSObject {
+    pub inline fn jsCallee(call_frame: *const CallFrame) *JSObject {
         return cppFn("jsCallee", .{
             call_frame,
         });
@@ -1261,8 +1360,6 @@ pub const EncodedJSValue = opaque {
     pub const include = "<JavaScriptCore/VM.h>";
     pub const name = "JSC::VM";
     pub const namespace = "JSC";
-
-    // pub const Extern = [_][]const u8{};
 };
 
 pub const Identifier = opaque {
@@ -1463,7 +1560,7 @@ pub const StringView = opaque {
     };
 };
 
-pub const Cpp = opaque {
+pub const Cpp = struct {
     pub const Function = fn (
         globalObject: *JSGlobalObject,
         callframe: CallFrame,

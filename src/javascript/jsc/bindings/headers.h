@@ -252,6 +252,11 @@ namespace JSC {
 }
 #endif
 
+CPP_DECL "C" uint64_t JSC__JSValue__encode(JSC::JSValue arg0);
+CPP_DECL "C" JSC::JSString* JSC__JSValue__asString(JSC::JSValue arg0);
+CPP_DECL "C" JSC::JSString* JSC__JSValue__asObject(JSC::JSValue arg0);
+CPP_DECL "C" JSC::JSString* JSC__JSValue__asNumber(JSC::JSValue arg0);
+CPP_DECL "C" bool JSC__JSValue__isError(JSC::JSValue arg0);
 CPP_DECL "C" JSC::JSValue JSC__JSValue__jsNull();
 CPP_DECL "C" JSC::JSValue JSC__JSValue__jsUndefined();
 CPP_DECL "C" JSC::JSValue JSC__JSValue__jsTDZValue();
@@ -293,18 +298,20 @@ CPP_DECL "C" JSC::JSValue JSC__JSValue__getPropertyByPropertyName(JSC::JSValue a
 CPP_DECL "C" bool JSC__JSValue__eqlValue(JSC::JSValue arg0, JSC::JSValue arg1);
 CPP_DECL "C" bool JSC__JSValue__eqlCell(JSC::JSValue arg0, JSC::JSCell* arg1);
 
-#pragma mark - JSC::JSGlobalObject
+#pragma mark - JSC::PropertyName
 
-#ifndef BINDINGS__decls__JavaScriptCore_Error_h
-#define BINDINGS__decls__JavaScriptCore_Error_h
-#include <JavaScriptCore/Error.h>
+#ifndef BINDINGS__decls__JavaScriptCore_PropertyName_h
+#define BINDINGS__decls__JavaScriptCore_PropertyName_h
+#include <JavaScriptCore/PropertyName.h>
 namespace JSC {
- class JSGlobalObject;
+ class PropertyName;
 }
 #endif
 
-CPP_DECL "C" JSC::JSObject* JSC__JSGlobalObject__throwError(JSC::JSGlobalObject* arg0, JSC::JSObject* arg1);
-CPP_DECL "C" JSC::JSObject* JSC__JSGlobalObject__createError(JSC::JSGlobalObject* arg0, char ErrorType1, WTF::WTFString* arg2);
+CPP_DECL "C" bool JSC__PropertyName__eqlToPropertyName(JSC::PropertyName* arg0, const JSC::PropertyName* arg1);
+CPP_DECL "C" bool JSC__PropertyName__eqlToIdentifier(JSC::PropertyName* arg0, const JSC::Identifier* arg1);
+CPP_DECL "C" WTF::StringImpl* JSC__PropertyName__publicName(JSC::PropertyName* arg0);
+CPP_DECL "C" WTF::StringImpl* JSC__PropertyName__uid(JSC::PropertyName* arg0);
 
 #pragma mark - JSC::Exception
 
@@ -317,6 +324,40 @@ namespace JSC {
 #endif
 
 CPP_DECL "C" JSC::Exception* JSC__Exception__create(JSC::JSGlobalObject* arg0, JSC::JSObject* arg1, char StackCaptureAction2);
+
+#pragma mark - JSC::VM
+
+#ifndef BINDINGS__decls__JavaScriptCore_VM_h
+#define BINDINGS__decls__JavaScriptCore_VM_h
+#include <JavaScriptCore/VM.h>
+namespace JSC {
+ class VM;
+}
+#endif
+
+CPP_DECL "C" JSC::VM* JSC__VM__create(char HeapType0);
+CPP_DECL "C" void JSC__VM__deinit(JSC::VM* arg0);
+CPP_DECL "C" void JSC__VM__setExecutionForbidden(JSC::VM* arg0, bool arg1);
+CPP_DECL "C" bool JSC__VM__executionForbidden(JSC::VM* arg0);
+CPP_DECL "C" bool JSC__VM__isEntered(JSC::VM* arg0);
+CPP_DECL "C" bool JSC__VM__throwError(JSC::VM* arg0, JSC::ExceptionScope* arg1, const char* arg2, size_t arg3);
+
+#pragma mark - JSC::ExceptionScope
+
+#ifndef BINDINGS__decls__JavaScriptCore_ExceptionScope_h
+#define BINDINGS__decls__JavaScriptCore_ExceptionScope_h
+#include <JavaScriptCore/ExceptionScope.h>
+namespace JSC {
+ class ExceptionScope;
+}
+#endif
+
+CPP_DECL "C" void JSC__ExceptionScope__release(JSC::ExceptionScope* arg0);
+CPP_DECL "C" JSC::ExceptionScope* JSC__ExceptionScope__declareThrowScope(JSC::VM* arg0, char* arg1, char* arg2, size_t arg3);
+CPP_DECL "C" JSC::ExceptionScope* JSC__ExceptionScope__declareCatchScope(JSC::VM* arg0, char* arg1, char* arg2, size_t arg3);
+CPP_DECL "C" void JSC__ExceptionScope__release(JSC::ExceptionScope* arg0);
+CPP_DECL "C" JSC::Exception* JSC__ExceptionScope__exception(JSC::ExceptionScope* arg0);
+CPP_DECL "C" void JSC__ExceptionScope__clearException(JSC::ExceptionScope* arg0);
 
 #pragma mark - JSC::CallFrame
 

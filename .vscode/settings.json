@@ -28,6 +28,7 @@
     "src/javascript/jsc/WebKit/WebInspectorUI": true
   },
   "files.associations": {
-    "*.idl": "cpp"
+    "*.idl": "cpp",
+    "memory": "cpp"
   }
 }

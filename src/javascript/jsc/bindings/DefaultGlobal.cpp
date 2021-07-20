@@ -86,77 +86,75 @@ JSValue DefaultGlobal::moduleLoaderEvaluate(JSGlobalObject* globalObject, JSModu
 using namespace JSC;
 
 
-JSC::ObjectPrototype* DefaultGlobal__objectPrototype(Wundle::DefaultGlobal* arg0) {
+JSC::ObjectPrototype* JSC__JSGlobalObject__objectPrototype(JSC::JSGlobalObject* arg0) {
     return arg0->objectPrototype();
 }
-JSC::FunctionPrototype* DefaultGlobal__functionPrototype(Wundle::DefaultGlobal* arg0) {
+JSC::FunctionPrototype* JSC__JSGlobalObject__functionPrototype(JSC::JSGlobalObject* arg0) {
     return arg0->functionPrototype();
 }
-JSC::ArrayPrototype* DefaultGlobal__arrayPrototype(Wundle::DefaultGlobal* arg0) {
+JSC::ArrayPrototype* JSC__JSGlobalObject__arrayPrototype(JSC::JSGlobalObject* arg0) {
     return arg0->arrayPrototype();
 }
-JSC::JSObject* DefaultGlobal__booleanPrototype(Wundle::DefaultGlobal* arg0) {
+JSC::JSObject* JSC__JSGlobalObject__booleanPrototype(JSC::JSGlobalObject* arg0) {
     return arg0->booleanPrototype();
 }
-JSC::StringPrototype* DefaultGlobal__stringPrototype(Wundle::DefaultGlobal* arg0) {
+JSC::StringPrototype* JSC__JSGlobalObject__stringPrototype(JSC::JSGlobalObject* arg0) {
     return arg0->stringPrototype();
 }
-JSC::JSObject* DefaultGlobal__numberPrototype(Wundle::DefaultGlobal* arg0) {
+JSC::JSObject* JSC__JSGlobalObject__numberPrototype(JSC::JSGlobalObject* arg0) {
     return arg0->numberPrototype();
 }
-JSC::BigIntPrototype* DefaultGlobal__bigIntPrototype(Wundle::DefaultGlobal* arg0) {
+JSC::BigIntPrototype* JSC__JSGlobalObject__bigIntPrototype(JSC::JSGlobalObject* arg0) {
     return arg0->bigIntPrototype();
 }
-JSC::JSObject* DefaultGlobal__datePrototype(Wundle::DefaultGlobal* arg0) {
+JSC::JSObject* JSC__JSGlobalObject__datePrototype(JSC::JSGlobalObject* arg0) {
     return arg0->datePrototype();
 }
-JSC::JSObject* DefaultGlobal__symbolPrototype(Wundle::DefaultGlobal* arg0) {
+JSC::JSObject* JSC__JSGlobalObject__symbolPrototype(JSC::JSGlobalObject* arg0) {
     return arg0->symbolPrototype();
 }
-JSC::RegExpPrototype* DefaultGlobal__regExpPrototype(Wundle::DefaultGlobal* arg0) {
+JSC::RegExpPrototype* JSC__JSGlobalObject__regExpPrototype(JSC::JSGlobalObject* arg0) {
     return arg0->regExpPrototype();
 }
-JSC::JSObject* DefaultGlobal__errorPrototype(Wundle::DefaultGlobal* arg0) {
+JSC::JSObject* JSC__JSGlobalObject__errorPrototype(JSC::JSGlobalObject* arg0) {
     return arg0->errorPrototype();
 }
-JSC::IteratorPrototype* DefaultGlobal__iteratorPrototype(Wundle::DefaultGlobal* arg0) {
+JSC::IteratorPrototype* JSC__JSGlobalObject__iteratorPrototype(JSC::JSGlobalObject* arg0) {
     return arg0->iteratorPrototype();
 }
-JSC::AsyncIteratorPrototype* DefaultGlobal__asyncIteratorPrototype(Wundle::DefaultGlobal* arg0) {
+JSC::AsyncIteratorPrototype* JSC__JSGlobalObject__asyncIteratorPrototype(JSC::JSGlobalObject* arg0) {
     return arg0->asyncIteratorPrototype();
 }
-JSC::GeneratorFunctionPrototype* DefaultGlobal__generatorFunctionPrototype(Wundle::DefaultGlobal* arg0) {
+JSC::GeneratorFunctionPrototype* JSC__JSGlobalObject__generatorFunctionPrototype(JSC::JSGlobalObject* arg0) {
     return arg0->generatorFunctionPrototype();
 }
-JSC::GeneratorPrototype* DefaultGlobal__generatorPrototype(Wundle::DefaultGlobal* arg0) {
+JSC::GeneratorPrototype* JSC__JSGlobalObject__generatorPrototype(JSC::JSGlobalObject* arg0) {
     return arg0->generatorPrototype();
 }
-JSC::AsyncFunctionPrototype* DefaultGlobal__asyncFunctionPrototype(Wundle::DefaultGlobal* arg0) {
+JSC::AsyncFunctionPrototype* JSC__JSGlobalObject__asyncFunctionPrototype(JSC::JSGlobalObject* arg0) {
     return arg0->asyncFunctionPrototype();
 }
-JSC::ArrayIteratorPrototype* DefaultGlobal__arrayIteratorPrototype(Wundle::DefaultGlobal* arg0) {
+JSC::ArrayIteratorPrototype* JSC__JSGlobalObject__arrayIteratorPrototype(JSC::JSGlobalObject* arg0) {
     return arg0->arrayIteratorPrototype();
 }
-JSC::MapIteratorPrototype* DefaultGlobal__mapIteratorPrototype(Wundle::DefaultGlobal* arg0) {
+JSC::MapIteratorPrototype* JSC__JSGlobalObject__mapIteratorPrototype(JSC::JSGlobalObject* arg0) {
     return arg0->mapIteratorPrototype();
 }
-JSC::SetIteratorPrototype* DefaultGlobal__setIteratorPrototype(Wundle::DefaultGlobal* arg0) {
+JSC::SetIteratorPrototype* JSC__JSGlobalObject__setIteratorPrototype(JSC::JSGlobalObject* arg0) {
     return arg0->setIteratorPrototype();
 }
-JSC::JSObject* DefaultGlobal__mapPrototype(Wundle::DefaultGlobal* arg0) {
+JSC::JSObject* JSC__JSGlobalObject__mapPrototype(JSC::JSGlobalObject* arg0) {
     return arg0->mapPrototype();
 }
-JSC::JSObject* DefaultGlobal__jsSetPrototype(Wundle::DefaultGlobal* arg0) {
+JSC::JSObject* JSC__JSGlobalObject__jsSetPrototype(JSC::JSGlobalObject* arg0) {
     return arg0->jsSetPrototype();
 }
-JSC::JSPromisePrototype* DefaultGlobal__promisePrototype(Wundle::DefaultGlobal* arg0) {
+JSC::JSPromisePrototype* JSC__JSGlobalObject__promisePrototype(JSC::JSGlobalObject* arg0) {
     return arg0->promisePrototype();
 }
-JSC::AsyncGeneratorPrototype* DefaultGlobal__asyncGeneratorPrototype(Wundle::DefaultGlobal* arg0) {
+JSC::AsyncGeneratorPrototype* JSC__JSGlobalObject__asyncGeneratorPrototype(JSC::JSGlobalObject* arg0) {
     return arg0->asyncGeneratorPrototype();
 }
-JSC::AsyncGeneratorFunctionPrototype* DefaultGlobal__asyncGeneratorFunctionPrototype(Wundle::DefaultGlobal* arg0) {
+JSC::AsyncGeneratorFunctionPrototype* JSC__JSGlobalObject__asyncGeneratorFunctionPrototype(JSC::JSGlobalObject* arg0) {
     return arg0->asyncGeneratorFunctionPrototype();
-}
-
 }

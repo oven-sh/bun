@@ -35,9 +35,7 @@
         "BUILDING_JSCONLY__",
         "USE_FOUNDATION=1"
       ],
-      "macFrameworkPath": [
-        // "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.3.sdk/System/Library/Frameworks"
-      ],
+      "macFrameworkPath": [],
       "compilerPath": "/usr/local/opt/llvm/bin/clang",
       "cStandard": "c17",
       "cppStandard": "c++17",

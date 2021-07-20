@@ -27,6 +27,5 @@ pub fn main() anyerror!void {
         Bindings,
         "src/javascript/jsc/bindings/bindings.zig",
     );
-
     HeaderGenerator.exec(HeaderGenerator{}, file);
 }

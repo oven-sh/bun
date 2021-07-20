@@ -4,10 +4,14 @@ speedy: speedy-prod-native speedy-prod-wasi speedy-prod-wasm
 api: 
 	peechy --schema src/api/schema.peechy --esm src/api/schema.js --ts src/api/schema.d.ts --zig src/api/schema.zig
 
-jsc: 
-	jsc-mac
+jsc: jsc-build jsc-bindings
+jsc-build: jsc-build-mac
+jsc-bindings:
+	jsc-bindings-headers
+	jsc-bindings-mac
 
-jsc-mac: jsc-build-mac jsc-bindings-mac
+jsc-bindings-headers:
+	zig build headers
 
 jsc-build-mac:
 	cd src/javascript/jsc/WebKit && ICU_INCLUDE_DIRS="/usr/local/opt/icu4c/include" ./Tools/Scripts/build-jsc --jsc-only --cmakeargs="-DENABLE_STATIC_JSC=ON -DCMAKE_BUILD_TYPE=relwithdebinfo" && echo "Ignore the \"has no symbols\" errors"
@@ -19,6 +23,8 @@ OBJ_FILES := $(patsubst $(SRC_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(SRC_FILES))
 
 jsc-bindings-mac: $(OBJ_FILES)
 
+# We do this outside of build.zig for performance reasons
+# The C compilation stuff with build.zig is really slow and we don't need to run this as often as the rest
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 	clang++ -c -o $@ $< \
 		-Isrc/JavaScript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/PrivateHeaders \

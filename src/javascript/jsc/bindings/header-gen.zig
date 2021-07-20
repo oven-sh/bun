@@ -7,22 +7,35 @@ const EnumMeta = std.builtin.TypeInfo.Enum;
 const UnionMeta = std.builtin.TypeInfo.Union;
 const warn = std.debug.warn;
 
+fn isCppObject(comptime Type: type) bool {
+    return switch (@typeInfo(Type)) {
+        .Struct, .Union, .Opaque => true,
+        else => false,
+    };
+}
+
 pub const C_Generator = struct {
     file: std.fs.File,
     filebase: []const u8,
+
+    direction: Direction = .export_cpp,
     const Self = @This();
+
+    pub const Direction = enum {
+        export_cpp,
+        export_zig,
+    };
 
     pub fn init(comptime src_file: []const u8, file: std.fs.File) Self {
         var res = Self{ .file = file, .filebase = src_file };
 
-        file.writeAll("\n/**** " ++ src_file ++ " /*****/\n\n") catch unreachable;
         return res;
     }
 
-    pub fn deinit(self: *Self) void {
-        self.file.writeAll("\n/***** ") catch unreachable;
-        self.file.writeAll(self.filebase) catch unreachable;
-        self.file.writeAll(" *****/") catch unreachable;
+    pub fn deinit(self: *const Self) void {
+        // self.file.writeAll("\n/**** </") catch unreachable;
+        // self.file.writeAll(self.filebase) catch unreachable;
+        // self.file.writeAll("> ****/\n\n") catch unreachable;
     }
 
     pub fn gen_func(self: *Self, comptime name: []const u8, comptime func: FnDecl, comptime meta: FnMeta, comptime arg_names: []const []const u8) void {
@@ -34,7 +47,11 @@ pub const C_Generator = struct {
             else => {},
         }
 
-        self.write("extern \"C\" ");
+        switch (self.direction) {
+            .export_cpp => self.write("CPP_DECL \"C\" "),
+            .export_zig => self.write("ZIG_DECL \"C\" "),
+        }
+
         self.writeType(func.return_type);
         self.write(" " ++ name ++ "(");
 
@@ -43,7 +60,12 @@ pub const C_Generator = struct {
             if (func.arg_names.len > i) {
                 self.write(comptime arg_names[i]);
             } else {
-                self.write(comptime std.fmt.comptimePrint(" arg{d}", .{i}));
+                const ArgType = arg.arg_type.?;
+                if (@typeInfo(ArgType) == .Enum) {
+                    self.write(comptime std.fmt.comptimePrint(" {s}{d}", .{ @typeName(ArgType), i }));
+                } else {
+                    self.write(comptime std.fmt.comptimePrint(" arg{d}", .{i}));
+                }
             }
 
             //TODO: Figure out how to get arg names; for now just do arg0..argN
@@ -51,7 +73,16 @@ pub const C_Generator = struct {
                 self.write(", ");
         }
 
-        self.write(");\n");
+        self.write(")");
+        defer self.write(";\n");
+        // const ReturnTypeInfo: std.builtin.TypeInfo = comptime @typeInfo(func.return_type);
+        // switch (comptime ReturnTypeInfo) {
+        //     .Pointer => |Pointer| {
+        //         self.write(" __attribute__((returns_nonnull))");
+        //     },
+        //     .Optional => |Optional| {},
+        //     else => {},
+        // }
     }
 
     pub fn gen_struct(self: *Self, comptime name: []const u8, comptime meta: StructMeta) void {
@@ -118,20 +149,20 @@ pub const C_Generator = struct {
     }
 
     fn writeType(self: *Self, comptime T: type) void {
-        const TT = if (@typeInfo(T) == .Pointer) @typeInfo(T).Pointer.child else T;
+        const TT = comptime if (@typeInfo(T) == .Pointer) @typeInfo(T).Pointer.child else T;
 
-        if (comptime std.meta.trait.hasDecls(TT, .{"C"}) and std.meta.trait.hasDecls(TT.C, .{"name"})) {
-            writeType(self, TT.C);
-            if (std.meta.trait.isSingleItemPtr(T)) {
-                write(self, "*");
+        if (comptime (isCppObject(TT)) and @hasDecl(TT, "name")) {
+            if (@typeInfo(T) == .Pointer or @hasDecl(TT, "Type") and @typeInfo(TT.Type) == .Pointer) {
+                if (@hasDecl(TT, "is_pointer") and !TT.is_pointer) {} else if (@typeInfo(T).Pointer.is_const) {
+                    write(self, "const ");
+                }
             }
-            return;
-        }
 
-        if (comptime std.meta.trait.hasDecls(TT, .{"name"})) {
-            self.write(comptime T.name);
-            if (std.meta.trait.isSingleItemPtr(T)) {
-                write(self, "*");
+            self.write(comptime TT.name);
+            if (@typeInfo(T) == .Pointer or @hasDecl(TT, "Type") and @typeInfo(TT.Type) == .Pointer) {
+                if (@hasDecl(TT, "is_pointer") and !TT.is_pointer) {} else {
+                    write(self, "*");
+                }
             }
             return;
         }
@@ -141,7 +172,7 @@ pub const C_Generator = struct {
             bool => self.write("bool"),
             usize => self.write("size_t"),
             isize => self.write("int"),
-            u8 => self.write("uint8_t"),
+            u8 => self.write("char"),
             u16 => self.write("uint16_t"),
             u32 => self.write("uint32_t"),
             u64 => self.write("uint64_t"),
@@ -150,10 +181,13 @@ pub const C_Generator = struct {
             i24 => self.write("int24_t"),
             i32 => self.write("int32_t"),
             i64 => self.write("int64_t"),
+            f64 => self.write("double"),
+            f32 => self.write("float"),
+            *c_void => self.write("void*"),
             [*]bool => self.write("bool*"),
             [*]usize => self.write("size_t*"),
             [*]isize => self.write("int*"),
-            [*]u8 => self.write("uint8_t*"),
+            [*]u8 => self.write("char*"),
             [*]u16 => self.write("uint16_t*"),
             [*]u32 => self.write("uint32_t*"),
             [*]u64 => self.write("uint64_t*"),
@@ -161,11 +195,22 @@ pub const C_Generator = struct {
             [*]i16 => self.write("int16_t*"),
             [*]i32 => self.write("int32_t*"),
             [*]i64 => self.write("int64_t*"),
+            [*]const bool => self.write("const bool*"),
+            [*]const usize => self.write("const size_t*"),
+            [*]const isize => self.write("const int*"),
+            [*]const u8 => self.write("const char*"),
+            [*]const u16 => self.write("const uint16_t*"),
+            [*]const u32 => self.write("const uint32_t*"),
+            [*]const u64 => self.write("const uint64_t*"),
+            [*]const i8 => self.write("const int8_t*"),
+            [*]const i16 => self.write("const int16_t*"),
+            [*]const i32 => self.write("const int32_t*"),
+            [*]const i64 => self.write("const int64_t*"),
             else => {
                 const meta = @typeInfo(T);
                 switch (meta) {
-                    .Pointer => {
-                        const child = meta.Pointer.child;
+                    .Pointer => |Pointer| {
+                        const child = Pointer.child;
                         const childmeta = @typeInfo(child);
                         // if (childmeta == .Struct and childmeta.Struct.layout != .Extern) {
                         //     self.write("void");
@@ -176,7 +221,12 @@ pub const C_Generator = struct {
                     },
                     .Optional => self.writeType(meta.Optional.child),
                     .Array => @compileError("Handle goofy looking C Arrays in the calling function"),
-                    else => self.write(@typeName(T) ++ "_t"),
+                    .Enum => |Enum| {
+                        self.writeType(Enum.tag_type);
+                    },
+                    else => {
+                        return self.write(@typeName(T));
+                    },
                 }
             },
         }
@@ -226,10 +276,10 @@ pub fn getCStruct(comptime T: type) ?NamedStruct {
     }
 
     inline for (std.meta.declarations(T)) |decl| {
-        if (std.mem.eql(u8, decl.name, "C")) {
+        if (std.mem.eql(u8, decl.name, "Type")) {
             switch (decl.data) {
-                .Type => |TT| {
-                    return NamedStruct{ .Type = TT, .name = @typeName(T) };
+                .Type => {
+                    return NamedStruct{ .Type = T, .name = @typeName(T) };
                 },
                 else => {},
             }
@@ -244,24 +294,14 @@ pub fn HeaderGen(comptime import: type, comptime fname: []const u8) type {
 
     return struct {
         source_file: []const u8 = fname,
-
+        gen: C_Generator = undefined,
         const Self = @This();
 
         pub fn init() Self {
             return Self{};
         }
 
-        pub fn processDecls(
-            comptime self: Self,
-            file: std.fs.File,
-            comptime Parent: type,
-            comptime Type: type,
-            comptime prefix: []const u8,
-        ) void {
-            const decls = std.meta.declarations(Type);
-            var gen = C_Generator.init(prefix, file);
-            defer gen.deinit();
-
+        pub fn startFile(comptime self: Self, comptime Type: type, comptime prefix: []const u8, file: std.fs.File) void {
             if (comptime std.meta.trait.hasDecls(Type, .{"include"})) {
                 comptime var new_name = std.mem.zeroes([Type.include.len]u8);
 
@@ -270,65 +310,63 @@ pub fn HeaderGen(comptime import: type, comptime fname: []const u8) type {
                     _ = std.mem.replace(u8, &new_name, ".", "_", std.mem.span(&new_name));
                 }
                 const inner_name = comptime std.mem.trim(u8, &new_name, "<>\"");
-                file.writeAll("#ifndef BINDINGS__decls__" ++ inner_name ++ "\n") catch {};
+                file.writeAll("\n#pragma mark - " ++ Type.name ++ "\n") catch unreachable;
+                file.writeAll("\n#ifndef BINDINGS__decls__" ++ inner_name ++ "\n") catch {};
                 file.writeAll("#define BINDINGS__decls__" ++ inner_name ++ "\n") catch {};
                 file.writeAll("#include " ++ Type.include ++ "\n") catch {};
-                file.writeAll("namespace Wundle {\n class " ++ prefix ++ ";\n}\n") catch {};
+                file.writeAll("namespace " ++ Type.namespace ++ " {\n class " ++ prefix ++ ";\n}\n") catch {};
                 file.writeAll("#endif\n\n") catch {};
             }
-
-            // iterate exported enums
-            // do this first in case target lang needs enums defined before use
-            inline for (decls) |decl| {
-                if (decl.is_pub and decl.data == .Type and comptime std.ascii.isUpper(decl.name[0])) {
-                    const T = decl.data.Type;
-                    const info = @typeInfo(T);
-                    if (info == .Enum and decl.is_pub) {
-                        const layout = info.Enum.layout;
-                        gen.gen_enum(prefix ++ "__" ++ decl.name, info.Enum);
+        }
+        pub fn processDecl(
+            comptime self: Self,
+            file: std.fs.File,
+            gen: *C_Generator,
+            comptime Container: type,
+            comptime Decl: std.builtin.TypeInfo.Declaration,
+            comptime name: []const u8,
+            comptime prefix: []const u8,
+        ) void {
+            switch (comptime Decl.data) {
+                .Type => |Type| {
+                    switch (@typeInfo(Type)) {
+                        .Enum => |Enum| {
+                            const layout = Enum.layout;
+                            gen.gen_enum(prefix ++ "__" ++ name, Enum);
+                        },
+                        .Struct => |Struct| {
+                            gen.gen_struct(decl.name, Struct);
+                        },
+                        .Union => |Union| {
+                            const layout = Union.layout;
+                            gen.gen_union(prefix ++ "__" ++ name, Union);
+                        },
+                        .Fn => |func| {
+                            // if (func.) {
+                            const fn_meta = @typeInfo(func.name).Fn;
+                            // blocked by https://github.com/ziglang/zig/issues/8259
+                            gen.gen_func(
+                                prefix ++ "__" ++ name,
+                                func,
+                                fn_meta,
+                                &.{},
+                            );
+                        },
+                        else => {},
                     }
-                }
-            }
-
-            // iterate exported structs
-            inline for (decls) |decl| {
-                if (decl.is_pub and decl.data == .Type and decl.is_pub and comptime std.ascii.isUpper(decl.name[0])) {
-                    const T = decl.data.Type;
-                    const info = @typeInfo(T);
-                    if (info == .Struct and decl.is_pub) {
-                        gen.gen_struct(decl.name, @typeInfo(T).Struct);
-                    }
-                }
-            }
-
-            inline for (decls) |decl| {
-                if (decl.is_pub and decl.data == .Type and decl.is_pub) {
-                    const T = decl.data.Type;
-                    const info = @typeInfo(T);
-                    if (info == .Union and comptime std.ascii.isUpper(decl.name[0])) {
-                        const layout = info.Union.layout;
-                        gen.gen_union(prefix ++ "__" ++ decl.name, info.Union);
-                    }
-                }
-            }
-
-            // iterate exported fns
-            inline for (decls) |decl, decl_i| {
-                if (decl.is_pub and decl.data == .Fn and decl.is_pub) {
-                    const func = decl.data.Fn;
+                },
+                .Fn => |func| {
                     // if (func.) {
                     const fn_meta = @typeInfo(func.fn_type).Fn;
-                    const info = @typeInfo(Type);
-                    const struct_decl = info.Struct.decls[decl_i];
                     // blocked by https://github.com/ziglang/zig/issues/8259
                     gen.gen_func(
-                        prefix ++ "__" ++ decl.name,
+                        prefix ++ "__" ++ name,
                         func,
                         fn_meta,
-                        struct_decl.data.Fn.arg_names,
+                        &.{},
                     );
-                    // }
-                }
+                },
+                else => {},
             }
         }
 
@@ -336,20 +374,36 @@ pub fn HeaderGen(comptime import: type, comptime fname: []const u8) type {
             const Generator = C_Generator;
             validateGenerator(Generator);
 
-            file.writeAll("#pragma once\n#include <stddef.h>\n#include <stdint.h>\n#include <stdbool.h>\n\n") catch {};
+            file.writeAll("#pragma once\n#include <stddef.h>\n#include <stdint.h>\n#include <stdbool.h>\n#define ZIG_DECL extern\n#define CPP_DECL extern \n\n") catch {};
 
             inline for (all_decls) |_decls| {
                 if (comptime _decls.is_pub) {
                     switch (_decls.data) {
                         .Type => |Type| {
-                            if (getCStruct(Type)) |CStruct| {
-                                processDecls(
-                                    self,
-                                    file,
-                                    Type,
-                                    CStruct.Type,
-                                    CStruct.name,
-                                );
+                            @setEvalBranchQuota(99999);
+                            if (@hasDecl(Type, "Extern")) {
+                                self.startFile(Type, Type.shim.name, file);
+                                var gen = C_Generator.init(Type.name, file);
+                                defer gen.deinit();
+                                inline for (Type.Extern) |extern_decl| {
+                                    if (@hasDecl(Type, extern_decl)) {
+                                        const normalized_name = comptime brk: {
+                                            var _normalized_name: [Type.name.len]u8 = undefined;
+                                            _ = std.mem.replace(u8, Type.name, ":", "_", std.mem.span(&_normalized_name));
+                                            break :brk _normalized_name;
+                                        };
+
+                                        processDecl(
+                                            self,
+                                            file,
+                                            &gen,
+                                            Type,
+                                            comptime std.meta.declarationInfo(Type, extern_decl),
+                                            comptime extern_decl,
+                                            comptime std.mem.span(&normalized_name),
+                                        );
+                                    }
+                                }
                             }
                         },
                         else => {},

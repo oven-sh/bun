@@ -1,4 +1,4 @@
-# Speedy - a fast web bundler
+# Speedy - a fast web bundler & JavaScript runtime environment
 
 Speedy bundles & transpiles JavaScript, TypeScript, and CSS. Speedy is probably the fastest bundler out today.
 

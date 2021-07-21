@@ -45,3 +45,4 @@ outcss
 .next
 txt.js
 .idea
+.vscode/cpp*

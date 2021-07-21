@@ -21,11 +21,14 @@ pub fn main() anyerror!void {
     var writer = stdout.writer();
     const src: std.builtin.SourceLocation = @src();
     const paths = [_][]const u8{ std.fs.path.dirname(src.file) orelse return error.BadPath, "headers.h" };
+    const paths2 = [_][]const u8{ std.fs.path.dirname(src.file) orelse return error.BadPath, "headers-cpp.h" };
+
+    const cpp = try std.fs.createFileAbsolute(try std.fs.path.join(allocator, &paths2), .{});
     const file = try std.fs.createFileAbsolute(try std.fs.path.join(allocator, &paths), .{});
 
     const HeaderGenerator = HeaderGen(
         Bindings,
         "src/javascript/jsc/bindings/bindings.zig",
     );
-    HeaderGenerator.exec(HeaderGenerator{}, file);
+    HeaderGenerator.exec(HeaderGenerator{}, file, cpp);
 }

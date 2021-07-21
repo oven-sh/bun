@@ -8,10 +8,13 @@ jsc: jsc-build jsc-bindings
 jsc-build: jsc-build-mac
 jsc-bindings:
 	jsc-bindings-headers
+	
 	jsc-bindings-mac
+	
 
 jsc-bindings-headers:
 	zig build headers
+
 
 jsc-build-mac:
 	cd src/javascript/jsc/WebKit && ICU_INCLUDE_DIRS="/usr/local/opt/icu4c/include" ./Tools/Scripts/build-jsc --jsc-only --cmakeargs="-DENABLE_STATIC_JSC=ON -DCMAKE_BUILD_TYPE=relwithdebinfo" && echo "Ignore the \"has no symbols\" errors"
@@ -20,15 +23,8 @@ SRC_DIR := src/javascript/jsc/bindings
 OBJ_DIR := src/javascript/jsc/bindings-obj
 SRC_FILES := $(wildcard $(SRC_DIR)/*.cpp)
 OBJ_FILES := $(patsubst $(SRC_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(SRC_FILES))
-
-jsc-bindings-mac: $(OBJ_FILES)
-
-# We do this outside of build.zig for performance reasons
-# The C compilation stuff with build.zig is really slow and we don't need to run this as often as the rest
-$(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
-	clang++ -c -o $@ $< \
-		-Isrc/JavaScript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/PrivateHeaders \
-		-Isrc/JavaScript/jsc/WebKit/WebKitBuild/Release/WTF/Headers \
+CLANG_FLAGS = -Isrc/JavaScript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/PrivateHeaders \
+		-Isrc/javascript/jsc/WebKit/WebKitBuild/Release/WTF/Headers \
 		-Isrc/javascript/jsc/WebKit/WebKitBuild/Release/ICU/Headers \
 		-DSTATICALLY_LINKED_WITH_JavaScriptCore=1 \
 		-DSTATICALLY_LINKED_WITH_WTF=1 \
@@ -40,7 +36,22 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 		-Isrc/JavaScript/jsc/WebKit/WebKitBuild/Release/ \
 		-Isrc/JavaScript/jsc/bindings/ \
 		-Isrc/javascript/jsc/WebKit/Source/bmalloc \
-		-std=gnu++17
+		-std=gnu++17 \
+		-stdlib=libc++ \
+		-DDU_DISABLE_RENAMING=1
+
+jsc-bindings-mac: $(OBJ_FILES)
+
+# We do this outside of build.zig for performance reasons
+# The C compilation stuff with build.zig is really slow and we don't need to run this as often as the rest
+$(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
+	clang++ -c -o $@ $< \
+		$(CLANG_FLAGS)
+
+sizegen:
+	clang++ src/javascript/jsc/headergen/sizegen.cpp -o /tmp/sizegen $(CLANG_FLAGS)
+	/tmp/sizegen > src/javascript/jsc/bindings/sizes.zig
+
 		
 speedy-prod-native-macos: 
 	cd src/deps; clang -c picohttpparser.c; cd ../../

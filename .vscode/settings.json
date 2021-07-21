@@ -29,6 +29,17 @@
   },
   "files.associations": {
     "*.idl": "cpp",
-    "memory": "cpp"
+    "memory": "cpp",
+    "iostream": "cpp",
+    "algorithm": "cpp",
+    "random": "cpp",
+    "ios": "cpp",
+    "filesystem": "cpp",
+    "__locale": "cpp",
+    "type_traits": "cpp",
+    "__mutex_base": "cpp",
+    "__string": "cpp",
+    "string": "cpp",
+    "string_view": "cpp"
   }
 }

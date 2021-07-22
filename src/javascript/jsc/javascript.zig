@@ -988,6 +988,7 @@ pub const Module = struct {
 
             js.JSValueUnprotect(global_ctx, commonjs_wrapper);
         }
+
         if (except != null) {
             var message = js.JSValueToStringCopy(function_ctx, except.?, null);
             defer js.JSStringRelease(message);

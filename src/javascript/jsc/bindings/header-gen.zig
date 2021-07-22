@@ -270,7 +270,7 @@ pub const C_Generator = struct {
         self: *Self,
         comptime T: type,
     ) void {
-        const TT = comptime if (@typeInfo(T) == .Pointer) @typeInfo(T).Pointer.child else T;
+        const TT = comptime if (@typeInfo(T) == .Pointer and !std.meta.trait.isManyItemPtr(T)) @typeInfo(T).Pointer.child else T;
 
         if (comptime (isCppObject(TT)) and @hasDecl(TT, "name")) {
             if (@typeInfo(T) == .Pointer or @hasDecl(TT, "Type") and @typeInfo(TT.Type) == .Pointer) {
@@ -444,9 +444,10 @@ pub fn HeaderGen(comptime import: type, comptime fname: []const u8) type {
                         \\#endif
                         \\
                         \\extern "C" const size_t {s} = sizeof({s});
+                        \\extern "C" const size_t {s} = alignof({s});
                         \\
                     ,
-                        .{ new_name, new_name, Type.include, Type.shim.size_of_symbol, Type.name },
+                        .{ new_name, new_name, Type.include, Type.shim.size_of_symbol, Type.name, Type.shim.align_of_symbol, Type.name },
                     ) catch unreachable;
                 }
             }
@@ -562,6 +563,9 @@ pub fn HeaderGen(comptime import: type, comptime fname: []const u8) type {
             var impl_third_buffer = std.ArrayList(u8).init(std.heap.c_allocator);
             var impl_third_writer = impl_third_buffer.writer();
 
+            var impl_fourth_buffer = std.ArrayList(u8).init(std.heap.c_allocator);
+            var impl_fourth_writer = impl_fourth_buffer.writer();
+
             var to_get_sizes: usize = 0;
             inline for (all_decls) |_decls| {
                 if (comptime _decls.is_pub) {
@@ -588,6 +592,7 @@ pub fn HeaderGen(comptime import: type, comptime fname: []const u8) type {
                                         if (to_get_sizes > 0) {
                                             impl_second_writer.writeAll(", ") catch unreachable;
                                             impl_third_writer.writeAll(", ") catch unreachable;
+                                            impl_fourth_writer.writeAll(", ") catch unreachable;
                                         }
 
                                         const formatted_name = comptime brk: {
@@ -597,6 +602,7 @@ pub fn HeaderGen(comptime import: type, comptime fname: []const u8) type {
                                         };
 
                                         impl_third_writer.print("sizeof({s})", .{comptime Type.name}) catch unreachable;
+                                        impl_fourth_writer.print("alignof({s})", .{comptime Type.name}) catch unreachable;
                                         impl_second_writer.print("\"{s}\"", .{formatted_name}) catch unreachable;
                                         to_get_sizes += 1;
                                         const ExternList = comptime brk: {
@@ -666,7 +672,9 @@ pub fn HeaderGen(comptime import: type, comptime fname: []const u8) type {
             impl.writer().print("\nconst char* names[{d}] = {{", .{to_get_sizes}) catch unreachable;
             impl.writeAll(impl_second_buffer.items) catch unreachable;
             impl.writeAll("};\n") catch unreachable;
-
+            impl.writer().print("\nconst size_t aligns[{d}] = {{", .{to_get_sizes}) catch unreachable;
+            impl.writeAll(impl_fourth_buffer.items) catch unreachable;
+            impl.writeAll("};\n") catch unreachable;
             var iter = type_names.iterator();
 
             const NamespaceMap = std.StringArrayHashMap(std.BufMap);

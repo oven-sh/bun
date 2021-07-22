@@ -27,13 +27,14 @@ int main() {
     cout <<  "// 1. \"make jsc-bindings-headers\"\n";
     cout <<  "// 2. \"make sizegen\"\n";
     cout <<  "// 3. \"make jsc-bindings-headers\"\n";
+    cout <<  "// ------------------------\n";
     cout <<  "// You can verify the numbers written in this file at runtime via the `extern`d types\n";
     cout <<  "// Run \"jsc-bindings-headers\" twice because it uses these values in the output. That's how all the bJSC__.* types are created - from these values. \n";
-    cout <<  "// The data for this file is generated in headers-cpp.h \n";
     int i = 0;
     int len = sizeof(sizes)/sizeof(sizes[0]);
     for (i = 0; i <  len ; i++) {
         cout <<  "pub const " << names[i] << " = " << sizes[i] << ";\n";
+        cout <<  "pub const " << names[i]  << "_align = " << aligns[i] << ";\n";
     }
 	
 	return 0;

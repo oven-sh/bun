@@ -13,7 +13,6 @@
 #include <wtf/text/StringView.h>
 #include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/VM.h>
-#include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/WasmFaultSignalHandler.h>
 #include <wtf/text/StringCommon.h>
 #include <JavaScriptCore/FunctionConstructor.h>
@@ -25,70 +24,7 @@
 #include <JavaScriptCore/JSMap.h>
 #include <JavaScriptCore/JSSet.h>
 
-template<class CppType, typename ZigType>
-class Wrap  {
-public:
-    Wrap(){
-    };
-
-    Wrap(ZigType zig){
-        result = zig;
-        cpp = static_cast<CppType*>(static_cast<void*>(&zig));
-    };
-
-    Wrap(CppType _cpp){
-        char* buffer = alignedBuffer();
-        memcpy(buffer, std::move(reinterpret_cast<char*>(reinterpret_cast<void*>(&_cpp))), sizeof(CppType));
-        cpp = reinterpret_cast<CppType*>(buffer);
-    };
-
-
-    ~Wrap(){};
-
-    char* alignedBuffer() {
-        return result.bytes + alignof(CppType) - reinterpret_cast<intptr_t>(result.bytes) % alignof(CppType);
-    }
-
-    ZigType result;
-    CppType* cpp;
-
-    static ZigType wrap(CppType obj) {
-        return *static_cast<ZigType*>(static_cast<void*>(&obj));
-    }
-
-    static ZigType wrap(CppType* obj) {
-        return *static_cast<ZigType*>(static_cast<void*>(obj));
-    }
-};
-
-
-
-
-
-template<class To, class From>
-To cast(From v)
-{
-    return *static_cast<To*>(static_cast<void*>(v));
-}
-
-template<class To, class From>
-To ccast(From v)
-{
-    return *static_cast<const To*>(static_cast<const void*>(v));
-}
-
-typedef JSC__JSValue (* NativeCallbackFunction)(void* arg0, JSC__JSGlobalObject* arg1, JSC__CallFrame* arg2);
-
-static const JSC::ArgList makeArgs(JSC__JSValue* v, size_t count) {
-    JSC::MarkedArgumentBuffer args = JSC::MarkedArgumentBuffer();
-    args.ensureCapacity(count);
-    for (size_t i = 0; i < count; ++i) {
-        args.append(JSC::JSValue::decode(v[i]));
-    }
-
-    return JSC::ArgList(args);
-}
-
+#include "helpers.h"
 
 extern "C"  {
 
@@ -131,8 +67,7 @@ JSC__JSObject* JSC__JSString__toObject(JSC__JSString* arg0, JSC__JSGlobalObject*
     return arg0->toObject(arg1);
 }
 bWTF__String JSC__JSString__value(JSC__JSString* arg0, JSC__JSGlobalObject* arg1) {
-    auto wrap = Wrap<WTF__String, bWTF__String>::wrap(arg0->value(arg1));
-    return wrap.result;
+    return Wrap<WTF__String, bWTF__String>::wrap(arg0->value(arg1));
 }
 
 #pragma mark - JSC::JSModuleLoader
@@ -452,7 +387,10 @@ JSC__JSString* JSC__JSValue__toStringOrNull(JSC__JSValue JSValue0, JSC__JSGlobal
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     return value.toStringOrNull(arg1);
 }
-
+bWTF__String JSC__JSValue__toWTFString(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1) {
+    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+    return Wrap<WTF::String, bWTF__String>(value.toWTFString(arg1));
+};
 
 #pragma mark - JSC::PropertyName
 

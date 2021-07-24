@@ -118,7 +118,9 @@ pub fn build(b: *std.build.Builder) void {
 
     var javascript = b.addExecutable("spjs", "src/main_javascript.zig");
     var typings_exe = b.addExecutable("typescript-decls", "src/javascript/jsc/typescript.zig");
-
+    javascript.setMainPkgPath(b.pathFromRoot("."));
+    typings_exe.setMainPkgPath(b.pathFromRoot("."));
+    exe.setMainPkgPath(b.pathFromRoot("."));
     // exe.want_lto = true;
     if (!target.getCpuArch().isWasm()) {
         b.default_step.dependOn(&exe.step);
@@ -167,11 +169,12 @@ pub fn build(b: *std.build.Builder) void {
         const headers_step = b.step("headers", "JSC headers");
         var headers_exec: *std.build.LibExeObjStep = b.addExecutable("headers", "src/javascript/jsc/bindings/bindings-generator.zig");
         var headers_runner = headers_exec.run();
+        headers_exec.setMainPkgPath(javascript.main_pkg_path.?);
         headers_step.dependOn(&headers_runner.step);
 
         b.default_step.dependOn(&exe.step);
 
-        var steps = [_]*std.build.LibExeObjStep{ exe, javascript, typings_exe };
+        var steps = [_]*std.build.LibExeObjStep{ javascript, typings_exe };
 
         for (steps) |step| {
             step.linkLibC();

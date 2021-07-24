@@ -1721,7 +1721,7 @@ pub fn NewBundler(cache_files: bool) type {
         ) !options.TransformResult {
             var bundler = try ThisBundler.init(allocator, log, opts, null);
             bundler.configureLinker();
-            try bundler.configureRouter();
+            // try bundler.configureRouter();
 
             var skip_normalize = false;
             if (bundler.router) |router| {

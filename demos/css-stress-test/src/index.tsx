@@ -1,5 +1,7 @@
 import { Main } from "./main";
 import classNames from "classnames";
+import * as ReactDOM from "react-dom";
+
 const Base = ({}) => {
   const name =
     typeof location !== "undefined"
@@ -9,7 +11,6 @@ const Base = ({}) => {
 };
 
 function startReact() {
-  const ReactDOM = require("react-dom");
   ReactDOM.render(<Base />, document.querySelector("#reactroot"));
 }
 
@@ -21,8 +22,9 @@ if (typeof window !== "undefined") {
 
   startReact();
 } else {
-  const ReactDOMServer = require("react-dom/server.browser");
   console.log(ReactDOMServer.renderToString(<Base />));
 }
 
 export { Base };
+
+

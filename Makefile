@@ -38,7 +38,8 @@ CLANG_FLAGS = -Isrc/JavaScript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/Pri
 		-Isrc/javascript/jsc/WebKit/Source/bmalloc \
 		-std=gnu++17 \
 		-stdlib=libc++ \
-		-DDU_DISABLE_RENAMING=1
+		-DDU_DISABLE_RENAMING=1 \
+		-Wall
 
 jsc-bindings-mac: $(OBJ_FILES)
 

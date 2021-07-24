@@ -19,7 +19,7 @@ const clap = @import("clap");
 const bundler = @import("bundler.zig");
 const fs = @import("fs.zig");
 const NodeModuleBundle = @import("./node_module_bundle.zig").NodeModuleBundle;
-const js = @import("javascript/jsc/javascript.zig");
+const js_bindings = @import("javascript/jsc/bindings/bindings.zig");
 const allocators = @import("allocators.zig");
 pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace) noreturn {
     if (MainPanicHandler.Singleton) |singleton| {
@@ -365,19 +365,21 @@ pub const Cli = struct {
         var panicker = MainPanicHandler.init(&log);
         MainPanicHandler.Singleton = &panicker;
 
-        var args = try Arguments.parse(alloc.static, stdout, stderr);
-        // var serve_bundler = try bundler.ServeBundler.init(allocator, &log, args);
-        // var res = try serve_bundler.buildFile(&log, allocator, args.entry_points[0], std.fs.path.extension(args.entry_points[0]));
+        // var args = try Arguments.parse(alloc.static, stdout, stderr);
+        // // var serve_bundler = try bundler.ServeBundler.init(allocator, &log, args);
+        // // var res = try serve_bundler.buildFile(&log, allocator, args.entry_points[0], std.fs.path.extension(args.entry_points[0]));
 
-        // var results = try bundler.Bundler.bundle(allocator, &log, args);
-        // var file = results.output_files[0];
-        var vm = try js.VirtualMachine.init(allocator, args, null, &log);
-        var resolved_entry_point = try vm.bundler.resolver.resolve(
-            vm.bundler.fs.top_level_dir,
-            vm.bundler.normalizeEntryPointPath(vm.bundler.options.entry_points[0]),
-            .entry_point,
-        );
-        var exception: js.JSValueRef = null;
-        var result = try js.Module.loadFromResolveResult(vm, vm.global.ctx, resolved_entry_point, &exception);
+        // // var results = try bundler.Bundler.bundle(allocator, &log, args);
+        // // var file = results.output_files[0];
+        // var vm = try js.VirtualMachine.init(allocator, args, null, &log);
+        // var resolved_entry_point = try vm.bundler.resolver.resolve(
+        //     vm.bundler.fs.top_level_dir,
+        //     vm.bundler.normalizeEntryPointPath(vm.bundler.options.entry_points[0]),
+        //     .entry_point,
+        // );
+        // var exception: js.JSValueRef = null;
+        // var result = try js.Module.loadFromResolveResult(vm, vm.global.ctx, resolved_entry_point, &exception);
+js_bindings.ZigConsoleClient
+        js_bindings.ZigGlobalObject.create(vm: ?*VM, console: *ZigConsoleClient)
     }
 };

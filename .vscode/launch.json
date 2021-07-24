@@ -90,8 +90,7 @@
         "--resolve=lazy",
         "--outdir=public",
         "--serve",
-        "--public-url=http://localhost:9000/",
-        "--framework=./framework.tsx"
+        "--public-url=http://localhost:9000/"
       ],
       "cwd": "${workspaceFolder}/demos/css-stress-test",
       "console": "internalConsole"

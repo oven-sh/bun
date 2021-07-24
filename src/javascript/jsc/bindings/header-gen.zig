@@ -572,8 +572,11 @@ pub fn HeaderGen(comptime import: type, comptime fname: []const u8) type {
                     switch (_decls.data) {
                         .Type => |Type| {
                             @setEvalBranchQuota(99999);
-
-                            if (@hasDecl(Type, "Extern") or @hasDecl(Type, "Export")) {
+                            const is_container_type = switch (@typeInfo(Type)) {
+                                .Opaque, .Struct => true,
+                                else => false,
+                            };
+                            if (is_container_type and (@hasDecl(Type, "Extern") or @hasDecl(Type, "Export"))) {
                                 const identifier = comptime std.fmt.comptimePrint("{s}_{s}", .{ Type.shim.name, Type.shim.namespace });
                                 if (!bufset.contains(identifier)) {
                                     self.startFile(

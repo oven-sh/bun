@@ -1,0 +1,59 @@
+#pragma once
+
+#include <JavaScriptCore/ConsoleClient.h>
+#include <wtf/Vector.h>
+#include <wtf/text/WTFString.h>
+
+namespace Inspector {
+class InspectorConsoleAgent;
+class InspectorDebuggerAgent;
+class InspectorScriptProfilerAgent;
+}
+namespace Zig {
+    using InspectorConsoleAgent = Inspector::InspectorConsoleAgent;
+    using InspectorDebuggerAgent = Inspector::InspectorDebuggerAgent;
+    using InspectorScriptProfilerAgent = Inspector::InspectorScriptProfilerAgent;
+
+
+class ConsoleClient final : public JSC::ConsoleClient {
+    WTF_MAKE_FAST_ALLOCATED;
+public:
+    explicit ConsoleClient(InspectorConsoleAgent*);
+    ~ConsoleClient() final { }
+
+    static bool logToSystemConsole();
+    static void setLogToSystemConsole(bool);
+
+    void setDebuggerAgent(InspectorDebuggerAgent* agent) { m_debuggerAgent = agent; }
+    void setPersistentScriptProfilerAgent(InspectorScriptProfilerAgent* agent) { m_scriptProfilerAgent = agent; }
+
+private:
+    void messageWithTypeAndLevel(MessageType, MessageLevel, JSC::JSGlobalObject*, Ref<Inspector::ScriptArguments>&&) final;
+    void count(JSC::JSGlobalObject*, const String& label) final;
+    void countReset(JSC::JSGlobalObject*, const String& label) final;
+    void profile(JSC::JSGlobalObject*, const String& title) final;
+    void profileEnd(JSC::JSGlobalObject*, const String& title) final;
+    void takeHeapSnapshot(JSC::JSGlobalObject*, const String& title) final;
+    void time(JSC::JSGlobalObject*, const String& label) final;
+    void timeLog(JSC::JSGlobalObject*, const String& label, Ref<Inspector::ScriptArguments>&&) final;
+    void timeEnd(JSC::JSGlobalObject*, const String& label) final;
+    void timeStamp(JSC::JSGlobalObject*, Ref<Inspector::ScriptArguments>&&) final;
+    void record(JSC::JSGlobalObject*, Ref<Inspector::ScriptArguments>&&) final;
+    void recordEnd(JSC::JSGlobalObject*, Ref<Inspector::ScriptArguments>&&) final;
+    void screenshot(JSC::JSGlobalObject*, Ref<Inspector::ScriptArguments>&&) final;
+
+    void warnUnimplemented(const String& method);
+    void internalAddMessage(MessageType, MessageLevel, JSC::JSGlobalObject*, Ref<Inspector::ScriptArguments>&&);
+
+    void startConsoleProfile();
+    void stopConsoleProfile();
+
+    Inspector::InspectorConsoleAgent* m_consoleAgent;
+    Inspector::InspectorDebuggerAgent* m_debuggerAgent { nullptr };
+    Inspector::InspectorScriptProfilerAgent* m_scriptProfilerAgent { nullptr };
+    Vector<String> m_profiles;
+    bool m_profileRestoreBreakpointActiveValue { false };
+};
+
+}
+

@@ -25,7 +25,7 @@ int main() {
     cout <<  "//    Failure to do so will lead to undefined behavior and probably some frustrated people.\n";
     cout <<  "// --- Regenerate this: --- \n";
     cout <<  "// 1. \"make jsc-bindings-headers\"\n";
-    cout <<  "// 2. \"make sizegen\"\n";
+    cout <<  "// 2. \"makpe sizegen\"\n";
     cout <<  "// 3. \"make jsc-bindings-headers\"\n";
     cout <<  "// ------------------------\n";
     cout <<  "// You can verify the numbers written in this file at runtime via the `extern`d types\n";

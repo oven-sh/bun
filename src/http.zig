@@ -1294,7 +1294,7 @@ pub const RequestContext = struct {
                 );
 
                 // It will call flush for us automatically
-                defer ctx.bundler.resetStore();
+                ctx.bundler.resetStore();
                 var written = ctx.bundler.buildWithResolveResult(
                     resolve_result,
                     ctx.allocator,
@@ -1674,25 +1674,25 @@ pub const Server = struct {
         }
 
         if (req_ctx.url.extname.len == 0 and !RequestContext.JavaScriptHandler.javascript_disabled) {
-            if (server.bundler.options.framework != null) {
-                RequestContext.JavaScriptHandler.enqueue(&req_ctx, server) catch unreachable;
-                server.javascript_enabled = !RequestContext.JavaScriptHandler.javascript_disabled;
-            }
+            // if (server.bundler.options.framework != null) {
+            //     RequestContext.JavaScriptHandler.enqueue(&req_ctx, server) catch unreachable;
+            //     server.javascript_enabled = !RequestContext.JavaScriptHandler.javascript_disabled;
+            // }
         }
 
-        if (!req_ctx.controlled) {
-            req_ctx.handleRequest() catch |err| {
-                switch (err) {
-                    error.ModuleNotFound => {
-                        req_ctx.sendNotFound() catch {};
-                    },
-                    else => {
-                        Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
-                        return;
-                    },
-                }
-            };
-        }
+        // if (!req_ctx.controlled) {
+        req_ctx.handleRequest() catch |err| {
+            switch (err) {
+                error.ModuleNotFound => {
+                    req_ctx.sendNotFound() catch {};
+                },
+                else => {
+                    Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
+                    return;
+                },
+            }
+        };
+        // }
 
         if (!req_ctx.controlled) {
             const status = req_ctx.status orelse @intCast(HTTPStatusCode, 500);
@@ -1725,7 +1725,7 @@ pub const Server = struct {
         };
         server.bundler = try Bundler.init(allocator, &server.log, options, null);
         server.bundler.configureLinker();
-        try server.bundler.configureRouter();
+        // try server.bundler.configureRouter();
 
         try server.initWatcher();
 

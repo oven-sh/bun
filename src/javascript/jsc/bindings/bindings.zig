@@ -1,193 +1,10 @@
-usingnamespace @import("./imports.zig");
+usingnamespace @import("../../../global.zig");
 
 const std = @import("std");
-const main = @import("root");
-const is_bindgen = std.meta.trait.hasDecls(main, .{"bindgen"});
+const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
 const hasRef = std.meta.trait.hasField("ref");
 const StaticExport = @import("./static_export.zig");
-const Sizes = @import("./sizes.zig");
-
-pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comptime Parent: type) type {
-    return struct {
-        pub const namespace = _namespace;
-        pub const name = _name;
-
-        fn toCppType(comptime FromType: ?type) ?type {
-            return comptime brk: {
-                var NewReturnType = FromType orelse c_void;
-
-                if (NewReturnType == c_void) {
-                    break :brk FromType;
-                }
-
-                var ReturnTypeInfo: std.builtin.TypeInfo = @typeInfo(FromType orelse c_void);
-
-                if (ReturnTypeInfo == .Pointer and NewReturnType != *c_void) {
-                    NewReturnType = ReturnTypeInfo.Pointer.child;
-                    ReturnTypeInfo = @typeInfo(NewReturnType);
-                }
-
-                switch (ReturnTypeInfo) {
-                    .Union,
-                    .Struct,
-                    .Enum,
-                    => {
-                        if (@hasDecl(ReturnTypeInfo, "Type")) {
-                            break :brk NewReturnType;
-                        }
-                    },
-                    else => {},
-                }
-
-                break :brk FromType;
-            };
-        }
-        pub const align_of_symbol = std.fmt.comptimePrint("{s}__{s}_object_align_", .{ namespace, name });
-        pub const size_of_symbol = std.fmt.comptimePrint("{s}__{s}_object_size_", .{ namespace, name });
-        pub const byte_size = brk: {
-            const identifier = std.fmt.comptimePrint("{s}__{s}", .{ namespace, name });
-            const align_symbol = std.fmt.comptimePrint("{s}__{s}_align", .{ namespace, name });
-            if (@hasDecl(Sizes, identifier)) {
-                break :brk @field(Sizes, identifier); //+ @field(Sizes, align_symbol);
-            } else {
-                break :brk 0;
-            }
-        };
-        pub const Bytes = [byte_size]u8;
-
-        pub inline fn getConvertibleType(comptime ZigType: type) type {
-            if (@typeInfo(ZigType) == .Struct) {
-                const Struct: std.builtin.TypeInfo.Struct = ChildType.Struct;
-                for (Struct.fields) |field| {
-                    if (std.mem.eql(u8, field.name, "ref")) {
-                        return field.field_type;
-                    }
-                }
-            }
-
-            return ZigType;
-        }
-
-        fn pointerChild(comptime Type: type) type {
-            if (@typeInfo(Type) == .Pointer) {
-                return @typeInfo(Type).Pointer.child_type;
-            }
-
-            return Type;
-        }
-
-        pub inline fn toZigType(comptime ZigType: type, comptime CppType: type, value: CppType) *ZigType {
-            if (comptime hasRef(ZigType)) {
-                // *WTF::String => Wtf.String{ = value}, via casting instead of copying
-                if (comptime @typeInfo(CppType) == .Pointer and @typeInfo(ZigType) != .Pointer) {
-                    return @bitCast(ZigType, @ptrToInt(value));
-                }
-            }
-
-            return @as(ZigType, value);
-        }
-
-        pub fn symbolName(comptime typeName: []const u8) []const u8 {
-            return comptime std.fmt.comptimePrint("{s}__{s}__{s}", .{ namespace, name, typeName });
-        }
-
-        pub fn exportFunctions(comptime Functions: anytype) [std.meta.fieldNames(@TypeOf(Functions)).len]StaticExport {
-            const FunctionsType = @TypeOf(Functions);
-            return comptime brk: {
-                var functions: [std.meta.fieldNames(FunctionsType).len]StaticExport = undefined;
-                for (std.meta.fieldNames(FunctionsType)) |fn_name, i| {
-                    const Function = @TypeOf(@field(Functions, fn_name));
-                    if (@typeInfo(Function) != .Fn) {
-                        @compileError("Expected " ++ @typeName(Parent) ++ "." ++ @typeName(Function) ++ " to be a function but received " ++ @tagName(@typeInfo(Function)));
-                    }
-                    var Fn: std.builtin.TypeInfo.Fn = @typeInfo(Function).Fn;
-                    if (Fn.calling_convention != .C) {
-                        @compileError("Expected " ++ @typeName(Parent) ++ "." ++ @typeName(Function) ++ " to have a C Calling Convention.");
-                    }
-
-                    const export_name = symbolName(fn_name);
-                    functions[i] = StaticExport{
-                        .Type = Function,
-                        .symbol_name = export_name,
-                        .local_name = fn_name,
-                        .Parent = Parent,
-                    };
-                }
-
-                break :brk functions;
-            };
-        }
-
-        pub inline fn zigFn(comptime typeName: []const u8, args: anytype) (@typeInfo(@TypeOf(@field(Parent, typeName))).Fn.return_type orelse void) {
-            const identifier = symbolName(typeName);
-            const func = comptime @typeInfo(Parent).Struct.fields[std.meta.fieldIndex(Parent, typeName)].field_type;
-            const ReturnType = comptime @typeInfo(func).Fn.return_type orelse c_void;
-
-            const Func: type = comptime brk: {
-                var FuncType: std.builtin.TypeInfo = @typeInfo(@TypeOf(func));
-                var Fn: std.builtin.TypeInfo.Fn = FuncType.Fn;
-
-                Fn.calling_convention = std.builtin.CallingConvention.C;
-                Fn.return_type = toCppType(Fn.return_type);
-
-                const ArgsType = @TypeOf(args);
-                for (std.meta.fieldNames(args)) |field, i| {
-                    Fn.args[i] = std.builtin.TypeInfo.FnArg{
-                        .is_generic = false,
-                        .is_noalias = false,
-                        .arg_type = @typeInfo(ArgsType).fields[i].field_type,
-                    };
-                }
-                FuncType.Fn = Fn;
-                break :brk @Type(FuncType);
-            };
-
-            comptime @export(Func, .{ .name = identifier });
-            unreachable;
-        }
-
-        pub inline fn cppFn(comptime typeName: []const u8, args: anytype) (ret: {
-            if (!@hasDecl(Parent, typeName)) {
-                @compileError(@typeName(Parent) ++ " is missing cppFn: " ++ typeName);
-            }
-            break :ret std.meta.declarationInfo(Parent, typeName).data.Fn.return_type;
-        }) {
-            if (comptime is_bindgen) {
-                unreachable;
-            } else {
-                const identifier = comptime std.fmt.comptimePrint("{s}__{s}__{s}", .{ namespace, name, typeName });
-                const func = comptime @typeInfo(Parent).Struct.fields[std.meta.fieldIndex(Parent, typeName)].field_type;
-                const ReturnType = comptime @typeInfo(func).Fn.return_type orelse c_void;
-
-                const Func: type = comptime brk: {
-                    var FuncType: std.builtin.TypeInfo = @typeInfo(@TypeOf(func));
-                    var Fn: std.builtin.TypeInfo.Fn = FuncType.Fn;
-
-                    Fn.calling_convention = std.builtin.CallingConvention.C;
-                    Fn.return_type = toCppType(Fn.return_type);
-
-                    const ArgsType = @TypeOf(args);
-                    for (std.meta.fieldNames(args)) |field, i| {
-                        Fn.args[i] = std.builtin.TypeInfo.FnArg{
-                            .is_generic = false,
-                            .is_noalias = false,
-                            .arg_type = @typeInfo(ArgsType).fields[i].field_type,
-                        };
-                    }
-                    FuncType.Fn = Fn;
-                    break :brk @Type(FuncType);
-                };
-                const Outgoing = comptime @extern(Func, std.builtin.ExternOptions{ .name = identifier });
-
-                return toZigType(
-                    ReturnType,
-                    @typeInfo(Func).Fn.return_type orelse void,
-                    @call(.{}, Outgoing, args),
-                );
-            }
-        }
-    };
-}
+const Shimmer = @import("./shimmer.zig").Shimmer;
 
 pub const JSObject = packed struct {
     pub const shim = Shimmer("JSC", "JSObject", @This());
@@ -361,6 +178,75 @@ pub const JSPromiseRejectionOperation = enum(u32) {
     Handle = 1,
 };
 
+pub const ScriptArguments = packed struct {
+    pub const shim = Shimmer("Inspector", "ScriptArguments", @This());
+    bytes: shim.Bytes,
+    const cppFn = shim.cppFn;
+    pub const include = "<JavaScriptCore/ScriptArguments.h>";
+    pub const name = "Inspector::ScriptArguments";
+    pub const namespace = "Inspector";
+
+    pub fn argumentAt(this: *const ScriptArguments, i: usize) JSValue {
+        return cppFn("argumentAt", .{
+            this,
+            i,
+        });
+    }
+    pub fn argumentCount(this: *const ScriptArguments) usize {
+        return cppFn("argumentCount", .{
+            this,
+        });
+    }
+    pub fn getFirstArgumentAsString(this: *const ScriptArguments) String {
+        return cppFn("getFirstArgumentAsString", .{
+            this,
+        });
+    }
+
+    pub fn isEqual(this: *const ScriptArguments, other: *const ScriptArguments) bool {
+        return cppFn("isEqual", .{ this, other });
+    }
+
+    pub fn release(this: *ScriptArguments) void {
+        return cppFn("release", .{this});
+    }
+
+    pub const Extern = [_][]const u8{
+        "argumentAt",
+        "argumentCount",
+        "getFirstArgumentAsString",
+        "isEqual",
+        "release",
+    };
+};
+
+const EmptyGlobalInterface = struct {
+    pub fn import(global: *JSGlobalObject, loader: *JSModuleLoader, specifier: *JSString, referrer: JSValue, origin: *const SourceOrigin) callconv(.C) *JSInternalPromise {
+        return JSInternalPromise.rejectedPromise(global, JSValue.jsUndefined());
+    }
+    const slice = "hello.js";
+    pub fn resolve(global: *JSGlobalObject, loader: *JSModuleLoader, specifier: JSValue, value: JSValue, origin: *const SourceOrigin) callconv(.C) Identifier {
+        return Identifier.fromSlice(global.vm(), &slice, slice.len);
+    }
+    pub fn fetch(global: *JSGlobalObject, loader: *JSModuleLoader, value1: JSValue, value2: JSValue, value3: JSValue) callconv(.C) *JSInternalPromise {
+        return JSInternalPromise.rejectedPromise(global, JSValue.jsUndefined());
+    }
+    pub fn eval(global: *JSGlobalObject, loader: *JSModuleLoader, key: JSValue, moduleRecordValue: JSValue, scriptFetcher: JSValue, awaitedValue: JSValue, resumeMode: JSValue) callconv(.C) JSValue {
+        return JSValue.jsUndefined();
+    }
+    pub fn promiseRejectionTracker(global: *JSGlobalObject, promise: *JSPromise, rejection: JSPromiseRejectionOperation) callconv(.C) JSValue {
+        return JSValue.jsUndefined();
+    }
+
+    pub fn reportUncaughtException(global: *JSGlobalObject, exception: *Exception) callconv(.C) JSValue {
+        return JSValue.jsUndefined();
+    }
+
+    pub fn createImportMetaProperties(global: *JSGlobalObject, loader: *JSModuleLoader, obj: JSValue, record: *JSModuleRecord, specifier: JSValue) callconv(.C) JSValue {
+        return JSValue.jsUndefined();
+    }
+};
+
 pub const ZigGlobalObject = packed struct {
     pub const shim = Shimmer("Zig", "GlobalObject", @This());
     bytes: shim.Bytes,
@@ -368,31 +254,56 @@ pub const ZigGlobalObject = packed struct {
     pub const name = "Zig::GlobalObject";
     pub const include = "\"ZigGlobalObject.h\"";
     pub const namespace = shim.namespace;
+    pub const Interface: type = std.meta.globalOption("JSGlobalObject", type) orelse EmptyGlobalInterface;
 
-    pub fn import(global: *JSGlobalObject, loader: *JSModuleLoader, string: *JSString, value: JSValue, origin: *const SourceOrigin) callconv(.C) *JSInternalPromise {
-        if (comptime is_bindgen) {
-            unreachable;
-        }
+    pub fn create(vm: ?*VM, console: *ZigConsoleClient) *JSGlobalObject {
+        return shim.cppFn("create", .{ vm, console });
     }
-    pub fn resolve(global: *JSGlobalObject, loader: *JSModuleLoader, string: *JSString, value: JSValue, origin: *const SourceOrigin) callconv(.C) *const Identifier {
+
+    pub fn import(global: *JSGlobalObject, loader: *JSModuleLoader, specifier: *JSString, referrer: JSValue, origin: *const SourceOrigin) callconv(.C) *JSInternalPromise {
+        // if (comptime is_bindgen) {
+        //     unreachable;
+        // }
+
+        return @call(.{ .modifier = .always_inline }, Interface.import, .{ global, loader, specifier, referrer, origin });
+    }
+    pub fn resolve(global: *JSGlobalObject, loader: *JSModuleLoader, specifier: JSValue, value: JSValue, origin: *const SourceOrigin) callconv(.C) Identifier {
         if (comptime is_bindgen) {
             unreachable;
         }
+        return @call(.{ .modifier = .always_inline }, Interface.resolve, .{ global, loader, specifier, value, origin });
     }
     pub fn fetch(global: *JSGlobalObject, loader: *JSModuleLoader, value1: JSValue, value2: JSValue, value3: JSValue) callconv(.C) *JSInternalPromise {
         if (comptime is_bindgen) {
             unreachable;
         }
+        return @call(.{ .modifier = .always_inline }, Interface.fetch, .{ global, loader, value1, value2, value3 });
     }
     pub fn eval(global: *JSGlobalObject, loader: *JSModuleLoader, key: JSValue, moduleRecordValue: JSValue, scriptFetcher: JSValue, awaitedValue: JSValue, resumeMode: JSValue) callconv(.C) JSValue {
         if (comptime is_bindgen) {
             unreachable;
         }
+        @call(.{ .modifier = .always_inline }, Interface.eval, .{ global, loader, key, moduleRecordValue, scriptFetcher, awaitedValue, resumeMode });
     }
-    pub fn reportUncaughtException(global: *JSGlobalObject, promise: *JSPromise, rejection: JSPromiseRejectionOperation) callconv(.C) JSValue {
+    pub fn promiseRejectionTracker(global: *JSGlobalObject, promise: *JSPromise, rejection: JSPromiseRejectionOperation) callconv(.C) JSValue {
         if (comptime is_bindgen) {
             unreachable;
         }
+        return @call(.{ .modifier = .always_inline }, Interface.promiseRejectionTracker, .{ global, promise, rejection });
+    }
+
+    pub fn reportUncaughtException(global: *JSGlobalObject, exception: *Exception) callconv(.C) JSValue {
+        if (comptime is_bindgen) {
+            unreachable;
+        }
+        return @call(.{ .modifier = .always_inline }, Interface.reportUncaughtException, .{ global, exception });
+    }
+
+    pub fn createImportMetaProperties(global: *JSGlobalObject, loader: *JSModuleLoader, obj: JSValue, record: *JSModuleRecord, specifier: JSValue) callconv(.C) JSValue {
+        if (comptime is_bindgen) {
+            unreachable;
+        }
+        return @call(.{ .modifier = .always_inline }, Interface.createImportMetaProperties, .{ global, loader, obj, record, specifier });
     }
 
     pub const Export = shim.exportFunctions(.{
@@ -400,15 +311,127 @@ pub const ZigGlobalObject = packed struct {
         .@"resolve" = resolve,
         .@"fetch" = fetch,
         .@"eval" = eval,
+        .@"promiseRejectionTracker" = promiseRejectionTracker,
         .@"reportUncaughtException" = reportUncaughtException,
+        .@"createImportMetaProperties" = createImportMetaProperties,
     });
+
+    pub const Extern = [_][]const u8{"create"};
 
     comptime {
         @export(import, .{ .name = Export[0].symbol_name });
         @export(resolve, .{ .name = Export[1].symbol_name });
         @export(fetch, .{ .name = Export[2].symbol_name });
         @export(eval, .{ .name = Export[3].symbol_name });
-        @export(reportUncaughtException, .{ .name = Export[4].symbol_name });
+        @export(promiseRejectionTracker, .{ .name = Export[4].symbol_name });
+        @export(reportUncaughtException, .{ .name = Export[5].symbol_name });
+        @export(createImportMetaProperties, .{ .name = Export[6].symbol_name });
+    }
+};
+
+pub const ZigConsoleClient = packed struct {
+    pub const shim = Shimmer("Zig", "ConsoleClient", @This());
+    pub const Type = *c_void;
+    pub const name = "Zig::ConsoleClient";
+    pub const include = "\"ZigConsoleClient.h\"";
+    pub const namespace = shim.namespace;
+    pub const Counter = struct {
+        // if it turns out a hash table is a better idea we'll do that later
+        pub const Entry = struct {
+            hash: u32,
+            count: u32,
+
+            pub const List = std.MultiArrayList(Entry);
+        };
+        counts: Entry.List,
+        allocator: *std.mem.Allocator,
+    };
+
+    pub fn messageWithTypeAndLevel(
+        message_type: u32,
+        message_level: u32,
+        global: *JSGlobalObject,
+        args: *ScriptArguments,
+    ) callconv(.C) void {
+        var i: usize = 0;
+        const len = args.argumentCount();
+        defer args.release();
+        defer Output.flush();
+        var writer = Output.writer();
+        while (i < len) : (i += 1) {
+            var str = args.argumentAt(i).toWTFString(global);
+            writer.writeAll(str.slice()) catch {};
+        }
+    }
+    pub fn count(global: *JSGlobalObject, chars: [*]const u8, len: usize) callconv(.C) void {}
+    pub fn countReset(global: *JSGlobalObject, chars: [*]const u8, len: usize) callconv(.C) void {}
+    pub fn time(global: *JSGlobalObject, chars: [*]const u8, len: usize) callconv(.C) void {}
+    pub fn timeLog(global: *JSGlobalObject, chars: [*]const u8, len: usize, args: *ScriptArguments) callconv(.C) void {}
+    pub fn timeEnd(global: *JSGlobalObject, chars: [*]const u8, len: usize) callconv(.C) void {}
+    pub fn profile(global: *JSGlobalObject, chars: [*]const u8, len: usize) callconv(.C) void {}
+    pub fn profileEnd(global: *JSGlobalObject, chars: [*]const u8, len: usize) callconv(.C) void {}
+    pub fn takeHeapSnapshot(global: *JSGlobalObject, chars: [*]const u8, len: usize) callconv(.C) void {}
+    pub fn timeStamp(global: *JSGlobalObject, args: *ScriptArguments) callconv(.C) void {}
+    pub fn record(global: *JSGlobalObject, args: *ScriptArguments) callconv(.C) void {}
+    pub fn recordEnd(global: *JSGlobalObject, args: *ScriptArguments) callconv(.C) void {}
+    pub fn screenshot(global: *JSGlobalObject, args: *ScriptArguments) callconv(.C) void {}
+
+    pub const Export = shim.exportFunctions(.{
+        .@"messageWithTypeAndLevel" = messageWithTypeAndLevel,
+        .@"count" = count,
+        .@"countReset" = countReset,
+        .@"time" = time,
+        .@"timeLog" = timeLog,
+        .@"timeEnd" = timeEnd,
+        .@"profile" = profile,
+        .@"profileEnd" = profileEnd,
+        .@"takeHeapSnapshot" = takeHeapSnapshot,
+        .@"timeStamp" = timeStamp,
+        .@"record" = record,
+        .@"recordEnd" = recordEnd,
+        .@"screenshot" = screenshot,
+    });
+
+    comptime {
+        @export(messageWithTypeAndLevel, .{
+            .name = Export[0].symbol_name,
+        });
+        @export(count, .{
+            .name = Export[1].symbol_name,
+        });
+        @export(countReset, .{
+            .name = Export[2].symbol_name,
+        });
+        @export(time, .{
+            .name = Export[3].symbol_name,
+        });
+        @export(timeLog, .{
+            .name = Export[4].symbol_name,
+        });
+        @export(timeEnd, .{
+            .name = Export[5].symbol_name,
+        });
+        @export(profile, .{
+            .name = Export[6].symbol_name,
+        });
+        @export(profileEnd, .{
+            .name = Export[7].symbol_name,
+        });
+        @export(takeHeapSnapshot, .{
+            .name = Export[8].symbol_name,
+        });
+        @export(timeStamp, .{
+            .name = Export[9].symbol_name,
+        });
+        @export(record, .{
+            .name = Export[10].symbol_name,
+        });
+        @export(recordEnd, .{
+            .name = Export[11].symbol_name,
+        });
+        @export(screenshot, .{
+            .name = Export[12].symbol_name,
+        });
     }
 };
 
@@ -1225,7 +1248,10 @@ pub const String = packed struct {
         });
     }
 
-    pub const slice = SliceFn(@This());
+    pub fn slice(this: *String) []const u8 {
+        const len = this.length();
+        return if (len > 0) this.characters8()[0..len] else "";
+    }
 
     pub const Extern = [_][]const u8{
         "is8Bit",
@@ -1375,6 +1401,10 @@ pub const JSValue = enum(i64) {
         return cppFn("toString", .{ this, globalThis });
     }
 
+    pub fn toWTFString(this: JSValue, globalThis: *JSGlobalObject) String {
+        return cppFn("toWTFString", .{ this, globalThis });
+    }
+
     // On exception, this returns null, to make exception checks faster.
     pub fn toStringOrNull(this: JSValue, globalThis: *JSGlobalObject) *JSString {
         return cppFn("toStringOrNull", .{ this, globalThis });
@@ -1425,7 +1455,7 @@ pub const JSValue = enum(i64) {
         });
     }
 
-    pub const Extern = [_][]const u8{ "hasProperty", "getPropertyNames", "getDirect", "putDirect", "get", "getIfExists", "encode", "asString", "asObject", "asNumber", "isError", "jsNull", "jsUndefined", "jsTDZValue", "jsBoolean", "jsDoubleNumber", "jsNumberFromDouble", "jsNumberFromChar", "jsNumberFromU16", "jsNumberFromInt32", "jsNumberFromInt64", "jsNumberFromUint64", "isUndefined", "isNull", "isUndefinedOrNull", "isBoolean", "isAnyInt", "isUInt32AsAnyInt", "isInt32AsAnyInt", "isNumber", "isString", "isBigInt", "isHeapBigInt", "isBigInt32", "isSymbol", "isPrimitive", "isGetterSetter", "isCustomGetterSetter", "isObject", "isCell", "asCell", "toString", "toStringOrNull", "toPropertyKey", "toPropertyKeyValue", "toObject", "toString", "getPrototype", "getPropertyByPropertyName", "eqlValue", "eqlCell" };
+    pub const Extern = [_][]const u8{ "toWTFString", "hasProperty", "getPropertyNames", "getDirect", "putDirect", "get", "getIfExists", "encode", "asString", "asObject", "asNumber", "isError", "jsNull", "jsUndefined", "jsTDZValue", "jsBoolean", "jsDoubleNumber", "jsNumberFromDouble", "jsNumberFromChar", "jsNumberFromU16", "jsNumberFromInt32", "jsNumberFromInt64", "jsNumberFromUint64", "isUndefined", "isNull", "isUndefinedOrNull", "isBoolean", "isAnyInt", "isUInt32AsAnyInt", "isInt32AsAnyInt", "isNumber", "isString", "isBigInt", "isHeapBigInt", "isBigInt32", "isSymbol", "isPrimitive", "isGetterSetter", "isCustomGetterSetter", "isObject", "isCell", "asCell", "toString", "toStringOrNull", "toPropertyKey", "toPropertyKeyValue", "toObject", "toString", "getPrototype", "getPropertyByPropertyName", "eqlValue", "eqlCell" };
 };
 
 pub const PropertyName = packed struct {
@@ -1674,9 +1704,23 @@ pub const CallFrame = packed struct {
             call_frame,
         });
     }
+
+    pub inline fn setThisValue(call_frame: *CallFrame, new_this: JSValue) ?JSValue {
+        return cppFn("setThisValue", .{
+            call_frame,
+            new_this,
+        });
+    }
     pub inline fn newTarget(call_frame: *const CallFrame) ?JSValue {
         return cppFn("newTarget", .{
             call_frame,
+        });
+    }
+
+    pub inline fn setNewTarget(call_frame: *CallFrame, target: JSValue) ?JSValue {
+        return cppFn("setNewTarget", .{
+            call_frame,
+            target,
         });
     }
     pub inline fn jsCallee(call_frame: *const CallFrame) *JSObject {
@@ -1684,7 +1728,7 @@ pub const CallFrame = packed struct {
             call_frame,
         });
     }
-    pub const Extern = [_][]const u8{ "argumentsCount", "uncheckedArgument", "argument", "thisValue", "newTarget", "jsCallee" };
+    pub const Extern = [_][]const u8{ "argumentsCount", "uncheckedArgument", "argument", "thisValue", "newTarget", "jsCallee", "setNewTarget", "setThisValue" };
 };
 
 // pub const WellKnownSymbols = packed struct {
@@ -1956,28 +2000,44 @@ pub const StringView = packed struct {
 pub const Cpp = struct {
     pub const Function = fn (
         globalObject: *JSGlobalObject,
-        callframe: *CallFrame,
-    ) *EncodedJSValue;
+        callframe: CallFrame,
+    ) callconv(.C) JSValue;
     pub const Getter = fn (
+        ctx: ?*c_void,
         globalObject: *JSGlobalObject,
-        this: *EncodedJSValue,
-        propertyName: *PropertyName,
-    ) *EncodedJSValue;
+        this: EncodedJSValue,
+        propertyName: PropertyName,
+    ) callconv(.C) JSValue;
     pub const Setter = fn (
+        ctx: ?*c_void,
         globalObject: *JSGlobalObject,
-        this: *EncodedJSValue,
-        value: EncodedJSValue,
-        propertyName: *PropertyName,
-    ) bool;
+        this: JSValue,
+        value: JSValue,
+        propertyName: PropertyName,
+    ) callconv(.C) bool;
 
     pub const Tag = enum {
         Callback,
         Constructor,
-        Getter,
-        Setter,
+        Attribute,
+        Static,
     };
 
-    pub const LUTAttribute = enum {
+    pub const Attribute = struct {
+        getter: ?StaticExport = null,
+        setter: ?StaticExport = null,
+        read_only: bool = false,
+        enumerable: bool = false,
+    };
+
+    pub const Static = union {
+        String: []const u8,
+        Number: u16,
+    };
+
+    pub const Callback = StaticExport;
+
+    pub const LUTType = enum {
         Function,
         Accessor,
         CellProperty,
@@ -1985,13 +2045,355 @@ pub const Cpp = struct {
         PropertyCallback,
     };
 
-    pub const ClassDefinition = struct { name: []const u8, hostFunctions: []Host };
+    pub const LUTFlag = enum {
+        Enum,
+        DontEnum,
+        ReadOnly,
+    };
 
-    pub const ZigValue = union(Tag) {
-        Callback: Function,
-        Constructor: Function,
-        Getter: Getter,
-        Setter: Setter,
+    pub const Property = struct {
+        name: []const u8,
+        read_only: bool = false,
+        enumerable: bool = false,
+        value: Value,
+        pub const Value = union(Tag) {
+            Callback: StaticExport,
+            Constructor: StaticExport,
+            Attribute: Attribute,
+            Static: Static,
+        };
+    };
+
+    pub const Subclass = enum {
+        JSNonFinalObject,
+        JSObject,
+    };
+
+    pub const InitCallback = fn (*c_void, *VM, *JSGlobalObject) void;
+    pub const ClassDefinition = struct {
+        name: []const u8,
+        subclass: Subclass,
+        statics: []Property,
+        init: StaticExport,
+        free: StaticExport,
+        Ctx: type,
+
+        pub fn printer(h: std.fs.File.Writer, cpp: std.fs.File.Writer, comptime Type: type, comptime ZigType: type, comptime Prototype_: ?type, comptime Properties: []Property, comptime use_lut: bool) !void {
+            var instanceName = comptime Type.name;
+            instanceName[0] = comptime std.ascii.toLower(instanceName[0]);
+            const fields = comptime .{
+                .TypeName = Type.name,
+                .instanceName = instanceName,
+            };
+            try h.print(
+                \\#pragma once
+                \\
+                \\#include "root.h"
+                \\#include "headers.h"
+                \\
+                \\namespace Zig {{
+                \\
+                \\  class {[TypeName][s]} : public JSC::JSNonFinalObject {{
+                \\      using Base = JSC::JSNonFinalObject;
+                \\      static {s}* create(JSC::Structure* structure, JSC::JSGlobalThis* globalObject)
+                \\      {{
+                \\          {[TypeName][s]}* ptr = new (NotNull, JSC::allocateCell<{s}>(globalObject->vm().heap)) {[TypeName][s]}(structure, *globalObject);
+                \\          ptr->finishCreation(globalObject->vm());
+                \\          return ptr;
+                \\      }}
+                \\
+                \\      static {s}* create(JSC::Structure* structure, JSC::JSGlobalThis* globalObject, void* zigBase)
+                \\      {{
+                \\          {[TypeName][s]}* ptr = new (NotNull, JSC::allocateCell<{s}>(globalObject->vm().heap)) {[TypeName][s]}(structure, *globalObject);
+                \\          ptr->finishCreation(globalObject->vm(), zigBase);
+                \\          return ptr;
+                \\      }}
+            ,
+                fields,
+            );
+
+            try cpp.print(
+                \\#pragma once
+                \\
+                \\#include "root.h"
+                \\#include "headers.h"
+                \\#include {[TypeName][s]}.h
+                \\
+            , fields);
+
+            inline for (Properties) |property| {
+                switch (comptime property.value) {
+                    .Callback => |Callback| {
+                        try cpp.print("static JSC_DECLARE_HOST_FUNCTION({s});\n", .{Callback.wrappedName()});
+                    },
+                    .Constructor => |Constructor| {
+                        try cpp.print("static JSC_DECLARE_HOST_FUNCTION({s});\n", .{Callback.wrappedName()});
+                    },
+                    .Attribute => |Attribute| {
+                        try cpp.print("    ");
+                        if (Attribute.getter) |getter| {
+                            try cpp.print("static JSC_DECLARE_CUSTOM_GETTER({s});\n", .{Callback.wrappedName()});
+                        }
+
+                        if (comptime Attribute.setter) |setter| {
+                            try cpp.print("static JSC_DECLARE_CUSTOM_SETTER({s});\n", .{Callback.wrappedName()});
+                        }
+                        try cpp.writeAll("    ");
+                    },
+                    .Static => |Static| {},
+                }
+            }
+
+            if (comptime use_lut) {
+                try cpp.print(
+                    \\namespace Zig {
+                    \\  #include {[TypeName][s]}.lut.h
+                    \\}
+                    \\
+                    \\ /* Source for {[TypeName][s]}.lut.h */
+                    \\   @begin {[instanceName][s]}Table
+                ,
+                    fields,
+                );
+
+                inline for (Properties) |property| {
+                    try cpp.writeAll("  ");
+                    try cpp.writeAll(comptime property.name);
+                    try cpp.writeAll("  ");
+                    switch (comptime property.value) {
+                        .Callback => |Callback| {
+                            try cpp.writeAll("    ");
+                            try cpp.writeAll(comptime Callback.wrappedName());
+                            try cpp.writeAll("    ");
+                        },
+                        .Constructor => |Constructor| {
+                            try cpp.writeAll("    ");
+                            try cpp.writeAll(comptime Constructor.wrappedName());
+                            try cpp.writeAll("    ");
+                        },
+                        .Attribute => |Attribute| {
+                            try cpp.writeAll("    ");
+                            if (Attribute.getter) |getter| {
+                                try cpp.writeAll(comptime getter.wrappedName());
+                                try cpp.writeAll("    ");
+                            }
+
+                            if (comptime Attribute.setter) |setter| {
+                                @compileError("Unsupported setter on " ++ Type.name);
+                            }
+                            try cpp.writeAll("    ");
+                        },
+                        .Static => |Static| {},
+                    }
+                    var needs_or = false;
+                    if (!property.enumerable) {
+                        try cpp.writeAll("DontEnum");
+                        needs_or = true;
+                    }
+
+                    if (needs_or) {
+                        try cpp.writeAll("|");
+                    }
+
+                    switch (comptime property.value) {
+                        .Callback => |Callback| {
+                            const Fn: std.builtin.TypeInfo.Fn = comptime @typeInfo(Callback.Type).Fn;
+                            try cpp.writeAll("Function {d}", .{Fn.args.len});
+                        },
+                        .Constructor => |Constructor| {
+                            const Fn: std.builtin.TypeInfo.Fn = comptime @typeInfo(Callback.Type).Fn;
+                            try cpp.writeAll("Function {d}", .{Fn.args.len});
+                        },
+                        .Attribute => |Attribute| {
+                            try cpp.writeAll("    ");
+                            if (Attribute.getter) |_| {
+                                try cpp.writeAll("Accessor");
+                                try cpp.writeAll("    ");
+                            }
+
+                            if (comptime Attribute.setter) |_| {
+                                @compileError("Unsupported setter on " ++ Type.name);
+                            }
+                            try cpp.writeAll("    ");
+                        },
+                        .Static => |Static| {},
+                    }
+                    try cpp.writeAll("\n");
+                }
+
+                try cpp.writeAll("   @end\n");
+                try cpp.print(
+                    \\namespace Zig {{
+                    \\
+                    \\  const ClassInfo {s}::s_info = {{ "{[TypeName][s]}", &Base::s_info, &{[instanceName][s]}Table, nullptr, CREATE_METHOD_TABLE({[TypeName][s]}) }};
+                    \\
+                    \\}}
+                    \\
+                ,
+                    fields,
+                );
+            } else {
+                try cpp.print(
+                    \\namespace Zig {{
+                    \\
+                    \\  const ClassInfo {[TypeName][s]}::s_info = {{ "{[TypeName][s]}", &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE({[TypeName][s]}) }};
+                    \\
+                    \\}}
+                    \\
+                , fields);
+            }
+
+            cpp.print(
+                \\
+                \\namespace Zig {{
+                \\
+                \\
+                \\
+                \\  class {[TypeName][s]} final : public JSC::JSNonFinalObject {{
+                \\      using Base = JSC::JSNonFinalObject;
+                \\
+                \\      void {[TypeName][s]}::finishCreation(JSGlobalObject* globalObject, VM& vm) {{
+                \\          Base::finishCreation(vm);
+                \\          m_zigBase = {[InitFunctionSymbol]}(globalObject, vm);
+                \\          reifyStaticProperties(vm, {[TypeName][s]}::info(), &{[instanceName][s]}Table, *this);
+                \\          JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+                \\      }}
+                \\
+                \\      void {[TypeName][s]}::finishCreation(JSGlobalObject* globalObject, VM& vm, void* zigBase) {{
+                \\          Base::finishCreation(vm);
+                \\          m_zigBase = zigBase;
+                \\          reifyStaticProperties(vm, {[TypeName][s]}::info(), &{[instanceName][s]}Table, *this);
+                \\          JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+                \\      }}
+                \\
+                \\
+            ,
+                fields,
+            );
+
+            inline for (Properties) |property| {
+                switch (comptime property.value) {
+                    .Callback => |Callback| {
+                        try cpp.writeAll(
+                            \\JSC_DEFINE_HOST_FUNCTION({[Wrapped][s]}, (JSGlobalObject* globalObject, CallFrame* callFrame))
+                            \\{{
+                            \\  VM& vm = globalObject->vm();
+                            \\  auto scope = DECLARE_THROW_SCOPE(vm);
+                            \\  auto* thisValue = JSC::jsDynamic<{[TypeName][s]}*>(callFrame->thisValue());
+                            \\  if (UNLIKELY(!thisValue || !thisValue.m_zigBase)) {{
+                            \\      return JSC::throwVMTypeError(globalObject, scope);
+                            \\  }}
+                            \\
+                            \\  RELEASE_AND_RETURN(scope, {[Fn][s]}(thisValue.m__zigType, vm, this, globalObject, callFrame, scope));
+                            \\}}
+                            \\
+                        , .{
+                            .Wrapped = Callback.wrappedName(),
+                            .Fn = Callback.symbol_name,
+                            .TypeName = Type.name,
+                        });
+                    },
+                    .Constructor => |Constructor| {
+                        try cpp.writeAll(
+                            \\JSC_DEFINE_HOST_FUNCTION({[Wrapped][s]}, (JSGlobalObject* globalObject, CallFrame* callFrame))
+                            \\{{
+                            \\  VM& vm = globalObject->vm();
+                            \\  auto scope = DECLARE_THROW_SCOPE(vm);
+                            \\  RELEASE_AND_RETURN(scope, {[Fn][s]}(globalObject, vm, callFrame, scope));
+                            \\}}
+                            \\
+                        , .{
+                            .Wrapped = Constructor.wrappedName(),
+                            .Fn = Constructor.symbol_name,
+                            .TypeName = Type.name,
+                        });
+                    },
+                    .Attribute => |Attribute| {
+                        try cpp.writeAll("    ");
+                        if (Attribute.getter) |getter| {
+                            try cpp.print(
+                                \\JSC_DEFINE_CUSTOM_GETTER({s}, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName)
+                                \\{{
+                                \\    auto& vm = JSC::getVM(&lexicalGlobalObject);
+                                \\    auto throwScope = DECLARE_THROW_SCOPE(vm);
+                                \\}}
+                            , .{Callback.wrappedName()});
+                        }
+
+                        if (comptime Attribute.setter) |setter| {
+                            try cpp.print(
+                                \\JSC_DEFINE_CUSTOM_SETTER({s}, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName)
+                                \\{{
+                                \\
+                                \\}}
+                            , .{Callback.wrappedName()});
+                        }
+                        try cpp.writeAll("    ");
+                    },
+                    .Static => |Static| {},
+                }
+            }
+
+            if (Prototype_) |Prototype| {
+                h.print(
+                    \\
+                    \\
+                    \\
+                    \\
+                ,
+                    fields,
+                );
+            } else {}
+
+            h.print(
+                \\      static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype) {{
+                \\        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+                \\      }}
+                \\
+                \\      EXPORT_DECLARE_INFO;
+                \\
+                \\      template<typename, JSC::SubspaceAccess mode> static JSC::IsoSubspace* subspaceFor(JSC::VM& vm)
+                \\      {{
+                \\          if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+                \\              return nullptr;
+                \\           return &vm.plainObjectSpace;
+                \\      }}
+                \\  private:
+                \\      {[TypeName][s]}(JSC::VM& vm, JSC::Structure* structure) : Base(vm, structure) {{
+                \\          m_zigBase = nullptr;
+                \\      }}
+                \\      void finishCreation(VM&);
+                \\      void* m_zigBase;
+                \\
+                \\}}
+                \\
+                \\
+                \\
+            ,
+                fields,
+            );
+        }
+
+        //     pub fn generateShimType(comptime Parent: type, comptime _name: []const u8, comptime static_properties: anytype) type {
+        //         const Base = struct {
+        //             const BaseType = @This();
+
+        //             bytes: shim.Bytes,
+        //             const cppFn = shim.cppFn;
+
+        //             pub const include = "Zig__" ++ _name;
+        //             pub const name = "Zig::" ++ _name;
+        //             pub const namespace = "Zig";
+
+        //             pub const shim = comptime Shimmer(namespace, name, BaseType);
+
+        //             pub fn create(global: *JSGlobalObject, parent: *Parent) JSValue {}
+
+        //             pub fn getZigType(this: *BaseType, global: *JSGlobalObject) JSValue {}
+
+        //             pub fn finalize(this: *BaseType, global: *JSGlobalObject) JSValue {}
+        //         };
+        //     }
     };
 };
 pub const Callback = struct {
@@ -2018,7 +2420,7 @@ const AsyncGeneratorPrototype = _JSCellStub("AsyncGeneratorPrototype");
 const AsyncGeneratorFunctionPrototype = _JSCellStub("AsyncGeneratorFunctionPrototype");
 pub fn SliceFn(comptime Type: type) type {
     const SliceStruct = struct {
-        pub fn slice(this: *Type) []const u8 {
+        pub fn slice(this: *const Type) []const u8 {
             if (this.isEmpty()) {
                 return "";
             }

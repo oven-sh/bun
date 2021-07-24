@@ -25,13 +25,3 @@ const Button = ({ label, label2, onClick }) => {
     </div>
   );
 };
-
-const Bacon = Button;
-
-export { Bacon, Bacon as Button };
-
-const RefreshLike = () => {};
-
-const useBacon = () => {
-  return [1, 8];
-};

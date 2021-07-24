@@ -3828,6 +3828,7 @@ pub fn printAst(
 ) !usize {
     const PrinterType = NewPrinter(false, Writer, LinkerType, false, false);
     var writer = _writer;
+
     var printer = try PrinterType.init(
         writer,
         &tree,

@@ -1,55 +1,70 @@
 const std = @import("std");
 const StaticExport = @import("./static_export.zig");
 const Sizes = @import("./sizes.zig");
-const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
+pub const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
 
 pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comptime Parent: type) type {
+    const extern_count: usize = if (@hasDecl(Parent, "Extern")) Parent.Extern.len else 0;
+
     return struct {
         pub const namespace = _namespace;
         pub const name = _name;
 
-        fn toCppType(comptime FromType: ?type) ?type {
-            return comptime brk: {
-                var NewReturnType = FromType orelse c_void;
+        // fn toCppType(comptime FromType: type) type {
+        //     var NewReturnType = FromType;
 
-                if (NewReturnType == c_void) {
-                    break :brk FromType;
-                }
+        //     if (NewReturnType == c_void) {
+        //         return FromType;
+        //     }
 
-                var ReturnTypeInfo: std.builtin.TypeInfo = @typeInfo(FromType orelse c_void);
+        //     var ReturnTypeInfo: std.builtin.TypeInfo = @typeInfo(FromType);
 
-                if (ReturnTypeInfo == .Pointer and NewReturnType != *c_void) {
-                    NewReturnType = ReturnTypeInfo.Pointer.child;
-                    ReturnTypeInfo = @typeInfo(NewReturnType);
-                }
+        //     if (ReturnTypeInfo == .Pointer and NewReturnType != *c_void) {
+        //         NewReturnType = ReturnTypeInfo.Pointer.child;
+        //         ReturnTypeInfo = @typeInfo(NewReturnType);
+        //     }
 
-                switch (ReturnTypeInfo) {
-                    .Union,
-                    .Struct,
-                    .Enum,
-                    => {
-                        if (@hasDecl(ReturnTypeInfo, "Type")) {
-                            break :brk NewReturnType;
-                        }
-                    },
-                    else => {},
-                }
+        //     switch (ReturnTypeInfo) {
+        //         .Union,
+        //         .Struct,
+        //         .Enum,
+        //         => {
+        //             if (@hasDecl(ReturnTypeInfo., "Type")) {
+        //                 return NewReturnType;
+        //             }
+        //         },
+        //         else => {},
+        //     }
 
-                break :brk FromType;
-            };
-        }
+        //     return FromType;
+        // }
         pub const align_of_symbol = std.fmt.comptimePrint("{s}__{s}_object_align_", .{ namespace, name });
         pub const size_of_symbol = std.fmt.comptimePrint("{s}__{s}_object_size_", .{ namespace, name });
+        const align_symbol = std.fmt.comptimePrint("{s}__{s}_align", .{ namespace, name });
+
         pub const byte_size = brk: {
             const identifier = std.fmt.comptimePrint("{s}__{s}", .{ namespace, name });
-            const align_symbol = std.fmt.comptimePrint("{s}__{s}_align", .{ namespace, name });
             if (@hasDecl(Sizes, identifier)) {
-                break :brk @field(Sizes, identifier); //+ @field(Sizes, align_symbol);
+                break :brk @field(Sizes, identifier);
+            } else {
+                break :brk 0;
+            }
+        };
+
+        pub const align_size = brk: {
+            const identifier = std.fmt.comptimePrint("{s}__{s}_align", .{ namespace, name });
+            if (@hasDecl(Sizes, identifier)) {
+                break :brk @field(Sizes, identifier);
             } else {
                 break :brk 0;
             }
         };
         pub const Bytes = [byte_size]u8;
+
+        pub const Return = struct {
+            pub const Type = Parent;
+            pub const is_return = true;
+        };
 
         pub inline fn getConvertibleType(comptime ZigType: type) type {
             if (@typeInfo(ZigType) == .Struct) {
@@ -70,17 +85,6 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
             }
 
             return Type;
-        }
-
-        pub inline fn toZigType(comptime ZigType: type, comptime CppType: type, value: CppType) *ZigType {
-            if (comptime hasRef(ZigType)) {
-                // *WTF::String => Wtf.String{ = value}, via casting instead of copying
-                if (comptime @typeInfo(CppType) == .Pointer and @typeInfo(ZigType) != .Pointer) {
-                    return @bitCast(ZigType, @ptrToInt(value));
-                }
-            }
-
-            return @as(ZigType, value);
         }
 
         pub fn symbolName(comptime typeName: []const u8) []const u8 {
@@ -114,34 +118,6 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
             };
         }
 
-        pub inline fn zigFn(comptime typeName: []const u8, args: anytype) (@typeInfo(@TypeOf(@field(Parent, typeName))).Fn.return_type orelse void) {
-            const identifier = symbolName(typeName);
-            const func = comptime @typeInfo(Parent).Struct.fields[std.meta.fieldIndex(Parent, typeName)].field_type;
-            const ReturnType = comptime @typeInfo(func).Fn.return_type orelse c_void;
-
-            const Func: type = comptime brk: {
-                var FuncType: std.builtin.TypeInfo = @typeInfo(@TypeOf(func));
-                var Fn: std.builtin.TypeInfo.Fn = FuncType.Fn;
-
-                Fn.calling_convention = std.builtin.CallingConvention.C;
-                Fn.return_type = toCppType(Fn.return_type);
-
-                const ArgsType = @TypeOf(args);
-                for (std.meta.fieldNames(args)) |field, i| {
-                    Fn.args[i] = std.builtin.TypeInfo.FnArg{
-                        .is_generic = false,
-                        .is_noalias = false,
-                        .arg_type = @typeInfo(ArgsType).fields[i].field_type,
-                    };
-                }
-                FuncType.Fn = Fn;
-                break :brk @Type(FuncType);
-            };
-
-            comptime @export(Func, .{ .name = identifier });
-            unreachable;
-        }
-
         pub inline fn cppFn(comptime typeName: []const u8, args: anytype) (ret: {
             if (!@hasDecl(Parent, typeName)) {
                 @compileError(@typeName(Parent) ++ " is missing cppFn: " ++ typeName);
@@ -150,37 +126,7 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
         }) {
             if (comptime is_bindgen) {
                 unreachable;
-            } else {
-                const identifier = comptime std.fmt.comptimePrint("{s}__{s}__{s}", .{ namespace, name, typeName });
-                const func = comptime @typeInfo(Parent).Struct.fields[std.meta.fieldIndex(Parent, typeName)].field_type;
-                const ReturnType = comptime @typeInfo(func).Fn.return_type orelse c_void;
-
-                const Func: type = comptime brk: {
-                    var FuncType: std.builtin.TypeInfo = @typeInfo(@TypeOf(func));
-                    var Fn: std.builtin.TypeInfo.Fn = FuncType.Fn;
-
-                    Fn.calling_convention = std.builtin.CallingConvention.C;
-                    Fn.return_type = toCppType(Fn.return_type);
-
-                    const ArgsType = @TypeOf(args);
-                    for (std.meta.fieldNames(args)) |field, i| {
-                        Fn.args[i] = std.builtin.TypeInfo.FnArg{
-                            .is_generic = false,
-                            .is_noalias = false,
-                            .arg_type = @typeInfo(ArgsType).fields[i].field_type,
-                        };
-                    }
-                    FuncType.Fn = Fn;
-                    break :brk @Type(FuncType);
-                };
-                const Outgoing = comptime @extern(Func, std.builtin.ExternOptions{ .name = identifier });
-
-                return toZigType(
-                    ReturnType,
-                    @typeInfo(Func).Fn.return_type orelse void,
-                    @call(.{}, Outgoing, args),
-                );
-            }
+            } else {}
         }
     };
 }

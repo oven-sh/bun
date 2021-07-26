@@ -16,6 +16,20 @@ pub fn addPicoHTTP(step: *std.build.LibExeObjStep) void {
     // homebrew-provided icu4c
 }
 
+pub var original_make_fn: ?fn (step: *std.build.Step) anyerror!void = null;
+pub var headers_zig_file: ?[]const u8 = null;
+const HeadersMaker = struct {
+    pub fn make(self: *std.build.Step) anyerror!void {
+        try original_make_fn.?(self);
+        var headers_zig: std.fs.File = try std.fs.openFileAbsolute(headers_zig_file.?, .{ .write = true });
+        const contents = try headers_zig.readToEndAlloc(std.heap.page_allocator, 99999);
+        const last_extern_i = std.mem.lastIndexOf(u8, contents, "pub extern fn") orelse @panic("Expected contents");
+        const last_newline = std.mem.indexOf(u8, contents[last_extern_i..], "\n") orelse @panic("Expected newline");
+        try headers_zig.seekTo(0);
+        try headers_zig.setEndPos(last_newline + last_extern_i);
+    }
+};
+
 pub fn build(b: *std.build.Builder) void {
     // Standard target options allows the person running `zig build` to choose
     // what target to build for. Here we do not override the defaults, which
@@ -171,10 +185,18 @@ pub fn build(b: *std.build.Builder) void {
         var headers_runner = headers_exec.run();
         headers_exec.setMainPkgPath(javascript.main_pkg_path.?);
         headers_step.dependOn(&headers_runner.step);
+        var translate_c: *std.build.TranslateCStep = b.addTranslateC(.{ .path = b.pathFromRoot("src/javascript/jsc/bindings/headers.h") });
+        translate_c.out_basename = "headers";
+        translate_c.output_dir = b.pathFromRoot("src/javascript/jsc/bindings/");
+        headers_step.dependOn(&translate_c.step);
 
+        headers_zig_file = b.pathFromRoot("src/javascript/jsc/bindings/headers.zig");
+
+        original_make_fn = headers_step.makeFn;
+        headers_step.makeFn = HeadersMaker.make;
         b.default_step.dependOn(&exe.step);
 
-        var steps = [_]*std.build.LibExeObjStep{ javascript, typings_exe };
+        var steps = [_]*std.build.LibExeObjStep{ exe, javascript, typings_exe };
 
         for (steps) |step| {
             step.linkLibC();
@@ -199,11 +221,11 @@ pub fn build(b: *std.build.Builder) void {
                 step.addIncludeDir("/usr/local/opt/icu4c/include");
             }
 
-            for (bindings_files.items) |binding| {
-                step.addObjectFile(
-                    binding,
-                );
-            }
+            // for (bindings_files.items) |binding| {
+            //     step.addObjectFile(
+            //         binding,
+            //     );
+            // }
         }
     } else {
         b.default_step.dependOn(&exe.step);

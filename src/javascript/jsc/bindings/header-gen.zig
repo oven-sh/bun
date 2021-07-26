@@ -18,13 +18,19 @@ fn isCppObject(comptime Type: type) bool {
     };
 }
 
+const ENABLE_REWRITE_RETURN = false;
+
 pub fn cTypeLabel(comptime Type: type) ?[]const u8 {
     return switch (comptime Type) {
-        void => "void",
+        *StaticExport.c_char => "char*",
+        *const StaticExport.c_char => "const char*",
+        StaticExport.c_char => "char",
+
+        *void => "void",
         bool => "bool",
         usize => "size_t",
         isize => "int",
-        u8 => "char",
+        u8 => "unsigned char",
         u16 => "uint16_t",
         u32 => "uint32_t",
         u64 => "uint64_t",
@@ -39,7 +45,7 @@ pub fn cTypeLabel(comptime Type: type) ?[]const u8 {
         [*]bool => "bool*",
         [*]usize => "size_t*",
         [*]isize => "int*",
-        [*]u8 => "char*",
+        [*]u8 => "unsigned char*",
         [*]u16 => "uint16_t*",
         [*]u32 => "uint32_t*",
         [*]u64 => "uint64_t*",
@@ -50,7 +56,7 @@ pub fn cTypeLabel(comptime Type: type) ?[]const u8 {
         [*]const bool => "const bool*",
         [*]const usize => "const size_t*",
         [*]const isize => "const int*",
-        [*]const u8 => "const char*",
+        [*]const u8 => "const unsigned char*",
         [*]const u16 => "const uint16_t*",
         [*]const u32 => "const uint32_t*",
         [*]const u64 => "const uint64_t*",
@@ -68,7 +74,9 @@ var impl_buffer = std.ArrayList(u8).init(std.heap.c_allocator);
 var impl_writer = impl_buffer.writer();
 var bufset = std.BufSet.init(std.heap.c_allocator);
 var type_names = TypeNameMap.init(std.heap.c_allocator);
+var opaque_types = std.BufSet.init(std.heap.c_allocator);
 var size_map = std.StringHashMap(u32).init(std.heap.c_allocator);
+var align_map = std.StringHashMap(u29).init(std.heap.c_allocator);
 
 pub const C_Generator = struct {
     filebase: []const u8,
@@ -99,8 +107,9 @@ pub const C_Generator = struct {
         comptime func: FnDecl,
         comptime meta: FnMeta,
         comptime arg_names: []const []const u8,
+        comptime rewrite_return: bool,
     ) void {
-        switch (meta.calling_convention) {
+        switch (comptime meta.calling_convention) {
             .Naked => self.write("__attribute__((naked)) "),
             .Stdcall => self.write("__attribute__((stdcall)) "),
             .Fastcall => self.write("__attribute__((fastcall)) "),
@@ -113,18 +122,33 @@ pub const C_Generator = struct {
             .export_zig => self.write("ZIG_DECL "),
         }
 
-        self.writeType(func.return_type);
+        if (comptime rewrite_return) {
+            self.writeType(void);
+        } else {
+            self.writeType(comptime func.return_type);
+        }
+
         self.write(" " ++ name ++ "(");
 
+        if (comptime rewrite_return) {
+            self.writeType(comptime func.return_type);
+            self.write("_buf ret_value");
+
+            if (comptime meta.args.len > 0) {
+                self.write(", ");
+            }
+        }
+
         inline for (meta.args) |arg, i| {
-            const ArgType = arg.arg_type.?;
+            const ArgType = comptime arg.arg_type.?;
 
             switch (@typeInfo(ArgType)) {
                 .Fn => {
                     self.gen_closure(comptime arg.arg_type.?, comptime std.fmt.comptimePrint(" ArgFn{d}", .{i}));
                 },
                 else => {
-                    self.writeType(arg.arg_type.?);
+                    self.writeType(comptime arg.arg_type.?);
+
                     switch (@typeInfo(ArgType)) {
                         .Enum => {
                             self.write(comptime std.fmt.comptimePrint(" {s}{d}", .{ @typeName(ArgType), i }));
@@ -291,17 +315,26 @@ pub const C_Generator = struct {
                     type_names.put(comptime label, formatted_name) catch unreachable;
                     if (@typeInfo(TT) == .Struct and @hasField(TT, "bytes")) {
                         size_map.put(comptime formatted_name, @as(u32, TT.shim.byte_size)) catch unreachable;
+                        align_map.put(comptime formatted_name, @as(u29, TT.shim.align_size)) catch unreachable;
+                    } else if (@typeInfo(TT) == .Opaque) {
+                        opaque_types.insert(comptime label) catch unreachable;
                     }
                 } else {
                     type_names.put(comptime TT.name, formatted_name) catch unreachable;
                     if (@typeInfo(TT) == .Struct and @hasField(TT, "bytes")) {
                         size_map.put(comptime formatted_name, @as(u32, TT.shim.byte_size)) catch unreachable;
+                        align_map.put(comptime formatted_name, @as(u29, TT.shim.align_size)) catch unreachable;
+                    } else if (@typeInfo(TT) == .Opaque) {
+                        opaque_types.insert(comptime label) catch unreachable;
                     }
                 }
             } else {
                 type_names.put(comptime TT.name, formatted_name) catch unreachable;
                 if (@typeInfo(TT) == .Struct and @hasField(TT, "bytes")) {
                     size_map.put(comptime formatted_name, @as(u32, TT.shim.byte_size)) catch unreachable;
+                    align_map.put(comptime formatted_name, @as(u29, TT.shim.align_size)) catch unreachable;
+                } else if (@typeInfo(TT) == .Opaque) {
+                    opaque_types.insert(comptime TT.name) catch unreachable;
                 }
             }
 
@@ -460,6 +493,7 @@ pub fn HeaderGen(comptime import: type, comptime fname: []const u8) type {
                 comptime static_export.Decl().data.Fn,
                 comptime fn_meta,
                 comptime std.mem.zeroes([]const []const u8),
+                false,
             );
         }
 
@@ -494,13 +528,13 @@ pub fn HeaderGen(comptime import: type, comptime fname: []const u8) type {
                         },
                         .Fn => |func| {
                             // if (func.) {
-                            const fn_meta = @typeInfo(func.name).Fn;
                             // blocked by https://github.com/ziglang/zig/issues/8259
                             gen.gen_func(
-                                prefix ++ "__" ++ name,
-                                func,
-                                fn_meta,
-                                &.{},
+                                comptime prefix ++ "__" ++ name,
+                                comptime func,
+                                comptime func,
+                                comptime &.{},
+                                comptime ENABLE_REWRITE_RETURN and @typeInfo(fn_meta.return_type) == .Struct,
                             );
                         },
                         else => {},
@@ -508,13 +542,13 @@ pub fn HeaderGen(comptime import: type, comptime fname: []const u8) type {
                 },
                 .Fn => |func| {
                     // if (func.) {
-                    const fn_meta = @typeInfo(func.fn_type).Fn;
                     // blocked by https://github.com/ziglang/zig/issues/8259
                     gen.gen_func(
-                        prefix ++ "__" ++ name,
-                        func,
-                        fn_meta,
-                        &.{},
+                        comptime prefix ++ "__" ++ name,
+                        comptime func,
+                        comptime @typeInfo(func.fn_type).Fn,
+                        comptime &.{},
+                        comptime ENABLE_REWRITE_RETURN and @typeInfo(func.return_type) == .Struct,
                     );
                 },
                 else => {},
@@ -573,7 +607,7 @@ pub fn HeaderGen(comptime import: type, comptime fname: []const u8) type {
                         .Type => |Type| {
                             @setEvalBranchQuota(99999);
                             const is_container_type = switch (@typeInfo(Type)) {
-                                .Opaque, .Struct => true,
+                                .Opaque, .Struct, .Enum => true,
                                 else => false,
                             };
                             if (is_container_type and (@hasDecl(Type, "Extern") or @hasDecl(Type, "Export"))) {
@@ -653,13 +687,17 @@ pub fn HeaderGen(comptime import: type, comptime fname: []const u8) type {
                                         };
 
                                         gen.direction = C_Generator.Direction.export_zig;
-                                        inline for (ExportLIst) |static_export| {
-                                            processStaticExport(
-                                                self,
-                                                file,
-                                                &gen,
-                                                comptime static_export,
-                                            );
+                                        if (ExportLIst.len > 0) {
+                                            gen.write("\n#ifdef __cplusplus\n\n");
+                                            inline for (ExportLIst) |static_export| {
+                                                processStaticExport(
+                                                    self,
+                                                    file,
+                                                    &gen,
+                                                    comptime static_export,
+                                                );
+                                            }
+                                            gen.write("\n#endif\n");
                                         }
                                     }
                                 }
@@ -683,17 +721,41 @@ pub fn HeaderGen(comptime import: type, comptime fname: []const u8) type {
             const NamespaceMap = std.StringArrayHashMap(std.BufMap);
             var namespaces = NamespaceMap.init(std.heap.c_allocator);
 
+            var size_iter = size_map.iterator();
+            while (size_iter.next()) |size| {
+                file_writer.print(" typedef struct b{s} {{ unsigned char bytes[{d}]; }} b{s};\n", .{
+                    size.key_ptr.*,
+                    // align_map.get(size.key_ptr.*).?,
+                    size.value_ptr.*,
+                    size.key_ptr.*,
+                }) catch unreachable;
+
+                file_writer.print(" typedef char* b{s}_buf;\n", .{
+                    size.key_ptr.*,
+                }) catch unreachable;
+            }
+
             file_writer.writeAll("\n#ifndef __cplusplus\n") catch unreachable;
             while (iter.next()) |entry| {
                 const key = entry.key_ptr.*;
                 const value = entry.value_ptr.*;
                 if (std.mem.indexOfScalar(u8, entry.key_ptr.*, ':')) |namespace_start| {
                     const namespace = entry.key_ptr.*[0..namespace_start];
-                    file_writer.print(" typedef struct {s} {s}; // {s}\n", .{
-                        value,
-                        value,
-                        key,
-                    }) catch unreachable;
+
+                    if (opaque_types.contains(entry.key_ptr.*)) {
+                        file_writer.print(" typedef struct {s} {s}; // {s}\n", .{
+                            value,
+                            value,
+                            key,
+                        }) catch unreachable;
+                    } else {
+                        file_writer.print(" typedef b{s} {s}; // {s}\n", .{
+                            value,
+                            value,
+                            key,
+                        }) catch unreachable;
+                    }
+
                     if (!namespaces.contains(namespace)) {
                         namespaces.put(namespace, std.BufMap.init(std.heap.c_allocator)) catch unreachable;
                     }
@@ -713,14 +775,6 @@ pub fn HeaderGen(comptime import: type, comptime fname: []const u8) type {
             }
 
             file_writer.writeAll("\n#endif\n") catch unreachable;
-            var size_iter = size_map.iterator();
-            while (size_iter.next()) |size| {
-                file_writer.print(" typedef struct b{s} {{ char bytes[{d}]; }} b{s};\n", .{
-                    size.key_ptr.*,
-                    size.value_ptr.*,
-                    size.key_ptr.*,
-                }) catch unreachable;
-            }
 
             file_writer.writeAll("\n#ifdef __cplusplus\n") catch unreachable;
 

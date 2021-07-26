@@ -40,6 +40,14 @@
     "__mutex_base": "cpp",
     "__string": "cpp",
     "string": "cpp",
-    "string_view": "cpp"
+    "string_view": "cpp",
+    "typeinfo": "cpp",
+    "__config": "cpp",
+    "__nullptr": "cpp",
+    "exception": "cpp",
+    "__bit_reference": "cpp",
+    "atomic": "cpp",
+    "utility": "cpp",
+    "sstream": "cpp"
   }
 }

@@ -29,14 +29,18 @@ CLANG_FLAGS = -Isrc/JavaScript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/Pri
 		-DSTATICALLY_LINKED_WITH_JavaScriptCore=1 \
 		-DSTATICALLY_LINKED_WITH_WTF=1 \
 		-DBUILDING_WITH_CMAKE=1 \
+		-DNDEBUG=1 \
 		-DNOMINMAX \
+		-DIS_BUILD \
+		-O3 \
+		-g \
 		-DENABLE_INSPECTOR_ALTERNATE_DISPATCHERS=0 \
 		-DBUILDING_JSCONLY__ \
 		-DASSERT_ENABLED=0\
 		-Isrc/JavaScript/jsc/WebKit/WebKitBuild/Release/ \
 		-Isrc/JavaScript/jsc/bindings/ \
 		-Isrc/javascript/jsc/WebKit/Source/bmalloc \
-		-std=gnu++17 \
+		-std=gnu++1z \
 		-stdlib=libc++ \
 		-DDU_DISABLE_RENAMING=1 \
 		-Wall

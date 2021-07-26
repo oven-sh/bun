@@ -25,6 +25,7 @@
 #include <JavaScriptCore/WasmFaultSignalHandler.h>
 #include <JavaScriptCore/JSCast.h>
 #include <JavaScriptCore/InitializeThreading.h>
+#include "ZigConsoleClient.h"
 
 #include <JavaScriptCore/JSLock.h>
 
@@ -39,29 +40,31 @@ using SourceOrigin = JSC::SourceOrigin;
 namespace JSCastingHelpers = JSC::JSCastingHelpers;
 
 
-JSC__JSGlobalObject* Zig__GlobalObject__create(JSC__VM* arg0) {
+extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(JSC__VM* arg0, void* console_client) {
+    auto client = makeUnique<Zig::ConsoleClient>(console_client);
+
     // There are assertions that the apiLock is set while the JSGlobalObject is initialized.
     if (arg0 != nullptr) {
-        JSC::VM& vm = reinterpret_cast<JSC__VM&>(arg0);
-        vm.apiLock().lock();
-        Zig::GlobalObject* globalObject = Zig::GlobalObject::create(vm, Zig::GlobalObject::createStructure(vm, JSC::jsNull()));
-        vm.apiLock().unlock();
+        Zig::GlobalObject* globalObject = Zig::GlobalObject::create(*arg0, Zig::GlobalObject::createStructure(*arg0, JSC::jsNull()));
+        JSC::JSLockHolder holder(globalObject);
+        globalObject->setConsoleClient(makeWeakPtr(*client));
+        
         return static_cast<JSC__JSGlobalObject*>(globalObject);
     }
 
     JSC::initialize();
-    
-    JSC::VM& vm = JSC::VM::create(JSC::LargeHeap, nullptr);
-    vm.apiLock().lock();
+    JSC::VM& vm = JSC::VM::create(JSC::LargeHeap).leakRef();
 
 
       #if ENABLE(WEBASSEMBLY)
         JSC::Wasm::enableFastMemory();
     #endif
+    JSC::JSLockHolder locker(vm);
+    auto globalObject = Zig::GlobalObject::create(vm, Zig::GlobalObject::createStructure(vm, JSC::jsNull()));
+    globalObject->setConsoleClient(makeWeakPtr(*client));
 
-    Zig::GlobalObject* globalObject = Zig::GlobalObject::create(vm, Zig::GlobalObject::createStructure(vm, JSC::jsNull()));
-    vm.apiLock().unlock();
-    return static_cast<JSC__JSGlobalObject*>(globalObject);
+
+    return globalObject;
 }
 
 namespace Zig {

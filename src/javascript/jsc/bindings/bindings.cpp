@@ -2,7 +2,7 @@
 #include "headers.h"
 #include "root.h"
 
-
+#include "helpers.h"
 
 #include <JavaScriptCore/ExceptionScope.h>
 #include <JavaScriptCore/JSObject.h>
@@ -23,8 +23,8 @@
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/JSMap.h>
 #include <JavaScriptCore/JSSet.h>
+#include <JavaScriptCore/JSInternalPromise.h>
 
-#include "helpers.h"
 
 extern "C"  {
 
@@ -42,7 +42,7 @@ JSC__JSObject* JSC__JSCell__getObject(JSC__JSCell* arg0) {
 bWTF__String JSC__JSCell__getString(JSC__JSCell* arg0, JSC__JSGlobalObject* arg1) {
     return Wrap<WTF__String, bWTF__String>::wrap(arg0->getString(arg1));
 }
-char JSC__JSCell__getType(JSC__JSCell* arg0) {
+unsigned char JSC__JSCell__getType(JSC__JSCell* arg0) {
     return arg0->type();
 }
 
@@ -72,7 +72,9 @@ bWTF__String JSC__JSString__value(JSC__JSString* arg0, JSC__JSGlobalObject* arg1
 
 #pragma mark - JSC::JSModuleLoader
 
-// JSC__JSValue JSC__JSModuleLoader__dependencyKeysIfEvaluated(JSC__JSModuleLoader* arg0, JSC__JSGlobalObject* arg1, JSC__JSModuleRecord* arg2);
+// JSC__JSValue JSC__JSModuleLoader__dependencyKeysIfEvaluated(JSC__JSModuleLoader* arg0, JSC__JSGlobalObject* arg1, JSC__JSModuleRecord* arg2) {
+//     arg2->depen
+// }
 
 bool JSC__JSModuleLoader__checkSyntax(JSC__JSGlobalObject* arg0, const JSC__SourceCode* arg1, bool arg2) {
     JSC::ParserError error;
@@ -88,10 +90,11 @@ bool JSC__JSModuleLoader__checkSyntax(JSC__JSGlobalObject* arg0, const JSC__Sour
 }
 JSC__JSValue JSC__JSModuleLoader__evaluate(JSC__JSGlobalObject* arg0, const JSC__SourceCode* arg1, JSC__JSValue JSValue2, JSC__Exception** arg3) {
     WTF::NakedPtr<JSC::Exception> returnedException;
-
-    auto val = JSC::JSValue::encode(JSC::evaluate(arg0, reinterpret_cast<const JSC__SourceCode&>(arg1), JSC::JSValue::decode(JSValue2), returnedException));
+    auto str2 = arg1->provider()->source();
+    auto val = JSC::evaluate(arg0, *arg1, JSC::JSValue::decode(JSValue2), returnedException);
+    auto str = val.toWTFString(arg0);
     *arg3 = returnedException.get();
-    return val;
+    return JSC::JSValue::encode(val);
 }
 JSC__JSInternalPromise* JSC__JSModuleLoader__importModule(JSC__JSGlobalObject* arg0, const JSC__Identifier* arg1) {
     return JSC::importModule(arg0, reinterpret_cast<JSC::Identifier&>(arg1), JSC::JSValue{}, JSC::JSValue{});
@@ -128,9 +131,7 @@ void JSC__JSPromise__rejectAsHandledException(JSC__JSPromise* arg0, JSC__JSGloba
 JSC__JSPromise* JSC__JSPromise__rejectedPromise(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1) {
     return JSC::JSPromise::rejectedPromise(arg0, JSC::JSValue::decode(JSValue1));
 }
-// void JSC__JSPromise__rejectException(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1, JSC__Exception* arg2) {
-//   JSC::JSPromise::rejec
-// }
+
 void JSC__JSPromise__rejectWithCaughtException(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1, bJSC__ThrowScope arg2) {
      Wrap<JSC::ThrowScope, bJSC__ThrowScope> wrapped = Wrap<JSC::ThrowScope, bJSC__ThrowScope>(arg2);
      
@@ -158,6 +159,57 @@ bool JSC__JSPromise__isHandled(const JSC__JSPromise* arg0, JSC__VM* arg1) {
     return arg0->isHandled(reinterpret_cast<JSC::VM&>(arg1));
 }
 
+#pragma mark - JSC::JSInternalPromise
+
+JSC__JSInternalPromise* JSC__JSInternalPromise__create(JSC__JSGlobalObject* globalObject) {
+    JSC::VM& vm = globalObject->vm();
+    return JSC::JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
+}
+
+void JSC__JSInternalPromise__reject(JSC__JSInternalPromise* arg0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2) {
+    arg0->reject(arg1, JSC::JSValue::decode(JSValue2));
+}
+void JSC__JSInternalPromise__rejectAsHandled(JSC__JSInternalPromise* arg0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2) {
+    arg0->rejectAsHandled(arg1, JSC::JSValue::decode(JSValue2));
+}
+void JSC__JSInternalPromise__rejectAsHandledException(JSC__JSInternalPromise* arg0, JSC__JSGlobalObject* arg1, JSC__Exception* arg2) {
+    arg0->rejectAsHandled(arg1,arg2);
+}
+JSC__JSInternalPromise* JSC__JSInternalPromise__rejectedPromise(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1) {
+    return reinterpret_cast<JSC::JSInternalPromise*>(JSC::JSInternalPromise::rejectedPromise(arg0, JSC::JSValue::decode(JSValue1)));
+}
+
+void JSC__JSInternalPromise__rejectWithCaughtException(JSC__JSInternalPromise* arg0, JSC__JSGlobalObject* arg1, bJSC__ThrowScope arg2) {
+     Wrap<JSC::ThrowScope, bJSC__ThrowScope> wrapped = Wrap<JSC::ThrowScope, bJSC__ThrowScope>(arg2);
+     
+     arg0->rejectWithCaughtException(arg1, *wrapped.cpp);
+}
+void JSC__JSInternalPromise__resolve(JSC__JSInternalPromise* arg0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2) {
+   arg0->resolve(arg1, JSC::JSValue::decode(JSValue2));
+}
+JSC__JSInternalPromise* JSC__JSInternalPromise__resolvedPromise(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1) {
+    return reinterpret_cast<JSC::JSInternalPromise*>(JSC::JSInternalPromise::resolvedPromise(arg0, JSC::JSValue::decode(JSValue1)));
+}
+
+JSC__JSValue JSC__JSInternalPromise__result(const JSC__JSInternalPromise* arg0, JSC__VM* arg1) {
+    return JSC::JSValue::encode(arg0->result(reinterpret_cast<JSC::VM&>(arg1)));
+}
+uint32_t JSC__JSInternalPromise__status(const JSC__JSInternalPromise* arg0, JSC__VM* arg1) {
+   switch (arg0->status(reinterpret_cast<JSC::VM&>(arg1))) {
+       case JSC::JSInternalPromise::Status::Pending: return 0;
+       case JSC::JSInternalPromise::Status::Fulfilled: return 1;
+       case JSC::JSInternalPromise::Status::Rejected: return 2;
+       default: return 255;
+   }
+}
+bool JSC__JSInternalPromise__isHandled(const JSC__JSInternalPromise* arg0, JSC__VM* arg1) {
+    return arg0->isHandled(reinterpret_cast<JSC::VM&>(arg1));
+}
+
+JSC__JSInternalPromise* JSC__JSInternalPromise__then(JSC__JSInternalPromise* arg0, JSC__JSGlobalObject* arg1, JSC__JSFunction* arg2, JSC__JSFunction* arg3) {
+    return arg0->then(arg1, arg2, arg3);
+}
+
 
 // bool JSC__JSPromise__isInternal(JSC__JSPromise* arg0, JSC__VM* arg1) {
 //     return arg0->inf
@@ -168,55 +220,89 @@ bool JSC__JSPromise__isHandled(const JSC__JSPromise* arg0, JSC__VM* arg1) {
 
 bJSC__SourceOrigin JSC__SourceOrigin__fromURL(const WTF__URL* arg0) {
 
-    auto wrap = Wrap<JSC::SourceOrigin, bJSC__SourceOrigin>(JSC::SourceOrigin(reinterpret_cast<const WTF::URL&>(arg0)));
+    auto wrap = Wrap<JSC::SourceOrigin, bJSC__SourceOrigin>(JSC::SourceOrigin(*arg0));
     return wrap.result;
 }
 
 #pragma mark - JSC::SourceCode
 
-bJSC__SourceCode JSC__SourceCode__fromString(const WTF__String* arg0, const JSC__SourceOrigin* arg1, WTF__String* arg2, char SourceType3) {
-    auto wrap = Wrap<JSC::SourceCode, bJSC__SourceCode>(
-        JSC::makeSource(
-        reinterpret_cast<const WTF::String&>(arg0), 
-        reinterpret_cast<const JSC::SourceOrigin&>(arg1), 
-        arg2 == nullptr ? WTF::String() : *arg2,
-        WTF::TextPosition(), 
-        SourceType3 == 0 ? JSC::SourceProviderSourceType::Program : JSC::SourceProviderSourceType::Module
-    ));
+// class StringSourceProvider : public JSC::SourceProvider {
+//     public:
+//         unsigned hash() const override
+//         {
+//             return m_source->hash();
+//         }
 
-    return wrap.result;
+//         StringView source() const override
+//         {
+//             return WTF::StringView(m_source);
+//         }
+
+//         ~StringSourceProvider() {
+            
+//         }
+//         WTF::StringImpl *m_source;
+
+//         StringSourceProvider(const WTF::String& source, const JSC::SourceOrigin& sourceOrigin, WTF::String&& sourceURL, const WTF::TextPosition& startPosition, JSC::SourceProviderSourceType sourceType)
+//             : JSC::SourceProvider(sourceOrigin, WTFMove(sourceURL), startPosition, sourceType)
+//             , m_source(source.isNull() ? WTF::StringImpl::empty() : source.impl())
+//         {
+//         }
+// };
+
+class CustomStringProvider : public JSC::StringSourceProvider {
+    public: JS_EXPORT_PRIVATE CustomStringProvider(const WTF::String& source, const JSC::SourceOrigin& sourceOrigin, WTF::String&& sourceURL, const TextPosition& startPosition, JSC::SourceProviderSourceType sourceType)
+            : JSC::StringSourceProvider(source, sourceOrigin, WTFMove(sourceURL), startPosition, sourceType) {
+
+            }
+
+
+};
+
+void JSC__SourceCode__fromString(JSC__SourceCode* arg0, const WTF__String* arg1, const JSC__SourceOrigin* arg2, WTF__String* arg3, unsigned char SourceType4) {
+    arg1->impl()->ref();
+
+    auto source = CustomStringProvider(
+        *arg1,
+        JSC::SourceOrigin(WTF::URL()), 
+        arg3 == nullptr ? WTF::String() : *arg3,
+        WTF::TextPosition(), 
+        SourceType4 == 0 ? JSC::SourceProviderSourceType::Program : JSC::SourceProviderSourceType::Module
+    );
+    *arg0 = JSC::SourceCode(source,  1,0);
+    
 }
 
 
 #pragma mark - JSC::JSFunction
 
-JSC__JSValue JSC__JSFunction__callWithArguments(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, JSC__JSValue* arg2, size_t arg3, JSC__Exception** arg4, char* arg5) {
+JSC__JSValue JSC__JSFunction__callWithArguments(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, JSC__JSValue* arg2, size_t arg3, JSC__Exception** arg4, const char* arg5) {
     auto args = makeArgs(arg2, arg3);
     return JSC::JSValue::encode(JSC::call(arg1, JSC::JSValue::decode(JSValue0), JSC::JSValue::decode(JSValue0), args, arg5));
 }
-JSC__JSValue JSC__JSFunction__callWithArgumentsAndThis(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* arg2, JSC__JSValue* arg3, size_t arg4, JSC__Exception** arg5, char* arg6) {
+JSC__JSValue JSC__JSFunction__callWithArgumentsAndThis(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* arg2, JSC__JSValue* arg3, size_t arg4, JSC__Exception** arg5, const char* arg6) {
     auto args = makeArgs(arg3, arg4);
     return JSC::JSValue::encode(JSC::call(arg2, JSC::JSValue::decode(JSValue0), JSC::JSValue::decode(JSValue1), args, arg6));
 }
-JSC__JSValue JSC__JSFunction__callWithoutAnyArgumentsOrThis(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, JSC__Exception** arg2, char* arg3) {
+JSC__JSValue JSC__JSFunction__callWithoutAnyArgumentsOrThis(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, JSC__Exception** arg2, const char* arg3) {
     return JSC::JSValue::encode(JSC::call(arg1, JSC::JSValue::decode(JSValue0), JSC::JSValue::decode(JSValue0), JSC::ArgList(), arg3));
 }
-JSC__JSValue JSC__JSFunction__callWithThis(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2, JSC__Exception** arg3, char* arg4) {
+JSC__JSValue JSC__JSFunction__callWithThis(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2, JSC__Exception** arg3, const char* arg4) {
     return JSC::JSValue::encode(JSC::call(arg1, JSC::JSValue::decode(JSValue0), JSC::JSValue::decode(JSValue2), JSC::ArgList(), arg4));
 }
-JSC__JSValue JSC__JSFunction__constructWithArguments(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, JSC__JSValue* arg2, size_t arg3, JSC__Exception** arg4, char* arg5) {
+JSC__JSValue JSC__JSFunction__constructWithArguments(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, JSC__JSValue* arg2, size_t arg3, JSC__Exception** arg4, const char* arg5) {
     auto args = makeArgs(arg2, arg3);
     return JSC::JSValue::encode(JSC::construct(arg1, JSC::JSValue::decode(JSValue0), args, arg5));
 }
 
-JSC__JSValue JSC__JSFunction__constructWithArgumentsAndNewTarget(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* arg2, JSC__JSValue* arg3, size_t arg4, JSC__Exception** arg5, char* arg6) {
+JSC__JSValue JSC__JSFunction__constructWithArgumentsAndNewTarget(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* arg2, JSC__JSValue* arg3, size_t arg4, JSC__Exception** arg5, const char* arg6) {
     auto args = makeArgs(arg3, arg4);
     return JSC::JSValue::encode(JSC::construct(arg2, JSC::JSValue::decode(JSValue0), JSC::JSValue::decode(JSValue0), args, arg6));
 }
-JSC__JSValue JSC__JSFunction__constructWithNewTarget(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2, JSC__Exception** arg3, char* arg4) {
+JSC__JSValue JSC__JSFunction__constructWithNewTarget(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2, JSC__Exception** arg3, const char* arg4) {
     return JSC::JSValue::encode(JSC::construct(arg1, JSC::JSValue::decode(JSValue0), JSC::JSValue::decode(JSValue2), JSC::ArgList(), arg4));
 }
-JSC__JSValue JSC__JSFunction__constructWithoutAnyArgumentsOrNewTarget(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, JSC__Exception** arg2, char* arg3) {
+JSC__JSValue JSC__JSFunction__constructWithoutAnyArgumentsOrNewTarget(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, JSC__Exception** arg2, const char* arg3) {
     return JSC::JSValue::encode(JSC::construct(arg1, JSC::JSValue::decode(JSValue0), JSC::ArgList(), arg3));
 }
 
@@ -233,7 +319,7 @@ JSC__JSFunction* JSC__JSFunction__createFromNative(JSC__JSGlobalObject* arg0, ui
 }
 // JSC__JSFunction* JSC__JSFunction__createFromSourceCode(
 //     JSC__JSGlobalObject* arg0, 
-//     const char* arg1, 
+//     const unsigned char* arg1, 
 //     uint16_t arg2,
 //     JSC__JSValue arg3,
 //     uint16_t arg4,
@@ -262,7 +348,7 @@ bWTF__String JSC__JSFunction__displayName(JSC__JSFunction* arg0, JSC__VM* arg1) 
     return wrap.result;
 };
 bWTF__String JSC__JSFunction__getName(JSC__JSFunction* arg0, JSC__VM* arg1) {
-      auto wrap = Wrap<WTF::String, bWTF__String>(arg0->name(reinterpret_cast<JSC::VM&>(arg1)));
+    auto wrap = Wrap<WTF::String, bWTF__String>(arg0->name(reinterpret_cast<JSC::VM&>(arg1)));
     return wrap.result;
 };
 bWTF__String JSC__JSFunction__calculatedDisplayName(JSC__JSFunction* arg0, JSC__VM* arg1) {
@@ -299,7 +385,7 @@ JSC__JSObject* JSC__JSGlobalObject__symbolPrototype(JSC__JSGlobalObject* arg0) {
 JSC__VM* JSC__JSGlobalObject__vm(JSC__JSGlobalObject* arg0) {
     return &arg0->vm();
 };
-// JSC__JSObject* JSC__JSGlobalObject__createError(JSC__JSGlobalObject* arg0, char ErrorType1, WTF__String* arg2) {};
+// JSC__JSObject* JSC__JSGlobalObject__createError(JSC__JSGlobalObject* arg0, unsigned char ErrorType1, WTF__String* arg2) {};
 // JSC__JSObject* JSC__JSGlobalObject__throwError(JSC__JSGlobalObject* arg0, JSC__JSObject* arg1) {};
 
 
@@ -341,7 +427,14 @@ bool JSC__JSValue__isBigInt32(JSC__JSValue JSValue0) { return JSC::JSValue::deco
 bool JSC__JSValue__isBoolean(JSC__JSValue JSValue0) { return JSC::JSValue::decode(JSValue0).isBoolean();  }
 bool JSC__JSValue__isCell(JSC__JSValue JSValue0) { return JSC::JSValue::decode(JSValue0).isCell();  }
 bool JSC__JSValue__isCustomGetterSetter(JSC__JSValue JSValue0) { return JSC::JSValue::decode(JSValue0).isCustomGetterSetter();  }
-// bool JSC__JSValue__isError(JSC__JSValue JSValue0) { return JSC::JSValue::decode(JSValue0).getPrototype()  }
+bool JSC__JSValue__isError(JSC__JSValue JSValue0) { 
+    JSC::JSObject* obj = JSC::JSValue::decode(JSValue0).getObject();
+    return obj != nullptr && obj->isErrorInstance();
+}
+bool JSC__JSValue__isCallable(JSC__JSValue JSValue0, JSC__VM* arg1) { 
+    return JSC::JSValue::decode(JSValue0).isCallable(reinterpret_cast<JSC::VM&>(arg1));  
+
+}
 bool JSC__JSValue__isGetterSetter(JSC__JSValue JSValue0) { return JSC::JSValue::decode(JSValue0).isGetterSetter();  }
 bool JSC__JSValue__isHeapBigInt(JSC__JSValue JSValue0) { return JSC::JSValue::decode(JSValue0).isHeapBigInt();  }
 bool JSC__JSValue__isInt32AsAnyInt(JSC__JSValue JSValue0) { return JSC::JSValue::decode(JSValue0).isInt32AsAnyInt();  }
@@ -357,7 +450,7 @@ bool JSC__JSValue__isUndefinedOrNull(JSC__JSValue JSValue0) { return JSC::JSValu
 JSC__JSValue JSC__JSValue__jsBoolean(bool arg0) { return JSC::JSValue::encode(JSC::jsBoolean(arg0)); };
 JSC__JSValue JSC__JSValue__jsDoubleNumber(double arg0) {return JSC::JSValue::encode(JSC::jsNumber(arg0)); }
 JSC__JSValue JSC__JSValue__jsNull() { return JSC::JSValue::encode(JSC::jsNull()); };
-JSC__JSValue JSC__JSValue__jsNumberFromChar(char arg0) { return JSC::JSValue::encode(JSC::jsNumber(arg0));};
+JSC__JSValue JSC__JSValue__jsNumberFromChar(unsigned char arg0) { return JSC::JSValue::encode(JSC::jsNumber(arg0));};
 JSC__JSValue JSC__JSValue__jsNumberFromDouble(double arg0) { return JSC::JSValue::encode(JSC::jsNumber(arg0));};
 JSC__JSValue JSC__JSValue__jsNumberFromInt32(int32_t arg0) { return JSC::JSValue::encode(JSC::jsNumber(arg0));};
 JSC__JSValue JSC__JSValue__jsNumberFromInt64(int64_t arg0) { return JSC::JSValue::encode(JSC::jsNumber(arg0));};
@@ -389,7 +482,7 @@ JSC__JSString* JSC__JSValue__toStringOrNull(JSC__JSValue JSValue0, JSC__JSGlobal
 }
 bWTF__String JSC__JSValue__toWTFString(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1) {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
-    return Wrap<WTF::String, bWTF__String>(value.toWTFString(arg1));
+    return Wrap<WTF::String, bWTF__String>::wrap(value.toWTFString(arg1));
 };
 
 #pragma mark - JSC::PropertyName
@@ -413,7 +506,7 @@ const WTF__StringImpl* JSC__PropertyName__uid(JSC__PropertyName* arg0) {
 JSC__JSLock* JSC__VM__apiLock(JSC__VM* arg0) {
     return makeRefPtr((*arg0).apiLock()).leakRef();
 }
-JSC__VM* JSC__VM__create(char HeapType0) {
+JSC__VM* JSC__VM__create(unsigned char HeapType0) {
     JSC::VM* vm = &JSC::VM::create(HeapType0 == JSC::SmallHeap ? JSC::SmallHeap : JSC::LargeHeap).leakRef();
     #if ENABLE(WEBASSEMBLY)
         JSC::Wasm::enableFastMemory();
@@ -446,7 +539,7 @@ void JSC__VM__setExecutionForbidden(JSC__VM* arg0, bool arg1) {
     (*arg0).setExecutionForbidden();
 }
 
-bool JSC__VM__throwError(JSC__VM* arg0, JSC__JSGlobalObject* arg1, JSC__ThrowScope* arg2, const char* arg3, size_t arg4) {
+bool JSC__VM__throwError(JSC__VM* arg0, JSC__JSGlobalObject* arg1, JSC__ThrowScope* arg2, const unsigned char* arg3, size_t arg4) {
     auto scope = arg2;
     auto global = arg1;
     const String& message = WTF::String(arg3, arg4);
@@ -458,7 +551,7 @@ bool JSC__VM__throwError(JSC__VM* arg0, JSC__JSGlobalObject* arg1, JSC__ThrowSco
 void JSC__ThrowScope__clearException(JSC__ThrowScope* arg0) {
     arg0->clearException();
 };
-bJSC__ThrowScope JSC__ThrowScope__declare(JSC__VM* arg0, char* arg1, char* arg2, size_t arg3) {
+bJSC__ThrowScope JSC__ThrowScope__declare(JSC__VM* arg0, unsigned char* arg1, unsigned char* arg2, size_t arg3) {
     Wrap<JSC::ThrowScope, bJSC__ThrowScope> wrapped = Wrap<JSC::ThrowScope, bJSC__ThrowScope>();
     wrapped.cpp = new (wrapped.alignedBuffer()) JSC::ThrowScope(reinterpret_cast<JSC::VM&>(arg0));
     return wrapped.result;
@@ -475,7 +568,7 @@ void JSC__ThrowScope__release(JSC__ThrowScope* arg0) {
 void JSC__CatchScope__clearException(JSC__CatchScope* arg0) {
     arg0->clearException();
 }
-bJSC__CatchScope JSC__CatchScope__declare(JSC__VM* arg0, char* arg1, char* arg2, size_t arg3) {
+bJSC__CatchScope JSC__CatchScope__declare(JSC__VM* arg0, unsigned char* arg1, unsigned char* arg2, size_t arg3) {
     JSC::CatchScope scope = JSC::CatchScope(reinterpret_cast<JSC::VM&>(arg0));
     return cast<bJSC__CatchScope>(&scope);
 }
@@ -507,13 +600,17 @@ JSC__JSValue JSC__CallFrame__uncheckedArgument(const JSC__CallFrame* arg0, uint1
 
 #pragma mark - JSC::Identifier
 
+void JSC__Identifier__deinit(const JSC__Identifier* arg0) {
+
+}
+
 bool JSC__Identifier__eqlIdent(const JSC__Identifier* arg0, const JSC__Identifier* arg1) {
     return arg0 == arg1;
 };
 bool JSC__Identifier__eqlStringImpl(const JSC__Identifier* arg0, const WTF__StringImpl* arg1) {
     return JSC::Identifier::equal(arg0->string().impl(), arg1);
 };
-bool JSC__Identifier__eqlUTF8(const JSC__Identifier* arg0, const char* arg1, size_t arg2) {
+bool JSC__Identifier__eqlUTF8(const JSC__Identifier* arg0, const unsigned char* arg1, size_t arg2) {
     return JSC::Identifier::equal(arg0->string().impl(), reinterpret_cast<const LChar*>(arg1), arg2);
 };
 bool JSC__Identifier__neqlIdent(const JSC__Identifier* arg0, const JSC__Identifier* arg1) {
@@ -523,7 +620,7 @@ bool JSC__Identifier__neqlStringImpl(const JSC__Identifier* arg0, const WTF__Str
     return !JSC::Identifier::equal(arg0->string().impl(), arg1);
 };
 
-bJSC__Identifier JSC__Identifier__fromSlice(JSC__VM* arg0, const char* arg1, size_t arg2) {
+bJSC__Identifier JSC__Identifier__fromSlice(JSC__VM* arg0, const unsigned char* arg1, size_t arg2) {
     JSC::Identifier ident = JSC::Identifier::fromString(reinterpret_cast<JSC__VM&>(arg0), reinterpret_cast<const LChar*>(arg1), static_cast<int>(arg2));
     return cast<bJSC__Identifier>(&ident);
 };
@@ -563,8 +660,8 @@ const uint16_t* WTF__StringView__characters16(const WTF__StringView* arg0) {
     WTF::StringView* view = (WTF::StringView*)arg0;
     return reinterpret_cast<const uint16_t*>(view->characters16());
 }
-const char* WTF__StringView__characters8(const WTF__StringView* arg0) {
-    return reinterpret_cast<const char*>(arg0->characters8()); 
+const unsigned char* WTF__StringView__characters8(const WTF__StringView* arg0) {
+    return reinterpret_cast<const unsigned char*>(arg0->characters8()); 
 };
 
 bool WTF__StringView__is16Bit(const WTF__StringView* arg0) {return !arg0->is8Bit(); };
@@ -577,13 +674,12 @@ size_t WTF__StringView__length(const WTF__StringView* arg0) {return arg0->length
 const uint16_t* WTF__StringImpl__characters16(const WTF__StringImpl* arg0) {
     return reinterpret_cast<const uint16_t*>(arg0->characters16());
 }
-const char* WTF__StringImpl__characters8(const WTF__StringImpl* arg0) {
-    return reinterpret_cast<const char*>(arg0->characters8()); 
+const unsigned char* WTF__StringImpl__characters8(const WTF__StringImpl* arg0) {
+    return reinterpret_cast<const unsigned char*>(arg0->characters8()); 
 }
 
-bWTF__StringView WTF__StringView__from8Bit(const char* arg0, size_t arg1) {
-     WTF::StringView view = WTF::StringView(arg0, arg1);
-    return cast<bWTF__StringView>(&view);
+void WTF__StringView__from8Bit(WTF__StringView* arg0, const unsigned char* arg1, size_t arg2) {
+    *arg0 = WTF::StringView(arg1, arg2);
 }
 
 bool WTF__StringImpl__is16Bit(const WTF__StringImpl* arg0) {
@@ -611,8 +707,8 @@ size_t WTF__StringImpl__length(const WTF__StringImpl* arg0) {
 const uint16_t* WTF__ExternalStringImpl__characters16(const WTF__ExternalStringImpl* arg0) {
     return reinterpret_cast<const uint16_t*>(arg0->characters16());
 }
-const char* WTF__ExternalStringImpl__characters8(const WTF__ExternalStringImpl* arg0) {
-    return reinterpret_cast<const char*>(arg0->characters8()); 
+const unsigned char* WTF__ExternalStringImpl__characters8(const WTF__ExternalStringImpl* arg0) {
+    return reinterpret_cast<const unsigned char*>(arg0->characters8()); 
 }
 
 
@@ -641,11 +737,11 @@ size_t WTF__ExternalStringImpl__length(const WTF__ExternalStringImpl* arg0) {
 const uint16_t* WTF__String__characters16(WTF__String* arg0) { 
     return reinterpret_cast<const uint16_t*>(arg0->characters16());
 };
- const char* WTF__String__characters8(WTF__String* arg0) {
-    return reinterpret_cast<const char*>(arg0->characters8()); 
+ const unsigned char* WTF__String__characters8(WTF__String* arg0) {
+    return reinterpret_cast<const unsigned char*>(arg0->characters8()); 
 };
 
- bool WTF__String__eqlSlice(WTF__String* arg0, const char* arg1, size_t arg2) {
+ bool WTF__String__eqlSlice(WTF__String* arg0, const unsigned char* arg1, size_t arg2) {
     return WTF::equal(arg0->impl(), reinterpret_cast<const LChar*>(arg1), arg2);
 }
  bool WTF__String__eqlString(WTF__String* arg0, const WTF__String* arg1) {
@@ -663,13 +759,12 @@ bool WTF__String__isStatic(WTF__String* arg0) {return arg0->impl()->isStatic();}
 size_t WTF__String__length(WTF__String* arg0) {return arg0->length();}
 
 bWTF__String WTF__String__createFromExternalString(bWTF__ExternalStringImpl arg0) {
-    WTF::ExternalStringImpl* external = cast<WTF::ExternalStringImpl*>(&arg0);
-    WTF::String string = WTF::String(external);
-    return ccast<bWTF__String>(&string);
+    auto external = Wrap<WTF::ExternalStringImpl, bWTF__ExternalStringImpl>(arg0);
+    return Wrap<WTF::String, bWTF__String>(WTF::String(external.cpp)).result;
 };
-bWTF__String WTF__String__createWithoutCopyingFromPtr(const char* arg0, size_t arg1) {
-    const WTF::String string = WTF::String(WTF::StringImpl::createWithoutCopying(reinterpret_cast<const LChar*>(arg0), arg1));
-    return ccast<bWTF__String>(&string);
+
+void WTF__String__createWithoutCopyingFromPtr(WTF__String* str, unsigned char* arg0, size_t arg1) {
+    *str = WTF::String(arg0, arg1);
 }
 
 #pragma mark - WTF::URL
@@ -694,9 +789,10 @@ bWTF__StringView WTF__URL__fragmentIdentifierWithLeadingNumberSign(WTF__URL* arg
     auto result = arg0->fragmentIdentifierWithLeadingNumberSign();
     return cast<bWTF__StringView>(&result);
 };
-bWTF__URL WTF__URL__fromFileSystemPath(bWTF__StringView arg0) {
-    auto url = WTF::URL::fileURLWithFileSystemPath(cast<WTF::StringView>(&arg0));
-      return cast<bWTF__URL>(&url);
+void WTF__URL__fromFileSystemPath(WTF::URL* result, bWTF__StringView arg0) {
+    Wrap<WTF::StringView, bWTF__StringView> fsPath = Wrap<WTF::StringView, bWTF__StringView>(&arg0);
+    *result = WTF::URL::fileURLWithFileSystemPath(*fsPath.cpp);
+    result->string().impl()->ref();
 };
 bWTF__URL WTF__URL__fromString(bWTF__String arg0, bWTF__String arg1) {
     WTF::URL url= WTF::URL(WTF::URL(), cast<WTF::String>(&arg1));
@@ -762,25 +858,25 @@ bWTF__String WTF__URL__user(WTF__URL* arg0) {
 };
 
 void WTF__URL__setHost(WTF__URL* arg0, bWTF__StringView arg1) {
-    arg0->setHost(cast<WTF::StringView>(&arg1));
+    arg0->setHost(*Wrap<WTF::StringView, bWTF__StringView>::unwrap(&arg1));
 };
 void WTF__URL__setHostAndPort(WTF__URL* arg0, bWTF__StringView arg1) {
-    arg0->setHostAndPort(cast<WTF::StringView>(&arg1));
+    arg0->setHostAndPort(*Wrap<WTF::StringView, bWTF__StringView>::unwrap(&arg1));
 };
 void WTF__URL__setPassword(WTF__URL* arg0, bWTF__StringView arg1) {
-    arg0->setPassword(cast<WTF::StringView>(&arg1));
+    arg0->setPassword(*Wrap<WTF::StringView, bWTF__StringView>::unwrap(&arg1));
 };
 void WTF__URL__setPath(WTF__URL* arg0, bWTF__StringView arg1) {
-    arg0->setPath(cast<WTF::StringView>(&arg1));
+    arg0->setPath(*Wrap<WTF::StringView, bWTF__StringView>::unwrap(&arg1));
 };
 void WTF__URL__setProtocol(WTF__URL* arg0, bWTF__StringView arg1) {
-    arg0->setProtocol(cast<WTF::StringView>(&arg1));
+    arg0->setProtocol(*Wrap<WTF::StringView, bWTF__StringView>::unwrap(&arg1));
 };
 void WTF__URL__setQuery(WTF__URL* arg0, bWTF__StringView arg1) {
-    arg0->setQuery(cast<WTF::StringView>(&arg1));
+    arg0->setQuery(*Wrap<WTF::StringView, bWTF__StringView>::unwrap(&arg1));
 };
 void WTF__URL__setUser(WTF__URL* arg0, bWTF__StringView arg1) {
-    arg0->setUser(cast<WTF::StringView>(&arg1));
+    arg0->setUser(*Wrap<WTF::StringView, bWTF__StringView>::unwrap(&arg1));
 };
 
 }

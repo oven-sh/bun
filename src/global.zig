@@ -9,16 +9,16 @@ pub const FeatureFlags = @import("feature_flags.zig");
 pub const Output = struct {
     threadlocal var source: Source = undefined;
     pub const Source = struct {
-        const StreamType = {
+        pub const StreamType: type = brk: {
             if (isWasm) {
-                return std.io.FixedBufferStream([]u8);
+                break :brk std.io.FixedBufferStream([]u8);
             } else {
-                return std.fs.File;
+                break :brk std.fs.File;
                 // var stdout = std.io.getStdOut();
                 // return @TypeOf(std.io.bufferedWriter(stdout.writer()));
             }
         };
-        const BufferedStream = std.io.BufferedWriter(4096, @typeInfo(@TypeOf(Source.StreamType.writer)).Fn.return_type.?);
+        pub const BufferedStream: type = std.io.BufferedWriter(4096, @typeInfo(std.meta.declarationInfo(StreamType, "writer").data.Fn.fn_type).Fn.return_type.?);
 
         buffered_stream: BufferedStream,
         buffered_error_stream: BufferedStream,
@@ -56,11 +56,13 @@ pub const Output = struct {
         enable_buffering = false;
     }
 
-    pub fn errorWriter() @typeInfo(@TypeOf(Source.StreamType.writer)).Fn.return_type.? {
+    pub const WriterType: type = @typeInfo(std.meta.declarationInfo(Source.StreamType, "writer").data.Fn.fn_type).Fn.return_type.?;
+
+    pub fn errorWriter() WriterType {
         return source.error_stream.writer();
     }
 
-    pub fn writer() @typeInfo(@TypeOf(Source.StreamType.writer)).Fn.return_type.? {
+    pub fn writer() WriterType {
         return source.stream.writer();
     }
 

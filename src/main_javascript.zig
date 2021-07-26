@@ -19,7 +19,7 @@ const clap = @import("clap");
 const bundler = @import("bundler.zig");
 const fs = @import("fs.zig");
 const NodeModuleBundle = @import("./node_module_bundle.zig").NodeModuleBundle;
-const js_bindings = @import("javascript/jsc/bindings/bindings.zig");
+const js = @import("javascript/jsc/bindings/bindings.zig");
 const allocators = @import("allocators.zig");
 pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace) noreturn {
     if (MainPanicHandler.Singleton) |singleton| {
@@ -28,6 +28,9 @@ pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace) nore
         panicky.default_panic(msg, error_return_trace);
     }
 }
+
+pub const JSGlobalObject = struct {};
+
 const constStrToU8 = allocators.constStrToU8;
 pub fn main() anyerror!void {
     // The memory allocator makes a massive difference.
@@ -359,6 +362,25 @@ pub const Cli = struct {
         Output.printError("\nJSON printing took: {d}\n", .{std.time.nanoTimestamp() - print_start});
     }
     pub fn startTransform(allocator: *std.mem.Allocator, args: Api.TransformOptions, log: *logger.Log) anyerror!void {}
+    const StringS = struct {
+        pub const src = "console.log('hi'); \"HELLO\";";
+    };
+    pub fn demo(allocator: *std.mem.Allocator) !void {
+        var console = try js.ZigConsoleClient.init(allocator);
+
+        var global: *js.JSGlobalObject = js.ZigGlobalObject.create(null, console);
+        var exception: ?*js.Exception = null;
+        const source_string = js.String.createWithoutCopying(StringS.src);
+        const slice = js.StringView.fromSlice("/Users/jarredsumner/Desktop/hi.js");
+        var url = std.mem.zeroes(js.URL);
+        js.URL.fromFileSystemPath(&url, slice);
+        // const origin = js.SourceOrigin.fromURL(&url);
+        var source_code = std.mem.zeroes(js.SourceCode);
+        js.SourceCode.fromString(&source_code, &source_string, null, null, js.SourceType.Module);
+        var result = js.JSModuleLoader.evaluate(global, &source_code, js.JSValue.jsUndefined(), &exception);
+        if (exception) |except| {}
+    }
+
     pub fn start(allocator: *std.mem.Allocator, stdout: anytype, stderr: anytype) anyerror!void {
         const start_time = std.time.nanoTimestamp();
         var log = logger.Log.init(allocator);
@@ -379,7 +401,6 @@ pub const Cli = struct {
         // );
         // var exception: js.JSValueRef = null;
         // var result = try js.Module.loadFromResolveResult(vm, vm.global.ctx, resolved_entry_point, &exception);
-js_bindings.ZigConsoleClient
-        js_bindings.ZigGlobalObject.create(vm: ?*VM, console: *ZigConsoleClient)
+        try demo(allocator);
     }
 };

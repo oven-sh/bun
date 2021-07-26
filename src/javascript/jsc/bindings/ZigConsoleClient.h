@@ -18,8 +18,11 @@ namespace Zig {
 class ConsoleClient final : public JSC::ConsoleClient {
     WTF_MAKE_FAST_ALLOCATED;
 public:
-    explicit ConsoleClient(InspectorConsoleAgent*);
     ~ConsoleClient() final { }
+    ConsoleClient(void* client) : JSC::ConsoleClient() {
+        m_client = client;
+    }
+    
 
     static bool logToSystemConsole();
     static void setLogToSystemConsole(bool);
@@ -27,20 +30,22 @@ public:
     void setDebuggerAgent(InspectorDebuggerAgent* agent) { m_debuggerAgent = agent; }
     void setPersistentScriptProfilerAgent(InspectorScriptProfilerAgent* agent) { m_scriptProfilerAgent = agent; }
 
+    void* m_client;
 private:
-    void messageWithTypeAndLevel(MessageType, MessageLevel, JSC::JSGlobalObject*, Ref<Inspector::ScriptArguments>&&) final;
-    void count(JSC::JSGlobalObject*, const String& label) final;
-    void countReset(JSC::JSGlobalObject*, const String& label) final;
-    void profile(JSC::JSGlobalObject*, const String& title) final;
-    void profileEnd(JSC::JSGlobalObject*, const String& title) final;
-    void takeHeapSnapshot(JSC::JSGlobalObject*, const String& title) final;
-    void time(JSC::JSGlobalObject*, const String& label) final;
-    void timeLog(JSC::JSGlobalObject*, const String& label, Ref<Inspector::ScriptArguments>&&) final;
-    void timeEnd(JSC::JSGlobalObject*, const String& label) final;
-    void timeStamp(JSC::JSGlobalObject*, Ref<Inspector::ScriptArguments>&&) final;
-    void record(JSC::JSGlobalObject*, Ref<Inspector::ScriptArguments>&&) final;
-    void recordEnd(JSC::JSGlobalObject*, Ref<Inspector::ScriptArguments>&&) final;
-    void screenshot(JSC::JSGlobalObject*, Ref<Inspector::ScriptArguments>&&) final;
+
+    void messageWithTypeAndLevel(MessageType, MessageLevel, JSC::JSGlobalObject*, Ref<Inspector::ScriptArguments>&&);
+    void count(JSC::JSGlobalObject*, const String& label);
+    void countReset(JSC::JSGlobalObject*, const String& label);
+    void profile(JSC::JSGlobalObject*, const String& title);
+    void profileEnd(JSC::JSGlobalObject*, const String& title);
+    void takeHeapSnapshot(JSC::JSGlobalObject*, const String& title);
+    void time(JSC::JSGlobalObject*, const String& label);
+    void timeLog(JSC::JSGlobalObject*, const String& label, Ref<Inspector::ScriptArguments>&&);
+    void timeEnd(JSC::JSGlobalObject*, const String& label);
+    void timeStamp(JSC::JSGlobalObject*, Ref<Inspector::ScriptArguments>&&);
+    void record(JSC::JSGlobalObject*, Ref<Inspector::ScriptArguments>&&);
+    void recordEnd(JSC::JSGlobalObject*, Ref<Inspector::ScriptArguments>&&);
+    void screenshot(JSC::JSGlobalObject*, Ref<Inspector::ScriptArguments>&&);
 
     void warnUnimplemented(const String& method);
     void internalAddMessage(MessageType, MessageLevel, JSC::JSGlobalObject*, Ref<Inspector::ScriptArguments>&&);

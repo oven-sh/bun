@@ -6,6 +6,7 @@
 #include <JavaScriptCore/VM.h>
 
 
+
 template<class CppType, typename ZigType>
 class Wrap  {
 public:
@@ -17,16 +18,20 @@ public:
         cpp = static_cast<CppType*>(static_cast<void*>(&zig));
     };
 
+     Wrap(ZigType* zig){
+        cpp = static_cast<CppType*>(static_cast<void*>(&zig));
+    };
+
+
     Wrap(CppType _cpp){
-        char* buffer = alignedBuffer();
-        memcpy(buffer, std::move(reinterpret_cast<char*>(reinterpret_cast<void*>(&_cpp))), sizeof(CppType));
-        cpp = reinterpret_cast<CppType*>(buffer);
+        auto buffer = alignedBuffer();
+        cpp = new (buffer) CppType(_cpp);
     };
 
 
     ~Wrap(){};
 
-    char* alignedBuffer() {
+    unsigned char* alignedBuffer() {
         return result.bytes + alignof(CppType) - reinterpret_cast<intptr_t>(result.bytes) % alignof(CppType);
     }
 
@@ -37,9 +42,17 @@ public:
         return *static_cast<ZigType*>(static_cast<void*>(&obj));
     }
 
-    static ZigType wrap(CppType* obj) {
-        return *static_cast<ZigType*>(static_cast<void*>(obj));
+    static CppType unwrap(ZigType obj) {
+        return *static_cast<CppType*>(static_cast<void*>(&obj));
     }
+
+    static CppType* unwrap(ZigType* obj) {
+        return static_cast<CppType*>(static_cast<void*>(obj));
+    }
+
+ 
+
+   
 };
 
 

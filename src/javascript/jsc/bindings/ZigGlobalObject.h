@@ -13,7 +13,11 @@ namespace JSC {
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSTypeInfo.h>
 
+#include "ZigConsoleClient.h"
+
+
 namespace Zig {
+
 
 
 class GlobalObject final : public JSC::JSGlobalObject {
@@ -28,7 +32,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess mode>
     static JSC::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
-        return vm.apiGlobalObjectSpace<mode>();
+        return vm.globalObjectSpace<mode>();
     }
 
     static GlobalObject* create(JSC::VM& vm, JSC::Structure* structure)
@@ -53,6 +57,8 @@ public:
     static JSC::JSObject* moduleLoaderCreateImportMetaProperties(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue, JSC::JSModuleRecord*, JSC::JSValue);
     static JSC::JSValue moduleLoaderEvaluate(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue, JSC::JSValue, JSC::JSValue, JSC::JSValue, JSC::JSValue);
     static void promiseRejectionTracker(JSGlobalObject*, JSC::JSPromise*, JSC::JSPromiseRejectionOperation);
+
+
 private:
     
     GlobalObject(JSC::VM& vm, JSC::Structure* structure)

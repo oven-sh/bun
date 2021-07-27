@@ -68,7 +68,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
         fd: StoredFileDescriptorType,
         ctx: ContextType,
         allocator: *std.mem.Allocator,
-        watchloop_handle: ?u64 = null,
+        watchloop_handle: ?std.Thread.Id = null,
 
         pub fn getHash(filepath: string) u32 {
             return @truncate(u32, std.hash.Wyhash.hash(0, filepath));
@@ -103,13 +103,12 @@ pub fn NewWatcher(comptime ContextType: type) type {
         pub fn start(this: *Watcher) !void {
             _ = try this.getQueue();
             std.debug.assert(this.watchloop_handle == null);
-
-            _ = try std.Thread.spawn(Watcher.watchLoop, this);
+            _ = try std.Thread.spawn(.{}, Watcher.watchLoop, .{this});
         }
 
         // This must only be called from the watcher thread
         pub fn watchLoop(this: *Watcher) !void {
-            this.watchloop_handle = std.Thread.getCurrentThreadId();
+            this.watchloop_handle = std.Thread.getCurrentId();
             var stdout = std.io.getStdOut();
             var stderr = std.io.getStdErr();
             var output_source = Output.Source.init(stdout, stderr);

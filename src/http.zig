@@ -655,7 +655,7 @@ pub const RequestContext = struct {
         pub var javascript_disabled = false;
         var thread: std.Thread = undefined;
         pub fn spawnThread(handler: HandlerThread) !void {
-            _ = try std.Thread.spawn(spawn, handler);
+            _ = try std.Thread.spawn(.{}, spawn, .{handler});
         }
 
         pub fn spawn(handler: HandlerThread) void {
@@ -1138,7 +1138,7 @@ pub const RequestContext = struct {
     pub fn handleWebsocket(ctx: *RequestContext) anyerror!void {
         ctx.controlled = true;
         var handler = try WebsocketHandler.addWebsocket(ctx);
-        _ = try std.Thread.spawn(WebsocketHandler.handle, handler);
+        _ = try std.Thread.spawn(.{}, WebsocketHandler.handle, .{handler});
     }
 
     pub fn auto500(ctx: *RequestContext) void {

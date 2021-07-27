@@ -845,11 +845,9 @@ pub const FileSystem = struct {
         // doNotCacheEntries bool
     };
 
-    pub const Implementation = {
-        switch (build_target) {
-            .wasi, .native => return RealFS,
-            .wasm => return WasmFS,
-        }
+    pub const Implementation = switch (build_target) {
+        .wasi, .native => RealFS,
+        .wasm => WasmFS,
     };
 };
 

@@ -45,7 +45,7 @@ pub fn build(b: *std.build.Builder) void {
     var exe: *std.build.LibExeObjStep = undefined;
     var output_dir_buf = std.mem.zeroes([4096]u8);
     var bin_label = if (mode == std.builtin.Mode.Debug) "/debug/" else "/";
-    const output_dir = std.fmt.bufPrint(&output_dir_buf, "build{s}{s}-{s}", .{ bin_label, @tagName(target.getOs().tag), @tagName(target.getCpuArch()) }) catch unreachable;
+    const output_dir = b.pathFromRoot(std.fmt.bufPrint(&output_dir_buf, "build{s}{s}-{s}", .{ bin_label, @tagName(target.getOs().tag), @tagName(target.getCpuArch()) }) catch unreachable);
 
     if (target.getOsTag() == .wasi) {
         exe.enable_wasmtime = true;
@@ -233,6 +233,7 @@ pub fn build(b: *std.build.Builder) void {
 
     javascript.strip = false;
     javascript.packages = std.ArrayList(std.build.Pkg).fromOwnedSlice(b.allocator, b.allocator.dupe(std.build.Pkg, exe.packages.items) catch unreachable);
+
     javascript.setOutputDir(output_dir);
     javascript.setBuildMode(mode);
 

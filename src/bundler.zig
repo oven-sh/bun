@@ -327,14 +327,14 @@ pub fn NewBundler(cache_files: bool) type {
             // When there are no more modules to process, we generate the metadata
             // To find the metadata, you look at the byte offset: initial_header[magic_bytes.len..initial_header.len - 1]
             // Then, you add that number to initial_header.len
-            const initial_header = {
+            const initial_header = brk: {
                 var buf = std.mem.zeroes([magic_bytes.len + 5]u8);
                 std.mem.copy(u8, &buf, magic_bytes);
                 var remainder = buf[magic_bytes.len..];
                 // Write an invalid byte offset to be updated after the file ends
                 std.mem.writeIntNative(u32, remainder[0 .. remainder.len - 1], 0);
                 buf[buf.len - 1] = '\n';
-                return buf;
+                break :brk buf;
             };
             const code_start_byte_offset: u32 = initial_header.len;
 

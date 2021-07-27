@@ -240,7 +240,7 @@ pub const TypeScriptAccessibilityModifier = std.ComptimeStringMap(u1, .{
 
 pub const TokenEnumType = std.EnumArray(T, []u8);
 
-pub const tokenToString = {
+pub const tokenToString = brk: {
     var TEndOfFile = "end of file".*;
     var TSyntaxError = "syntax error".*;
     var THashbang = "hashbang comment".*;
@@ -489,7 +489,7 @@ pub const tokenToString = {
     tokenEnums.set(T.t_while, &TWhile);
     tokenEnums.set(T.t_with, &TWith);
 
-    return tokenEnums;
+    break :brk tokenEnums;
 };
 
 pub const TypescriptStmtKeyword = enum {

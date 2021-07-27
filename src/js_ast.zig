@@ -20,13 +20,14 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
     }
 
     const UnionValueType = [max_size]u8;
+    const MaxAlign = max_align;
 
     return struct {
         const Allocator = std.mem.Allocator;
         const Self = @This();
 
         const Block = struct {
-            items: [count]UnionValueType align(max_align) = undefined,
+            items: [count]UnionValueType align(MaxAlign) = undefined,
             used: usize = 0,
             allocator: *std.mem.Allocator,
 
@@ -775,7 +776,7 @@ pub const Symbol = struct {
     }
 };
 
-pub const OptionalChain = packed enum(u2) {
+pub const OptionalChain = enum(u2) {
 
 // "a?.b"
 start,
@@ -3356,7 +3357,7 @@ pub const Op = struct {
         }
     };
 
-    pub const Level = packed enum(u6) {
+    pub const Level = enum(u6) {
         lowest,
         comma,
         spread,
@@ -3422,7 +3423,7 @@ pub const Op = struct {
     }
 
     pub const TableType: std.EnumArray(Op.Code, Op) = undefined;
-    pub const Table = {
+    pub const Table = brk: {
         var table = std.EnumArray(Op.Code, Op).initUndefined();
 
         // Prefix
@@ -3490,7 +3491,7 @@ pub const Op = struct {
         table.set(Op.Code.bin_logical_or_assign, Op.init(.{ "||=", Level.assign, false }));
         table.set(Op.Code.bin_logical_and_assign, Op.init(.{ "&&=", Level.assign, false }));
 
-        return table;
+        break :brk table;
     };
 };
 
@@ -3696,7 +3697,7 @@ pub const NamedExport = struct {
     alias_loc: logger.Loc,
 };
 
-pub const StrictModeKind = packed enum(u7) {
+pub const StrictModeKind = enum(u7) {
     sloppy_mode,
     explicit_strict_mode,
     implicit_strict_mode_import,

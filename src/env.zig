@@ -1,13 +1,13 @@
 const std = @import("std");
 
 pub const BuildTarget = enum { native, wasm, wasi };
-pub const build_target: BuildTarget = {
+pub const build_target: BuildTarget = brk: {
     if (std.Target.current.isWasm() and std.Target.current.getOsTag() == .wasi) {
-        return BuildTarget.wasi;
+        break :brk BuildTarget.wasi;
     } else if (std.Target.current.isWasm()) {
-        return BuildTarget.wasm;
+        break :brk BuildTarget.wasm;
     } else {
-        return BuildTarget.native;
+        break :brk BuildTarget.native;
     }
 };
 

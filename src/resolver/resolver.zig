@@ -270,8 +270,8 @@ pub const TSConfigExtender = struct {
     file_dir: string,
     r: *ThisResolver,
 
-    pub fn extends(ctx: *TSConfigExtender, extends: String, range: logger.Range) ?*TSConfigJSON {
-        Global.notimpl();
+    pub fn extends(ctx: *TSConfigExtender, ext: String, range: logger.Range) ?*TSConfigJSON {
+        unreachable;
         // if (isPackagePath(extends)) {
         //     // // If this is a package path, try to resolve it to a "node_modules"
         //     // // folder. This doesn't use the normal node module resolution algorithm

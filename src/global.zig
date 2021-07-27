@@ -137,7 +137,7 @@ pub const Output = struct {
     fn _pretty(comptime fmt: string, args: anytype, comptime printer: anytype, comptime is_enabled: bool) void {
         comptime var new_fmt: [fmt.len * 4]u8 = undefined;
         comptime var new_fmt_i: usize = 0;
-        comptime const ED = "\x1b[";
+        const ED = comptime "\x1b[";
 
         @setEvalBranchQuota(9999);
         comptime var i: usize = 0;

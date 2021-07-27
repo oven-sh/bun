@@ -300,7 +300,7 @@ pub const Platform = enum {
     }
 
     const MAIN_FIELD_NAMES = [_]string{ "browser", "module", "main" };
-    pub const DefaultMainFields: std.EnumArray(Platform, []const string) = {
+    pub const DefaultMainFields: std.EnumArray(Platform, []const string) = brk: {
         var array = std.EnumArray(Platform, []const string).initUndefined();
 
         // Note that this means if a package specifies "module" and "main", the ES6
@@ -338,7 +338,7 @@ pub const Platform = enum {
         // fields is empty by default. You must explicitly configure it yourself.
         array.set(Platform.neutral, &([_]string{}));
 
-        return array;
+        break :brk array;
     };
 };
 

@@ -11,17 +11,17 @@ pub fn ComptimeClap(
     comptime Id: type,
     comptime params: []const clap.Param(Id),
 ) type {
-    var flags: usize = 0;
-    var single_options: usize = 0;
-    var multi_options: usize = 0;
-    var converted_params: []const clap.Param(usize) = &[_]clap.Param(usize){};
+    var _flags: usize = 0;
+    var _single_options: usize = 0;
+    var _multi_options: usize = 0;
+    var _converted_params: []const clap.Param(usize) = &[_]clap.Param(usize){};
     for (params) |param| {
         var index: usize = 0;
         if (param.names.long != null or param.names.short != null) {
             const ptr = switch (param.takes_value) {
-                .none => &flags,
-                .one => &single_options,
-                .many => &multi_options,
+                .none => &_flags,
+                .one => &_single_options,
+                .many => &_multi_options,
             };
             index = ptr.*;
             ptr.* += 1;
@@ -32,8 +32,12 @@ pub fn ComptimeClap(
             .names = param.names,
             .takes_value = param.takes_value,
         };
-        converted_params = converted_params ++ [_]clap.Param(usize){converted};
+        _converted_params = _converted_params ++ [_]clap.Param(usize){converted};
     }
+    const flags = _flags;
+    const single_options = _single_options;
+    const multi_options = _multi_options;
+    const converted_params = _converted_params;
 
     return struct {
         single_options: [single_options]?[]const u8,

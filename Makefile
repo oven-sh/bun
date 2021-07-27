@@ -57,9 +57,11 @@ sizegen:
 	clang++ src/javascript/jsc/headergen/sizegen.cpp -o /tmp/sizegen $(CLANG_FLAGS)
 	/tmp/sizegen > src/javascript/jsc/bindings/sizes.zig
 
-		
-speedy-prod-native-macos: 
-	cd src/deps; clang -c picohttpparser.c; cd ../../
+
+picohttp:
+	 clang -O3 -g -c src/deps/picohttpparser.c -Isrc/deps -o src/deps/picohttpparser.o; cd ../../	
+
+speedy-prod-native-macos: picohttp
 	zig build -Drelease-fast -Dtarget=x86_64-macos-gnu
 
 speedy-prod-native-macos-lib: 

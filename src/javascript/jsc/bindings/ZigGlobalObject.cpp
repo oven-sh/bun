@@ -1,4 +1,3 @@
-
 #include "ZigGlobalObject.h"
 #include "helpers.h"
 
@@ -28,6 +27,12 @@
 #include "ZigConsoleClient.h"
 
 #include <JavaScriptCore/JSLock.h>
+#include <wtf/StdLibExtras.h>
+
+#include <iostream>
+#include <cstdlib>
+#include <exception>
+
 
 using JSGlobalObject = JSC::JSGlobalObject;
 using Exception = JSC::Exception;
@@ -41,16 +46,18 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 
 
 extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(JSC__VM* arg0, void* console_client) {
-    auto client = makeUnique<Zig::ConsoleClient>(console_client);
+
 
     // There are assertions that the apiLock is set while the JSGlobalObject is initialized.
     if (arg0 != nullptr) {
-        Zig::GlobalObject* globalObject = Zig::GlobalObject::create(*arg0, Zig::GlobalObject::createStructure(*arg0, JSC::jsNull()));
-        JSC::JSLockHolder holder(globalObject);
-        globalObject->setConsoleClient(makeWeakPtr(*client));
-        
+        JSC::VM& vm = *arg0;
+        JSC::JSLockHolder holder(vm);
+
+        auto globalObject = Zig::GlobalObject::create(vm, Zig::GlobalObject::createStructure(vm, JSC::jsNull()));
         return static_cast<JSC__JSGlobalObject*>(globalObject);
     }
+
+    std::set_terminate([](){ Zig__GlobalObject__onCrash(); });
 
     JSC::initialize();
     JSC::VM& vm = JSC::VM::create(JSC::LargeHeap).leakRef();
@@ -61,9 +68,10 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(JSC__VM* arg0, void* c
     #endif
     JSC::JSLockHolder locker(vm);
     auto globalObject = Zig::GlobalObject::create(vm, Zig::GlobalObject::createStructure(vm, JSC::jsNull()));
-    globalObject->setConsoleClient(makeWeakPtr(*client));
+    globalObject->setConsole(console_client);
+    
 
-
+    
     return globalObject;
 }
 
@@ -99,6 +107,13 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* 
     Zig__GlobalObject__promiseRejectionTracker(obj, prom, reject == JSC::JSPromiseRejectionOperation::Reject ? 0 : 1);
 }
 
+static Zig::ConsoleClient* m_console;
+
+void GlobalObject::setConsole(void* console) {
+    m_console = new Zig::ConsoleClient(console);
+    this->setConsoleClient(makeWeakPtr(m_console));
+}
+
 JSC::Identifier GlobalObject::moduleLoaderResolve(
     JSGlobalObject* globalObject,
     JSModuleLoader* loader,
@@ -114,8 +129,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(
         nullptr
     );
 
-   Wrap<JSC::Identifier, bJSC__Identifier> wrapped = Wrap<JSC::Identifier, bJSC__Identifier>(res);
-   return *wrapped.cpp;
+    return toIdentifier(res, globalObject);
 }
 
 JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* globalObject, JSModuleLoader* loader, JSString* specifierValue, JSValue referrer, const SourceOrigin& sourceOrigin) {

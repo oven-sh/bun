@@ -23,9 +23,8 @@ const ENABLE_REWRITE_RETURN = false;
 pub fn cTypeLabel(comptime Type: type) ?[]const u8 {
     return switch (comptime Type) {
         *StaticExport.c_char => "char*",
-        *const StaticExport.c_char => "const char*",
+        [*c]u8, *const StaticExport.c_char => "const char*",
         StaticExport.c_char => "char",
-
         *void => "void",
         bool => "bool",
         usize => "size_t",
@@ -56,7 +55,7 @@ pub fn cTypeLabel(comptime Type: type) ?[]const u8 {
         [*]const bool => "const bool*",
         [*]const usize => "const size_t*",
         [*]const isize => "const int*",
-        [*]const u8 => "const unsigned char*",
+        [*c]const u8, [*]const u8 => "const unsigned char*",
         [*]const u16 => "const uint16_t*",
         [*]const u32 => "const uint32_t*",
         [*]const u64 => "const uint64_t*",
@@ -576,6 +575,8 @@ pub fn HeaderGen(comptime import: type, comptime fname: []const u8) type {
                 \\#define CPP_DECL AUTO_EXTERN_C
                 \\#define CPP_SIZE AUTO_EXTERN_C
                 \\
+                \\
+                \\typedef struct ZigString { const unsigned char* ptr; size_t len; } ZigString;
                 \\
             ) catch {};
 

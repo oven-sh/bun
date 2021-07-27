@@ -1,6 +1,12 @@
 usingnamespace @import("./bindings.zig");
 usingnamespace @import("./shared.zig");
 
+const Handler = struct {
+    pub export fn global_signal_handler_fn(sig: i32, info: *const std.os.siginfo_t, ctx_ptr: ?*const c_void) callconv(.C) void {
+        Global.panic("C++ Crash!!", .{});
+    }
+};
+
 pub const ZigGlobalObject = extern struct {
     pub const shim = Shimmer("Zig", "GlobalObject", @This());
     bytes: shim.Bytes,
@@ -8,9 +14,21 @@ pub const ZigGlobalObject = extern struct {
     pub const name = "Zig::GlobalObject";
     pub const include = "\"ZigGlobalObject.h\"";
     pub const namespace = shim.namespace;
-    pub const Interface: type = NewGlobalObject(std.meta.globalOption("JSGlobalObject", type) orelse struct {});
+    pub const Interface: type = NewGlobalObject(std.meta.globalOption("JavaScript", type) orelse struct {});
+
+    pub var sigaction: std.os.Sigaction = undefined;
+    pub var sigaction_installed = false;
 
     pub fn create(vm: ?*VM, console: *c_void) *JSGlobalObject {
+        if (!sigaction_installed) {
+            sigaction_installed = true;
+
+            sigaction = std.mem.zeroes(std.os.Sigaction);
+            sigaction.handler = .{ .sigaction = Handler.global_signal_handler_fn };
+
+            std.os.sigaction(std.os.SIGABRT, &sigaction, null);
+        }
+
         return shim.cppFn("create", .{ vm, console });
     }
 
@@ -21,7 +39,7 @@ pub const ZigGlobalObject = extern struct {
 
         return @call(.{ .modifier = .always_inline }, Interface.import, .{ global, loader, specifier, referrer, origin });
     }
-    pub fn resolve(global: *JSGlobalObject, loader: *JSModuleLoader, specifier: JSValue, value: JSValue, origin: *const SourceOrigin) callconv(.C) Identifier {
+    pub fn resolve(global: *JSGlobalObject, loader: *JSModuleLoader, specifier: JSValue, value: JSValue, origin: *const SourceOrigin) callconv(.C) ZigString {
         if (comptime is_bindgen) {
             unreachable;
         }
@@ -60,6 +78,13 @@ pub const ZigGlobalObject = extern struct {
         return @call(.{ .modifier = .always_inline }, Interface.createImportMetaProperties, .{ global, loader, obj, record, specifier });
     }
 
+    pub fn onCrash() callconv(.C) void {
+        if (comptime is_bindgen) {
+            unreachable;
+        }
+        return @call(.{ .modifier = .always_inline }, Interface.onCrash, .{});
+    }
+
     pub const Export = shim.exportFunctions(.{
         .@"import" = import,
         .@"resolve" = resolve,
@@ -68,6 +93,7 @@ pub const ZigGlobalObject = extern struct {
         .@"promiseRejectionTracker" = promiseRejectionTracker,
         .@"reportUncaughtException" = reportUncaughtException,
         .@"createImportMetaProperties" = createImportMetaProperties,
+        .@"onCrash" = onCrash,
     });
 
     pub const Extern = [_][]const u8{"create"};
@@ -80,6 +106,7 @@ pub const ZigGlobalObject = extern struct {
         @export(promiseRejectionTracker, .{ .name = Export[4].symbol_name });
         @export(reportUncaughtException, .{ .name = Export[5].symbol_name });
         @export(createImportMetaProperties, .{ .name = Export[6].symbol_name });
+        @export(onCrash, .{ .name = Export[7].symbol_name });
     }
 };
 
@@ -118,24 +145,28 @@ pub const ZigConsoleClient = struct {
         message_type: u32,
         message_level: u32,
         global: *JSGlobalObject,
-        args: *ScriptArguments,
+        vals: [*]JSValue,
+        len: usize,
     ) callconv(.C) void {
         var console = zigCast(ZigConsoleClient, console_);
         var i: usize = 0;
-        const len = args.argumentCount();
-        defer args.release();
         var writer = console.writer;
 
         if (len == 1) {
-            var str = args.getFirstArgumentAsString();
-            _ = writer.unbuffered_writer.write(str.slice()) catch 0;
+            var str = vals[0].toWTFString(global);
+            var slice = str.slice();
+            _ = writer.unbuffered_writer.write(slice) catch 0;
+            if (slice.len > 0 and slice[slice.len - 1] != '\n') {
+                _ = writer.unbuffered_writer.write("\n") catch 0;
+            }
             return;
         }
 
+        var values = vals[0..len];
         defer writer.flush() catch {};
 
         while (i < len) : (i += 1) {
-            var str = args.argumentAt(i).toWTFString(global);
+            var str = values[i].toWTFString(global);
             _ = writer.write(str.slice()) catch 0;
         }
     }

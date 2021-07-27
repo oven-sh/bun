@@ -5,6 +5,7 @@
 #include <JavaScriptCore/ConsoleMessage.h>
 #include <JavaScriptCore/ScriptArguments.h>
 #include <wtf/text/WTFString.h>
+#include <JavaScriptCore/JSString.h>
 
 using ScriptArguments = Inspector::ScriptArguments;
 using MessageType = JSC::MessageType;
@@ -14,31 +15,64 @@ using JSGlobalObject = JSC__JSGlobalObject;
 using String = WTF::String;
 
 extern "C" {
-JSC__JSValue Inspector__ScriptArguments__argumentAt(const Inspector__ScriptArguments* arg0, size_t i) {
+JSC__JSValue Inspector__ScriptArguments__argumentAt( Inspector__ScriptArguments* arg0, size_t i) {
 return JSC::JSValue::encode(arg0->argumentAt(i));
 }
-size_t Inspector__ScriptArguments__argumentCount(const Inspector__ScriptArguments* arg0) {
+size_t Inspector__ScriptArguments__argumentCount( Inspector__ScriptArguments* arg0) {
     return arg0->argumentCount();
 }
-bWTF__String Inspector__ScriptArguments__getFirstArgumentAsString(const Inspector__ScriptArguments* arg0) {
-    WTF::String str;
-    arg0->getFirstArgumentAsString(str);
-    Wrap<WTF::String, bWTF__String> wrap = Wrap<WTF::String, bWTF__String>(str);
+bWTF__String Inspector__ScriptArguments__getFirstArgumentAsString( Inspector__ScriptArguments* arg0) {
+    auto scope = DECLARE_CATCH_SCOPE(arg0->globalObject()->vm());
+    JSC::JSValue val0 = arg0->argumentAt(0);
+    auto type = val0.asCell()->type();
+    Wrap<WTF::String, bWTF__String> wrap;
+    wrap.cpp = new (wrap.alignedBuffer()) WTF::String(val0.getString(arg0->globalObject()) );
+    scope.clearException();
     return wrap.result;
 }
 
-bool Inspector__ScriptArguments__isEqual(const Inspector__ScriptArguments* arg0, const Inspector__ScriptArguments* arg1) {
+bool Inspector__ScriptArguments__isEqual( Inspector__ScriptArguments* arg0,  Inspector__ScriptArguments* arg1) {
     return arg0->isEqual(*arg1);
 }
 
 void Inspector__ScriptArguments__release(Inspector__ScriptArguments* arg0) {
+    auto count = arg0->argumentCount();
+    for (int i = 0; i < count; i++) {
+        JSC::gcUnprotect(arg0->argumentAt(i));    
+    }
     arg0->deref();
 }
 
 }
-
 void Zig::ConsoleClient::messageWithTypeAndLevel(MessageType type, MessageLevel level, JSC::JSGlobalObject* globalObject, Ref<ScriptArguments>&& arguments) {
-    Zig__ConsoleClient__messageWithTypeAndLevel(this->m_client, static_cast<uint32_t>(type), static_cast<uint32_t>(level), globalObject, arguments.ptr()); 
+    // JSC::JSLockHolder holder(arguments->globalObject()->vm()); 
+
+    auto args = arguments.ptr();
+    JSC__JSValue jsArgs[255];
+
+    auto count = std::min(args->argumentCount(), (size_t)255);
+    for (size_t i = 0; i < count; i++) {
+        auto val = args->argumentAt(i);
+        // JSC::gcProtect(val);
+        jsArgs[i] = JSC::JSValue::encode(val);
+        
+    }
+    
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    Zig__ConsoleClient__messageWithTypeAndLevel(
+        this->m_client,
+        static_cast<uint32_t>(type),
+        static_cast<uint32_t>(level),
+        globalObject,
+        jsArgs,
+        count
+    ); 
+    scope.clearException();
+
+    // for (size_t i = 0; i < count; i++) {
+    //     JSC::gcUnprotect(JSC::JSValue::decode(jsArgs[i]));
+    // }
+
 }
 void Zig::ConsoleClient::count(JSGlobalObject* globalObject, const String& label) 
 {

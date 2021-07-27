@@ -88,25 +88,45 @@ bool JSC__JSModuleLoader__checkSyntax(JSC__JSGlobalObject* arg0, const JSC__Sour
     return result;
 
 }
-JSC__JSValue JSC__JSModuleLoader__evaluate(JSC__JSGlobalObject* arg0, const JSC__SourceCode* arg1, JSC__JSValue JSValue2, JSC__Exception** arg3) {
-    WTF::NakedPtr<JSC::Exception> returnedException;
-    auto str2 = arg1->provider()->source();
-    auto val = JSC::evaluate(arg0, *arg1, JSC::JSValue::decode(JSValue2), returnedException);
-    auto str = val.toWTFString(arg0);
-    *arg3 = returnedException.get();
-    return JSC::JSValue::encode(val);
+JSC__JSValue JSC__JSModuleLoader__evaluate(JSC__JSGlobalObject* arg0, const unsigned char* arg1, size_t arg2, const unsigned char* arg3, size_t arg4, JSC__JSValue JSValue5, JSC__JSValue* arg6) {
+    WTF::String src = WTF::String(WTF::StringImpl::createWithoutCopying(arg1, arg2));
+    WTF::URL origin = WTF::URL::fileURLWithFileSystemPath(WTF::StringView(arg3, arg4));
+
+    JSC::VM& vm = arg0->vm();
+    JSC::JSLockHolder locker(vm);
+
+    JSC::SourceCode sourceCode = JSC::makeSource(src, JSC::SourceOrigin { origin }, origin.lastPathComponent().toStringWithoutCopying(), WTF::TextPosition(), JSC::SourceProviderSourceType::Module);
+    
+    auto val = JSC::loadAndEvaluateModule(arg0, sourceCode, JSC::JSValue());
+    vm.drainMicrotasks();
+
+    switch (val->status(vm)) {
+        case JSC::JSPromise::Status::Fulfilled: {
+            return JSC::JSValue::encode(val->result(vm));
+            break;   
+        }
+
+        case JSC::JSPromise::Status::Rejected: {
+            *arg6 = JSC::JSValue::encode(val->result(vm));
+            return JSC::JSValue::encode(JSC::jsUndefined());
+            break;
+        }
+    }
+  
+
+
 }
 JSC__JSInternalPromise* JSC__JSModuleLoader__importModule(JSC__JSGlobalObject* arg0, const JSC__Identifier* arg1) {
-    return JSC::importModule(arg0, reinterpret_cast<JSC::Identifier&>(arg1), JSC::JSValue{}, JSC::JSValue{});
+    return JSC::importModule(arg0, *arg1, JSC::JSValue{}, JSC::JSValue{});
 }
 JSC__JSValue JSC__JSModuleLoader__linkAndEvaluateModule(JSC__JSGlobalObject* arg0, const JSC__Identifier* arg1) {
-    return JSC::JSValue::encode(JSC::linkAndEvaluateModule(arg0, reinterpret_cast<const JSC::Identifier&>(arg1), JSC::JSValue{}));
+    return JSC::JSValue::encode(JSC::linkAndEvaluateModule(arg0, *arg1, JSC::JSValue{}));
 }
 JSC__JSInternalPromise* JSC__JSModuleLoader__loadAndEvaluateModule(JSC__JSGlobalObject* arg0, const WTF__String* arg1) {
-    return JSC::loadAndEvaluateModule(arg0, reinterpret_cast<const WTF__String&>(arg1), JSC::JSValue{}, JSC::JSValue{});
+    return JSC::loadAndEvaluateModule(arg0, *arg1, JSC::JSValue{}, JSC::JSValue{});
 }
 JSC__JSInternalPromise* JSC__JSModuleLoader__loadAndEvaluateModuleEntryPoint(JSC__JSGlobalObject* arg0, const JSC__SourceCode* arg1) {
-    return JSC::loadAndEvaluateModule(arg0, reinterpret_cast<const JSC__SourceCode&>(arg1), JSC::JSValue{});
+    return JSC::loadAndEvaluateModule(arg0, *arg1, JSC::JSValue{});
 }
 
 #pragma mark - JSC::JSModuleRecord
@@ -220,7 +240,8 @@ JSC__JSInternalPromise* JSC__JSInternalPromise__then(JSC__JSInternalPromise* arg
 
 bJSC__SourceOrigin JSC__SourceOrigin__fromURL(const WTF__URL* arg0) {
 
-    auto wrap = Wrap<JSC::SourceOrigin, bJSC__SourceOrigin>(JSC::SourceOrigin(*arg0));
+    Wrap<JSC::SourceOrigin, bJSC__SourceOrigin> wrap;
+    wrap.cpp = new (&wrap.result.bytes) JSC::SourceOrigin(WTF::URL(*arg0));
     return wrap.result;
 }
 
@@ -250,27 +271,11 @@ bJSC__SourceOrigin JSC__SourceOrigin__fromURL(const WTF__URL* arg0) {
 //         }
 // };
 
-class CustomStringProvider : public JSC::StringSourceProvider {
-    public: JS_EXPORT_PRIVATE CustomStringProvider(const WTF::String& source, const JSC::SourceOrigin& sourceOrigin, WTF::String&& sourceURL, const TextPosition& startPosition, JSC::SourceProviderSourceType sourceType)
-            : JSC::StringSourceProvider(source, sourceOrigin, WTFMove(sourceURL), startPosition, sourceType) {
 
-            }
-
-
-};
 
 void JSC__SourceCode__fromString(JSC__SourceCode* arg0, const WTF__String* arg1, const JSC__SourceOrigin* arg2, WTF__String* arg3, unsigned char SourceType4) {
-    arg1->impl()->ref();
 
-    auto source = CustomStringProvider(
-        *arg1,
-        JSC::SourceOrigin(WTF::URL()), 
-        arg3 == nullptr ? WTF::String() : *arg3,
-        WTF::TextPosition(), 
-        SourceType4 == 0 ? JSC::SourceProviderSourceType::Program : JSC::SourceProviderSourceType::Module
-    );
-    *arg0 = JSC::SourceCode(source,  1,0);
-    
+
 }
 
 
@@ -763,9 +768,11 @@ bWTF__String WTF__String__createFromExternalString(bWTF__ExternalStringImpl arg0
     return Wrap<WTF::String, bWTF__String>(WTF::String(external.cpp)).result;
 };
 
-void WTF__String__createWithoutCopyingFromPtr(WTF__String* str, unsigned char* arg0, size_t arg1) {
-    *str = WTF::String(arg0, arg1);
+void WTF__String__createWithoutCopyingFromPtr(WTF__String* str, const unsigned char* arg0, size_t arg1) {
+    auto new_str = new (reinterpret_cast<char*>(str)) WTF::String(arg0, arg1);
+    new_str->impl()->ref();
 }
+
 
 #pragma mark - WTF::URL
 

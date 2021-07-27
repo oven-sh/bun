@@ -4,7 +4,7 @@
 
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/VM.h>
-
+#include <JavaScriptCore/Identifier.h>
 
 
 template<class CppType, typename ZigType>
@@ -82,3 +82,20 @@ static const JSC::ArgList makeArgs(JSC__JSValue* v, size_t count) {
 
     return JSC::ArgList(args);
 }
+
+static const JSC::Identifier toIdentifier(ZigString str, JSC::JSGlobalObject* global) {
+    if (str.len == 0 || str.ptr == nullptr) {
+        return JSC::Identifier::EmptyIdentifier;
+    }
+
+    return JSC::Identifier::fromString(global->vm(), str.ptr, str.len);
+}
+
+static const WTF::String toString(ZigString str) {
+    if (str.len == 0 || str.ptr == nullptr) {
+        return WTF::String();
+    }
+
+    return WTF::String(WTF::StringImpl::createWithoutCopying(str.ptr, str.len));
+}
+

@@ -1,3 +1,4 @@
+usingnamespace @import("./headers-replacements.zig");
 pub usingnamespace @import("std").zig.c_builtins;
 pub const ptrdiff_t = c_long;
 pub const wchar_t = c_int;
@@ -36,292 +37,65 @@ pub const __mbstate_t = extern union {
 pub const __darwin_mbstate_t = __mbstate_t;
 pub const __darwin_ptrdiff_t = c_long;
 pub const __darwin_size_t = c_ulong;
-pub const struct___va_list_tag = extern struct {
-    gp_offset: c_uint,
-    fp_offset: c_uint,
-    overflow_arg_area: ?*c_void,
-    reg_save_area: ?*c_void,
-};
-pub const __builtin_va_list = [1]struct___va_list_tag;
-pub const __darwin_va_list = __builtin_va_list;
-pub const __darwin_wchar_t = c_int;
-pub const __darwin_rune_t = __darwin_wchar_t;
-pub const __darwin_wint_t = c_int;
-pub const __darwin_clock_t = c_ulong;
-pub const __darwin_socklen_t = __uint32_t;
-pub const __darwin_ssize_t = c_long;
-pub const __darwin_time_t = c_long;
-pub const __darwin_blkcnt_t = __int64_t;
-pub const __darwin_blksize_t = __int32_t;
-pub const __darwin_dev_t = __int32_t;
-pub const __darwin_fsblkcnt_t = c_uint;
-pub const __darwin_fsfilcnt_t = c_uint;
-pub const __darwin_gid_t = __uint32_t;
-pub const __darwin_id_t = __uint32_t;
-pub const __darwin_ino64_t = __uint64_t;
-pub const __darwin_ino_t = __darwin_ino64_t;
-pub const __darwin_mach_port_name_t = __darwin_natural_t;
-pub const __darwin_mach_port_t = __darwin_mach_port_name_t;
-pub const __darwin_mode_t = __uint16_t;
-pub const __darwin_off_t = __int64_t;
-pub const __darwin_pid_t = __int32_t;
-pub const __darwin_sigset_t = __uint32_t;
-pub const __darwin_suseconds_t = __int32_t;
-pub const __darwin_uid_t = __uint32_t;
-pub const __darwin_useconds_t = __uint32_t;
-pub const __darwin_uuid_t = [16]u8;
-pub const __darwin_uuid_string_t = [37]u8;
-pub const struct___darwin_pthread_handler_rec = extern struct {
-    __routine: ?fn (?*c_void) callconv(.C) void,
-    __arg: ?*c_void,
-    __next: [*c]struct___darwin_pthread_handler_rec,
-};
-pub const struct__opaque_pthread_attr_t = extern struct {
-    __sig: c_long,
-    __opaque: [56]u8,
-};
-pub const struct__opaque_pthread_cond_t = extern struct {
-    __sig: c_long,
-    __opaque: [40]u8,
-};
-pub const struct__opaque_pthread_condattr_t = extern struct {
-    __sig: c_long,
-    __opaque: [8]u8,
-};
-pub const struct__opaque_pthread_mutex_t = extern struct {
-    __sig: c_long,
-    __opaque: [56]u8,
-};
-pub const struct__opaque_pthread_mutexattr_t = extern struct {
-    __sig: c_long,
-    __opaque: [8]u8,
-};
-pub const struct__opaque_pthread_once_t = extern struct {
-    __sig: c_long,
-    __opaque: [8]u8,
-};
-pub const struct__opaque_pthread_rwlock_t = extern struct {
-    __sig: c_long,
-    __opaque: [192]u8,
-};
-pub const struct__opaque_pthread_rwlockattr_t = extern struct {
-    __sig: c_long,
-    __opaque: [16]u8,
-};
-pub const struct__opaque_pthread_t = extern struct {
-    __sig: c_long,
-    __cleanup_stack: [*c]struct___darwin_pthread_handler_rec,
-    __opaque: [8176]u8,
-};
-pub const __darwin_pthread_attr_t = struct__opaque_pthread_attr_t;
-pub const __darwin_pthread_cond_t = struct__opaque_pthread_cond_t;
-pub const __darwin_pthread_condattr_t = struct__opaque_pthread_condattr_t;
-pub const __darwin_pthread_key_t = c_ulong;
-pub const __darwin_pthread_mutex_t = struct__opaque_pthread_mutex_t;
-pub const __darwin_pthread_mutexattr_t = struct__opaque_pthread_mutexattr_t;
-pub const __darwin_pthread_once_t = struct__opaque_pthread_once_t;
-pub const __darwin_pthread_rwlock_t = struct__opaque_pthread_rwlock_t;
-pub const __darwin_pthread_rwlockattr_t = struct__opaque_pthread_rwlockattr_t;
-pub const __darwin_pthread_t = [*c]struct__opaque_pthread_t;
-pub const u_int8_t = u8;
-pub const u_int16_t = c_ushort;
-pub const u_int32_t = c_uint;
-pub const u_int64_t = c_ulonglong;
-pub const register_t = i64;
-pub const user_addr_t = u_int64_t;
-pub const user_size_t = u_int64_t;
-pub const user_ssize_t = i64;
-pub const user_long_t = i64;
-pub const user_ulong_t = u_int64_t;
-pub const user_time_t = i64;
-pub const user_off_t = i64;
-pub const syscall_arg_t = u_int64_t;
-pub const intmax_t = c_long;
-pub const uintmax_t = c_ulong;
-pub const struct_bJSC__JSModuleRecord = extern struct {
-    bytes: [216]u8,
-};
-pub const bJSC__JSModuleRecord = struct_bJSC__JSModuleRecord;
-pub const bJSC__JSModuleRecord_buf = [*c]u8;
-pub const struct_bJSC__ThrowScope = extern struct {
-    bytes: [8]u8,
-};
-pub const bJSC__ThrowScope = struct_bJSC__ThrowScope;
-pub const bJSC__ThrowScope_buf = [*c]u8;
-pub const struct_bJSC__PropertyName = extern struct {
-    bytes: [8]u8,
-};
-pub const bJSC__PropertyName = struct_bJSC__PropertyName;
-pub const bJSC__PropertyName_buf = [*c]u8;
-pub const struct_bJSC__CallFrame = extern struct {
-    bytes: [8]u8,
-};
-pub const bJSC__CallFrame = struct_bJSC__CallFrame;
-pub const bJSC__CallFrame_buf = [*c]u8;
-pub const struct_bJSC__CatchScope = extern struct {
-    bytes: [8]u8,
-};
-pub const bJSC__CatchScope = struct_bJSC__CatchScope;
-pub const bJSC__CatchScope_buf = [*c]u8;
-pub const struct_bWTF__String = extern struct {
-    bytes: [8]u8,
-};
-pub const bWTF__String = struct_bWTF__String;
-pub const bWTF__String_buf = [*c]u8;
-pub const struct_bWTF__StringView = extern struct {
-    bytes: [16]u8,
-};
-pub const bWTF__StringView = struct_bWTF__StringView;
-pub const bWTF__StringView_buf = [*c]u8;
-pub const struct_bJSC__JSModuleLoader = extern struct {
-    bytes: [16]u8,
-};
-pub const bJSC__JSModuleLoader = struct_bJSC__JSModuleLoader;
-pub const bJSC__JSModuleLoader_buf = [*c]u8;
-pub const struct_bJSC__Exception = extern struct {
-    bytes: [40]u8,
-};
-pub const bJSC__Exception = struct_bJSC__Exception;
-pub const bJSC__Exception_buf = [*c]u8;
-pub const struct_bJSC__VM = extern struct {
-    bytes: [48824]u8,
-};
-pub const bJSC__VM = struct_bJSC__VM;
-pub const bJSC__VM_buf = [*c]u8;
-pub const struct_bJSC__JSString = extern struct {
-    bytes: [16]u8,
-};
-pub const bJSC__JSString = struct_bJSC__JSString;
-pub const bJSC__JSString_buf = [*c]u8;
-pub const struct_bJSC__SourceOrigin = extern struct {
-    bytes: [48]u8,
-};
-pub const bJSC__SourceOrigin = struct_bJSC__SourceOrigin;
-pub const bJSC__SourceOrigin_buf = [*c]u8;
-pub const struct_bWTF__ExternalStringImpl = extern struct {
-    bytes: [32]u8,
-};
-pub const bWTF__ExternalStringImpl = struct_bWTF__ExternalStringImpl;
-pub const bWTF__ExternalStringImpl_buf = [*c]u8;
-pub const struct_bWTF__StringImpl = extern struct {
-    bytes: [24]u8,
-};
-pub const bWTF__StringImpl = struct_bWTF__StringImpl;
-pub const bWTF__StringImpl_buf = [*c]u8;
-pub const struct_bJSC__JSPromise = extern struct {
-    bytes: [32]u8,
-};
-pub const bJSC__JSPromise = struct_bJSC__JSPromise;
-pub const bJSC__JSPromise_buf = [*c]u8;
-pub const struct_bJSC__SourceCode = extern struct {
-    bytes: [24]u8,
-};
-pub const bJSC__SourceCode = struct_bJSC__SourceCode;
-pub const bJSC__SourceCode_buf = [*c]u8;
-pub const struct_bWTF__URL = extern struct {
-    bytes: [40]u8,
-};
-pub const bWTF__URL = struct_bWTF__URL;
-pub const bWTF__URL_buf = [*c]u8;
-pub const struct_bJSC__JSFunction = extern struct {
-    bytes: [32]u8,
-};
-pub const bJSC__JSFunction = struct_bJSC__JSFunction;
-pub const bJSC__JSFunction_buf = [*c]u8;
-pub const struct_bJSC__JSGlobalObject = extern struct {
-    bytes: [2400]u8,
-};
-pub const bJSC__JSGlobalObject = struct_bJSC__JSGlobalObject;
-pub const bJSC__JSGlobalObject_buf = [*c]u8;
-pub const struct_bJSC__JSCell = extern struct {
-    bytes: [8]u8,
-};
-pub const bJSC__JSCell = struct_bJSC__JSCell;
-pub const bJSC__JSCell_buf = [*c]u8;
-pub const struct_bJSC__JSLock = extern struct {
-    bytes: [40]u8,
-};
-pub const bJSC__JSLock = struct_bJSC__JSLock;
-pub const bJSC__JSLock_buf = [*c]u8;
-pub const struct_bInspector__ScriptArguments = extern struct {
-    bytes: [32]u8,
-};
-pub const bInspector__ScriptArguments = struct_bInspector__ScriptArguments;
-pub const bInspector__ScriptArguments_buf = [*c]u8;
-pub const struct_bJSC__JSInternalPromise = extern struct {
-    bytes: [32]u8,
-};
-pub const bJSC__JSInternalPromise = struct_bJSC__JSInternalPromise;
-pub const bJSC__JSInternalPromise_buf = [*c]u8;
-pub const struct_bJSC__JSObject = extern struct {
-    bytes: [16]u8,
-};
-pub const bJSC__JSObject = struct_bJSC__JSObject;
-pub const bJSC__JSObject_buf = [*c]u8;
-pub const struct_bJSC__Identifier = extern struct {
-    bytes: [8]u8,
-};
-pub const bJSC__Identifier = struct_bJSC__Identifier;
-pub const bJSC__Identifier_buf = [*c]u8;
-pub const struct_JSC__RegExpPrototype = opaque {};
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              
 pub const JSC__RegExpPrototype = struct_JSC__RegExpPrototype;
-pub const struct_JSC__GeneratorPrototype = opaque {};
+                                                     
 pub const JSC__GeneratorPrototype = struct_JSC__GeneratorPrototype;
-pub const struct_JSC__ArrayIteratorPrototype = opaque {};
+                                                         
 pub const JSC__ArrayIteratorPrototype = struct_JSC__ArrayIteratorPrototype;
-pub const struct_JSC__StringPrototype = opaque {};
+                                                  
 pub const JSC__StringPrototype = struct_JSC__StringPrototype;
 pub const WTF__StringView = bWTF__StringView;
-pub const struct_JSC__JSPromisePrototype = opaque {};
+                                                     
 pub const JSC__JSPromisePrototype = struct_JSC__JSPromisePrototype;
 pub const JSC__CatchScope = bJSC__CatchScope;
 pub const JSC__ThrowScope = bJSC__ThrowScope;
 pub const JSC__PropertyName = bJSC__PropertyName;
 pub const JSC__JSObject = bJSC__JSObject;
 pub const WTF__ExternalStringImpl = bWTF__ExternalStringImpl;
-pub const struct_JSC__AsyncIteratorPrototype = opaque {};
+                                                         
 pub const JSC__AsyncIteratorPrototype = struct_JSC__AsyncIteratorPrototype;
 pub const WTF__StringImpl = bWTF__StringImpl;
 pub const JSC__JSLock = bJSC__JSLock;
 pub const JSC__JSModuleLoader = bJSC__JSModuleLoader;
 pub const JSC__VM = bJSC__VM;
-pub const struct_JSC__AsyncGeneratorPrototype = opaque {};
+                                                          
 pub const JSC__AsyncGeneratorPrototype = struct_JSC__AsyncGeneratorPrototype;
-pub const struct_JSC__AsyncGeneratorFunctionPrototype = opaque {};
+                                                                  
 pub const JSC__AsyncGeneratorFunctionPrototype = struct_JSC__AsyncGeneratorFunctionPrototype;
 pub const JSC__JSGlobalObject = bJSC__JSGlobalObject;
 pub const JSC__JSFunction = bJSC__JSFunction;
-pub const struct_JSC__ArrayPrototype = opaque {};
+                                                 
 pub const JSC__ArrayPrototype = struct_JSC__ArrayPrototype;
-pub const struct_JSC__AsyncFunctionPrototype = opaque {};
+                                                         
 pub const JSC__AsyncFunctionPrototype = struct_JSC__AsyncFunctionPrototype;
 pub const JSC__Identifier = bJSC__Identifier;
 pub const JSC__JSPromise = bJSC__JSPromise;
-pub const struct_JSC__SetIteratorPrototype = opaque {};
+                                                       
 pub const JSC__SetIteratorPrototype = struct_JSC__SetIteratorPrototype;
 pub const JSC__SourceCode = bJSC__SourceCode;
 pub const JSC__JSCell = bJSC__JSCell;
-pub const struct_JSC__BigIntPrototype = opaque {};
+                                                  
 pub const JSC__BigIntPrototype = struct_JSC__BigIntPrototype;
-pub const struct_JSC__GeneratorFunctionPrototype = opaque {};
+                                                             
 pub const JSC__GeneratorFunctionPrototype = struct_JSC__GeneratorFunctionPrototype;
 pub const JSC__SourceOrigin = bJSC__SourceOrigin;
 pub const JSC__JSModuleRecord = bJSC__JSModuleRecord;
 pub const WTF__String = bWTF__String;
 pub const WTF__URL = bWTF__URL;
-pub const JSC__JSValue = i64;
-pub const struct_JSC__IteratorPrototype = opaque {};
+                             
+                                                    
 pub const JSC__IteratorPrototype = struct_JSC__IteratorPrototype;
 pub const JSC__JSInternalPromise = bJSC__JSInternalPromise;
-pub const struct_JSC__FunctionPrototype = opaque {};
+                                                    
 pub const JSC__FunctionPrototype = struct_JSC__FunctionPrototype;
 pub const Inspector__ScriptArguments = bInspector__ScriptArguments;
 pub const JSC__Exception = bJSC__Exception;
 pub const JSC__JSString = bJSC__JSString;
-pub const struct_JSC__ObjectPrototype = opaque {};
+                                                  
 pub const JSC__ObjectPrototype = struct_JSC__ObjectPrototype;
 pub const JSC__CallFrame = bJSC__CallFrame;
-pub const struct_JSC__MapIteratorPrototype = opaque {};
+                                                       
 pub const JSC__MapIteratorPrototype = struct_JSC__MapIteratorPrototype;
 pub extern fn JSC__JSObject__getArrayLength(arg0: [*c]JSC__JSObject) usize;
 pub extern fn JSC__JSObject__getAtIndex(arg0: [*c]JSC__JSObject, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]JSC__PropertyName, arg3: u32) JSC__JSValue;
@@ -335,14 +109,14 @@ pub extern fn JSC__JSString__eql(arg0: [*c]const JSC__JSString, arg1: [*c]JSC__J
 pub extern fn JSC__JSString__is8Bit(arg0: [*c]const JSC__JSString) bool;
 pub extern fn JSC__JSString__length(arg0: [*c]const JSC__JSString) usize;
 pub extern fn JSC__JSString__toObject(arg0: [*c]JSC__JSString, arg1: [*c]JSC__JSGlobalObject) [*c]JSC__JSObject;
-pub extern fn JSC__JSString__value(arg0: bWTF__String, arg1: [*c]JSC__JSString, arg2: [*c]JSC__JSGlobalObject) void;
-pub extern fn Inspector__ScriptArguments__argumentAt(arg0: [*c]const Inspector__ScriptArguments, arg1: usize) JSC__JSValue;
-pub extern fn Inspector__ScriptArguments__argumentCount(arg0: [*c]const Inspector__ScriptArguments) usize;
-pub extern fn Inspector__ScriptArguments__getFirstArgumentAsString(arg0: [*c]const Inspector__ScriptArguments) bWTF__String;
-pub extern fn Inspector__ScriptArguments__isEqual(arg0: [*c]const Inspector__ScriptArguments, arg1: [*c]const Inspector__ScriptArguments) bool;
+pub extern fn JSC__JSString__value(arg0: [*c]JSC__JSString, arg1: [*c]JSC__JSGlobalObject) bWTF__String;
+pub extern fn Inspector__ScriptArguments__argumentAt(arg0: [*c]Inspector__ScriptArguments, arg1: usize) JSC__JSValue;
+pub extern fn Inspector__ScriptArguments__argumentCount(arg0: [*c]Inspector__ScriptArguments) usize;
+pub extern fn Inspector__ScriptArguments__getFirstArgumentAsString(arg0: [*c]Inspector__ScriptArguments) bWTF__String;
+pub extern fn Inspector__ScriptArguments__isEqual(arg0: [*c]Inspector__ScriptArguments, arg1: [*c]Inspector__ScriptArguments) bool;
 pub extern fn Inspector__ScriptArguments__release(arg0: [*c]Inspector__ScriptArguments) void;
 pub extern fn JSC__JSModuleLoader__checkSyntax(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]const JSC__SourceCode, arg2: bool) bool;
-pub extern fn JSC__JSModuleLoader__evaluate(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]const JSC__SourceCode, JSValue2: JSC__JSValue, arg3: [*c][*c]JSC__Exception) JSC__JSValue;
+pub extern fn JSC__JSModuleLoader__evaluate(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]const u8, arg2: usize, arg3: [*c]const u8, arg4: usize, JSValue5: JSC__JSValue, arg6: [*c]JSC__JSValue) JSC__JSValue;
 pub extern fn JSC__JSModuleLoader__importModule(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]const JSC__Identifier) [*c]JSC__JSInternalPromise;
 pub extern fn JSC__JSModuleLoader__linkAndEvaluateModule(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]const JSC__Identifier) JSC__JSValue;
 pub extern fn JSC__JSModuleLoader__loadAndEvaluateModule(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]const WTF__String) [*c]JSC__JSInternalPromise;
@@ -442,7 +216,7 @@ pub extern fn WTF__URL__user(arg0: [*c]WTF__URL) bWTF__String;
 pub extern fn WTF__String__characters16(arg0: [*c]WTF__String) [*c]const u16;
 pub extern fn WTF__String__characters8(arg0: [*c]WTF__String) [*c]const u8;
 pub extern fn WTF__String__createFromExternalString(arg0: bWTF__ExternalStringImpl) bWTF__String;
-pub extern fn WTF__String__createWithoutCopyingFromPtr(arg0: [*c]WTF__String, arg1: [*c]u8, arg2: usize) void;
+pub extern fn WTF__String__createWithoutCopyingFromPtr(arg0: [*c]WTF__String, arg1: [*c]const u8, arg2: usize) void;
 pub extern fn WTF__String__eqlSlice(arg0: [*c]WTF__String, arg1: [*c]const u8, arg2: usize) bool;
 pub extern fn WTF__String__eqlString(arg0: [*c]WTF__String, arg1: [*c]const WTF__String) bool;
 pub extern fn WTF__String__impl(arg0: [*c]WTF__String) [*c]const WTF__StringImpl;

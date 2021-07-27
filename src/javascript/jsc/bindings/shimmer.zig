@@ -2,6 +2,11 @@ const std = @import("std");
 const StaticExport = @import("./static_export.zig");
 const Sizes = @import("./sizes.zig");
 pub const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
+const headers = @import("./headers.zig");
+
+fn isNullableType(comptime Type: type) bool {
+    return @typeInfo(Type) == .Optional;
+}
 
 pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comptime Parent: type) type {
     const extern_count: usize = if (@hasDecl(Parent, "Extern")) Parent.Extern.len else 0;
@@ -59,7 +64,7 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
                 break :brk 0;
             }
         };
-        pub const Bytes = [byte_size]u8;
+        pub const Bytes = if (byte_size > 16) [byte_size]u8 else std.meta.Int(.unsigned, byte_size * 8);
 
         pub const Return = struct {
             pub const Type = Parent;
@@ -118,6 +123,16 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
             };
         }
 
+        pub inline fn matchNullable(comptime ExpectedReturnType: type, comptime ExternReturnType: type, value: ExternReturnType) ExpectedReturnType {
+            if (comptime isNullableType(ExpectedReturnType) != isNullableType(ExternReturnType)) {
+                return value.?;
+            } else if (comptime (@typeInfo(ExpectedReturnType) == .Enum) and (@typeInfo(ExternReturnType) != .Enum)) {
+                return @intToEnum(ExpectedReturnType, value);
+            } else {
+                return value;
+            }
+        }
+
         pub inline fn cppFn(comptime typeName: []const u8, args: anytype) (ret: {
             if (!@hasDecl(Parent, typeName)) {
                 @compileError(@typeName(Parent) ++ " is missing cppFn: " ++ typeName);
@@ -126,7 +141,14 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
         }) {
             if (comptime is_bindgen) {
                 unreachable;
-            } else {}
+            } else {
+                const Fn = comptime @field(headers, symbolName(typeName));
+                return matchNullable(
+                    comptime std.meta.declarationInfo(Parent, typeName).data.Fn.return_type,
+                    comptime @typeInfo(@TypeOf(Fn)).Fn.return_type.?,
+                    @call(.{}, Fn, args),
+                );
+            }
         }
     };
 }

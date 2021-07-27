@@ -363,22 +363,27 @@ pub const Cli = struct {
     }
     pub fn startTransform(allocator: *std.mem.Allocator, args: Api.TransformOptions, log: *logger.Log) anyerror!void {}
     const StringS = struct {
-        pub const src = "console.log('hi'); \"HELLO\";";
+        pub const src = "import Bacon from \"import-test\";\n\nconsole.log('hi'); \"HELLO\";";
     };
     pub fn demo(allocator: *std.mem.Allocator) !void {
         var console = try js.ZigConsoleClient.init(allocator);
 
         var global: *js.JSGlobalObject = js.ZigGlobalObject.create(null, console);
-        var exception: ?*js.Exception = null;
-        const source_string = js.String.createWithoutCopying(StringS.src);
-        const slice = js.StringView.fromSlice("/Users/jarredsumner/Desktop/hi.js");
-        var url = std.mem.zeroes(js.URL);
-        js.URL.fromFileSystemPath(&url, slice);
-        // const origin = js.SourceOrigin.fromURL(&url);
-        var source_code = std.mem.zeroes(js.SourceCode);
-        js.SourceCode.fromString(&source_code, &source_string, null, null, js.SourceType.Module);
-        var result = js.JSModuleLoader.evaluate(global, &source_code, js.JSValue.jsUndefined(), &exception);
-        if (exception) |except| {}
+        var exception = js.JSValue.jsUndefined();
+        var result = js.JSModuleLoader.evaluate(
+            global,
+            StringS.src,
+            StringS.src.len,
+            "/hi.js",
+            "/hi.js".len,
+            js.JSValue.jsUndefined(),
+            @ptrCast([*]js.JSValue, &exception),
+        );
+        if (!exception.isUndefined()) {
+            var str = exception.toWTFString(global);
+            var slice = str.slice();
+            _ = Output.errorWriter().write(slice) catch 0;
+        }
     }
 
     pub fn start(allocator: *std.mem.Allocator, stdout: anytype, stderr: anytype) anyerror!void {
@@ -403,4 +408,8 @@ pub const Cli = struct {
         // var result = try js.Module.loadFromResolveResult(vm, vm.global.ctx, resolved_entry_point, &exception);
         try demo(allocator);
     }
+};
+
+pub const JavaScript = struct {
+    
 };

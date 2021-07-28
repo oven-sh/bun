@@ -1,3 +1,4 @@
+usingnamespace @import("../../global.zig");
 const std = @import("std");
 
 const Fs = @import("../../fs.zig");

@@ -20,7 +20,7 @@ namespace Zig {
 
 
 
-class GlobalObject final : public JSC::JSGlobalObject {
+class GlobalObject : public JSC::JSGlobalObject {
     using Base = JSC::JSGlobalObject;
 
 public:
@@ -58,7 +58,7 @@ public:
     static JSC::JSValue moduleLoaderEvaluate(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue, JSC::JSValue, JSC::JSValue, JSC::JSValue, JSC::JSValue);
     static void promiseRejectionTracker(JSGlobalObject*, JSC::JSPromise*, JSC::JSPromiseRejectionOperation);
     void setConsole(void* console);
-
+    void installAPIGlobals(JSClassRef* globals, int count);
 
 private:
     

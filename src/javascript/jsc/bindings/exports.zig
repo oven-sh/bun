@@ -1,7 +1,7 @@
 usingnamespace @import("./bindings.zig");
 usingnamespace @import("./shared.zig");
-usingnamespace @import("../new.zig");
 const Fs = @import("../../../fs.zig");
+const CAPI = @import("../JavaScriptCore.zig");
 
 const Handler = struct {
     pub export fn global_signal_handler_fn(sig: i32, info: *const std.os.siginfo_t, ctx_ptr: ?*const c_void) callconv(.C) void {
@@ -21,7 +21,7 @@ pub const ZigGlobalObject = extern struct {
     pub var sigaction: std.os.Sigaction = undefined;
     pub var sigaction_installed = false;
 
-    pub fn create(vm: ?*VM, console: *c_void) *JSGlobalObject {
+    pub fn create(class_ref: [*]CAPI.JSClassRef, count: i32, console: *c_void) *JSGlobalObject {
         if (!sigaction_installed) {
             sigaction_installed = true;
 
@@ -31,7 +31,7 @@ pub const ZigGlobalObject = extern struct {
             std.os.sigaction(std.os.SIGABRT, &sigaction, null);
         }
 
-        return shim.cppFn("create", .{ vm, console });
+        return shim.cppFn("create", .{ class_ref, count, console });
     }
 
     pub fn import(global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) ErrorableZigString {
@@ -53,7 +53,7 @@ pub const ZigGlobalObject = extern struct {
         }
         return @call(.{ .modifier = .always_inline }, Interface.fetch, .{ global, specifier, source });
     }
-  
+
     pub fn promiseRejectionTracker(global: *JSGlobalObject, promise: *JSPromise, rejection: JSPromiseRejectionOperation) callconv(.C) JSValue {
         if (comptime is_bindgen) {
             unreachable;
@@ -388,3 +388,7 @@ pub const ZigConsoleClient = struct {
 //         }
 //     }
 // };
+
+pub inline fn toGlobalContextRef(ptr: *JSGlobalObject) CAPI.JSGlobalContextRef {
+    return @ptrCast(CAPI.JSGlobalContextRef, ptr);
+}

@@ -7,7 +7,11 @@ pub const JSContextRef = ?*const struct_OpaqueJSContext;
 pub const JSGlobalContextRef = ?*struct_OpaqueJSContext;
 pub const struct_OpaqueJSString = generic;
 pub const JSStringRef = ?*struct_OpaqueJSString;
-pub const struct_OpaqueJSClass = generic;
+pub const struct_OpaqueJSClass = opaque {
+    pub const name = "JSClassRef";
+    pub const is_pointer = false;
+    pub const Type = "JSClassRef";
+};
 pub const JSClassRef = ?*struct_OpaqueJSClass;
 pub const struct_OpaqueJSPropertyNameArray = generic;
 pub const JSPropertyNameArrayRef = ?*struct_OpaqueJSPropertyNameArray;

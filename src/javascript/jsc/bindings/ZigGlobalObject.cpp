@@ -33,6 +33,8 @@
 #include <cstdlib>
 #include <exception>
 
+#include <JavaScriptCore/JSClassRef.h>
+#include <JavaScriptCore/JSCallbackObject.h>
 
 using JSGlobalObject = JSC::JSGlobalObject;
 using Exception = JSC::Exception;
@@ -42,36 +44,32 @@ using JSModuleLoader = JSC::JSModuleLoader;
 using JSModuleRecord = JSC::JSModuleRecord;
 using Identifier = JSC::Identifier;
 using SourceOrigin = JSC::SourceOrigin;
+using JSObject = JSC::JSObject;
+using JSNonFinalObject = JSC::JSNonFinalObject;
 namespace JSCastingHelpers = JSC::JSCastingHelpers;
 
 
-extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(JSC__VM* arg0, void* console_client) {
-
-
-    // There are assertions that the apiLock is set while the JSGlobalObject is initialized.
-    if (arg0 != nullptr) {
-        JSC::VM& vm = *arg0;
-        JSC::JSLockHolder holder(vm);
-
-        auto globalObject = Zig::GlobalObject::create(vm, Zig::GlobalObject::createStructure(vm, JSC::jsNull()));
-        return static_cast<JSC__JSGlobalObject*>(globalObject);
-    }
-
+extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(JSClassRef* globalObjectClass, int count, void* console_client) {
     std::set_terminate([](){ Zig__GlobalObject__onCrash(); });
-
     JSC::initialize();
+    
     JSC::VM& vm = JSC::VM::create(JSC::LargeHeap).leakRef();
 
-
-      #if ENABLE(WEBASSEMBLY)
+    #if ENABLE(WEBASSEMBLY)
         JSC::Wasm::enableFastMemory();
     #endif
-    JSC::JSLockHolder locker(vm);
-    auto globalObject = Zig::GlobalObject::create(vm, Zig::GlobalObject::createStructure(vm, JSC::jsNull()));
-    globalObject->setConsole(console_client);
-    
 
-    
+    JSC::JSLockHolder locker(vm);
+    Zig::GlobalObject *globalObject = Zig::GlobalObject::create(vm, Zig::GlobalObject::createStructure(vm, JSC::jsNull()));
+    globalObject->setConsole(globalObject);
+
+    if (count > 0) {
+        globalObject->installAPIGlobals(globalObjectClass, count);
+    }
+
+
+    JSC::gcProtect(globalObject);
+    vm.ref();
     return globalObject;
 }
 
@@ -112,6 +110,24 @@ static Zig::ConsoleClient* m_console;
 void GlobalObject::setConsole(void* console) {
     m_console = new Zig::ConsoleClient(console);
     this->setConsoleClient(makeWeakPtr(m_console));
+}
+
+void GlobalObject::installAPIGlobals(JSClassRef* globals, int count) {
+   WTF::Vector<GlobalPropertyInfo> extraStaticGlobals;
+    extraStaticGlobals.reserveCapacity((size_t)count);
+
+    for (int i = 0; i < count; i++) {
+        auto jsClass = globals[i];
+
+        JSC::JSCallbackObject<JSNonFinalObject>* object = JSC::JSCallbackObject<JSNonFinalObject>::create(this, this->callbackObjectStructure(), jsClass, nullptr);
+        if (JSObject* prototype = jsClass->prototype(this))
+            object->setPrototypeDirect(vm(), prototype);
+
+        extraStaticGlobals.uncheckedAppend(GlobalPropertyInfo{ JSC::Identifier::fromString(vm(), jsClass->className()),  JSC::JSValue(object),  JSC::PropertyAttribute::DontDelete | 0  });
+    }
+    this->addStaticGlobals(extraStaticGlobals.data(), count);
+    extraStaticGlobals.releaseBuffer();
+    
 }
 
 JSC::Identifier GlobalObject::moduleLoaderResolve(
@@ -219,4 +235,6 @@ JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* globalObject, JS
     // VM& vm = globalObject->vm();
     return moduleLoader->evaluateNonVirtual(globalObject, key, moduleRecordValue, scriptFetcher, sentValue, resumeMode);
 }
-}
+
+
+} // namespace Zig

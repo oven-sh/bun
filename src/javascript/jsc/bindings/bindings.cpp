@@ -1,7 +1,4 @@
-
-#include "headers.h"
 #include "root.h"
-
 #include "helpers.h"
 
 #include <JavaScriptCore/ExceptionScope.h>
@@ -24,6 +21,11 @@
 #include <JavaScriptCore/JSMap.h>
 #include <JavaScriptCore/JSSet.h>
 #include <JavaScriptCore/JSInternalPromise.h>
+
+
+#include <JavaScriptCore/JSClassRef.h>
+#include <JavaScriptCore/JSCallbackObject.h>
+
 
 
 extern "C"  {
@@ -96,22 +98,14 @@ JSC__JSValue JSC__JSModuleLoader__evaluate(JSC__JSGlobalObject* arg0, const unsi
     JSC::JSLockHolder locker(vm);
 
     JSC::SourceCode sourceCode = JSC::makeSource(src, JSC::SourceOrigin { origin }, origin.lastPathComponent().toStringWithoutCopying(), WTF::TextPosition(), JSC::SourceProviderSourceType::Module);
-    
-    auto val = JSC::loadAndEvaluateModule(arg0, sourceCode, JSC::JSValue());
-    vm.drainMicrotasks();
-
-    switch (val->status(vm)) {
-        case JSC::JSPromise::Status::Fulfilled: {
-            return JSC::JSValue::encode(val->result(vm));
-            break;   
-        }
-
-        case JSC::JSPromise::Status::Rejected: {
-            *arg6 = JSC::JSValue::encode(val->result(vm));
-            return JSC::JSValue::encode(JSC::jsUndefined());
-            break;
-        }
+    WTF::NakedPtr<JSC::Exception> exception;
+    auto val = JSC::evaluate(arg0, sourceCode, JSC::JSValue(), exception);
+    if (exception.get()) {
+        *arg6 = JSC::JSValue::encode(JSC::JSValue(exception.get()));
     }
+
+    vm.drainMicrotasks();
+    return JSC::JSValue::encode(val);
   
 
 

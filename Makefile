@@ -5,19 +5,20 @@ api:
 	peechy --schema src/api/schema.peechy --esm src/api/schema.js --ts src/api/schema.d.ts --zig src/api/schema.zig
 
 jsc: jsc-build jsc-bindings
-jsc-build: jsc-build-mac
+jsc-build: jsc-build-mac jsc-copy-headers
 jsc-bindings:
 	jsc-bindings-headers
-	
 	jsc-bindings-mac
-	
 
 jsc-bindings-headers:
 	zig build headers
 
+jsc-copy-headers:
+	find src/JavaScript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/Headers/JavaScriptCore/ -name "*.h" -exec cp {} src/JavaScript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/PrivateHeaders/JavaScriptCore \;
 
 jsc-build-mac:
 	cd src/javascript/jsc/WebKit && ICU_INCLUDE_DIRS="/usr/local/opt/icu4c/include" ./Tools/Scripts/build-jsc --jsc-only --cmakeargs="-DENABLE_STATIC_JSC=ON -DCMAKE_BUILD_TYPE=relwithdebinfo" && echo "Ignore the \"has no symbols\" errors"
+	 
 
 SRC_DIR := src/javascript/jsc/bindings
 OBJ_DIR := src/javascript/jsc/bindings-obj
@@ -43,8 +44,6 @@ CLANG_FLAGS = -Isrc/JavaScript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/Pri
 		-std=gnu++1z \
 		-stdlib=libc++ \
 		-DDU_DISABLE_RENAMING=1 \
-		-Wall \
-		-Wextra \
 		-march=native 
 
 jsc-bindings-mac: $(OBJ_FILES)

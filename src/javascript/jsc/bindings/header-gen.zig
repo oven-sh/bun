@@ -336,13 +336,15 @@ pub const C_Generator = struct {
             const formatted_name = comptime std.mem.span(&_formatted_name);
 
             if (@hasDecl(TT, "is_pointer") and !TT.is_pointer) {
-                if (cTypeLabel(TT.Type)) |label| {
-                    type_names.put(comptime label, formatted_name) catch unreachable;
-                    if (@typeInfo(TT) == .Struct and @hasField(TT, "bytes")) {
-                        size_map.put(comptime formatted_name, @as(u32, TT.shim.byte_size)) catch unreachable;
-                        align_map.put(comptime formatted_name, @as(u29, TT.shim.align_size)) catch unreachable;
-                    } else if (@typeInfo(TT) == .Opaque) {
-                        opaque_types.insert(comptime label) catch unreachable;
+                if (@TypeOf(TT.Type) == type) {
+                    if (cTypeLabel(TT.Type)) |label| {
+                        type_names.put(comptime label, formatted_name) catch unreachable;
+                        if (@typeInfo(TT) == .Struct and @hasField(TT, "bytes")) {
+                            size_map.put(comptime formatted_name, @as(u32, TT.shim.byte_size)) catch unreachable;
+                            align_map.put(comptime formatted_name, @as(u29, TT.shim.align_size)) catch unreachable;
+                        } else if (@typeInfo(TT) == .Opaque) {
+                            opaque_types.insert(comptime label) catch unreachable;
+                        }
                     }
                 } else {
                     type_names.put(comptime TT.name, formatted_name) catch unreachable;
@@ -350,7 +352,7 @@ pub const C_Generator = struct {
                         size_map.put(comptime formatted_name, @as(u32, TT.shim.byte_size)) catch unreachable;
                         align_map.put(comptime formatted_name, @as(u29, TT.shim.align_size)) catch unreachable;
                     } else if (@typeInfo(TT) == .Opaque) {
-                        opaque_types.insert(comptime label) catch unreachable;
+                        opaque_types.insert(comptime TT.name) catch unreachable;
                     }
                 }
             } else {
@@ -593,6 +595,9 @@ pub fn HeaderGen(comptime import: type, comptime fname: []const u8) type {
                 \\#define CPP_SIZE AUTO_EXTERN_C
                 \\
                 \\typedef uint16_t ZigErrorCode;
+                \\#ifndef __cplusplus
+                \\typedef void* JSClassRef;
+                \\#endif
                 \\typedef struct ZigString { const unsigned char* ptr; size_t len; } ZigString;
                 \\typedef struct ZigErrorType { ZigErrorCode code; ZigString message; } ZigErrorType;
                 \\typedef union ErrorableZigStringResult { ZigString value; ZigErrorType err; } ErrorableZigStringResult;

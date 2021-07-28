@@ -38,11 +38,15 @@ pub const ZigString = extern struct {
     ptr: [*]const u8,
     len: usize,
 
-    pub fn init(slice: []const u8) ZigString {
-        return ZigString{ .ptr = slice.ptr, .len = slice.len };
+    pub fn init(slice_: []const u8) ZigString {
+        return ZigString{ .ptr = slice_.ptr, .len = slice_.len };
     }
 
     pub const Empty = ZigString{ .ptr = "", .len = 0 };
+
+    pub fn slice(this: *const ZigString) []const u8 {
+        return this.ptr[0..this.len];
+    }
 };
 
 pub const JSCell = extern struct {
@@ -168,29 +172,23 @@ pub const ScriptArguments = extern struct {
 
 pub fn NewGlobalObject(comptime Type: type) type {
     return struct {
-        pub fn import(global: *JSGlobalObject, loader: *JSModuleLoader, specifier: *JSString, referrer: JSValue, origin: *const SourceOrigin) callconv(.C) *JSInternalPromise {
+        pub fn import(global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) ErrorableZigString {
             if (comptime @hasDecl(Type, "import")) {
-                return @call(.{ .modifier = .always_inline }, Interface.import, .{ global, loader, specifier, referrer, origin });
+                return @call(.{ .modifier = .always_inline }, Interface.import, .{ global, specifier, source });
             }
-            return JSInternalPromise.rejectedPromise(global, JSValue.jsUndefined());
+            return ErrorableZigString.err(error.ImportFailed, "Import not implemented");
         }
-        pub fn resolve(global: *JSGlobalObject, loader: *JSModuleLoader, specifier: JSValue, value: JSValue, origin: *const SourceOrigin) callconv(.C) ZigString {
+        pub fn resolve(global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) ErrorableZigString {
             if (comptime @hasDecl(Type, "resolve")) {
-                return @call(.{ .modifier = .always_inline }, Interface.resolve, .{ global, loader, specifier, value, origin });
+                return @call(.{ .modifier = .always_inline }, Interface.resolve, .{ global, specifier, source });
             }
-            return ZigString.Empty;
+            return ErrorableZigString.err(error.ResolveFailed, "resolve not implemented");
         }
-        pub fn fetch(global: *JSGlobalObject, loader: *JSModuleLoader, value1: JSValue, value2: JSValue, value3: JSValue) callconv(.C) *JSInternalPromise {
+        pub fn fetch(global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) ErrorableZigString {
             if (comptime @hasDecl(Type, "fetch")) {
-                return @call(.{ .modifier = .always_inline }, Interface.fetch, .{ global, loader, value1, value2, value3 });
+                return @call(.{ .modifier = .always_inline }, Interface.fetch, .{ global, specifier, source });
             }
-            return JSInternalPromise.rejectedPromise(global, JSValue.jsUndefined());
-        }
-        pub fn eval(global: *JSGlobalObject, loader: *JSModuleLoader, key: JSValue, moduleRecordValue: JSValue, scriptFetcher: JSValue, awaitedValue: JSValue, resumeMode: JSValue) callconv(.C) JSValue {
-            if (comptime @hasDecl(Type, "eval")) {
-                return @call(.{ .modifier = .always_inline }, Interface.eval, .{ global, loader, key, moduleRecordValue, scriptFetcher, awaitedValue, resumeMode });
-            }
-            return JSValue.jsUndefined();
+            return ErrorableZigString.err(error.FetchFailed, "Module fetch not implemented");
         }
         pub fn promiseRejectionTracker(global: *JSGlobalObject, promise: *JSPromise, rejection: JSPromiseRejectionOperation) callconv(.C) JSValue {
             if (comptime @hasDecl(Type, "promiseRejectionTracker")) {

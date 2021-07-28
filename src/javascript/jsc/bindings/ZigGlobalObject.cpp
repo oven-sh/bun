@@ -123,59 +123,100 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(
 ) {
     auto res = Zig__GlobalObject__resolve(
         globalObject,
-        loader,
-        JSValue::encode(key),
-        JSValue::encode(referrer),
-        nullptr
+        toZigString(key, globalObject),
+        toZigString(referrer, globalObject)
     );
 
-    return toIdentifier(res, globalObject);
+    if (res.success) {
+        return toIdentifier(res.result.value, globalObject);
+    } else {
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        throwException(scope, res.result.err.message, globalObject);
+        return globalObject->vm().propertyNames->emptyIdentifier;
+    }
+    
 }
 
-JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* globalObject, JSModuleLoader* loader, JSString* specifierValue, JSValue referrer, const SourceOrigin& sourceOrigin) {
-    return Zig__GlobalObject__import(
-        globalObject,
-        loader,
-        specifierValue,
-        JSC::JSValue::encode(referrer),
-        &sourceOrigin
-    );
+JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* globalObject, JSModuleLoader*, JSString* moduleNameValue, JSValue parameters, const SourceOrigin& sourceOrigin)
+{
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* promise = JSC::JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
+    RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
+
+    auto sourceURL = sourceOrigin.url();
+    auto resolved = Zig__GlobalObject__resolve(globalObject, toZigString(moduleNameValue, globalObject), sourceURL.isEmpty() ? ZigStringCwd : toZigString(sourceURL.fileSystemPath()));
+    if (!resolved.success) {
+        throwException(scope, resolved.result.err.message, globalObject);
+        return promise->rejectWithCaughtException(globalObject, scope);
+    }
+
+    auto result = JSC::importModule(globalObject, toIdentifier(resolved.result.value, globalObject), parameters, JSC::jsUndefined());
+    RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
+
+    return result;
 }
+
 
 JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject, JSModuleLoader* loader, JSValue key, JSValue value1, JSValue value2) {
-    return Zig__GlobalObject__fetch(
+    JSC::VM& vm = globalObject->vm();
+    JSC::JSInternalPromise* promise = JSC::JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
+
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto rejectWithError = [&](JSC::JSValue error) {
+        promise->reject(globalObject, error);
+        return promise;
+    };
+
+    auto moduleKey = key.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
+    auto moduleKeyZig = toZigString(moduleKey);
+
+    auto res = Zig__GlobalObject__fetch(
         globalObject,
-        loader,
-        JSValue::encode(key),
-        JSValue::encode(value1),
-        JSValue::encode(value2)
+        moduleKeyZig,
+        ZigStringEmpty
     );
+
+    if (!res.success) {
+        throwException(scope, res.result.err.message, globalObject);
+        RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
+    }
+
+    auto code = Zig::toString(res.result.value);
+    auto sourceCode = JSC::JSSourceCode::create(
+        vm,
+        JSC::makeSource(
+            code,
+            JSC::SourceOrigin { WTF::URL::fileURLWithFileSystemPath(moduleKey) },
+            WTFMove(moduleKey),
+            TextPosition(),
+            JSC::SourceProviderSourceType::Module
+        )
+    );
+
+    scope.release();
+    promise->resolve(globalObject, sourceCode);
+    return promise;
 }
 
 JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObject* globalObject, JSModuleLoader* loader, JSValue key, JSModuleRecord* record, JSValue val) {
-    auto res = Zig__GlobalObject__createImportMetaProperties(
-        globalObject,
-        loader,
-        JSValue::encode(key),
-        record,
-        JSValue::encode(val)
-    );
+    return nullptr;
+    // auto res = Zig__GlobalObject__createImportMetaProperties(
+    //     globalObject,
+    //     loader,
+    //     JSValue::encode(key),
+    //     record,
+    //     JSValue::encode(val)
+    // );
 
-    return JSValue::decode(res).getObject();
+    // return JSValue::decode(res).getObject();
 }
 
 JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* globalObject, JSModuleLoader* moduleLoader, JSValue key, JSValue moduleRecordValue, JSValue scriptFetcher, JSValue sentValue, JSValue resumeMode) {
-    auto res = Zig__GlobalObject__eval(
-        globalObject,
-        moduleLoader,
-        JSValue::encode(key),
-        JSValue::encode(moduleRecordValue),
-        JSValue::encode(scriptFetcher),
-        JSValue::encode(sentValue),
-        JSValue::encode(resumeMode)
-    );
-
-    return JSValue::decode(res);
+    // VM& vm = globalObject->vm();
+    return moduleLoader->evaluateNonVirtual(globalObject, key, moduleRecordValue, scriptFetcher, sentValue, resumeMode);
 }
-
 }

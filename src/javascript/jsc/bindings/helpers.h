@@ -1,11 +1,14 @@
-
 #include "headers.h"
 #include "root.h"
 
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/Identifier.h>
-
+#include <JavaScriptCore/JSValue.h>
+#include <JavaScriptCore/JSString.h>
+#include <JavaScriptCore/ThrowScope.h>
+#include <JavaScriptCore/Error.h>
+#include <JavaScriptCore/Exception.h>
 
 template<class CppType, typename ZigType>
 class Wrap  {
@@ -83,6 +86,11 @@ static const JSC::ArgList makeArgs(JSC__JSValue* v, size_t count) {
     return JSC::ArgList(args);
 }
 
+namespace Zig {
+
+
+
+
 static const JSC::Identifier toIdentifier(ZigString str, JSC::JSGlobalObject* global) {
     if (str.len == 0 || str.ptr == nullptr) {
         return JSC::Identifier::EmptyIdentifier;
@@ -99,3 +107,76 @@ static const WTF::String toString(ZigString str) {
     return WTF::String(WTF::StringImpl::createWithoutCopying(str.ptr, str.len));
 }
 
+static const JSC::JSString* toJSString(ZigString str, JSC::JSGlobalObject* global) {
+    return JSC::jsOwnedString(global->vm(), toString(str));
+}
+
+static const ZigString ZigStringEmpty = ZigString{nullptr, 0};
+static const unsigned char __dot_char = '.'; 
+static const ZigString ZigStringCwd = ZigString{&__dot_char, 1};
+
+
+
+static ZigString toZigString(WTF::String str) {
+    return str.isEmpty() ? ZigStringEmpty : ZigString{ str.characters8(), str.length() };
+}
+
+
+static ZigString toZigString(WTF::String* str) {
+    return str->isEmpty() ? ZigStringEmpty : ZigString{ str->characters8(), str->length() };
+}
+
+
+static ZigString toZigString(WTF::StringImpl& str) {
+    return str.isEmpty() ? ZigStringEmpty : ZigString{ str.characters8(), str.length() };
+}
+
+static ZigString toZigString(WTF::StringView& str) {
+    return str.isEmpty() ? ZigStringEmpty : ZigString{ str.characters8(), str.length() };
+}
+
+static ZigString toZigString(JSC::JSString& str, JSC::JSGlobalObject *global) {
+    return toZigString(str.value(global));
+}
+
+
+static ZigString toZigString(JSC::JSString* str, JSC::JSGlobalObject *global) {
+    return toZigString(str->value(global));
+}
+
+
+static ZigString toZigString(JSC::Identifier& str, JSC::JSGlobalObject *global) {
+    return toZigString(str.string());
+}
+
+static ZigString toZigString(JSC::Identifier* str, JSC::JSGlobalObject *global) {
+    return toZigString(str->string());
+}
+
+
+
+static void throwException(JSC::ThrowScope& scope, ZigString msg, JSC::JSGlobalObject* global) {
+    auto str = toJSString(msg, global);
+    scope.throwException(global, JSC::Exception::create(global->vm(), JSC::JSValue(str)));
+}
+
+
+
+static ZigString toZigString(JSC::JSValue val, JSC::JSGlobalObject* global) {
+    auto scope = DECLARE_THROW_SCOPE(global->vm());
+    WTF::String str = val.toWTFString(global);
+
+    if (scope.exception()) {
+        scope.clearException();
+        scope.release();
+        return ZigStringEmpty;
+    }
+
+    scope.release();
+
+
+    return toZigString(str);
+}
+
+
+}

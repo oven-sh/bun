@@ -218,7 +218,12 @@ pub const C_Generator = struct {
         // }
     }
 
-    pub fn gen_struct(self: *Self, comptime name: []const u8, comptime meta: StructMeta) void {
+    pub fn gen_struct(
+        self: *Self,
+        comptime name: []const u8,
+        comptime meta: StructMeta,
+        comptime static_types: anytype,
+    ) void {
         self.write("typedef struct ");
 
         if (meta.layout == .Packed)
@@ -232,9 +237,27 @@ pub const C_Generator = struct {
             const info = @typeInfo(field.field_type);
 
             if (info == .Array) {
-                self.writeType(info.Array.child);
+                const PrintType = comptime brk: {
+                    for (static_types) |static_type| {
+                        if (static_type.Type == info.Array.child) {
+                            break :brk static_type.Type;
+                        }
+                    }
+
+                    break :brk info.Array.child;
+                };
+                self.writeType(PrintType);
             } else {
-                self.writeType(field.field_type);
+                const PrintType = comptime brk: {
+                    for (static_types) |static_type| {
+                        if (static_type.Type == field.field_type) {
+                            break :brk static_type.Type;
+                        }
+                    }
+
+                    break :brk field.field_type;
+                };
+                self.writeType(PrintType);
             }
 
             self.write(" " ++ field.name);
@@ -245,7 +268,7 @@ pub const C_Generator = struct {
 
             self.write(";\n");
         }
-        self.write("} " ++ name ++ "_t;\n\n");
+        self.write("} " ++ name ++ ";\n\n");
     }
 
     pub fn gen_enum(
@@ -276,17 +299,20 @@ pub const C_Generator = struct {
         self: *Self,
         comptime name: []const u8,
         comptime meta: UnionMeta,
+        comptime static_types: anytype,
     ) void {
         self.write("typedef union ");
 
         self.write(name ++ " {\n");
 
-        inline for (meta.fields) |field| {
+        inline for (meta.fields) |field, i| {
             self.write("   ");
-            self.writeType(field.field_type);
+
+            self.writeType(comptime FieldType);
+
             self.write(" " ++ field.name ++ ";\n");
         }
-        self.write("} " ++ name ++ "_t;\n\n");
+        self.write("} " ++ name ++ ";\n\n");
     }
 
     fn writeType(
@@ -515,16 +541,7 @@ pub fn HeaderGen(comptime import: type, comptime fname: []const u8) type {
                                 Enum,
                             );
                         },
-                        .Struct => |Struct| {
-                            gen.gen_struct(decl.name, Struct, file);
-                        },
-                        .Union => |Union| {
-                            const layout = Union.layout;
-                            gen.gen_union(
-                                prefix ++ "__" ++ name,
-                                Union,
-                            );
-                        },
+
                         .Fn => |func| {
                             // if (func.) {
                             // blocked by https://github.com/ziglang/zig/issues/8259
@@ -575,8 +592,11 @@ pub fn HeaderGen(comptime import: type, comptime fname: []const u8) type {
                 \\#define CPP_DECL AUTO_EXTERN_C
                 \\#define CPP_SIZE AUTO_EXTERN_C
                 \\
-                \\
+                \\typedef uint16_t ZigErrorCode;
                 \\typedef struct ZigString { const unsigned char* ptr; size_t len; } ZigString;
+                \\typedef struct ZigErrorType { ZigErrorCode code; ZigString message; } ZigErrorType;
+                \\typedef union ErrorableZigStringResult { ZigString value; ZigErrorType err; } ErrorableZigStringResult;
+                \\typedef struct ErrorableZigString { ErrorableZigStringResult result; bool success; } ErrorableZigString;
                 \\
             ) catch {};
 
@@ -601,13 +621,36 @@ pub fn HeaderGen(comptime import: type, comptime fname: []const u8) type {
             var impl_fourth_buffer = std.ArrayList(u8).init(std.heap.c_allocator);
             var impl_fourth_writer = impl_fourth_buffer.writer();
 
+            // inline for (import.all_static_externs) |static_extern, i| {
+            //     const Type = static_extern.Type;
+            //     var gen = C_Generator.init(static_extern.name, @TypeOf(writer), writer);
+            //     defer gen.deinit();
+
+            //     switch (@typeInfo(Type)) {
+            //         .Enum => |Enum| {
+            //             gen.gen_enum(
+            //                 static_extern.name,
+            //                 Enum,
+            //             );
+            //         },
+            //         .Union => |Union| {
+            //             gen.gen_union(static_extern.name, Union, import.all_static_externs);
+            //         },
+            //         .Struct => |Struct| {
+            //             gen.gen_struct(static_extern.name, Struct, import.all_static_externs);
+            //         },
+            //         else => {},
+            //     }
+            // }
+
             var to_get_sizes: usize = 0;
             inline for (all_decls) |_decls| {
                 if (comptime _decls.is_pub) {
                     switch (_decls.data) {
                         .Type => |Type| {
                             @setEvalBranchQuota(99999);
-                            const is_container_type = switch (@typeInfo(Type)) {
+                            const TypeTypeInfo: std.builtin.TypeInfo = @typeInfo(Type);
+                            const is_container_type = switch (TypeTypeInfo) {
                                 .Opaque, .Struct, .Enum => true,
                                 else => false,
                             };
@@ -708,6 +751,7 @@ pub fn HeaderGen(comptime import: type, comptime fname: []const u8) type {
                     }
                 }
             }
+
             impl.writer().print("\nconst size_t sizes[{d}] = {{", .{to_get_sizes}) catch unreachable;
             impl.writeAll(impl_third_buffer.items) catch unreachable;
             impl.writeAll("};\n") catch unreachable;

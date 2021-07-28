@@ -1,5 +1,7 @@
 usingnamespace @import("./bindings.zig");
 usingnamespace @import("./shared.zig");
+usingnamespace @import("../new.zig");
+const Fs = @import("../../../fs.zig");
 
 const Handler = struct {
     pub export fn global_signal_handler_fn(sig: i32, info: *const std.os.siginfo_t, ctx_ptr: ?*const c_void) callconv(.C) void {
@@ -32,31 +34,26 @@ pub const ZigGlobalObject = extern struct {
         return shim.cppFn("create", .{ vm, console });
     }
 
-    pub fn import(global: *JSGlobalObject, loader: *JSModuleLoader, specifier: *JSString, referrer: JSValue, origin: *const SourceOrigin) callconv(.C) *JSInternalPromise {
-        // if (comptime is_bindgen) {
-        //     unreachable;
-        // }
+    pub fn import(global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) ErrorableZigString {
+        if (comptime is_bindgen) {
+            unreachable;
+        }
 
-        return @call(.{ .modifier = .always_inline }, Interface.import, .{ global, loader, specifier, referrer, origin });
+        return @call(.{ .modifier = .always_inline }, Interface.import, .{ global, specifier, source });
     }
-    pub fn resolve(global: *JSGlobalObject, loader: *JSModuleLoader, specifier: JSValue, value: JSValue, origin: *const SourceOrigin) callconv(.C) ZigString {
+    pub fn resolve(global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) ErrorableZigString {
         if (comptime is_bindgen) {
             unreachable;
         }
-        return @call(.{ .modifier = .always_inline }, Interface.resolve, .{ global, loader, specifier, value, origin });
+        return @call(.{ .modifier = .always_inline }, Interface.resolve, .{ global, specifier, source });
     }
-    pub fn fetch(global: *JSGlobalObject, loader: *JSModuleLoader, value1: JSValue, value2: JSValue, value3: JSValue) callconv(.C) *JSInternalPromise {
+    pub fn fetch(global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) ErrorableZigString {
         if (comptime is_bindgen) {
             unreachable;
         }
-        return @call(.{ .modifier = .always_inline }, Interface.fetch, .{ global, loader, value1, value2, value3 });
+        return @call(.{ .modifier = .always_inline }, Interface.fetch, .{ global, specifier, source });
     }
-    pub fn eval(global: *JSGlobalObject, loader: *JSModuleLoader, key: JSValue, moduleRecordValue: JSValue, scriptFetcher: JSValue, awaitedValue: JSValue, resumeMode: JSValue) callconv(.C) JSValue {
-        if (comptime is_bindgen) {
-            unreachable;
-        }
-        return @call(.{ .modifier = .always_inline }, Interface.eval, .{ global, loader, key, moduleRecordValue, scriptFetcher, awaitedValue, resumeMode });
-    }
+  
     pub fn promiseRejectionTracker(global: *JSGlobalObject, promise: *JSPromise, rejection: JSPromiseRejectionOperation) callconv(.C) JSValue {
         if (comptime is_bindgen) {
             unreachable;
@@ -89,7 +86,7 @@ pub const ZigGlobalObject = extern struct {
         .@"import" = import,
         .@"resolve" = resolve,
         .@"fetch" = fetch,
-        .@"eval" = eval,
+        // .@"eval" = eval,
         .@"promiseRejectionTracker" = promiseRejectionTracker,
         .@"reportUncaughtException" = reportUncaughtException,
         .@"createImportMetaProperties" = createImportMetaProperties,
@@ -102,13 +99,77 @@ pub const ZigGlobalObject = extern struct {
         @export(import, .{ .name = Export[0].symbol_name });
         @export(resolve, .{ .name = Export[1].symbol_name });
         @export(fetch, .{ .name = Export[2].symbol_name });
-        @export(eval, .{ .name = Export[3].symbol_name });
-        @export(promiseRejectionTracker, .{ .name = Export[4].symbol_name });
-        @export(reportUncaughtException, .{ .name = Export[5].symbol_name });
-        @export(createImportMetaProperties, .{ .name = Export[6].symbol_name });
-        @export(onCrash, .{ .name = Export[7].symbol_name });
+        @export(promiseRejectionTracker, .{ .name = Export[3].symbol_name });
+        @export(reportUncaughtException, .{ .name = Export[4].symbol_name });
+        @export(createImportMetaProperties, .{ .name = Export[5].symbol_name });
+        @export(onCrash, .{ .name = Export[6].symbol_name });
     }
 };
+
+const ErrorCodeInt = std.meta.Int(.unsigned, @sizeOf(anyerror) * 8);
+pub const ErrorCode = enum(ErrorCodeInt) {
+    _,
+
+    pub inline fn from(code: anyerror) ErrorCode {
+        return @intToEnum(ErrorCode, @errorToInt(code));
+    }
+
+    pub const Type = switch (@sizeOf(anyerror)) {
+        0, 1 => u8,
+        2 => u16,
+        3 => u32,
+        4 => u64,
+        else => @compileError("anyerror is too big"),
+    };
+};
+
+pub const ZigErrorType = extern struct {
+    code: ErrorCode,
+    message: ZigString,
+};
+
+pub fn Errorable(comptime Type: type) type {
+    return extern struct {
+        result: Result,
+        success: bool,
+        pub const name = "Errorable" ++ @typeName(Type);
+
+        pub const Result = extern union {
+            value: Type,
+            err: ZigErrorType,
+        };
+
+        pub fn value(val: Type) @This() {
+            return @This(){ .result = .{ .value = val }, .success = true };
+        }
+
+        pub fn ok(val: Type) @This() {
+            return @This(){ .result = .{ .value = val }, .success = true };
+        }
+
+        threadlocal var err_buf: [4096]u8 = undefined;
+        pub fn errFmt(code: anyerror, comptime fmt: []const u8, args: anytype) @This() {
+            const message = std.fmt.bufPrint(&err_buf, fmt, args) catch @errorName(code);
+
+            return @call(.{ .modifier = .always_inline }, err, .{ code, message });
+        }
+
+        pub fn err(code: anyerror, msg: []const u8) @This() {
+            return @This(){
+                .result = .{
+                    .err = .{
+                        .code = ErrorCode.from(code),
+                        .message = ZigString.init(msg),
+                    },
+                },
+                .success = false,
+            };
+        }
+    };
+}
+
+pub const ErrorableZigString = Errorable(ZigString);
+pub const ErrorableJSValue = Errorable(JSValue);
 
 pub const ZigConsoleClient = struct {
     pub const shim = Shimmer("Zig", "ConsoleClient", @This());
@@ -131,13 +192,11 @@ pub const ZigConsoleClient = struct {
     error_writer: BufferedWriter,
     writer: BufferedWriter,
 
-    pub fn init(allocator: *std.mem.Allocator) !*ZigConsoleClient {
-        var console = try allocator.create(ZigConsoleClient);
-        console.* = ZigConsoleClient{
-            .error_writer = BufferedWriter{ .unbuffered_writer = Output.errorWriter() },
-            .writer = BufferedWriter{ .unbuffered_writer = Output.writer() },
+    pub fn init(error_writer: Output.WriterType, writer: Output.WriterType) ZigConsoleClient {
+        return ZigConsoleClient{
+            .error_writer = BufferedWriter{ .unbuffered_writer = error_writer },
+            .writer = BufferedWriter{ .unbuffered_writer = writer },
         };
-        return console;
     }
 
     pub fn messageWithTypeAndLevel(
@@ -241,3 +300,91 @@ pub const ZigConsoleClient = struct {
         });
     }
 };
+
+// pub const CommonJSModuleConstructor = struct {
+//     pub const shim = Shimmer("Zig", "CommonJSModuleConstructor", @This());
+//     pub const name = "Zig::CommonJSModuleConstructor";
+//     pub const include = "\"CommonJSModule.h\"";
+//     pub const namespace = shim.namespace;
+
+//     pub fn construct(global: *JSGlobalObject, module: *CommonJSModule) callconv(.C) ErrorableJSValue {}
+// };
+
+// pub const CommonJSModulePrototype = struct {
+//     pub const shim = Shimmer("Zig", "CommonJSModulePrototype", @This());
+//     pub const name = "Zig::CommonJSModulePrototype";
+//     pub const include = "\"CommonJSModule.h\"";
+//     pub const namespace = shim.namespace;
+
+//     bytes: shim.Bytes,
+// };
+
+// pub const CommonJSModule = struct {
+//     pub const shim = Shimmer("Zig", "CommonJSModule", @This());
+//     pub const Type = *c_void;
+//     pub const name = "Zig::CommonJSModule";
+//     pub const include = "\"CommonJSModule.h\"";
+//     pub const namespace = shim.namespace;
+
+//     path: Fs.Path,
+//     reload_pending: bool = false,
+
+//     exports: JSValue,
+//     instance: *CommonJSModulePrototype,
+//     loaded: bool = false,
+
+//     pub fn finishLoading(module: *CommonJSModule, global: *JSGlobalObject, exports: JSValue, instance: *CommonJSModulePrototype) callconv(.C) ErrorableJSValue {
+//         module.loaded = true;
+//         module.instance = instance;
+//         module.exports = exports;
+//     }
+
+//     pub fn onCallRequire(module: *CommonJSModule, global: *JSGlobalObject, input: []const u8) callconv(.C) ErrorableJSValue {
+//         const resolve = ModuleLoader.resolve(global, input, module) catch |err| {
+//             return ErrorableJSValue.errFmt(
+//                 err,
+//                 "ResolveError: {s} while resolving \"{s}\"\nfrom \"{s}\"",
+//                 .{
+//                     @errorName(err),
+//                     input,
+//                     module.path.pretty,
+//                 },
+//             );
+//         };
+
+//         const hash = ModuleLoader.hashid(resolve.path_pair.primary.text);
+//         var reload_pending = false;
+//         if (ModuleLoader.require_cache.get(hash)) |obj| {
+//             reload_pending = obj.reload_pending;
+
+//             return ErrorableJSValue.ok(obj.exports);
+//         }
+
+//         const result = ModuleLoader.load(global, resolve) catch |err| {
+//             return ErrorableJSValue.errFmt(
+//                 err,
+//                 "LoadError: {s} while loading \"{s}\"",
+//                 .{
+//                     @errorName(err),
+//                     input,
+//                     module.path.pretty,
+//                 },
+//             );
+//         };
+
+//         switch (result) {
+//             .value => |value| {
+//                 return value;
+//             },
+//             .module => |mod| {
+//                 return ErrorableJSValue.ok(mod.exports);
+//             },
+//             .bundled_module_export => |bundled_module_export| {
+//                 return ErrorableJSValue.ok(bundled_module_export);
+//             },
+//             .path => |path| {
+//                 return ErrorableJSValue.ok(ZigString.init(path.text).toJSValue(global));
+//             },
+//         }
+//     }
+// };

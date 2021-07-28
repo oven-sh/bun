@@ -366,7 +366,6 @@ pub const Cli = struct {
         pub const src = "import Bacon from \"import-test\";\n\nconsole.log('hi'); \"HELLO\";";
     };
     pub fn demo(allocator: *std.mem.Allocator) !void {
-        var console = try js.ZigConsoleClient.init(allocator);
 
         var global: *js.JSGlobalObject = js.ZigGlobalObject.create(null, console);
         var exception = js.JSValue.jsUndefined();
@@ -410,6 +409,4 @@ pub const Cli = struct {
     }
 };
 
-pub const JavaScript = struct {
-    
-};
+pub const JavaScript = struct {};

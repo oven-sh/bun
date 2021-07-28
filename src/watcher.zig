@@ -70,8 +70,10 @@ pub fn NewWatcher(comptime ContextType: type) type {
         allocator: *std.mem.Allocator,
         watchloop_handle: ?std.Thread.Id = null,
 
-        pub fn getHash(filepath: string) u32 {
-            return @truncate(u32, std.hash.Wyhash.hash(0, filepath));
+        pub const HashType = u32;
+
+        pub fn getHash(filepath: string) HashType {
+            return @truncate(HashType, std.hash.Wyhash.hash(0, filepath));
         }
 
         pub fn init(ctx: ContextType, fs: *Fs.FileSystem, allocator: *std.mem.Allocator) !*Watcher {

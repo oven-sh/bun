@@ -529,6 +529,7 @@ pub const RequestContext = struct {
                         Fs.Path.init(file_path_str),
                         &parse_result,
                         .absolute_url,
+                        false,
                     );
 
                     var written = this.bundler.print(parse_result, @TypeOf(&this.printer), &this.printer, .esm) catch |err| {
@@ -691,8 +692,8 @@ pub const RequestContext = struct {
                 boot,
                 .entry_point,
             );
-            JavaScript.VirtualMachine.instance = vm;
-            javascript_vm = JavaScript.VirtualMachine.instance;
+            JavaScript.VirtualMachine.vm = vm;
+            javascript_vm = JavaScript.VirtualMachine.vm;
             var exception: js.JSValueRef = null;
             var load_result = try JavaScript.Module.loadFromResolveResult(vm, vm.ctx, resolved_entry_point, &exception);
 

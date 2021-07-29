@@ -82,7 +82,7 @@ const JSC::GlobalObjectMethodTable GlobalObject::s_globalObjectMethodTable = {
     &shouldInterruptScript,
     &javaScriptRuntimeFlags,
     nullptr, // queueTaskToEventLoop
-nullptr,    // &shouldInterruptScriptBeforeTimeout,
+    nullptr,    // &shouldInterruptScriptBeforeTimeout,
     &moduleLoaderImportModule, // moduleLoaderImportModule
     &moduleLoaderResolve, // moduleLoaderResolve
     &moduleLoaderFetch, // moduleLoaderFetch
@@ -127,7 +127,6 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count) {
     }
     this->addStaticGlobals(extraStaticGlobals.data(), count);
     extraStaticGlobals.releaseBuffer();
-    
 }
 
 JSC::Identifier GlobalObject::moduleLoaderResolve(
@@ -140,11 +139,11 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(
     auto res = Zig__GlobalObject__resolve(
         globalObject,
         toZigString(key, globalObject),
-        toZigString(referrer, globalObject)
+        referrer.isString() ? toZigString(referrer, globalObject) : ZigStringEmpty
     );
 
     if (res.success) {
-        return toIdentifier(res.result.value, globalObject);
+        return  toIdentifier(res.result.value, globalObject);
     } else {
         auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         throwException(scope, res.result.err.message, globalObject);
@@ -215,6 +214,7 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalOb
 
     scope.release();
     promise->resolve(globalObject, sourceCode);
+    globalObject->vm().drainMicrotasks();
     return promise;
 }
 

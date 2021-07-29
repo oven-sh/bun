@@ -2,7 +2,7 @@ usingnamespace @import("./bindings.zig");
 usingnamespace @import("./shared.zig");
 const Fs = @import("../../../fs.zig");
 const CAPI = @import("../JavaScriptCore.zig");
-
+const JS = @import("../javascript.zig");
 const Handler = struct {
     pub export fn global_signal_handler_fn(sig: i32, info: *const std.os.siginfo_t, ctx_ptr: ?*const c_void) callconv(.C) void {
         Global.panic("C++ Crash!!", .{});
@@ -16,7 +16,7 @@ pub const ZigGlobalObject = extern struct {
     pub const name = "Zig::GlobalObject";
     pub const include = "\"ZigGlobalObject.h\"";
     pub const namespace = shim.namespace;
-    pub const Interface: type = NewGlobalObject(std.meta.globalOption("JavaScript", type) orelse struct {});
+    pub const Interface: type = NewGlobalObject(std.meta.globalOption("JavaScriptVirtualMachine", type) orelse struct {});
 
     pub var sigaction: std.os.Sigaction = undefined;
     pub var sigaction_installed = false;
@@ -149,7 +149,7 @@ pub fn Errorable(comptime Type: type) type {
 
         threadlocal var err_buf: [4096]u8 = undefined;
         pub fn errFmt(code: anyerror, comptime fmt: []const u8, args: anytype) @This() {
-            const message = std.fmt.bufPrint(&err_buf, fmt, args) catch @errorName(code);
+            const message = std.fmt.bufPrint(&err_buf, fmt, args) catch @as([]const u8, @errorName(code)[0..]);
 
             return @call(.{ .modifier = .always_inline }, err, .{ code, message });
         }
@@ -207,15 +207,15 @@ pub const ZigConsoleClient = struct {
         vals: [*]JSValue,
         len: usize,
     ) callconv(.C) void {
-        var console = zigCast(ZigConsoleClient, console_);
+        var console = JS.VirtualMachine.vm.console;
         var i: usize = 0;
         var writer = console.writer;
 
         if (len == 1) {
             var str = vals[0].toWTFString(global);
             var slice = str.slice();
-            _ = writer.unbuffered_writer.write(slice) catch 0;
-            if (slice.len > 0 and slice[slice.len - 1] != '\n') {
+            var written = writer.unbuffered_writer.write(slice) catch 0;
+            if (written > 0 and slice[slice.len - 1] != '\n') {
                 _ = writer.unbuffered_writer.write("\n") catch 0;
             }
             return;

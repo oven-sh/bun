@@ -1611,9 +1611,6 @@ pub const Parser = struct {
         filepath_hash_for_hmr: u32 = 0,
         features: RuntimeFeatures = RuntimeFeatures{},
 
-        // When platform is set to "speedy"
-        force_commonjs: bool = false,
-
         // Used when bundling node_modules
         enable_bundling: bool = false,
         transform_require_to_import: bool = true,
@@ -1832,28 +1829,26 @@ pub const Parser = struct {
                     declared_symbols_i += 1;
                     declared_symbols[declared_symbols_i] = .{ .ref = automatic_namespace_ref, .is_top_level = true };
                     declared_symbols_i += 1;
-                    if (!p.options.force_commonjs) {
-                        var require_call = p.callRequireOrBundledRequire(require_call_args);
+                    var require_call = p.callRequireOrBundledRequire(require_call_args);
 
-                        decls[decl_i] = G.Decl{
-                            .binding = p.b(
-                                B.Identifier{
-                                    .ref = p.jsx_runtime_ref,
-                                },
-                                loc,
-                            ),
-                            .value = p.e(
-                                E.Dot{
-                                    .target = require_call,
-                                    .name = p.options.jsx.jsx,
-                                    .name_loc = loc,
-                                    .can_be_removed_if_unused = true,
-                                },
-                                loc,
-                            ),
-                        };
-                        decl_i += 1;
-                    }
+                    decls[decl_i] = G.Decl{
+                        .binding = p.b(
+                            B.Identifier{
+                                .ref = p.jsx_runtime_ref,
+                            },
+                            loc,
+                        ),
+                        .value = p.e(
+                            E.Dot{
+                                .target = require_call,
+                                .name = p.options.jsx.jsx,
+                                .name_loc = loc,
+                                .can_be_removed_if_unused = true,
+                            },
+                            loc,
+                        ),
+                    };
+                    decl_i += 1;
 
                     if (jsx_filename_symbol.use_count_estimate > 0) {
                         declared_symbols[declared_symbols_i] = .{ .ref = p.jsx_filename_ref, .is_top_level = true };
@@ -1874,34 +1869,12 @@ pub const Parser = struct {
                     // When everything is CommonJS
                     // We import JSX like this:
                     // var {jsxDev} = require("react/jsx-dev")
-                    if (p.options.force_commonjs) {
-                        var clause_items = p.allocator.alloc(js_ast.ClauseItem, 1) catch unreachable;
-                        clause_items[0] = js_ast.ClauseItem{
-                            .alias = p.options.jsx.jsx,
-                            .alias_loc = loc,
-                            .name = LocRef{ .loc = loc, .ref = p.jsx_runtime_ref },
-                            .original_name = "",
-                        };
-                        jsx_part_stmts[stmt_i] = p.s(
-                            S.Import{
-                                .namespace_ref = automatic_namespace_ref,
-                                .items = clause_items,
-                                .star_name_loc = loc,
-                                .is_single_line = true,
-                                .import_record_index = import_record_id,
-                            },
-                            loc,
-                        );
-                        // Otherwise, it looks like this
-                        // var
-                    } else {
-                        jsx_part_stmts[stmt_i] = p.s(S.Import{
-                            .namespace_ref = automatic_namespace_ref,
-                            .star_name_loc = loc,
-                            .is_single_line = true,
-                            .import_record_index = import_record_id,
-                        }, loc);
-                    }
+                    jsx_part_stmts[stmt_i] = p.s(S.Import{
+                        .namespace_ref = automatic_namespace_ref,
+                        .star_name_loc = loc,
+                        .is_single_line = true,
+                        .import_record_index = import_record_id,
+                    }, loc);
 
                     stmt_i += 1;
                     p.named_imports.put(
@@ -2026,7 +1999,7 @@ pub const Parser = struct {
 
         var runtime_imports_iter = p.runtime_imports.iter();
         // don't import runtime if we're bundling, it's already included
-        if (!p.options.enable_bundling) {
+        if (!p.options.enable_bundling and p.has_called_runtime) {
             while (runtime_imports_iter.next()) |entry| {
                 const imports = [_]u16{entry.key};
                 p.generateImportStmt(
@@ -2353,6 +2326,8 @@ pub fn NewParser(
         hmr_client_ref: js_ast.Ref = js_ast.Ref.None,
         hmr_module_class_ref: js_ast.Ref = js_ast.Ref.None,
         hmr_exports_list: std.ArrayList(js_ast.ClauseItem),
+
+        has_called_runtime: bool = false,
 
         cjs_import_stmts: std.ArrayList(Stmt),
 
@@ -2849,9 +2824,7 @@ pub fn NewParser(
         // This means we need to transform from require(react) to react()
         // unless we're building inside of speedy, then it's just normal commonjs
         pub fn callRequireOrBundledRequire(p: *P, require_args: []Expr) Expr {
-            if (p.options.force_commonjs) {
-                return require_args[0];
-            } else if (p.options.can_import_from_bundle) {
+            if (p.options.can_import_from_bundle) {
                 return p.e(E.Call{ .target = require_args[0] }, require_args[0].loc);
             } else {
                 return p.callRuntime(require_args[0].loc, "__require", require_args);
@@ -3169,15 +3142,9 @@ pub fn NewParser(
 
             p.hoistSymbols(p.module_scope);
 
-            if (p.options.force_commonjs) {
-                p.exports_ref = try p.declareCommonJSSymbol(.unbound, "exports");
-                p.module_ref = try p.declareCommonJSSymbol(.unbound, "module");
-                p.require_ref = try p.declareSymbol(.hoisted, logger.Loc.Empty, "require");
-            } else {
-                p.exports_ref = try p.declareSymbol(.hoisted, logger.Loc.Empty, "exports");
-                p.module_ref = try p.declareSymbol(.hoisted, logger.Loc.Empty, "module");
-                p.require_ref = try p.declareCommonJSSymbol(.unbound, "require");
-            }
+            p.exports_ref = try p.declareSymbol(.hoisted, logger.Loc.Empty, "exports");
+            p.module_ref = try p.declareSymbol(.hoisted, logger.Loc.Empty, "module");
+            p.require_ref = try p.declareCommonJSSymbol(.unbound, "require");
 
             if (p.options.enable_bundling) {
                 p.bundle_export_ref = try p.declareSymbol(.unbound, logger.Loc.Empty, "IF_YOU_SEE_THIS_ITS_A_BUNDLER_BUG_PLEASE_FILE_AN_ISSUE_THX");
@@ -13066,6 +13033,7 @@ pub fn NewParser(
 
         pub fn callRuntime(p: *P, loc: logger.Loc, comptime name: string, args: []Expr) Expr {
             var ref: Ref = undefined;
+            p.has_called_runtime = true;
 
             if (!p.runtime_imports.contains(name)) {
                 ref = p.newSymbol(.other, name) catch unreachable;

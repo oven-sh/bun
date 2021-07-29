@@ -116,8 +116,74 @@ JSC__JSInternalPromise* JSC__JSModuleLoader__importModule(JSC__JSGlobalObject* a
 JSC__JSValue JSC__JSModuleLoader__linkAndEvaluateModule(JSC__JSGlobalObject* arg0, const JSC__Identifier* arg1) {
     return JSC::JSValue::encode(JSC::linkAndEvaluateModule(arg0, *arg1, JSC::JSValue{}));
 }
-JSC__JSInternalPromise* JSC__JSModuleLoader__loadAndEvaluateModule(JSC__JSGlobalObject* arg0, const WTF__String* arg1) {
-    return JSC::loadAndEvaluateModule(arg0, *arg1, JSC::JSValue{}, JSC::JSValue{});
+
+static JSC::Identifier jsValueToModuleKey(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue value)
+{
+    if (value.isSymbol())
+        return JSC::Identifier::fromUid(JSC::jsCast<JSC::Symbol*>(value)->privateName());
+    return JSC::asString(value)->toIdentifier(lexicalGlobalObject);
+}
+
+static JSC::JSValue doLink(JSC__JSGlobalObject* globalObject, JSC::JSValue moduleKeyValue) {
+    JSC::VM& vm = globalObject->vm();
+    JSC::JSLockHolder lock { vm };
+    if (!(moduleKeyValue.isString() || moduleKeyValue.isSymbol())) {
+        return JSC::jsUndefined();
+    }
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::Identifier moduleKey = jsValueToModuleKey(globalObject, moduleKeyValue);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    return JSC::linkAndEvaluateModule(globalObject, moduleKey, JSC::JSValue());
+}
+
+static JSC::JSNativeStdFunction* resolverFunction;
+static JSC::JSNativeStdFunction* rejecterFunction;
+static bool resolverFunctionInitialized = false;
+
+static JSC::EncodedJSValue resolverFunctionCallback(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) {
+    return JSC::JSValue::encode(doLink(globalObject, callFrame->argument(0))); 
+}
+
+static JSC::EncodedJSValue rejecterFunctionCallback(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) {
+    return JSC::JSValue::encode(callFrame->argument(0));
+}
+    
+
+JSC__JSInternalPromise* JSC__JSModuleLoader__loadAndEvaluateModule(JSC__JSGlobalObject* globalObject, ZigString arg1) {
+    globalObject->vm().drainMicrotasks();
+    auto name = Zig::toString(arg1);
+    name.impl()->ref();
+
+    auto* promise = JSC::loadAndEvaluateModule(
+        globalObject,
+        name,
+        JSC::jsUndefined(),
+        JSC::jsUndefined()
+    );
+
+    if (!resolverFunctionInitialized) {
+        resolverFunction = JSC::JSNativeStdFunction::create(globalObject->vm(), globalObject, 1, String(), resolverFunctionCallback);
+        rejecterFunction = JSC::JSNativeStdFunction::create(globalObject->vm(), globalObject, 1, String(), rejecterFunctionCallback);
+        resolverFunctionInitialized = true;
+        JSC::gcProtect(resolverFunction);
+        JSC::gcProtect(rejecterFunction);
+    }
+    
+    auto result = promise->then(globalObject, resolverFunction, rejecterFunction);
+    globalObject->vm().drainMicrotasks();
+
+  
+    // if (promise->status(globalObject->vm()) == JSC::JSPromise::Status::Fulfilled) {
+    //     return reinterpret_cast<JSC::JSInternalPromise*>(
+    //         JSC::JSInternalPromise::resolvedPromise(
+    //             globalObject,
+    //             doLink(globalObject, promise->result(globalObject->vm()))
+    //         )
+    //     );
+    // }
+   
+    return result;
 }
 JSC__JSInternalPromise* JSC__JSModuleLoader__loadAndEvaluateModuleEntryPoint(JSC__JSGlobalObject* arg0, const JSC__SourceCode* arg1) {
     return JSC::loadAndEvaluateModule(arg0, *arg1, JSC::JSValue{});

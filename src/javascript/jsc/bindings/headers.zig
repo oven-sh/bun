@@ -119,7 +119,7 @@ pub extern fn JSC__JSModuleLoader__checkSyntax(arg0: [*c]JSC__JSGlobalObject, ar
 pub extern fn JSC__JSModuleLoader__evaluate(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]const u8, arg2: usize, arg3: [*c]const u8, arg4: usize, JSValue5: JSC__JSValue, arg6: [*c]JSC__JSValue) JSC__JSValue;
 pub extern fn JSC__JSModuleLoader__importModule(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]const JSC__Identifier) [*c]JSC__JSInternalPromise;
 pub extern fn JSC__JSModuleLoader__linkAndEvaluateModule(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]const JSC__Identifier) JSC__JSValue;
-pub extern fn JSC__JSModuleLoader__loadAndEvaluateModule(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]const WTF__String) [*c]JSC__JSInternalPromise;
+pub extern fn JSC__JSModuleLoader__loadAndEvaluateModule(arg0: [*c]JSC__JSGlobalObject, arg1: ZigString) [*c]JSC__JSInternalPromise;
 pub extern fn JSC__JSModuleLoader__loadAndEvaluateModuleEntryPoint(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]const JSC__SourceCode) [*c]JSC__JSInternalPromise;
 pub extern fn JSC__JSModuleRecord__sourceCode(arg0: [*c]JSC__JSModuleRecord) bJSC__SourceCode;
 pub extern fn JSC__JSPromise__isHandled(arg0: [*c]const JSC__JSPromise, arg1: [*c]JSC__VM) bool;

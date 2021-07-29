@@ -1,6 +1,6 @@
 {
   "git.autoRepositoryDetection": "openEditors",
-  "search.quickOpen.includeSymbols": true,
+  "search.quickOpen.includeSymbols": false,
   "search.seedWithNearestWord": true,
   "search.smartCase": true,
   "search.exclude": {

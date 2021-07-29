@@ -3813,7 +3813,10 @@ pub fn NewFileWriter(file: std.fs.File) FileWriter {
     return FileWriter.init(internal);
 }
 
-pub const Format = enum { esm, cjs, speedy };
+pub const Format = enum {
+    esm,
+    cjs,
+};
 
 pub fn printAst(
     comptime Writer: type,
@@ -3883,41 +3886,6 @@ pub fn printCommonJS(
 
     // Add a couple extra newlines at the end
     printer.writer.print(@TypeOf("\n\n"), "\n\n");
-
-    try printer.writer.done();
-
-    return @intCast(usize, std.math.max(printer.writer.written, 0));
-}
-
-pub fn printSpeedyCJS(
-    comptime Writer: type,
-    _writer: Writer,
-    tree: Ast,
-    symbols: js_ast.Symbol.Map,
-    source: *const logger.Source,
-    ascii_only: bool,
-    opts: Options,
-    comptime LinkerType: type,
-    linker: ?*LinkerType,
-) !usize {
-    const PrinterType = NewPrinter(false, Writer, LinkerType, true, true);
-    var writer = _writer;
-    var printer = try PrinterType.init(
-        writer,
-        &tree,
-        source,
-        symbols,
-        opts,
-        linker,
-    );
-    for (tree.parts) |part| {
-        for (part.stmts) |stmt| {
-            try printer.printStmt(stmt);
-            if (printer.writer.getError()) {} else |err| {
-                return err;
-            }
-        }
-    }
 
     try printer.writer.done();
 

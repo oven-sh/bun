@@ -1,1 +1,2 @@
-console.log("Waiting for debugger.");
+import hello from "./hello";
+console.log(hello);

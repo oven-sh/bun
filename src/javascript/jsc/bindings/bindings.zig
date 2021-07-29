@@ -174,46 +174,46 @@ pub fn NewGlobalObject(comptime Type: type) type {
     return struct {
         pub fn import(global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) ErrorableZigString {
             if (comptime @hasDecl(Type, "import")) {
-                return @call(.{ .modifier = .always_inline }, Interface.import, .{ global, specifier, source });
+                return @call(.{ .modifier = .always_inline }, Type.import, .{ global, specifier, source });
             }
             return ErrorableZigString.err(error.ImportFailed, "Import not implemented");
         }
         pub fn resolve(global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) ErrorableZigString {
             if (comptime @hasDecl(Type, "resolve")) {
-                return @call(.{ .modifier = .always_inline }, Interface.resolve, .{ global, specifier, source });
+                return @call(.{ .modifier = .always_inline }, Type.resolve, .{ global, specifier, source });
             }
             return ErrorableZigString.err(error.ResolveFailed, "resolve not implemented");
         }
         pub fn fetch(global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) ErrorableZigString {
             if (comptime @hasDecl(Type, "fetch")) {
-                return @call(.{ .modifier = .always_inline }, Interface.fetch, .{ global, specifier, source });
+                return @call(.{ .modifier = .always_inline }, Type.fetch, .{ global, specifier, source });
             }
             return ErrorableZigString.err(error.FetchFailed, "Module fetch not implemented");
         }
         pub fn promiseRejectionTracker(global: *JSGlobalObject, promise: *JSPromise, rejection: JSPromiseRejectionOperation) callconv(.C) JSValue {
             if (comptime @hasDecl(Type, "promiseRejectionTracker")) {
-                return @call(.{ .modifier = .always_inline }, Interface.promiseRejectionTracker, .{ global, promise, rejection });
+                return @call(.{ .modifier = .always_inline }, Type.promiseRejectionTracker, .{ global, promise, rejection });
             }
             return JSValue.jsUndefined();
         }
 
         pub fn reportUncaughtException(global: *JSGlobalObject, exception: *Exception) callconv(.C) JSValue {
             if (comptime @hasDecl(Type, "reportUncaughtException")) {
-                return @call(.{ .modifier = .always_inline }, Interface.reportUncaughtException, .{ global, exception });
+                return @call(.{ .modifier = .always_inline }, Type.reportUncaughtException, .{ global, exception });
             }
             return JSValue.jsUndefined();
         }
 
         pub fn createImportMetaProperties(global: *JSGlobalObject, loader: *JSModuleLoader, obj: JSValue, record: *JSModuleRecord, specifier: JSValue) callconv(.C) JSValue {
             if (comptime @hasDecl(Type, "createImportMetaProperties")) {
-                return @call(.{ .modifier = .always_inline }, Interface.createImportMetaProperties, .{ global, loader, obj, record, specifier });
+                return @call(.{ .modifier = .always_inline }, Type.createImportMetaProperties, .{ global, loader, obj, record, specifier });
             }
             return JSValue.jsUndefined();
         }
 
         pub fn onCrash() callconv(.C) void {
             if (comptime @hasDecl(Type, "onCrash")) {
-                return @call(.{ .modifier = .always_inline }, Interface.onCrash, .{});
+                return @call(.{ .modifier = .always_inline }, Type.onCrash, .{});
             }
 
             Global.panic("C++ crashed :(", .{});
@@ -256,7 +256,7 @@ pub const JSModuleLoader = extern struct {
         });
     }
 
-    pub fn loadAndEvaluateModule(globalObject: *JSGlobalObject, module_name: *const String) *JSInternalPromise {
+    pub fn loadAndEvaluateModule(globalObject: *JSGlobalObject, module_name: ZigString) *JSInternalPromise {
         return shim.cppFn("loadAndEvaluateModule", .{
             globalObject,
             module_name,
@@ -393,13 +393,7 @@ pub const JSInternalPromise = extern struct {
     pub const name = "JSC::JSInternalPromise";
     pub const namespace = "JSC";
 
-    pub const Status = enum(u32) {
-        Pending = 0, // Making this as 0, so that, we can change the status from Pending to others without masking.
-        Fulfilled = 1,
-        Rejected = 2,
-    };
-
-    pub fn status(this: *const JSInternalPromise, vm: *VM) Status {
+    pub fn status(this: *const JSInternalPromise, vm: *VM) JSPromise.Status {
         return shim.cppFn("status", .{ this, vm });
     }
     pub fn result(this: *const JSInternalPromise, vm: *VM) JSValue {
@@ -1356,8 +1350,9 @@ pub const VM = extern struct {
     pub fn throwError(vm: *VM, global_object: *JSGlobalObject, scope: *ThrowScope, message: [*]const u8, len: usize) bool {
         return cppFn("throwError", .{
             vm,
-            scope,
+
             global_object,
+            scope,
 
             message,
             len,

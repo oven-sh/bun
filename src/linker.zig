@@ -175,6 +175,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
             file_path: Fs.Path,
             result: *_bundler.ParseResult,
             comptime import_path_format: Options.BundleOptions.ImportPathFormat,
+            comptime ignore_runtime: bool,
         ) !void {
             var needs_runtime = result.ast.uses_exports_ref or result.ast.uses_module_ref or result.ast.runtime_imports.hasAny();
             const source_dir = file_path.name.dir;
@@ -186,22 +187,24 @@ pub fn NewLinker(comptime BundlerType: type) type {
                 .jsx, .js, .ts, .tsx => {
                     for (result.ast.import_records) |*import_record, _record_index| {
                         const record_index = @truncate(u32, _record_index);
-                        if (strings.eqlComptime(import_record.path.text, Runtime.Imports.Name)) {
-                            // runtime is included in the bundle, so we don't need to dynamically import it
-                            if (linker.options.node_modules_bundle) |node_modules_bundle| {
-                                import_record.path.text = if (linker.options.node_modules_bundle_url.len > 0) linker.options.node_modules_bundle_url else node_modules_bundle.bundle.import_from_name;
-                            } else {
-                                import_record.path = try linker.generateImportPath(
-                                    source_dir,
-                                    linker.runtime_source_path,
-                                    Runtime.version(),
-                                    false,
-                                    import_path_format,
-                                );
-                                result.ast.runtime_import_record_id = record_index;
-                                result.ast.needs_runtime = true;
+                        if (comptime !ignore_runtime) {
+                            if (strings.eqlComptime(import_record.path.text, Runtime.Imports.Name)) {
+                                // runtime is included in the bundle, so we don't need to dynamically import it
+                                if (linker.options.node_modules_bundle) |node_modules_bundle| {
+                                    import_record.path.text = if (linker.options.node_modules_bundle_url.len > 0) linker.options.node_modules_bundle_url else node_modules_bundle.bundle.import_from_name;
+                                } else {
+                                    import_record.path = try linker.generateImportPath(
+                                        source_dir,
+                                        linker.runtime_source_path,
+                                        Runtime.version(),
+                                        false,
+                                        import_path_format,
+                                    );
+                                    result.ast.runtime_import_record_id = record_index;
+                                    result.ast.needs_runtime = true;
+                                }
+                                continue;
                             }
-                            continue;
                         }
 
                         if (linker.resolver.resolve(source_dir, import_record.path.text, import_record.kind)) |*_resolved_import| {
@@ -307,7 +310,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
                             switch (err) {
                                 error.ModuleNotFound => {
                                     if (Resolver.isPackagePath(import_record.path.text)) {
-                                        if (linker.options.platform != .node and Options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
+                                        if (linker.options.platform.isWebLike() and Options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
                                             try linker.log.addRangeErrorFmt(
                                                 &result.source,
                                                 import_record.range,

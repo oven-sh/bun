@@ -6,7 +6,7 @@ pub const ProdSourceContent = @embedFile("./runtime.out.js");
 
 pub const Runtime = struct {
     pub fn sourceContent() string {
-        if (isDebug) {
+        if (comptime isDebug) {
             var runtime_path = std.fs.path.join(std.heap.c_allocator, &[_]string{ std.fs.path.dirname(@src().file).?, "runtime.out.js" }) catch unreachable;
             const file = std.fs.openFileAbsolute(runtime_path, .{}) catch unreachable;
             defer file.close();

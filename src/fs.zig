@@ -885,7 +885,7 @@ pub const PathName = struct {
         // so if dir does not have a trailing slash, but is spaced one apart from the basename
         // we can assume there is a trailing slash there
         // so we extend the original slice's length by one
-        return this.dir.ptr[0 .. this.dir.len + @intCast(
+        return if (this.dir.len == 0) "./" else this.dir.ptr[0 .. this.dir.len + @intCast(
             usize,
             @boolToInt(
                 this.dir[this.dir.len - 1] != std.fs.path.sep_posix and (@ptrToInt(this.dir.ptr) + this.dir.len + 1) == @ptrToInt(this.base.ptr),

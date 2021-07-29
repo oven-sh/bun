@@ -1032,7 +1032,7 @@ pub fn NewBundler(cache_files: bool) type {
                         };
                     };
 
-                    try bundler.linker.link(file_path, &result, import_path_format);
+                    try bundler.linker.link(file_path, &result, import_path_format, false);
 
                     return BuildResolveResultPair{
                         .written = try bundler.print(
@@ -1099,6 +1099,7 @@ pub fn NewBundler(cache_files: bool) type {
                         file_path,
                         &result,
                         import_path_format,
+                        false,
                     );
 
                     output_file.size = try bundler.print(
@@ -1301,22 +1302,6 @@ pub fn NewBundler(cache_files: bool) type {
                     Linker,
                     &bundler.linker,
                 ),
-                .speedy => try js_printer.printSpeedyCJS(
-                    Writer,
-                    writer,
-                    ast,
-                    js_ast.Symbol.Map.initList(symbols),
-                    &result.source,
-                    false,
-                    js_printer.Options{
-                        .to_module_ref = Ref.RuntimeRef,
-                        .externals = ast.externals,
-                        .runtime_imports = ast.runtime_imports,
-                        .require_ref = ast.require_ref,
-                    },
-                    Linker,
-                    &bundler.linker,
-                ),
             };
         }
 
@@ -1360,8 +1345,7 @@ pub fn NewBundler(cache_files: bool) type {
                     jsx.parse = loader.isJSX();
                     var opts = js_parser.Parser.Options.init(jsx, loader);
                     opts.enable_bundling = false;
-                    opts.transform_require_to_import = !bundler.options.platform.implementsRequire();
-                    opts.force_commonjs = bundler.options.platform == .speedy;
+                    opts.transform_require_to_import = true;
                     opts.can_import_from_bundle = bundler.options.node_modules_bundle != null;
                     opts.features.hot_module_reloading = bundler.options.hot_module_reloading and bundler.options.platform != .speedy;
                     opts.features.react_fast_refresh = opts.features.hot_module_reloading and jsx.parse and bundler.options.jsx.supports_fast_refresh;

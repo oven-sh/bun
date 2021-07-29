@@ -250,9 +250,9 @@ pub const Platform = enum {
     speedy,
     node,
 
-    pub fn implementsRequire(platform: Platform) bool {
+    pub fn isWebLike(platform: Platform) bool {
         return switch (platform) {
-            .speedy, .node => true,
+            .neutral, .browser => true,
             else => false,
         };
     }

@@ -386,23 +386,10 @@ pub const Cli = struct {
         //     .entry_point,
         // );
 
-        var exception = js.JSValue.jsUndefined();
-        var result = js.JSModuleLoader.evaluate(
-            vm.global,
-            StringS.src,
-            StringS.src.len,
-            "/hi.js",
-            "/hi.js".len,
-            js.JSValue.jsUndefined(),
-            @ptrCast([*]js.JSValue, &exception),
-        );
-
-        if (!exception.isUndefined()) {
-            var str = exception.toWTFString(vm.global);
-            var slice = str.slice();
-            _ = Output.errorWriter().write(slice) catch 0;
-        }
+        try vm.loadEntryPoint(vm.bundler.options.entry_points[0]);
     }
 };
 
 pub const JavaScript = struct {};
+
+pub const JavaScriptVirtualMachine = VirtualMachine;

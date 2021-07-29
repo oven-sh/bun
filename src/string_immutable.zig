@@ -80,6 +80,30 @@ pub fn endsWithAny(self: string, str: string) bool {
 
 pub fn lastNonwhitespace(self: string, str: string) bool {}
 
+pub fn quotedAlloc(allocator: *std.mem.Allocator, self: string) !string {
+    var count: usize = 0;
+    for (self) |char| {
+        count += @boolToInt(char == '"');
+    }
+
+    if (count == 0) {
+        return allocator.dupe(u8, self);
+    }
+
+    var i: usize = 0;
+    var out = try allocator.alloc(u8, self.len + count);
+    for (self) |char| {
+        if (char == '"') {
+            out[i] = '\\';
+            i += 1;
+        }
+        out[i] = char;
+        i += 1;
+    }
+
+    return out;
+}
+
 pub fn endsWithAnyComptime(self: string, comptime str: string) bool {
     if (str.len < 10) {
         const last = self[self.len - 1];

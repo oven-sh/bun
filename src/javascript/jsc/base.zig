@@ -1296,6 +1296,18 @@ pub fn NewClass(
                                 def.callAsConstructor = To.JS.Constructor(staticFunctions.constructor.rfn).rfn;
                             } else if (comptime strings.eqlComptime(function_names[i], "finalize")) {
                                 def.finalize = To.JS.Finalize(ZigType, staticFunctions.finalize.rfn).rfn;
+                            } else if (comptime strings.eqlComptime(function_names[i], "callAsFunction")) {
+                                const ctxfn = @field(staticFunctions, function_names[i]).rfn;
+                                const Func: std.builtin.TypeInfo.Fn = @typeInfo(@TypeOf(ctxfn)).Fn;
+
+                                const PointerType = std.meta.Child(Func.args[0].arg_type.?);
+
+                                var callback = if (Func.calling_convention == .C) ctxfn else To.JS.Callback(
+                                    PointerType,
+                                    ctxfn,
+                                ).rfn;
+
+                                def.callAsFunction = callback;
                             } else {
                                 const ctxfn = @field(staticFunctions, function_names[i]).rfn;
                                 const Func: std.builtin.TypeInfo.Fn = @typeInfo(@TypeOf(ctxfn)).Fn;

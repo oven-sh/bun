@@ -19,10 +19,13 @@ usingnamespace @import("./config.zig");
 usingnamespace @import("./bindings/exports.zig");
 usingnamespace @import("./bindings/bindings.zig");
 
+const Runtime = @import("../../runtime.zig");
+
 pub const GlobalClasses = [_]type{
     Request.Class,
     Response.Class,
     Headers.Class,
+    EventListenerMixin.addEventListener(VirtualMachine),
 };
 
 pub const Module = struct {
@@ -39,9 +42,11 @@ pub const VirtualMachine = struct {
     node_modules: ?*NodeModuleBundle = null,
     bundler: Bundler,
     watcher: ?*http.Watcher = null,
-    console: ZigConsoleClient,
+    console: *ZigConsoleClient,
     require_cache: RequireCacheType,
     log: *logger.Log,
+    event_listeners: EventListenerMixin.Map,
+    pub threadlocal var vm_loaded = false;
     pub threadlocal var vm: *VirtualMachine = undefined;
 
     pub fn init(
@@ -58,20 +63,26 @@ pub const VirtualMachine = struct {
         }
 
         vm = try allocator.create(VirtualMachine);
+        var console = try allocator.create(ZigConsoleClient);
+        console.* = ZigConsoleClient.init(Output.errorWriter(), Output.writer());
+
         vm.* = VirtualMachine{
             .global = undefined,
             .allocator = allocator,
             .require_cache = RequireCacheType.init(allocator),
+            .event_listeners = EventListenerMixin.Map.init(allocator),
             .bundler = try Bundler.init(
                 allocator,
                 log,
                 try configureTransformOptionsForSpeedy(allocator, _args),
                 existing_bundle,
             ),
-            .console = ZigConsoleClient.init(Output.errorWriter(), Output.writer()),
+            .console = console,
             .node_modules = existing_bundle,
             .log = log,
         };
+
+        vm.bundler.configureLinker();
 
         var global_classes: [GlobalClasses.len]js.JSClassRef = undefined;
         inline for (GlobalClasses) |Class, i| {
@@ -80,10 +91,149 @@ pub const VirtualMachine = struct {
         vm.global = ZigGlobalObject.create(
             &global_classes,
             @intCast(i32, global_classes.len),
-            &vm.console,
+            vm.console,
         );
+        vm_loaded = true;
 
         return vm;
+    }
+
+    // dynamic import
+    // pub fn import(global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) ErrorableZigString {
+
+    // }
+
+    threadlocal var source_code_printer: js_printer.BufferPrinter = undefined;
+    threadlocal var source_code_printer_loaded: bool = false;
+
+    inline fn _fetch(global: *JSGlobalObject, specifier: string, source: string) !string {
+        std.debug.assert(VirtualMachine.vm_loaded);
+        std.debug.assert(VirtualMachine.vm.global == global);
+
+        if (strings.eqlComptime(specifier, Runtime.Runtime.Imports.Name)) {
+            return Runtime.Runtime.sourceContent();
+        }
+
+        const result = vm.bundler.resolve_results.get(specifier) orelse return error.MissingResolveResult;
+        const path = result.path_pair.primary;
+        const loader = vm.bundler.options.loaders.get(path.name.ext) orelse .file;
+
+        switch (loader) {
+            .js, .jsx, .ts, .tsx, .json => {
+                vm.bundler.resetStore();
+                const hash = http.Watcher.getHash(path.text);
+
+                var fd: ?StoredFileDescriptorType = null;
+
+                if (vm.watcher) |watcher| {
+                    if (watcher.indexOf(hash)) |index| {
+                        fd = watcher.watchlist.items(.fd)[index];
+                    }
+                }
+
+                var parse_result = vm.bundler.parse(
+                    vm.bundler.allocator,
+                    path,
+                    loader,
+                    result.dirname_fd,
+                    fd,
+                    hash,
+                ) orelse {
+                    return error.ParseError;
+                };
+
+                // We _must_ link because:
+                // - node_modules bundle won't be properly
+                try vm.bundler.linker.link(
+                    path,
+                    &parse_result,
+                    .absolute_path,
+                    true,
+                );
+
+                if (!source_code_printer_loaded) {
+                    var writer = try js_printer.BufferWriter.init(vm.allocator);
+                    source_code_printer = js_printer.BufferPrinter.init(writer);
+                    source_code_printer.ctx.append_null_byte = false;
+
+                    source_code_printer_loaded = true;
+                }
+
+                source_code_printer.ctx.reset();
+
+                var written = try vm.bundler.print(
+                    parse_result,
+                    @TypeOf(&source_code_printer),
+                    &source_code_printer,
+                    .esm,
+                );
+
+                if (written == 0) {
+                    return error.PrintingErrorWriteFailed;
+                }
+
+                return vm.allocator.dupe(u8, source_code_printer.ctx.written) catch unreachable;
+            },
+            else => {
+                return try strings.quotedAlloc(VirtualMachine.vm.allocator, path.pretty);
+            },
+        }
+    }
+    inline fn _resolve(global: *JSGlobalObject, specifier: string, source: string) !string {
+        std.debug.assert(VirtualMachine.vm_loaded);
+        std.debug.assert(VirtualMachine.vm.global == global);
+        if (strings.eqlComptime(specifier, Runtime.Runtime.Imports.Name)) {
+            return Runtime.Runtime.Imports.Name;
+        }
+
+        const result: resolver.Result = vm.bundler.resolve_results.get(specifier) orelse brk: {
+            // We don't want to write to the hash table if there's an error
+            // That's why we don't use getOrPut here
+            const res = try vm.bundler.resolver.resolve(
+                Fs.PathName.init(source).dirWithTrailingSlash(),
+                specifier,
+                .stmt,
+            );
+            try vm.bundler.resolve_results.put(res.path_pair.primary.text, res);
+            break :brk res;
+        };
+
+        return result.path_pair.primary.text;
+    }
+
+    pub fn resolve(global: *JSGlobalObject, specifier: ZigString, source: ZigString) ErrorableZigString {
+        const result = _resolve(global, specifier.slice(), source.slice()) catch |err| {
+            return ErrorableZigString.errFmt(err, "ResolveError {s} for \"{s}\"\nfrom\"{s}\"", .{
+                @errorName(err),
+                specifier.slice(),
+                source.slice(),
+            });
+        };
+
+        return ErrorableZigString.ok(ZigString.init(result));
+    }
+
+    pub fn fetch(global: *JSGlobalObject, specifier: ZigString, source: ZigString) ErrorableZigString {
+        const result = _fetch(global, specifier.slice(), source.slice()) catch |err| {
+            return ErrorableZigString.errFmt(err, "{s}: \"{s}\"", .{
+                @errorName(err),
+                specifier.slice(),
+            });
+        };
+
+        return ErrorableZigString.ok(ZigString.init(result));
+    }
+
+    pub fn loadEntryPoint(this: *VirtualMachine, entry_point: string) !void {
+        var path = this.bundler.normalizeEntryPointPath(entry_point);
+
+        var promise = JSModuleLoader.loadAndEvaluateModule(this.global, ZigString.init(path));
+
+        this.global.vm().drainMicrotasks();
+        if (promise.status(this.global.vm()) == JSPromise.Status.Rejected) {
+            var str = promise.result(this.global.vm()).toWTFString(this.global);
+            Output.prettyErrorln("<r><red>Error<r>: <b>{s}<r>", .{str.slice()});
+        }
     }
 };
 
@@ -216,13 +366,14 @@ pub const EventListenerMixin = struct {
     ) type {
         const Handler = struct {
             pub fn addListener(
-                ptr: *Struct,
                 ctx: js.JSContextRef,
                 function: js.JSObjectRef,
                 thisObject: js.JSObjectRef,
-                arguments: []const js.JSValueRef,
+                argumentCount: usize,
+                _arguments: [*c]const js.JSValueRef,
                 exception: js.ExceptionRef,
-            ) js.JSValueRef {
+            ) callconv(.C) js.JSValueRef {
+                const arguments = _arguments[0 .. argumentCount - 1];
                 if (arguments.len == 0 or arguments.len == 1 or !js.JSValueIsString(ctx, arguments[0]) or !js.JSValueIsObject(ctx, arguments[arguments.len - 1]) or !js.JSObjectIsFunction(ctx, arguments[arguments.len - 1])) {
                     return js.JSValueMakeUndefined(ctx);
                 }
@@ -235,10 +386,10 @@ pub const EventListenerMixin = struct {
                 const name_used_len = js.JSStringGetUTF8CString(arguments[0], &event_listener_names_buf, event_listener_names_buf.len);
                 const name = event_listener_names_buf[0 .. name_used_len - 1];
                 const event = EventType.match(name) orelse return js.JSValueMakeUndefined(ctx);
-                var entry = VirtualMachine.instance.event_listeners.getOrPut(event) catch unreachable;
+                var entry = VirtualMachine.vm.event_listeners.getOrPut(event) catch unreachable;
 
                 if (!entry.found_existing) {
-                    entry.value_ptr.* = List.initCapacity(VirtualMachine.instance.allocator, 1) catch unreachable;
+                    entry.value_ptr.* = List.initCapacity(VirtualMachine.vm.allocator, 1) catch unreachable;
                 }
 
                 var callback = arguments[arguments.len - 1];
@@ -249,6 +400,19 @@ pub const EventListenerMixin = struct {
             }
         };
 
-        return Handler;
+        return NewClass(
+            Struct,
+            .{
+                .name = "addEventListener",
+                .read_only = true,
+            },
+            .{
+                .@"callAsFunction" = .{
+                    .rfn = Handler.addListener,
+                    .ts = d.ts{},
+                },
+            },
+            .{},
+        );
     }
 };

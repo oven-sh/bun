@@ -1,6 +1,7 @@
 const schema = @import("./api/schema.zig");
 const Api = schema.Api;
 const std = @import("std");
+const Fs = @import("./fs.zig");
 usingnamespace @import("global.zig");
 
 pub fn modulesIn(bundle: *const Api.JavascriptBundle, pkg: *const Api.JavascriptBundledPackage) []const Api.JavascriptBundledModule {
@@ -16,13 +17,20 @@ const PackageIDMap = std.AutoHashMap(BundledPackageHash, BundledPackageID);
 
 const PackageNameMap = std.StringHashMap([]BundledPackageID);
 
+pub const AllocatedString = struct {
+    str: string,
+    len: u32,
+    allocator: *std.mem.Allocator,
+};
+
 pub const NodeModuleBundle = struct {
     container: Api.JavascriptBundleContainer,
     bundle: Api.JavascriptBundle,
     allocator: *std.mem.Allocator,
     bytes_ptr: []u8 = undefined,
-    bytes: []u8 = undefined,
+    bytes: []u8 = &[_]u8{},
     fd: FileDescriptorType = 0,
+    code_end_pos: u32 = 0,
 
     // Lookup packages by ID - hash(name@version)
     package_id_map: PackageIDMap,
@@ -33,12 +41,33 @@ pub const NodeModuleBundle = struct {
     // This is stored as a single pre-allocated, flat array so we can avoid dynamic allocations.
     package_name_ids_ptr: []BundledPackageID = &([_]BundledPackageID{}),
 
+    code_string: ?AllocatedString = null,
+
+    bytecode_cache_fetcher: Fs.BytecodeCacheFetcher = Fs.BytecodeCacheFetcher{},
+
     pub const magic_bytes = "#!/usr/bin/env speedy\n\n";
     threadlocal var jsbundle_prefix: [magic_bytes.len + 5]u8 = undefined;
 
     // TODO: support preact-refresh, others by not hard coding
     pub fn hasFastRefresh(this: *const NodeModuleBundle) bool {
         return this.package_name_map.contains("react-refresh");
+    }
+
+    pub inline fn fetchByteCodeCache(this: *NodeModuleBundle, basename: string, fs: *Fs.FileSystem.RealFS) ?StoredFileDescriptorType {
+        return this.bytecode_cache_fetcher.fetch(basename, fs);
+    }
+
+    pub fn readCodeAsStringSlow(this: *NodeModuleBundle, allocator: *std.mem.Allocator) !string {
+        if (this.code_string) |code| {
+            return code.str;
+        }
+
+        var file = std.fs.File{ .handle = this.fd };
+
+        var buf = try allocator.alloc(u8, this.code_end_pos);
+        const count = try file.preadAll(buf, this.codeStartOffset());
+        this.code_string = AllocatedString{ .str = buf[0..count], .len = @truncate(u32, buf.len), .allocator = allocator };
+        return this.code_string.?.str;
     }
 
     pub fn loadPackageMap(this: *NodeModuleBundle) !void {
@@ -268,12 +297,13 @@ pub const NodeModuleBundle = struct {
         var read_bytes = file_bytes[0..read_count];
         var reader = schema.Reader.init(read_bytes, allocator);
         var container = try Api.JavascriptBundleContainer.decode(&reader);
-
         var bundle = NodeModuleBundle{
             .allocator = allocator,
             .container = container,
             .bundle = container.bundle.?,
             .fd = stream.handle,
+            // sorry you can't have 4 GB of node_modules
+            .code_end_pos = @truncate(u32, file_end) - @intCast(u32, jsbundle_prefix.len),
             .bytes = read_bytes,
             .bytes_ptr = file_bytes,
             .package_id_map = undefined,
@@ -346,7 +376,7 @@ pub const NodeModuleBundle = struct {
         Output.prettyln(indent ++ "<b>{d:6} packages", .{this.bundle.packages.len});
     }
 
-    pub fn codeStartOffset(this: *const NodeModuleBundle) u32 {
+    pub inline fn codeStartOffset(this: *const NodeModuleBundle) u32 {
         return @intCast(u32, jsbundle_prefix.len);
     }
 

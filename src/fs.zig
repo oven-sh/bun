@@ -5,7 +5,7 @@ const alloc = @import("alloc.zig");
 const expect = std.testing.expect;
 const Mutex = sync.Mutex;
 const Semaphore = sync.Semaphore;
-
+const Fs = @This();
 const path_handler = @import("./resolver/resolve_path.zig");
 
 const allocators = @import("./allocators.zig");
@@ -20,6 +20,51 @@ pub const Preallocate = struct {
         pub const dir_entry: usize = 512;
         pub const files: usize = 1024;
     };
+};
+
+pub const BytecodeCacheFetcher = struct {
+    fd: ?StoredFileDescriptorType = null,
+
+    pub const Available = enum {
+        Unknown,
+        Available,
+        NotAvailable,
+
+        pub inline fn determine(fd: ?StoredFileDescriptorType) Available {
+            if (!comptime FeatureFlags.enable_bytecode_caching) return .NotAvailable;
+
+            const _fd = fd orelse return .Unknown;
+            return if (_fd > 0) .Available else return .NotAvailable;
+        }
+    };
+
+    pub fn fetch(this: *BytecodeCacheFetcher, sourcename: string, fs: *FileSystem.RealFS) ?StoredFileDescriptorType {
+        switch (Available.determine(this.fd)) {
+            .Available => {
+                return this.fd.?;
+            },
+            .NotAvailable => {
+                return null;
+            },
+            .Unknown => {
+                var basename_buf: [512]u8 = undefined;
+                var pathname = Fs.PathName.init(sourcename);
+                std.mem.copy(u8, &basename_buf, pathname.base);
+                std.mem.copy(u8, basename_buf[pathname.base.len..], ".bytecode");
+                const basename = basename_buf[0 .. pathname.base.len + ".bytecode".len];
+
+                if (fs.fetchCacheFile(basename)) |cache_file| {
+                    this.fd = @truncate(StoredFileDescriptorType, cache_file.handle);
+                    return @truncate(StoredFileDescriptorType, cache_file.handle);
+                } else |err| {
+                    Output.prettyWarnln("<r><yellow>Warn<r>: Bytecode caching unavailable due to error: {s}", .{@errorName(err)});
+                    Output.flush();
+                    this.fd = 0;
+                    return null;
+                }
+            },
+        }
+    }
 };
 
 pub const FileSystem = struct {
@@ -421,21 +466,44 @@ pub const FileSystem = struct {
         file_quota: usize = 32,
 
         pub var tmpdir_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+
+        const PLATFORM_TMP_DIR: string = switch (std.Target.current.os.tag) {
+            .windows => "%TMPDIR%",
+            .macos => "/private/tmp",
+            else => "/tmp",
+        };
+
         pub var tmpdir_path: []const u8 = undefined;
         pub fn openTmpDir(fs: *const RealFS) !std.fs.Dir {
-            if (isMac) {
-                var tmpdir_base = std.os.getenv("TMPDIR") orelse "/private/tmp";
-                tmpdir_path = try std.fs.realpath(tmpdir_base, &tmpdir_buf);
-                return try std.fs.openDirAbsolute(tmpdir_path, .{ .access_sub_paths = true, .iterate = true });
-            } else {
-                @compileError("Implement openTmpDir");
+            var tmpdir_base = std.os.getenv("TMPDIR") orelse PLATFORM_TMP_DIR;
+            tmpdir_path = try std.fs.realpath(tmpdir_base, &tmpdir_buf);
+            return try std.fs.openDirAbsolute(tmpdir_path, .{ .access_sub_paths = true, .iterate = true });
+        }
+
+        pub fn fetchCacheFile(fs: *RealFS, basename: string) !std.fs.File {
+            const file = try fs._fetchCacheFile(basename);
+            if (comptime FeatureFlags.store_file_descriptors) {
+                setMaxFd(file.handle);
             }
+            return file;
+        }
+
+        inline fn _fetchCacheFile(fs: *RealFS, basename: string) !std.fs.File {
+            var parts = [_]string{ "node_modules", ".cache", basename };
+            var path = fs.parent_fs.join(&parts);
+            return std.fs.cwd().openFile(path, .{ .write = true, .read = true, .lock = .Shared }) catch |err| {
+                path = fs.parent_fs.join(parts[0..2]);
+                try std.fs.cwd().makePath(path);
+
+                path = fs.parent_fs.join(&parts);
+                return try std.fs.cwd().createFile(path, .{ .read = true, .lock = .Shared });
+            };
         }
 
         pub fn needToCloseFiles(rfs: *const RealFS) bool {
             // On Windows, we must always close open file handles
             // Windows locks files
-            if (!FeatureFlags.store_file_descriptors) {
+            if (comptime !FeatureFlags.store_file_descriptors) {
                 return true;
             }
 

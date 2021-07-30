@@ -27,6 +27,15 @@
     "src/javascript/jsc/WebKit/WebKitBuild": true,
     "src/javascript/jsc/WebKit/WebInspectorUI": true
   },
+  "[cpp]": {
+    "editor.defaultFormatter": "xaver.clang-format"
+  },
+  "[h]": {
+    "editor.defaultFormatter": "xaver.clang-format"
+  },
+  "[c]": {
+    "editor.defaultFormatter": "xaver.clang-format"
+  },
   "files.associations": {
     "*.idl": "cpp",
     "memory": "cpp",

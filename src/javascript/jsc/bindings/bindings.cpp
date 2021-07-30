@@ -1,6 +1,7 @@
 #include "helpers.h"
 #include "root.h"
 #include <JavaScriptCore/Completion.h>
+#include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/ExceptionScope.h>
 #include <JavaScriptCore/FunctionConstructor.h>
 #include <JavaScriptCore/Identifier.h>
@@ -15,6 +16,7 @@
 #include <JavaScriptCore/JSSet.h>
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/ParserError.h>
+#include <JavaScriptCore/StackFrame.h>
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/WasmFaultSignalHandler.h>
 #include <wtf/text/ExternalStringImpl.h>
@@ -572,7 +574,7 @@ JSC__JSValue JSC__JSValue__getPrototype(JSC__JSValue JSValue0, JSC__JSGlobalObje
   return JSC::JSValue::encode(value.getPrototype(arg1));
 }
 bool JSC__JSValue__isException(JSC__JSValue JSValue0, JSC__VM *arg1) {
-  return JSC::jsDynamicCast<JSC::Exception>(*arg1, JSC::JSValue::decode(JSValue0)) != nullptr;
+  return JSC::jsDynamicCast<JSC::Exception *>(*arg1, JSC::JSValue::decode(JSValue0)) != nullptr;
 }
 bool JSC__JSValue__isAnyInt(JSC__JSValue JSValue0) {
   return JSC::JSValue::decode(JSValue0).isAnyInt();
@@ -685,16 +687,100 @@ bWTF__String JSC__JSValue__toWTFString(JSC__JSValue JSValue0, JSC__JSGlobalObjec
   return Wrap<WTF::String, bWTF__String>::wrap(value.toWTFString(arg1));
 };
 
+static ZigException fromErrorInstance(JSC::JSGlobalObject *global, JSC::ErrorInstance *err,
+                                      JSC::JSValue val) {
+  ZigException except = Zig::ZigExceptionNone;
+  JSC::JSObject *obj = JSC::jsDynamicCast<JSC::JSObject *>(global->vm(), val);
+  if (err->stackTrace() != nullptr && err->stackTrace()->size() > 0) {
+    JSC::StackFrame *stack = &err->stackTrace()->first();
+    except.sourceURL = Zig::toZigString(stack->sourceURL());
+
+    if (stack->hasLineAndColumnInfo()) {
+      unsigned lineNumber;
+      unsigned column;
+      stack->computeLineAndColumn(lineNumber, column);
+      except.line = lineNumber;
+      except.column = column;
+    }
+  } else {
+    // JSC::ErrorInstance marks these as protected.
+    // To work around that, we cast as a JSC::JSObject
+    // This code path triggers when there was an exception before the code was executed
+    // For example, ParserError becomes one of these
+    auto source_url_value = obj->getDirect(global->vm(), global->vm().propertyNames->sourceURL);
+    auto str = source_url_value.toWTFString(global);
+    except.sourceURL = Zig::toZigString(str);
+    except.line = obj->getDirect(global->vm(), global->vm().propertyNames->line).toInt32(global);
+    except.column =
+      obj->getDirect(global->vm(), global->vm().propertyNames->column).toInt32(global);
+  }
+
+  if (obj->hasProperty(global, global->vm().propertyNames->stack)) {
+    except.stack = Zig::toZigString(
+      obj->getDirect(global->vm(), global->vm().propertyNames->stack).toWTFString(global));
+  }
+
+  except.code = (unsigned char)err->errorType();
+  if (err->isStackOverflowError()) { except.code = 253; }
+  if (err->isOutOfMemoryError()) { except.code = 8; }
+
+  if (obj->hasProperty(global, global->vm().propertyNames->message)) {
+    except.message = Zig::toZigString(
+      obj->getDirect(global->vm(), global->vm().propertyNames->message).toWTFString(global));
+
+  } else {
+    except.message = Zig::toZigString(err->sanitizedMessageString(global));
+  }
+  except.name = Zig::toZigString(err->sanitizedNameString(global));
+  except.runtime_type = err->runtimeTypeForCause();
+
+  except.exception = err;
+
+  return except;
+}
+
+static ZigException exceptionFromString(WTF::String &str) {
+  ZigException except = Zig::ZigExceptionNone;
+  auto ref = OpaqueJSString::tryCreate(str);
+  except.message = ZigString{ref->characters8(), ref->length()};
+  ref->ref();
+
+  return except;
+}
+
+static ZigException exceptionFromString(JSC::JSValue value, JSC::JSGlobalObject *global) {
+  auto scope = DECLARE_THROW_SCOPE(global->vm());
+  auto str = value.toWTFString(global);
+  if (scope.exception()) {
+    scope.clearException();
+    scope.release();
+    return Zig::ZigExceptionNone;
+  }
+  scope.release();
+
+  ZigException except = Zig::ZigExceptionNone;
+  auto ref = OpaqueJSString::tryCreate(str);
+  except.message = ZigString{ref->characters8(), ref->length()};
+  ref->ref();
+
+  return except;
+}
+
 ZigException JSC__JSValue__toZigException(JSC__JSValue JSValue0, JSC__JSGlobalObject *arg1) {
   JSC::JSValue value = JSC::JSValue::decode(JSValue0);
 
-  if (JSC::ErrorInstance *error =
-        JSC::jsDynamicCast<JSC::ErrorInstance>(*arg1, JSC::JSValue::decode(JSValue0))) {}
+  if (JSC::ErrorInstance *error = JSC::jsDynamicCast<JSC::ErrorInstance *>(arg1->vm(), value)) {
+    return fromErrorInstance(arg1, error, value);
+  }
 
-  if (JSC::Exception *exception =
-        JSC::jsDynamicCast<JSC::Exception>(*arg1, JSC::JSValue::decode(JSValue0))) {}
+  if (JSC::Exception *exception = JSC::jsDynamicCast<JSC::Exception *>(arg1->vm(), value)) {
+    if (JSC::ErrorInstance *error =
+          JSC::jsDynamicCast<JSC::ErrorInstance *>(arg1->vm(), exception->value())) {
+      return fromErrorInstance(arg1, error, value);
+    }
+  }
 
-  return Zig::ZigExceptionNone;
+  return exceptionFromString(value, arg1);
 }
 #pragma mark - JSC::PropertyName
 

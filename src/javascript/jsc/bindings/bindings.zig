@@ -45,7 +45,7 @@ pub const ZigString = extern struct {
     pub const Empty = ZigString{ .ptr = "", .len = 0 };
 
     pub fn slice(this: *const ZigString) []const u8 {
-        return this.ptr[0..this.len];
+        return this.ptr[0..std.math.min(this.len, 4096)];
     }
 };
 
@@ -184,11 +184,11 @@ pub fn NewGlobalObject(comptime Type: type) type {
             }
             return ErrorableZigString.err(error.ResolveFailed, "resolve not implemented");
         }
-        pub fn fetch(global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) ErrorableZigString {
+        pub fn fetch(global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) ErrorableResolvedSource {
             if (comptime @hasDecl(Type, "fetch")) {
                 return @call(.{ .modifier = .always_inline }, Type.fetch, .{ global, specifier, source });
             }
-            return ErrorableZigString.err(error.FetchFailed, "Module fetch not implemented");
+            return ErrorableResolvedSource.err(error.FetchFailed, "Module fetch not implemented");
         }
         pub fn promiseRejectionTracker(global: *JSGlobalObject, promise: *JSPromise, rejection: JSPromiseRejectionOperation) callconv(.C) JSValue {
             if (comptime @hasDecl(Type, "promiseRejectionTracker")) {
@@ -687,18 +687,6 @@ pub const JSGlobalObject = extern struct {
     pub const name = "JSC::JSGlobalObject";
     pub const namespace = "JSC";
 
-    pub const ErrorType = enum(u8) {
-        Error = 0,
-        EvalError = 1,
-        RangeError = 2,
-        ReferenceError = 3,
-        SyntaxError = 4,
-        TypeError = 5,
-        URIError = 6,
-        AggregateError = 7,
-        OutOfMemoryError = 8,
-    };
-
     // pub fn createError(globalObject: *JSGlobalObject, error_type: ErrorType, message: *String) *JSObject {
     //     return cppFn("createError", .{ globalObject, error_type, message });
     // }
@@ -1173,6 +1161,14 @@ pub const JSValue = enum(i64) {
         return cppFn("isCallable", .{ this, vm });
     }
 
+    pub fn isException(this: JSValue, vm: *VM) bool {
+        return cppFn("isException", .{ this, vm });
+    }
+
+    pub fn toZigException(this: JSValue, global: *JSGlobalObject) ZigException {
+        return cppFn("toZigException", .{ this, global });
+    }
+
     // On exception, this returns the empty string.
     pub fn toString(this: JSValue, globalThis: *JSGlobalObject) *JSString {
         return cppFn("toString", .{ this, globalThis });
@@ -1226,7 +1222,7 @@ pub const JSValue = enum(i64) {
         });
     }
 
-    pub const Extern = [_][]const u8{ "toWTFString", "hasProperty", "getPropertyNames", "getDirect", "putDirect", "get", "getIfExists", "asString", "asObject", "asNumber", "isError", "jsNull", "jsUndefined", "jsTDZValue", "jsBoolean", "jsDoubleNumber", "jsNumberFromDouble", "jsNumberFromChar", "jsNumberFromU16", "jsNumberFromInt32", "jsNumberFromInt64", "jsNumberFromUint64", "isUndefined", "isNull", "isUndefinedOrNull", "isBoolean", "isAnyInt", "isUInt32AsAnyInt", "isInt32AsAnyInt", "isNumber", "isString", "isBigInt", "isHeapBigInt", "isBigInt32", "isSymbol", "isPrimitive", "isGetterSetter", "isCustomGetterSetter", "isObject", "isCell", "asCell", "toString", "toStringOrNull", "toPropertyKey", "toPropertyKeyValue", "toObject", "toString", "getPrototype", "getPropertyByPropertyName", "eqlValue", "eqlCell", "isCallable" };
+    pub const Extern = [_][]const u8{ "toZigException", "isException", "toWTFString", "hasProperty", "getPropertyNames", "getDirect", "putDirect", "get", "getIfExists", "asString", "asObject", "asNumber", "isError", "jsNull", "jsUndefined", "jsTDZValue", "jsBoolean", "jsDoubleNumber", "jsNumberFromDouble", "jsNumberFromChar", "jsNumberFromU16", "jsNumberFromInt32", "jsNumberFromInt64", "jsNumberFromUint64", "isUndefined", "isNull", "isUndefinedOrNull", "isBoolean", "isAnyInt", "isUInt32AsAnyInt", "isInt32AsAnyInt", "isNumber", "isString", "isBigInt", "isHeapBigInt", "isBigInt32", "isSymbol", "isPrimitive", "isGetterSetter", "isCustomGetterSetter", "isObject", "isCell", "asCell", "toString", "toStringOrNull", "toPropertyKey", "toPropertyKeyValue", "toObject", "toString", "getPrototype", "getPropertyByPropertyName", "eqlValue", "eqlCell", "isCallable" };
 };
 
 pub const PropertyName = extern struct {

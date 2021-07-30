@@ -4,6 +4,8 @@ usingnamespace @import("global.zig");
 const std = @import("std");
 pub const ProdSourceContent = @embedFile("./runtime.out.js");
 
+const Fs = @import("./fs.zig");
+
 pub const Runtime = struct {
     pub fn sourceContent() string {
         if (comptime isDebug) {
@@ -15,7 +17,22 @@ pub const Runtime = struct {
             return ProdSourceContent;
         }
     }
-    pub var version_hash = @embedFile("./runtime.version");
+    pub const version_hash = @embedFile("./runtime.version");
+    var version_hash_int: u32 = 0;
+    pub fn versionHash() u32 {
+        if (version_hash_int == 0) {
+            version_hash_int = @truncate(u32, std.fmt.parseInt(u64, version(), 16) catch unreachable);
+        }
+        return version_hash_int;
+    }
+
+    const bytecodeCacheFilename = std.fmt.comptimePrint("__runtime.{s}", .{version_hash});
+    var bytecodeCacheFetcher = Fs.BytecodeCacheFetcher{};
+
+    pub fn byteCodeCacheFile(fs: *Fs.FileSystem.RealFS) ?StoredFileDescriptorType {
+        return bytecodeCacheFetcher.fetch(bytecodeCacheFilename, fs);
+    }
+
     pub fn version() string {
         return version_hash;
     }

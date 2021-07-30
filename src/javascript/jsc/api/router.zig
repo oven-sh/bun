@@ -20,7 +20,7 @@ pub fn importRoute(
     arguments: []const js.JSValueRef,
     exception: js.ExceptionRef,
 ) js.JSObjectRef {
-    return JavaScript.VirtualMachine.vm.require(
+    return JavaScript.VirtualMachine.instance.require(
         ctx,
         std.fs.path.dirname(this.route.file_path).?,
         this.route.file_path,

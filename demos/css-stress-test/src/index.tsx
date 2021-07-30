@@ -1,6 +1,7 @@
 import { Main } from "./main";
 import classNames from "classnames";
 import * as ReactDOM from "react-dom";
+import * as ReactDOMServer from "react-dom/server.browser";
 
 const Base = ({}) => {
   const name =
@@ -22,9 +23,8 @@ if (typeof window !== "undefined") {
 
   startReact();
 } else {
+  console.log("test");
   console.log(ReactDOMServer.renderToString(<Base />));
 }
 
 export { Base };
-
-

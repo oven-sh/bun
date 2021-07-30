@@ -616,6 +616,7 @@ pub const BundleOptions = struct {
     output_dir: string = "",
     output_dir_handle: ?std.fs.Dir = null,
     node_modules_bundle_url: string = "",
+    node_modules_bundle_pretty_path: string = "",
     public_dir_handle: ?std.fs.Dir = null,
     write: bool = false,
     preserve_symlinks: bool = false,
@@ -804,8 +805,19 @@ pub const BundleOptions = struct {
                                     relative = relative[1..];
                                 }
 
-                                opts.node_modules_bundle_url = try std.fmt.allocPrint(allocator, "{s}{s}", .{ opts.public_url, relative });
+                                const buf_size = opts.public_url.len + relative.len + pretty_path.len;
+                                var buf = try allocator.alloc(u8, buf_size);
+                                opts.node_modules_bundle_url = try std.fmt.bufPrint(buf, "{s}{s}", .{ opts.public_url, relative });
+                                opts.node_modules_bundle_pretty_path = buf[opts.node_modules_bundle_url.len..];
+                                std.mem.copy(
+                                    u8,
+                                    buf[opts.node_modules_bundle_url.len..],
+                                    pretty_path,
+                                );
+                            } else {
+                                opts.node_modules_bundle_pretty_path = try allocator.dupe(u8, pretty_path);
                             }
+
                             const elapsed = @intToFloat(f64, (std.time.nanoTimestamp() - time_start)) / std.time.ns_per_ms;
                             Output.prettyErrorln(
                                 "<r><b><d>\"{s}\"<r><d> - {d} modules, {d} packages <b>[{d:>.2}ms]<r>",

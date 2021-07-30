@@ -236,7 +236,11 @@ pub const Output = struct {
         printer(new_fmt[0..new_fmt_i], args);
     }
 
-    pub fn prettyWithPrinter(comptime fmt: string, args: anytype, printer: anytype) void {
+    pub fn prettyWithPrinter(comptime fmt: string, args: anytype, printer: anytype, comptime l: Level) void {
+        if (comptime l == .Warn) {
+            if (level == .Error) return;
+        }
+
         if (enable_ansi_colors) {
             _pretty(fmt, args, printer, true);
         } else {
@@ -245,7 +249,7 @@ pub const Output = struct {
     }
 
     pub fn pretty(comptime fmt: string, args: anytype) void {
-        prettyWithPrinter(fmt, args, print);
+        prettyWithPrinter(fmt, args, print, .Error);
     }
 
     pub fn prettyln(comptime fmt: string, args: anytype) void {
@@ -265,7 +269,7 @@ pub const Output = struct {
     }
 
     pub fn prettyError(comptime fmt: string, args: anytype) void {
-        prettyWithPrinter(fmt, args, printError);
+        prettyWithPrinter(fmt, args, printError, .Error);
     }
 
     pub fn prettyErrorln(comptime fmt: string, args: anytype) void {
@@ -274,6 +278,7 @@ pub const Output = struct {
                 fmt ++ "\n",
                 args,
                 printError,
+                .Error,
             );
         }
 
@@ -281,7 +286,27 @@ pub const Output = struct {
             fmt,
             args,
             printError,
+            .Error,
         );
+    }
+
+    pub const Level = enum(u8) {
+        Warn,
+        Error,
+    };
+
+    pub var level = if (isDebug) Level.Warn else Level.Error;
+
+    pub fn prettyWarn(comptime fmt: string, args: anytype) void {
+        prettyWithPrinter(fmt, args, printError, .Warn);
+    }
+
+    pub fn prettyWarnln(comptime fmt: string, args: anytype) void {
+        if (fmt[fmt.len - 1] != '\n') {
+            return prettyWithPrinter(fmt ++ "\n", args, printError, .Warn);
+        }
+
+        return prettyWithPrinter(fmt, args, printError, .Warn);
     }
 
     pub fn errorLn(comptime fmt: string, args: anytype) void {

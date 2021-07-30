@@ -65,20 +65,20 @@ pub const VirtualMachine = struct {
         vm = try allocator.create(VirtualMachine);
         var console = try allocator.create(ZigConsoleClient);
         console.* = ZigConsoleClient.init(Output.errorWriter(), Output.writer());
-
+        const bundler = try Bundler.init(
+            allocator,
+            log,
+            try configureTransformOptionsForSpeedy(allocator, _args),
+            existing_bundle,
+        );
         vm.* = VirtualMachine{
             .global = undefined,
             .allocator = allocator,
             .require_cache = RequireCacheType.init(allocator),
             .event_listeners = EventListenerMixin.Map.init(allocator),
-            .bundler = try Bundler.init(
-                allocator,
-                log,
-                try configureTransformOptionsForSpeedy(allocator, _args),
-                existing_bundle,
-            ),
+            .bundler = bundler,
             .console = console,
-            .node_modules = existing_bundle,
+            .node_modules = bundler.options.node_modules_bundle,
             .log = log,
         };
 
@@ -106,12 +106,39 @@ pub const VirtualMachine = struct {
     threadlocal var source_code_printer: js_printer.BufferPrinter = undefined;
     threadlocal var source_code_printer_loaded: bool = false;
 
-    inline fn _fetch(global: *JSGlobalObject, specifier: string, source: string) !string {
+    inline fn _fetch(global: *JSGlobalObject, specifier: string, source: string) !ResolvedSource {
         std.debug.assert(VirtualMachine.vm_loaded);
         std.debug.assert(VirtualMachine.vm.global == global);
 
-        if (strings.eqlComptime(specifier, Runtime.Runtime.Imports.Name)) {
-            return Runtime.Runtime.sourceContent();
+        if (vm.node_modules != null and strings.eql(vm.bundler.linker.nodeModuleBundleImportPath(), specifier)) {
+            // We kind of need an abstraction around this.
+            // Basically we should subclass JSC::SourceCode with:
+            // - hash
+            // - file descriptor for source input
+            // - file path + file descriptor for bytecode caching
+            // - separate bundles for server build vs browser build OR at least separate sections
+            const code = try vm.node_modules.?.readCodeAsStringSlow(vm.allocator);
+            return ResolvedSource{
+                .source_code = ZigString.init(code),
+                .specifier = ZigString.init(vm.bundler.linker.nodeModuleBundleImportPath()),
+                .source_url = ZigString.init(vm.bundler.options.node_modules_bundle_pretty_path),
+                .hash = 0, // TODO
+                .bytecodecache_fd = std.math.lossyCast(u64, vm.node_modules.?.fetchByteCodeCache(
+                    vm.bundler.options.node_modules_bundle_pretty_path,
+                    &vm.bundler.fs.fs,
+                ) orelse 0),
+            };
+        } else if (strings.eqlComptime(specifier, Runtime.Runtime.Imports.Name)) {
+            return ResolvedSource{
+                .source_code = ZigString.init(Runtime.Runtime.sourceContent()),
+                .specifier = ZigString.init(Runtime.Runtime.Imports.Name),
+                .source_url = ZigString.init(Runtime.Runtime.Imports.Name),
+                .hash = Runtime.Runtime.versionHash(),
+                .bytecodecache_fd = std.math.lossyCast(
+                    u64,
+                    Runtime.Runtime.byteCodeCacheFile(&vm.bundler.fs.fs) orelse 0,
+                ),
+            };
         }
 
         const result = vm.bundler.resolve_results.get(specifier) orelse return error.MissingResolveResult;
@@ -172,18 +199,32 @@ pub const VirtualMachine = struct {
                     return error.PrintingErrorWriteFailed;
                 }
 
-                return vm.allocator.dupe(u8, source_code_printer.ctx.written) catch unreachable;
+                return ResolvedSource{
+                    .source_code = ZigString.init(vm.allocator.dupe(u8, source_code_printer.ctx.written) catch unreachable),
+                    .specifier = ZigString.init(specifier),
+                    .source_url = ZigString.init(path.pretty),
+                    .hash = 0,
+                    .bytecodecache_fd = 0,
+                };
             },
             else => {
-                return try strings.quotedAlloc(VirtualMachine.vm.allocator, path.pretty);
+                return ResolvedSource{
+                    .source_code = ZigString.init(try strings.quotedAlloc(VirtualMachine.vm.allocator, path.pretty)),
+                    .specifier = ZigString.init(path.text),
+                    .source_url = ZigString.init(path.pretty),
+                    .hash = 0,
+                    .bytecodecache_fd = 0,
+                };
             },
         }
     }
     inline fn _resolve(global: *JSGlobalObject, specifier: string, source: string) !string {
         std.debug.assert(VirtualMachine.vm_loaded);
         std.debug.assert(VirtualMachine.vm.global == global);
-        if (strings.eqlComptime(specifier, Runtime.Runtime.Imports.Name)) {
+        if (vm.node_modules == null and strings.eqlComptime(specifier, Runtime.Runtime.Imports.Name)) {
             return Runtime.Runtime.Imports.Name;
+        } else if (vm.node_modules != null and strings.eql(specifier, vm.bundler.linker.nodeModuleBundleImportPath())) {
+            return vm.bundler.linker.nodeModuleBundleImportPath();
         }
 
         const result: resolver.Result = vm.bundler.resolve_results.get(specifier) orelse brk: {
@@ -197,6 +238,47 @@ pub const VirtualMachine = struct {
             try vm.bundler.resolve_results.put(res.path_pair.primary.text, res);
             break :brk res;
         };
+
+        if (vm.node_modules != null and result.isLikelyNodeModule()) {
+            const node_modules_bundle = vm.node_modules.?;
+
+            node_module_checker: {
+                const package_json = result.package_json orelse brk: {
+                    if (vm.bundler.linker.resolver.packageJSONForResolvedNodeModule(&result)) |pkg| {
+                        break :brk pkg;
+                    } else {
+                        break :node_module_checker;
+                    }
+                };
+
+                if (node_modules_bundle.getPackageIDByName(package_json.name)) |possible_pkg_ids| {
+                    const pkg_id: u32 = brk: {
+                        for (possible_pkg_ids) |pkg_id| {
+                            const pkg = node_modules_bundle.bundle.packages[pkg_id];
+                            if (pkg.hash == package_json.hash) {
+                                break :brk pkg_id;
+                            }
+                        }
+                        break :node_module_checker;
+                    };
+
+                    const package = &node_modules_bundle.bundle.packages[pkg_id];
+
+                    if (isDebug) {
+                        std.debug.assert(strings.eql(node_modules_bundle.str(package.name), package_json.name));
+                    }
+
+                    const package_relative_path = vm.bundler.fs.relative(
+                        package_json.source.path.name.dirWithTrailingSlash(),
+                        result.path_pair.primary.text,
+                    );
+
+                    if (node_modules_bundle.findModuleIDInPackage(package, package_relative_path) == null) break :node_module_checker;
+
+                    return vm.bundler.linker.nodeModuleBundleImportPath();
+                }
+            }
+        }
 
         return result.path_pair.primary.text;
     }
@@ -213,15 +295,15 @@ pub const VirtualMachine = struct {
         return ErrorableZigString.ok(ZigString.init(result));
     }
 
-    pub fn fetch(global: *JSGlobalObject, specifier: ZigString, source: ZigString) ErrorableZigString {
+    pub fn fetch(global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) ErrorableResolvedSource {
         const result = _fetch(global, specifier.slice(), source.slice()) catch |err| {
-            return ErrorableZigString.errFmt(err, "{s}: \"{s}\"", .{
+            return ErrorableResolvedSource.errFmt(err, "{s}: \"{s}\"", .{
                 @errorName(err),
                 specifier.slice(),
             });
         };
 
-        return ErrorableZigString.ok(ZigString.init(result));
+        return ErrorableResolvedSource.ok(result);
     }
 
     pub fn loadEntryPoint(this: *VirtualMachine, entry_point: string) !void {
@@ -230,9 +312,21 @@ pub const VirtualMachine = struct {
         var promise = JSModuleLoader.loadAndEvaluateModule(this.global, ZigString.init(path));
 
         this.global.vm().drainMicrotasks();
+
+        while (promise.status(this.global.vm()) == JSPromise.Status.Pending) {
+            this.global.vm().drainMicrotasks();
+        }
+
         if (promise.status(this.global.vm()) == JSPromise.Status.Rejected) {
-            var str = promise.result(this.global.vm()).toWTFString(this.global);
-            Output.prettyErrorln("<r><red>Error<r>: <b>{s}<r>", .{str.slice()});
+            var exception = promise.result(this.global.vm()).toZigException(this.global);
+            Output.prettyErrorln("<r><red>{s}<r><d>:<r> <b>{s}<r>\n<blue>{s}<r>:{d}:{d}\n{s}", .{
+                exception.name.slice(),
+                exception.message.slice(),
+                exception.sourceURL.slice(),
+                exception.line,
+                exception.column,
+                exception.stack.slice(),
+            });
         }
     }
 };

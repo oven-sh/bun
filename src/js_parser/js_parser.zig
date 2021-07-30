@@ -1,5 +1,19 @@
 usingnamespace @import("imports.zig");
 
+// Dear reader,
+// There are some things you should know about this file to make it easier for humans to read
+// "P" is the internal parts of the parser
+// "p.e" allocates a new Expr
+// "p.b" allocates a new Binding
+// "p.s" allocates a new Stmt
+// We do it this way so if we want to refactor how these are allocated in the future, we only have to modify one function to change it everywhere
+// Everything in JavaScript is either an Expression, a Binding, or a Statement.
+//   Expression:  foo(1)
+//    Statement:  let a = 1;
+//      Binding:  1
+// While the names for Expr, Binding, and Stmt are directly copied from esbuild, those were likely inspired by Go's parser.
+// which is another example of a very fast parser.
+
 const TemplatePartTuple = std.meta.Tuple(&[_]type{ []E.TemplatePart, logger.Loc });
 const ScopeOrderList = std.ArrayListUnmanaged(?ScopeOrder);
 

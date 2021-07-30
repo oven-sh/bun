@@ -44,4 +44,8 @@ pub const bJSC__CatchScope = bindings.CatchScope;
 pub const bJSC__CallFrame = bindings.CallFrame;
 pub const bInspector__ScriptArguments = bindings.ScriptArguments;
 pub const JSC__JSValue = bindings.JSValue;
+
+// Inlined types
 pub const ZigString = bindings.ZigString;
+pub const ZigException = bindings.ZigException;
+pub const ResolvedSource = bindings.ResolvedSource;

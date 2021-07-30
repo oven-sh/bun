@@ -47,7 +47,7 @@ pub const ZigGlobalObject = extern struct {
         }
         return @call(.{ .modifier = .always_inline }, Interface.resolve, .{ global, specifier, source });
     }
-    pub fn fetch(global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) ErrorableZigString {
+    pub fn fetch(global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) ErrorableResolvedSource {
         if (comptime is_bindgen) {
             unreachable;
         }
@@ -128,6 +128,39 @@ pub const ZigErrorType = extern struct {
     message: ZigString,
 };
 
+pub const JSErrorCode = enum(u8) {
+    Error = 0,
+    EvalError = 1,
+    RangeError = 2,
+    ReferenceError = 3,
+    SyntaxError = 4,
+    TypeError = 5,
+    URIError = 6,
+    AggregateError = 7,
+
+    // StackOverflow & OutOfMemoryError is not an ErrorType in <JavaScriptCore/ErrorType.h> within JSC, so the number here is just totally made up
+    OutOfMemoryError = 8,
+    StackOverflow = 253,
+    UserErrorCode = 254,
+    _,
+};
+
+pub const JSRuntimeType = enum(u16) {
+    Nothing = 0x0,
+    Function = 0x1,
+    Undefined = 0x2,
+    Null = 0x4,
+    Boolean = 0x8,
+    AnyInt = 0x10,
+    Number = 0x20,
+    String = 0x40,
+    Object = 0x80,
+    Symbol = 0x100,
+    BigInt = 0x200,
+
+    _,
+};
+
 pub fn Errorable(comptime Type: type) type {
     return extern struct {
         result: Result,
@@ -168,8 +201,46 @@ pub fn Errorable(comptime Type: type) type {
     };
 }
 
+pub const ResolvedSource = extern struct {
+    pub const shim = Shimmer("Zig", "ResolvedSource", @This());
+    pub const name = "ResolvedSource";
+    pub const namespace = shim.namespace;
+
+    specifier: ZigString,
+    source_code: ZigString,
+    source_url: ZigString,
+    hash: u32,
+
+    // 0 means disabled
+    bytecodecache_fd: u64,
+};
+
+pub const ErrorableResolvedSource = Errorable(ResolvedSource);
+
 pub const ErrorableZigString = Errorable(ZigString);
 pub const ErrorableJSValue = Errorable(JSValue);
+
+pub const ZigException = extern struct {
+    pub const shim = Shimmer("Zig", "Exception", @This());
+    pub const name = "ZigException";
+    pub const namespace = shim.namespace;
+
+    code: JSErrorCode,
+    runtime_type: JSRuntimeType,
+    name: ZigString,
+    message: ZigString,
+    sourceURL: ZigString,
+    line: i32,
+    column: i32,
+    stack: ZigString,
+    exception: ?*c_void,
+
+    pub fn fromException(exception: *Exception) ZigException {
+        return shim.cppFn("fromException", .{exception});
+    }
+
+    pub const Extern = [_][]const u8{"fromException"};
+};
 
 pub const ZigConsoleClient = struct {
     pub const shim = Shimmer("Zig", "ConsoleClient", @This());

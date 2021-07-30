@@ -167,6 +167,8 @@ pub const Result = struct {
     dirname_fd: StoredFileDescriptorType = 0,
     file_fd: StoredFileDescriptorType = 0,
 
+    // remember: non-node_modules can have package.json
+    // checking package.json may not be relevant
     pub fn isLikelyNodeModule(this: *const Result) bool {
         const dir = this.path_pair.primary.name.dirWithTrailingSlash();
         return strings.indexOf(dir, "/node_modules/") != null;

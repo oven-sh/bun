@@ -1,6 +1,7 @@
 const std = @import("std");
 const Api = @import("./api/schema.zig").Api;
-
+const js = @import("./javascript/jsc/bindings/bindings.zig");
+const ImportKind = @import("./import_record.zig").ImportKind;
 usingnamespace @import("global.zig");
 
 const fs = @import("fs.zig");
@@ -161,10 +162,41 @@ pub const Data = struct {
     }
 };
 
+pub const BabyString = packed struct {
+    offset: u16,
+    len: u16,
+
+    pub fn in(parent: string, text: string) BabyString {
+        return BabyString{
+            .offset = @truncate(u16, std.mem.indexOf(u8, parent, text) orelse unreachable),
+            .len = @truncate(u16, text.len),
+        };
+    }
+
+    pub fn slice(container: string) string {
+        return container[offset..][0..len];
+    }
+};
+
 pub const Msg = struct {
     kind: Kind = Kind.err,
     data: Data,
+    metadata: Metadata = .{ .build = 0 },
     notes: ?[]Data = null,
+
+    pub const Metadata = union(Tag) {
+        build: u0,
+        resolve: Resolve,
+        pub const Tag = enum(u8) {
+            build = 1,
+            resolve = 2,
+        };
+
+        pub const Resolve = struct {
+            specifier: BabyString,
+            import_kind: ImportKind,
+        };
+    };
 
     pub fn toAPI(this: *const Msg, allocator: *std.mem.Allocator) Api.Message {
         var msg = Api.Message{
@@ -183,6 +215,7 @@ pub const Msg = struct {
 
         return msg;
     }
+
     pub fn toAPIFromList(comptime ListType: type, list: ListType, allocator: *std.mem.Allocator) ![]Api.Message {
         var out_list = try allocator.alloc(Api.Msg, list.items.len);
         for (list.items) |item, i| {
@@ -316,6 +349,32 @@ pub const Log = struct {
         });
     }
 
+    pub fn addResolveError(
+        log: *Log,
+        source: *const Source,
+        r: Range,
+        allocator: *std.mem.Allocator,
+        comptime fmt: string,
+        args: anytype,
+        import_kind: ImportKind,
+    ) !void {
+        const text = try std.fmt.allocPrint(allocator, fmt, args);
+        // TODO: fix this. this is stupid, it should be returned in allocPrint.
+        const specifier = BabyString.in(text, args.@"0");
+        log.errors += 1;
+        try log.addMsg(
+            Msg{
+                .kind = .err,
+                .data = rangeData(
+                    source,
+                    r,
+                    text,
+                ),
+                .metadata = .{ .resolve = Msg.Metadata.Resolve{ .specifier = specifier, .import_kind = import_kind } },
+            },
+        );
+    }
+
     pub fn addRangeError(log: *Log, source: ?*const Source, r: Range, text: string) !void {
         log.errors += 1;
         try log.addMsg(Msg{
@@ -431,6 +490,15 @@ pub const Log = struct {
         for (self.msgs.items) |msg| {
             try msg.writeFormat(to);
         }
+    }
+
+    pub fn toZigException(this: *const Log, allocator: *std.mem.Allocator) *js.ZigException.Holder {
+        var holder = try allocator.create(js.ZigException.Holder);
+        holder.* = js.ZigException.Holder.init();
+        var zig_exception: *js.ZigException = holder.zigException();
+        zig_exception.exception = this;
+        zig_exception.code = js.JSErrorCode.BundlerError;
+        return holder;
     }
 };
 

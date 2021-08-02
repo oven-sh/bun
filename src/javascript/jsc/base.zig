@@ -1,7 +1,12 @@
 pub const js = @import("./JavaScriptCore.zig");
 const std = @import("std");
 pub usingnamespace @import("../../global.zig");
-const javascript = @import("./javascript.zig");
+usingnamespace @import("./javascript.zig");
+usingnamespace @import("./webcore/response.zig");
+
+const TaggedPointerTypes = @import("../../tagged_pointer.zig");
+const TaggedPointerUnion = TaggedPointerTypes.TaggedPointerUnion;
+
 pub const ExceptionValueRef = [*c]js.JSValueRef;
 pub const JSValueRef = js.JSValueRef;
 
@@ -26,10 +31,10 @@ pub const To = struct {
             ) js.JSValueRef,
         ) js.JSObjectRef {
             var function = js.JSObjectMakeFunctionWithCallback(ctx, name, Callback(ZigContextType, callback).rfn);
-            _ = js.JSObjectSetPrivate(
+            std.debug.assert(js.JSObjectSetPrivate(
                 function,
-                @ptrCast(*c_void, @alignCast(@alignOf(*c_void), zig)),
-            );
+                JSPrivateDataPtr.init(zig).ptr(),
+            ));
             return function;
         }
 
@@ -44,12 +49,8 @@ pub const To = struct {
                 pub fn rfn(
                     object: js.JSObjectRef,
                 ) callconv(.C) void {
-                    var object_ptr_ = js.JSObjectGetPrivate(object);
-                    if (object_ptr_ == null) return;
-
                     return ctxfn(
-                        @ptrCast(*ZigContextType, @alignCast(@alignOf(*ZigContextType), object_ptr_.?)),
-                        object,
+                        GetJSPrivateData(ZigContextType, object) orelse return,
                     );
                 }
             };
@@ -128,26 +129,25 @@ pub const To = struct {
                 ) callconv(.C) js.JSValueRef {
                     var object_ptr: *c_void = undefined;
 
-                    if (comptime ZigContextType != c_void) {
-                        var object_ptr_ = js.JSObjectGetPrivate(function);
-                        if (object_ptr_ == null) {
-                            object_ptr_ = js.JSObjectGetPrivate(thisObject);
-                        }
-
-                        if (object_ptr_ == null) {
-                            return js.JSValueMakeUndefined(ctx);
-                        }
-                        object_ptr = object_ptr_.?;
+                    if (comptime ZigContextType == c_void) {
+                        return ctxfn(
+                            js.JSObjectGetPrivate(function) or js.jsObjectGetPrivate(thisObject),
+                            ctx,
+                            function,
+                            thisObject,
+                            if (arguments) |args| args[0..argumentCount] else &[_]js.JSValueRef{},
+                            exception,
+                        );
+                    } else {
+                        return ctxfn(
+                            GetJSPrivateData(ZigContextType, function) orelse GetJSPrivateData(ZigContextType, thisObject) orelse return js.JSValueMakeUndefined(ctx),
+                            ctx,
+                            function,
+                            thisObject,
+                            if (arguments) |args| args[0..argumentCount] else &[_]js.JSValueRef{},
+                            exception,
+                        );
                     }
-
-                    return ctxfn(
-                        @ptrCast(*ZigContextType, @alignCast(@alignOf(*ZigContextType), object_ptr)),
-                        ctx,
-                        function,
-                        thisObject,
-                        if (arguments) |args| args[0..argumentCount] else &[_]js.JSValueRef{},
-                        exception,
-                    );
                 }
             };
         }
@@ -164,15 +164,7 @@ pub const To = struct {
             return buf[0..js.JSStringGetUTF8CString(Ref.str(ref), buf.ptr, buf.len)];
         }
         pub inline fn ptr(comptime StructType: type, obj: js.JSObjectRef) *StructType {
-            return @ptrCast(
-                *StructType,
-                @alignCast(
-                    @alignOf(
-                        *StructType,
-                    ),
-                    js.JSObjectGetPrivate(obj).?,
-                ),
-            );
+            return GetJSPrivateData(StructType, obj).?;
         }
     };
 };
@@ -764,10 +756,6 @@ pub fn NewClass(
 
         pub const static_value_count = static_properties.len;
 
-        pub fn new(ctx: js.JSContextRef, ptr: ?*ZigType) js.JSObjectRef {
-            return js.JSObjectMake(ctx, get().*, ptr);
-        }
-
         pub fn get() callconv(.C) [*c]js.JSClassRef {
             if (!loaded) {
                 loaded = true;
@@ -795,6 +783,17 @@ pub fn NewClass(
             return ClassGetter;
         }
 
+        pub fn customHasInstance(ctx: js.JSContextRef, obj: js.JSObjectRef, value: js.JSValueRef, exception: ExceptionRef) callconv(.C) bool {
+            return js.JSValueIsObjectOfClass(ctx, obj, get().*);
+        }
+
+        pub fn make(ctx: js.JSContextRef, ptr: *ZigType) callconv(.C) js.JSObjectRef {
+            return js.JSObjectMake(
+                ctx,
+                get().*,
+                JSPrivateDataPtr.init(ptr).ptr(),
+            );
+        }
         pub fn GetClass(comptime ReceiverType: type) type {
             const ClassGetter = struct {
                 get: fn (
@@ -825,21 +824,7 @@ pub fn NewClass(
             prop: js.JSStringRef,
             exception: js.ExceptionRef,
         ) callconv(.C) js.JSValueRef {
-            var instance_pointer_ = js.JSObjectGetPrivate(obj);
-            if (comptime ZigType != c_void) {
-                if (instance_pointer_ == null) return null;
-            }
-
-            var instance_pointer: *c_void = if (comptime ZigType == c_void) undefined else instance_pointer_.?;
-            var ptr = @ptrCast(
-                *ZigType,
-                @alignCast(
-                    @alignOf(
-                        *ZigType,
-                    ),
-                    instance_pointer,
-                ),
-            );
+            var pointer = GetJSPrivateData(ZigType, obj) orelse return js.JSValueMakeUndefined(ctx);
 
             if (singleton) {
                 inline for (function_names) |propname, i| {
@@ -876,17 +861,7 @@ pub fn NewClass(
                     prop: js.JSStringRef,
                     exception: js.ExceptionRef,
                 ) callconv(.C) js.JSValueRef {
-                    var instance_pointer_ = js.JSObjectGetPrivate(obj);
-                    if (instance_pointer_ == null) return null;
-                    var this: *ZigType = @ptrCast(
-                        *ZigType,
-                        @alignCast(
-                            @alignOf(
-                                *ZigType,
-                            ),
-                            instance_pointer_.?,
-                        ),
-                    );
+                    var this = GetJSPrivateData(ZigType, obj) orelse return js.JSValueMakeUndefined(ctx);
 
                     var exc: js.JSValueRef = null;
                     const Field = @TypeOf(@field(
@@ -958,17 +933,7 @@ pub fn NewClass(
                     value: js.JSValueRef,
                     exception: js.ExceptionRef,
                 ) callconv(.C) bool {
-                    var instance_pointer_ = js.JSObjectGetPrivate(obj);
-                    if (instance_pointer_ == null) return false;
-                    var this: *ZigType = @ptrCast(
-                        *ZigType,
-                        @alignCast(
-                            @alignOf(
-                                *ZigType,
-                            ),
-                            instance_pointer_.?,
-                        ),
-                    );
+                    var this = GetJSPrivateData(ZigType, obj) orelse return js.JSValueMakeUndefined(ctx);
 
                     var exc: js.ExceptionRef = null;
 
@@ -1375,13 +1340,14 @@ pub fn NewClass(
                     }
                     static_properties[i].name = property_names[i][0.. :0].ptr;
                 }
-
                 def.staticValues = (&static_properties);
             }
 
             def.className = class_name_str;
             // def.getProperty = getPropertyCallback;
 
+            if (!singleton)
+                def.hasInstance = customHasInstance;
             return def;
         }
     };
@@ -1430,8 +1396,19 @@ pub const ArrayBuffer = struct {
 };
 
 pub fn castObj(obj: js.JSObjectRef, comptime Type: type) *Type {
-    return @ptrCast(
-        *Type,
-        @alignCast(@alignOf(*Type), js.JSObjectGetPrivate(obj).?),
-    );
+    return JSPrivateDataPtr.from(js.JSObjectGetPrivate(obj)).as(Type);
+}
+
+pub const JSPrivateDataPtr = TaggedPointerUnion(.{
+    ResolveError,
+    BuildError,
+    Response,
+    Request,
+    FetchEvent,
+    Headers,
+    Body,
+});
+
+pub inline fn GetJSPrivateData(comptime Type: type, ref: js.JSObjectRef) ?*Type {
+    return JSPrivateDataPtr.from(js.JSObjectGetPrivate(ref)).get(Type);
 }

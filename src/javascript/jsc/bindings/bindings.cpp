@@ -1,10 +1,14 @@
 #include "helpers.h"
 #include "root.h"
+#include <JavaScriptCore/AggregateError.h>
+#include <JavaScriptCore/BytecodeIndex.h>
+#include <JavaScriptCore/CodeBlock.h>
 #include <JavaScriptCore/Completion.h>
 #include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/ExceptionScope.h>
 #include <JavaScriptCore/FunctionConstructor.h>
 #include <JavaScriptCore/Identifier.h>
+#include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSCallbackObject.h>
 #include <JavaScriptCore/JSClassRef.h>
@@ -16,15 +20,17 @@
 #include <JavaScriptCore/JSSet.h>
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/ParserError.h>
+#include <JavaScriptCore/ScriptExecutable.h>
 #include <JavaScriptCore/StackFrame.h>
+#include <JavaScriptCore/StackVisitor.h>
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/WasmFaultSignalHandler.h>
 #include <wtf/text/ExternalStringImpl.h>
 #include <wtf/text/StringCommon.h>
 #include <wtf/text/StringImpl.h>
 #include <wtf/text/StringView.h>
-#include <wtf/text/WTFString.h>
 
+#include <wtf/text/WTFString.h>
 extern "C" {
 
 //     #pragma mark - JSC::PropertyNameArray
@@ -131,18 +137,49 @@ static JSC::JSValue doLink(JSC__JSGlobalObject *globalObject, JSC::JSValue modul
   return JSC::linkAndEvaluateModule(globalObject, moduleKey, JSC::JSValue());
 }
 
+JSC__JSValue JSC__JSGlobalObject__createAggregateError(JSC__JSGlobalObject *globalObject,
+                                                       JSC__JSValue *errors, uint16_t errors_count,
+                                                       ZigString arg3) {
+  JSC::VM &vm = globalObject->vm();
+  auto scope = DECLARE_THROW_SCOPE(vm);
+
+  JSC::JSValue message = JSC::JSValue(JSC::jsOwnedString(vm, Zig::toString(arg3)));
+  JSC::JSValue options = JSC::jsUndefined();
+  JSC::JSArray *array = nullptr;
+  {
+    JSC::ObjectInitializationScope initializationScope(vm);
+    if ((array = JSC::JSArray::tryCreateUninitializedRestricted(
+           initializationScope, nullptr,
+           globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
+           errors_count))) {
+
+      for (uint16_t i = 0; i < errors_count; ++i) {
+        array->initializeIndexWithoutBarrier(initializationScope, i,
+                                             JSC::JSValue::decode(errors[i]));
+      }
+    }
+  }
+  if (!array) {
+    JSC::throwOutOfMemoryError(globalObject, scope);
+    return JSC::JSValue::encode(JSC::JSValue());
+  }
+
+  JSC::Structure *errorStructure = globalObject->errorStructure(JSC::ErrorType::AggregateError);
+  return RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::createAggregateError(
+                                     globalObject, vm, errorStructure, array, message, options,
+                                     nullptr, JSC::TypeNothing, false)));
+}
 // static JSC::JSNativeStdFunction* resolverFunction;
 // static JSC::JSNativeStdFunction* rejecterFunction;
 // static bool resolverFunctionInitialized = false;
 
+JSC__JSValue ZigString__toValue(ZigString arg0, JSC__JSGlobalObject *arg1) {
+  return JSC::JSValue::encode(JSC::JSValue(JSC::jsOwnedString(arg1->vm(), Zig::toString(arg0))));
+}
+
 static JSC::EncodedJSValue resolverFunctionCallback(JSC::JSGlobalObject *globalObject,
                                                     JSC::CallFrame *callFrame) {
   return JSC::JSValue::encode(doLink(globalObject, callFrame->argument(0)));
-}
-
-static JSC::EncodedJSValue rejecterFunctionCallback(JSC::JSGlobalObject *globalObject,
-                                                    JSC::CallFrame *callFrame) {
-  return JSC::JSValue::encode(callFrame->argument(0));
 }
 
 JSC__JSInternalPromise *
@@ -157,9 +194,14 @@ JSC__JSModuleLoader__loadAndEvaluateModule(JSC__JSGlobalObject *globalObject, Zi
   JSC::JSNativeStdFunction *resolverFunction = JSC::JSNativeStdFunction::create(
     globalObject->vm(), globalObject, 1, String(), resolverFunctionCallback);
   JSC::JSNativeStdFunction *rejecterFunction = JSC::JSNativeStdFunction::create(
-    globalObject->vm(), globalObject, 1, String(), rejecterFunctionCallback);
+    globalObject->vm(), globalObject, 1, String(),
+    [&arg1](JSC::JSGlobalObject *globalObject, JSC::CallFrame *callFrame) -> JSC::EncodedJSValue {
+      return JSC::JSValue::encode(
+        JSC::JSInternalPromise::rejectedPromise(globalObject, callFrame->argument(0)));
+    });
+
   globalObject->vm().drainMicrotasks();
-  auto result = promise->then(globalObject, resolverFunction, nullptr);
+  auto result = promise->then(globalObject, resolverFunction, rejecterFunction);
   globalObject->vm().drainMicrotasks();
 
   // if (promise->status(globalObject->vm()) ==
@@ -687,100 +729,321 @@ bWTF__String JSC__JSValue__toWTFString(JSC__JSValue JSValue0, JSC__JSGlobalObjec
   return Wrap<WTF::String, bWTF__String>::wrap(value.toWTFString(arg1));
 };
 
-static ZigException fromErrorInstance(JSC::JSGlobalObject *global, JSC::ErrorInstance *err,
-                                      JSC::JSValue val) {
-  ZigException except = Zig::ZigExceptionNone;
-  JSC::JSObject *obj = JSC::jsDynamicCast<JSC::JSObject *>(global->vm(), val);
-  if (err->stackTrace() != nullptr && err->stackTrace()->size() > 0) {
-    JSC::StackFrame *stack = &err->stackTrace()->first();
-    except.sourceURL = Zig::toZigString(stack->sourceURL());
+static void populateStackFrameMetadata(const JSC::StackFrame *stackFrame, ZigStackFrame *frame) {
+  frame->source_url = Zig::toZigString(stackFrame->sourceURL());
 
-    if (stack->hasLineAndColumnInfo()) {
-      unsigned lineNumber;
-      unsigned column;
-      stack->computeLineAndColumn(lineNumber, column);
-      except.line = lineNumber;
-      except.column = column;
+  if (stackFrame->isWasmFrame()) {
+    frame->code_type = ZigStackFrameCodeWasm;
+    return;
+  }
+
+  auto m_codeBlock = stackFrame->codeBlock();
+  if (m_codeBlock) {
+    switch (m_codeBlock->codeType()) {
+      case JSC::EvalCode: {
+        frame->code_type = ZigStackFrameCodeEval;
+        return;
+      }
+      case JSC::ModuleCode: {
+        frame->code_type = ZigStackFrameCodeModule;
+        return;
+      }
+      case JSC::GlobalCode: {
+        frame->code_type = ZigStackFrameCodeGlobal;
+        return;
+      }
+      case JSC::FunctionCode: {
+        frame->code_type =
+          !m_codeBlock->isConstructor() ? ZigStackFrameCodeFunction : ZigStackFrameCodeConstructor;
+        break;
+      }
+      default: ASSERT_NOT_REACHED();
     }
+  }
+
+  auto calleeCell = stackFrame->callee();
+  if (!calleeCell || !calleeCell->isObject()) return;
+
+  JSC::JSObject *callee = JSC::jsCast<JSC::JSObject *>(calleeCell);
+  // Does the code block have a user-defined name property?
+  JSC::JSValue name = callee->getDirect(m_codeBlock->vm(), m_codeBlock->vm().propertyNames->name);
+  if (name && name.isString()) {
+    auto str = name.toWTFString(m_codeBlock->globalObject());
+    frame->function_name = Zig::toZigString(str);
+    return;
+  }
+
+  /* For functions (either JSFunction or InternalFunction), fallback to their "native" name
+   * property. Based on JSC::getCalculatedDisplayName, "inlining" the
+   * JSFunction::calculatedDisplayName\InternalFunction::calculatedDisplayName calls */
+  if (JSC::JSFunction *function =
+        JSC::jsDynamicCast<JSC::JSFunction *>(m_codeBlock->vm(), callee)) {
+
+    WTF::String actualName = function->name(m_codeBlock->vm());
+    if (!actualName.isEmpty() || function->isHostOrBuiltinFunction()) {
+      frame->function_name = Zig::toZigString(actualName);
+      return;
+    }
+
+    auto inferred_name = function->jsExecutable()->name();
+    frame->function_name = Zig::toZigString(inferred_name.string());
+  }
+
+  if (JSC::InternalFunction *function =
+        JSC::jsDynamicCast<JSC::InternalFunction *>(m_codeBlock->vm(), callee)) {
+    // Based on JSC::InternalFunction::calculatedDisplayName, skipping the "displayName" property
+    frame->function_name = Zig::toZigString(function->name());
+  }
+}
+// Based on
+// https://github.com/mceSystems/node-jsc/blob/master/deps/jscshim/src/shim/JSCStackTrace.cpp#L298
+static void populateStackFramePosition(const JSC::StackFrame *stackFrame, ZigString *source_lines,
+                                       int32_t *source_line_numbers, uint8_t source_lines_count,
+                                       ZigStackFramePosition *position) {
+  auto m_codeBlock = stackFrame->codeBlock();
+  if (!m_codeBlock) return;
+
+  JSC::BytecodeIndex bytecodeOffset =
+    stackFrame->hasBytecodeIndex() ? stackFrame->bytecodeIndex() : JSC::BytecodeIndex();
+
+  /* Get the "raw" position info.
+   * Note that we're using m_codeBlock->unlinkedCodeBlock()->expressionRangeForBytecodeOffset
+   * rather than m_codeBlock->expressionRangeForBytecodeOffset in order get the "raw" offsets and
+   * avoid the CodeBlock's expressionRangeForBytecodeOffset modifications to the line and column
+   * numbers, (we don't need the column number from it, and we'll calculate the line "fixes"
+   * ourselves). */
+  int startOffset = 0;
+  int endOffset = 0;
+  int divotPoint = 0;
+  unsigned line = 0;
+  unsigned unusedColumn = 0;
+  m_codeBlock->unlinkedCodeBlock()->expressionRangeForBytecodeIndex(
+    bytecodeOffset, divotPoint, startOffset, endOffset, line, unusedColumn);
+  divotPoint += m_codeBlock->sourceOffset();
+
+  // TODO: evaluate if using the API from UnlinkedCodeBlock can be used instead of iterating
+  // through source text.
+
+  /* On the first line of the source code, it seems that we need to "fix" the column with the
+   * starting offset. We currently use codeBlock->source()->startPosition().m_column.oneBasedInt()
+   * as the offset in the first line rather than codeBlock->firstLineColumnOffset(), which seems
+   * simpler (and what CodeBlock::expressionRangeForBytecodeOffset does). This is because
+   * firstLineColumnOffset values seems different from what we expect (according to v8's tests)
+   * and I haven't dove into the relevant parts in JSC (yet) to figure out why. */
+  unsigned columnOffset = line ? 0 : m_codeBlock->source().startColumn().zeroBasedInt();
+
+  // "Fix" the line number
+  JSC::ScriptExecutable *executable = m_codeBlock->ownerExecutable();
+  if (std::optional<int> overrideLine = executable->overrideLineNumber(m_codeBlock->vm())) {
+    line = overrideLine.value();
   } else {
-    // JSC::ErrorInstance marks these as protected.
-    // To work around that, we cast as a JSC::JSObject
-    // This code path triggers when there was an exception before the code was executed
-    // For example, ParserError becomes one of these
-    auto source_url_value = obj->getDirect(global->vm(), global->vm().propertyNames->sourceURL);
-    auto str = source_url_value.toWTFString(global);
-    except.sourceURL = Zig::toZigString(str);
-    except.line = obj->getDirect(global->vm(), global->vm().propertyNames->line).toInt32(global);
-    except.column =
-      obj->getDirect(global->vm(), global->vm().propertyNames->column).toInt32(global);
+    line += executable->firstLine();
   }
 
-  if (obj->hasProperty(global, global->vm().propertyNames->stack)) {
-    except.stack = Zig::toZigString(
-      obj->getDirect(global->vm(), global->vm().propertyNames->stack).toWTFString(global));
+  // Calculate the staring\ending offsets of the entire expression
+  int expressionStart = divotPoint - startOffset;
+  int expressionStop = divotPoint + endOffset;
+
+  // Make sure the range is valid
+  WTF::StringView sourceString = m_codeBlock->source().provider()->source();
+  if (!expressionStop || expressionStart > static_cast<int>(sourceString.length())) { return; }
+
+  // Search for the beginning of the line
+  unsigned int lineStart = expressionStart;
+  while ((lineStart > 0) && ('\n' != sourceString[lineStart - 1])) { lineStart--; }
+  // Search for the end of the line
+  unsigned int lineStop = expressionStop;
+  unsigned int sourceLength = sourceString.length();
+  while ((lineStop < sourceLength) && ('\n' != sourceString[lineStop])) { lineStop++; }
+  if (source_lines_count > 1 && source_lines != nullptr) {
+    auto chars = sourceString.characters8();
+
+    // Most of the time, when you look at a stack trace, you want a couple lines above
+
+    source_lines[0] = {&chars[lineStart], lineStop - lineStart};
+    source_line_numbers[0] = line;
+
+    if (lineStart > 0) {
+      auto byte_offset_in_source_string = lineStart - 1;
+      uint8_t source_line_i = 1;
+      auto remaining_lines_to_grab = source_lines_count - 1;
+
+      while (byte_offset_in_source_string > 0 && remaining_lines_to_grab > 0) {
+        unsigned int end_of_line_offset = byte_offset_in_source_string;
+
+        // This should probably be code points instead of newlines
+        while (byte_offset_in_source_string > 0 && chars[byte_offset_in_source_string] != '\n') {
+          byte_offset_in_source_string--;
+        }
+
+        // We are at the beginning of the line
+        source_lines[source_line_i] = {&chars[byte_offset_in_source_string],
+                                       end_of_line_offset - byte_offset_in_source_string + 1};
+
+        source_line_numbers[source_line_i] = line - source_line_i;
+        source_line_i++;
+
+        remaining_lines_to_grab--;
+
+        byte_offset_in_source_string -= byte_offset_in_source_string > 0;
+      }
+    }
   }
 
-  except.code = (unsigned char)err->errorType();
-  if (err->isStackOverflowError()) { except.code = 253; }
-  if (err->isOutOfMemoryError()) { except.code = 8; }
+  /* Finally, store the source "positions" info.
+   * Notes:
+   * - The retrieved column seem to point the "end column". To make sure we're current, we'll
+   *calculate the columns ourselves, since we've already found where the line starts. Note that in
+   *v8 it should be 0-based here (in contrast the 1-based column number in v8::StackFrame).
+   * - The static_casts are ugly, but comes from differences between JSC and v8's api, and should
+   *be OK since no source should be longer than "max int" chars.
+   * TODO: If expressionStart == expressionStop, then m_endColumn will be equal to m_startColumn.
+   *Should we handle this case?
+   */
+  position->expression_start = expressionStart;
+  position->expression_stop = expressionStop;
+  position->line = WTF::OrdinalNumber::fromOneBasedInt(static_cast<int>(line)).zeroBasedInt();
+  position->column_start = (expressionStart - lineStart) + columnOffset;
+  position->column_stop = position->column_start + (expressionStop - expressionStart);
+  position->line_start = lineStart;
+  position->line_stop = lineStop;
+
+  return;
+}
+static void populateStackFrame(ZigStackTrace *trace, const JSC::StackFrame *stackFrame,
+                               ZigStackFrame *frame, bool is_top) {
+  populateStackFrameMetadata(stackFrame, frame);
+  populateStackFramePosition(stackFrame, is_top ? trace->source_lines_ptr : nullptr,
+                             is_top ? trace->source_lines_numbers : nullptr,
+                             is_top ? trace->source_lines_to_collect : 0, &frame->position);
+}
+static void populateStackTrace(const WTF::Vector<JSC::StackFrame> &frames, ZigStackTrace *trace) {
+  uint8_t frame_i = 0;
+  size_t stack_frame_i = 0;
+  const size_t total_frame_count = frames.size();
+  const uint8_t frame_count =
+    total_frame_count < trace->frames_len ? total_frame_count : trace->frames_len;
+
+  while (frame_i < frame_count && stack_frame_i < total_frame_count) {
+    // Skip native frames
+    while (stack_frame_i < total_frame_count && !(&frames.at(stack_frame_i))->codeBlock() &&
+           !(&frames.at(stack_frame_i))->isWasmFrame()) {
+      stack_frame_i++;
+    }
+    if (stack_frame_i >= total_frame_count) break;
+
+    ZigStackFrame *frame = &trace->frames_ptr[frame_i];
+    populateStackFrame(trace, &frames[stack_frame_i], frame, frame_i == 0);
+    stack_frame_i++;
+    frame_i++;
+  }
+  trace->frames_len = frame_i;
+}
+static void fromErrorInstance(ZigException *except, JSC::JSGlobalObject *global,
+                              JSC::ErrorInstance *err, const Vector<JSC::StackFrame> *stackTrace,
+                              JSC::JSValue val) {
+  JSC::JSObject *obj = JSC::jsDynamicCast<JSC::JSObject *>(global->vm(), val);
+  if (stackTrace != nullptr && stackTrace->size() > 0) {
+    populateStackTrace(*stackTrace, &except->stack);
+  } else if (err->stackTrace() != nullptr && err->stackTrace()->size() > 0) {
+    populateStackTrace(*err->stackTrace(), &except->stack);
+  }
+
+  except->code = (unsigned char)err->errorType();
+  if (err->isStackOverflowError()) { except->code = 253; }
+  if (err->isOutOfMemoryError()) { except->code = 8; }
 
   if (obj->hasProperty(global, global->vm().propertyNames->message)) {
-    except.message = Zig::toZigString(
+    except->message = Zig::toZigString(
       obj->getDirect(global->vm(), global->vm().propertyNames->message).toWTFString(global));
 
   } else {
-    except.message = Zig::toZigString(err->sanitizedMessageString(global));
+    except->message = Zig::toZigString(err->sanitizedMessageString(global));
   }
-  except.name = Zig::toZigString(err->sanitizedNameString(global));
-  except.runtime_type = err->runtimeTypeForCause();
+  except->name = Zig::toZigString(err->sanitizedNameString(global));
+  except->runtime_type = err->runtimeTypeForCause();
 
-  except.exception = err;
-
-  return except;
+  except->exception = err;
 }
 
-static ZigException exceptionFromString(WTF::String &str) {
-  ZigException except = Zig::ZigExceptionNone;
-  auto ref = OpaqueJSString::tryCreate(str);
-  except.message = ZigString{ref->characters8(), ref->length()};
-  ref->ref();
+void exceptionFromString(ZigException *except, JSC::JSValue value, JSC::JSGlobalObject *global) {
+  // Fallback case for when it's a user-defined ErrorLike-object that doesn't inherit from
+  // ErrorInstance
+  if (JSC::JSObject *obj = JSC::jsDynamicCast<JSC::JSObject *>(global->vm(), value)) {
+    if (obj->hasProperty(global, global->vm().propertyNames->name)) {
+      auto name_str =
+        obj->getDirect(global->vm(), global->vm().propertyNames->name).toWTFString(global);
+      except->name = Zig::toZigString(name_str);
+      if (name_str == "Error"_s) {
+        except->code = JSErrorCodeError;
+      } else if (name_str == "EvalError"_s) {
+        except->code = JSErrorCodeEvalError;
+      } else if (name_str == "RangeError"_s) {
+        except->code = JSErrorCodeRangeError;
+      } else if (name_str == "ReferenceError"_s) {
+        except->code = JSErrorCodeReferenceError;
+      } else if (name_str == "SyntaxError"_s) {
+        except->code = JSErrorCodeSyntaxError;
+      } else if (name_str == "TypeError"_s) {
+        except->code = JSErrorCodeTypeError;
+      } else if (name_str == "URIError"_s) {
+        except->code = JSErrorCodeURIError;
+      } else if (name_str == "AggregateError"_s) {
+        except->code = JSErrorCodeAggregateError;
+      }
+    }
 
-  return except;
-}
+    if (obj->hasProperty(global, global->vm().propertyNames->message)) {
+      except->message = Zig::toZigString(
+        obj->getDirect(global->vm(), global->vm().propertyNames->message).toWTFString(global));
+    }
 
-static ZigException exceptionFromString(JSC::JSValue value, JSC::JSGlobalObject *global) {
+    if (obj->hasProperty(global, global->vm().propertyNames->sourceURL)) {
+      except->stack.frames_ptr[0].source_url = Zig::toZigString(
+        obj->getDirect(global->vm(), global->vm().propertyNames->sourceURL).toWTFString(global));
+      except->stack.frames_len = 1;
+    }
+
+    if (obj->hasProperty(global, global->vm().propertyNames->line)) {
+      except->stack.frames_ptr[0].position.line =
+        obj->getDirect(global->vm(), global->vm().propertyNames->line).toInt32(global);
+      except->stack.frames_len = 1;
+    }
+
+    return;
+  }
   auto scope = DECLARE_THROW_SCOPE(global->vm());
   auto str = value.toWTFString(global);
   if (scope.exception()) {
     scope.clearException();
     scope.release();
-    return Zig::ZigExceptionNone;
+    return;
   }
   scope.release();
 
-  ZigException except = Zig::ZigExceptionNone;
   auto ref = OpaqueJSString::tryCreate(str);
-  except.message = ZigString{ref->characters8(), ref->length()};
+  except->message = ZigString{ref->characters8(), ref->length()};
   ref->ref();
-
-  return except;
 }
 
-ZigException JSC__JSValue__toZigException(JSC__JSValue JSValue0, JSC__JSGlobalObject *arg1) {
+void JSC__JSValue__toZigException(JSC__JSValue JSValue0, JSC__JSGlobalObject *arg1,
+                                  ZigException *exception) {
   JSC::JSValue value = JSC::JSValue::decode(JSValue0);
 
-  if (JSC::ErrorInstance *error = JSC::jsDynamicCast<JSC::ErrorInstance *>(arg1->vm(), value)) {
-    return fromErrorInstance(arg1, error, value);
-  }
-
-  if (JSC::Exception *exception = JSC::jsDynamicCast<JSC::Exception *>(arg1->vm(), value)) {
+  if (JSC::Exception *jscException = JSC::jsDynamicCast<JSC::Exception *>(arg1->vm(), value)) {
     if (JSC::ErrorInstance *error =
-          JSC::jsDynamicCast<JSC::ErrorInstance *>(arg1->vm(), exception->value())) {
-      return fromErrorInstance(arg1, error, value);
+          JSC::jsDynamicCast<JSC::ErrorInstance *>(arg1->vm(), jscException->value())) {
+      fromErrorInstance(exception, arg1, error, &jscException->stack(), value);
+      return;
     }
   }
 
-  return exceptionFromString(value, arg1);
+  if (JSC::ErrorInstance *error = JSC::jsDynamicCast<JSC::ErrorInstance *>(arg1->vm(), value)) {
+    fromErrorInstance(exception, arg1, error, nullptr, value);
+    return;
+  }
+
+  exceptionFromString(exception, value, arg1);
 }
 #pragma mark - JSC::PropertyName
 

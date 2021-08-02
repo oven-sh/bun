@@ -539,8 +539,20 @@ pub fn NewBundler(cache_files: bool) type {
 
             // Since we trim the prefixes, we must also compare the package name
             pub fn sortJavascriptModuleByPath(ctx: *GenerateNodeModuleBundle, a: Api.JavascriptBundledModule, b: Api.JavascriptBundledModule) bool {
-                return switch (std.mem.order(u8, ctx.metadataStringPointer(ctx.package_list.items[a.package_id].name), ctx.metadataStringPointer(ctx.package_list.items[b.package_id].name))) {
-                    .eq => std.mem.order(u8, ctx.metadataStringPointer(a.path), ctx.metadataStringPointer(b.path)) == .lt,
+                return switch (std.mem.order(
+                    u8,
+                    ctx.metadataStringPointer(
+                        ctx.package_list.items[a.package_id].name,
+                    ),
+                    ctx.metadataStringPointer(
+                        ctx.package_list.items[b.package_id].name,
+                    ),
+                )) {
+                    .eq => std.mem.order(
+                        u8,
+                        ctx.metadataStringPointer(a.path),
+                        ctx.metadataStringPointer(b.path),
+                    ) == .lt,
                     .lt => true,
                     else => false,
                 };

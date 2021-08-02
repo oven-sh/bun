@@ -17,17 +17,22 @@ usingnamespace @import("imports.zig");
 const TemplatePartTuple = std.meta.Tuple(&[_]type{ []E.TemplatePart, logger.Loc });
 const ScopeOrderList = std.ArrayListUnmanaged(?ScopeOrder);
 
-pub fn ExpressionTransposer(comptime ctx: type, visitor: fn (ptr: *ctx, arg: Expr, state: anytype) Expr) type {
+pub fn ExpressionTransposer(
+    comptime Kontext: type,
+    visitor: fn (ptr: *Kontext, arg: Expr, state: anytype) Expr,
+) type {
     return struct {
+        pub const Context = Kontext;
+        pub const This = @This();
         context: *Context,
 
-        pub fn init(c: *Context) @This() {
-            return @This(){
+        pub fn init(c: *Context) This {
+            return This{
                 .context = c,
             };
         }
 
-        pub fn maybeTransposeIf(self: *@This(), arg: Expr, state: anytype) Expr {
+        pub fn maybeTransposeIf(self: *This, arg: Expr, state: anytype) Expr {
             switch (arg.data) {
                 .e_if => |ex| {
                     ex.yes = self.maybeTransposeIf(ex.yes, state);
@@ -39,7 +44,6 @@ pub fn ExpressionTransposer(comptime ctx: type, visitor: fn (ptr: *ctx, arg: Exp
                 },
             }
         }
-        pub const Context = ctx;
     };
 }
 

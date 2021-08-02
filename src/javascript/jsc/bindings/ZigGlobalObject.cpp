@@ -147,7 +147,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject *globalObject,
     return toIdentifier(res.result.value, globalObject);
   } else {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    throwException(scope, res.result.err.message, globalObject);
+    throwException(scope, res.result.err, globalObject);
     return globalObject->vm().propertyNames->emptyIdentifier;
   }
 }
@@ -168,7 +168,7 @@ JSC::JSInternalPromise *GlobalObject::moduleLoaderImportModule(JSGlobalObject *g
     globalObject, toZigString(moduleNameValue, globalObject),
     sourceURL.isEmpty() ? ZigStringCwd : toZigString(sourceURL.fileSystemPath()));
   if (!resolved.success) {
-    throwException(scope, resolved.result.err.message, globalObject);
+    throwException(scope, resolved.result.err, globalObject);
     return promise->rejectWithCaughtException(globalObject, scope);
   }
 
@@ -196,11 +196,15 @@ JSC::JSInternalPromise *GlobalObject::moduleLoaderFetch(JSGlobalObject *globalOb
   auto moduleKey = key.toWTFString(globalObject);
   RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
   auto moduleKeyZig = toZigString(moduleKey);
+  ErrorableResolvedSource res;
+  res.success = false;
+  res.result.err.code = 0;
+  res.result.err.ptr = nullptr;
 
-  auto res = Zig__GlobalObject__fetch(globalObject, moduleKeyZig, ZigStringEmpty);
+  Zig__GlobalObject__fetch(&res, globalObject, moduleKeyZig, ZigStringEmpty);
 
   if (!res.success) {
-    throwException(scope, res.result.err.message, globalObject);
+    throwException(scope, res.result.err, globalObject);
     RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
   }
 

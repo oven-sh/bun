@@ -223,14 +223,13 @@ pub fn build(b: *std.build.Builder) void {
         translate_c.out_basename = "headers";
         translate_c.output_dir = b.pathFromRoot("src/javascript/jsc/bindings/");
         headers_step.dependOn(&translate_c.step);
-
         headers_zig_file = b.pathFromRoot("src/javascript/jsc/bindings/headers.zig");
 
         original_make_fn = headers_step.makeFn;
         headers_step.makeFn = HeadersMaker.make;
         b.default_step.dependOn(&exe.step);
 
-        var steps = [_]*std.build.LibExeObjStep{ exe, javascript, typings_exe };
+        var steps = [_]*std.build.LibExeObjStep{ exe, javascript, typings_exe, headers_exec };
 
         for (steps) |step| {
             step.linkLibC();

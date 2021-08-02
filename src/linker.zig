@@ -160,11 +160,9 @@ pub fn NewLinker(comptime BundlerType: type) type {
             unreachable;
         }
 
-
         pub inline fn nodeModuleBundleImportPath(this: *const ThisLinker) string {
             return if (this.options.node_modules_bundle_url.len > 0) this.options.node_modules_bundle_url else this.options.node_modules_bundle.?.bundle.import_from_name;
         }
-
 
         // pub const Scratch = struct {
         //     threadlocal var externals: std.ArrayList(u32) = undefined;
@@ -317,24 +315,26 @@ pub fn NewLinker(comptime BundlerType: type) type {
                                 error.ModuleNotFound => {
                                     if (Resolver.isPackagePath(import_record.path.text)) {
                                         if (linker.options.platform.isWebLike() and Options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
-                                            try linker.log.addRangeErrorFmt(
+                                            try linker.log.addResolveError(
                                                 &result.source,
                                                 import_record.range,
                                                 linker.allocator,
                                                 "Could not resolve: \"{s}\". Try setting --platform=\"node\"",
                                                 .{import_record.path.text},
+                                                import_record.kind,
                                             );
                                         } else {
-                                            try linker.log.addRangeErrorFmt(
+                                            try linker.log.addResolveError(
                                                 &result.source,
                                                 import_record.range,
                                                 linker.allocator,
                                                 "Could not resolve: \"{s}\". Maybe you need to \"npm install\" (or yarn/pnpm)?",
                                                 .{import_record.path.text},
+                                                import_record.kind,
                                             );
                                         }
                                     } else {
-                                        try linker.log.addRangeErrorFmt(
+                                        try linker.log.addResolveError(
                                             &result.source,
                                             import_record.range,
                                             linker.allocator,
@@ -342,6 +342,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
                                             .{
                                                 import_record.path.text,
                                             },
+                                            import_record.kind,
                                         );
                                         continue;
                                     }

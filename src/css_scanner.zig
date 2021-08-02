@@ -316,7 +316,13 @@ pub const Scanner = struct {
         return text;
     }
 
-    pub fn next(scanner: *Scanner, comptime import_behavior: ImportBehavior, comptime WriterType: type, writer: WriterType, writeChunk: (fn (ctx: WriterType, Chunk) anyerror!void)) !void {
+    pub fn next(
+        scanner: *Scanner,
+        comptime import_behavior: ImportBehavior,
+        comptime WriterType: type,
+        writer: WriterType,
+        writeChunk: (fn (ctx: WriterType, Chunk) anyerror!void),
+    ) !void {
         scanner.has_newline_before = scanner.end == 0;
         scanner.has_delimiter_before = false;
         scanner.step();

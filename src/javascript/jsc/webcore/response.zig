@@ -121,13 +121,16 @@ pub const Response = struct {
         //     return null;
         // }
 
-        var response = getAllocator(ctx).create(Response) catch return null;
+        var tup = Repsonse.Class.makeObject(
+            ctx,
+            getAllocator(ctx),
+        );
 
-        response.* = Response{
+        tup.ptr.* = Response{
             .body = body,
             .allocator = getAllocator(ctx),
         };
-        return js.JSObjectMake(ctx, Response.Class.get().*, response);
+        return tup.ref;
     }
 };
 
@@ -290,7 +293,7 @@ pub const Headers = struct {
                 };
             }
 
-            return js.JSObjectMake(ctx, Headers.Class.get().*, headers);
+            return Headers.Class.make(ctx, headers);
         }
 
         pub fn finalize(
@@ -922,7 +925,7 @@ pub const Request = struct {
             this.headers = Headers.fromRequestCtx(getAllocator(ctx), this.request_context) catch unreachable;
         }
 
-        return js.JSObjectMake(ctx, Headers.Class.get().*, &this.headers.?);
+        return Headers.Class.make(ctx, &this.headers.?);
     }
     pub fn getIntegrity(
         this: *Request,
@@ -1068,7 +1071,7 @@ pub const FetchEvent = struct {
         prop: js.JSStringRef,
         exception: js.ExceptionRef,
     ) js.JSValueRef {
-        return js.JSObjectMake(ctx, Request.Class.get().*, &this.request);
+        return Request.Class.make(ctx, &this.request);
     }
 
     // https://developer.mozilla.org/en-US/docs/Web/API/FetchEvent/respondWith
@@ -1096,14 +1099,11 @@ pub const FetchEvent = struct {
             return js.JSValueMakeUndefined(ctx);
         }
 
-        var ptr = js.JSObjectGetPrivate(arg);
-        if (ptr == null) {
+        var response: *Response = GetJSPrivateData(Response, arg) orelse {
             JSError(getAllocator(ctx), "event.respondWith()'s Response object was invalid. This may be an internal error.", .{}, ctx, exception);
             this.request_context.sendInternalError(error.respondWithWasInvalid) catch {};
             return js.JSValueMakeUndefined(ctx);
-        }
-
-        var response = @ptrCast(*Response, @alignCast(@alignOf(*Response), ptr.?));
+        };
 
         var needs_mime_type = true;
         var content_length: ?usize = null;

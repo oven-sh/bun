@@ -127,10 +127,6 @@ pub fn NewPrinter(
     comptime rewrite_esm_to_cjs: bool,
     comptime speedy: bool,
 ) type {
-    // comptime const comptime_buf_len = 64;
-    // comptime var comptime_buf = [comptime_buf_len]u8{};
-    // comptime var comptime_buf_i: usize = 0;
-
     return struct {
         symbols: Symbol.Map,
         import_records: []importRecord.ImportRecord,
@@ -153,53 +149,6 @@ pub fn NewPrinter(
         prev_stmt_tag: Stmt.Tag = .s_empty,
 
         const Printer = @This();
-        pub fn comptime_flush(p: *Printer) void {}
-
-        // pub fn comptime_flush(p: *Printer) callconv(.Inline) void {
-        //     const result = comptime {
-        //         if (comptime_buf_i > 0) {
-        //             return comptime_buf[0..comptime_buf_i];
-        //         } else {
-        //             return "";
-        //         }
-        //     };
-
-        //     if (result.len) {
-        //         p.print(result);
-        //         comptime {
-        //             if (comptime_buf_i > 0) {
-        //                 comptime_buf_i = 0;
-        //                 while (comptime_buf_i < comptime_buf_i) {
-        //                     comptime_buf[comptime_buf_i] = 0;
-        //                     comptime_buf_i += 1;
-        //                 }
-        //                 comptime_buf_i = 0;
-        //             }
-        //         }
-        //     }
-        // }
-        // pub fn comptime_print(p: *Printer, str: comptime []const u8) callconv(.Inline) void {
-        //     comptime const needsFlush = (str.len + comptime_buf_i >= comptime_buf_len - 1);
-        //     if (needsFlush) {
-        //         p.comptime_flush();
-        //     }
-
-        //     comptime {
-        //         if (str.len > 63) {
-        //             @compileError("comptime_print buffer overflow");
-        //             return;
-        //         }
-        //     }
-
-        //     comptime {
-        //         comptime str_i = 0;
-        //         while (str_i < str.len) {
-        //             comptime_buf[comptime_buf_i] = str[str_i];
-        //             comptime_buf_i += 1;
-        //             str_i += 1;
-        //         }
-        //     }
-        // }
 
         pub fn writeAll(p: *Printer, bytes: anytype) anyerror!void {
             p.print(bytes);
@@ -234,8 +183,6 @@ pub fn NewPrinter(
         }
 
         pub fn printIndent(p: *Printer) void {
-            comptime_flush(p);
-
             if (p.options.indent == 0) {
                 return;
             }
@@ -2149,7 +2096,6 @@ pub fn NewPrinter(
 
             debug("<printStmt>: {s}\n", .{stmt});
             defer debug("</printStmt>: {s}\n", .{stmt});
-            p.comptime_flush();
 
             p.addSourceMapping(stmt.loc);
             switch (stmt.data) {

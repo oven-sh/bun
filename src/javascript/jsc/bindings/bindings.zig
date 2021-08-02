@@ -2,6 +2,7 @@ usingnamespace @import("./shared.zig");
 usingnamespace @import("./headers.zig");
 pub const Shimmer = @import("./shimmer.zig").Shimmer;
 const hasRef = std.meta.trait.hasField("ref");
+const C_API = @import("../JavaScriptCore.zig");
 
 pub const JSObject = extern struct {
     pub const shim = Shimmer("JSC", "JSObject", @This());
@@ -37,6 +38,10 @@ pub const JSObject = extern struct {
 pub const ZigString = extern struct {
     ptr: [*]const u8,
     len: usize,
+    pub const shim = Shimmer("Zig", "ZigString", @This());
+
+    pub const name = "ZigString";
+    pub const namespace = "Zig";
 
     pub fn init(slice_: []const u8) ZigString {
         return ZigString{ .ptr = slice_.ptr, .len = slice_.len };
@@ -47,6 +52,18 @@ pub const ZigString = extern struct {
     pub fn slice(this: *const ZigString) []const u8 {
         return this.ptr[0..std.math.min(this.len, 4096)];
     }
+
+    pub fn toValue(this: ZigString, global: *JSGlobalObject) JSValue {
+        return shim.cppFn("toValue", .{ this, global });
+    }
+
+    pub fn toJSStringRef(this: *const ZigString) C_API.JSStringRef {
+        return C_API.JSStringCreateStatic(this.ptr, this.len);
+    }
+
+    pub const Extern = [_][]const u8{
+        "toValue",
+    };
 };
 
 pub const JSCell = extern struct {
@@ -184,11 +201,12 @@ pub fn NewGlobalObject(comptime Type: type) type {
             }
             return ErrorableZigString.err(error.ResolveFailed, "resolve not implemented");
         }
-        pub fn fetch(global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) ErrorableResolvedSource {
+        pub fn fetch(ret: *ErrorableResolvedSource, global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) void {
             if (comptime @hasDecl(Type, "fetch")) {
-                return @call(.{ .modifier = .always_inline }, Type.fetch, .{ global, specifier, source });
+                @call(.{ .modifier = .always_inline }, Type.fetch, .{ ret, global, specifier, source });
+                return;
             }
-            return ErrorableResolvedSource.err(error.FetchFailed, "Module fetch not implemented");
+            ret.* = ErrorableResolvedSource.err(error.FetchFailed, "Module fetch not implemented");
         }
         pub fn promiseRejectionTracker(global: *JSGlobalObject, promise: *JSPromise, rejection: JSPromiseRejectionOperation) callconv(.C) JSValue {
             if (comptime @hasDecl(Type, "promiseRejectionTracker")) {
@@ -776,11 +794,16 @@ pub const JSGlobalObject = extern struct {
         return cppFn("asyncGeneratorFunctionPrototype", .{this});
     }
 
+    pub fn createAggregateError(globalObject: *JSGlobalObject, errors: [*]JSValue, errors_len: u16, message: ZigString) JSValue {
+        return cppFn("createAggregateError", .{ globalObject, errors, errors_len, message });
+    }
+
     pub fn vm(this: *JSGlobalObject) *VM {
         return cppFn("vm", .{this});
     }
 
     pub const Extern = [_][]const u8{
+        "createAggregateError",
         "objectPrototype",
         "functionPrototype",
         "arrayPrototype",
@@ -1087,6 +1110,7 @@ pub const JSValue = enum(i64) {
     pub fn jsNumberFromInt32(i: i32) JSValue {
         return cppFn("jsNumberFromInt32", .{i});
     }
+
     pub fn jsNumberFromInt64(i: i64) JSValue {
         return cppFn("jsNumberFromInt64", .{i});
     }
@@ -1165,8 +1189,8 @@ pub const JSValue = enum(i64) {
         return cppFn("isException", .{ this, vm });
     }
 
-    pub fn toZigException(this: JSValue, global: *JSGlobalObject) ZigException {
-        return cppFn("toZigException", .{ this, global });
+    pub fn toZigException(this: JSValue, global: *JSGlobalObject, exception: *ZigException) void {
+        return cppFn("toZigException", .{ this, global, exception });
     }
 
     // On exception, this returns the empty string.

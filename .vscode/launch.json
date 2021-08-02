@@ -53,6 +53,20 @@
     {
       "type": "lldb",
       "request": "launch",
+      "name": "Eval Error",
+      "program": "${workspaceFolder}/build/debug/macos-x86_64/spjs",
+      "args": [
+        "error.js",
+        "--resolve=dev",
+        "--outdir=outcss"
+        // "--public-url=https://localhost:9000/"
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
       "name": "Eval",
       "program": "${workspaceFolder}/build/debug/macos-x86_64/spjs",
       "args": [

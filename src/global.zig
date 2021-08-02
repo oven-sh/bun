@@ -62,6 +62,10 @@ pub const Output = struct {
         return source.error_stream.writer();
     }
 
+    pub fn errorStream() Source.StreamType {
+        return source.error_stream;
+    }
+
     pub fn writer() WriterType {
         return source.stream.writer();
     }
@@ -134,7 +138,7 @@ pub const Output = struct {
     // <d> - dim
     // </r> - reset
     // <r> - reset
-    fn _pretty(comptime fmt: string, args: anytype, comptime printer: anytype, comptime is_enabled: bool) void {
+    pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) string {
         comptime var new_fmt: [fmt.len * 4]u8 = undefined;
         comptime var new_fmt_i: usize = 0;
         const ED = comptime "\x1b[";
@@ -205,7 +209,7 @@ pub const Output = struct {
                             is_reset = true;
                             break :color_picker "";
                         } else {
-                            @compileError("Invalid color name passed:" ++ color_name);
+                            @compileError("Invalid color name passed: " ++ color_name);
                         }
                     };
                     var orig = new_fmt_i;
@@ -233,18 +237,19 @@ pub const Output = struct {
                 },
             }
         };
-        printer(new_fmt[0..new_fmt_i], args);
+
+        return comptime new_fmt[0..new_fmt_i];
     }
 
-    pub fn prettyWithPrinter(comptime fmt: string, args: anytype, printer: anytype, comptime l: Level) void {
+    pub fn prettyWithPrinter(comptime fmt: string, args: anytype, comptime printer: anytype, comptime l: Level) void {
         if (comptime l == .Warn) {
             if (level == .Error) return;
         }
 
         if (enable_ansi_colors) {
-            _pretty(fmt, args, printer, true);
+            printer(comptime prettyFmt(fmt, true), args);
         } else {
-            _pretty(fmt, args, printer, false);
+            printer(comptime prettyFmt(fmt, false), args);
         }
     }
 
@@ -254,9 +259,9 @@ pub const Output = struct {
 
     pub fn prettyln(comptime fmt: string, args: anytype) void {
         if (enable_ansi_colors) {
-            _pretty(fmt, args, println, true);
+            println(comptime prettyFmt(fmt, true), args);
         } else {
-            _pretty(fmt, args, println, false);
+            println(comptime prettyFmt(fmt, false), args);
         }
     }
 

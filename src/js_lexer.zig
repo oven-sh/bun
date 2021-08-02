@@ -142,6 +142,11 @@ pub const Lexer = struct {
         return Error.SyntaxError;
     }
 
+    pub fn addSyntaxError(self: *LexerType, _loc: logger.Loc, comptime fmt: []const u8, args: anytype) !void {
+        self.addError(_loc, fmt, args, false);
+        return Error.SyntaxError;
+    }
+
     pub fn addError(self: *LexerType, _loc: usize, comptime format: []const u8, args: anytype, panic: bool) void {
         if (self.is_log_disabled) return;
         var __loc = logger.usize2Loc(_loc);
@@ -151,8 +156,6 @@ pub const Lexer = struct {
 
         self.log.addErrorFmt(self.source, __loc, self.allocator, format, args) catch unreachable;
         self.prev_error_loc = __loc;
-        var msg = self.log.msgs.items[self.log.msgs.items.len - 1];
-        msg.formatNoWriter(Global.panic);
     }
 
     pub fn addRangeError(self: *LexerType, r: logger.Range, comptime format: []const u8, args: anytype, panic: bool) !void {
@@ -1293,7 +1296,11 @@ pub const Lexer = struct {
                                     },
                                     -1 => {
                                         lexer.start = lexer.end;
-                                        lexer.addError(lexer.start, "Expected \"*/\" to terminate multi-line comment", .{}, true);
+                                        try lexer.addSyntaxError(
+                                            lexer.start,
+                                            "Expected \"*/\" to terminate multi-line comment",
+                                            .{},
+                                        );
                                     },
                                     else => {
                                         try lexer.step();
@@ -1827,7 +1834,7 @@ pub const Lexer = struct {
                                         },
                                         -1 => {
                                             lexer.start = lexer.end;
-                                            lexer.addError(lexer.start, "Expected \"*/\" to terminate multi-line comment", .{}, true);
+                                            try lexer.addSyntaxError(lexer.start, "Expected \"*/\" to terminate multi-line comment", .{});
                                         },
                                         else => {
                                             try lexer.step();
@@ -1874,7 +1881,7 @@ pub const Lexer = struct {
                                     try lexer.step();
                                 }
                             } else {
-                                lexer.addError(lexer.range().endI(), "Expected identifier after \"{s}\" in namespaced JSX name", .{lexer.raw()}, true);
+                                try lexer.addSyntaxError(lexer.range().endI(), "Expected identifier after \"{s}\" in namespaced JSX name", .{lexer.raw()});
                             }
                         }
 
@@ -2363,7 +2370,7 @@ pub const Lexer = struct {
                     if (std.fmt.parseFloat(f64, text)) |num| {
                         lexer.number = num;
                     } else |err| {
-                        lexer.addError(lexer.start, "Invalid number {s}", .{text}, true);
+                        try lexer.addSyntaxError(lexer.start, "Invalid number {s}", .{text});
                     }
                 }
             }
@@ -2474,7 +2481,7 @@ pub const Lexer = struct {
                     }
                     text = bytes;
                 } else |err| {
-                    lexer.addError(lexer.start, "Out of Memory Wah Wah Wah", .{}, true);
+                    try lexer.addSyntaxError(lexer.start, "Out of Memory Wah Wah Wah", .{});
                     return;
                 }
             }
@@ -2499,7 +2506,7 @@ pub const Lexer = struct {
                 if (std.fmt.parseFloat(f64, text)) |num| {
                     lexer.number = num;
                 } else |err| {
-                    lexer.addError(lexer.start, "Invalid number", .{}, true);
+                    try lexer.addSyntaxError(lexer.start, "Invalid number", .{});
                 }
             }
         }
@@ -2630,7 +2637,7 @@ pub const CodepointIterator = struct {
 
         const cp_len = strings.utf8ByteSequenceLength(it.bytes[it.i]);
         it.i += cp_len;
-        // without branching, 
+        // without branching,
         it.width = @intCast(u3, @boolToInt(it.i <= it.bytes.len)) * cp_len;
 
         return if (!(it.i > it.bytes.len)) it.bytes[it.i - cp_len .. it.i] else "";

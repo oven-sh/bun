@@ -675,6 +675,11 @@ bool JSC__JSValue__isBigInt32(JSC__JSValue JSValue0) {
 bool JSC__JSValue__isBoolean(JSC__JSValue JSValue0) {
   return JSC::JSValue::decode(JSValue0).isBoolean();
 }
+
+bool JSC__JSValue__isClass(JSC__JSValue JSValue0, JSC__JSGlobalObject *arg1) {
+  JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+  return value.isConstructor(arg1->vm());
+}
 bool JSC__JSValue__isCell(JSC__JSValue JSValue0) { return JSC::JSValue::decode(JSValue0).isCell(); }
 bool JSC__JSValue__isCustomGetterSetter(JSC__JSValue JSValue0) {
   return JSC::JSValue::decode(JSValue0).isCustomGetterSetter();
@@ -1112,6 +1117,71 @@ void exceptionFromString(ZigException *except, JSC::JSValue value, JSC::JSGlobal
   auto ref = OpaqueJSString::tryCreate(str);
   except->message = ZigString{ref->characters8(), ref->length()};
   ref->ref();
+}
+
+static WTF::StringView function_string_view = WTF::StringView("Function");
+void JSC__JSValue__getClassName(JSC__JSValue JSValue0, JSC__JSGlobalObject *arg1, ZigString *arg2) {
+  JSC::JSCell *cell = JSC::JSValue::decode(JSValue0).asCell();
+  if (cell == nullptr) {
+    arg2->len = 0;
+    return;
+  }
+
+  const char *ptr = cell->className(arg1->vm());
+  auto view = WTF::StringView(ptr);
+
+  // Fallback to .name if className is empty
+  if (view.length() == 0 || view == function_string_view) {
+    JSC__JSValue__getNameProperty(JSValue0, arg1, arg2);
+    return;
+  } else {
+    *arg2 = Zig::toZigString(view);
+    return;
+  }
+
+  arg2->len = 0;
+}
+void JSC__JSValue__getNameProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject *arg1,
+                                   ZigString *arg2) {
+
+  JSC::JSObject *obj = JSC::JSValue::decode(JSValue0).getObject();
+
+  if (obj == nullptr) {
+    arg2->len = 0;
+    return;
+  }
+
+  JSC::JSValue name = obj->getDirect(arg1->vm(), arg1->vm().propertyNames->name);
+  if (name && name.isString()) {
+    auto str = name.toWTFString(arg1);
+    if (!str.isEmpty()) {
+      *arg2 = Zig::toZigString(str);
+      return;
+    }
+  }
+
+  if (JSC::JSFunction *function = JSC::jsDynamicCast<JSC::JSFunction *>(arg1->vm(), obj)) {
+
+    WTF::String actualName = function->name(arg1->vm());
+    if (!actualName.isEmpty() || function->isHostOrBuiltinFunction()) {
+      *arg2 = Zig::toZigString(actualName);
+      return;
+    }
+
+    actualName = function->jsExecutable()->name().string();
+
+    *arg2 = Zig::toZigString(actualName);
+    return;
+  }
+
+  if (JSC::InternalFunction *function =
+        JSC::jsDynamicCast<JSC::InternalFunction *>(arg1->vm(), obj)) {
+    auto view = WTF::StringView(function->name());
+    *arg2 = Zig::toZigString(view);
+    return;
+  }
+
+  arg2->len = 0;
 }
 
 void JSC__JSValue__toZigException(JSC__JSValue JSValue0, JSC__JSGlobalObject *arg1,

@@ -26,7 +26,7 @@ pub const ZigGlobalObject = extern struct {
         if (!sigaction_installed) {
             sigaction_installed = true;
 
-        sigaction = std.mem.zeroes(std.os.Sigaction);
+            sigaction = std.mem.zeroes(std.os.Sigaction);
             sigaction.handler = .{ .sigaction = Handler.global_signal_handler_fn };
 
             std.os.sigaction(std.os.SIGABRT, &sigaction, null);
@@ -548,9 +548,21 @@ pub const ZigConsoleClient = struct {
 
         if (len == 1) {
             if (Output.enable_ansi_colors) {
-                FormattableType.format(@TypeOf(buffered_writer.unbuffered_writer), buffered_writer.unbuffered_writer, vals[0], true) catch {};
+                FormattableType.format(
+                    @TypeOf(buffered_writer.unbuffered_writer),
+                    buffered_writer.unbuffered_writer,
+                    vals[0],
+                    global,
+                    true,
+                ) catch {};
             } else {
-                FormattableType.format(@TypeOf(buffered_writer.unbuffered_writer), buffered_writer.unbuffered_writer, vals[0], false) catch {};
+                FormattableType.format(
+                    @TypeOf(buffered_writer.unbuffered_writer),
+                    buffered_writer.unbuffered_writer,
+                    vals[0],
+                    global,
+                    false,
+                ) catch {};
             }
 
             _ = buffered_writer.unbuffered_writer.write("\n") catch 0;
@@ -567,13 +579,13 @@ pub const ZigConsoleClient = struct {
             while (i < len) : (i += 1) {
                 _ = if (i > 0) (writer.write(" ") catch 0);
 
-                FormattableType.format(@TypeOf(writer), writer, values[i], true) catch {};
+                FormattableType.format(@TypeOf(writer), writer, values[i], global, true) catch {};
             }
         } else {
             while (i < len) : (i += 1) {
                 _ = if (i > 0) (writer.write(" ") catch 0);
 
-                FormattableType.format(@TypeOf(writer), writer, values[i], false) catch {};
+                FormattableType.format(@TypeOf(writer), writer, values[i], global, false) catch {};
             }
         }
 
@@ -589,8 +601,8 @@ pub const ZigConsoleClient = struct {
         Null,
         Boolean,
         const CellType = CAPI.CellType;
-
-        pub fn format(comptime Writer: type, writer: Writer, value: JSValue, comptime enable_ansi_colors: bool) anyerror!void {
+        threadlocal var name_buf: [512]u8 = undefined;
+        pub fn format(comptime Writer: type, writer: Writer, value: JSValue, globalThis: *JSGlobalObject, comptime enable_ansi_colors: bool) anyerror!void {
             if (value.isCell()) {
                 if (CAPI.JSObjectGetPrivate(value.asRef())) |private_data_ptr| {
                     const priv_data = JS.JSPrivateDataPtr.from(private_data_ptr);
@@ -633,10 +645,20 @@ pub const ZigConsoleClient = struct {
                 try writer.print(comptime Output.prettyFmt("<r><yellow>null<r>", enable_ansi_colors), .{});
             } else if (value.isBoolean()) {
                 if (value.toBoolean()) {
-                    try writer.print(comptime Output.prettyFmt("<r><blue>true<r>", enable_ansi_colors), .{});
+                    try writer.print(comptime Output.prettyFmt("<r><yellow>true<r>", enable_ansi_colors), .{});
                 } else {
-                    try writer.print(comptime Output.prettyFmt("<r><blue>false<r>", enable_ansi_colors), .{});
+                    try writer.print(comptime Output.prettyFmt("<r><yellow>false<r>", enable_ansi_colors), .{});
                 }
+                // } else if (value.isSymbol()) {
+                //     try writer.print(comptime Output.prettyFmt("<r><yellow>Symbol(\"{s}\")<r>", enable_ansi_colors), .{ value.getDescriptionProperty() });
+            } else if (value.isClass(globalThis)) {
+                var printable = ZigString.init(&name_buf);
+                value.getClassName(globalThis, &printable);
+                try writer.print("[class {s}]", .{printable.slice()});
+            } else if (value.isCallable(globalThis.vm())) {
+                var printable = ZigString.init(&name_buf);
+                value.getNameProperty(globalThis, &printable);
+                try writer.print("[Function {s}]", .{printable.slice()});
             } else {
                 var str = value.toWTFString(JS.VirtualMachine.vm.global);
                 _ = try writer.write(str.slice());

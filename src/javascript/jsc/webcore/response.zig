@@ -55,7 +55,6 @@ pub const Response = struct {
 
     pub fn finalize(
         this: *Response,
-        ctx: js.JSObjectRef,
     ) void {
         this.body.deinit(this.allocator);
         this.allocator.destroy(this);
@@ -121,16 +120,15 @@ pub const Response = struct {
         //     return null;
         // }
 
-        var tup = Repsonse.Class.makeObject(
-            ctx,
-            getAllocator(ctx),
-        );
-
-        tup.ptr.* = Response{
+        var response = getAllocator(ctx).create(Response) catch unreachable;
+        response.* = Response{
             .body = body,
             .allocator = getAllocator(ctx),
         };
-        return tup.ref;
+        return Response.Class.make(
+            ctx,
+            response,
+        );
     }
 };
 
@@ -298,7 +296,6 @@ pub const Headers = struct {
 
         pub fn finalize(
             this: *Headers,
-            ctx: js.JSObjectRef,
         ) void {
             this.deinit();
         }

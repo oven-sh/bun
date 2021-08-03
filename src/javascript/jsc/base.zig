@@ -42,7 +42,6 @@ pub const To = struct {
             comptime ZigContextType: type,
             comptime ctxfn: fn (
                 this: *ZigContextType,
-                object: js.JSObjectRef,
             ) void,
         ) type {
             return struct {
@@ -783,16 +782,28 @@ pub fn NewClass(
             return ClassGetter;
         }
 
-        pub fn customHasInstance(ctx: js.JSContextRef, obj: js.JSObjectRef, value: js.JSValueRef, exception: ExceptionRef) callconv(.C) bool {
-            return js.JSValueIsObjectOfClass(ctx, obj, get().*);
+        pub fn customHasInstance(ctx: js.JSContextRef, obj: js.JSObjectRef, value: js.JSValueRef, exception: js.ExceptionRef) callconv(.C) bool {
+            return js.JSValueIsObjectOfClass(ctx, value, get().*);
         }
 
-        pub fn make(ctx: js.JSContextRef, ptr: *ZigType) callconv(.C) js.JSObjectRef {
-            return js.JSObjectMake(
+        pub fn make(ctx: js.JSContextRef, ptr: *ZigType) js.JSObjectRef {
+            var real_ptr = JSPrivateDataPtr.init(ptr).ptr();
+            if (comptime isDebug) {
+                std.debug.assert(JSPrivateDataPtr.isValidPtr(real_ptr));
+                std.debug.assert(JSPrivateDataPtr.from(real_ptr).get(ZigType).? == ptr);
+            }
+
+            var result = js.JSObjectMake(
                 ctx,
                 get().*,
-                JSPrivateDataPtr.init(ptr).ptr(),
+                real_ptr,
             );
+
+            if (comptime isDebug) {
+                std.debug.assert(JSPrivateDataPtr.from(js.JSObjectGetPrivate(result)).ptr() == real_ptr);
+            }
+
+            return result;
         }
         pub fn GetClass(comptime ReceiverType: type) type {
             const ClassGetter = struct {
@@ -1274,7 +1285,11 @@ pub fn NewClass(
 
                                 def.callAsFunction = callback;
                             } else {
-                                const ctxfn = @field(staticFunctions, function_names[i]).rfn;
+                                const CtxField = @field(staticFunctions, function_names[i]);
+                                if (comptime !@hasField(@TypeOf(CtxField), "rfn")) {
+                                    @compileError("Expected " ++ options.name ++ "." ++ function_names[i] ++ " to have .rfn");
+                                }
+                                const ctxfn = CtxField.rfn;
                                 const Func: std.builtin.TypeInfo.Fn = @typeInfo(@TypeOf(ctxfn)).Fn;
 
                                 const PointerType = std.meta.Child(Func.args[0].arg_type.?);

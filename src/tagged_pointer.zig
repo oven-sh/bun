@@ -48,7 +48,7 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
         inline for (Types) |field, i| {
             enumFields[i] = .{
                 .name = @typeName(field),
-                .value = std.math.maxInt(TagSize) - 1 - i,
+                .value = 1024 - i,
             };
         }
 

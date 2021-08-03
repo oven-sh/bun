@@ -93,7 +93,11 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
         }
 
         pub fn symbolName(comptime typeName: []const u8) []const u8 {
-            return comptime std.fmt.comptimePrint("{s}__{s}__{s}", .{ namespace, name, typeName });
+            if (comptime namespace.len > 0) {
+                return comptime std.fmt.comptimePrint("{s}__{s}__{s}", .{ namespace, name, typeName });
+            } else {
+                return comptime std.fmt.comptimePrint("{s}__{s}", .{ name, typeName });
+            }
         }
 
         pub fn exportFunctions(comptime Functions: anytype) [std.meta.fieldNames(@TypeOf(Functions)).len]StaticExport {
@@ -134,11 +138,13 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
         }
 
         pub inline fn cppFn(comptime typeName: []const u8, args: anytype) (ret: {
+            @setEvalBranchQuota(99999);
             if (!@hasDecl(Parent, typeName)) {
                 @compileError(@typeName(Parent) ++ " is missing cppFn: " ++ typeName);
             }
             break :ret std.meta.declarationInfo(Parent, typeName).data.Fn.return_type;
         }) {
+            @setEvalBranchQuota(99999);
             if (comptime is_bindgen) {
                 unreachable;
             } else {

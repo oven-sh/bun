@@ -12,36 +12,53 @@ pub const JSObject = extern struct {
     pub const name = "JSC::JSObject";
     pub const namespace = "JSC";
 
-    pub extern "c" fn putAtIndex(this: *JSObject, globalThis: *JSGlobalObject, property_name: *PropertyName, i: u32) bool;
-
     pub fn getArrayLength(this: *JSObject) usize {
         return cppFn("getArrayLength", .{
             this,
         });
     }
 
-    pub fn getAtIndex(this: *JSObject, globalThis: *JSGlobalObject, property_name: *PropertyName, i: u32) JSValue {
-        return cppFn("getAtIndex", .{
+    pub fn getIndex(this: *JSObject, globalThis: *JSGlobalObject, i: u32) JSValue {
+        return cppFn("getIndex", .{
             this,
-            property_name,
+            globalThis,
             i,
+        });
+    }
+
+    pub fn getDirect(this: *JSObject, globalThis: *JSGlobalObject, str: ZigString) JSValue {
+        return cppFn("getDirect", .{
+            this,
+            globalThis,
+            str,
+        });
+    }
+
+    pub fn putDirect(this: *JSObject, globalThis: *JSGlobalObject, prop: ZigString, value: JSValue) void {
+        return cppFn("putDirect", .{
+            this,
+            globalThis,
+            prop,
+            value,
         });
     }
 
     pub const Extern = [_][]const u8{
         "getArrayLength",
-        "getAtIndex",
+        "getIndex",
         "putAtIndex",
+        "getDirect",
+        "putDirect",
     };
 };
 
 pub const ZigString = extern struct {
     ptr: [*]const u8,
     len: usize,
-    pub const shim = Shimmer("Zig", "ZigString", @This());
+    pub const shim = Shimmer("", "ZigString", @This());
 
     pub const name = "ZigString";
-    pub const namespace = "Zig";
+    pub const namespace = "";
 
     pub fn init(slice_: []const u8) ZigString {
         return ZigString{ .ptr = slice_.ptr, .len = slice_.len };
@@ -61,8 +78,13 @@ pub const ZigString = extern struct {
         return C_API.JSStringCreateStatic(this.ptr, this.len);
     }
 
+    pub fn toErrorInstance(this: *const ZigString, global: *JSGlobalObject) JSValue {
+        return shim.cppFn("toErrorInstance", .{ this, global });
+    }
+
     pub const Extern = [_][]const u8{
         "toValue",
+        "toErrorInstance",
     };
 };
 
@@ -189,24 +211,28 @@ pub const ScriptArguments = extern struct {
 
 pub fn NewGlobalObject(comptime Type: type) type {
     return struct {
+        const importNotImpl = "Import not implemented";
+        const resolveNotImpl = "resolve not implemented";
+        const moduleNotImpl = "Module fetch not implemented";
         pub fn import(global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) ErrorableZigString {
             if (comptime @hasDecl(Type, "import")) {
                 return @call(.{ .modifier = .always_inline }, Type.import, .{ global, specifier, source });
             }
-            return ErrorableZigString.err(error.ImportFailed, "Import not implemented");
+            return ErrorableZigString.err(error.ImportFailed, ZigString.init(importNotImpl).toErrorInstance(global).asVoid());
         }
-        pub fn resolve(global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) ErrorableZigString {
+        pub fn resolve(res: *ErrorableZigString, global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) void {
             if (comptime @hasDecl(Type, "resolve")) {
-                return @call(.{ .modifier = .always_inline }, Type.resolve, .{ global, specifier, source });
+                @call(.{ .modifier = .always_inline }, Type.resolve, .{ res, global, specifier, source });
+                return;
             }
-            return ErrorableZigString.err(error.ResolveFailed, "resolve not implemented");
+            res.* = ErrorableZigString.err(error.ResolveFailed, ZigString.init(resolveNotImpl).toErrorInstance(global).asVoid());
         }
         pub fn fetch(ret: *ErrorableResolvedSource, global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) void {
             if (comptime @hasDecl(Type, "fetch")) {
                 @call(.{ .modifier = .always_inline }, Type.fetch, .{ ret, global, specifier, source });
                 return;
             }
-            ret.* = ErrorableResolvedSource.err(error.FetchFailed, "Module fetch not implemented");
+            ret.* = ErrorableResolvedSource.err(error.FetchFailed, ZigString.init(moduleNotImpl).toErrorInstance(global).asVoid());
         }
         pub fn promiseRejectionTracker(global: *JSGlobalObject, promise: *JSPromise, rejection: JSPromiseRejectionOperation) callconv(.C) JSValue {
             if (comptime @hasDecl(Type, "promiseRejectionTracker")) {
@@ -721,6 +747,11 @@ pub const JSGlobalObject = extern struct {
 
     const cppFn = shim.cppFn;
 
+    pub fn ref(this: *JSGlobalObject) C_API.JSContextRef {
+        return @ptrCast(C_API.JSContextRef, this);
+    }
+    pub const ctx = ref;
+
     pub fn objectPrototype(this: *JSGlobalObject) *ObjectPrototype {
         return cppFn("objectPrototype", .{this});
     }
@@ -794,7 +825,7 @@ pub const JSGlobalObject = extern struct {
         return cppFn("asyncGeneratorFunctionPrototype", .{this});
     }
 
-    pub fn createAggregateError(globalObject: *JSGlobalObject, errors: [*]JSValue, errors_len: u16, message: ZigString) JSValue {
+    pub fn createAggregateError(globalObject: *JSGlobalObject, errors: [*]*c_void, errors_len: u16, message: ZigString) JSValue {
         return cppFn("createAggregateError", .{ globalObject, errors, errors_len, message });
     }
 
@@ -1070,6 +1101,13 @@ pub const JSValue = enum(i64) {
     pub const name = "JSC::JSValue";
     pub const namespace = "JSC";
 
+    pub inline fn cast(ptr: anytype) JSValue {
+        return @intToEnum(JSValue, @intCast(i64, @ptrToInt(ptr)));
+    }
+
+    pub fn getErrorsProperty(this: JSValue, globalObject: *JSGlobalObject) JSValue {
+        return cppFn("getErrorsProperty", .{ this, globalObject });
+    }
     pub fn jsNumber(number: anytype) JSValue {
         return switch (@TypeOf(number)) {
             f64 => @call(.{ .modifier = .always_inline }, jsNumberFromDouble, .{number}),
@@ -1135,6 +1173,9 @@ pub const JSValue = enum(i64) {
     }
     pub fn isUInt32AsAnyInt(this: JSValue) bool {
         return cppFn("isUInt32AsAnyInt", .{this});
+    }
+    pub fn isInt32(this: JSValue) bool {
+        return cppFn("isInt32", .{this});
     }
     pub fn isInt32AsAnyInt(this: JSValue) bool {
         return cppFn("isInt32AsAnyInt", .{this});
@@ -1246,7 +1287,42 @@ pub const JSValue = enum(i64) {
         });
     }
 
-    pub const Extern = [_][]const u8{ "toZigException", "isException", "toWTFString", "hasProperty", "getPropertyNames", "getDirect", "putDirect", "get", "getIfExists", "asString", "asObject", "asNumber", "isError", "jsNull", "jsUndefined", "jsTDZValue", "jsBoolean", "jsDoubleNumber", "jsNumberFromDouble", "jsNumberFromChar", "jsNumberFromU16", "jsNumberFromInt32", "jsNumberFromInt64", "jsNumberFromUint64", "isUndefined", "isNull", "isUndefinedOrNull", "isBoolean", "isAnyInt", "isUInt32AsAnyInt", "isInt32AsAnyInt", "isNumber", "isString", "isBigInt", "isHeapBigInt", "isBigInt32", "isSymbol", "isPrimitive", "isGetterSetter", "isCustomGetterSetter", "isObject", "isCell", "asCell", "toString", "toStringOrNull", "toPropertyKey", "toPropertyKeyValue", "toObject", "toString", "getPrototype", "getPropertyByPropertyName", "eqlValue", "eqlCell", "isCallable" };
+    pub fn toBoolean(this: JSValue) bool {
+        return cppFn("toBoolean", .{
+            this,
+        });
+    }
+
+    pub fn toInt32(this: JSValue) i32 {
+        return cppFn("toInt32", .{
+            this,
+        });
+    }
+
+    pub fn isAggregateError(this: JSValue, globalObject: *JSGlobalObject) bool {
+        return cppFn("isAggregateError", .{ this, globalObject });
+    }
+
+    pub fn forEach(this: JSValue, globalObject: *JSGlobalObject, callback: fn (vm: [*c]VM, globalObject: [*c]JSGlobalObject, nextValue: JSValue) callconv(.C) void) void {
+        return cppFn("forEach", .{ this, globalObject, callback });
+    }
+
+    pub fn isIterable(this: JSValue, globalObject: *JSGlobalObject) bool {
+        return cppFn("isIterable", .{
+            this,
+            globalObject,
+        });
+    }
+
+    pub inline fn asRef(this: JSValue) C_API.JSValueRef {
+        return @intToPtr(C_API.JSValueRef, @intCast(usize, @enumToInt(this)));
+    }
+
+    pub inline fn asVoid(this: JSValue) *c_void {
+        return @intToPtr(*c_void, @intCast(usize, @enumToInt(this)));
+    }
+
+    pub const Extern = [_][]const u8{ "getErrorsProperty", "toInt32", "toBoolean", "isInt32", "isIterable", "forEach", "isAggregateError", "toZigException", "isException", "toWTFString", "hasProperty", "getPropertyNames", "getDirect", "putDirect", "get", "getIfExists", "asString", "asObject", "asNumber", "isError", "jsNull", "jsUndefined", "jsTDZValue", "jsBoolean", "jsDoubleNumber", "jsNumberFromDouble", "jsNumberFromChar", "jsNumberFromU16", "jsNumberFromInt32", "jsNumberFromInt64", "jsNumberFromUint64", "isUndefined", "isNull", "isUndefinedOrNull", "isBoolean", "isAnyInt", "isUInt32AsAnyInt", "isInt32AsAnyInt", "isNumber", "isString", "isBigInt", "isHeapBigInt", "isBigInt32", "isSymbol", "isPrimitive", "isGetterSetter", "isCustomGetterSetter", "isObject", "isCell", "asCell", "toString", "toStringOrNull", "toPropertyKey", "toPropertyKeyValue", "toObject", "toString", "getPrototype", "getPropertyByPropertyName", "eqlValue", "eqlCell", "isCallable" };
 };
 
 pub const PropertyName = extern struct {
@@ -1304,9 +1380,21 @@ pub const Exception = extern struct {
         );
     }
 
-    pub const Extern = [_][]const u8{
-        "create",
-    };
+    pub fn value(this: *Exception) JSValue {
+        return cppFn(
+            "value",
+            .{this},
+        );
+    }
+
+    pub fn getStackTrace(this: *Exception, trace: *ZigStackTrace) void {
+        return cppFn(
+            "getStackTrace",
+            .{ this, trace },
+        );
+    }
+
+    pub const Extern = [_][]const u8{ "create", "value", "getStackTrace" };
 };
 
 pub const JSLock = extern struct {

@@ -169,7 +169,13 @@ pub const VirtualMachine = struct {
 
                 var old = vm.bundler.log;
                 vm.bundler.log = log;
-                defer vm.bundler.log = old;
+                vm.bundler.linker.log = log;
+                vm.bundler.resolver.log = log;
+                defer {
+                    vm.bundler.log = old;
+                    vm.bundler.linker.log = old;
+                    vm.bundler.resolver.log = old;
+                }
 
                 var parse_result = vm.bundler.parse(
                     vm.bundler.allocator,
@@ -231,13 +237,20 @@ pub const VirtualMachine = struct {
             },
         }
     }
-    inline fn _resolve(global: *JSGlobalObject, specifier: string, source: string) !string {
+    pub const ResolveFunctionResult = struct {
+        result: ?resolver.Result,
+        path: string,
+    };
+
+    inline fn _resolve(ret: *ResolveFunctionResult, global: *JSGlobalObject, specifier: string, source: string) !void {
         std.debug.assert(VirtualMachine.vm_loaded);
         std.debug.assert(VirtualMachine.vm.global == global);
         if (vm.node_modules == null and strings.eqlComptime(specifier, Runtime.Runtime.Imports.Name)) {
-            return Runtime.Runtime.Imports.Name;
+            ret.path = Runtime.Runtime.Imports.Name;
+            return;
         } else if (vm.node_modules != null and strings.eql(specifier, vm.bundler.linker.nodeModuleBundleImportPath())) {
-            return vm.bundler.linker.nodeModuleBundleImportPath();
+            ret.path = vm.bundler.linker.nodeModuleBundleImportPath();
+            return;
         }
 
         const result: resolver.Result = vm.bundler.resolve_results.get(specifier) orelse brk: {
@@ -251,6 +264,7 @@ pub const VirtualMachine = struct {
             try vm.bundler.resolve_results.put(res.path_pair.primary.text, res);
             break :brk res;
         };
+        ret.result = result;
 
         if (vm.node_modules != null and result.isLikelyNodeModule()) {
             const node_modules_bundle = vm.node_modules.?;
@@ -288,52 +302,114 @@ pub const VirtualMachine = struct {
 
                     if (node_modules_bundle.findModuleIDInPackage(package, package_relative_path) == null) break :node_module_checker;
 
-                    return vm.bundler.linker.nodeModuleBundleImportPath();
+                    ret.path = vm.bundler.linker.nodeModuleBundleImportPath();
+                    return;
                 }
             }
         }
 
-        return result.path_pair.primary.text;
+        ret.path = result.path_pair.primary.text;
     }
 
-    pub fn resolve(global: *JSGlobalObject, specifier: ZigString, source: ZigString) ErrorableZigString {
-        const result = _resolve(global, specifier.slice(), source.slice()) catch |err| {
-            return ErrorableZigString.errFmt(err, "ResolveError {s} for \"{s}\"\nfrom\"{s}\"", .{
-                @errorName(err),
+    pub fn resolve(res: *ErrorableZigString, global: *JSGlobalObject, specifier: ZigString, source: ZigString) void {
+        var result = ResolveFunctionResult{ .path = "", .result = null };
+        _resolve(&result, global, specifier.slice(), source.slice()) catch |err| {
+            // This should almost always just apply to dynamic imports
+
+            const printed = ResolveError.fmt(
+                vm.allocator,
                 specifier.slice(),
                 source.slice(),
-            });
+                err,
+            ) catch unreachable;
+            const msg = logger.Msg{
+                .data = logger.rangeData(
+                    null,
+                    logger.Range.None,
+                    printed,
+                ),
+                .metadata = .{
+                    // import_kind is wrong probably
+                    .resolve = .{ .specifier = logger.BabyString.in(printed, specifier.slice()), .import_kind = .stmt },
+                },
+            };
+
+            {
+                res.* = ErrorableZigString.err(err, @ptrCast(*c_void, ResolveError.create(vm.allocator, msg, source.slice())));
+            }
+
+            return;
         };
 
-        return ErrorableZigString.ok(ZigString.init(result));
+        res.* = ErrorableZigString.ok(ZigString.init(result.path));
     }
 
+    threadlocal var errors_stack: [256]*c_void = undefined;
     pub fn fetch(ret: *ErrorableResolvedSource, global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) void {
         var log = logger.Log.init(vm.bundler.allocator);
-        const result = _fetch(global, specifier.slice(), source.slice()) catch |err| {
-            switch (err) {
-                error.ParserError => {
-                    std.debug.assert(log.msgs.items.len > 0);
-
-                    switch (log.msgs.items.len) {
-                        1 => {
-                            return ErrorableResolvedSource.err(error.ParserError, BuildError.create(vm.bundler.allocator, &log.msgs.items[0]));
-                        },
-                        else => {
-                            
-                        },
-                    }
-                },
-                else => {
-                    ret.* = ErrorableResolvedSource.errFmt(err, "{s}: \"{s}\"", .{
-                        @errorName(err),
-                        specifier.slice(),
-                    });
-                },
-            }
+        const result = _fetch(global, specifier.slice(), source.slice(), &log) catch |err| {
+            processFetchLog(specifier, source, &log, ret, err);
+            return;
         };
 
-        ret.* = ErrorableResolvedSource.ok(result);
+        if (log.errors > 0) {
+            processFetchLog(specifier, source, &log, ret, error.LinkError);
+            return;
+        }
+
+        ret.result.value = result;
+        ret.success = true;
+    }
+
+    fn processFetchLog(specifier: ZigString, referrer: ZigString, log: *logger.Log, ret: *ErrorableResolvedSource, err: anyerror) void {
+        switch (log.msgs.items.len) {
+            0 => {
+                const msg = logger.Msg{
+                    .data = logger.rangeData(null, logger.Range.None, std.fmt.allocPrint(vm.allocator, "{s} while building {s}", .{ @errorName(err), specifier.slice() }) catch unreachable),
+                };
+                {
+                    ret.* = ErrorableResolvedSource.err(err, @ptrCast(*c_void, BuildError.create(vm.bundler.allocator, msg)));
+                }
+                return;
+            },
+
+            1 => {
+                const msg = log.msgs.items[0];
+                ret.* = ErrorableResolvedSource.err(err, switch (msg.metadata) {
+                    .build => BuildError.create(vm.bundler.allocator, msg).?,
+                    .resolve => ResolveError.create(
+                        vm.bundler.allocator,
+                        msg,
+                        referrer.slice(),
+                    ).?,
+                });
+                return;
+            },
+            else => {
+                var errors = errors_stack[0..std.math.min(log.msgs.items.len, errors_stack.len)];
+
+                for (log.msgs.items) |msg, i| {
+                    errors[i] = switch (msg.metadata) {
+                        .build => BuildError.create(vm.bundler.allocator, msg).?,
+                        .resolve => ResolveError.create(
+                            vm.bundler.allocator,
+                            msg,
+                            referrer.slice(),
+                        ).?,
+                    };
+                }
+
+                ret.* = ErrorableResolvedSource.err(
+                    err,
+                    vm.global.createAggregateError(
+                        errors.ptr,
+                        @intCast(u16, errors.len),
+                        ZigString.init(std.fmt.allocPrint(vm.bundler.allocator, "{d} errors building \"{s}\"", .{ errors.len, specifier.slice() }) catch unreachable),
+                    ).asVoid(),
+                );
+                return;
+            },
+        }
     }
 
     pub fn loadEntryPoint(this: *VirtualMachine, entry_point: string) !void {
@@ -348,124 +424,270 @@ pub const VirtualMachine = struct {
         }
 
         if (promise.status(this.global.vm()) == JSPromise.Status.Rejected) {
-            var exception_holder = ZigException.Holder.init();
-            var exception = exception_holder.zigException();
-            promise.result(this.global.vm()).toZigException(vm.global, exception);
-            var stderr: std.fs.File = Output.errorStream();
-            var buffered = std.io.bufferedWriter(stderr.writer());
-            var writer = buffered.writer();
-            defer buffered.flush() catch unreachable;
-            // We are going to print the stack trace backwards
-            const stack = exception.stack.frames();
-            if (stack.len > 0) {
-                var i = @intCast(i16, stack.len - 1);
+            var result = promise.result(this.global.vm());
 
-                var func_name_pad: usize = 0;
-                while (i >= 0) : (i -= 1) {
-                    const frame = stack[@intCast(usize, i)];
-                    func_name_pad = std.math.max(func_name_pad, std.fmt.count("{any}", .{
-                        frame.nameFormatter(true),
-                    }));
+            if (result.isException(this.global.vm())) {
+                var exception = @ptrCast(*Exception, result.asVoid());
+
+                if (Output.enable_ansi_colors) {
+                    this.printErrorlikeObject(exception.value(), exception, true);
+                } else {
+                    this.printErrorlikeObject(exception.value(), exception, false);
                 }
+            } else if (Output.enable_ansi_colors) {
+                this.printErrorlikeObject(result, null, true);
+            } else {
+                this.printErrorlikeObject(result, null, false);
+            }
+        }
+    }
 
-                i = @intCast(i16, stack.len - 1);
+    // When the Error-like object is one of our own, it's best to rely on the object directly instead of serializing it to a ZigException.
+    // This is for:
+    // - BuildError
+    // - ResolveError
+    // If there were multiple errors, it could be contained in an AggregateError.
+    // In that case, this function becomes recursive.
+    // In all other cases, we will convert it to a ZigException.
+    const errors_property = ZigString.init("errors");
+    pub fn printErrorlikeObject(this: *VirtualMachine, value: JSValue, exception: ?*Exception, comptime allow_ansi_color: bool) void {
+        var was_internal = false;
 
-                while (i >= 0) : (i -= 1) {
-                    const frame = stack[@intCast(usize, i)];
-                    const file = frame.source_url.slice();
-                    const func = frame.function_name.slice();
+        defer {
+            if (was_internal) {
+                if (exception) |exception_| {
+                    var holder = ZigException.Holder.init();
+                    var zig_exception = holder.zigException();
+                    exception_.getStackTrace(&zig_exception.stack);
+                    if (zig_exception.stack.frames_len > 0) {
+                        var buffered_writer = std.io.bufferedWriter(Output.errorWriter());
+                        var writer = buffered_writer.writer();
 
-                    try writer.print(" {any}", .{frame.sourceURLFormatter(true)});
-                    try writer.writeAll(" in ");
-                    try writer.print("  {any}\n", .{frame.nameFormatter(true)});
+                        if (Output.enable_ansi_colors) {
+                            printStackTrace(@TypeOf(writer), writer, zig_exception.stack, true) catch {};
+                        } else {
+                            printStackTrace(@TypeOf(writer), writer, zig_exception.stack, false) catch {};
+                        }
 
-                    // if (!frame.position.isInvalid()) {
-                    //     if (func.len > 0) {
-                    //         writer.print(
-                    //             comptime Output.prettyFmt("<r><d>{s}<r> {s}{s} - {s}:{d}:{d}\n", true),
-                    //             .{
-                    //                 if (i > 1) "↓" else "↳",
-                    //                 frame.code_type.ansiColor(),
-                    //                 func,
-                    //                 file,
-                    //                 frame.position.line,
-                    //                 frame.position.column_start,
-                    //             },
-                    //         ) catch unreachable;
-                    //     } else {
-                    //         writer.print(comptime Output.prettyFmt("<r><d>{s}<r> {u} - {s}{s}:{d}:{d}\n", true), .{
-                    //             if (i > 1) "↓" else "↳",
-                    //             frame.code_type.emoji(),
-
-                    //             frame.code_type.ansiColor(),
-                    //             file,
-                    //             frame.position.line,
-                    //             frame.position.column_start,
-                    //         }) catch unreachable;
-                    //     }
-                    // } else {
-                    //     if (func.len > 0) {
-                    //         writer.print(
-                    //             comptime Output.prettyFmt("<r><d>{s}<r> {s}{s} - {s}\n", true),
-                    //             .{
-                    //                 if (i > 1) "↓" else "↳",
-                    //                 frame.code_type.ansiColor(),
-                    //                 func,
-                    //                 file,
-                    //             },
-                    //         ) catch unreachable;
-                    //     } else {
-                    //         writer.print(
-                    //             comptime Output.prettyFmt("<r><d>{s}<r> {u} - {s}{s}\n", true),
-                    //             .{
-                    //                 if (i > 1) "↓" else "↳",
-                    //                 frame.code_type.emoji(),
-                    //                 frame.code_type.ansiColor(),
-                    //                 file,
-                    //             },
-                    //         ) catch unreachable;
-                    //     }
-                    // }
+                        buffered_writer.flush() catch {};
+                    }
                 }
             }
+        }
 
-            var line_numbers = exception.stack.source_lines_numbers[0..exception.stack.source_lines_len];
-            var max_line: i32 = -1;
-            for (line_numbers) |line| max_line = std.math.max(max_line, line);
-            const max_line_number_pad = std.fmt.count("{d}", .{max_line});
+        if (value.isAggregateError(this.global)) {
+            const AggregateErrorIterator = struct {
+                pub fn iteratorWithColor(_vm: [*c]VM, globalObject: [*c]JSGlobalObject, nextValue: JSValue) callconv(.C) void {
+                    iterator(_vm, globalObject, nextValue, true);
+                }
+                pub fn iteratorWithOutColor(_vm: [*c]VM, globalObject: [*c]JSGlobalObject, nextValue: JSValue) callconv(.C) void {
+                    iterator(_vm, globalObject, nextValue, false);
+                }
+                inline fn iterator(_vm: [*c]VM, globalObject: [*c]JSGlobalObject, nextValue: JSValue, comptime color: bool) void {
+                    VirtualMachine.vm.printErrorlikeObject(nextValue, null, color);
+                }
+            };
+            if (comptime allow_ansi_color) {
+                value.getErrorsProperty(this.global).forEach(this.global, AggregateErrorIterator.iteratorWithColor);
+            } else {
+                value.getErrorsProperty(this.global).forEach(this.global, AggregateErrorIterator.iteratorWithOutColor);
+            }
+            return;
+        }
 
-            var source_lines = exception.stack.sourceLineIterator();
-            var last_pad: u64 = 0;
-            while (source_lines.untilLast()) |source| {
-                const int_size = std.fmt.count("{d}", .{source.line});
-                const pad = max_line_number_pad - int_size;
-                last_pad = pad;
-                writer.writeByteNTimes(' ', pad) catch unreachable;
+        if (js.JSValueIsObject(vm.global.ref(), value.asRef())) {
+            if (js.JSObjectGetPrivate(value.asRef())) |priv| {
+                was_internal = this.printErrorFromMaybePrivateData(priv, allow_ansi_color);
+                return;
+            }
+        }
+
+        was_internal = this.printErrorFromMaybePrivateData(value.asRef(), allow_ansi_color);
+    }
+
+    pub fn printErrorFromMaybePrivateData(this: *VirtualMachine, value: ?*c_void, comptime allow_ansi_color: bool) bool {
+        const private_data_ptr = JSPrivateDataPtr.from(value);
+
+        switch (private_data_ptr.tag()) {
+            .BuildError => {
+                defer Output.flush();
+                const build_error = private_data_ptr.as(BuildError);
+                build_error.msg.formatNoWriter(Output.printErrorln);
+                return true;
+            },
+            .ResolveError => {
+                defer Output.flush();
+                const resolve_error = private_data_ptr.as(ResolveError);
+                resolve_error.msg.formatNoWriter(Output.printErrorln);
+                return true;
+            },
+            else => {
+                this.printErrorInstance(@intToEnum(JSValue, @intCast(i64, (@ptrToInt(value)))), allow_ansi_color) catch |err| {
+                    if (comptime isDebug) {
+                        Output.printErrorln("Error while printing Error-like object: {s}", .{@errorName(err)});
+                        Output.flush();
+                    }
+                };
+                return false;
+            },
+        }
+    }
+
+    pub fn printStackTrace(comptime Writer: type, writer: Writer, trace: ZigStackTrace, comptime allow_ansi_colors: bool) !void {
+        // We are going to print the stack trace backwards
+        const stack = trace.frames();
+        if (stack.len > 0) {
+            var i = @intCast(i16, stack.len - 1);
+
+            var func_name_pad: usize = 0;
+            while (i >= 0) : (i -= 1) {
+                const frame = stack[@intCast(usize, i)];
+                func_name_pad = std.math.max(func_name_pad, std.fmt.count("{any}", .{
+                    frame.nameFormatter(allow_ansi_colors),
+                }));
+            }
+
+            i = @intCast(i16, stack.len - 1);
+
+            while (i >= 0) : (i -= 1) {
+                const frame = stack[@intCast(usize, i)];
+                const file = frame.source_url.slice();
+                const func = frame.function_name.slice();
+
+                try writer.print(
+                    comptime Output.prettyFmt(
+                        "<r>      <d>at <r>{any} <d>(<r>{any}<d>)<r>\n",
+                        allow_ansi_colors,
+                    ),
+                    .{ frame.nameFormatter(allow_ansi_colors), frame.sourceURLFormatter(allow_ansi_colors) },
+                );
+
+                // if (!frame.position.isInvalid()) {
+                //     if (func.len > 0) {
+                //         writer.print(
+                //             comptime Output.prettyFmt("<r><d>{s}<r> {s}{s} - {s}:{d}:{d}\n", true),
+                //             .{
+                //                 if (i > 1) "↓" else "↳",
+                //                 frame.code_type.ansiColor(),
+                //                 func,
+                //                 file,
+                //                 frame.position.line,
+                //                 frame.position.column_start,
+                //             },
+                //         ) catch unreachable;
+                //     } else {
+                //         writer.print(comptime Output.prettyFmt("<r><d>{s}<r> {u} - {s}{s}:{d}:{d}\n", true), .{
+                //             if (i > 1) "↓" else "↳",
+                //             frame.code_type.emoji(),
+
+                //             frame.code_type.ansiColor(),
+                //             file,
+                //             frame.position.line,
+                //             frame.position.column_start,
+                //         }) catch unreachable;
+                //     }
+                // } else {
+                //     if (func.len > 0) {
+                //         writer.print(
+                //             comptime Output.prettyFmt("<r><d>{s}<r> {s}{s} - {s}\n", true),
+                //             .{
+                //                 if (i > 1) "↓" else "↳",
+                //                 frame.code_type.ansiColor(),
+                //                 func,
+                //                 file,
+                //             },
+                //         ) catch unreachable;
+                //     } else {
+                //         writer.print(
+                //             comptime Output.prettyFmt("<r><d>{s}<r> {u} - {s}{s}\n", true),
+                //             .{
+                //                 if (i > 1) "↓" else "↳",
+                //                 frame.code_type.emoji(),
+                //                 frame.code_type.ansiColor(),
+                //                 file,
+                //             },
+                //         ) catch unreachable;
+                //     }
+                // }
+            }
+        }
+    }
+
+    pub fn printErrorInstance(this: *VirtualMachine, error_instance: JSValue, comptime allow_ansi_color: bool) !void {
+        var exception_holder = ZigException.Holder.init();
+        var exception = exception_holder.zigException();
+        error_instance.toZigException(vm.global, exception);
+
+        var stderr: std.fs.File = Output.errorStream();
+        var buffered = std.io.bufferedWriter(stderr.writer());
+        var writer = buffered.writer();
+        defer buffered.flush() catch unreachable;
+
+        var line_numbers = exception.stack.source_lines_numbers[0..exception.stack.source_lines_len];
+        var max_line: i32 = -1;
+        for (line_numbers) |line| max_line = std.math.max(max_line, line);
+        const max_line_number_pad = std.fmt.count("{d}", .{max_line});
+
+        var source_lines = exception.stack.sourceLineIterator();
+        var last_pad: u64 = 0;
+        while (source_lines.untilLast()) |source| {
+            const int_size = std.fmt.count("{d}", .{source.line});
+            const pad = max_line_number_pad - int_size;
+            last_pad = pad;
+            writer.writeByteNTimes(' ', pad) catch unreachable;
+            writer.print(
+                comptime Output.prettyFmt("<r><d>{d} | <r>{s}\n", allow_ansi_color),
+                .{
+                    source.line,
+                    std.mem.trim(u8, source.text, "\n"),
+                },
+            ) catch unreachable;
+        }
+
+        const name = exception.name.slice();
+        const message = exception.message.slice();
+        var did_print_name = false;
+        if (source_lines.next()) |source| {
+            if (source.text.len > 0 and exception.stack.frames()[0].position.isInvalid()) {
+                defer did_print_name = true;
+                var text = std.mem.trim(u8, source.text, "\n");
+
                 writer.print(
-                    comptime Output.prettyFmt("<r><d>{d} | <r>{s}\n", true),
+                    comptime Output.prettyFmt(
+                        "<r><d>- |<r> {s}\n",
+                        allow_ansi_color,
+                    ),
                     .{
-                        source.line,
-                        std.mem.trim(u8, source.text, "\n"),
+                        text,
                     },
                 ) catch unreachable;
-            }
 
-            const name = exception.name.slice();
-            const message = exception.message.slice();
-            var did_print_name = false;
-            if (source_lines.next()) |source| {
+                if (name.len > 0 and message.len > 0) {
+                    writer.print(comptime Output.prettyFmt(" <r><red><b>{s}<r><d>:<r> <b>{s}<r>\n", allow_ansi_color), .{
+                        name,
+                        message,
+                    }) catch unreachable;
+                } else if (name.len > 0) {
+                    writer.print(comptime Output.prettyFmt(" <r><b>{s}<r>\n", allow_ansi_color), .{name}) catch unreachable;
+                } else if (message.len > 0) {
+                    writer.print(comptime Output.prettyFmt(" <r><b>{s}<r>\n", allow_ansi_color), .{message}) catch unreachable;
+                }
+            } else if (source.text.len > 0) {
+                defer did_print_name = true;
                 const int_size = std.fmt.count("{d}", .{source.line});
                 const pad = max_line_number_pad - int_size;
                 writer.writeByteNTimes(' ', pad) catch unreachable;
-
-                std.debug.assert(!stack[0].position.isInvalid());
+                const top = exception.stack.frames()[0];
                 var remainder = std.mem.trim(u8, source.text, "\n");
-                const prefix = remainder[0..@intCast(usize, stack[0].position.column_start)];
-                const underline = remainder[@intCast(usize, stack[0].position.column_start)..@intCast(usize, stack[0].position.column_stop)];
-                const suffix = remainder[@intCast(usize, stack[0].position.column_stop)..];
+                const prefix = remainder[0..@intCast(usize, top.position.column_start)];
+                const underline = remainder[@intCast(usize, top.position.column_start)..@intCast(usize, top.position.column_stop)];
+                const suffix = remainder[@intCast(usize, top.position.column_stop)..];
 
                 writer.print(
-                    comptime Output.prettyFmt("<r><d>{d} |<r> {s}<red>{s}<r>{s}<r>\n<r>", true),
+                    comptime Output.prettyFmt(
+                        "<r><d>{d} |<r> {s}<red>{s}<r>{s}<r>\n<r>",
+                        allow_ansi_color,
+                    ),
                     .{
                         source.line,
                         prefix,
@@ -473,55 +695,45 @@ pub const VirtualMachine = struct {
                         suffix,
                     },
                 ) catch unreachable;
-                var first_non_whitespace = @intCast(u32, stack[0].position.column_start);
+                var first_non_whitespace = @intCast(u32, top.position.column_start);
                 while (first_non_whitespace < source.text.len and source.text[first_non_whitespace] == ' ') {
                     first_non_whitespace += 1;
                 }
-                std.debug.assert(stack.len > 0);
                 const indent = @intCast(usize, pad) + " | ".len + first_non_whitespace + 1;
 
                 writer.writeByteNTimes(' ', indent) catch unreachable;
                 writer.print(comptime Output.prettyFmt(
                     "<red><b>^<r>\n",
-                    true,
+                    allow_ansi_color,
                 ), .{}) catch unreachable;
 
                 if (name.len > 0 and message.len > 0) {
-                    writer.print(comptime Output.prettyFmt(" <r><red><b>{s}<r><d>:<r> <b>{s}<r>\n", true), .{
+                    writer.print(comptime Output.prettyFmt(" <r><red><b>{s}<r><d>:<r> <b>{s}<r>\n", allow_ansi_color), .{
                         name,
                         message,
                     }) catch unreachable;
                 } else if (name.len > 0) {
-                    writer.print(comptime Output.prettyFmt(" <r><b>{s}<r>\n", true), .{name}) catch unreachable;
+                    writer.print(comptime Output.prettyFmt(" <r><b>{s}<r>\n", allow_ansi_color), .{name}) catch unreachable;
                 } else if (message.len > 0) {
-                    writer.print(comptime Output.prettyFmt(" <r><b>{s}<r>\n", true), .{message}) catch unreachable;
-                }
-
-                did_print_name = true;
-            }
-
-            if (!did_print_name) {
-                if (name.len > 0 and message.len > 0) {
-                    writer.print(comptime Output.prettyFmt("<r><red><b>{s}<r><d>:<r> <b>{s}<r>\n", true), .{
-                        name,
-                        message,
-                    }) catch unreachable;
-                } else if (name.len > 0) {
-                    writer.print(comptime Output.prettyFmt("<r><b>{s}<r>\n", true), .{name}) catch unreachable;
-                } else if (message.len > 0) {
-                    writer.print(comptime Output.prettyFmt("<r><b>{s}<r>\n", true), .{name}) catch unreachable;
+                    writer.print(comptime Output.prettyFmt(" <r><b>{s}<r>\n", allow_ansi_color), .{message}) catch unreachable;
                 }
             }
-
-            // Output.prettyErrorln("<r><red>{s}<r><d>:<r> <b>{s}<r>\n<blue>{s}<r>:{d}:{d}\n{s}", .{
-            //     exception.name.slice(),
-            //     exception.message.slice(),
-            //     exception.sourceURL.slice(),
-            //     exception.line,
-            //     exception.column,
-            //     exception.stack.slice(),
-            // });
         }
+
+        if (!did_print_name) {
+            if (name.len > 0 and message.len > 0) {
+                writer.print(comptime Output.prettyFmt("<r><red><b>{s}<r><d>:<r> <b>{s}<r>\n", true), .{
+                    name,
+                    message,
+                }) catch unreachable;
+            } else if (name.len > 0) {
+                writer.print(comptime Output.prettyFmt("<r><b>{s}<r>\n", true), .{name}) catch unreachable;
+            } else if (message.len > 0) {
+                writer.print(comptime Output.prettyFmt("<r><b>{s}<r>\n", true), .{name}) catch unreachable;
+            }
+        }
+
+        try printStackTrace(@TypeOf(writer), writer, exception.stack, allow_ansi_color);
     }
 };
 
@@ -706,12 +918,32 @@ pub const ResolveError = struct {
     allocator: *std.mem.Allocator,
     referrer: ?Fs.Path = null,
 
+    pub fn fmt(allocator: *std.mem.Allocator, specifier: string, referrer: string, err: anyerror) !string {
+        switch (err) {
+            error.ModuleNotFound => {
+                if (resolver.isPackagePath(specifier)) {
+                    return try std.fmt.allocPrint(allocator, "Cannot find package \"{s}\" from \"{s}\"", .{ specifier, referrer });
+                } else {
+                    return try std.fmt.allocPrint(allocator, "Cannot find module \"{s}\" from \"{s}\"", .{ specifier, referrer });
+                }
+            },
+            else => {
+                if (resolver.isPackagePath(specifier)) {
+                    return try std.fmt.allocPrint(allocator, "{s} while resolving package \"{s}\" from \"{s}\"", .{ @errorName(err), specifier, referrer });
+                } else {
+                    return try std.fmt.allocPrint(allocator, "{s} while resolving \"{s}\" from \"{s}\"", .{ @errorName(err), specifier, referrer });
+                }
+            },
+        }
+    }
+
     pub const Class = NewClass(
         ResolveError,
         .{
             .name = "ResolveError",
             .read_only = true,
         },
+        .{},
         .{
             .@"referrer" = .{
                 .@"get" = getReferrer,
@@ -744,20 +976,22 @@ pub const ResolveError = struct {
                 .ts = d.ts{ .@"return" = "string" },
             },
         },
-        .{},
     );
 
     pub fn create(
-        msg: logger.Msg,
         allocator: *std.mem.Allocator,
+        msg: logger.Msg,
+        referrer: string,
     ) js.JSObjectRef {
         var resolve_error = allocator.create(ResolveError) catch unreachable;
         resolve_error.* = ResolveError{
             .msg = msg,
             .allocator = allocator,
+            .referrer = Fs.Path.init(referrer),
         };
-
-        return Class.make(VirtualMachine.vm.global, resolve_error);
+        var ref = Class.make(VirtualMachine.vm.global.ctx(), resolve_error);
+        js.JSValueProtect(VirtualMachine.vm.global.ref(), ref);
+        return ref;
     }
 
     pub fn getPosition(
@@ -771,44 +1005,44 @@ pub const ResolveError = struct {
     }
 
     pub fn getMessage(
-        this: *BuildError,
+        this: *ResolveError,
         ctx: js.JSContextRef,
         thisObject: js.JSObjectRef,
         prop: js.JSStringRef,
         exception: js.ExceptionRef,
     ) js.JSValueRef {
-        return ZigString.init(this.msg.data.text).toValue(VirtualMachine.vm.global);
+        return ZigString.init(this.msg.data.text).toValue(VirtualMachine.vm.global).asRef();
     }
 
     pub fn getSpecifier(
-        this: *BuildError,
+        this: *ResolveError,
         ctx: js.JSContextRef,
         thisObject: js.JSObjectRef,
         prop: js.JSStringRef,
         exception: js.ExceptionRef,
     ) js.JSValueRef {
-        return ZigString.init(this.msg.metadata.Resolve.specifier.slice(this.msg.data.text)).toValue(VirtualMachine.vm.global);
+        return ZigString.init(this.msg.metadata.resolve.specifier.slice(this.msg.data.text)).toValue(VirtualMachine.vm.global).asRef();
     }
 
     pub fn getImportKind(
-        this: *BuildError,
+        this: *ResolveError,
         ctx: js.JSContextRef,
         thisObject: js.JSObjectRef,
         prop: js.JSStringRef,
         exception: js.ExceptionRef,
     ) js.JSValueRef {
-        return ZigString.init(@tagName(this.msg.metadata.Resolve.import_kind)).toValue(VirtualMachine.vm.global);
+        return ZigString.init(@tagName(this.msg.metadata.resolve.import_kind)).toValue(VirtualMachine.vm.global).asRef();
     }
 
     pub fn getReferrer(
-        this: *BuildError,
+        this: *ResolveError,
         ctx: js.JSContextRef,
         thisObject: js.JSObjectRef,
         prop: js.JSStringRef,
         exception: js.ExceptionRef,
     ) js.JSValueRef {
         if (this.referrer) |referrer| {
-            return ZigString.init(referrer.text).toValue(VirtualMachine.vm.global);
+            return ZigString.init(referrer.text).toValue(VirtualMachine.vm.global).asRef();
         } else {
             return js.JSValueMakeNull(ctx);
         }
@@ -816,13 +1050,13 @@ pub const ResolveError = struct {
 
     const BuildErrorName = "ResolveError";
     pub fn getName(
-        this: *BuildError,
+        this: *ResolveError,
         ctx: js.JSContextRef,
         thisObject: js.JSObjectRef,
         prop: js.JSStringRef,
         exception: js.ExceptionRef,
     ) js.JSValueRef {
-        return ZigString.init(BuildErrorName).toValue(VirtualMachine.vm.global);
+        return ZigString.init(BuildErrorName).toValue(VirtualMachine.vm.global).asRef();
     }
 };
 
@@ -857,17 +1091,19 @@ pub const BuildError = struct {
 
     pub fn create(
         allocator: *std.mem.Allocator,
-        msg: *const logger.Msg,
+        msg: logger.Msg,
         // resolve_result: *const resolver.Result,
     ) js.JSObjectRef {
         var build_error = allocator.create(BuildError) catch unreachable;
         build_error.* = BuildError{
-            .msg = msg.*,
+            .msg = msg,
             // .resolve_result = resolve_result.*,
             .allocator = allocator,
         };
 
-        return Class.make(VirtualMachine.vm.global, build_error);
+        var ref = Class.make(VirtualMachine.vm.global.ref(), build_error);
+        js.JSValueProtect(VirtualMachine.vm.global.ref(), ref);
+        return ref;
     }
 
     pub fn getPosition(
@@ -939,16 +1175,65 @@ pub const BuildError = struct {
         }
     };
 
-    pub fn generatePositionObject(msg: logger.Msg, ctx: js.JSContextRef, exception: ExceptionValueRef) js.JSValue {
+    pub fn generatePositionObject(msg: logger.Msg, ctx: js.JSContextRef, exception: ExceptionValueRef) js.JSValueRef {
         if (msg.data.location) |location| {
             const ref = js.JSObjectMake(ctx, null, null);
-            js.JSObjectSetProperty(ctx, ref, PositionProperties.lineText(), ZigString.init(location.line_text orelse "").toJSStringRef(), 0, exception);
-            js.JSObjectSetProperty(ctx, ref, PositionProperties.file(), ZigString.init(location.file).toJSStringRef(), 0, exception);
-            js.JSObjectSetProperty(ctx, ref, PositionProperties.namespace(), ZigString.init(location.namespace).toJSStringRef(), 0, exception);
-            js.JSObjectSetProperty(ctx, ref, PositionProperties.line(), js.JSValueMakeNumber(ctx, location.line), 0, exception);
-            js.JSObjectSetProperty(ctx, ref, PositionProperties.column(), js.JSValueMakeNumber(ctx, location.column), 0, exception);
-            js.JSObjectSetProperty(ctx, ref, PositionProperties.length(), js.JSValueMakeNumber(ctx, location.length), 0, exception);
-            js.JSObjectSetProperty(ctx, ref, PositionProperties.offset(), js.JSValueMakeNumber(ctx, location.offset), 0, exception);
+            js.JSObjectSetProperty(
+                ctx,
+                ref,
+                PositionProperties.lineText(),
+                ZigString.init(location.line_text orelse "").toJSStringRef(),
+                0,
+                exception,
+            );
+            js.JSObjectSetProperty(
+                ctx,
+                ref,
+                PositionProperties.file(),
+                ZigString.init(location.file).toJSStringRef(),
+                0,
+                exception,
+            );
+            js.JSObjectSetProperty(
+                ctx,
+                ref,
+                PositionProperties.namespace(),
+                ZigString.init(location.namespace).toJSStringRef(),
+                0,
+                exception,
+            );
+            js.JSObjectSetProperty(
+                ctx,
+                ref,
+                PositionProperties.line(),
+                js.JSValueMakeNumber(ctx, @intToFloat(f64, location.line)),
+                0,
+                exception,
+            );
+            js.JSObjectSetProperty(
+                ctx,
+                ref,
+                PositionProperties.column(),
+                js.JSValueMakeNumber(ctx, @intToFloat(f64, location.column)),
+                0,
+                exception,
+            );
+            js.JSObjectSetProperty(
+                ctx,
+                ref,
+                PositionProperties.length(),
+                js.JSValueMakeNumber(ctx, @intToFloat(f64, location.length)),
+                0,
+                exception,
+            );
+            js.JSObjectSetProperty(
+                ctx,
+                ref,
+                PositionProperties.offset(),
+                js.JSValueMakeNumber(ctx, @intToFloat(f64, location.offset)),
+                0,
+                exception,
+            );
             return ref;
         }
 
@@ -962,7 +1247,7 @@ pub const BuildError = struct {
         prop: js.JSStringRef,
         exception: js.ExceptionRef,
     ) js.JSValueRef {
-        return ZigString.init(this.msg.data.text).toValue(VirtualMachine.vm.global);
+        return ZigString.init(this.msg.data.text).toValue(VirtualMachine.vm.global).asRef();
     }
 
     const BuildErrorName = "BuildError";
@@ -973,7 +1258,7 @@ pub const BuildError = struct {
         prop: js.JSStringRef,
         exception: js.ExceptionRef,
     ) js.JSValueRef {
-        return ZigString.init(BuildErrorName).toValue(VirtualMachine.vm.global);
+        return ZigString.init(BuildErrorName).toValue(VirtualMachine.vm.global).asRef();
     }
 };
 

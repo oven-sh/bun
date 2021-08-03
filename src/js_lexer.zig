@@ -133,21 +133,28 @@ pub const Lexer = struct {
     }
 
     pub fn syntaxError(self: *LexerType) !void {
+        @setCold(true);
+
         self.addError(self.start, "Syntax Error!!", .{}, true);
         return Error.SyntaxError;
     }
 
     pub fn addDefaultError(self: *LexerType, msg: []const u8) !void {
+        @setCold(true);
+
         self.addError(self.start, "{s}", .{msg}, true);
         return Error.SyntaxError;
     }
 
-    pub fn addSyntaxError(self: *LexerType, _loc: logger.Loc, comptime fmt: []const u8, args: anytype) !void {
+    pub fn addSyntaxError(self: *LexerType, _loc: usize, comptime fmt: []const u8, args: anytype) !void {
+        @setCold(true);
         self.addError(_loc, fmt, args, false);
         return Error.SyntaxError;
     }
 
     pub fn addError(self: *LexerType, _loc: usize, comptime format: []const u8, args: anytype, panic: bool) void {
+        @setCold(true);
+
         if (self.is_log_disabled) return;
         var __loc = logger.usize2Loc(_loc);
         if (__loc.eql(self.prev_error_loc)) {
@@ -159,6 +166,8 @@ pub const Lexer = struct {
     }
 
     pub fn addRangeError(self: *LexerType, r: logger.Range, comptime format: []const u8, args: anytype, panic: bool) !void {
+        @setCold(true);
+
         if (self.is_log_disabled) return;
         if (self.prev_error_loc.eql(r.loc)) {
             return;
@@ -171,14 +180,6 @@ pub const Lexer = struct {
         // if (panic) {
         //     return Error.ParserError;
         // }
-    }
-
-    fn doPanic(self: *LexerType, content: []const u8) void {
-        if (@import("builtin").is_test) {
-            self.did_panic = true;
-        } else {
-            Global.panic("{s}", .{content});
-        }
     }
 
     pub fn codePointEql(self: *LexerType, a: u8) bool {

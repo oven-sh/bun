@@ -173,8 +173,8 @@ pub const BabyString = packed struct {
         };
     }
 
-    pub fn slice(container: string) string {
-        return container[offset..][0..len];
+    pub fn slice(this: BabyString, container: string) string {
+        return container[this.offset..][0..this.len];
     }
 };
 
@@ -258,6 +258,30 @@ pub const Msg = struct {
             msg.data.location.?.column,
             msg.data.location.?.offset,
         });
+    }
+
+    pub fn formatWriter(
+        msg: *const Msg,
+        comptime Writer: type,
+        writer: Writer,
+        comptime allow_colors: bool,
+    ) !void {
+        if (msg.data.location) |location| {
+            try writer.print("{s}: {s}\n{s}\n{s}:{}:{} ({d})", .{
+                msg.kind.string(),
+                msg.data.text,
+                location.line_text,
+                location.file,
+                location.line,
+                location.column,
+                location.offset,
+            });
+        } else {
+            try writer.print("{s}: {s}", .{
+                msg.kind.string(),
+                msg.data.text,
+            });
+        }
     }
 
     pub fn formatNoWriter(msg: *const Msg, comptime formatterFunc: @TypeOf(Global.panic)) void {

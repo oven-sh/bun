@@ -49,3 +49,4 @@ pub const JSC__JSValue = bindings.JSValue;
 pub const ZigString = bindings.ZigString;
 pub const ZigException = bindings.ZigException;
 pub const ResolvedSource = bindings.ResolvedSource;
+pub const ZigStackTrace = bindings.ZigStackTrace;

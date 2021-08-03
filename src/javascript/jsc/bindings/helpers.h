@@ -125,8 +125,8 @@ static ZigString toZigString(JSC::Identifier *str, JSC::JSGlobalObject *global) 
 static WTF::StringView toStringView(ZigString str) { return WTF::StringView(str.ptr, str.len); }
 
 static void throwException(JSC::ThrowScope &scope, ZigErrorType err, JSC::JSGlobalObject *global) {
-  scope.throwException(
-    global, JSC::Exception::create(global->vm(), JSC::JSValue((JSC::EncodedJSValue)err.ptr)));
+  scope.throwException(global,
+                       JSC::Exception::create(global->vm(), JSC::JSValue((JSC::JSCell *)err.ptr)));
 }
 
 static ZigString toZigString(JSC::JSValue val, JSC::JSGlobalObject *global) {

@@ -1,8 +1,8 @@
 const generic = opaque {};
 pub const Private = c_void;
-pub const struct_OpaqueJSContextGroup = opaque {};
+pub const struct_OpaqueJSContextGroup = generic;
 pub const JSContextGroupRef = ?*const struct_OpaqueJSContextGroup;
-pub const struct_OpaqueJSContext = opaque {};
+pub const struct_OpaqueJSContext = generic;
 pub const JSContextRef = ?*const struct_OpaqueJSContext;
 pub const JSGlobalContextRef = ?*struct_OpaqueJSContext;
 pub const struct_OpaqueJSString = generic;
@@ -18,7 +18,7 @@ pub const JSPropertyNameArrayRef = ?*struct_OpaqueJSPropertyNameArray;
 pub const struct_OpaqueJSPropertyNameAccumulator = generic;
 pub const JSPropertyNameAccumulatorRef = ?*struct_OpaqueJSPropertyNameAccumulator;
 pub const JSTypedArrayBytesDeallocator = ?fn (?*c_void, ?*c_void) callconv(.C) void;
-pub const OpaqueJSValue = opaque {};
+pub const OpaqueJSValue = generic;
 pub const JSValueRef = ?*OpaqueJSValue;
 pub const JSObjectRef = ?*OpaqueJSValue;
 pub extern fn JSEvaluateScript(ctx: JSContextRef, script: JSStringRef, thisObject: JSObjectRef, sourceURL: JSStringRef, startingLineNumber: c_int, exception: ExceptionRef) JSValueRef;
@@ -291,10 +291,13 @@ pub const Encoding = enum(u8) {
 };
 pub const JSCellValue = u64;
 pub const CellType = enum(u8) {
+    pub const LastMaybeFalsyCellPrimitive = 2;
+    pub const LastJSCObjectType = 73;
+
     CellType = 0,
     StringType = 1,
     HeapBigIntType = 2,
-    LastMaybeFalsyCellPrimitive = 2,
+
     SymbolType = 3,
     GetterSetterType = 4,
     CustomGetterSetterType = 5,
@@ -366,7 +369,7 @@ pub const CellType = enum(u8) {
     WebAssemblyModuleType = 71,
     StringObjectType = 72,
     DerivedStringObjectType = 73,
-    LastJSCObjectType = 73,
+
     MaxJSType = 255,
     _,
 

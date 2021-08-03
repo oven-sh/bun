@@ -26,7 +26,7 @@ pub const ZigGlobalObject = extern struct {
         if (!sigaction_installed) {
             sigaction_installed = true;
 
-            sigaction = std.mem.zeroes(std.os.Sigaction);
+        sigaction = std.mem.zeroes(std.os.Sigaction);
             sigaction.handler = .{ .sigaction = Handler.global_signal_handler_fn };
 
             std.os.sigaction(std.os.SIGABRT, &sigaction, null);
@@ -42,11 +42,11 @@ pub const ZigGlobalObject = extern struct {
 
         return @call(.{ .modifier = .always_inline }, Interface.import, .{ global, specifier, source });
     }
-    pub fn resolve(global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) ErrorableZigString {
+    pub fn resolve(res: *ErrorableZigString, global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) void {
         if (comptime is_bindgen) {
             unreachable;
         }
-        return @call(.{ .modifier = .always_inline }, Interface.resolve, .{ global, specifier, source });
+        @call(.{ .modifier = .always_inline }, Interface.resolve, .{ res, global, specifier, source });
     }
     pub fn fetch(ret: *ErrorableResolvedSource, global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) void {
         if (comptime is_bindgen) {
@@ -107,7 +107,7 @@ pub const ZigGlobalObject = extern struct {
     }
 };
 
-const ErrorCodeInt = usize;
+const ErrorCodeInt = u16;
 
 pub const ErrorCode = enum(ErrorCodeInt) {
     _,
@@ -298,9 +298,10 @@ pub const ZigStackTrace = extern struct {
         pub fn next(this: *SourceLineIterator) ?SourceLine {
             if (this.i < 0) return null;
 
+            const source_line = this.trace.source_lines_ptr[@intCast(usize, this.i)];
             const result = SourceLine{
                 .line = this.trace.source_lines_numbers[@intCast(usize, this.i)],
-                .text = this.trace.source_lines_ptr[@intCast(usize, this.i)].slice(),
+                .text = source_line.slice(),
             };
             this.i -= 1;
             return result;
@@ -542,26 +543,107 @@ pub const ZigConsoleClient = struct {
     ) callconv(.C) void {
         var console = JS.VirtualMachine.vm.console;
         var i: usize = 0;
-        var writer = console.writer;
+        var buffered_writer = console.writer;
+        var writer = buffered_writer.writer();
 
         if (len == 1) {
-            var str = vals[0].toWTFString(global);
-            var slice = str.slice();
-            var written = writer.unbuffered_writer.write(slice) catch 0;
-            if (written > 0 and slice[slice.len - 1] != '\n') {
-                _ = writer.unbuffered_writer.write("\n") catch 0;
+            if (Output.enable_ansi_colors) {
+                FormattableType.format(@TypeOf(buffered_writer.unbuffered_writer), buffered_writer.unbuffered_writer, vals[0], true) catch {};
+            } else {
+                FormattableType.format(@TypeOf(buffered_writer.unbuffered_writer), buffered_writer.unbuffered_writer, vals[0], false) catch {};
             }
+
+            _ = buffered_writer.unbuffered_writer.write("\n") catch 0;
+
             return;
         }
 
         var values = vals[0..len];
-        defer writer.flush() catch {};
+        defer buffered_writer.flush() catch {};
+        var last_count: usize = 0;
+        var tail: u8 = 0;
 
-        while (i < len) : (i += 1) {
-            var str = values[i].toWTFString(global);
-            _ = writer.write(str.slice()) catch 0;
+        if (Output.enable_ansi_colors) {
+            while (i < len) : (i += 1) {
+                _ = if (i > 0) (writer.write(" ") catch 0);
+
+                FormattableType.format(@TypeOf(writer), writer, values[i], true) catch {};
+            }
+        } else {
+            while (i < len) : (i += 1) {
+                _ = if (i > 0) (writer.write(" ") catch 0);
+
+                FormattableType.format(@TypeOf(writer), writer, values[i], false) catch {};
+            }
         }
+
+        _ = writer.write("\n") catch 0;
     }
+
+    const FormattableType = enum {
+        Error,
+        String,
+        Undefined,
+        Double,
+        Integer,
+        Null,
+        Boolean,
+        const CellType = CAPI.CellType;
+
+        pub fn format(comptime Writer: type, writer: Writer, value: JSValue, comptime enable_ansi_colors: bool) anyerror!void {
+            if (value.isCell()) {
+                if (CAPI.JSObjectGetPrivate(value.asRef())) |private_data_ptr| {
+                    const priv_data = JS.JSPrivateDataPtr.from(private_data_ptr);
+                    switch (priv_data.tag()) {
+                        .BuildError => {
+                            const build_error = priv_data.as(JS.BuildError);
+                            try build_error.msg.formatWriter(Writer, writer, enable_ansi_colors);
+                            return;
+                        },
+                        .ResolveError => {
+                            const resolve_error = priv_data.as(JS.ResolveError);
+                            try resolve_error.msg.formatWriter(Writer, writer, enable_ansi_colors);
+                            return;
+                        },
+                        else => {},
+                    }
+                }
+
+                switch (@intToEnum(CellType, value.asCell().getType())) {
+                    CellType.ErrorInstanceType => {
+                        JS.VirtualMachine.printErrorlikeObject(JS.VirtualMachine.vm, value, null, enable_ansi_colors);
+                        return;
+                    },
+
+                    CellType.GlobalObjectType => {
+                        _ = try writer.write("[globalThis]");
+                        return;
+                    },
+                    else => {},
+                }
+            }
+
+            if (value.isInt32()) {
+                try writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{value.toInt32()});
+            } else if (value.isNumber()) {
+                try writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{value.asNumber()});
+            } else if (value.isUndefined()) {
+                try writer.print(comptime Output.prettyFmt("<r><d>undefined<r>", enable_ansi_colors), .{});
+            } else if (value.isNull()) {
+                try writer.print(comptime Output.prettyFmt("<r><yellow>null<r>", enable_ansi_colors), .{});
+            } else if (value.isBoolean()) {
+                if (value.toBoolean()) {
+                    try writer.print(comptime Output.prettyFmt("<r><blue>true<r>", enable_ansi_colors), .{});
+                } else {
+                    try writer.print(comptime Output.prettyFmt("<r><blue>false<r>", enable_ansi_colors), .{});
+                }
+            } else {
+                var str = value.toWTFString(JS.VirtualMachine.vm.global);
+                _ = try writer.write(str.slice());
+            }
+        }
+    };
+
     pub fn count(console: ZigConsoleClient.Type, global: *JSGlobalObject, chars: [*]const u8, len: usize) callconv(.C) void {}
     pub fn countReset(console: ZigConsoleClient.Type, global: *JSGlobalObject, chars: [*]const u8, len: usize) callconv(.C) void {}
     pub fn time(console: ZigConsoleClient.Type, global: *JSGlobalObject, chars: [*]const u8, len: usize) callconv(.C) void {}

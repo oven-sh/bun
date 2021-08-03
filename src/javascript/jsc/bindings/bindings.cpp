@@ -8,6 +8,7 @@
 #include <JavaScriptCore/ExceptionScope.h>
 #include <JavaScriptCore/FunctionConstructor.h>
 #include <JavaScriptCore/Identifier.h>
+#include <JavaScriptCore/IteratorOperations.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSCallbackObject.h>
@@ -33,12 +34,40 @@
 #include <wtf/text/WTFString.h>
 extern "C" {
 
+#pragma mark - JSC::Exception
+
+JSC__Exception *JSC__Exception__create(JSC__JSGlobalObject *arg0, JSC__JSObject *arg1,
+                                       unsigned char StackCaptureAction2) {
+  return JSC::Exception::create(arg0->vm(), JSC::JSValue(arg1),
+                                StackCaptureAction2 == 0
+                                  ? JSC::Exception::StackCaptureAction::CaptureStack
+                                  : JSC::Exception::StackCaptureAction::DoNotCaptureStack);
+}
+JSC__JSValue JSC__Exception__value(JSC__Exception *arg0) {
+  return JSC::JSValue::encode(arg0->value());
+}
+
 //     #pragma mark - JSC::PropertyNameArray
 
 // CPP_DECL size_t JSC__PropertyNameArray__length(JSC__PropertyNameArray* arg0);
 // CPP_DECL const JSC__PropertyName*
 // JSC__PropertyNameArray__next(JSC__PropertyNameArray* arg0, size_t arg1);
 // CPP_DECL void JSC__PropertyNameArray__release(JSC__PropertyNameArray* arg0);
+size_t JSC__JSObject__getArrayLength(JSC__JSObject *arg0) { return arg0->getArrayLength(); }
+JSC__JSValue JSC__JSObject__getIndex(JSC__JSObject *arg0, JSC__JSGlobalObject *arg1,
+                                     uint32_t arg3) {
+  return JSC::JSValue::encode(arg0->getIndex(arg1, arg3));
+}
+JSC__JSValue JSC__JSObject__getDirect(JSC__JSObject *arg0, JSC__JSGlobalObject *arg1,
+                                      ZigString arg2) {
+  return JSC::JSValue::encode(arg0->getDirect(arg1->vm(), Zig::toIdentifier(arg2, arg1)));
+}
+void JSC__JSObject__putDirect(JSC__JSObject *arg0, JSC__JSGlobalObject *arg1, ZigString key,
+                              JSC__JSValue value) {
+  auto prop = Zig::toIdentifier(key, arg1);
+
+  arg0->putDirect(arg1->vm(), prop, JSC::JSValue::decode(value));
+}
 
 #pragma mark - JSC::JSCell
 
@@ -138,7 +167,7 @@ static JSC::JSValue doLink(JSC__JSGlobalObject *globalObject, JSC::JSValue modul
 }
 
 JSC__JSValue JSC__JSGlobalObject__createAggregateError(JSC__JSGlobalObject *globalObject,
-                                                       JSC__JSValue *errors, uint16_t errors_count,
+                                                       void **errors, uint16_t errors_count,
                                                        ZigString arg3) {
   JSC::VM &vm = globalObject->vm();
   auto scope = DECLARE_THROW_SCOPE(vm);
@@ -154,8 +183,8 @@ JSC__JSValue JSC__JSGlobalObject__createAggregateError(JSC__JSGlobalObject *glob
            errors_count))) {
 
       for (uint16_t i = 0; i < errors_count; ++i) {
-        array->initializeIndexWithoutBarrier(initializationScope, i,
-                                             JSC::JSValue::decode(errors[i]));
+        array->initializeIndexWithoutBarrier(
+          initializationScope, i, JSC::JSValue(reinterpret_cast<JSC::JSCell *>(errors[i])));
       }
     }
   }
@@ -165,9 +194,10 @@ JSC__JSValue JSC__JSGlobalObject__createAggregateError(JSC__JSGlobalObject *glob
   }
 
   JSC::Structure *errorStructure = globalObject->errorStructure(JSC::ErrorType::AggregateError);
-  return RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::createAggregateError(
-                                     globalObject, vm, errorStructure, array, message, options,
-                                     nullptr, JSC::TypeNothing, false)));
+  scope.release();
+
+  return JSC::JSValue::encode(JSC::createAggregateError(
+    globalObject, vm, errorStructure, array, message, options, nullptr, JSC::TypeNothing, false));
 }
 // static JSC::JSNativeStdFunction* resolverFunction;
 // static JSC::JSNativeStdFunction* rejecterFunction;
@@ -175,6 +205,21 @@ JSC__JSValue JSC__JSGlobalObject__createAggregateError(JSC__JSGlobalObject *glob
 
 JSC__JSValue ZigString__toValue(ZigString arg0, JSC__JSGlobalObject *arg1) {
   return JSC::JSValue::encode(JSC::JSValue(JSC::jsOwnedString(arg1->vm(), Zig::toString(arg0))));
+}
+
+JSC__JSValue ZigString__toErrorInstance(const ZigString *str, JSC__JSGlobalObject *globalObject) {
+  JSC::VM &vm = globalObject->vm();
+
+  auto scope = DECLARE_THROW_SCOPE(vm);
+  JSC::JSValue message = Zig::toJSString(*str, globalObject);
+  JSC::JSValue options = JSC::jsUndefined();
+  JSC::Structure *errorStructure = globalObject->errorStructure();
+  JSC::JSObject *result =
+    JSC::ErrorInstance::create(globalObject, errorStructure, message, options);
+  RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::JSValue()));
+  scope.release();
+
+  return JSC::JSValue::encode(JSC::JSValue(result));
 }
 
 static JSC::EncodedJSValue resolverFunctionCallback(JSC::JSGlobalObject *globalObject,
@@ -638,6 +683,33 @@ bool JSC__JSValue__isError(JSC__JSValue JSValue0) {
   JSC::JSObject *obj = JSC::JSValue::decode(JSValue0).getObject();
   return obj != nullptr && obj->isErrorInstance();
 }
+
+bool JSC__JSValue__isAggregateError(JSC__JSValue JSValue0, JSC__JSGlobalObject *global) {
+  JSC::JSObject *obj = JSC::JSValue::decode(JSValue0).getObject();
+
+  if (obj != nullptr) {
+    if (JSC::ErrorInstance *err = JSC::jsDynamicCast<JSC::ErrorInstance *>(global->vm(), obj)) {
+      return err->errorType() == JSC::ErrorType::AggregateError;
+    }
+  }
+
+  return false;
+}
+
+bool JSC__JSValue__isIterable(JSC__JSValue JSValue, JSC__JSGlobalObject *global) {
+  return JSC::hasIteratorMethod(global, JSC::JSValue::decode(JSValue));
+}
+
+void JSC__JSValue__forEach(JSC__JSValue JSValue0, JSC__JSGlobalObject *arg1,
+                           void (*ArgFn2)(JSC__VM *arg0, JSC__JSGlobalObject *arg1,
+                                          JSC__JSValue JSValue2)) {
+  JSC::forEachInIterable(
+    arg1, JSC::JSValue::decode(JSValue0),
+    [ArgFn2](JSC::VM &vm, JSC::JSGlobalObject *global, JSC::JSValue value) -> void {
+      ArgFn2(&vm, global, JSC::JSValue::encode(value));
+    });
+}
+
 bool JSC__JSValue__isCallable(JSC__JSValue JSValue0, JSC__VM *arg1) {
   return JSC::JSValue::decode(JSValue0).isCallable(reinterpret_cast<JSC::VM &>(arg1));
 }
@@ -646,6 +718,9 @@ bool JSC__JSValue__isGetterSetter(JSC__JSValue JSValue0) {
 }
 bool JSC__JSValue__isHeapBigInt(JSC__JSValue JSValue0) {
   return JSC::JSValue::decode(JSValue0).isHeapBigInt();
+}
+bool JSC__JSValue__isInt32(JSC__JSValue JSValue0) {
+  return JSC::JSValue::decode(JSValue0).isInt32();
 }
 bool JSC__JSValue__isInt32AsAnyInt(JSC__JSValue JSValue0) {
   return JSC::JSValue::decode(JSValue0).isInt32AsAnyInt();
@@ -700,6 +775,19 @@ JSC__JSValue JSC__JSValue__jsNumberFromU16(uint16_t arg0) {
 JSC__JSValue JSC__JSValue__jsNumberFromUint64(uint64_t arg0) {
   return JSC::JSValue::encode(JSC::jsNumber(arg0));
 };
+
+bool JSC__JSValue__toBoolean(JSC__JSValue JSValue0) {
+  return JSC::JSValue::decode(JSValue0).asBoolean();
+}
+int32_t JSC__JSValue__toInt32(JSC__JSValue JSValue0) {
+  return JSC::JSValue::decode(JSValue0).asInt32();
+}
+
+JSC__JSValue JSC__JSValue__getErrorsProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject *global) {
+  JSC::JSObject *obj = JSC::JSValue::decode(JSValue0).getObject();
+  return JSC::JSValue::encode(obj->getDirect(global->vm(), global->vm().propertyNames->errors));
+}
+
 JSC__JSValue JSC__JSValue__jsTDZValue() { return JSC::JSValue::encode(JSC::jsTDZValue()); };
 JSC__JSValue JSC__JSValue__jsUndefined() { return JSC::JSValue::encode(JSC::jsUndefined()); };
 JSC__JSObject *JSC__JSValue__toObject(JSC__JSValue JSValue0, JSC__JSGlobalObject *arg1) {
@@ -1045,6 +1133,11 @@ void JSC__JSValue__toZigException(JSC__JSValue JSValue0, JSC__JSGlobalObject *ar
 
   exceptionFromString(exception, value, arg1);
 }
+
+void JSC__Exception__getStackTrace(JSC__Exception *arg0, ZigStackTrace *trace) {
+  populateStackTrace(arg0->stack(), trace);
+}
+
 #pragma mark - JSC::PropertyName
 
 bool JSC__PropertyName__eqlToIdentifier(JSC__PropertyName *arg0, const JSC__Identifier *arg1) {

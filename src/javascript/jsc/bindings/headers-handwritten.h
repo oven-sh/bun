@@ -21,7 +21,7 @@ typedef struct ResolvedSource {
   ZigString source_code;
   ZigString source_url;
   uint32_t hash;
-  uint32_t bytecodecache_fd;
+  uint64_t bytecodecache_fd;
 } ResolvedSource;
 typedef union ErrorableResolvedSourceResult {
   ResolvedSource value;

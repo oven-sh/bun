@@ -537,19 +537,9 @@ pub const VirtualMachine = struct {
         // We are going to print the stack trace backwards
         const stack = trace.frames();
         if (stack.len > 0) {
-            var i = @intCast(i16, stack.len - 1);
+            var i: i16 = 0;
 
-            var func_name_pad: usize = 0;
-            while (i >= 0) : (i -= 1) {
-                const frame = stack[@intCast(usize, i)];
-                func_name_pad = std.math.max(func_name_pad, std.fmt.count("{any}", .{
-                    frame.nameFormatter(allow_ansi_colors),
-                }));
-            }
-
-            i = @intCast(i16, stack.len - 1);
-
-            while (i >= 0) : (i -= 1) {
+            while (i < stack.len) : (i += 1) {
                 const frame = stack[@intCast(usize, i)];
                 const file = frame.source_url.slice();
                 const func = frame.function_name.slice();

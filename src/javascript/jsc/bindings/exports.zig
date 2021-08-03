@@ -328,10 +328,10 @@ pub const ZigStackFrame = extern struct {
         pub fn format(this: SourceURLFormatter, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
             try writer.writeAll(this.source_url.slice());
             if (this.position.line > -1 and this.position.column_start > -1) {
-                try std.fmt.format(writer, ":{d}:{d}", .{ this.position.line, this.position.column_start });
+                try std.fmt.format(writer, ":{d}:{d}", .{ this.position.line + 1, this.position.column_start });
             } else if (this.position.line > -1) {
                 try std.fmt.format(writer, ":{d}", .{
-                    this.position.line,
+                    this.position.line + 1,
                 });
             }
         }

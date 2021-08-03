@@ -125,9 +125,9 @@ pub const FileSystem = struct {
             const tld = try allocator.alloc(u8, _top_level_dir.len + 1);
             std.mem.copy(u8, tld, _top_level_dir);
             tld[tld.len - 1] = std.fs.path.sep;
-            if (!isBrowser) {
-                allocator.free(_top_level_dir);
-            }
+            // if (!isBrowser) {
+            //     allocator.free(_top_level_dir);
+            // }
             _top_level_dir = tld;
         }
 

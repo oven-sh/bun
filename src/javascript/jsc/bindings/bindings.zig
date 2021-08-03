@@ -88,6 +88,8 @@ pub const ZigString = extern struct {
     };
 };
 
+pub const ReturnableException = *?*Exception;
+
 pub const JSCell = extern struct {
     pub const shim = Shimmer("JSC", "JSCell", @This());
     bytes: shim.Bytes,
@@ -548,29 +550,29 @@ pub const JSFunction = extern struct {
     pub const name = "JSC::JSFunction";
     pub const namespace = "JSC";
 
-    pub const NativeFunctionCallback = fn (ctx: ?*c_void, global: *JSGlobalObject, call_frame: *CallFrame) callconv(.C) JSValue;
+    pub const NativeFunctionCallback = fn (ctx: ?*c_void, global: [*c]JSGlobalObject, call_frame: [*c]CallFrame) callconv(.C) JSValue;
 
-    pub fn createFromSourceCode(
-        global: *JSGlobalObject,
-        function_name: ?[*]const u8,
-        function_name_len: u16,
-        args: ?[*]JSValue,
-        args_len: u16,
-        source: *const SourceCode,
-        origin: *SourceOrigin,
-        exception: *?*JSObject,
-    ) *JSFunction {
-        return cppFn("createFromSourceCode", .{
-            global,
-            function_name,
-            function_name_len,
-            args,
-            args_len,
-            source,
-            origin,
-            exception,
-        });
-    }
+    // pub fn createFromSourceCode(
+    //     global: *JSGlobalObject,
+    //     function_name: ?[*]const u8,
+    //     function_name_len: u16,
+    //     args: ?[*]JSValue,
+    //     args_len: u16,
+    //     source: *const SourceCode,
+    //     origin: *SourceOrigin,
+    //     exception: *?*JSObject,
+    // ) *JSFunction {
+    //     return cppFn("createFromSourceCode", .{
+    //         global,
+    //         function_name,
+    //         function_name_len,
+    //         args,
+    //         args_len,
+    //         source,
+    //         origin,
+    //         exception,
+    //     });
+    // }
     pub fn createFromNative(
         global: *JSGlobalObject,
         argument_count: u16,
@@ -589,9 +591,9 @@ pub const JSFunction = extern struct {
     pub fn calculatedDisplayName(this: *JSFunction, vm: *VM) String {
         return cppFn("calculatedDisplayName", .{ this, vm });
     }
-    pub fn toString(this: *JSFunction, globalThis: *JSGlobalObject) *const JSString {
-        return cppFn("toString", .{ this, globalThis });
-    }
+    // pub fn toString(this: *JSFunction, globalThis: *JSGlobalObject) *const JSString {
+    //     return cppFn("toString", .{ this, globalThis });
+    // }
 
     pub fn callWithArgumentsAndThis(
         function: JSValue,
@@ -599,13 +601,13 @@ pub const JSFunction = extern struct {
         globalThis: *JSGlobalObject,
         arguments_ptr: [*]JSValue,
         arguments_len: usize,
-        exception: *?*Exception,
-        error_message: *const c_char,
+        exception: ReturnableException,
+        error_message: [*c]const u8,
     ) JSValue {
         return cppFn("callWithArgumentsAndThis", .{
             function,
-            globalThis,
             thisValue,
+            globalThis,
             arguments_ptr,
             arguments_len,
             exception,
@@ -618,20 +620,27 @@ pub const JSFunction = extern struct {
         globalThis: *JSGlobalObject,
         arguments_ptr: [*]JSValue,
         arguments_len: usize,
-        exception: *?*Exception,
-        error_message: *const c_char,
+        exception: ReturnableException,
+        error_message: [*c]const u8,
     ) JSValue {
-        return cppFn("callWithArguments", .{ function, globalThis, arguments_ptr, arguments_len, exception, exception, error_message });
+        return cppFn("callWithArguments", .{
+            function,
+            globalThis,
+            arguments_ptr,
+            arguments_len,
+            exception,
+            error_message,
+        });
     }
 
     pub fn callWithThis(
         function: JSValue,
         globalThis: *JSGlobalObject,
         thisValue: JSValue,
-        exception: *?*Exception,
-        error_message: *const c_char,
+        exception: ReturnableException,
+        error_message: [*c]const u8,
     ) JSValue {
-        return cppFn("callWithArguments", .{
+        return cppFn("callWithThis", .{
             function,
             globalThis,
             thisValue,
@@ -643,10 +652,10 @@ pub const JSFunction = extern struct {
     pub fn callWithoutAnyArgumentsOrThis(
         function: JSValue,
         globalThis: *JSGlobalObject,
-        exception: *?*Exception,
-        error_message: *const c_char,
+        exception: ReturnableException,
+        error_message: [*c]const u8,
     ) JSValue {
-        return cppFn("callWithoutAnyArgumentsOrThis", .{ function, globalThis, exception, exception, error_message });
+        return cppFn("callWithoutAnyArgumentsOrThis", .{ function, globalThis, exception, error_message });
     }
 
     pub fn constructWithArgumentsAndNewTarget(
@@ -655,13 +664,13 @@ pub const JSFunction = extern struct {
         globalThis: *JSGlobalObject,
         arguments_ptr: [*]JSValue,
         arguments_len: usize,
-        exception: *?*Exception,
-        error_message: *const c_char,
+        exception: ReturnableException,
+        error_message: [*c]const u8,
     ) JSValue {
         return cppFn("constructWithArgumentsAndNewTarget", .{
             function,
-            globalThis,
             newTarget,
+            globalThis,
             arguments_ptr,
             arguments_len,
             exception,
@@ -674,20 +683,27 @@ pub const JSFunction = extern struct {
         globalThis: *JSGlobalObject,
         arguments_ptr: [*]JSValue,
         arguments_len: usize,
-        exception: *?*Exception,
-        error_message: *const c_char,
+        exception: ReturnableException,
+        error_message: [*c]const u8,
     ) JSValue {
-        return cppFn("constructWithArguments", .{ function, globalThis, arguments_ptr, arguments_len, exception, exception, error_message });
+        return cppFn("constructWithArguments", .{
+            function,
+            globalThis,
+            arguments_ptr,
+            arguments_len,
+            exception,
+            error_message,
+        });
     }
 
     pub fn constructWithNewTarget(
         function: JSValue,
         globalThis: *JSGlobalObject,
         newTarget: JSValue,
-        exception: *?*Exception,
-        error_message: *const c_char,
+        exception: ReturnableException,
+        error_message: [*c]const u8,
     ) JSValue {
-        return cppFn("constructWithArguments", .{
+        return cppFn("constructWithNewTarget", .{
             function,
             globalThis,
             newTarget,
@@ -699,15 +715,20 @@ pub const JSFunction = extern struct {
     pub fn constructWithoutAnyArgumentsOrNewTarget(
         function: JSValue,
         globalThis: *JSGlobalObject,
-        exception: *?*Exception,
-        error_message: *const c_char,
+        exception: ReturnableException,
+        error_message: [*c]const u8,
     ) JSValue {
-        return cppFn("constructWithoutAnyArgumentsOrNewTarget", .{ function, globalThis, exception, exception, error_message });
+        return cppFn("constructWithoutAnyArgumentsOrNewTarget", .{
+            function,
+            globalThis,
+            exception,
+            error_message,
+        });
     }
 
     pub const Extern = [_][]const u8{
         "fromString",
-        "createFromSourceCode",
+        // "createFromSourceCode",
         "createFromNative",
         "getName",
         "displayName",
@@ -1330,11 +1351,19 @@ pub const JSValue = enum(i64) {
         return @intToPtr(C_API.JSValueRef, @intCast(usize, @enumToInt(this)));
     }
 
+    pub inline fn fromRef(this: C_API.JSValueRef) JSValue {
+        return @intToEnum(JSValue, @intCast(i64, @ptrToInt(this)));
+    }
+
+    pub inline fn asObjectRef(this: JSValue) C_API.JSObjectRef {
+        return @ptrCast(C_API.JSObjectRef, this.asVoid());
+    }
+
     pub inline fn asVoid(this: JSValue) *c_void {
         return @intToPtr(*c_void, @intCast(usize, @enumToInt(this)));
     }
 
-    pub const Extern = [_][]const u8{ "isClass", "getNameProperty", "getClassName", "getErrorsProperty", "toInt32", "toBoolean", "isInt32", "isIterable", "forEach", "isAggregateError", "toZigException", "isException", "toWTFString", "hasProperty", "getPropertyNames", "getDirect", "putDirect", "get", "getIfExists", "asString", "asObject", "asNumber", "isError", "jsNull", "jsUndefined", "jsTDZValue", "jsBoolean", "jsDoubleNumber", "jsNumberFromDouble", "jsNumberFromChar", "jsNumberFromU16", "jsNumberFromInt32", "jsNumberFromInt64", "jsNumberFromUint64", "isUndefined", "isNull", "isUndefinedOrNull", "isBoolean", "isAnyInt", "isUInt32AsAnyInt", "isInt32AsAnyInt", "isNumber", "isString", "isBigInt", "isHeapBigInt", "isBigInt32", "isSymbol", "isPrimitive", "isGetterSetter", "isCustomGetterSetter", "isObject", "isCell", "asCell", "toString", "toStringOrNull", "toPropertyKey", "toPropertyKeyValue", "toObject", "toString", "getPrototype", "getPropertyByPropertyName", "eqlValue", "eqlCell", "isCallable" };
+    pub const Extern = [_][]const u8{ "asPromise", "isClass", "getNameProperty", "getClassName", "getErrorsProperty", "toInt32", "toBoolean", "isInt32", "isIterable", "forEach", "isAggregateError", "toZigException", "isException", "toWTFString", "hasProperty", "getPropertyNames", "getDirect", "putDirect", "get", "getIfExists", "asString", "asObject", "asNumber", "isError", "jsNull", "jsUndefined", "jsTDZValue", "jsBoolean", "jsDoubleNumber", "jsNumberFromDouble", "jsNumberFromChar", "jsNumberFromU16", "jsNumberFromInt32", "jsNumberFromInt64", "jsNumberFromUint64", "isUndefined", "isNull", "isUndefinedOrNull", "isBoolean", "isAnyInt", "isUInt32AsAnyInt", "isInt32AsAnyInt", "isNumber", "isString", "isBigInt", "isHeapBigInt", "isBigInt32", "isSymbol", "isPrimitive", "isGetterSetter", "isCustomGetterSetter", "isObject", "isCell", "asCell", "toString", "toStringOrNull", "toPropertyKey", "toPropertyKeyValue", "toObject", "toString", "getPrototype", "getPropertyByPropertyName", "eqlValue", "eqlCell", "isCallable" };
 };
 
 pub const PropertyName = extern struct {

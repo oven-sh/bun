@@ -2,7 +2,9 @@ usingnamespace @import("../base.zig");
 const std = @import("std");
 const Api = @import("../../../api/schema.zig").Api;
 const http = @import("../../../http.zig");
-const JavaScript = @import("../javascript.zig");
+usingnamespace @import("../javascript.zig");
+usingnamespace @import("../bindings/bindings.zig");
+
 pub const Response = struct {
     pub const Class = NewClass(
         Response,
@@ -1089,7 +1091,26 @@ pub const FetchEvent = struct {
             return js.JSValueMakeUndefined(ctx);
         }
 
-        var arg = arguments[0];
+        var resolved = JSInternalPromise.resolvedPromise(VirtualMachine.vm.global, JSValue.fromRef(arguments[0]));
+
+        var status = resolved.status(VirtualMachine.vm.global.vm());
+
+        if (status == .Pending) {
+            VirtualMachine.vm.global.vm().drainMicrotasks();
+        }
+
+        status = resolved.status(VirtualMachine.vm.global.vm());
+
+        switch (status) {
+            .Fulfilled => {},
+            else => {
+                this.request_context.sendInternalError(error.rejectedPromise) catch {};
+                return js.JSValueMakeUndefined(ctx);
+            },
+        }
+
+        var arg = resolved.result(VirtualMachine.vm.global.vm()).asObjectRef();
+
         if (!js.JSValueIsObjectOfClass(ctx, arg, Response.Class.ref)) {
             JSError(getAllocator(ctx), "event.respondWith() must be a Response or a Promise<Response>.", .{}, ctx, exception);
             this.request_context.sendInternalError(error.respondWithWasEmpty) catch {};
@@ -1180,3 +1201,67 @@ pub const FetchEvent = struct {
         return js.JSValueMakeUndefined(ctx);
     }
 };
+
+// pub const ReadableStream = struct {
+//     pub const Class = NewClass(
+//         ReadableStream,
+//         .{
+//             .name = "ReadableStream",
+//         },
+//         .{},
+//         .{
+
+//         },
+//     );
+// };
+
+// pub const TextEncoder = struct {
+//     pub const Class = NewClass(
+//         TextEncoder,
+//         .{
+//             .name = "TextEncoder",
+//         },
+//         .{
+//             .encoding = .{
+//                 .@"get" = getEncoding,
+//                 .ro = true,
+//             },
+//         },
+//         .{
+//             .encode = .{
+//                 .rfn = encode,
+//             },
+//             .constructor = .{
+//                 .rfn = constructor,
+//             },
+//             .encodeInto = .{
+//                 .rfn = encodeInto,
+//             },
+//         },
+//     );
+
+//     const encoding_str = "utf-8";
+//     pub fn getEncoding(
+//         this: *TextEncoder,
+//         ctx: js.JSContextRef,
+//         thisObject: js.JSObjectRef,
+//         prop: js.JSStringRef,
+//         exception: js.ExceptionRef,
+//     ) js.JSValueRef {
+//         return ZigString.init(encoding_str).toValue(ctx).asRef()
+//     }
+// };
+
+// pub const TextDecoder = struct {
+//     pub const Class = NewClass(
+//         TextDecoder,
+//         .{
+//             .name = "TextDecoder",
+//         },
+//         .{},
+//         .{
+//             .decode = .{},
+//             .constructor = .{},
+//         },
+//     );
+// };

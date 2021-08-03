@@ -17,7 +17,7 @@ pub const ZigGlobalObject = extern struct {
     pub const name = "Zig::GlobalObject";
     pub const include = "\"ZigGlobalObject.h\"";
     pub const namespace = shim.namespace;
-    pub const Interface: type = NewGlobalObject(std.meta.globalOption("JavaScriptVirtualMachine", type) orelse struct {});
+    pub const Interface: type = NewGlobalObject(JS.VirtualMachine);
 
     pub var sigaction: std.os.Sigaction = undefined;
     pub var sigaction_installed = false;
@@ -533,6 +533,8 @@ pub const ZigConsoleClient = struct {
         };
     }
 
+    /// TODO: support %s %d %f %o %O
+    /// https://console.spec.whatwg.org/#formatter
     pub fn messageWithTypeAndLevel(
         console_: ZigConsoleClient.Type,
         message_type: u32,

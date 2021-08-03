@@ -50,8 +50,8 @@ pub const VirtualMachine = struct {
     require_cache: RequireCacheType,
     log: *logger.Log,
     event_listeners: EventListenerMixin.Map,
-    pub threadlocal var vm_loaded = false;
-    pub threadlocal var vm: *VirtualMachine = undefined;
+    pub var vm_loaded = false;
+    pub var vm: *VirtualMachine = undefined;
 
     pub fn init(
         allocator: *std.mem.Allocator,
@@ -66,7 +66,7 @@ pub const VirtualMachine = struct {
             log = try allocator.create(logger.Log);
         }
 
-        vm = try allocator.create(VirtualMachine);
+        VirtualMachine.vm = try allocator.create(VirtualMachine);
         var console = try allocator.create(ZigConsoleClient);
         console.* = ZigConsoleClient.init(Output.errorWriter(), Output.writer());
         const bundler = try Bundler.init(
@@ -75,7 +75,7 @@ pub const VirtualMachine = struct {
             try configureTransformOptionsForSpeedy(allocator, _args),
             existing_bundle,
         );
-        vm.* = VirtualMachine{
+        VirtualMachine.vm.* = VirtualMachine{
             .global = undefined,
             .allocator = allocator,
             .require_cache = RequireCacheType.init(allocator),
@@ -86,20 +86,23 @@ pub const VirtualMachine = struct {
             .log = log,
         };
 
-        vm.bundler.configureLinker();
+        VirtualMachine.vm.bundler.configureLinker();
 
         var global_classes: [GlobalClasses.len]js.JSClassRef = undefined;
         inline for (GlobalClasses) |Class, i| {
             global_classes[i] = Class.get().*;
         }
-        vm.global = ZigGlobalObject.create(
+        VirtualMachine.vm.global = ZigGlobalObject.create(
             &global_classes,
             @intCast(i32, global_classes.len),
             vm.console,
         );
-        vm_loaded = true;
+        VirtualMachine.vm_loaded = true;
+        std.debug.print("VM IS LOADED {}", .{
+            VirtualMachine.vm_loaded,
+        });
 
-        return vm;
+        return VirtualMachine.vm;
     }
 
     // dynamic import
@@ -110,7 +113,7 @@ pub const VirtualMachine = struct {
     threadlocal var source_code_printer: js_printer.BufferPrinter = undefined;
     threadlocal var source_code_printer_loaded: bool = false;
 
-    inline fn _fetch(
+    fn _fetch(
         global: *JSGlobalObject,
         specifier: string,
         source: string,
@@ -242,7 +245,7 @@ pub const VirtualMachine = struct {
         path: string,
     };
 
-    inline fn _resolve(ret: *ResolveFunctionResult, global: *JSGlobalObject, specifier: string, source: string) !void {
+    fn _resolve(ret: *ResolveFunctionResult, global: *JSGlobalObject, specifier: string, source: string) !void {
         std.debug.assert(VirtualMachine.vm_loaded);
         std.debug.assert(VirtualMachine.vm.global == global);
         if (vm.node_modules == null and strings.eqlComptime(specifier, Runtime.Runtime.Imports.Name)) {
@@ -412,7 +415,30 @@ pub const VirtualMachine = struct {
         }
     }
 
-    pub fn loadEntryPoint(this: *VirtualMachine, entry_point: string) !void {
+    // TODO:
+    pub fn deinit(this: *VirtualMachine) void {}
+
+    pub fn printException(this: *VirtualMachine, exception: *Exception) void {
+        if (Output.enable_ansi_colors) {
+            this.printErrorlikeObject(exception.value(), exception, true);
+        } else {
+            this.printErrorlikeObject(exception.value(), exception, false);
+        }
+    }
+
+    pub fn defaultErrorHandler(this: *VirtualMachine, result: JSValue) void {
+        if (result.isException(this.global.vm())) {
+            var exception = @ptrCast(*Exception, result.asVoid());
+
+            this.printException(exception);
+        } else if (Output.enable_ansi_colors) {
+            this.printErrorlikeObject(result, null, true);
+        } else {
+            this.printErrorlikeObject(result, null, false);
+        }
+    }
+
+    pub fn loadEntryPoint(this: *VirtualMachine, entry_point: string) !*JSInternalPromise {
         var path = this.bundler.normalizeEntryPointPath(entry_point);
 
         var promise = JSModuleLoader.loadAndEvaluateModule(this.global, ZigString.init(path));
@@ -423,23 +449,7 @@ pub const VirtualMachine = struct {
             this.global.vm().drainMicrotasks();
         }
 
-        if (promise.status(this.global.vm()) == JSPromise.Status.Rejected) {
-            var result = promise.result(this.global.vm());
-
-            if (result.isException(this.global.vm())) {
-                var exception = @ptrCast(*Exception, result.asVoid());
-
-                if (Output.enable_ansi_colors) {
-                    this.printErrorlikeObject(exception.value(), exception, true);
-                } else {
-                    this.printErrorlikeObject(exception.value(), exception, false);
-                }
-            } else if (Output.enable_ansi_colors) {
-                this.printErrorlikeObject(result, null, true);
-            } else {
-                this.printErrorlikeObject(result, null, false);
-            }
-        }
+        return promise;
     }
 
     // When the Error-like object is one of our own, it's best to rely on the object directly instead of serializing it to a ZigException.
@@ -797,7 +807,6 @@ pub const EventListenerMixin = struct {
             .{},
         );
 
-        var exception: js.JSValueRef = null;
         // Rely on JS finalizer
         var fetch_event = try vm.allocator.create(FetchEvent);
         fetch_event.* = FetchEvent{
@@ -805,32 +814,37 @@ pub const EventListenerMixin = struct {
             .request = Request{ .request_context = request_context },
         };
 
-        var fetch_args: [1]js.JSObjectRef = undefined;
-        for (listeners.items) |listener| {
-            fetch_args[0] = FetchEvent.Class.make(vm.global, fetch_event);
+        var fetch_args: [1]JSValue = undefined;
+        var exception: ?*Exception = null;
+        const failed_str = "Failed";
+        for (listeners.items) |listener_ref| {
+            var listener = @intToEnum(JSValue, @intCast(i64, @ptrToInt(listener_ref)));
 
-            _ = js.JSObjectCallAsFunction(
-                vm.ctx,
-                listener,
-                js.JSContextGetGlobalObject(vm.ctx),
-                1,
-                &fetch_args,
-                &exception,
-            );
+            fetch_args[0] = JSValue.fromRef(FetchEvent.Class.make(vm.global.ref(), fetch_event));
+
+            var promise = JSPromise.resolvedPromise(vm.global, JSFunction.callWithArguments(listener, vm.global, &fetch_args, 1, &exception, failed_str));
+            vm.global.vm().drainMicrotasks();
+
+            if (promise.status(vm.global.vm()) == .Rejected) {
+                if (exception == null) {
+                    var res = promise.result(vm.global.vm());
+                    if (res.isException(vm.global.vm())) {
+                        exception = @ptrCast(*Exception, res.asVoid());
+                    }
+                }
+            } else {
+                _ = promise.result(vm.global.vm());
+            }
+
+            vm.global.vm().drainMicrotasks();
+
             if (request_context.has_called_done) {
                 break;
             }
         }
 
-        if (exception != null) {
-            var message = js.JSValueToStringCopy(vm.ctx, exception, null);
-            defer js.JSStringRelease(message);
-            var buf = vm.allocator.alloc(u8, js.JSStringGetLength(message) + 1) catch unreachable;
-            defer vm.allocator.free(buf);
-            var note = buf[0 .. js.JSStringGetUTF8CString(message, buf.ptr, buf.len) - 1];
-
-            Output.prettyErrorln("<r><red>error<r>: <b>{s}<r>", .{note});
-            Output.flush();
+        if (exception) |except| {
+            vm.printException(except);
 
             if (!request_context.has_called_done) {
                 request_context.sendInternalError(error.JavaScriptError) catch {};

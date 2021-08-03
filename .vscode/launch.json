@@ -103,6 +103,7 @@
         "./src/index.tsx",
         "--resolve=lazy",
         "--outdir=public",
+        "--framework=framework.tsx",
         "--serve",
         "--public-url=http://localhost:9000/"
       ],

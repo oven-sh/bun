@@ -30,8 +30,6 @@ pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace) nore
     }
 }
 
-pub const JSGlobalObject = struct {};
-
 const constStrToU8 = allocators.constStrToU8;
 pub fn main() anyerror!void {
     // The memory allocator makes a massive difference.
@@ -386,7 +384,10 @@ pub const Cli = struct {
         //     .entry_point,
         // );
 
-        try vm.loadEntryPoint(vm.bundler.options.entry_points[0]);
+        var promise = try vm.loadEntryPoint(vm.bundler.options.entry_points[0]);
+        if (promise.status(vm.global.vm()) == js.JSPromise.Status.Rejected) {
+            vm.defaultRejectionHandler(promise.result(vm.global.vm()));
+        }
     }
 };
 

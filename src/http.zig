@@ -44,6 +44,7 @@ threadlocal var res_headers_buf: [100]picohttp.Header = undefined;
 const sync = @import("./sync.zig");
 const JavaScript = @import("./javascript/jsc/JavaScript.zig");
 const js = @import("javascript/jsc/javascript.zig");
+usingnamespace @import("javascript/jsc/bindings/bindings.zig");
 const Router = @import("./router.zig");
 pub const Watcher = watcher.NewWatcher(*Server);
 
@@ -654,9 +655,9 @@ pub const RequestContext = struct {
         pub var channel: Channel = undefined;
         var has_loaded_channel = false;
         pub var javascript_disabled = false;
-        var thread: std.Thread = undefined;
         pub fn spawnThread(handler: HandlerThread) !void {
-            _ = try std.Thread.spawn(.{}, spawn, .{handler});
+            var thread = try std.Thread.spawn(.{}, spawn, .{handler});
+            // thread.detach();
         }
 
         pub fn spawn(handler: HandlerThread) void {
@@ -682,48 +683,43 @@ pub const RequestContext = struct {
             js_ast.Expr.Data.Store.create(std.heap.c_allocator);
 
             defer Output.flush();
-            var vm = try JavaScript.VirtualMachine.init(std.heap.c_allocator, handler.args, handler.existing_bundle, handler.log);
+            var vm = JavaScript.VirtualMachine.init(std.heap.c_allocator, handler.args, handler.existing_bundle, handler.log) catch |err| {
+                Output.prettyErrorln(
+                    "JavaScript VM failed to start: <r><red>{s}<r>",
+                    .{@errorName(err)},
+                );
+                Output.flush();
+                return;
+            };
+            std.debug.assert(JavaScript.VirtualMachine.vm_loaded);
+            javascript_vm = vm;
 
             const boot = handler.framework.entry_point;
+            std.debug.assert(boot.len > 0);
             defer vm.deinit();
 
             var resolved_entry_point = try vm.bundler.resolver.resolve(
-                std.fs.path.dirname(boot).?,
-                boot,
+                std.fs.path.dirname(boot) orelse vm.bundler.fs.top_level_dir,
+                vm.bundler.normalizeEntryPointPath(boot),
                 .entry_point,
             );
-            JavaScript.VirtualMachine.vm = vm;
-            javascript_vm = JavaScript.VirtualMachine.vm;
-            var exception: js.JSValueRef = null;
-            var load_result = try JavaScript.Module.loadFromResolveResult(vm, vm.ctx, resolved_entry_point, &exception);
+            var load_result = try vm.loadEntryPoint(resolved_entry_point.path_pair.primary.text);
 
-            // We've already printed the exception here!
-            if (exception != null) {
-                Output.prettyErrorln(
-                    "JavaScript VM failed to start",
-                    .{},
-                );
-                Output.flush();
-
-                return;
-            }
-
-            switch (load_result) {
-                .Module => {
-                    Output.prettyln(
-                        "Loaded JavaScript VM: \"{s}\"",
-                        .{vm.bundler.fs.relativeTo(boot)},
-                    );
-                    Output.flush();
-                },
-                .Path => {
+            switch (load_result.status(vm.global.vm())) {
+                JSPromise.Status.Fulfilled => {},
+                else => {
                     Output.prettyErrorln(
-                        "Error loading JavaScript VM: Expected framework to be a path to a JavaScript-like file but received \"{s}\"",
-                        .{boot},
+                        "JavaScript VM failed to start",
+                        .{},
                     );
                     Output.flush();
                     return;
                 },
+            }
+
+            if (vm.event_listeners.count() == 0) {
+                Output.prettyErrorln("<r><red>error<r>: Framework didn't run <b><cyan>addEventListener(\"fetch\", callback)<r>, which means it can't accept HTTP requests.\nShutting down JS.", .{});
+                return;
             }
 
             js_ast.Stmt.Data.Store.reset();
@@ -1675,25 +1671,25 @@ pub const Server = struct {
         }
 
         if (req_ctx.url.extname.len == 0 and !RequestContext.JavaScriptHandler.javascript_disabled) {
-            // if (server.bundler.options.framework != null) {
-            //     RequestContext.JavaScriptHandler.enqueue(&req_ctx, server) catch unreachable;
-            //     server.javascript_enabled = !RequestContext.JavaScriptHandler.javascript_disabled;
-            // }
+            if (server.bundler.options.framework != null) {
+                RequestContext.JavaScriptHandler.enqueue(&req_ctx, server) catch unreachable;
+                server.javascript_enabled = !RequestContext.JavaScriptHandler.javascript_disabled;
+            }
         }
 
-        // if (!req_ctx.controlled) {
-        req_ctx.handleRequest() catch |err| {
-            switch (err) {
-                error.ModuleNotFound => {
-                    req_ctx.sendNotFound() catch {};
-                },
-                else => {
-                    Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
-                    return;
-                },
-            }
-        };
-        // }
+        if (!req_ctx.controlled) {
+            req_ctx.handleRequest() catch |err| {
+                switch (err) {
+                    error.ModuleNotFound => {
+                        req_ctx.sendNotFound() catch {};
+                    },
+                    else => {
+                        Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
+                        return;
+                    },
+                }
+            };
+        }
 
         if (!req_ctx.controlled) {
             const status = req_ctx.status orelse @intCast(HTTPStatusCode, 500);

@@ -14,6 +14,8 @@ usingnamespace @import("global.zig");
 const panicky = @import("panic_handler.zig");
 const cli = @import("cli.zig");
 pub const MainPanicHandler = panicky.NewPanicHandler(panicky.default_panic);
+const js = @import("javascript/jsc/bindings/bindings.zig");
+usingnamespace @import("javascript/jsc/javascript.zig");
 
 pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace) noreturn {
     if (MainPanicHandler.Singleton) |singleton| {
@@ -39,4 +41,10 @@ pub fn main() anyerror!void {
     Output.enable_ansi_colors = stderr.isTty();
     defer Output.flush();
     try cli.Cli.start(std.heap.c_allocator, stdout, stderr, MainPanicHandler);
+
+    std.mem.doNotOptimizeAway(JavaScriptVirtualMachine.fetch);
+    std.mem.doNotOptimizeAway(JavaScriptVirtualMachine.init);
+    std.mem.doNotOptimizeAway(JavaScriptVirtualMachine.resolve);
 }
+
+pub const JavaScriptVirtualMachine = VirtualMachine;

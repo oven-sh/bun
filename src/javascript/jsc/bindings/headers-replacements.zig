@@ -50,3 +50,4 @@ pub const ZigString = bindings.ZigString;
 pub const ZigException = bindings.ZigException;
 pub const ResolvedSource = bindings.ResolvedSource;
 pub const ZigStackTrace = bindings.ZigStackTrace;
+pub const ReturnableException = bindings.ReturnableException;

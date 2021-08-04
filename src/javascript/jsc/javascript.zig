@@ -113,7 +113,7 @@ pub const VirtualMachine = struct {
     threadlocal var source_code_printer: js_printer.BufferPrinter = undefined;
     threadlocal var source_code_printer_loaded: bool = false;
 
-    fn _fetch(
+    inline fn _fetch(
         global: *JSGlobalObject,
         specifier: string,
         source: string,
@@ -130,6 +130,7 @@ pub const VirtualMachine = struct {
             // - file path + file descriptor for bytecode caching
             // - separate bundles for server build vs browser build OR at least separate sections
             const code = try vm.node_modules.?.readCodeAsStringSlow(vm.allocator);
+
             return ResolvedSource{
                 .source_code = ZigString.init(code),
                 .specifier = ZigString.init(vm.bundler.linker.nodeModuleBundleImportPath()),

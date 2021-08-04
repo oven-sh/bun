@@ -303,7 +303,7 @@ pub const NodeModuleBundle = struct {
             .bundle = container.bundle.?,
             .fd = stream.handle,
             // sorry you can't have 4 GB of node_modules
-            .code_end_pos = @truncate(u32, file_end) - @intCast(u32, jsbundle_prefix.len),
+            .code_end_pos = end - @intCast(u32, jsbundle_prefix.len),
             .bytes = read_bytes,
             .bytes_ptr = file_bytes,
             .package_id_map = undefined,

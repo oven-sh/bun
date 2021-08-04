@@ -3019,7 +3019,14 @@ pub fn NewPrinter(
                     p.printSemicolonAfterStatement();
                 },
                 else => {
-                    Global.panic("Unexpected {s}", .{stmt.data});
+                    var slice = p.writer.slice();
+                    const to_print: []const u8 = if (slice.len > 1024) slice[slice.len - 1024 ..] else slice;
+
+                    if (to_print.len > 0) {
+                        Global.panic("\n<r><red>voluntary crash<r> while printing:<r>\n{s}\n---This is a <b>bug<r>. Not your fault.\n", .{to_print});
+                    } else {
+                        Global.panic("\n<r><red>voluntary crash<r> while printing. This is a <b>bug<r>. Not your fault.\n", .{});
+                    }
                 },
             }
         }
@@ -3547,6 +3554,10 @@ pub fn NewWriter(
             );
         }
 
+        pub fn slice(this: *Self) string {
+            return this.ctx.slice();
+        }
+
         pub fn getError(writer: *const Self) anyerror!void {
             if (writer.orig_err) |orig_err| {
                 return orig_err;
@@ -3672,6 +3683,10 @@ const FileWriterInternal = struct {
         return bytes.len;
     }
 
+    pub fn slice(this: *@This()) string {
+        return buffer.list.items;
+    }
+
     pub fn getLastByte(_ctx: *const FileWriterInternal) u8 {
         return if (buffer.list.items.len > 0) buffer.list.items[buffer.list.items.len - 1] else 0;
     }
@@ -3716,6 +3731,10 @@ pub const BufferWriter = struct {
         try ctx.buffer.append(bytes);
         ctx.approximate_newline_count += @boolToInt(bytes.len > 0 and bytes[bytes.len - 1] == '\n');
         return bytes.len;
+    }
+
+    pub fn slice(self: *@This()) string {
+        return self.buffer.list.items;
     }
 
     pub fn getLastByte(ctx: *const BufferWriter) u8 {

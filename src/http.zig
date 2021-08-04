@@ -42,7 +42,7 @@ const watcher = @import("./watcher.zig");
 threadlocal var req_headers_buf: [100]picohttp.Header = undefined;
 threadlocal var res_headers_buf: [100]picohttp.Header = undefined;
 const sync = @import("./sync.zig");
-const JavaScript = @import("./javascript/jsc/JavaScript.zig");
+const JavaScript = @import("./javascript/jsc/javascript.zig");
 const js = @import("javascript/jsc/javascript.zig");
 usingnamespace @import("javascript/jsc/bindings/bindings.zig");
 const Router = @import("./router.zig");

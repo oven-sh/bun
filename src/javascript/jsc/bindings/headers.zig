@@ -159,7 +159,6 @@ pub extern fn JSC__JSFunction__constructWithArgumentsAndNewTarget(JSValue0: JSC_
 pub extern fn JSC__JSFunction__constructWithNewTarget(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, JSValue2: JSC__JSValue, arg3: *?*JSC__Exception     , arg4: [*c]const u8) JSC__JSValue;
 pub extern fn JSC__JSFunction__constructWithoutAnyArgumentsOrNewTarget(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: *?*JSC__Exception     , arg3: [*c]const u8) JSC__JSValue;
 pub extern fn JSC__JSFunction__createFromNative(arg0: [*c]JSC__JSGlobalObject, arg1: u16, arg2: [*c]const WTF__String, arg3: ?*c_void, ArgFn4: ?fn (?*c_void, [*c]JSC__JSGlobalObject, [*c]JSC__CallFrame) callconv(.C) JSC__JSValue) [*c]JSC__JSFunction;
-pub extern fn JSC__JSFunction__createFromSourceCode(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]const u8, arg2: u16, arg3: [*c]JSC__JSValue, arg4: u16, arg5: [*c]const JSC__SourceCode, arg6: [*c]JSC__SourceOrigin, arg7: [*c][*c]JSC__JSObject) [*c]JSC__JSFunction;
 pub extern fn JSC__JSFunction__displayName(arg0: [*c]JSC__JSFunction, arg1: [*c]JSC__VM) bWTF__String;
 pub extern fn JSC__JSFunction__getName(arg0: [*c]JSC__JSFunction, arg1: [*c]JSC__VM) bWTF__String;
 pub extern fn JSC__JSGlobalObject__arrayIteratorPrototype(arg0: [*c]JSC__JSGlobalObject) ?*JSC__ArrayIteratorPrototype;

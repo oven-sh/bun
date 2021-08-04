@@ -553,6 +553,7 @@ pub const VirtualMachine = struct {
                 const frame = stack[@intCast(usize, i)];
                 const file = frame.source_url.slice();
                 const func = frame.function_name.slice();
+                if (file.len == 0 and func.len == 0) continue;
 
                 try writer.print(
                     comptime Output.prettyFmt(

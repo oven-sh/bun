@@ -2016,8 +2016,11 @@ pub const Parser = struct {
         }
 
         var runtime_imports_iter = p.runtime_imports.iter();
-        // don't import runtime if we're bundling, it's already included
-        if (!p.options.enable_bundling and p.has_called_runtime) {
+        const has_cjs_imports = p.cjs_import_stmts.items.len > 0 and p.options.transform_require_to_import;
+        // - don't import runtime if we're bundling, it's already included
+        // - when HMR is enabled, we always need to import the runtime for HMRClient and HMRModule.
+        // - when HMR is not enabled, we only need any runtime imports if we're importing require()
+        if (!p.options.enable_bundling and (p.has_called_runtime or p.options.features.hot_module_reloading or has_cjs_imports)) {
             while (runtime_imports_iter.next()) |entry| {
                 const imports = [_]u16{entry.key};
                 p.generateImportStmt(
@@ -2031,7 +2034,7 @@ pub const Parser = struct {
                 ) catch unreachable;
             }
         }
-        if (p.cjs_import_stmts.items.len > 0 and p.options.transform_require_to_import) {
+        if (has_cjs_imports) {
             var import_records = try p.allocator.alloc(u32, p.cjs_import_stmts.items.len);
             var declared_symbols = try p.allocator.alloc(js_ast.DeclaredSymbol, p.cjs_import_stmts.items.len);
 
@@ -13540,7 +13543,7 @@ pub fn NewParser(
                 // 1. HMRClient.activate(${isDebug});
                 // 2. var __hmrModule = new HMMRModule(id, file_path), __exports = __hmrModule.exports;
                 // 3. (__hmrModule.load = function() {
-                // ${end_iffe_stmts_count - 1}
+                // ${...end_iffe_stmts_count - 1}
                 // ${end_iffe_stmts_count}
                 // __hmrModule.exportAll({exportAlias: () => identifier}) <-- ${named_exports_count}
                 // ();
@@ -13556,6 +13559,14 @@ pub fn NewParser(
                 // Normally, we'd have to grow that inner function's stmts list by one
                 // But we can avoid that by just making them all use this same array.
                 var curr_stmts = _stmts;
+
+                // in debug: crash in the printer due to undefined memory
+                // in release: print ";" instead.
+                // this should never happen regardless, but i'm just being cautious here.
+                if (comptime !isDebug) {
+                    std.mem.set(Stmt, _stmts, Stmt.empty());
+                }
+
                 // Second pass: move any imports from the part's stmts array to the new stmts
                 var imports_list = curr_stmts[0..imports_count];
                 curr_stmts = curr_stmts[imports_list.len..];
@@ -13572,26 +13583,26 @@ pub fn NewParser(
                 // This is the original part statements + 1
                 var part_stmts = curr_stmts;
                 std.debug.assert(part_stmts.len == end_iife_stmts_count);
+                var part_stmts_i: usize = 0;
 
-                if (imports_list.len > 0 or exports_from.len > 0) {
-                    var import_list_i: usize = 0;
-                    var part_stmts_i: usize = 0;
-                    var export_list_i: usize = 0;
-                    for (part.stmts) |stmt, i| {
-                        switch (stmt.data) {
-                            .s_import => {
-                                imports_list[import_list_i] = stmt;
-                                import_list_i += 1;
-                            },
-                            .s_export_star, .s_export_from => {
-                                exports_from[export_list_i] = stmt;
-                                export_list_i += 1;
-                            },
-                            else => {
-                                part_stmts[part_stmts_i] = stmt;
-                                part_stmts_i += 1;
-                            },
-                        }
+                var import_list_i: usize = 0;
+                var export_list_i: usize = 0;
+
+                // We must always copy it into the new stmts array
+                for (part.stmts) |stmt, i| {
+                    switch (stmt.data) {
+                        .s_import => {
+                            imports_list[import_list_i] = stmt;
+                            import_list_i += 1;
+                        },
+                        .s_export_star, .s_export_from => {
+                            exports_from[export_list_i] = stmt;
+                            export_list_i += 1;
+                        },
+                        else => {
+                            part_stmts[part_stmts_i] = stmt;
+                            part_stmts_i += 1;
+                        },
                     }
                 }
 
@@ -13768,7 +13779,7 @@ pub fn NewParser(
                 var func = p.e(
                     E.Function{
                         .func = .{
-                            .body = .{ .loc = logger.Loc.Empty, .stmts = part_stmts },
+                            .body = .{ .loc = logger.Loc.Empty, .stmts = part_stmts[0 .. part_stmts_i + 1] },
                             .name = null,
                             .open_parens_loc = logger.Loc.Empty,
                             .flags = .{
@@ -13781,19 +13792,25 @@ pub fn NewParser(
 
                 // (__hmrModule._load = function())()
                 toplevel_stmts[2] = p.s(
-                    S.SExpr{ .value = p.e(
-                        E.Call{
-                            .target = Expr.assign(p.e(
-                                E.Dot{
-                                    .name = "_load",
-                                    .target = hmr_module_ident,
-                                    .name_loc = logger.Loc.Empty,
-                                },
-                                logger.Loc.Empty,
-                            ), func, p.allocator),
-                        },
-                        logger.Loc.Empty,
-                    ) },
+                    S.SExpr{
+                        .value = p.e(
+                            E.Call{
+                                .target = Expr.assign(
+                                    p.e(
+                                        E.Dot{
+                                            .name = "_load",
+                                            .target = hmr_module_ident,
+                                            .name_loc = logger.Loc.Empty,
+                                        },
+                                        logger.Loc.Empty,
+                                    ),
+                                    func,
+                                    p.allocator,
+                                ),
+                            },
+                            logger.Loc.Empty,
+                        ),
+                    },
                     logger.Loc.Empty,
                 );
 

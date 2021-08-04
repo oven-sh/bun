@@ -332,6 +332,7 @@ pub const Output = struct {
 
 pub const Global = struct {
     pub fn panic(comptime fmt: string, args: anytype) noreturn {
+        @setCold(true);
         if (comptime isWasm) {
             Output.printErrorln(fmt, args);
             Output.flush();
@@ -351,6 +352,8 @@ pub const Global = struct {
     }
 
     inline fn _invariant(comptime fmt: string, args: anytype) noreturn {
+        @setCold(true);
+
         if (comptime isWasm) {
             Output.printErrorln(fmt, args);
             Output.flush();
@@ -363,11 +366,13 @@ pub const Global = struct {
     }
 
     pub fn notimpl() noreturn {
+        @setCold(true);
         Global.panic("Not implemented yet!!!!!", .{});
     }
 
     // Make sure we always print any leftover
     pub fn crash() noreturn {
+        @setCold(true);
         Output.flush();
         std.os.exit(1);
     }

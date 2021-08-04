@@ -18,4 +18,5 @@ pub const isMac = build_target == .native and std.Target.current.os.tag == .maco
 pub const isBrowser = !isWasi and isWasm;
 pub const isWindows = std.Target.current.os.tag == .windows;
 pub const isDebug = std.builtin.Mode.Debug == std.builtin.mode;
+pub const isRelease = std.builtin.Mode.Debug != std.builtin.mode and !isTest;
 pub const isTest = std.builtin.is_test;

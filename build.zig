@@ -146,9 +146,9 @@ pub fn build(b: *std.build.Builder) void {
     });
 
     exe.setOutputDir(output_dir);
-
+    var cwd_dir = std.fs.cwd();
     if (std.builtin.is_test) {
-        var walker = std.fs.walkPath(b.allocator, cwd) catch unreachable;
+        var walker = cwd_dir.walk(std.heap.c_allocator) catch unreachable;
 
         while (walker.next() catch unreachable) |entry| {
             if (std.mem.endsWith(u8, entry.basename, "_test.zig")) {
@@ -187,12 +187,14 @@ pub fn build(b: *std.build.Builder) void {
             },
         ) catch unreachable;
 
-        var bindings_walker = std.fs.walkPath(b.allocator, bindings_dir) catch unreachable;
+        var bindings_dir_ = cwd_dir.openDir(bindings_dir, .{ .iterate = true }) catch unreachable;
+        var bindings_walker = bindings_dir_.walk(b.allocator) catch unreachable;
+
         var bindings_files = std.ArrayList([]const u8).init(b.allocator);
 
         while (bindings_walker.next() catch unreachable) |entry| {
             if (std.mem.eql(u8, std.fs.path.extension(entry.basename), ".o")) {
-                bindings_files.append(b.allocator.dupe(u8, entry.path) catch unreachable) catch unreachable;
+                bindings_files.append(bindings_dir_.realpathAlloc(b.allocator, entry.path) catch unreachable) catch unreachable;
             }
         }
 

@@ -53,8 +53,16 @@ const HeadersMaker = struct {
             remainder = begin[end_struct..];
         }
 
-        _ = std.mem.replace(u8, new_contents, "[*c][*c]JSC__Exception", "*?*JSC__Exception     ", new_contents);
-        _ = std.mem.replace(u8, new_contents, "[*c]?*c_void", "[*c]*c_void", new_contents);
+        const HARDCODE = [_][]const u8{
+            "[*c][*c]JSC__Exception",
+            "*?*JSC__Exception     ",
+            "[*c]?*c_void",
+            "[*c]*c_void",
+        };
+        i = 0;
+        while (i < HARDCODE.len) : (i += 2) {
+            _ = std.mem.replace(u8, new_contents, HARDCODE[i], HARDCODE[i + 1], new_contents);
+        }
 
         const js_value_start = std.mem.indexOf(u8, new_contents, "pub const JSC__JSValue") orelse unreachable;
         const js_value_end = std.mem.indexOf(u8, new_contents[js_value_start..], "\n") orelse unreachable;

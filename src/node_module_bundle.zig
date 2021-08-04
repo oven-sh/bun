@@ -335,7 +335,7 @@ pub const NodeModuleBundle = struct {
     }
 
     pub fn printSummary(this: *const NodeModuleBundle) void {
-        const last = this.bundle.packages.len - 1;
+        const last = std.math.max(this.bundle.packages.len, 1) - 1;
         const indent = comptime "   ";
         for (this.bundle.packages) |pkg, i| {
             const modules = this.bundle.modules[pkg.modules_offset .. pkg.modules_offset + pkg.modules_length];

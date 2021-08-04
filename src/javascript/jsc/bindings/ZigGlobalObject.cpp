@@ -53,6 +53,7 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 extern "C" JSC__JSGlobalObject *Zig__GlobalObject__create(JSClassRef *globalObjectClass, int count,
                                                           void *console_client) {
   std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
+  WTF::initializeMainThread();
   JSC::initialize();
 
   JSC::VM &vm = JSC::VM::create(JSC::LargeHeap).leakRef();

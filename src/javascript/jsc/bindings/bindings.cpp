@@ -437,60 +437,66 @@ void JSC__SourceCode__fromString(JSC__SourceCode *arg0, const WTF__String *arg1,
 
 JSC__JSValue JSC__JSFunction__callWithArguments(JSC__JSValue JSValue0, JSC__JSGlobalObject *arg1,
                                                 JSC__JSValue *arg2, size_t arg3,
-                                                JSC__Exception **arg4, const char *arg5) {
+                                                JSC__Exception **arg4, const unsigned char *arg5) {
   auto args = makeArgs(arg2, arg3);
-  return JSC::JSValue::encode(
-    JSC::call(arg1, JSC::JSValue::decode(JSValue0), JSC::JSValue::decode(JSValue0), args, arg5));
+  return JSC::JSValue::encode(JSC::call(arg1, JSC::JSValue::decode(JSValue0),
+                                        JSC::JSValue::decode(JSValue0), args, (const char *)arg5));
 }
 JSC__JSValue JSC__JSFunction__callWithArgumentsAndThis(JSC__JSValue JSValue0, JSC__JSValue JSValue1,
                                                        JSC__JSGlobalObject *arg2,
                                                        JSC__JSValue *arg3, size_t arg4,
-                                                       JSC__Exception **arg5, const char *arg6) {
+                                                       JSC__Exception **arg5,
+                                                       const unsigned char *arg6) {
   auto args = makeArgs(arg3, arg4);
-  return JSC::JSValue::encode(
-    JSC::call(arg2, JSC::JSValue::decode(JSValue0), JSC::JSValue::decode(JSValue1), args, arg6));
+  return JSC::JSValue::encode(JSC::call(arg2, JSC::JSValue::decode(JSValue0),
+                                        JSC::JSValue::decode(JSValue1), args, (const char *)arg6));
 }
 JSC__JSValue JSC__JSFunction__callWithoutAnyArgumentsOrThis(JSC__JSValue JSValue0,
                                                             JSC__JSGlobalObject *arg1,
                                                             JSC__Exception **arg2,
-                                                            const char *arg3) {
+                                                            const unsigned char *arg3) {
   return JSC::JSValue::encode(JSC::call(arg1, JSC::JSValue::decode(JSValue0),
-                                        JSC::JSValue::decode(JSValue0), JSC::ArgList(), arg3));
+                                        JSC::JSValue::decode(JSValue0), JSC::ArgList(),
+                                        (const char *)arg3));
 }
 JSC__JSValue JSC__JSFunction__callWithThis(JSC__JSValue JSValue0, JSC__JSGlobalObject *arg1,
                                            JSC__JSValue JSValue2, JSC__Exception **arg3,
-                                           const char *arg4) {
+                                           const unsigned char *arg4) {
   return JSC::JSValue::encode(JSC::call(arg1, JSC::JSValue::decode(JSValue0),
-                                        JSC::JSValue::decode(JSValue2), JSC::ArgList(), arg4));
+                                        JSC::JSValue::decode(JSValue2), JSC::ArgList(),
+                                        (const char *)arg4));
 }
 JSC__JSValue JSC__JSFunction__constructWithArguments(JSC__JSValue JSValue0,
                                                      JSC__JSGlobalObject *arg1, JSC__JSValue *arg2,
                                                      size_t arg3, JSC__Exception **arg4,
-                                                     const char *arg5) {
+                                                     const unsigned char *arg5) {
   auto args = makeArgs(arg2, arg3);
-  return JSC::JSValue::encode(JSC::construct(arg1, JSC::JSValue::decode(JSValue0), args, arg5));
+  return JSC::JSValue::encode(
+    JSC::construct(arg1, JSC::JSValue::decode(JSValue0), args, (const char *)arg5));
 }
 
 JSC__JSValue JSC__JSFunction__constructWithArgumentsAndNewTarget(
   JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject *arg2, JSC__JSValue *arg3,
-  size_t arg4, JSC__Exception **arg5, const char *arg6) {
+  size_t arg4, JSC__Exception **arg5, const unsigned char *arg6) {
   auto args = makeArgs(arg3, arg4);
   return JSC::JSValue::encode(JSC::construct(arg2, JSC::JSValue::decode(JSValue0),
-                                             JSC::JSValue::decode(JSValue0), args, arg6));
+                                             JSC::JSValue::decode(JSValue0), args,
+                                             (const char *)arg6));
 }
 JSC__JSValue JSC__JSFunction__constructWithNewTarget(JSC__JSValue JSValue0,
                                                      JSC__JSGlobalObject *arg1,
                                                      JSC__JSValue JSValue2, JSC__Exception **arg3,
-                                                     const char *arg4) {
+                                                     const unsigned char *arg4) {
   return JSC::JSValue::encode(JSC::construct(arg1, JSC::JSValue::decode(JSValue0),
-                                             JSC::JSValue::decode(JSValue2), JSC::ArgList(), arg4));
+                                             JSC::JSValue::decode(JSValue2), JSC::ArgList(),
+                                             (const char *)arg4));
 }
 JSC__JSValue JSC__JSFunction__constructWithoutAnyArgumentsOrNewTarget(JSC__JSValue JSValue0,
                                                                       JSC__JSGlobalObject *arg1,
                                                                       JSC__Exception **arg2,
-                                                                      const char *arg3) {
+                                                                      const unsigned char *arg3) {
   return JSC::JSValue::encode(
-    JSC::construct(arg1, JSC::JSValue::decode(JSValue0), JSC::ArgList(), arg3));
+    JSC::construct(arg1, JSC::JSValue::decode(JSValue0), JSC::ArgList(), (const char *)arg3));
 }
 
 JSC__JSFunction *JSC__JSFunction__createFromNative(JSC__JSGlobalObject *arg0, uint16_t arg1,

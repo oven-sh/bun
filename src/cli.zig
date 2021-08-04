@@ -353,7 +353,7 @@ pub const Cli = struct {
                 clap.parseParam("<POS>...     ") catch unreachable,
             };
 
-            var jsBundleArgs = clap.parse(clap.Help, &params, .{}) catch |err| {
+            var jsBundleArgs = clap.parse(clap.Help, &params, .{ .allocator = allocator }) catch |err| {
                 try NodeModuleBundle.printBundle(std.fs.File, input, @TypeOf(stdout), stdout);
                 return;
             };

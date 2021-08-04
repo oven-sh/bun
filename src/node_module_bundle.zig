@@ -201,9 +201,9 @@ pub const NodeModuleBundle = struct {
         package: *const Api.JavascriptBundledPackage,
         _query: string,
     ) ?u32 {
-        for (this.bundle.modules[package.modules_offset..][0..package.modules_length]) |mod, i| {
+        for (modulesIn(&this.bundle, package)) |mod, i| {
             if (strings.eql(this.str(mod.path), _query)) {
-                return @truncate(u32, i);
+                return @truncate(u32, i + package.modules_offset);
             }
         }
 
@@ -263,7 +263,7 @@ pub const NodeModuleBundle = struct {
             modules,
             finder,
             ModuleFinder.cmpAsc,
-        ) orelse return null);
+        ) orelse return null) + package.modules_offset;
     }
 
     pub fn init(container: Api.JavascriptBundleContainer, allocator: *std.mem.Allocator) NodeModuleBundle {

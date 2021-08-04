@@ -252,7 +252,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
 
                                             const package = &node_modules_bundle.bundle.packages[pkg_id];
 
-                                            if (isDebug) {
+                                            if (comptime isDebug) {
                                                 std.debug.assert(strings.eql(node_modules_bundle.str(package.name), package_json.name));
                                             }
 
@@ -274,6 +274,16 @@ pub fn NewLinker(comptime BundlerType: type) type {
                                                 ) catch {};
                                                 return error.RebuildJSB;
                                             };
+
+                                            if (comptime isDebug) {
+                                                const module_path = node_modules_bundle.str(found_module.path);
+                                                std.debug.assert(
+                                                    strings.eql(
+                                                        module_path,
+                                                        package_relative_path,
+                                                    ),
+                                                );
+                                            }
 
                                             import_record.is_bundled = true;
                                             import_record.path.text = linker.nodeModuleBundleImportPath();

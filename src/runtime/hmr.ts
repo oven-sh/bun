@@ -379,10 +379,12 @@ var __HMRModule, __FastRefreshModule, __HMRClient;
       this.connect();
 
       // Explicitly send a socket close event so the thread doesn't have to wait for a timeout
-      var origUnload = globalThis.onunload;
-      globalThis.onunload = (ev: Event) => {
+      var origUnload = globalThis.onbeforeunload;
+      globalThis.onbeforeunload = (ev: Event) => {
+        this.disableReconnect = true;
+
         if (this.socket && this.socket.readyState === this.socket.OPEN) {
-          this.socket.close(0, "unload");
+          this.socket.close(4990, "unload");
         }
         origUnload && origUnload.call(globalThis, [ev]);
       };
@@ -690,8 +692,10 @@ var __HMRModule, __FastRefreshModule, __HMRClient;
       }
     };
 
+    disableReconnect = false;
+
     handleClose = (event: CloseEvent) => {
-      if (this.reconnect !== 0) {
+      if (this.reconnect !== 0 || this.disableReconnect) {
         return;
       }
 

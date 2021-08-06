@@ -18,8 +18,8 @@ usingnamespace @import("./webcore/response.zig");
 usingnamespace @import("./config.zig");
 usingnamespace @import("./bindings/exports.zig");
 usingnamespace @import("./bindings/bindings.zig");
-
 const Runtime = @import("../../runtime.zig");
+const Router = @import("./api/router.zig");
 
 pub const GlobalClasses = [_]type{
     Request.Class,
@@ -28,6 +28,34 @@ pub const GlobalClasses = [_]type{
     EventListenerMixin.addEventListener(VirtualMachine),
     BuildError.Class,
     ResolveError.Class,
+    Wundle.Class,
+};
+
+pub const Wundle = struct {
+    top_level_dir: string,
+
+    pub const Class = NewClass(
+        void,
+        .{
+            .name = "Wundle",
+            .read_only = true,
+            .ts = .{
+                .module = .{
+                    .path = "speedy.js/router",
+                    .tsdoc = "Filesystem Router supporting dynamic routes, exact routes, catch-all routes, and optional catch-all routes. Implemented in native code and only available with Speedy.js.",
+                },
+            },
+        },
+        .{
+            .match = .{
+                .rfn = Router.match,
+                .ts = Router.match_type_definition,
+            },
+        },
+        .{
+            .Route = Router.Instance.GetClass(void){},
+        },
+    );
 };
 
 pub const LazyClasses = [_]type{};
@@ -317,6 +345,7 @@ pub const VirtualMachine = struct {
 
     pub fn resolve(res: *ErrorableZigString, global: *JSGlobalObject, specifier: ZigString, source: ZigString) void {
         var result = ResolveFunctionResult{ .path = "", .result = null };
+
         _resolve(&result, global, specifier.slice(), source.slice()) catch |err| {
             // This should almost always just apply to dynamic imports
 

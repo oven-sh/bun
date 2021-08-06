@@ -3,12 +3,18 @@ const std = @import("std");
 pub usingnamespace @import("../../global.zig");
 usingnamespace @import("./javascript.zig");
 usingnamespace @import("./webcore/response.zig");
+const Router = @import("./api/router.zig");
 
 const TaggedPointerTypes = @import("../../tagged_pointer.zig");
 const TaggedPointerUnion = TaggedPointerTypes.TaggedPointerUnion;
 
 pub const ExceptionValueRef = [*c]js.JSValueRef;
 pub const JSValueRef = js.JSValueRef;
+
+fn ObjectPtrType(comptime Type: type) type {
+    if (Type == void) return Type;
+    return *Type;
+}
 
 pub const To = struct {
     pub const JS = struct {
@@ -18,11 +24,11 @@ pub const To = struct {
 
         pub fn functionWithCallback(
             comptime ZigContextType: type,
-            zig: *ZigContextType,
+            zig: ObjectPtrType(ZigContextType),
             name: js.JSStringRef,
             ctx: js.JSContextRef,
             comptime callback: fn (
-                obj: *ZigContextType,
+                obj: ObjectPtrType(ZigContextType),
                 ctx: js.JSContextRef,
                 function: js.JSObjectRef,
                 thisObject: js.JSObjectRef,
@@ -41,7 +47,7 @@ pub const To = struct {
         pub fn Finalize(
             comptime ZigContextType: type,
             comptime ctxfn: fn (
-                this: *ZigContextType,
+                this: ObjectPtrType(ZigContextType),
             ) void,
         ) type {
             return struct {
@@ -109,7 +115,7 @@ pub const To = struct {
         pub fn Callback(
             comptime ZigContextType: type,
             comptime ctxfn: fn (
-                obj: *ZigContextType,
+                obj: ObjectPtrType(ZigContextType),
                 ctx: js.JSContextRef,
                 function: js.JSObjectRef,
                 thisObject: js.JSObjectRef,
@@ -131,6 +137,15 @@ pub const To = struct {
                     if (comptime ZigContextType == c_void) {
                         return ctxfn(
                             js.JSObjectGetPrivate(function) or js.jsObjectGetPrivate(thisObject),
+                            ctx,
+                            function,
+                            thisObject,
+                            if (arguments) |args| args[0..argumentCount] else &[_]js.JSValueRef{},
+                            exception,
+                        );
+                    } else if (comptime ZigContextType == void) {
+                        return ctxfn(
+                            void{},
                             ctx,
                             function,
                             thisObject,
@@ -165,32 +180,6 @@ pub const To = struct {
         pub inline fn ptr(comptime StructType: type, obj: js.JSObjectRef) *StructType {
             return GetJSPrivateData(StructType, obj).?;
         }
-    };
-};
-
-pub const RuntimeImports = struct {
-    pub fn resolve(ctx: js.JSContextRef, str: string) ?js.JSObjectRef {
-        switch (ModuleList.Map.get(str) orelse ModuleList.none) {
-            .Router => {
-                const Router = @import("./api/router.zig");
-                return js.JSObjectMake(ctx, Router.Class.get().*, null);
-            },
-            else => {
-                return null;
-            },
-        }
-    }
-
-    pub const ModuleList = enum(u8) {
-        Router = 0,
-        none = std.math.maxInt(u8),
-
-        pub const Map = std.ComptimeStringMap(
-            ModuleList,
-            .{
-                .{ "speedy.js/router", ModuleList.Router },
-            },
-        );
     };
 };
 
@@ -751,6 +740,23 @@ pub fn NewClass(
             }
         };
 
+        pub fn throwInvalidConstructorError(ctx: js.JSContextRef, obj: js.JSObjectRef, c: usize, a: [*c]const js.JSValueRef, exception: js.ExceptionRef) callconv(.C) js.JSObjectRef {
+            JSError(getAllocator(ctx), "" ++ name ++ " is not a constructor", .{}, ctx, exception);
+            return null;
+        }
+
+        pub fn throwInvalidFunctionError(
+            ctx: js.JSContextRef,
+            function: js.JSObjectRef,
+            thisObject: js.JSObjectRef,
+            argumentCount: usize,
+            arguments: [*c]const js.JSValueRef,
+            exception: js.ExceptionRef,
+        ) callconv(.C) js.JSValueRef {
+            JSError(getAllocator(ctx), "" ++ name ++ " is not a function", .{}, ctx, exception);
+            return null;
+        }
+
         pub const Constructor = ConstructorWrapper.rfn;
 
         pub const static_value_count = static_properties.len;
@@ -872,7 +878,7 @@ pub fn NewClass(
                     prop: js.JSStringRef,
                     exception: js.ExceptionRef,
                 ) callconv(.C) js.JSValueRef {
-                    var this = GetJSPrivateData(ZigType, obj) orelse return js.JSValueMakeUndefined(ctx);
+                    var this: ObjectPtrType(ZigType) = if (comptime ZigType == void) void{} else GetJSPrivateData(ZigType, obj) orelse return js.JSValueMakeUndefined(ctx);
 
                     var exc: js.JSValueRef = null;
                     const Field = @TypeOf(@field(
@@ -902,7 +908,7 @@ pub fn NewClass(
 
                             const Func = @typeInfo(@TypeOf(func));
                             const WithPropFn = fn (
-                                *ZigType,
+                                ObjectPtrType(ZigType),
                                 js.JSContextRef,
                                 js.JSObjectRef,
                                 js.JSStringRef,
@@ -910,7 +916,7 @@ pub fn NewClass(
                             ) js.JSValueRef;
 
                             const WithoutPropFn = fn (
-                                *ZigType,
+                                ObjectPtrType(ZigType),
                                 js.JSContextRef,
                                 js.JSObjectRef,
                                 js.ExceptionRef,
@@ -1292,7 +1298,7 @@ pub fn NewClass(
                                 const ctxfn = CtxField.rfn;
                                 const Func: std.builtin.TypeInfo.Fn = @typeInfo(@TypeOf(ctxfn)).Fn;
 
-                                const PointerType = std.meta.Child(Func.args[0].arg_type.?);
+                                const PointerType = if (Func.args[0].arg_type.? == void) void else std.meta.Child(Func.args[0].arg_type.?);
 
                                 var callback = if (Func.calling_convention == .C) ctxfn else To.JS.Callback(
                                     PointerType,
@@ -1361,6 +1367,14 @@ pub fn NewClass(
             def.className = class_name_str;
             // def.getProperty = getPropertyCallback;
 
+            if (def.callAsConstructor == null) {
+                def.callAsConstructor = throwInvalidConstructorError;
+            }
+
+            if (def.callAsFunction == null) {
+                def.callAsFunction = throwInvalidFunctionError;
+            }
+
             if (!singleton)
                 def.hasInstance = customHasInstance;
             return def;
@@ -1422,6 +1436,7 @@ pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     FetchEvent,
     Headers,
     Body,
+    Router,
 });
 
 pub inline fn GetJSPrivateData(comptime Type: type, ref: js.JSObjectRef) ?*Type {

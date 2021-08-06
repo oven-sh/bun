@@ -4,9 +4,11 @@ const Api = @import("../../../api/schema.zig").Api;
 const FilesystemRouter = @import("../../../router.zig");
 const http = @import("../../../http.zig");
 const JavaScript = @import("../javascript.zig");
-
+usingnamespace @import("../bindings/bindings.zig");
 usingnamespace @import("../webcore/response.zig");
 const Router = @This();
+
+const VirtualMachine = JavaScript.VirtualMachine;
 
 route: *const FilesystemRouter.Match,
 file_path_str: js.JSStringRef = null,
@@ -20,16 +22,13 @@ pub fn importRoute(
     arguments: []const js.JSValueRef,
     exception: js.ExceptionRef,
 ) js.JSObjectRef {
-    return JavaScript.VirtualMachine.instance.require(
-        ctx,
-        std.fs.path.dirname(this.route.file_path).?,
-        this.route.file_path,
-        exception,
-    );
+    const prom = JSModuleLoader.loadAndEvaluateModule(VirtualMachine.vm.global, ZigString.init(this.route.file_path));
+    VirtualMachine.vm.global.vm().drainMicrotasks();
+    return prom.result(VirtualMachine.vm.global.vm()).asRef();
 }
 
 pub fn match(
-    obj: *c_void,
+    obj: void,
     ctx: js.JSContextRef,
     function: js.JSObjectRef,
     thisObject: js.JSObjectRef,
@@ -96,10 +95,10 @@ fn createRouteObject(ctx: js.JSContextRef, req: *const http.RequestContext, exce
         .route = route,
     };
 
-    return Class.new(ctx, router);
+    return Instance.make(ctx, router);
 }
 
-const match_type_definition = &[_]d.ts{
+pub const match_type_definition = &[_]d.ts{
     .{
         .tsdoc = "Match a {@link https://developer.mozilla.org/en-US/docs/Web/API/FetchEvent FetchEvent} to a `Route` from the local filesystem. Returns `null` if there is no match.",
         .args = &[_]d.ts.arg{
@@ -131,29 +130,6 @@ const match_type_definition = &[_]d.ts{
         .@"return" = "Route | null",
     },
 };
-
-pub const Class = NewClass(
-    c_void,
-    .{
-        .name = "Router",
-        .read_only = true,
-        .ts = .{
-            .module = .{
-                .path = "speedy.js/router",
-                .tsdoc = "Filesystem Router supporting dynamic routes, exact routes, catch-all routes, and optional catch-all routes. Implemented in native code and only available with Speedy.js.",
-            },
-        },
-    },
-    .{
-        .match = .{
-            .rfn = match,
-            .ts = match_type_definition,
-        },
-    },
-    .{
-        .Route = Instance.GetClass(c_void){},
-    },
-);
 
 pub const Instance = NewClass(
     Router,
@@ -249,16 +225,11 @@ pub fn getFilePath(
     prop: js.JSStringRef,
     exception: js.ExceptionRef,
 ) js.JSValueRef {
-    if (this.file_path_str == null) {
-        this.file_path_str = js.JSStringCreateWithUTF8CString(this.route.file_path.ptr);
-    }
-
-    return js.JSValueMakeString(ctx, this.file_path_str);
+    return ZigString.init(this.route.file_path).toValue(VirtualMachine.vm.global).asRef();
 }
 
 pub fn finalize(
     this: *Router,
-    ctx: js.JSObjectRef,
 ) void {
     // this.deinit();
 }
@@ -270,11 +241,7 @@ pub fn getPathname(
     prop: js.JSStringRef,
     exception: js.ExceptionRef,
 ) js.JSValueRef {
-    if (this.pathname_str == null) {
-        this.pathname_str = js.JSStringCreateWithUTF8CString(this.route.pathname.ptr);
-    }
-
-    return js.JSValueMakeString(ctx, this.pathname_str);
+    return ZigString.init(this.route.pathname).toValue(VirtualMachine.vm.global).asRef();
 }
 
 pub fn getRoute(
@@ -284,8 +251,27 @@ pub fn getRoute(
     prop: js.JSStringRef,
     exception: js.ExceptionRef,
 ) js.JSValueRef {
-    return js.JSValueMakeString(ctx, Properties.Refs.default);
+    return ZigString.init(this.route.name).toValue(VirtualMachine.vm.global).asRef();
 }
+
+const KindEnum = struct {
+    pub const exact = "exact";
+    pub const catch_all = "catch-all";
+    pub const optional_catch_all = "optional-catch-all";
+    pub const dynamic = "dynamic";
+
+    pub fn init(name: string) ZigString {
+        if (strings.contains(name, "[[...")) {
+            return ZigString.init(optional_catch_all);
+        } else if (strings.contains(name, "[...")) {
+            return ZigString.init(catch_all);
+        } else if (strings.contains(name, "[")) {
+            return ZigString.init(dynamic);
+        } else {
+            return ZigString.init(exact);
+        }
+    }
+};
 
 pub fn getKind(
     this: *Router,
@@ -294,7 +280,7 @@ pub fn getKind(
     prop: js.JSStringRef,
     exception: js.ExceptionRef,
 ) js.JSValueRef {
-    return js.JSValueMakeString(ctx, Properties.Refs.default);
+    return KindEnum.init(this.route.name).toValue(VirtualMachine.vm.global).asRef();
 }
 
 pub fn getQuery(
@@ -304,5 +290,5 @@ pub fn getQuery(
     prop: js.JSStringRef,
     exception: js.ExceptionRef,
 ) js.JSValueRef {
-    return js.JSValueMakeString(ctx, Properties.Refs.default);
+    return ZigString.init(this.route.query_string).toValue(VirtualMachine.vm.global).asRef();
 }

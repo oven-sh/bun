@@ -25,9 +25,9 @@ pub fn NewStringBuilder(comptime size: usize) type {
             this.remain = (&this.buffer)[0..size];
         }
 
-        pub fn append(this: *This, str: string) void {
-            std.mem.copy(u8, this.remain, str);
-            this.remain = this.remain[str.len..];
+        pub fn append(this: *This, _str: string) void {
+            std.mem.copy(u8, this.remain, _str);
+            this.remain = this.remain[_str.len..];
         }
 
         pub fn str(this: *This) string {

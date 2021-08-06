@@ -171,6 +171,20 @@ pub fn loadRoutes(
             }
         }
     }
+
+    if (comptime isDebug) {
+        if (comptime is_root) {
+            var i: usize = 0;
+            Output.prettyln("Routes:", .{});
+            while (i < this.routes.routes.len) : (i += 1) {
+                const route = this.routes.routes.get(i);
+
+                Output.prettyln("   {s}: {s}", .{ route.name, route.path });
+            }
+            Output.prettyln("  {d} routes", .{this.routes.routes.len});
+            Output.flush();
+        }
+    }
 }
 
 const TinyPtr = packed struct {
@@ -322,10 +336,12 @@ pub const RouteMap = struct {
             head_i: u16,
             segment_i: u16,
         ) ?Match {
-            var match = this._matchDynamicRoute(head_i, segment_i) orelse return null;
+            if (this.segments.len == 0) return null;
+
+            const _match = this._matchDynamicRoute(head_i, segment_i) orelse return null;
             this.matched_route_name.append("/");
-            this.matched_route_name.append(match.name);
-            return match;
+            this.matched_route_name.append(_match.name);
+            return _match;
         }
 
         fn _matchDynamicRoute(
@@ -335,8 +351,8 @@ pub const RouteMap = struct {
         ) ?Match {
             const start_len = this.params.len;
             var head = this.map.routes.get(head_i);
-            const segment = this.segments[segment_i];
-            const remaining = this.segments[segment_i..];
+            const segment: string = this.segments[segment_i];
+            const remaining: []string = this.segments[segment_i..];
 
             if (remaining.len > 0 and head.children.len == 0) {
                 return null;
@@ -373,18 +389,20 @@ pub const RouteMap = struct {
                 this.params.shrinkRetainingCapacity(start_len);
                 return null;
             } else {
-                match_result = Match{
-                    .path = head.path,
-                    .name = head.name,
-                    .params = this.params,
-                    .hash = head.full_hash,
-                    .query_string = this.url_path.query_string,
-                    .pathname = this.url_path.pathname,
-                };
-
                 if (Fs.FileSystem.DirEntry.EntryStore.instance.at(head.entry_index)) |entry| {
                     var parts = [_]string{ entry.dir, entry.base };
-                    match_result.file_path = Fs.FileSystem.instance.absBuf(&parts, this.matched_route_buf);
+
+                    match_result = Match{
+                        .path = head.path,
+                        .name = head.name,
+                        .params = this.params,
+                        .hash = head.full_hash,
+                        .query_string = this.url_path.query_string,
+                        .pathname = this.url_path.pathname,
+                        .file_path = Fs.FileSystem.instance.absBuf(&parts, &this.matched_route_buf),
+                        .basename = entry.base,
+                    };
+
                     this.matched_route_buf[match_result.file_path.len] = 0;
                 }
             }
@@ -410,7 +428,7 @@ pub const RouteMap = struct {
 
     // This makes many passes over the list of routes
     // However, most of those passes are basically array.indexOf(number) and then smallerArray.indexOf(number)
-    pub fn matchPage(this: *RouteMap, url_path: URLPath, params: *Param.List) ?Match {
+    pub fn matchPage(this: *RouteMap, file_path_buf: []u8, url_path: URLPath, params: *Param.List) ?Match {
         // Trim trailing slash
         var path = url_path.path;
         var redirect = false;
@@ -435,12 +453,22 @@ pub const RouteMap = struct {
             redirect = true;
         }
 
+        if (strings.eqlComptime(path, ".")) {
+            path = "";
+            redirect = false;
+        }
+
         if (path.len == 0) {
             if (this.index) |index| {
+                const entry = Fs.FileSystem.DirEntry.EntryStore.instance.at(this.routes.items(.entry_index)[index]).?;
+                const parts = [_]string{ entry.dir, entry.base };
+
                 return Match{
                     .params = params,
                     .name = "index",
                     .path = this.routes.items(.path)[index],
+                    .file_path = Fs.FileSystem.instance.absBuf(&parts, file_path_buf),
+                    .basename = entry.base,
                     .pathname = url_path.pathname,
                     .hash = index_route_hash,
                     .query_string = url_path.query_string,
@@ -462,12 +490,17 @@ pub const RouteMap = struct {
                 const children = this.routes.items(.hash)[route.children.offset .. route.children.offset + route.children.len];
                 for (children) |child_hash, i| {
                     if (child_hash == index_route_hash) {
+                        const entry = Fs.FileSystem.DirEntry.EntryStore.instance.at(this.routes.items(.entry_index)[i + route.children.offset]).?;
+                        const parts = [_]string{ entry.dir, entry.base };
+
                         return Match{
                             .params = params,
                             .name = this.routes.items(.name)[i],
                             .path = this.routes.items(.path)[i],
                             .pathname = url_path.pathname,
+                            .basename = entry.base,
                             .hash = child_hash,
+                            .file_path = Fs.FileSystem.instance.absBuf(&parts, file_path_buf),
                             .query_string = url_path.query_string,
                         };
                     }
@@ -475,14 +508,18 @@ pub const RouteMap = struct {
                 // It's an exact route, there are no params
                 // /foo/bar => /foo/bar.js
             } else {
+                const entry = Fs.FileSystem.DirEntry.EntryStore.instance.at(route.entry_index).?;
+                const parts = [_]string{ entry.dir, entry.base };
                 return Match{
                     .params = params,
                     .name = route.name,
                     .path = route.path,
                     .redirect_path = if (redirect) path else null,
                     .hash = full_hash,
+                    .basename = entry.base,
                     .pathname = url_path.pathname,
                     .query_string = url_path.query_string,
+                    .file_path = Fs.FileSystem.instance.absBuf(&parts, file_path_buf),
                 };
             }
         }
@@ -517,7 +554,8 @@ pub const RouteMap = struct {
             .url_path = url_path,
         };
 
-        if (ctx.matchDynamicRoute(0, 0)) |dynamic_route| {
+        if (ctx.matchDynamicRoute(0, 0)) |_dynamic_route| {
+            var dynamic_route = _dynamic_route;
             dynamic_route.name = ctx.matched_route_name.str();
             return dynamic_route;
         }
@@ -593,7 +631,7 @@ pub const RoutePart = packed struct {
 };
 
 threadlocal var params_list: Param.List = undefined;
-pub fn match(app: *Router, comptime RequestContextType: type, ctx: *RequestContextType) !void {
+pub fn match(app: *Router, server: anytype, comptime RequestContextType: type, ctx: *RequestContextType) !void {
     // If there's an extname assume it's an asset and not a page
     switch (ctx.url.extname.len) {
         0 => {},
@@ -611,7 +649,7 @@ pub fn match(app: *Router, comptime RequestContextType: type, ctx: *RequestConte
     }
 
     params_list.shrinkRetainingCapacity(0);
-    if (app.routes.matchPage(0, ctx.url, &params_list)) |route| {
+    if (app.routes.matchPage(&ctx.match_file_path_buf, ctx.url, &params_list)) |route| {
         if (route.redirect_path) |redirect| {
             try ctx.handleRedirect(redirect);
             return;
@@ -620,10 +658,20 @@ pub fn match(app: *Router, comptime RequestContextType: type, ctx: *RequestConte
         std.debug.assert(route.path.len > 0);
 
         // ??? render javascript ??
-        try ctx.handleRoute(route);
+
+        if (server.watcher.watchloop_handle == null) {
+            server.watcher.start() catch {};
+        }
+
+        ctx.matched_route = route;
+        RequestContextType.JavaScriptHandler.enqueue(ctx, server) catch {
+            server.javascript_enabled = false;
+        };
     }
 
-    try ctx.handleRequest();
+    if (!ctx.controlled) {
+        try ctx.handleRequest();
+    }
 }
 
 pub const Match = struct {

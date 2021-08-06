@@ -98,7 +98,7 @@
       "name": "Demo Serve",
       "program": "${workspaceFolder}/build/debug/macos-x86_64/esdev",
       "args": [
-        "./src/index.tsx",
+        "pages",
         "--resolve=lazy",
         "--outdir=public",
         "--framework=framework.tsx",

@@ -91,16 +91,18 @@ pub const ZigGlobalObject = extern struct {
         return @call(.{ .modifier = .always_inline }, Interface.onCrash, .{});
     }
 
-    pub const Export = shim.exportFunctions(.{
-        .@"import" = import,
-        .@"resolve" = resolve,
-        .@"fetch" = fetch,
-        // .@"eval" = eval,
-        .@"promiseRejectionTracker" = promiseRejectionTracker,
-        .@"reportUncaughtException" = reportUncaughtException,
-        .@"createImportMetaProperties" = createImportMetaProperties,
-        .@"onCrash" = onCrash,
-    });
+    pub const Export = shim.exportFunctions(
+        .{
+            .@"import" = import,
+            .@"resolve" = resolve,
+            .@"fetch" = fetch,
+            // .@"eval" = eval,
+            .@"promiseRejectionTracker" = promiseRejectionTracker,
+            .@"reportUncaughtException" = reportUncaughtException,
+            .@"createImportMetaProperties" = createImportMetaProperties,
+            .@"onCrash" = onCrash,
+        },
+    );
 
     pub const Extern = [_][]const u8{ "create", "getModuleRegistryMap", "resetModuleRegistryMap" };
 

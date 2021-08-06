@@ -117,6 +117,7 @@ pub const URLPath = struct {
         };
 
         const path = if (question_mark_i < 0) raw_path[1..] else raw_path[1..@intCast(usize, question_mark_i)];
+
         const first_segment = raw_path[1..std.math.min(@intCast(usize, first_segment_end), raw_path.len)];
 
         return URLPath{
@@ -197,6 +198,7 @@ pub const RequestContext = struct {
     matched_route: ?Router.Match = null,
 
     full_url: [:0]const u8 = "",
+    match_file_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined,
     res_headers_count: usize = 0,
 
     pub const bundle_prefix = "__speedy";
@@ -211,6 +213,13 @@ pub const RequestContext = struct {
         }
 
         return this.full_url;
+    }
+
+    pub fn handleRedirect(this: *RequestContext, url: string) !void {
+        this.appendHeader("Location", url);
+        defer this.done();
+        try this.writeStatus(302);
+        try this.flushHeaders();
     }
 
     pub fn header(ctx: *RequestContext, comptime name: anytype) ?Header {
@@ -1685,22 +1694,19 @@ pub const Server = struct {
             req_ctx.keep_alive = false;
         }
 
-        if (req_ctx.url.extname.len == 0 and !RequestContext.JavaScriptHandler.javascript_disabled) {
-            if (server.bundler.options.framework != null) {
-                server.javascript_enabled = true;
-
-                // We want to start this on the main thread
-                if (server.watcher.watchloop_handle == null) {
-                    server.watcher.start() catch {};
+        if (server.bundler.router) |*router| {
+            router.match(server, RequestContext, &req_ctx) catch |err| {
+                switch (err) {
+                    error.ModuleNotFound => {
+                        req_ctx.sendNotFound() catch {};
+                    },
+                    else => {
+                        Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
+                        return;
+                    },
                 }
-
-                RequestContext.JavaScriptHandler.enqueue(&req_ctx, server) catch {
-                    server.javascript_enabled = false;
-                };
-            }
-        }
-
-        if (!req_ctx.controlled) {
+            };
+        } else {
             req_ctx.handleRequest() catch |err| {
                 switch (err) {
                     error.ModuleNotFound => {
@@ -1745,7 +1751,7 @@ pub const Server = struct {
         };
         server.bundler = try Bundler.init(allocator, &server.log, options, null);
         server.bundler.configureLinker();
-        // try server.bundler.configureRouter();
+        try server.bundler.configureRouter();
 
         try server.initWatcher();
 

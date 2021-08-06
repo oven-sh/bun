@@ -1,12 +1,18 @@
 import ReactDOMServer from "react-dom/server.browser";
 
 addEventListener("fetch", async (event: FetchEvent) => {
-  const { Base } = await import("./src/index");
+  var route = Wundle.match(event);
+  const { default: PageComponent } = await import(route.filepath);
+  // const router = Wundle.Router.match(event);
+  // console.log("Route", router.name);
+
+  // const { Base: Page } = await router.import();
 
   const response = new Response(`
   <!DOCTYPE html>
 <html>
   <head>
+    <link rel="stylesheet" href="./src/index.css" />
     <link
       rel="stylesheet"
       crossorigin="anonymous"
@@ -15,7 +21,9 @@ addEventListener("fetch", async (event: FetchEvent) => {
   </head>
   <body>
     <link rel="stylesheet" href="./src/index.css" />
-    <div id="reactroot">${ReactDOMServer.renderToString(<Base />)}</div>
+    <div id="reactroot">${ReactDOMServer.renderToString(
+      <PageComponent />
+    )}</div>
 
     <script src="./src/index.tsx" async type="module"></script>
   </body>

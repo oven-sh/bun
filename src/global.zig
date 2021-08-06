@@ -394,22 +394,22 @@ pub const PathBuilder = struct {
     }
 
     fn load(this: *PathBuilder) void {
-        return @call(.{ .modifier = .always_inline }, StringBuilderType.load, .{this.builder});
+        return @call(.{ .modifier = .always_inline }, StringBuilderType.load, .{&this.builder});
     }
 
-    pub fn append(this: *PathBuilder, str: string) void {
-        return @call(.{ .modifier = .always_inline }, StringBuilderType.append, .{ this.builder, str });
+    pub fn append(this: *PathBuilder, _str: string) void {
+        return @call(.{ .modifier = .always_inline }, StringBuilderType.append, .{ &this.builder, _str });
     }
 
     pub fn pop(this: *PathBuilder, count: usize) void {
-        return @call(.{ .modifier = .always_inline }, StringBuilderType.pop, .{ this.builder, count });
+        return @call(.{ .modifier = .always_inline }, StringBuilderType.pop, .{ &this.builder, count });
     }
 
     pub fn str(this: *PathBuilder) string {
-        return @call(.{ .modifier = .always_inline }, StringBuilderType.str, .{this.builder});
+        return @call(.{ .modifier = .always_inline }, StringBuilderType.str, .{&this.builder});
     }
 
     pub fn reset(this: *PathBuilder) void {
-        return @call(.{ .modifier = .always_inline }, StringBuilderType.reset, .{this.builder});
+        return @call(.{ .modifier = .always_inline }, StringBuilderType.reset, .{&this.builder});
     }
 };

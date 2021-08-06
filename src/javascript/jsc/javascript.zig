@@ -523,18 +523,21 @@ pub const VirtualMachine = struct {
             .BuildError => {
                 defer Output.flush();
                 const build_error = private_data_ptr.as(BuildError);
-                build_error.msg.formatNoWriter(Output.printErrorln);
+                var writer = Output.errorWriter();
+                build_error.msg.formatWriter(@TypeOf(writer), writer, allow_ansi_color) catch {};
                 return true;
             },
             .ResolveError => {
                 defer Output.flush();
                 const resolve_error = private_data_ptr.as(ResolveError);
-                resolve_error.msg.formatNoWriter(Output.printErrorln);
+                var writer = Output.errorWriter();
+                resolve_error.msg.formatWriter(@TypeOf(writer), writer, allow_ansi_color) catch {};
                 return true;
             },
             else => {
                 this.printErrorInstance(@intToEnum(JSValue, @intCast(i64, (@ptrToInt(value)))), allow_ansi_color) catch |err| {
                     if (comptime isDebug) {
+                        // yo dawg
                         Output.printErrorln("Error while printing Error-like object: {s}", .{@errorName(err)});
                         Output.flush();
                     }
@@ -816,15 +819,16 @@ pub const EventListenerMixin = struct {
             .request = Request{ .request_context = request_context },
         };
 
-        var fetch_args: [1]JSValue = undefined;
+        var fetch_args: [1]js.JSObjectRef = undefined;
         var exception: ?*Exception = null;
         const failed_str = "Failed";
         for (listeners.items) |listener_ref| {
             var listener = @intToEnum(JSValue, @intCast(i64, @ptrToInt(listener_ref)));
 
-            fetch_args[0] = JSValue.fromRef(FetchEvent.Class.make(vm.global.ref(), fetch_event));
+            fetch_args[0] = FetchEvent.Class.make(vm.global.ref(), fetch_event);
 
-            var promise = JSPromise.resolvedPromise(vm.global, JSFunction.callWithArguments(listener, vm.global, &fetch_args, 1, &exception, failed_str));
+            var result = js.JSObjectCallAsFunctionReturnValue(vm.global.ref(), listener_ref, null, 1, &fetch_args);
+            var promise = JSPromise.resolvedPromise(vm.global, result);
             vm.global.vm().drainMicrotasks();
 
             if (promise.status(vm.global.vm()) == .Rejected) {
@@ -849,7 +853,7 @@ pub const EventListenerMixin = struct {
             vm.printException(except);
 
             if (!request_context.has_called_done) {
-                request_context.sendInternalError(error.JavaScriptError) catch {};
+                request_context.sendInternalError(error.JavaScriptErrorNeedARealErrorPageSorryAboutThisSeeTheTerminal) catch {};
             }
             return;
         }
@@ -875,7 +879,7 @@ pub const EventListenerMixin = struct {
                 _arguments: [*c]const js.JSValueRef,
                 exception: js.ExceptionRef,
             ) callconv(.C) js.JSValueRef {
-                const arguments = _arguments[0 .. argumentCount - 1];
+                const arguments = _arguments[0..argumentCount];
                 if (arguments.len == 0 or arguments.len == 1 or !js.JSValueIsString(ctx, arguments[0]) or !js.JSValueIsObject(ctx, arguments[arguments.len - 1]) or !js.JSObjectIsFunction(ctx, arguments[arguments.len - 1])) {
                     return js.JSValueMakeUndefined(ctx);
                 }

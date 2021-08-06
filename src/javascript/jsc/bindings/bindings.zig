@@ -1480,6 +1480,13 @@ pub const VM = extern struct {
         return cppFn("deinit", .{ vm, global_object });
     }
 
+    pub fn deleteAllCode(
+        vm: *VM,
+        global_object: *JSGlobalObject,
+    ) void {
+        return cppFn("deleteAllCode", .{ vm, global_object });
+    }
+
     pub fn setExecutionForbidden(vm: *VM, forbidden: bool) void {
         cppFn("setExecutionForbidden", .{ vm, forbidden });
     }
@@ -1522,7 +1529,7 @@ pub const VM = extern struct {
         });
     }
 
-    pub const Extern = [_][]const u8{ "apiLock", "create", "deinit", "setExecutionForbidden", "executionForbidden", "isEntered", "throwError", "drainMicrotasks" };
+    pub const Extern = [_][]const u8{ "deleteAllCode", "apiLock", "create", "deinit", "setExecutionForbidden", "executionForbidden", "isEntered", "throwError", "drainMicrotasks" };
 };
 
 pub const ThrowScope = extern struct {

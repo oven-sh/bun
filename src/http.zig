@@ -33,18 +33,18 @@ const Header = picohttp.Header;
 const Request = picohttp.Request;
 const Response = picohttp.Response;
 pub const Headers = picohttp.Headers;
-pub const MimeType = @import("http/mime_type.zig");
+pub const MimeType = @import("./http/mime_type.zig");
 const Bundler = bundler.ServeBundler;
 const Websocket = @import("./http/websocket.zig");
-const js_printer = @import("js_printer.zig");
+const js_printer = @import("./js_printer.zig");
 const SOCKET_FLAGS = os.SOCK_CLOEXEC;
 const watcher = @import("./watcher.zig");
 threadlocal var req_headers_buf: [100]picohttp.Header = undefined;
 threadlocal var res_headers_buf: [100]picohttp.Header = undefined;
 const sync = @import("./sync.zig");
 const JavaScript = @import("./javascript/jsc/javascript.zig");
-const js = @import("javascript/jsc/javascript.zig");
-usingnamespace @import("javascript/jsc/bindings/bindings.zig");
+usingnamespace @import("./javascript/jsc/bindings/bindings.zig");
+usingnamespace @import("./javascript/jsc/bindings/exports.zig");
 const Router = @import("./router.zig");
 pub const Watcher = watcher.NewWatcher(*Server);
 
@@ -649,6 +649,7 @@ pub const RequestContext = struct {
             framework: Options.Framework,
             existing_bundle: ?*NodeModuleBundle,
             log: ?*logger.Log = null,
+            watcher: *Watcher,
         };
 
         pub const Channel = sync.Channel(*JavaScriptHandler, .{ .Static = 100 });
@@ -657,7 +658,7 @@ pub const RequestContext = struct {
         pub var javascript_disabled = false;
         pub fn spawnThread(handler: HandlerThread) !void {
             var thread = try std.Thread.spawn(.{}, spawn, .{handler});
-            // thread.detach();
+            thread.detach();
         }
 
         pub fn spawn(handler: HandlerThread) void {
@@ -697,14 +698,13 @@ pub const RequestContext = struct {
             const boot = handler.framework.entry_point;
             std.debug.assert(boot.len > 0);
             defer vm.deinit();
-
+            vm.watcher = handler.watcher;
             var resolved_entry_point = try vm.bundler.resolver.resolve(
                 std.fs.path.dirname(boot) orelse vm.bundler.fs.top_level_dir,
                 vm.bundler.normalizeEntryPointPath(boot),
                 .entry_point,
             );
             var load_result = try vm.loadEntryPoint(resolved_entry_point.path_pair.primary.text);
-
             switch (load_result.status(vm.global.vm())) {
                 JSPromise.Status.Fulfilled => {},
                 else => {
@@ -712,7 +712,14 @@ pub const RequestContext = struct {
                         "JavaScript VM failed to start",
                         .{},
                     );
-                    Output.flush();
+                    var result = load_result.result(vm.global.vm());
+
+                    vm.defaultErrorHandler(result);
+
+                    if (channel.tryReadItem() catch null) |item| {
+                        item.ctx.sendInternalError(error.JSFailedToStart) catch {};
+                        item.ctx.arena.deinit();
+                    }
                     return;
                 },
             }
@@ -729,10 +736,14 @@ pub const RequestContext = struct {
         }
 
         pub fn runLoop(vm: *JavaScript.VirtualMachine) !void {
+            var module_map = ZigGlobalObject.getModuleRegistryMap(vm.global);
+
             while (true) {
                 defer {
+                    std.debug.assert(ZigGlobalObject.resetModuleRegistryMap(vm.global, module_map));
                     js_ast.Stmt.Data.Store.reset();
                     js_ast.Expr.Data.Store.reset();
+                    
                 }
                 var handler: *JavaScriptHandler = try channel.readItem();
                 try JavaScript.EventListenerMixin.emitFetchEvent(vm, &handler.ctx);
@@ -755,6 +766,7 @@ pub const RequestContext = struct {
                         .framework = server.bundler.options.framework.?,
                         .existing_bundle = server.bundler.options.node_modules_bundle,
                         .log = &server.log,
+                        .watcher = server.watcher,
                     },
                 );
             }
@@ -1159,7 +1171,7 @@ pub const RequestContext = struct {
             return try ctx.sendJSB();
         }
 
-        if (strings.eqlComptime(ctx.url.path, "_api")) {
+        if (strings.eqlComptime(ctx.url.path, "_api.hmr")) {
             try ctx.handleWebsocket();
             return;
         }
@@ -1228,6 +1240,10 @@ pub const RequestContext = struct {
                     pub fn writeAll(_ctx: *SocketPrinterInternal, bytes: anytype) anyerror!usize {
                         try buffer.append(bytes);
                         return bytes.len;
+                    }
+
+                    pub fn slice(_ctx: *SocketPrinterInternal) string {
+                        return buffer.list.items;
                     }
 
                     pub fn getLastByte(_ctx: *const SocketPrinterInternal) u8 {
@@ -1540,6 +1556,8 @@ pub const Server = struct {
         var header = fbs.getWritten();
         for (events) |event| {
             const file_path = watchlist.items(.file_path)[event.index];
+            const update_count = watchlist.items(.count)[event.index] + 1;
+            watchlist.items(.count)[event.index] = update_count;
 
             // so it's consistent with the rest
             // if we use .extname we might run into an issue with whether or not the "." is included.
@@ -1550,9 +1568,7 @@ pub const Server = struct {
             defer {
                 if (comptime is_javascript_enabled) {
                     // TODO: does this need a lock?
-                    if (RequestContext.JavaScriptHandler.javascript_vm.require_cache.get(id)) |module| {
-                        module.reload_pending = true;
-                    }
+                    RequestContext.JavaScriptHandler.javascript_vm.incrementUpdateCounter(id, update_count);
                 }
             }
             const change_message = Api.WebsocketMessageFileChangeNotification{
@@ -1672,8 +1688,16 @@ pub const Server = struct {
 
         if (req_ctx.url.extname.len == 0 and !RequestContext.JavaScriptHandler.javascript_disabled) {
             if (server.bundler.options.framework != null) {
-                RequestContext.JavaScriptHandler.enqueue(&req_ctx, server) catch unreachable;
-                server.javascript_enabled = !RequestContext.JavaScriptHandler.javascript_disabled;
+                server.javascript_enabled = true;
+
+                // We want to start this on the main thread
+                if (server.watcher.watchloop_handle == null) {
+                    server.watcher.start() catch {};
+                }
+
+                RequestContext.JavaScriptHandler.enqueue(&req_ctx, server) catch {
+                    server.javascript_enabled = false;
+                };
             }
         }
 

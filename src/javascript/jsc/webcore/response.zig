@@ -775,17 +775,14 @@ pub const Body = struct {
                     } else |err| {}
                 }
 
-                var str_ref = js.JSValueToStringCopy(ctx, body_ref, exception);
-                defer js.JSStringRelease(str_ref);
-                const len = js.JSStringGetMaximumUTF8CStringSize(str_ref);
+                var str = JSValue.fromRef(body_ref).toWTFString(VirtualMachine.vm.global);
+                const len = str.length();
                 if (len == 0) {
                     body.value = .{ .String = "" };
                     return body;
                 }
 
-                var str = allocator.alloc(u8, len + 1) catch unreachable;
-
-                body.value = Value{ .String = str[0 .. js.JSStringGetUTF8CString(str_ref, str.ptr, len) - 1] };
+                body.value = Value{ .String = str.characters8()[0..len] };
                 return body;
             },
             .kJSTypeObject => {
@@ -1123,6 +1120,8 @@ pub const FetchEvent = struct {
             return js.JSValueMakeUndefined(ctx);
         };
 
+        defer this.request_context.arena.deinit();
+
         var needs_mime_type = true;
         var content_length: ?usize = null;
         if (response.body.init.headers) |*headers| {
@@ -1166,7 +1165,10 @@ pub const FetchEvent = struct {
                 },
                 .String => |str| {
                     const did_send = this.request_context.writeETag(str) catch false;
-                    if (did_send) return js.JSValueMakeUndefined(ctx);
+                    if (did_send) {
+                        // defer getAllocator(ctx).destroy(str.ptr);
+                        return js.JSValueMakeUndefined(ctx);
+                    }
                 },
                 else => unreachable,
             }
@@ -1182,6 +1184,7 @@ pub const FetchEvent = struct {
                 this.request_context.writeBodyBuf(buf.ptr[buf.offset..buf.byte_len]) catch return js.JSValueMakeUndefined(ctx);
             },
             .String => |str| {
+                // defer getAllocator(ctx).destroy(str.ptr);
                 this.request_context.writeBodyBuf(str) catch return js.JSValueMakeUndefined(ctx);
             },
             else => unreachable,

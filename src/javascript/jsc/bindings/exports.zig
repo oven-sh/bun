@@ -35,6 +35,14 @@ pub const ZigGlobalObject = extern struct {
         return shim.cppFn("create", .{ class_ref, count, console });
     }
 
+    pub fn getModuleRegistryMap(global: *JSGlobalObject) *c_void {
+        return shim.cppFn("getModuleRegistryMap", .{global});
+    }
+
+    pub fn resetModuleRegistryMap(global: *JSGlobalObject, map: *c_void) bool {
+        return shim.cppFn("resetModuleRegistryMap", .{ global, map });
+    }
+
     pub fn import(global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) ErrorableZigString {
         if (comptime is_bindgen) {
             unreachable;
@@ -94,7 +102,7 @@ pub const ZigGlobalObject = extern struct {
         .@"onCrash" = onCrash,
     });
 
-    pub const Extern = [_][]const u8{"create"};
+    pub const Extern = [_][]const u8{ "create", "getModuleRegistryMap", "resetModuleRegistryMap" };
 
     comptime {
         @export(import, .{ .name = Export[0].symbol_name });

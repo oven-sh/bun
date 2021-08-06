@@ -33,8 +33,7 @@ Ref<SourceProvider> SourceProvider::create(ResolvedSource resolvedSource) {
 unsigned SourceProvider::getHash() {
   if (m_hash) { return m_hash; }
 
-  m_hash = WTF::StringHash::hash(WTF::String(WTF::StringImpl::createWithoutCopying(
-    m_resolvedSource.source_code.ptr, m_resolvedSource.source_code.len)));
+  m_hash = WTF::StringHash::hash(m_source.get());
   return m_hash;
 }
 
@@ -103,6 +102,9 @@ void SourceProvider::readOrGenerateByteCodeCache(JSC::VM &vm, const JSC::SourceC
         m_resolvedSource.bytecodecache_fd = 0;
         m_cachedBytecode = JSC::CachedBytecode::create();
       }
+    }
+    // TODO: read the bytecode into a JSC::SourceCode object here
+    case 1: {
     }
   }
 }

@@ -15,6 +15,7 @@
 #include <JavaScriptCore/JSClassRef.h>
 #include <JavaScriptCore/JSInternalPromise.h>
 #include <JavaScriptCore/JSMap.h>
+#include <JavaScriptCore/JSModuleLoader.h>
 #include <JavaScriptCore/JSModuleRecord.h>
 #include <JavaScriptCore/JSNativeStdFunction.h>
 #include <JavaScriptCore/JSObject.h>
@@ -33,6 +34,70 @@
 
 #include <wtf/text/WTFString.h>
 extern "C" {
+
+// This is very naive!
+JSC__JSInternalPromise *JSC__VM__reloadModule(JSC__VM *vm, JSC__JSGlobalObject *arg1,
+                                              ZigString arg2) {
+  return nullptr;
+  // JSC::JSMap *map = JSC::jsDynamicCast<JSC::JSMap *>(
+  //   arg1->vm(), arg1->moduleLoader()->getDirect(
+  //                 arg1->vm(), JSC::Identifier::fromString(arg1->vm(), "registry")));
+
+  // const JSC::Identifier identifier = Zig::toIdentifier(arg2, arg1);
+  // JSC::JSValue val = JSC::identifierToJSValue(arg1->vm(), identifier);
+
+  // if (!map->has(arg1, val)) return nullptr;
+
+  // if (JSC::JSObject *registryEntry =
+  //       JSC::jsDynamicCast<JSC::JSObject *>(arg1->vm(), map->get(arg1, val))) {
+  //   auto moduleIdent = JSC::Identifier::fromString(arg1->vm(), "module");
+  //   if (JSC::JSModuleRecord *record = JSC::jsDynamicCast<JSC::JSModuleRecord *>(
+  //         arg1->vm(), registryEntry->getDirect(arg1->vm(), moduleIdent))) {
+  //     registryEntry->putDirect(arg1->vm(), moduleIdent, JSC::jsUndefined());
+  //     JSC::JSModuleRecord::destroy(static_cast<JSC::JSCell *>(record));
+  //   }
+  //   map->remove(arg1, val);
+  //   return JSC__JSModuleLoader__loadAndEvaluateModule(arg1, arg2);
+  // }
+
+  // return nullptr;
+}
+
+// This is the same as the C API version, except it returns a JSValue which may be a *Exception
+// We want that so we can return stack traces.
+JSC__JSValue JSObjectCallAsFunctionReturnValue(JSContextRef ctx, JSObjectRef object,
+                                               JSObjectRef thisObject, size_t argumentCount,
+                                               const JSValueRef *arguments);
+
+JSC__JSValue JSObjectCallAsFunctionReturnValue(JSContextRef ctx, JSObjectRef object,
+                                               JSObjectRef thisObject, size_t argumentCount,
+                                               const JSValueRef *arguments) {
+  JSC::JSGlobalObject *globalObject = toJS(ctx);
+  JSC::VM &vm = globalObject->vm();
+
+  if (!object) return JSC::JSValue::encode(JSC::JSValue());
+
+  JSC::JSObject *jsObject = toJS(object);
+  JSC::JSObject *jsThisObject = toJS(thisObject);
+
+  if (!jsThisObject) jsThisObject = globalObject->globalThis();
+
+  JSC::MarkedArgumentBuffer argList;
+  for (size_t i = 0; i < argumentCount; i++) argList.append(toJS(globalObject, arguments[i]));
+
+  auto callData = getCallData(vm, jsObject);
+  if (callData.type == JSC::CallData::Type::None) return JSC::JSValue::encode(JSC::JSValue());
+
+  NakedPtr<JSC::Exception> returnedException = nullptr;
+  auto result =
+    JSC::call(globalObject, jsObject, callData, jsThisObject, argList, returnedException);
+
+  if (returnedException.get()) {
+    return JSC::JSValue::encode(JSC::JSValue(returnedException.get()));
+  }
+
+  return JSC::JSValue::encode(result);
+}
 
 #pragma mark - JSC::Exception
 
@@ -95,6 +160,7 @@ size_t JSC__JSString__length(const JSC__JSString *arg0) { return arg0->length();
 JSC__JSObject *JSC__JSString__toObject(JSC__JSString *arg0, JSC__JSGlobalObject *arg1) {
   return arg0->toObject(arg1);
 }
+
 bWTF__String JSC__JSString__value(JSC__JSString *arg0, JSC__JSGlobalObject *arg1) {
   return Wrap<WTF__String, bWTF__String>::wrap(arg0->value(arg1));
 }
@@ -1239,14 +1305,22 @@ JSC__VM *JSC__VM__create(unsigned char HeapType0) {
 
   return vm;
 }
-void JSC__VM__deinit(JSC__VM *arg1, JSC__JSGlobalObject *globalObject) {
-  JSC::VM &vm = reinterpret_cast<JSC::VM &>(arg1);
-  bool protectCountIsZero = vm.heap.unprotect(globalObject);
 
-  if (protectCountIsZero) vm.heap.reportAbandonedObjectGraph();
+void JSC__VM__deleteAllCode(JSC__VM *arg1, JSC__JSGlobalObject *globalObject) {
+  JSC::JSLockHolder locker(globalObject->vm());
 
-  vm.deref();
+  arg1->drainMicrotasks();
+  if (JSC::JSObject *obj =
+        JSC::jsDynamicCast<JSC::JSObject *>(globalObject->vm(), globalObject->moduleLoader())) {
+    auto id = JSC::Identifier::fromString(globalObject->vm(), "registry");
+    JSC::JSMap *map =
+      JSC::JSMap::create(globalObject, globalObject->vm(), globalObject->mapStructure());
+    obj->putDirect(globalObject->vm(), id, map);
+  }
+  arg1->deleteAllCode(JSC::DeleteAllCodeEffort::PreventCollectionAndDeleteAllCode);
+  arg1->heap.reportAbandonedObjectGraph();
 }
+void JSC__VM__deinit(JSC__VM *arg1, JSC__JSGlobalObject *globalObject) {}
 void JSC__VM__drainMicrotasks(JSC__VM *arg0) { arg0->drainMicrotasks(); }
 
 bool JSC__VM__executionForbidden(JSC__VM *arg0) { return (*arg0).executionForbidden(); }

@@ -396,7 +396,7 @@ var __HMRModule, __FastRefreshModule, __HMRClient;
         this.reconnect = 0;
       }
 
-      const baseURL = new URL(location.origin + "/_api");
+      const baseURL = new URL(location.origin + "/_api.hmr");
       baseURL.protocol = location.protocol === "https" ? "wss" : "ws";
       this.socket = new WebSocket(baseURL.toString(), ["speedy-hmr"]);
       this.socket.binaryType = "arraybuffer";

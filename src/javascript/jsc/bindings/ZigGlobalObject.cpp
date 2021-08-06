@@ -8,11 +8,14 @@
 #include <JavaScriptCore/Completion.h>
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/Exception.h>
+#include <JavaScriptCore/HashMapImpl.h>
+#include <JavaScriptCore/HashMapImplInlines.h>
 #include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/InitializeThreading.h>
 #include <JavaScriptCore/JSCast.h>
 #include <JavaScriptCore/JSContextInternal.h>
 #include <JavaScriptCore/JSInternalPromise.h>
+#include <JavaScriptCore/JSMap.h>
 #include <JavaScriptCore/JSModuleLoader.h>
 #include <JavaScriptCore/JSNativeStdFunction.h>
 #include <JavaScriptCore/JSPromise.h>
@@ -33,6 +36,7 @@
 #include <exception>
 #include <iostream>
 
+// #include <JavaScriptCore/CachedType.h>
 #include <JavaScriptCore/JSCallbackObject.h>
 #include <JavaScriptCore/JSClassRef.h>
 
@@ -184,6 +188,59 @@ JSC::JSInternalPromise *GlobalObject::moduleLoaderImportModule(JSGlobalObject *g
   return result;
 }
 
+extern "C" void *Zig__GlobalObject__getModuleRegistryMap(JSC__JSGlobalObject *arg0) {
+  if (JSC::JSObject *loader =
+        JSC::jsDynamicCast<JSC::JSObject *>(arg0->vm(), arg0->moduleLoader())) {
+    JSC::JSMap *map = JSC::jsDynamicCast<JSC::JSMap *>(
+      arg0->vm(),
+      loader->getDirect(arg0->vm(), JSC::Identifier::fromString(arg0->vm(), "registry")));
+
+    JSC::JSMap *cloned = map->clone(arg0, arg0->vm(), arg0->mapStructure());
+    JSC::gcProtect(cloned);
+
+    return cloned;
+  }
+
+  return nullptr;
+}
+
+extern "C" bool Zig__GlobalObject__resetModuleRegistryMap(JSC__JSGlobalObject *globalObject,
+                                                          void *map_ptr) {
+  if (map_ptr == nullptr) return false;
+  JSC::JSMap *map = reinterpret_cast<JSC::JSMap *>(map_ptr);
+
+  if (JSC::JSObject *obj =
+        JSC::jsDynamicCast<JSC::JSObject *>(globalObject->vm(), globalObject->moduleLoader())) {
+    auto identifier = JSC::Identifier::fromString(globalObject->vm(), "registry");
+
+    if (JSC::JSMap *oldMap = JSC::jsDynamicCast<JSC::JSMap *>(
+          globalObject->vm(), obj->getDirect(globalObject->vm(), identifier))) {
+      // Help the GC by releasing the old map.
+      oldMap->clear(globalObject);
+      // forEachInIterable(
+      //   globalObject, oldMap, [&](VM &vm, JSGlobalObject *globalObject, JSValue nextValue) {
+      //     auto scope = DECLARE_THROW_SCOPE(vm);
+      //     JSC::JSValue key = nextObject->getIndex(globalObject, static_cast<unsigned>(0));
+      //     RETURN_IF_EXCEPTION(scope, void());
+
+      //     if (!map->has(globalObject, key)) {
+
+      //       JSC::JSValue value = nextObject->getIndex(globalObject, static_cast<unsigned>(1));
+      //       RETURN_IF_EXCEPTION(scope, void());
+
+      //     }
+      //     scope.release();
+      //   });
+    };
+
+    return obj->putDirect(
+      globalObject->vm(), identifier,
+      map->clone(globalObject, globalObject->vm(), globalObject->mapStructure()));
+  }
+
+  return false;
+}
+
 JSC::JSInternalPromise *GlobalObject::moduleLoaderFetch(JSGlobalObject *globalObject,
                                                         JSModuleLoader *loader, JSValue key,
                                                         JSValue value1, JSValue value2) {
@@ -214,14 +271,13 @@ JSC::JSInternalPromise *GlobalObject::moduleLoaderFetch(JSGlobalObject *globalOb
     RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
   }
 
-  auto code = Zig::toString(res.result.value.source_code);
   auto provider = Zig::SourceProvider::create(res.result.value);
 
   auto jsSourceCode = JSC::JSSourceCode::create(vm, JSC::SourceCode(provider));
 
-  // if (provider.ptr()->isBytecodeCacheEnabled()) {
-  //   provider.ptr()->readOrGenerateByteCodeCache(vm, jsSourceCode->sourceCode());
-  // }
+  if (provider.ptr()->isBytecodeCacheEnabled()) {
+    provider.ptr()->readOrGenerateByteCodeCache(vm, jsSourceCode->sourceCode());
+  }
 
   scope.release();
   promise->resolve(globalObject, jsSourceCode);

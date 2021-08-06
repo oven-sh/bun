@@ -382,6 +382,7 @@ pub const Cli = struct {
             this_bundler.configureLinker();
             var filepath = "node_modules.jsb";
             var node_modules = try bundler.ServeBundler.GenerateNodeModuleBundle.generate(&this_bundler, allocator, filepath);
+
             var elapsed = @divTrunc(std.time.nanoTimestamp() - start_time, @as(i128, std.time.ns_per_ms));
             var bundle = NodeModuleBundle.init(node_modules, allocator);
 

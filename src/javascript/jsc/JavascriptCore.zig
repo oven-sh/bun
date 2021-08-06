@@ -1,3 +1,4 @@
+const cpp = @import("./bindings/bindings.zig");
 const generic = opaque {};
 pub const Private = c_void;
 pub const struct_OpaqueJSContextGroup = generic;
@@ -243,7 +244,11 @@ pub const OpaqueJSClass = struct_OpaqueJSClass;
 pub const OpaqueJSPropertyNameArray = struct_OpaqueJSPropertyNameArray;
 pub const OpaqueJSPropertyNameAccumulator = struct_OpaqueJSPropertyNameAccumulator;
 
-// const JSProcessID = ;
+// This is a workaround for not receiving a JSException* object
+// This function lets us use the C API but returns a plain old JSValue
+// allowing us to have exceptions that include stack traces
+pub extern "c" fn JSObjectCallAsFunctionReturnValue(ctx: JSContextRef, object: JSObjectRef, thisObject: JSObjectRef, argumentCount: usize, arguments: [*c]const JSValueRef) cpp.JSValue;
+
 pub extern fn JSRemoteInspectorDisableAutoStart() void;
 pub extern fn JSRemoteInspectorStart() void;
 // JS_EXPORT void JSRemoteInspectorSetParentProcessInformation(JSProcessID, const uint8_t* auditData, size_t auditLength) JSC_API_AVAILABLE(macos(10.11), ios(9.0));

@@ -14,6 +14,7 @@ pub const WatchItem = struct {
     eventlist_index: u32,
     loader: options.Loader,
     fd: StoredFileDescriptorType,
+    count: u32,
 };
 
 pub const WatchEvent = struct {
@@ -54,7 +55,6 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
         // Internal
         changelist: [128]KEvent = undefined,
-        changed_count: u8 = 0,
 
         // User-facing
         watch_events: [128]WatchEvent = undefined,
@@ -235,6 +235,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 .file_path = if (copy_file_path) try this.allocator.dupe(u8, file_path) else file_path,
                 .fd = fd,
                 .hash = hash,
+                .count = 0,
                 .eventlist_index = @truncate(u32, index),
                 .loader = loader,
             });

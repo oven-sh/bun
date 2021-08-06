@@ -1,7 +1,8 @@
 import ReactDOMServer from "react-dom/server.browser";
-import { Base } from "./src/index";
 
-addEventListener("fetch", (event: FetchEvent) => {
+addEventListener("fetch", async (event: FetchEvent) => {
+  const { Base } = await import("./src/index");
+
   const response = new Response(`
   <!DOCTYPE html>
 <html>

@@ -6,6 +6,7 @@
 namespace JSC {
 class Structure;
 class Identifier;
+class SourceCodeKey;
 
 } // namespace JSC
 
@@ -13,6 +14,7 @@ class Identifier;
 #include <JavaScriptCore/CachedBytecode.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSTypeInfo.h>
+// #include <JavaScriptCore/SourceCodeKey.h>
 #include <JavaScriptCore/SourceProvider.h>
 #include <JavaScriptCore/Structure.h>
 #include <wtf/FileSystem.h>
@@ -35,9 +37,7 @@ class SourceProvider final : public JSC::SourceProvider {
   ~SourceProvider() { commitCachedBytecode(); }
 
   unsigned hash() const { return m_hash; };
-  StringView source() const {
-    return StringView(m_resolvedSource.source_code.ptr, m_resolvedSource.source_code.len);
-  }
+  StringView source() const { return StringView(m_source.get()); }
   RefPtr<JSC::CachedBytecode> cachedBytecode() {
     if (m_resolvedSource.bytecodecache_fd == 0) { return nullptr; }
 
@@ -57,7 +57,10 @@ class SourceProvider final : public JSC::SourceProvider {
   SourceProvider(ResolvedSource resolvedSource, const SourceOrigin &sourceOrigin,
                  WTF::String &&sourceURL, const TextPosition &startPosition,
                  JSC::SourceProviderSourceType sourceType)
-    : Base(sourceOrigin, WTFMove(sourceURL), startPosition, sourceType) {
+    : Base(sourceOrigin, WTFMove(sourceURL), startPosition, sourceType),
+      m_source(
+        *WTF::String(resolvedSource.source_code.ptr, resolvedSource.source_code.len).impl()) {
+
     m_resolvedSource = resolvedSource;
     m_hash = resolvedSource.hash;
     getHash();
@@ -65,6 +68,8 @@ class SourceProvider final : public JSC::SourceProvider {
   unsigned m_hash;
   unsigned getHash();
   RefPtr<JSC::CachedBytecode> m_cachedBytecode;
+  Ref<WTF::StringImpl> m_source;
+  // JSC::SourceCodeKey key;
 };
 
 } // namespace Zig

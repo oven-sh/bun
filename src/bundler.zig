@@ -229,6 +229,26 @@ pub fn NewBundler(cache_files: bool) type {
                 framework.entry_point = try this.allocator.dupe(u8, resolved.path_pair.primary.text);
             }
         }
+
+        pub fn configureFrameworkWithResolveResult(this: *ThisBundler) ?_resolver.Result {
+            if (this.options.framework) |*framework| {
+                var framework_file = this.normalizeEntryPointPath(framework.entry_point);
+                const result = this.resolver.resolve(
+                    this.fs.top_level_dir,
+                    framework_file,
+                    .entry_point,
+                ) catch |err| {
+                    Output.prettyErrorln("Failed to load framework: {s}", .{@errorName(err)});
+                    Output.flush();
+                    this.options.framework = null;
+                    return null;
+                };
+                framework.entry_point = result.path_pair.primary.text;
+                return result;
+            }
+
+            return null;
+        }
         pub fn configureRouter(this: *ThisBundler) !void {
             try this.configureFramework();
 
@@ -379,6 +399,10 @@ pub fn NewBundler(cache_files: bool) type {
 
                 if (bundler.log.level == .verbose) {
                     bundler.resolver.debug_logs = try DebugLogs.init(allocator);
+                }
+
+                if (bundler.configureFrameworkWithResolveResult()) |result| {
+                    try this.resolve_queue.writeItem(result);
                 }
 
                 for (bundler.options.entry_points) |entry_point| {

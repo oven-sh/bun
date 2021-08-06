@@ -92,4 +92,5 @@ const JSErrorCode JSErrorCodeUserErrorCode = 254;
 
 #ifdef __cplusplus
 extern "C" ZigErrorCode Zig_ErrorCodeParserError;
+
 #endif

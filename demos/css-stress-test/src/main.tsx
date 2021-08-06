@@ -12,7 +12,7 @@ export const Main = ({ productName }) => {
         <section className="ProgressSection">
           <p className="Subtitle">
             <span className="Subtitle-part">
-              Ran:&nbsp;<span className="timer"></span>
+              Ran: <span className="timer"></span>
             </span>
           </p>
 
@@ -55,7 +55,7 @@ export const Main = ({ productName }) => {
         <div className="Bundler-container">
           <div className="Bundler">{productName}</div>
           <div className="Bundler-updateRate">
-            Saving a css file every&nbsp;
+            Saving a css file every
             <span className="highlight">
               <span className="interval"></span>ms
             </span>

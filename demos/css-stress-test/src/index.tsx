@@ -1,7 +1,6 @@
 import { Main } from "./main";
 import classNames from "classnames";
-import * as ReactDOM from "react-dom";
-import * as ReactDOMServer from "react-dom/server.browser";
+import ReactDOM from "react-dom";
 
 const Base = ({}) => {
   const name =
@@ -12,19 +11,15 @@ const Base = ({}) => {
 };
 
 function startReact() {
-  ReactDOM.render(<Base />, document.querySelector("#reactroot"));
+  ReactDOM.hydrate(<Base />, document.querySelector("#reactroot"));
 }
 
 if (typeof window !== "undefined") {
-  console.log("HERE!!");
   globalThis.addEventListener("DOMContentLoaded", () => {
     startReact();
   });
 
   startReact();
-} else {
-  console.log("test");
-  console.log(ReactDOMServer.renderToString(<Base />));
 }
 
 export { Base };

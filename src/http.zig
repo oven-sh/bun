@@ -743,7 +743,6 @@ pub const RequestContext = struct {
                     std.debug.assert(ZigGlobalObject.resetModuleRegistryMap(vm.global, module_map));
                     js_ast.Stmt.Data.Store.reset();
                     js_ast.Expr.Data.Store.reset();
-                    
                 }
                 var handler: *JavaScriptHandler = try channel.readItem();
                 try JavaScript.EventListenerMixin.emitFetchEvent(vm, &handler.ctx);
@@ -1568,7 +1567,7 @@ pub const Server = struct {
             defer {
                 if (comptime is_javascript_enabled) {
                     // TODO: does this need a lock?
-                    RequestContext.JavaScriptHandler.javascript_vm.incrementUpdateCounter(id, update_count);
+                    // RequestContext.JavaScriptHandler.javascript_vm.incrementUpdateCounter(id, update_count);
                 }
             }
             const change_message = Api.WebsocketMessageFileChangeNotification{

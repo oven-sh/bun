@@ -12,16 +12,14 @@ pub const eql = std.meta.eql;
 pub fn NewStringBuilder(comptime size: usize) type {
     return struct {
         const This = @This();
-        buffer: [size + 1]u8 = undefined,
+        buffer: [*]u8 = undefined,
         remain: []u8 = undefined,
 
         pub fn init() This {
-            var instance = This{};
-            instance.load();
-            return instance;
+            return This{};
         }
 
-        fn load(this: *This) void {
+        pub fn load(this: *This) void {
             this.remain = (&this.buffer)[0..size];
         }
 

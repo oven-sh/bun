@@ -664,7 +664,7 @@ pub fn joinStringBuf(buf: []u8, _parts: anytype, comptime _platform: Platform) [
     const platform = comptime _platform.resolve();
 
     for (_parts) |part| {
-        if (part.len == 0 or (part.len == 1 and part[1] == '.')) {
+        if (part.len == 0 or (part.len == 1 and part[0] == '.')) {
             continue;
         }
 

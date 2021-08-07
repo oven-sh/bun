@@ -6,12 +6,13 @@
 const Router = @This();
 
 const std = @import("std");
-const DirInfo = @import("./resolver/resolver.zig").DirInfo;
 usingnamespace @import("global.zig");
+
+const DirInfo = @import("./resolver/dir_info.zig");
 const Fs = @import("./fs.zig");
 const Options = @import("./options.zig");
 const allocators = @import("./allocators.zig");
-const URLPath = @import("./http.zig").URLPath;
+const URLPath = @import("./http/url_path.zig");
 
 const index_route_hash = @truncate(u32, std.hash.Wyhash.hash(0, "index"));
 const arbitrary_max_route = 4096;
@@ -118,13 +119,14 @@ pub fn loadRoutes(
 
                         var route: Route = Route.parse(
                             entry.base,
-                            entry.dir[this.config.dir.len..],
+                            Fs.PathName.init(entry.dir[this.config.dir.len..]).dirWithTrailingSlash(),
                             "",
                             entry_ptr.value,
                         );
 
                         route.parent = parent;
-                        route.children.offset = @truncate(u16, this.routes.routes.len);
+
+                        route.children.offset = @truncate(u16, this.routes.routes.len + 1);
                         try this.routes.routes.append(this.allocator, route);
 
                         // potential stack overflow!
@@ -136,7 +138,7 @@ pub fn loadRoutes(
                             false,
                         );
 
-                        this.routes.routes.items(.children)[route.children.offset].len = @truncate(u16, this.routes.routes.len) - route.children.offset;
+                        this.routes.routes.items(.children)[route.children.offset - 1].len = @truncate(u16, this.routes.routes.len) - route.children.offset;
                     }
                 },
 
@@ -149,7 +151,8 @@ pub fn loadRoutes(
                         if (strings.eql(extname[1..], _extname)) {
                             var route = Route.parse(
                                 entry.base,
-                                entry.dir[this.config.dir.len..],
+                                // we extend the pointer length by one to get it's slash
+                                entry.dir.ptr[this.config.dir.len..entry.dir.len],
                                 extname,
                                 entry_ptr.value,
                             );
@@ -217,10 +220,14 @@ pub const Route = struct {
     pub const Ptr = TinyPtr;
 
     pub fn parse(base: string, dir: string, extname: string, entry_index: allocators.IndexType) Route {
-        var parts = [_]string{ dir, base };
+        const ensure_slash = if (dir.len > 0 and dir[dir.len - 1] != '/') "/" else "";
+
+        var parts = [3]string{ dir, ensure_slash, base };
         // this isn't really absolute, it's relative to the pages dir
-        const absolute = Fs.FileSystem.instance.abs(&parts);
+        const absolute = Fs.FileSystem.instance.join(&parts);
         const name = base[0 .. base.len - extname.len];
+        const start_index: usize = if (absolute[0] == '/') 1 else 0;
+        var hash_path = absolute[start_index .. absolute.len - extname.len];
 
         return Route{
             .name = name,
@@ -237,7 +244,7 @@ pub const Route = struct {
                 u32,
                 std.hash.Wyhash.hash(
                     0,
-                    absolute[0 .. absolute.len - extname.len],
+                    hash_path,
                 ),
             ),
             .part = RoutePart.parse(name),
@@ -326,8 +333,7 @@ pub const RouteMap = struct {
         redirect_path: ?string = "",
         url_path: URLPath,
 
-        matched_route_name: PathBuilder = PathBuilder.init(),
-        matched_route_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined,
+        matched_route_buf: []u8 = undefined,
 
         file_path: string = "",
 
@@ -336,31 +342,18 @@ pub const RouteMap = struct {
             head_i: u16,
             segment_i: u16,
         ) ?Match {
-            if (this.segments.len == 0) return null;
-
-            const _match = this._matchDynamicRoute(head_i, segment_i) orelse return null;
-            this.matched_route_name.append("/");
-            this.matched_route_name.append(_match.name);
-            return _match;
-        }
-
-        fn _matchDynamicRoute(
-            this: *MatchContext,
-            head_i: u16,
-            segment_i: u16,
-        ) ?Match {
             const start_len = this.params.len;
             var head = this.map.routes.get(head_i);
-            const segment: string = this.segments[segment_i];
-            const remaining: []string = this.segments[segment_i..];
+            const remaining: []string = this.segments[segment_i + 1 ..];
 
-            if (remaining.len > 0 and head.children.len == 0) {
+            if ((remaining.len > 0 and head.children.len == 0)) {
                 return null;
             }
 
             switch (head.part.tag) {
                 .exact => {
-                    if (this.hashes[segment_i] != head.hash) {
+                    // is it the end of an exact match?
+                    if (!(this.hashes.len > segment_i and this.hashes[segment_i] == head.hash)) {
                         return null;
                     }
                 },
@@ -391,16 +384,17 @@ pub const RouteMap = struct {
             } else {
                 if (Fs.FileSystem.DirEntry.EntryStore.instance.at(head.entry_index)) |entry| {
                     var parts = [_]string{ entry.dir, entry.base };
+                    const file_path = Fs.FileSystem.instance.absBuf(&parts, this.matched_route_buf);
 
                     match_result = Match{
                         .path = head.path,
-                        .name = head.name,
+                        .name = file_path,
                         .params = this.params,
                         .hash = head.full_hash,
                         .query_string = this.url_path.query_string,
                         .pathname = this.url_path.pathname,
-                        .file_path = Fs.FileSystem.instance.absBuf(&parts, &this.matched_route_buf),
                         .basename = entry.base,
+                        .file_path = file_path,
                     };
 
                     this.matched_route_buf[match_result.file_path.len] = 0;
@@ -414,7 +408,7 @@ pub const RouteMap = struct {
                         this.allocator,
                         Param{
                             .key = head.part.str(head.name),
-                            .value = segment,
+                            .value = this.segments[segment_i],
                             .kind = head.part.tag,
                         },
                     ) catch unreachable;
@@ -428,7 +422,7 @@ pub const RouteMap = struct {
 
     // This makes many passes over the list of routes
     // However, most of those passes are basically array.indexOf(number) and then smallerArray.indexOf(number)
-    pub fn matchPage(this: *RouteMap, file_path_buf: []u8, url_path: URLPath, params: *Param.List) ?Match {
+    pub fn matchPage(this: *RouteMap, routes_dir: string, file_path_buf: []u8, url_path: URLPath, params: *Param.List) ?Match {
         // Trim trailing slash
         var path = url_path.path;
         var redirect = false;
@@ -479,24 +473,25 @@ pub const RouteMap = struct {
         }
 
         const full_hash = @truncate(u32, std.hash.Wyhash.hash(0, path));
+        const routes_slice = this.routes.slice();
 
         // Check for an exact match
         // These means there are no params.
-        if (std.mem.indexOfScalar(u32, this.routes.items(.full_hash), full_hash)) |exact_match| {
+        if (std.mem.indexOfScalar(u32, routes_slice.items(.full_hash), full_hash)) |exact_match| {
             const route = this.routes.get(exact_match);
             // It might be a folder with an index route
             // /bacon/index.js => /bacon
             if (route.children.len > 0) {
-                const children = this.routes.items(.hash)[route.children.offset .. route.children.offset + route.children.len];
+                const children = routes_slice.items(.hash)[route.children.offset .. route.children.offset + route.children.len];
                 for (children) |child_hash, i| {
                     if (child_hash == index_route_hash) {
-                        const entry = Fs.FileSystem.DirEntry.EntryStore.instance.at(this.routes.items(.entry_index)[i + route.children.offset]).?;
+                        const entry = Fs.FileSystem.DirEntry.EntryStore.instance.at(routes_slice.items(.entry_index)[i + route.children.offset]).?;
                         const parts = [_]string{ entry.dir, entry.base };
 
                         return Match{
                             .params = params,
-                            .name = this.routes.items(.name)[i],
-                            .path = this.routes.items(.path)[i],
+                            .name = routes_slice.items(.name)[i],
+                            .path = routes_slice.items(.path)[i],
                             .pathname = url_path.pathname,
                             .basename = entry.base,
                             .hash = child_hash,
@@ -528,22 +523,25 @@ pub const RouteMap = struct {
         var segments: []string = segments_buf[0..];
         var hashes: []u32 = segments_hash[0..];
         var segment_i: usize = 0;
-        for (path) |i, c| {
-            if (c == '/') {
-                // if the URL is /foo/./foo
-                // rewrite it as /foo/foo
-                segments[segment_i] = path[last_slash_i..i];
-                hashes[segment_i] = @truncate(u32, std.hash.Wyhash.hash(0, segments[segment_i]));
-
-                if (!(segments[segment_i].len == 1 and segments[segment_i][0] == '.')) {
-                    segment_i += 1;
-                }
-
-                last_slash_i = i + 1;
-            }
+        var splitter = std.mem.tokenize(path, "/");
+        while (splitter.next()) |part| {
+            if (part.len == 0 or (part.len == 1 and part[0] == '.')) continue;
+            segments[segment_i] = part;
+            hashes[segment_i] = @truncate(u32, std.hash.Wyhash.hash(0, part));
+            segment_i += 1;
         }
         segments = segments[0..segment_i];
+        hashes = hashes[0..segment_i];
 
+        // Now, we've established that there is no exact match.
+        // Something will be dynamic
+        // There are three tricky things about this.
+        // 1. It's possible that the correct route is a catch-all route or an optional catch-all route.
+        // 2. Given routes like this:
+        //      * [name]/[id]
+        //      * foo/[id]
+        //    If the URL is /foo/123
+        //    Then the correct route is foo/[id]
         var ctx = MatchContext{
             .params = params,
             .segments = segments,
@@ -552,11 +550,17 @@ pub const RouteMap = struct {
             .redirect_path = if (redirect) path else null,
             .allocator = this.allocator,
             .url_path = url_path,
+            .matched_route_buf = file_path_buf,
         };
 
         if (ctx.matchDynamicRoute(0, 0)) |_dynamic_route| {
+            // route name == the filesystem path relative to the pages dir excluding the file extension
             var dynamic_route = _dynamic_route;
-            dynamic_route.name = ctx.matched_route_name.str();
+            dynamic_route.name = dynamic_route.name[this.config.dir.len..];
+            dynamic_route.name = dynamic_route.name[0 .. dynamic_route.name.len - std.fs.path.extension(dynamic_route.file_path).len];
+            std.debug.assert(dynamic_route.name.len > 0);
+            if (dynamic_route.name[0] == '/') dynamic_route.name = dynamic_route.name[1..];
+
             return dynamic_route;
         }
 
@@ -649,7 +653,8 @@ pub fn match(app: *Router, server: anytype, comptime RequestContextType: type, c
     }
 
     params_list.shrinkRetainingCapacity(0);
-    if (app.routes.matchPage(&ctx.match_file_path_buf, ctx.url, &params_list)) |route| {
+    var filepath_buf = std.mem.span(&ctx.match_file_path_buf);
+    if (app.routes.matchPage(app.config.dir, filepath_buf, ctx.url, &params_list)) |route| {
         if (route.redirect_path) |redirect| {
             try ctx.handleRedirect(redirect);
             return;
@@ -664,7 +669,7 @@ pub fn match(app: *Router, server: anytype, comptime RequestContextType: type, c
         }
 
         ctx.matched_route = route;
-        RequestContextType.JavaScriptHandler.enqueue(ctx, server) catch {
+        RequestContextType.JavaScriptHandler.enqueue(ctx, server, filepath_buf) catch {
             server.javascript_enabled = false;
         };
     }

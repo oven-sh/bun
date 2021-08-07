@@ -195,10 +195,10 @@ const TinyPtr = packed struct {
     len: u16 = 0,
 };
 
-const Param = struct {
-    key: string,
+pub const Param = struct {
+    key: TinyPtr,
     kind: RoutePart.Tag,
-    value: string,
+    value: TinyPtr,
 
     pub const List = std.MultiArrayList(Param);
 };
@@ -404,11 +404,16 @@ pub const RouteMap = struct {
             // Now that we know for sure the route will match, we append the param
             switch (head.part.tag) {
                 .param => {
+                    // account for the slashes
+                    var segment_offset: u16 = segment_i;
+                    for (this.segments[0..segment_i]) |segment| {
+                        segment_offset += @truncate(u16, segment.len);
+                    }
                     this.params.append(
                         this.allocator,
                         Param{
-                            .key = head.part.str(head.name),
-                            .value = this.segments[segment_i],
+                            .key = .{ .offset = head.part.name.offset, .len = head.part.name.len },
+                            .value = .{ .offset = segment_offset, .len = @truncate(u16, this.segments[segment_i].len) },
                             .kind = head.part.tag,
                         },
                     ) catch unreachable;
@@ -669,7 +674,7 @@ pub fn match(app: *Router, server: anytype, comptime RequestContextType: type, c
         }
 
         ctx.matched_route = route;
-        RequestContextType.JavaScriptHandler.enqueue(ctx, server, filepath_buf) catch {
+        RequestContextType.JavaScriptHandler.enqueue(ctx, server, filepath_buf, &params_list) catch {
             server.javascript_enabled = false;
         };
     }

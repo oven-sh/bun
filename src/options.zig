@@ -936,6 +936,8 @@ pub const OutputFile = struct {
         dir: FileDescriptorType = 0,
         is_tmpdir: bool = false,
         is_outdir: bool = false,
+        close_handle_on_complete: bool = false,
+        autowatch: bool = true,
 
         pub fn fromFile(fd: FileDescriptorType, pathname: string) FileOperation {
             return .{

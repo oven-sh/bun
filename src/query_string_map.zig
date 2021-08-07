@@ -2,7 +2,7 @@ const std = @import("std");
 const Api = @import("./api/schema.zig").Api;
 usingnamespace @import("./global.zig");
 
-/// QueryString hash table that does few allocations and preserves the original order
+/// QueryString array-backed hash table that does few allocations and preserves the original order
 pub const QueryStringMap = struct {
     allocator: *std.mem.Allocator,
     slice: string,

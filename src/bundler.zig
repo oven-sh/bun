@@ -1419,7 +1419,8 @@ pub fn NewBundler(cache_files: bool) type {
             return null;
         }
 
-        threadlocal var tmp_buildfile_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        // This is public so it can be used by the HTTP handler when matching against public dir.
+        pub threadlocal var tmp_buildfile_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 
         // We try to be mostly stateless when serving
         // This means we need a slightly different resolver setup
@@ -1440,98 +1441,6 @@ pub fn NewBundler(cache_files: bool) type {
             bundler.log = log;
             bundler.linker.allocator = allocator;
             bundler.resolver.log = log;
-
-            // Resolving a public file has special behavior
-            if (bundler.options.public_dir_enabled) {
-                // On Windows, we don't keep the directory handle open forever because Windows doesn't like that.
-                const public_dir: std.fs.Dir = bundler.options.public_dir_handle orelse std.fs.openDirAbsolute(bundler.options.public_dir, .{}) catch |err| {
-                    log.addErrorFmt(null, logger.Loc.Empty, allocator, "Opening public directory failed: {s}", .{@errorName(err)}) catch unreachable;
-                    Output.printErrorln("Opening public directory failed: {s}", .{@errorName(err)});
-                    bundler.options.public_dir_enabled = false;
-                    return error.PublicDirError;
-                };
-
-                var relative_unrooted_path: []u8 = resolve_path.normalizeString(relative_path, false, .auto);
-
-                var _file: ?std.fs.File = null;
-
-                // Is it the index file?
-                if (relative_unrooted_path.len == 0) {
-                    // std.mem.copy(u8, &tmp_buildfile_buf, relative_unrooted_path);
-                    // std.mem.copy(u8, tmp_buildfile_buf[relative_unrooted_path.len..], "/"
-                    // Search for /index.html
-                    if (public_dir.openFile("index.html", .{})) |file| {
-                        var index_path = "index.html".*;
-                        relative_unrooted_path = &(index_path);
-                        _file = file;
-                        extension = "html";
-                    } else |err| {}
-                    // Okay is it actually a full path?
-                } else {
-                    if (public_dir.openFile(relative_unrooted_path, .{})) |file| {
-                        _file = file;
-                    } else |err| {}
-                }
-
-                // Try some weird stuff.
-                while (_file == null and relative_unrooted_path.len > 1) {
-                    // When no extension is provided, it might be html
-                    if (extension.len == 0) {
-                        std.mem.copy(u8, &tmp_buildfile_buf, relative_unrooted_path[0..relative_unrooted_path.len]);
-                        std.mem.copy(u8, tmp_buildfile_buf[relative_unrooted_path.len..], ".html");
-
-                        if (public_dir.openFile(tmp_buildfile_buf[0 .. relative_unrooted_path.len + ".html".len], .{})) |file| {
-                            _file = file;
-                            extension = "html";
-                            break;
-                        } else |err| {}
-
-                        var _path: []u8 = undefined;
-                        if (relative_unrooted_path[relative_unrooted_path.len - 1] == '/') {
-                            std.mem.copy(u8, &tmp_buildfile_buf, relative_unrooted_path[0 .. relative_unrooted_path.len - 1]);
-                            std.mem.copy(u8, tmp_buildfile_buf[relative_unrooted_path.len - 1 ..], "/index.html");
-                            _path = tmp_buildfile_buf[0 .. relative_unrooted_path.len - 1 + "/index.html".len];
-                        } else {
-                            std.mem.copy(u8, &tmp_buildfile_buf, relative_unrooted_path[0..relative_unrooted_path.len]);
-                            std.mem.copy(u8, tmp_buildfile_buf[relative_unrooted_path.len..], "/index.html");
-
-                            _path = tmp_buildfile_buf[0 .. relative_unrooted_path.len + "/index.html".len];
-                        }
-
-                        if (public_dir.openFile(_path, .{})) |file| {
-                            const __path = _path;
-                            relative_unrooted_path = __path;
-                            extension = "html";
-                            _file = file;
-                            break;
-                        } else |err| {}
-                    }
-
-                    break;
-                }
-
-                if (_file) |*file| {
-                    var stat = try file.stat();
-                    var absolute_path = resolve_path.joinAbs(bundler.options.public_dir, .auto, relative_unrooted_path);
-
-                    if (stat.kind == .SymLink) {
-                        absolute_path = try std.fs.realpath(absolute_path, &tmp_buildfile_buf);
-                        file.close();
-                        file.* = try std.fs.openFileAbsolute(absolute_path, .{ .read = true });
-                        stat = try file.stat();
-                    }
-
-                    if (stat.kind != .File) {
-                        file.close();
-                        return error.NotFile;
-                    }
-
-                    return ServeResult{
-                        .file = options.OutputFile.initFile(file.*, absolute_path, stat.size),
-                        .mime_type = MimeType.byExtension(std.fs.path.extension(absolute_path)[1..]),
-                    };
-                }
-            }
 
             if (strings.eqlComptime(relative_path, "__runtime.js")) {
                 return ServeResult{

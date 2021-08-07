@@ -13,7 +13,8 @@ const Fs = @import("./fs.zig");
 const Options = @import("./options.zig");
 const Css = @import("css_scanner.zig");
 const NodeModuleBundle = @import("./node_module_bundle.zig").NodeModuleBundle;
-
+const resolve_path = @import("./resolver/resolve_path.zig");
+const OutputFile = Options.OutputFile;
 pub fn constStrToU8(s: string) []u8 {
     return @intToPtr([*]u8, @ptrToInt(s.ptr))[0..s.len];
 }
@@ -56,7 +57,8 @@ pub fn println(comptime fmt: string, args: anytype) void {
 }
 
 const HTTPStatusCode = u10;
-pub const URLPath = @import("./http/url_path.zig");
+const URLPath = @import("./http/url_path.zig");
+
 pub const Method = enum {
     GET,
     HEAD,
@@ -162,6 +164,107 @@ pub const RequestContext = struct {
                     return head;
                 }
             }
+        }
+
+        return null;
+    }
+
+    fn matchPublicFolder(this: *RequestContext) ?bundler.ServeResult {
+        if (!this.bundler.options.public_dir_enabled) return null;
+        const relative_path = this.url.path;
+        var extension = this.url.extname;
+        var tmp_buildfile_buf = std.mem.span(&Bundler.tmp_buildfile_buf);
+
+        // On Windows, we don't keep the directory handle open forever because Windows doesn't like that.
+        const public_dir: std.fs.Dir = this.bundler.options.public_dir_handle orelse std.fs.openDirAbsolute(this.bundler.options.public_dir, .{}) catch |err| {
+            this.bundler.log.addErrorFmt(null, logger.Loc.Empty, this.allocator, "Opening public directory failed: {s}", .{@errorName(err)}) catch unreachable;
+            Output.printErrorln("Opening public directory failed: {s}", .{@errorName(err)});
+            this.bundler.options.public_dir_enabled = false;
+            return null;
+        };
+
+        var relative_unrooted_path: []u8 = resolve_path.normalizeString(relative_path, false, .auto);
+
+        var _file: ?std.fs.File = null;
+
+        // Is it the index file?
+        if (relative_unrooted_path.len == 0) {
+            // std.mem.copy(u8, &tmp_buildfile_buf, relative_unrooted_path);
+            // std.mem.copy(u8, tmp_buildfile_buf[relative_unrooted_path.len..], "/"
+            // Search for /index.html
+            if (public_dir.openFile("index.html", .{})) |file| {
+                var index_path = "index.html".*;
+                relative_unrooted_path = &(index_path);
+                _file = file;
+                extension = "html";
+            } else |err| {}
+            // Okay is it actually a full path?
+        } else {
+            if (public_dir.openFile(relative_unrooted_path, .{})) |file| {
+                _file = file;
+            } else |err| {}
+        }
+
+        // Try some weird stuff.
+        while (_file == null and relative_unrooted_path.len > 1) {
+            // When no extension is provided, it might be html
+            if (extension.len == 0) {
+                std.mem.copy(u8, tmp_buildfile_buf, relative_unrooted_path[0..relative_unrooted_path.len]);
+                std.mem.copy(u8, tmp_buildfile_buf[relative_unrooted_path.len..], ".html");
+
+                if (public_dir.openFile(tmp_buildfile_buf[0 .. relative_unrooted_path.len + ".html".len], .{})) |file| {
+                    _file = file;
+                    extension = "html";
+                    break;
+                } else |err| {}
+
+                var _path: []u8 = undefined;
+                if (relative_unrooted_path[relative_unrooted_path.len - 1] == '/') {
+                    std.mem.copy(u8, tmp_buildfile_buf, relative_unrooted_path[0 .. relative_unrooted_path.len - 1]);
+                    std.mem.copy(u8, tmp_buildfile_buf[relative_unrooted_path.len - 1 ..], "/index.html");
+                    _path = tmp_buildfile_buf[0 .. relative_unrooted_path.len - 1 + "/index.html".len];
+                } else {
+                    std.mem.copy(u8, tmp_buildfile_buf, relative_unrooted_path[0..relative_unrooted_path.len]);
+                    std.mem.copy(u8, tmp_buildfile_buf[relative_unrooted_path.len..], "/index.html");
+
+                    _path = tmp_buildfile_buf[0 .. relative_unrooted_path.len + "/index.html".len];
+                }
+
+                if (public_dir.openFile(_path, .{})) |file| {
+                    const __path = _path;
+                    relative_unrooted_path = __path;
+                    extension = "html";
+                    _file = file;
+                    break;
+                } else |err| {}
+            }
+
+            break;
+        }
+
+        if (_file) |*file| {
+            var stat = file.stat() catch return null;
+            var absolute_path = resolve_path.joinAbs(this.bundler.options.public_dir, .auto, relative_unrooted_path);
+
+            if (stat.kind == .SymLink) {
+                absolute_path = std.fs.realpath(absolute_path, &Bundler.tmp_buildfile_buf) catch return null;
+                file.close();
+                file.* = std.fs.openFileAbsolute(absolute_path, .{ .read = true }) catch return null;
+                stat = file.stat() catch return null;
+            }
+
+            if (stat.kind != .File) {
+                file.close();
+                return null;
+            }
+
+            var output_file = OutputFile.initFile(file.*, absolute_path, stat.size);
+            output_file.value.copy.close_handle_on_complete = true;
+            output_file.value.copy.autowatch = false;
+            return bundler.ServeResult{
+                .file = output_file,
+                .mime_type = MimeType.byExtension(std.fs.path.extension(absolute_path)[1..]),
+            };
         }
 
         return null;
@@ -577,6 +680,7 @@ pub const RequestContext = struct {
     pub const JavaScriptHandler = struct {
         ctx: RequestContext,
         conn: tcp.Connection,
+        params: Router.Param.List,
 
         pub var javascript_vm: *JavaScript.VirtualMachine = undefined;
 
@@ -687,13 +791,20 @@ pub const RequestContext = struct {
         }
 
         var one: [1]*JavaScriptHandler = undefined;
-        pub fn enqueue(ctx: *RequestContext, server: *Server, filepath_buf: []u8) !void {
+        pub fn enqueue(ctx: *RequestContext, server: *Server, filepath_buf: []u8, params: *Router.Param.List) !void {
             var clone = try ctx.allocator.create(JavaScriptHandler);
             clone.ctx = ctx.*;
             clone.conn = ctx.conn.*;
             clone.ctx.conn = &clone.conn;
 
-            // it's a dead pointer now
+            if (params.len > 0) {
+                clone.params = try params.clone(ctx.allocator);
+            } else {
+                clone.params = Router.Param.List{};
+            }
+
+            clone.ctx.matched_route.?.params = &clone.params;
+
             clone.ctx.matched_route.?.file_path = filepath_buf[0..ctx.matched_route.?.file_path.len];
             // this copy may be unnecessary, i'm not 100% sure where when
             std.mem.copy(u8, &clone.ctx.match_file_path_buf, filepath_buf[0..ctx.matched_route.?.file_path.len]);
@@ -1107,25 +1218,7 @@ pub const RequestContext = struct {
         }
     }
 
-    pub fn handleGet(ctx: *RequestContext) !void {
-        if (strings.eqlComptime(ctx.url.extname, "jsb") and ctx.bundler.options.node_modules_bundle != null) {
-            return try ctx.sendJSB();
-        }
-
-        if (strings.eqlComptime(ctx.url.path, "_api.hmr")) {
-            try ctx.handleWebsocket();
-            return;
-        }
-
-        // errdefer ctx.auto500();
-
-        const result = try ctx.bundler.buildFile(
-            &ctx.log,
-            ctx.allocator,
-            ctx.url.path,
-            ctx.url.extname,
-        );
-
+    pub fn renderServeResult(ctx: *RequestContext, result: bundler.ServeResult) !void {
         if (ctx.keep_alive) {
             ctx.appendHeader("Connection", "keep-alive");
         }
@@ -1293,19 +1386,29 @@ pub const RequestContext = struct {
             .copy, .move => |file| {
                 // defer std.os.close(file.fd);
                 defer {
-                    if (ctx.watcher.addFile(
-                        file.fd,
-                        result.file.input.text,
-                        Watcher.getHash(result.file.input.text),
-                        result.file.loader,
-                        true,
-                    )) {
-                        if (ctx.watcher.watchloop_handle == null) {
-                            ctx.watcher.start() catch |err| {
-                                Output.prettyErrorln("Failed to start watcher: {s}", .{@errorName(err)});
-                            };
-                        }
-                    } else |err| {}
+                    // for public dir content, we close on completion
+                    if (file.close_handle_on_complete) {
+                        std.debug.assert(!file.autowatch);
+                        std.os.close(file.fd);
+                    }
+
+                    if (file.autowatch) {
+                        // we must never autowatch a file that will be closed
+                        std.debug.assert(!file.close_handle_on_complete);
+                        if (ctx.watcher.addFile(
+                            file.fd,
+                            result.file.input.text,
+                            Watcher.getHash(result.file.input.text),
+                            result.file.loader,
+                            true,
+                        )) {
+                            if (ctx.watcher.watchloop_handle == null) {
+                                ctx.watcher.start() catch |err| {
+                                    Output.prettyErrorln("Failed to start watcher: {s}", .{@errorName(err)});
+                                };
+                            }
+                        } else |err| {}
+                    }
                 }
 
                 // if (result.mime_type.category != .html) {
@@ -1348,6 +1451,7 @@ pub const RequestContext = struct {
                         try ctx.writeStatus(200);
                         try ctx.prepareToSendBody(result.file.size, false);
                         if (!send_body) return;
+
                         _ = try std.os.sendfile(
                             ctx.conn.client.socket.fd,
                             file.fd,
@@ -1389,8 +1493,28 @@ pub const RequestContext = struct {
                 _ = try ctx.writeSocket(buffer, SOCKET_FLAGS);
             },
         }
+    }
 
-        // If we get this far, it means
+    pub fn handleGet(ctx: *RequestContext) !void {
+        if (strings.eqlComptime(ctx.url.extname, "jsb") and ctx.bundler.options.node_modules_bundle != null) {
+            return try ctx.sendJSB();
+        }
+
+        if (strings.eqlComptime(ctx.url.path, "_api.hmr")) {
+            try ctx.handleWebsocket();
+            return;
+        }
+
+        // errdefer ctx.auto500();
+
+        const result = try ctx.bundler.buildFile(
+            &ctx.log,
+            ctx.allocator,
+            ctx.url.path,
+            ctx.url.extname,
+        );
+
+        try @call(.{ .modifier = .always_inline }, RequestContext.renderServeResult, .{ ctx, result });
     }
 
     pub fn handleRequest(ctx: *RequestContext) !void {
@@ -1463,12 +1587,12 @@ pub const Server = struct {
         }
     }
 
-    pub fn onTCPConnection(server: *Server, conn: tcp.Connection) void {
+    pub fn onTCPConnection(server: *Server, conn: tcp.Connection, comptime features: ConnectionFeatures) void {
         conn.client.setNoDelay(true) catch {};
         conn.client.setQuickACK(true) catch {};
         conn.client.setLinger(1) catch {};
 
-        server.handleConnection(&conn);
+        server.handleConnection(&conn, comptime features);
     }
 
     threadlocal var filechange_buf: [32]u8 = undefined;
@@ -1529,7 +1653,7 @@ pub const Server = struct {
         }
     }
 
-    fn run(server: *Server) !void {
+    fn run(server: *Server, comptime features: ConnectionFeatures) !void {
         adjustUlimit() catch {};
         const listener = try tcp.Listener.init(.ip, .{ .close_on_exec = true });
         defer listener.deinit();
@@ -1564,7 +1688,7 @@ pub const Server = struct {
                 continue;
             };
 
-            server.handleConnection(&conn);
+            server.handleConnection(&conn, comptime features);
         }
     }
 
@@ -1574,7 +1698,12 @@ pub const Server = struct {
 
     threadlocal var req_buf: [32_000]u8 = undefined;
 
-    pub fn handleConnection(server: *Server, conn: *tcp.Connection) void {
+    pub const ConnectionFeatures = struct {
+        public_folder: bool = false,
+        filesystem_router: bool = false,
+    };
+
+    pub fn handleConnection(server: *Server, conn: *tcp.Connection, comptime features: ConnectionFeatures) void {
 
         // https://stackoverflow.com/questions/686217/maximum-on-http-header-values
         var read_size = conn.client.read(&req_buf, SOCKET_FLAGS) catch |err| {
@@ -1617,7 +1746,7 @@ pub const Server = struct {
         req_ctx.allocator = &req_ctx.arena.allocator;
         req_ctx.log = logger.Log.init(req_ctx.allocator);
 
-        if (FeatureFlags.keep_alive) {
+        if (comptime FeatureFlags.keep_alive) {
             if (req_ctx.header("Connection")) |connection| {
                 req_ctx.keep_alive = strings.eqlInsensitive(connection.value, "keep-alive");
             }
@@ -1627,8 +1756,54 @@ pub const Server = struct {
             req_ctx.keep_alive = false;
         }
 
-        if (server.bundler.router) |*router| {
-            router.match(server, RequestContext, &req_ctx) catch |err| {
+        if (comptime features.public_folder and features.filesystem_router) {
+            var finished = false;
+            if (req_ctx.matchPublicFolder()) |result| {
+                finished = true;
+                req_ctx.renderServeResult(result) catch |err| {
+                    Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
+                    return;
+                };
+            }
+
+            if (!finished) {
+                req_ctx.bundler.router.?.match(server, RequestContext, &req_ctx) catch |err| {
+                    switch (err) {
+                        error.ModuleNotFound => {
+                            req_ctx.sendNotFound() catch {};
+                        },
+                        else => {
+                            Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
+                            return;
+                        },
+                    }
+                };
+            }
+        } else if (comptime features.public_folder) {
+            var finished = false;
+            if (req_ctx.matchPublicFolder()) |result| {
+                finished = true;
+                req_ctx.renderServeResult(result) catch |err| {
+                    Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
+                    return;
+                };
+            }
+
+            if (!finished) {
+                req_ctx.handleRequest() catch |err| {
+                    switch (err) {
+                        error.ModuleNotFound => {
+                            req_ctx.sendNotFound() catch {};
+                        },
+                        else => {
+                            Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
+                            return;
+                        },
+                    }
+                };
+            }
+        } else if (comptime features.filesystem_router) {
+            req_ctx.bundler.router.?.match(server, RequestContext, &req_ctx) catch |err| {
                 switch (err) {
                     error.ModuleNotFound => {
                         req_ctx.sendNotFound() catch {};
@@ -1688,6 +1863,22 @@ pub const Server = struct {
 
         try server.initWatcher();
 
-        try server.run();
+        if (server.bundler.router != null and server.bundler.options.public_dir_enabled) {
+            try server.run(
+                ConnectionFeatures{ .public_folder = true, .filesystem_router = true },
+            );
+        } else if (server.bundler.router != null) {
+            try server.run(
+                ConnectionFeatures{ .public_folder = false, .filesystem_router = true },
+            );
+        } else if (server.bundler.options.public_dir_enabled) {
+            try server.run(
+                ConnectionFeatures{ .public_folder = true, .filesystem_router = false },
+            );
+        } else {
+            try server.run(
+                ConnectionFeatures{ .public_folder = false, .filesystem_router = false },
+            );
+        }
     }
 };

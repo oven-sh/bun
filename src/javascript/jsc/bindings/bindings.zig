@@ -18,12 +18,39 @@ pub const JSObject = extern struct {
         });
     }
 
+    const InitializeCallback = fn (ctx: ?*c_void, obj: [*c]JSObject, global: [*c]JSGlobalObject) callconv(.C) void;
+    pub fn create(global_object: *JSGlobalObject, length: usize, ctx: *c_void, initializer: InitializeCallback) JSValue {
+        return cppFn("create", .{
+            global_object,
+            length,
+            ctx,
+            initializer,
+        });
+    }
+
+    pub fn Initializer(comptime Ctx: type, comptime func: fn (*Ctx, obj: *JSObject, global: *JSGlobalObject) void) type {
+        return struct {
+            pub fn call(this: ?*c_void, obj: [*c]JSObject, global: [*c]JSGlobalObject) callconv(.C) void {
+                @call(.{ .modifier = .always_inline }, func, .{ @ptrCast(*Ctx, @alignCast(@alignOf(*Ctx), this.?)), obj.?, global.? });
+            }
+        };
+    }
+
+    pub fn createWithInitializer(comptime Ctx: type, creator: *Ctx, global: *JSGlobalObject, length: usize) JSValue {
+        const Type = Initializer(Ctx, Ctx.create);
+        return create(global, length, creator, Type.call);
+    }
+
     pub fn getIndex(this: *JSObject, globalThis: *JSGlobalObject, i: u32) JSValue {
         return cppFn("getIndex", .{
             this,
             globalThis,
             i,
         });
+    }
+
+    pub fn putRecord(this: *JSObject, global: *JSGlobalObject, key: *ZigString, values: [*]ZigString, values_len: usize) void {
+        return cppFn("putRecord", .{ this, global, key, values, values_len });
     }
 
     pub fn getDirect(this: *JSObject, globalThis: *JSGlobalObject, str: ZigString) JSValue {
@@ -44,6 +71,8 @@ pub const JSObject = extern struct {
     }
 
     pub const Extern = [_][]const u8{
+        "putRecord",
+        "create",
         "getArrayLength",
         "getIndex",
         "putAtIndex",
@@ -1126,6 +1155,14 @@ pub const JSValue = enum(i64) {
         return @intToEnum(JSValue, @intCast(i64, @ptrToInt(ptr)));
     }
 
+    pub fn createEmptyObject(global: *JSGlobalObject, len: usize) JSValue {
+        return cppFn("createEmptyObject", .{ global, len });
+    }
+
+    pub fn putRecord(value: JSValue, global: *JSGlobalObject, key: *ZigString, values: [*]ZigString, values_len: usize) void {
+        return cppFn("putRecord", .{ value, global, key, values, values_len });
+    }
+
     pub fn getErrorsProperty(this: JSValue, globalObject: *JSGlobalObject) JSValue {
         return cppFn("getErrorsProperty", .{ this, globalObject });
     }
@@ -1363,7 +1400,7 @@ pub const JSValue = enum(i64) {
         return @intToPtr(*c_void, @intCast(usize, @enumToInt(this)));
     }
 
-    pub const Extern = [_][]const u8{ "asPromise", "isClass", "getNameProperty", "getClassName", "getErrorsProperty", "toInt32", "toBoolean", "isInt32", "isIterable", "forEach", "isAggregateError", "toZigException", "isException", "toWTFString", "hasProperty", "getPropertyNames", "getDirect", "putDirect", "get", "getIfExists", "asString", "asObject", "asNumber", "isError", "jsNull", "jsUndefined", "jsTDZValue", "jsBoolean", "jsDoubleNumber", "jsNumberFromDouble", "jsNumberFromChar", "jsNumberFromU16", "jsNumberFromInt32", "jsNumberFromInt64", "jsNumberFromUint64", "isUndefined", "isNull", "isUndefinedOrNull", "isBoolean", "isAnyInt", "isUInt32AsAnyInt", "isInt32AsAnyInt", "isNumber", "isString", "isBigInt", "isHeapBigInt", "isBigInt32", "isSymbol", "isPrimitive", "isGetterSetter", "isCustomGetterSetter", "isObject", "isCell", "asCell", "toString", "toStringOrNull", "toPropertyKey", "toPropertyKeyValue", "toObject", "toString", "getPrototype", "getPropertyByPropertyName", "eqlValue", "eqlCell", "isCallable" };
+    pub const Extern = [_][]const u8{ "createEmptyObject", "putRecord", "asPromise", "isClass", "getNameProperty", "getClassName", "getErrorsProperty", "toInt32", "toBoolean", "isInt32", "isIterable", "forEach", "isAggregateError", "toZigException", "isException", "toWTFString", "hasProperty", "getPropertyNames", "getDirect", "putDirect", "get", "getIfExists", "asString", "asObject", "asNumber", "isError", "jsNull", "jsUndefined", "jsTDZValue", "jsBoolean", "jsDoubleNumber", "jsNumberFromDouble", "jsNumberFromChar", "jsNumberFromU16", "jsNumberFromInt32", "jsNumberFromInt64", "jsNumberFromUint64", "isUndefined", "isNull", "isUndefinedOrNull", "isBoolean", "isAnyInt", "isUInt32AsAnyInt", "isInt32AsAnyInt", "isNumber", "isString", "isBigInt", "isHeapBigInt", "isBigInt32", "isSymbol", "isPrimitive", "isGetterSetter", "isCustomGetterSetter", "isObject", "isCell", "asCell", "toString", "toStringOrNull", "toPropertyKey", "toPropertyKeyValue", "toObject", "toString", "getPrototype", "getPropertyByPropertyName", "eqlValue", "eqlCell", "isCallable" };
 };
 
 pub const PropertyName = extern struct {

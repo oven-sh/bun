@@ -2,6 +2,7 @@ import ReactDOMServer from "react-dom/server.browser";
 
 addEventListener("fetch", async (event: FetchEvent) => {
   var route = Wundle.match(event);
+  console.log("Route", JSON.stringify(route.query, null, 2));
   const { default: PageComponent } = await import(route.filepath);
   // const router = Wundle.Router.match(event);
   // console.log("Route", router.name);

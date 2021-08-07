@@ -444,6 +444,18 @@ pub fn sortDesc(in: []string) void {
     std.sort.sort([]const u8, in, {}, cmpStringsDesc);
 }
 
+pub fn isASCIIHexDigit(c: u8) bool {
+    return std.ascii.isDigit(c) or std.ascii.isXDigit(c);
+}
+
+pub fn toASCIIHexValue(character: u8) u8 {
+    std.debug.assert(isASCIIHexDigit(character));
+    return switch (character) {
+        0...('A' - 1) => character - '0',
+        else => (character - 'A' + 10) & 0xF,
+    };
+}
+
 pub fn utf8ByteSequenceLength(first_byte: u8) u3 {
     // The switch is optimized much better than a "smart" approach using @clz
     return switch (first_byte) {

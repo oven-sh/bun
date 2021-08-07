@@ -4,6 +4,7 @@ const Api = @import("../../../api/schema.zig").Api;
 const FilesystemRouter = @import("../../../router.zig");
 const http = @import("../../../http.zig");
 const JavaScript = @import("../javascript.zig");
+const QueryStringMap = @import("../../../query_string_map.zig").QueryStringMap;
 usingnamespace @import("../bindings/bindings.zig");
 usingnamespace @import("../webcore/response.zig");
 const Router = @This();
@@ -11,8 +12,7 @@ const Router = @This();
 const VirtualMachine = JavaScript.VirtualMachine;
 
 route: *const FilesystemRouter.Match,
-file_path_str: js.JSStringRef = null,
-pathname_str: js.JSStringRef = null,
+query_string_map: ?QueryStringMap = null,
 
 pub fn importRoute(
     this: *Router,
@@ -231,7 +231,9 @@ pub fn getFilePath(
 pub fn finalize(
     this: *Router,
 ) void {
-    // this.deinit();
+    if (this.query_string_map) |*map| {
+        map.deinit();
+    }
 }
 
 pub fn getPathname(
@@ -283,6 +285,40 @@ pub fn getKind(
     return KindEnum.init(this.route.name).toValue(VirtualMachine.vm.global).asRef();
 }
 
+threadlocal var query_string_values_buf: [256]string = undefined;
+threadlocal var query_string_value_refs_buf: [256]ZigString = undefined;
+pub fn createQueryObject(ctx: js.JSContextRef, map: *QueryStringMap, exception: js.ExceptionRef) callconv(.C) js.JSValueRef {
+    const QueryObjectCreator = struct {
+        query: *QueryStringMap,
+        pub fn create(this: *@This(), obj: *JSObject, global: *JSGlobalObject) void {
+            var iter = this.query.iter();
+            var str: ZigString = undefined;
+            while (iter.next(&query_string_values_buf)) |entry| {
+                str = ZigString.init(entry.name);
+
+                std.debug.assert(entry.values.len > 0);
+                if (entry.values.len > 1) {
+                    var values = query_string_value_refs_buf[0..entry.values.len];
+                    for (entry.values) |value, i| {
+                        values[i] = ZigString.init(value);
+                    }
+                    obj.putRecord(VirtualMachine.vm.global, &str, values.ptr, values.len);
+                } else {
+                    query_string_value_refs_buf[0] = ZigString.init(entry.values[0]);
+
+                    obj.putRecord(VirtualMachine.vm.global, &str, &query_string_value_refs_buf, 1);
+                }
+            }
+        }
+    };
+
+    var creator = QueryObjectCreator{ .query = map };
+
+    var value = JSObject.createWithInitializer(QueryObjectCreator, &creator, VirtualMachine.vm.global, map.getNameCount());
+
+    return value.asRef();
+}
+
 pub fn getQuery(
     this: *Router,
     ctx: js.JSContextRef,
@@ -290,5 +326,16 @@ pub fn getQuery(
     prop: js.JSStringRef,
     exception: js.ExceptionRef,
 ) js.JSValueRef {
-    return ZigString.init(this.route.query_string).toValue(VirtualMachine.vm.global).asRef();
+    if (this.query_string_map == null) {
+        if (QueryStringMap.init(getAllocator(ctx), this.route.query_string)) |map| {
+            this.query_string_map = map;
+        } else |err| {}
+    }
+
+    // If it's still null, the query string has no names.
+    if (this.query_string_map) |*map| {
+        return createQueryObject(ctx, map, exception);
+    } else {
+        return JSValue.createEmptyObject(VirtualMachine.vm.global, 0).asRef();
+    }
 }

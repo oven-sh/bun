@@ -21,6 +21,7 @@
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/JSSet.h>
 #include <JavaScriptCore/JSString.h>
+#include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/ParserError.h>
 #include <JavaScriptCore/ScriptExecutable.h>
 #include <JavaScriptCore/StackFrame.h>
@@ -31,9 +32,109 @@
 #include <wtf/text/StringCommon.h>
 #include <wtf/text/StringImpl.h>
 #include <wtf/text/StringView.h>
-
 #include <wtf/text/WTFString.h>
 extern "C" {
+JSC__JSValue
+JSC__JSObject__create(JSC__JSGlobalObject *globalObject, size_t initialCapacity, void *arg2,
+                      void (*ArgFn3)(void *arg0, JSC__JSObject *arg1, JSC__JSGlobalObject *arg2)) {
+  JSC::JSObject *object =
+    JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), initialCapacity);
+
+  ArgFn3(arg2, object, globalObject);
+
+  return JSC::JSValue::encode(object);
+}
+
+JSC__JSValue JSC__JSValue__createEmptyObject(JSC__JSGlobalObject *globalObject,
+                                             size_t initialCapacity) {
+  return JSC::JSValue::encode(
+    JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), initialCapacity));
+}
+
+void JSC__JSObject__putRecord(JSC__JSObject *object, JSC__JSGlobalObject *global, ZigString *key,
+                              ZigString *values, size_t valuesLen) {
+  auto scope = DECLARE_THROW_SCOPE(global->vm());
+  auto ident = Zig::toIdentifier(*key, global);
+  JSC::PropertyDescriptor descriptor;
+
+  descriptor.setEnumerable(1);
+  descriptor.setConfigurable(1);
+  descriptor.setWritable(1);
+
+  if (valuesLen == 1) {
+    descriptor.setValue(JSC::jsString(global->vm(), Zig::toString(values[0])));
+  } else {
+
+    JSC::JSArray *array = nullptr;
+    {
+      JSC::ObjectInitializationScope initializationScope(global->vm());
+      if ((array = JSC::JSArray::tryCreateUninitializedRestricted(
+             initializationScope, nullptr,
+             global->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
+             valuesLen))) {
+
+        for (size_t i = 0; i < valuesLen; ++i) {
+          array->initializeIndexWithoutBarrier(
+            initializationScope, i, JSC::jsString(global->vm(), Zig::toString(values[i])));
+        }
+      }
+    }
+
+    if (!array) {
+      JSC::throwOutOfMemoryError(global, scope);
+      return;
+    }
+
+    descriptor.setValue(array);
+  }
+
+  object->methodTable(global->vm())->defineOwnProperty(object, global, ident, descriptor, true);
+  object->putDirect(global->vm(), ident, descriptor.value());
+  scope.release();
+}
+void JSC__JSValue__putRecord(JSC__JSValue objectValue, JSC__JSGlobalObject *global, ZigString *key,
+                             ZigString *values, size_t valuesLen) {
+  JSC::JSValue objValue = JSC::JSValue::decode(objectValue);
+  JSC::JSObject *object = objValue.asCell()->getObject();
+  auto scope = DECLARE_THROW_SCOPE(global->vm());
+  auto ident = Zig::toIdentifier(*key, global);
+  JSC::PropertyDescriptor descriptor;
+
+  descriptor.setEnumerable(1);
+  descriptor.setConfigurable(1);
+  descriptor.setWritable(1);
+
+  if (valuesLen == 1) {
+    descriptor.setValue(JSC::jsString(global->vm(), Zig::toString(values[0])));
+  } else {
+
+    JSC::JSArray *array = nullptr;
+    {
+      JSC::ObjectInitializationScope initializationScope(global->vm());
+      if ((array = JSC::JSArray::tryCreateUninitializedRestricted(
+             initializationScope, nullptr,
+             global->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
+             valuesLen))) {
+
+        for (size_t i = 0; i < valuesLen; ++i) {
+          array->initializeIndexWithoutBarrier(
+            initializationScope, i, JSC::jsString(global->vm(), Zig::toString(values[i])));
+        }
+      }
+    }
+
+    if (!array) {
+      JSC::throwOutOfMemoryError(global, scope);
+      return;
+    }
+
+    descriptor.setValue(array);
+  }
+
+  object->methodTable(global->vm())->defineOwnProperty(object, global, ident, descriptor, true);
+  object->putDirect(global->vm(), ident, descriptor.value());
+  scope.release();
+}
 
 // This is very naive!
 JSC__JSInternalPromise *JSC__VM__reloadModule(JSC__VM *vm, JSC__JSGlobalObject *arg1,

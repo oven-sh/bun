@@ -119,7 +119,8 @@ pub const Result = struct {
             return false;
         }
 
-        return r.is_from_node_modules;
+        // If we rely just on isPackagePath, we mess up tsconfig.json baseUrl paths.
+        return r.isLikelyNodeModule();
     }
 
     pub const DebugMeta = struct {

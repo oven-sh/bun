@@ -7015,13 +7015,13 @@ pub fn NewParser(
             if (func.name) |name| {
                 const original_name = p.symbols.items[name.ref.?.inner_index].original_name;
 
-                if (func.flags.is_async and strings.eql(original_name, "await")) {
+                if (func.flags.is_async and strings.eqlComptime(original_name, "await")) {
                     p.log.addRangeError(
                         p.source,
                         js_lexer.rangeOfIdentifier(p.source, name.loc),
                         "An async function cannot be named \"await\"",
                     ) catch unreachable;
-                } else if (kind == .expr and func.flags.is_generator and strings.eql(original_name, "yield")) {
+                } else if (kind == .expr and func.flags.is_generator and strings.eqlComptime(original_name, "yield")) {
                     p.log.addRangeError(
                         p.source,
                         js_lexer.rangeOfIdentifier(p.source, name.loc),

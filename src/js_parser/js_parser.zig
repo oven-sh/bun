@@ -4911,7 +4911,42 @@ pub fn NewParser(
                             }
 
                             try p.lexer.expectOrInsertSemicolon();
-                            return p.s(S.ExportDefault{ .default_name = createDefaultName(p, loc) catch unreachable, .value = js_ast.StmtOrExpr{ .expr = expr } }, loc);
+
+                            // Use the expression name if present, since it's a better name
+                            const default_name: js_ast.LocRef = default_name_getter: {
+                                switch (expr.data) {
+                                    .e_function => |func_container| {
+                                        if (func_container.func.name) |_name| {
+                                            if (_name.ref) |ref| {
+                                                break :default_name_getter LocRef{ .loc = defaultLoc, .ref = ref };
+                                            }
+                                        } else {}
+                                    },
+                                    .e_identifier => |ident| {
+                                        break :default_name_getter LocRef{ .loc = defaultLoc, .ref = ident.ref };
+                                    },
+                                    .e_class => |class| {
+                                        if (class.class_name) |_name| {
+                                            if (_name.ref) |ref| {
+                                                break :default_name_getter LocRef{ .loc = defaultLoc, .ref = ref };
+                                            }
+                                        } else {}
+                                    },
+                                    else => {},
+                                }
+
+                                break :default_name_getter createDefaultName(p, defaultLoc) catch unreachable;
+                            };
+
+                            return p.s(
+                                S.ExportDefault{
+                                    .default_name = default_name,
+                                    .value = js_ast.StmtOrExpr{
+                                        .expr = expr,
+                                    },
+                                },
+                                loc,
+                            );
                         },
                         T.t_asterisk => {
                             if (!opts.is_module_scope and !(opts.is_namespace_scope or !opts.is_typescript_declare)) {

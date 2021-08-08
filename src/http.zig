@@ -1495,15 +1495,21 @@ pub const RequestContext = struct {
         }
     }
 
-    pub fn handleGet(ctx: *RequestContext) !void {
+    pub fn handleReservedRoutes(ctx: *RequestContext) !bool {
         if (strings.eqlComptime(ctx.url.extname, "jsb") and ctx.bundler.options.node_modules_bundle != null) {
-            return try ctx.sendJSB();
+            try ctx.sendJSB();
+            return true;
         }
 
         if (strings.eqlComptime(ctx.url.path, "_api.hmr")) {
             try ctx.handleWebsocket();
-            return;
+            return true;
         }
+
+        return false;
+    }
+
+    pub fn handleGet(ctx: *RequestContext) !void {
 
         // errdefer ctx.auto500();
 
@@ -1756,14 +1762,20 @@ pub const Server = struct {
             req_ctx.keep_alive = false;
         }
 
+        var finished = req_ctx.handleReservedRoutes() catch |err| {
+            Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
+            return;
+        };
+
         if (comptime features.public_folder and features.filesystem_router) {
-            var finished = false;
-            if (req_ctx.matchPublicFolder()) |result| {
-                finished = true;
-                req_ctx.renderServeResult(result) catch |err| {
-                    Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
-                    return;
-                };
+            if (!finished) {
+                if (req_ctx.matchPublicFolder()) |result| {
+                    finished = true;
+                    req_ctx.renderServeResult(result) catch |err| {
+                        Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
+                        return;
+                    };
+                }
             }
 
             if (!finished) {
@@ -1780,13 +1792,14 @@ pub const Server = struct {
                 };
             }
         } else if (comptime features.public_folder) {
-            var finished = false;
-            if (req_ctx.matchPublicFolder()) |result| {
-                finished = true;
-                req_ctx.renderServeResult(result) catch |err| {
-                    Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
-                    return;
-                };
+            if (!finished) {
+                if (req_ctx.matchPublicFolder()) |result| {
+                    finished = true;
+                    req_ctx.renderServeResult(result) catch |err| {
+                        Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
+                        return;
+                    };
+                }
             }
 
             if (!finished) {
@@ -1803,29 +1816,33 @@ pub const Server = struct {
                 };
             }
         } else if (comptime features.filesystem_router) {
-            req_ctx.bundler.router.?.match(server, RequestContext, &req_ctx) catch |err| {
-                switch (err) {
-                    error.ModuleNotFound => {
-                        req_ctx.sendNotFound() catch {};
-                    },
-                    else => {
-                        Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
-                        return;
-                    },
-                }
-            };
+            if (!finished) {
+                req_ctx.bundler.router.?.match(server, RequestContext, &req_ctx) catch |err| {
+                    switch (err) {
+                        error.ModuleNotFound => {
+                            req_ctx.sendNotFound() catch {};
+                        },
+                        else => {
+                            Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
+                            return;
+                        },
+                    }
+                };
+            }
         } else {
-            req_ctx.handleRequest() catch |err| {
-                switch (err) {
-                    error.ModuleNotFound => {
-                        req_ctx.sendNotFound() catch {};
-                    },
-                    else => {
-                        Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
-                        return;
-                    },
-                }
-            };
+            if (!finished) {
+                req_ctx.handleRequest() catch |err| {
+                    switch (err) {
+                        error.ModuleNotFound => {
+                            req_ctx.sendNotFound() catch {};
+                        },
+                        else => {
+                            Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
+                            return;
+                        },
+                    }
+                };
+            }
         }
 
         if (!req_ctx.controlled) {

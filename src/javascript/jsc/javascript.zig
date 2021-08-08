@@ -126,9 +126,6 @@ pub const VirtualMachine = struct {
             vm.console,
         );
         VirtualMachine.vm_loaded = true;
-        std.debug.print("VM IS LOADED {}", .{
-            VirtualMachine.vm_loaded,
-        });
 
         return VirtualMachine.vm;
     }

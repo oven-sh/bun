@@ -132,6 +132,115 @@ pub const QueryStringMap = struct {
         pub const List = std.MultiArrayList(Param);
     };
 
+    pub fn initWithScanner(
+        allocator: *std.mem.Allocator,
+        _scanner: CombinedScanner,
+    ) !?QueryStringMap {
+        var list = Param.List{};
+        var scanner = _scanner;
+
+        var estimated_str_len: usize = 0;
+        var count: usize = 0;
+
+        var nothing_needs_decoding = true;
+
+        while (scanner.pathname.next()) |result| {
+            if (result.name_needs_decoding or result.value_needs_decoding) {
+                nothing_needs_decoding = false;
+            }
+            estimated_str_len += result.name.length + result.value.length;
+            count += 1;
+        }
+
+        std.debug.assert(count > 0); // We should not call initWithScanner when there are no path params
+
+        while (scanner.query.next()) |result| {
+            if (result.name_needs_decoding or result.value_needs_decoding) {
+                nothing_needs_decoding = false;
+            }
+            estimated_str_len += result.name.length + result.value.length;
+            count += 1;
+        }
+
+        if (count == 0) return null;
+
+        try list.ensureTotalCapacity(allocator, count);
+        scanner.reset();
+
+        // this over-allocates
+        // TODO: refactor this to support multiple slices instead of copying the whole thing
+        var buf = try std.ArrayList(u8).initCapacity(allocator, estimated_str_len);
+        var writer = buf.writer();
+        var buf_writer_pos: u32 = 0;
+
+        const Writer = @TypeOf(writer);
+        while (scanner.pathname.next()) |result| {
+            var list_slice = list.slice();
+            var name = result.name;
+            var value = result.value;
+            const name_slice = result.rawName(scanner.pathname.routename);
+
+            name.length = @truncate(u32, name_slice.len);
+            name.offset = buf_writer_pos;
+            try writer.writeAll(name_slice);
+            buf_writer_pos += @truncate(u32, name_slice.len);
+
+            var name_hash: u64 = std.hash.Wyhash.hash(0, name_slice);
+
+            value.length = PercentEncoding.decode(Writer, writer, result.rawValue(scanner.pathname.pathname)) catch continue;
+            value.offset = buf_writer_pos;
+            buf_writer_pos += value.length;
+
+            list.appendAssumeCapacity(Param{ .name = name, .value = value, .name_hash = name_hash });
+        }
+
+        const route_parameter_begin = list.len;
+
+        while (scanner.query.next()) |result| {
+            var list_slice = list.slice();
+
+            var name = result.name;
+            var value = result.value;
+            var name_hash: u64 = undefined;
+            if (result.name_needs_decoding) {
+                name.length = PercentEncoding.decode(Writer, writer, scanner.query.query_string[name.offset..][0..name.length]) catch continue;
+                name.offset = buf_writer_pos;
+                buf_writer_pos += name.length;
+                name_hash = std.hash.Wyhash.hash(0, buf.items[name.offset..][0..name.length]);
+            } else {
+                name_hash = std.hash.Wyhash.hash(0, result.rawName(scanner.query.query_string));
+                if (std.mem.indexOfScalar(u64, list_slice.items(.name_hash), name_hash)) |index| {
+
+                    // query string parameters should not override route parameters
+                    // see https://nextjs.org/docs/routing/dynamic-routes
+                    if (index < route_parameter_begin) {
+                        continue;
+                    }
+
+                    name = list_slice.items(.name)[index];
+                } else {
+                    name.length = PercentEncoding.decode(Writer, writer, scanner.query.query_string[name.offset..][0..name.length]) catch continue;
+                    name.offset = buf_writer_pos;
+                    buf_writer_pos += name.length;
+                }
+            }
+
+            value.length = PercentEncoding.decode(Writer, writer, scanner.query.query_string[value.offset..][0..value.length]) catch continue;
+            value.offset = buf_writer_pos;
+            buf_writer_pos += value.length;
+
+            list.appendAssumeCapacity(Param{ .name = name, .value = value, .name_hash = name_hash });
+        }
+
+        buf.expandToCapacity();
+        return QueryStringMap{
+            .list = list,
+            .buffer = buf.items,
+            .slice = buf.items[0..buf_writer_pos],
+            .allocator = allocator,
+        };
+    }
+
     pub fn init(
         allocator: *std.mem.Allocator,
         query_string: string,
@@ -190,6 +299,7 @@ pub const QueryStringMap = struct {
                 name.length = PercentEncoding.decode(Writer, writer, query_string[name.offset..][0..name.length]) catch continue;
                 name.offset = buf_writer_pos;
                 buf_writer_pos += name.length;
+                name_hash = std.hash.Wyhash.hash(0, buf.items[name.offset..][0..name.length]);
             } else {
                 name_hash = std.hash.Wyhash.hash(0, result.rawName(query_string));
                 if (std.mem.indexOfScalar(u64, list_slice.items(.name_hash), name_hash)) |index| {
@@ -259,16 +369,80 @@ pub const PercentEncoding = struct {
     }
 };
 
+const ParamsList = @import("./router.zig").Param.List;
+pub const CombinedScanner = struct {
+    query: Scanner,
+    pathname: PathnameScanner,
+    pub fn init(query_string: string, pathname: string, routename: string, url_params: *ParamsList) CombinedScanner {
+        return CombinedScanner{
+            .query = Scanner.init(query_string),
+            .pathname = PathnameScanner.init(pathname, routename, url_params),
+        };
+    }
+
+    pub fn reset(this: *CombinedScanner) void {
+        this.query.reset();
+        this.pathname.reset();
+    }
+
+    pub fn next(this: *CombinedScanner) ?Scanner.Result {
+        return this.pathname.next() orelse this.query.next();
+    }
+};
+
+pub const PathnameScanner = struct {
+    params: *ParamsList,
+    pathname: string,
+    routename: string,
+    i: usize = 0,
+
+    pub inline fn isDone(this: *const PathnameScanner) bool {
+        return this.params.len <= this.i;
+    }
+
+    pub fn reset(this: *PathnameScanner) void {
+        this.i = 0;
+    }
+
+    pub fn init(pathname: string, routename: string, params: *ParamsList) PathnameScanner {
+        return PathnameScanner{
+            .pathname = pathname,
+            .routename = routename,
+            .params = params,
+        };
+    }
+
+    pub fn next(this: *PathnameScanner) ?Scanner.Result {
+        if (this.isDone()) {
+            return null;
+        }
+
+        defer this.i += 1;
+        const param = this.params.get(this.i);
+        return Scanner.Result{
+            .name = param.key.toStringPointer(),
+            .name_needs_decoding = false,
+            .value = param.value.toStringPointer(),
+            .value_needs_decoding = std.mem.indexOfScalar(u8, param.value.str(this.pathname), '%') != null,
+        };
+    }
+};
+
 pub const Scanner = struct {
     query_string: string,
     i: usize,
+    start: usize = 0,
 
     pub fn init(query_string: string) Scanner {
         if (query_string.len > 0 and query_string[0] == '?') {
-            return Scanner{ .query_string = query_string, .i = 1 };
+            return Scanner{ .query_string = query_string, .i = 1, .start = 1 };
         }
 
-        return Scanner{ .query_string = query_string, .i = 0 };
+        return Scanner{ .query_string = query_string, .i = 0, .start = 0 };
+    }
+
+    pub inline fn reset(this: *Scanner) void {
+        this.i = this.start;
     }
 
     pub const Result = struct {

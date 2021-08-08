@@ -5,6 +5,7 @@
 // All it does is resolve URL paths to the appropriate entry point and parse URL params/query.
 const Router = @This();
 
+const Api = @import("./api/schema.zig").Api;
 const std = @import("std");
 usingnamespace @import("global.zig");
 
@@ -193,6 +194,13 @@ pub fn loadRoutes(
 const TinyPtr = packed struct {
     offset: u16 = 0,
     len: u16 = 0,
+
+    pub inline fn str(this: TinyPtr, slice: string) string {
+        return if (this.len > 0) slice[this.offset .. this.offset + this.len] else "";
+    }
+    pub inline fn toStringPointer(this: TinyPtr) Api.StringPointer {
+        return Api.StringPointer{ .offset = this.offset, .length = this.len };
+    }
 };
 
 pub const Param = struct {
@@ -667,8 +675,6 @@ pub fn match(app: *Router, server: anytype, comptime RequestContextType: type, c
 
         std.debug.assert(route.path.len > 0);
 
-        // ??? render javascript ??
-
         if (server.watcher.watchloop_handle == null) {
             server.watcher.start() catch {};
         }
@@ -701,4 +707,8 @@ pub const Match = struct {
     params: *Param.List,
     redirect_path: ?string = null,
     query_string: string = "",
+
+    pub fn pathnameWithoutLeadingSlash(this: *const Match) string {
+        return std.mem.trimLeft(u8, this.pathname, "/");
+    }
 };

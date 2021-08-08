@@ -5,6 +5,7 @@ const FilesystemRouter = @import("../../../router.zig");
 const http = @import("../../../http.zig");
 const JavaScript = @import("../javascript.zig");
 const QueryStringMap = @import("../../../query_string_map.zig").QueryStringMap;
+const CombinedScanner = @import("../../../query_string_map.zig").CombinedScanner;
 usingnamespace @import("../bindings/bindings.zig");
 usingnamespace @import("../webcore/response.zig");
 const Router = @This();
@@ -327,9 +328,21 @@ pub fn getQuery(
     exception: js.ExceptionRef,
 ) js.JSValueRef {
     if (this.query_string_map == null) {
-        if (QueryStringMap.init(getAllocator(ctx), this.route.query_string)) |map| {
-            this.query_string_map = map;
-        } else |err| {}
+        if (this.route.params.len > 0) {
+            if (QueryStringMap.initWithScanner(getAllocator(ctx), CombinedScanner.init(
+                this.route.query_string,
+                this.route.pathnameWithoutLeadingSlash(),
+                this.route.name,
+
+                this.route.params,
+            ))) |map| {
+                this.query_string_map = map;
+            } else |err| {}
+        } else {
+            if (QueryStringMap.init(getAllocator(ctx), this.route.query_string)) |map| {
+                this.query_string_map = map;
+            } else |err| {}
+        }
     }
 
     // If it's still null, the query string has no names.

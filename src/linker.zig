@@ -384,6 +384,8 @@ pub fn NewLinker(comptime BundlerType: type) type {
                 };
             }
 
+            // This is a bad idea
+            // I don't think it's safe to do this
             const ImportStatementSorter = struct {
                 import_records: []ImportRecord,
                 pub fn lessThan(ctx: @This(), lhs: js_ast.Stmt, rhs: js_ast.Stmt) bool {

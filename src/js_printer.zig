@@ -1150,6 +1150,7 @@ pub fn NewPrinter(
                     p.printSpaceBeforeIdentifier();
                     p.print("class");
                     if (e.class_name) |name| {
+                        p.maybePrintSpace();
                         p.printSymbol(name.ref orelse Global.panic("internal error: expected E.Class's name symbol to have a ref\n{s}", .{e}));
                         p.maybePrintSpace();
                     }

@@ -4620,17 +4620,24 @@ pub fn NewParser(
             }
 
             var is_identifier = p.lexer.token == .t_identifier;
-            var is_strict_modereserved_word = is_identifier and js_lexer.StrictModeReservedWords.has(p.lexer.identifier);
 
-            if (!opts.is_name_optional or (is_identifier and !is_strict_modereserved_word)) {
+            if (!opts.is_name_optional or (is_identifier and (!is_typescript_enabled or !strings.eqlComptime(p.lexer.identifier, "interface")))) {
                 var name_loc = p.lexer.loc();
                 var name_text = p.lexer.identifier;
-                if (is_strict_modereserved_word) {
-                    try p.lexer.unexpected();
+                try p.lexer.expect(.t_identifier);
+
+                // We must return here
+                // or the lexer will crash loop!
+                // example:
+                // export class {}
+                if (!is_identifier) {
                     return error.SyntaxError;
                 }
 
-                try p.lexer.expect(.t_identifier);
+                if (p.fn_or_arrow_data_parse.allow_await != .allow_ident and strings.eqlComptime(name_text, "await")) {
+                    try p.log.addRangeError(p.source, p.lexer.range(), "Cannot use \"await\" as an identifier here");
+                }
+
                 name = LocRef{ .loc = name_loc, .ref = null };
                 if (!opts.is_typescript_declare) {
                     (name orelse unreachable).ref = p.declareSymbol(.class, name_loc, name_text) catch unreachable;
@@ -11981,7 +11988,9 @@ pub fn NewParser(
                     }
 
                     // We must relocate vars in order to safely handle removing if/else depending on NODE_ENV.
-                    if (data.kind == .k_var) {
+                    // Edgecase:
+                    //  `export var` is skipped because it's unnecessary. That *should* be a noop, but it loses the `is_export` flag if we're in HMR.
+                    if (data.kind == .k_var and !data.is_export) {
                         const relocated = p.maybeRelocateVarsToTopLevel(data.decls, .normal);
                         if (relocated.ok) {
                             if (relocated.stmt) |new_stmt| {

@@ -456,39 +456,90 @@ pub const ImportScanner = struct {
                     try p.recordExport(st.default_name.loc, "default", st.default_name.ref.?);
                     // Rewrite this export to be:
                     // exports.default =
+                    // But only if it's anonymous
                     if (p.options.features.hot_module_reloading) {
-                        var exports_default_ident = p.e(E.Dot{ .target = p.e(E.Identifier{ .ref = p.hmr_module_ref }, stmt.loc), .name = "default", .name_loc = st.default_name.loc }, stmt.loc);
 
                         // export default can be:
                         // - an expression
                         // - a function
                         // - a class
-                        switch (st.value) {
-                            .expr => |ex| {
-                                stmt = Expr.assignStmt(exports_default_ident, ex, p.allocator);
-                            },
-                            .stmt => |class_or_func| {
-                                switch (class_or_func.data) {
-                                    .s_function => |func| {
-                                        // convert this to an E.Function
-                                        stmt = Expr.assignStmt(exports_default_ident, p.e(E.Function{ .func = func.func }, stmt.loc), p.allocator);
-                                    },
-                                    .s_class => |class| {
-                                        stmt = Expr.assignStmt(exports_default_ident, p.e(
-                                            E.Class{
-                                                .class_keyword = class.class.class_keyword,
-                                                .ts_decorators = class.class.ts_decorators,
-                                                .class_name = class.class.class_name,
-                                                .extends = class.class.extends,
-                                                .body_loc = class.class.body_loc,
-                                                .properties = class.class.properties,
-                                            },
-                                            stmt.loc,
-                                        ), p.allocator);
-                                    },
-                                    else => unreachable,
-                                }
-                            },
+                        // it cannot be a declaration!
+                        // we want to avoid adding a new name
+                        // but we must remove the export default clause.
+                        transform_export_default_when_its_anonymous: {
+                            switch (st.value) {
+                                .expr => |ex| {
+                                    switch (ex.data) {
+                                        .e_identifier => {
+                                            continue;
+                                        },
+                                        .e_function => |func| {
+                                            if (func.func.name) |name_ref| {
+                                                if (name_ref.ref != null) {
+                                                    stmt = p.s(S.Function{ .func = func.func }, ex.loc);
+                                                    break :transform_export_default_when_its_anonymous;
+                                                }
+                                            }
+                                        },
+                                        .e_class => |class| {
+                                            if (class.class_name) |name_ref| {
+                                                if (name_ref.ref != null) {
+                                                    stmt = p.s(
+                                                        S.Class{
+                                                            .class = class.*,
+                                                        },
+                                                        ex.loc,
+                                                    );
+                                                    break :transform_export_default_when_its_anonymous;
+                                                }
+                                            }
+                                        },
+                                        else => {},
+                                    }
+                                    const exports_default_ident = p.e(E.Dot{ .target = p.e(E.Identifier{ .ref = p.hmr_module_ref }, stmt.loc), .name = "default", .name_loc = st.default_name.loc }, stmt.loc);
+
+                                    stmt = Expr.assignStmt(exports_default_ident, ex, p.allocator);
+                                },
+                                .stmt => |class_or_func| {
+                                    switch (class_or_func.data) {
+                                        .s_function => |func| {
+                                            if (func.func.name) |name_ref| {
+                                                if (name_ref.ref != null) {
+                                                    stmt = class_or_func;
+                                                    break :transform_export_default_when_its_anonymous;
+                                                }
+                                            }
+
+                                            // convert this to an E.Function
+                                            const exports_default_ident = p.e(E.Dot{ .target = p.e(E.Identifier{ .ref = p.hmr_module_ref }, stmt.loc), .name = "default", .name_loc = st.default_name.loc }, stmt.loc);
+
+                                            stmt = Expr.assignStmt(exports_default_ident, p.e(E.Function{ .func = func.func }, stmt.loc), p.allocator);
+                                        },
+                                        .s_class => |class| {
+                                            if (class.class.class_name) |name_ref| {
+                                                if (name_ref.ref != null) {
+                                                    stmt = class_or_func;
+                                                    break :transform_export_default_when_its_anonymous;
+                                                }
+                                            }
+
+                                            const exports_default_ident = p.e(E.Dot{ .target = p.e(E.Identifier{ .ref = p.hmr_module_ref }, stmt.loc), .name = "default", .name_loc = st.default_name.loc }, stmt.loc);
+                                            stmt = Expr.assignStmt(exports_default_ident, p.e(
+                                                E.Class{
+                                                    .class_keyword = class.class.class_keyword,
+                                                    .ts_decorators = class.class.ts_decorators,
+                                                    .class_name = class.class.class_name,
+                                                    .extends = class.class.extends,
+                                                    .body_loc = class.class.body_loc,
+                                                    .properties = class.class.properties,
+                                                },
+                                                stmt.loc,
+                                            ), p.allocator);
+                                        },
+                                        else => unreachable,
+                                    }
+                                },
+                            }
                         }
                     }
                 },

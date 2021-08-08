@@ -3,7 +3,7 @@ usingnamespace @import("./headers.zig");
 pub const Shimmer = @import("./shimmer.zig").Shimmer;
 const hasRef = std.meta.trait.hasField("ref");
 const C_API = @import("../JavaScriptCore.zig");
-
+const StringPointer = @import("../../../api/schema.zig").Api.StringPointer;
 pub const JSObject = extern struct {
     pub const shim = Shimmer("JSC", "JSObject", @This());
     bytes: shim.Bytes,
@@ -88,6 +88,13 @@ pub const ZigString = extern struct {
 
     pub const name = "ZigString";
     pub const namespace = "";
+
+    pub fn fromStringPointer(ptr: StringPointer, buf: string, to: *ZigString) void {
+        to.* = ZigString{
+            .len = ptr.length,
+            .ptr = buf[ptr.offset..ptr.length].ptr,
+        };
+    }
 
     pub fn init(slice_: []const u8) ZigString {
         return ZigString{ .ptr = slice_.ptr, .len = slice_.len };
@@ -1194,6 +1201,14 @@ pub const JSValue = enum(i64) {
         return cppFn("jsDoubleNumber", .{i});
     }
 
+    pub fn createStringArray(globalThis: *JSGlobalObject, str: [*c]ZigString, strings_count: usize) JSValue {
+        return cppFn("createStringArray", .{
+            globalThis,
+            str,
+            strings_count,
+        });
+    }
+
     pub fn jsNumberFromDouble(i: f64) JSValue {
         return cppFn("jsNumberFromDouble", .{i});
     }
@@ -1400,7 +1415,7 @@ pub const JSValue = enum(i64) {
         return @intToPtr(*c_void, @intCast(usize, @enumToInt(this)));
     }
 
-    pub const Extern = [_][]const u8{ "createEmptyObject", "putRecord", "asPromise", "isClass", "getNameProperty", "getClassName", "getErrorsProperty", "toInt32", "toBoolean", "isInt32", "isIterable", "forEach", "isAggregateError", "toZigException", "isException", "toWTFString", "hasProperty", "getPropertyNames", "getDirect", "putDirect", "get", "getIfExists", "asString", "asObject", "asNumber", "isError", "jsNull", "jsUndefined", "jsTDZValue", "jsBoolean", "jsDoubleNumber", "jsNumberFromDouble", "jsNumberFromChar", "jsNumberFromU16", "jsNumberFromInt32", "jsNumberFromInt64", "jsNumberFromUint64", "isUndefined", "isNull", "isUndefinedOrNull", "isBoolean", "isAnyInt", "isUInt32AsAnyInt", "isInt32AsAnyInt", "isNumber", "isString", "isBigInt", "isHeapBigInt", "isBigInt32", "isSymbol", "isPrimitive", "isGetterSetter", "isCustomGetterSetter", "isObject", "isCell", "asCell", "toString", "toStringOrNull", "toPropertyKey", "toPropertyKeyValue", "toObject", "toString", "getPrototype", "getPropertyByPropertyName", "eqlValue", "eqlCell", "isCallable" };
+    pub const Extern = [_][]const u8{ "createStringArray", "createEmptyObject", "putRecord", "asPromise", "isClass", "getNameProperty", "getClassName", "getErrorsProperty", "toInt32", "toBoolean", "isInt32", "isIterable", "forEach", "isAggregateError", "toZigException", "isException", "toWTFString", "hasProperty", "getPropertyNames", "getDirect", "putDirect", "get", "getIfExists", "asString", "asObject", "asNumber", "isError", "jsNull", "jsUndefined", "jsTDZValue", "jsBoolean", "jsDoubleNumber", "jsNumberFromDouble", "jsNumberFromChar", "jsNumberFromU16", "jsNumberFromInt32", "jsNumberFromInt64", "jsNumberFromUint64", "isUndefined", "isNull", "isUndefinedOrNull", "isBoolean", "isAnyInt", "isUInt32AsAnyInt", "isInt32AsAnyInt", "isNumber", "isString", "isBigInt", "isHeapBigInt", "isBigInt32", "isSymbol", "isPrimitive", "isGetterSetter", "isCustomGetterSetter", "isObject", "isCell", "asCell", "toString", "toStringOrNull", "toPropertyKey", "toPropertyKeyValue", "toObject", "toString", "getPrototype", "getPropertyByPropertyName", "eqlValue", "eqlCell", "isCallable" };
 };
 
 pub const PropertyName = extern struct {

@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const Fs = @import("../../fs.zig");
-const resolver = @import("../../resolver/resolver.zig");
+const Resolver = @import("../../resolver/resolver.zig");
 const ast = @import("../../import_record.zig");
 const NodeModuleBundle = @import("../../node_module_bundle.zig").NodeModuleBundle;
 const logger = @import("../../logger.zig");
@@ -20,6 +20,7 @@ usingnamespace @import("./bindings/exports.zig");
 usingnamespace @import("./bindings/bindings.zig");
 const Runtime = @import("../../runtime.zig");
 const Router = @import("./api/router.zig");
+const ImportRecord = ast.ImportRecord;
 
 pub const GlobalClasses = [_]type{
     Request.Class,
@@ -33,6 +34,85 @@ pub const GlobalClasses = [_]type{
 
 pub const Wundle = struct {
     top_level_dir: string,
+
+    threadlocal var css_imports_list_strings: [512]ZigString = undefined;
+    threadlocal var css_imports_list: [512]Api.StringPointer = undefined;
+    threadlocal var css_imports_list_tail: u16 = 0;
+    threadlocal var css_imports_buf: std.ArrayList(u8) = undefined;
+    threadlocal var css_imports_buf_loaded: bool = false;
+
+    pub fn flushCSSImports() void {
+        if (css_imports_buf_loaded) {
+            css_imports_buf.clearRetainingCapacity();
+            css_imports_list_tail = 0;
+        }
+    }
+
+    pub fn getCSSImports() []ZigString {
+        var i: u16 = 0;
+        const tail = css_imports_list_tail;
+        while (i < tail) : (i += 1) {
+            ZigString.fromStringPointer(css_imports_list[i], css_imports_buf.items, &css_imports_list_strings[i]);
+        }
+        return css_imports_list_strings[0..tail];
+    }
+
+    pub fn getImportedStyles(
+        this: void,
+        ctx: js.JSContextRef,
+        function: js.JSObjectRef,
+        thisObject: js.JSObjectRef,
+        arguments: []const js.JSValueRef,
+        exception: js.ExceptionRef,
+    ) js.JSValueRef {
+        defer flushCSSImports();
+        const styles = getCSSImports();
+        if (styles.len == 0) {
+            return js.JSObjectMakeArray(ctx, 0, null, null);
+        }
+
+        return JSValue.createStringArray(VirtualMachine.vm.global, styles.ptr, styles.len).asRef();
+    }
+
+    pub fn onImportCSS(
+        resolve_result: *const Resolver.Result,
+        import_record: *ImportRecord,
+        source_dir: string,
+    ) void {
+        if (!css_imports_buf_loaded) {
+            css_imports_buf = std.ArrayList(u8).initCapacity(
+                VirtualMachine.vm.allocator,
+                import_record.path.text.len,
+            ) catch unreachable;
+            css_imports_buf_loaded = true;
+        }
+
+        var writer = css_imports_buf.writer();
+        const offset = css_imports_buf.items.len;
+        css_imports_list[css_imports_list_tail] = .{
+            .offset = @truncate(u32, offset),
+            .length = 0,
+        };
+        getPublicPath(resolve_result.path_pair.primary.text, @TypeOf(writer), writer);
+        const length = css_imports_buf.items.len - offset;
+        css_imports_list[css_imports_list_tail].length = @truncate(u32, length);
+        css_imports_list_tail += 1;
+    }
+
+    pub fn getPublicPath(to: string, comptime Writer: type, writer: Writer) void {
+        const relative_path = VirtualMachine.vm.bundler.fs.relativeTo(to);
+        if (VirtualMachine.vm.bundler.options.public_url.len > 0) {
+            writer.print(
+                "{s}/{s}",
+                .{
+                    std.mem.trimRight(u8, VirtualMachine.vm.bundler.options.public_url, "/"),
+                    std.mem.trimLeft(u8, relative_path, "/"),
+                },
+            ) catch unreachable;
+        } else {
+            writer.writeAll(std.mem.trimLeft(u8, relative_path, "/")) catch unreachable;
+        }
+    }
 
     pub const Class = NewClass(
         void,
@@ -50,6 +130,13 @@ pub const Wundle = struct {
             .match = .{
                 .rfn = Router.match,
                 .ts = Router.match_type_definition,
+            },
+            .getImportedStyles = .{
+                .rfn = Wundle.getImportedStyles,
+                .ts = d.ts{
+                    .name = "getImportedStyles",
+                    .@"return" = "string[]",
+                },
             },
         },
         .{
@@ -115,6 +202,10 @@ pub const VirtualMachine = struct {
         };
 
         VirtualMachine.vm.bundler.configureLinker();
+
+        if (_args.serve orelse false) {
+            VirtualMachine.vm.bundler.linker.onImportCSS = Wundle.onImportCSS;
+        }
 
         var global_classes: [GlobalClasses.len]js.JSClassRef = undefined;
         inline for (GlobalClasses) |Class, i| {
@@ -267,7 +358,7 @@ pub const VirtualMachine = struct {
         }
     }
     pub const ResolveFunctionResult = struct {
-        result: ?resolver.Result,
+        result: ?Resolver.Result,
         path: string,
     };
 
@@ -282,7 +373,7 @@ pub const VirtualMachine = struct {
             return;
         }
 
-        const result: resolver.Result = vm.bundler.resolve_results.get(specifier) orelse brk: {
+        const result: Resolver.Result = vm.bundler.resolve_results.get(specifier) orelse brk: {
             // We don't want to write to the hash table if there's an error
             // That's why we don't use getOrPut here
             const res = try vm.bundler.resolver.resolve(
@@ -862,6 +953,12 @@ pub const EventListenerMixin = struct {
                     var res = promise.result(vm.global.vm());
                     if (res.isException(vm.global.vm())) {
                         exception = @ptrCast(*Exception, res.asVoid());
+                    } else {
+                        vm.defaultErrorHandler(res);
+                        if (!request_context.has_called_done) {
+                            request_context.sendInternalError(error.JavaScriptErrorNeedARealErrorPageSorryAboutThisSeeTheTerminal) catch {};
+                        }
+                        return;
                     }
                 }
             } else {
@@ -957,14 +1054,14 @@ pub const ResolveError = struct {
     pub fn fmt(allocator: *std.mem.Allocator, specifier: string, referrer: string, err: anyerror) !string {
         switch (err) {
             error.ModuleNotFound => {
-                if (resolver.isPackagePath(specifier)) {
+                if (Resolver.isPackagePath(specifier)) {
                     return try std.fmt.allocPrint(allocator, "Cannot find package \"{s}\" from \"{s}\"", .{ specifier, referrer });
                 } else {
                     return try std.fmt.allocPrint(allocator, "Cannot find module \"{s}\" from \"{s}\"", .{ specifier, referrer });
                 }
             },
             else => {
-                if (resolver.isPackagePath(specifier)) {
+                if (Resolver.isPackagePath(specifier)) {
                     return try std.fmt.allocPrint(allocator, "{s} while resolving package \"{s}\" from \"{s}\"", .{ @errorName(err), specifier, referrer });
                 } else {
                     return try std.fmt.allocPrint(allocator, "{s} while resolving \"{s}\" from \"{s}\"", .{ @errorName(err), specifier, referrer });
@@ -1098,7 +1195,7 @@ pub const ResolveError = struct {
 
 pub const BuildError = struct {
     msg: logger.Msg,
-    // resolve_result: resolver.Result,
+    // resolve_result: Resolver.Result,
     allocator: *std.mem.Allocator,
 
     pub const Class = NewClass(
@@ -1128,7 +1225,7 @@ pub const BuildError = struct {
     pub fn create(
         allocator: *std.mem.Allocator,
         msg: logger.Msg,
-        // resolve_result: *const resolver.Result,
+        // resolve_result: *const Resolver.Result,
     ) js.JSObjectRef {
         var build_error = allocator.create(BuildError) catch unreachable;
         build_error.* = BuildError{

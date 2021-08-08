@@ -30,6 +30,8 @@ const Runtime = @import("./runtime.zig").Runtime;
 
 pub const CSSResolveError = error{ResolveError};
 
+pub const OnImportCallback = fn (resolve_result: *const Resolver.Result, import_record: *ImportRecord, source_dir: string) void;
+
 pub fn NewLinker(comptime BundlerType: type) type {
     return struct {
         const HashedFileNameMap = std.AutoHashMap(u64, string);
@@ -45,6 +47,8 @@ pub fn NewLinker(comptime BundlerType: type) type {
         runtime_import_record: ?ImportRecord = null,
         runtime_source_path: string,
         hashed_filenames: HashedFileNameMap,
+
+        onImportCSS: ?OnImportCallback = null,
 
         pub fn init(
             allocator: *std.mem.Allocator,
@@ -583,6 +587,12 @@ pub fn NewLinker(comptime BundlerType: type) type {
                 BundlerType.isCacheEnabled and loader == .file,
                 import_path_format,
             );
+
+            if (loader == .css) {
+                if (linker.onImportCSS) |callback| {
+                    callback(resolve_result, import_record, source_dir);
+                }
+            }
         }
 
         pub fn resolveResultHashKey(linker: *ThisLinker, resolve_result: *const Resolver.Result) string {

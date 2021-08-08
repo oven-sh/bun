@@ -374,6 +374,8 @@ pub fn NewResolver(cache_files: bool) type {
                 r.debug_logs = try DebugLogs.init(r.allocator);
             }
 
+            if (import_path.len == 0) return error.ModuleNotFound;
+
             // Certain types of URLs default to being external for convenience
             if (r.isExternalPattern(import_path) or
                 // "fill: url(#filter);"

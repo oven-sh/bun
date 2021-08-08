@@ -11,9 +11,14 @@ usingnamespace @import("../webcore/response.zig");
 const Router = @This();
 
 const VirtualMachine = JavaScript.VirtualMachine;
+const ScriptSrcStream = std.io.FixedBufferStream([]u8);
 
 route: *const FilesystemRouter.Match,
 query_string_map: ?QueryStringMap = null,
+script_src: ?string = null,
+script_src_buf: [1024]u8 = undefined,
+
+script_src_buf_writer: ScriptSrcStream = undefined,
 
 pub fn importRoute(
     this: *Router,
@@ -95,6 +100,7 @@ fn createRouteObject(ctx: js.JSContextRef, req: *const http.RequestContext, exce
     router.* = Router{
         .route = route,
     };
+    router.script_src_buf_writer = ScriptSrcStream{ .pos = 0, .buffer = std.mem.span(&router.script_src_buf) };
 
     return Instance.make(ctx, router);
 }
@@ -168,13 +174,23 @@ pub const Instance = NewClass(
                 .@"tsdoc" = "URL path as appears in a web browser's address bar",
             },
         },
-        .filepath = .{
+        .filePath = .{
             .get = getFilePath,
             .ro = true,
             .ts = d.ts{
                 .@"return" = "string",
                 .tsdoc = 
                 \\Project-relative filesystem path to the route file.
+                ,
+            },
+        },
+        .scriptSrc = .{
+            .get = getScriptSrc,
+            .ro = true,
+            .ts = d.ts{
+                .@"return" = "string",
+                .tsdoc = 
+                \\src attribute of the script tag that loads the route.
                 ,
             },
         },
@@ -320,6 +336,25 @@ pub fn createQueryObject(ctx: js.JSContextRef, map: *QueryStringMap, exception: 
     return value.asRef();
 }
 
+pub fn getScriptSrc(
+    this: *Router,
+    ctx: js.JSContextRef,
+    thisObject: js.JSObjectRef,
+    prop: js.JSStringRef,
+    exception: js.ExceptionRef,
+) js.JSValueRef {
+    const src = this.script_src orelse brk: {
+        var writer = this.script_src_buf_writer.writer();
+
+        JavaScript.Wundle.getPublicPath(this.route.file_path, ScriptSrcStream.Writer, writer);
+        break :brk this.script_src_buf[0..this.script_src_buf_writer.pos];
+    };
+
+    this.script_src = src;
+
+    return js.JSValueMakeString(ctx, ZigString.init(src).toJSStringRef());
+}
+
 pub fn getQuery(
     this: *Router,
     ctx: js.JSContextRef,
@@ -338,7 +373,7 @@ pub fn getQuery(
             ))) |map| {
                 this.query_string_map = map;
             } else |err| {}
-        } else {
+        } else if (this.route.query_string.len > 0) {
             if (QueryStringMap.init(getAllocator(ctx), this.route.query_string)) |map| {
                 this.query_string_map = map;
             } else |err| {}

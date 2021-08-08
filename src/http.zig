@@ -771,6 +771,7 @@ pub const RequestContext = struct {
 
             js_ast.Stmt.Data.Store.reset();
             js_ast.Expr.Data.Store.reset();
+            JavaScript.Wundle.flushCSSImports();
 
             try runLoop(vm);
         }
@@ -783,6 +784,7 @@ pub const RequestContext = struct {
                     std.debug.assert(ZigGlobalObject.resetModuleRegistryMap(vm.global, module_map));
                     js_ast.Stmt.Data.Store.reset();
                     js_ast.Expr.Data.Store.reset();
+                    JavaScript.Wundle.flushCSSImports();
                 }
                 var handler: *JavaScriptHandler = try channel.readItem();
 

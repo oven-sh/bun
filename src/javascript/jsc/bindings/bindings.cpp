@@ -333,6 +333,33 @@ static JSC::JSValue doLink(JSC__JSGlobalObject *globalObject, JSC::JSValue modul
   return JSC::linkAndEvaluateModule(globalObject, moduleKey, JSC::JSValue());
 }
 
+JSC__JSValue JSC__JSValue__createStringArray(JSC__JSGlobalObject *globalObject, ZigString *arg1,
+                                             size_t arg2) {
+  JSC::VM &vm = globalObject->vm();
+  auto scope = DECLARE_THROW_SCOPE(vm);
+
+  JSC::JSArray *array = nullptr;
+  {
+    JSC::ObjectInitializationScope initializationScope(vm);
+    if ((array = JSC::JSArray::tryCreateUninitializedRestricted(
+           initializationScope, nullptr,
+           globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
+           arg2))) {
+
+      for (size_t i = 0; i < arg2; ++i) {
+        array->initializeIndexWithoutBarrier(initializationScope, i,
+                                             JSC::jsString(vm, Zig::toString(arg1[i])));
+      }
+    }
+  }
+  if (!array) {
+    JSC::throwOutOfMemoryError(globalObject, scope);
+    return JSC::JSValue::encode(JSC::JSValue());
+  }
+
+  RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::JSValue(array)));
+}
+
 JSC__JSValue JSC__JSGlobalObject__createAggregateError(JSC__JSGlobalObject *globalObject,
                                                        void **errors, uint16_t errors_count,
                                                        ZigString arg3) {

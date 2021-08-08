@@ -465,19 +465,21 @@ pub const RouteMap = struct {
             redirect = false;
         }
 
+        const routes_slice = this.routes.slice();
+
         if (path.len == 0) {
             if (this.index) |index| {
-                const entry = Fs.FileSystem.DirEntry.EntryStore.instance.at(this.routes.items(.entry_index)[index]).?;
+                const entry = Fs.FileSystem.DirEntry.EntryStore.instance.at(routes_slice.items(.entry_index)[index]).?;
                 const parts = [_]string{ entry.dir, entry.base };
 
                 return Match{
                     .params = params,
-                    .name = "index",
-                    .path = this.routes.items(.path)[index],
-                    .file_path = Fs.FileSystem.instance.absBuf(&parts, file_path_buf),
-                    .basename = entry.base,
+                    .name = routes_slice.items(.name)[index],
+                    .path = routes_slice.items(.path)[index],
                     .pathname = url_path.pathname,
+                    .basename = entry.base,
                     .hash = index_route_hash,
+                    .file_path = Fs.FileSystem.instance.absBuf(&parts, file_path_buf),
                     .query_string = url_path.query_string,
                 };
             }
@@ -486,7 +488,6 @@ pub const RouteMap = struct {
         }
 
         const full_hash = @truncate(u32, std.hash.Wyhash.hash(0, path));
-        const routes_slice = this.routes.slice();
 
         // Check for an exact match
         // These means there are no params.

@@ -77,18 +77,19 @@ pub const FileSystem = struct {
 
     _tmpdir: ?std.fs.Dir = null,
 
+    threadlocal var tmpdir_handle: ?std.fs.Dir = null;
+
     pub fn tmpdir(fs: *FileSystem) std.fs.Dir {
-        if (fs._tmpdir == null) {
-            fs._tmpdir = fs.fs.openTmpDir() catch unreachable;
+        if (tmpdir_handle == null) {
+            tmpdir_handle = fs.fs.openTmpDir() catch unreachable;
         }
 
-        return fs._tmpdir.?;
+        return tmpdir_handle.?;
     }
 
-    var tmpname_buf: [64]u8 = undefined;
-    pub fn tmpname(fs: *const FileSystem, extname: string) !string {
-        const int = std.crypto.random.int(u64);
-        return try std.fmt.bufPrint(&tmpname_buf, "{x}{s}", .{ int, extname });
+    pub fn tmpname(fs: *const FileSystem, extname: string, buf: []u8, hash: u64) ![*:0]u8 {
+        // PRNG was...not so random
+        return try std.fmt.bufPrintZ(buf, "{x}{s}", .{ @truncate(u64, @intCast(u128, hash) * @intCast(u128, std.time.nanoTimestamp())), extname });
     }
 
     pub var max_fd: FileDescriptorType = 0;
@@ -100,7 +101,7 @@ pub const FileSystem = struct {
 
         max_fd = std.math.max(fd, max_fd);
     }
-
+    pub var instance_loaded: bool = false;
     pub var instance: FileSystem = undefined;
 
     pub const DirnameStore = allocators.BSSStringList(Preallocate.Counts.dir_entry, 128);
@@ -131,20 +132,24 @@ pub const FileSystem = struct {
             _top_level_dir = tld;
         }
 
-        instance = FileSystem{
-            .allocator = allocator,
-            .top_level_dir = _top_level_dir,
-            .fs = Implementation.init(
-                allocator,
-                _top_level_dir,
-            ),
-            // .stats = std.StringHashMap(Stat).init(allocator),
-            .dirname_store = DirnameStore.init(allocator),
-            .filename_store = FilenameStore.init(allocator),
-        };
+        if (!instance_loaded) {
+            instance = FileSystem{
+                .allocator = allocator,
+                .top_level_dir = _top_level_dir,
+                .fs = Implementation.init(
+                    allocator,
+                    _top_level_dir,
+                ),
+                // .stats = std.StringHashMap(Stat).init(allocator),
+                .dirname_store = DirnameStore.init(allocator),
+                .filename_store = FilenameStore.init(allocator),
+            };
+            instance_loaded = true;
 
-        instance.fs.parent_fs = &instance;
-        _ = DirEntry.EntryStore.init(allocator);
+            instance.fs.parent_fs = &instance;
+            _ = DirEntry.EntryStore.init(allocator);
+        }
+
         return &instance;
     }
 
@@ -188,7 +193,7 @@ pub const FileSystem = struct {
                 },
             }
 
-            for (entry.name) |c, i| {
+            for (name) |c, i| {
                 name[i] = std.ascii.toLower(c);
             }
 

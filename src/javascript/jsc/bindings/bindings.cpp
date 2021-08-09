@@ -401,6 +401,17 @@ JSC__JSValue ZigString__toValue(ZigString arg0, JSC__JSGlobalObject *arg1) {
   return JSC::JSValue::encode(JSC::JSValue(JSC::jsOwnedString(arg1->vm(), Zig::toString(arg0))));
 }
 
+JSC__JSValue ZigString__toValueGC(ZigString arg0, JSC__JSGlobalObject *arg1) {
+  return JSC::JSValue::encode(
+    JSC::JSValue(JSC::jsMakeNontrivialString(arg1->vm(), Zig::toString(arg0))));
+}
+
+void JSC__JSValue__toZigString(JSC__JSValue JSValue0, ZigString *arg1, JSC__JSGlobalObject *arg2) {
+  JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+  auto str = value.toWTFString(arg2);
+  arg1->ptr = str.characters8();
+  arg1->len = str.length();
+}
 JSC__JSValue ZigString__toErrorInstance(const ZigString *str, JSC__JSGlobalObject *globalObject) {
   JSC::VM &vm = globalObject->vm();
 

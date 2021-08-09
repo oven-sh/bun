@@ -96,8 +96,11 @@ message JavascriptBundleContainer {
 
   JavascriptBundle bundle = 2;
 
+  LoadedFramework framework = 3;
+  LoadedRouteConfig routes = 4;
+
   // Don't technically need to store this, but it may be helpful as a sanity check
-  uint32 code_length = 3;
+  uint32 code_length = 5;
 }
 
 smol ScanDependencyMode {
@@ -133,7 +136,22 @@ struct LoaderMap {
 }
 
 message FrameworkConfig {
-  string entry_point = 1;
+  string package = 1;
+  string client = 2;
+  string server = 3;
+  bool development = 4;
+}
+
+struct LoadedFramework {
+  string entry_point;
+  string package;
+  bool development;
+  bool client;
+}
+
+struct LoadedRouteConfig {
+  string dir;
+  string[] extensions;
 }
 
 message RouteConfig {
@@ -146,7 +164,7 @@ message TransformOptions {
   string tsconfig_override = 2;
   ResolveMode resolve = 3;
 
-  string public_url = 4;
+  string origin = 4;
   string absolute_working_dir = 5;
 
   StringMap define = 6;
@@ -177,9 +195,10 @@ message TransformOptions {
   bool generate_node_module_bundle = 20;
 
   string node_modules_bundle_path = 21;
+  string node_modules_bundle_path_server = 22;
 
-  FrameworkConfig framework = 22;
-  RouteConfig router = 23;
+  FrameworkConfig framework = 23;
+  RouteConfig router = 24;
 }
 
 struct FileHandle {

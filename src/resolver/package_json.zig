@@ -1,4 +1,5 @@
 usingnamespace @import("../global.zig");
+const Api = @import("../api/schema.zig").Api;
 const std = @import("std");
 const options = @import("../options.zig");
 const log = @import("../logger.zig");
@@ -12,7 +13,20 @@ const resolver = @import("./resolver.zig");
 const MainFieldMap = std.StringHashMap(string);
 const BrowserMap = std.StringHashMap(string);
 threadlocal var hashed_buf: [2048]u8 = undefined;
+
 pub const PackageJSON = struct {
+    pub const LoadFramework = enum {
+        none,
+        development,
+        production,
+    };
+
+    pub const FrameworkRouterPair = struct {
+        framework: *options.Framework,
+        router: *options.RouteConfig,
+        loaded_routes: bool = false,
+    };
+
     name: string = "",
     source: logger.Source,
     main_fields: MainFieldMap,
@@ -46,6 +60,97 @@ pub const PackageJSON = struct {
     //   should match and the query "./ext" should ALSO match.
     //
     browser_map: BrowserMap,
+
+    fn loadFrameworkExpression(framework: *options.Framework, json: js_ast.Expr, allocator: *std.mem.Allocator) bool {
+        if (json.asProperty("client")) |client| {
+            if (client.expr.asString(allocator)) |str| {
+                if (str.len > 0) {
+                    framework.client = str;
+                }
+            }
+        }
+
+        if (json.asProperty("server")) |server| {
+            if (server.expr.asString(allocator)) |str| {
+                if (str.len > 0) {
+                    framework.server = str;
+                }
+            }
+        }
+
+        return framework.client.len > 0;
+    }
+
+    pub fn loadFrameworkWithPreference(package_json: *const PackageJSON, pair: *FrameworkRouterPair, json: js_ast.Expr, allocator: *std.mem.Allocator, comptime load_framework: LoadFramework) void {
+        const framework_object = json.asProperty("framework") orelse return;
+
+        if (framework_object.expr.asProperty("router")) |router| {
+            if (router.expr.asProperty("dir")) |route_dir| {
+                if (route_dir.expr.asString(allocator)) |str| {
+                    if (str.len > 0) {
+                        pair.router.dir = str;
+                        pair.loaded_routes = true;
+                    }
+                }
+            }
+
+            if (router.expr.asProperty("extensions")) |extensions_expr| {
+                if (extensions_expr.expr.asArray()) |*array| {
+                    const count = array.array.items.len;
+                    var valid_count: usize = 0;
+
+                    while (array.next()) |expr| {
+                        if (expr.data != .e_string) continue;
+                        const e_str: *const js_ast.E.String = expr.data.e_string;
+                        if (e_str.utf8.len == 0 or e_str.utf8[0] != '.') continue;
+                        valid_count += 1;
+                    }
+
+                    if (valid_count > 0) {
+                        var extensions = allocator.alloc(string, valid_count) catch unreachable;
+                        array.index = 0;
+                        var i: usize = 0;
+
+                        // We don't need to allocate the strings because we keep the package.json source string in memory
+                        while (array.next()) |expr| {
+                            if (expr.data != .e_string) continue;
+                            const e_str: *const js_ast.E.String = expr.data.e_string;
+                            if (e_str.utf8.len == 0 or e_str.utf8[0] != '.') continue;
+                            extensions[i] = e_str.utf8;
+                            i += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        switch (comptime load_framework) {
+            .development => {
+                if (framework_object.expr.asProperty("development")) |env| {
+                    if (loadFrameworkExpression(pair.framework, env.expr, allocator)) {
+                        pair.framework.package = package_json.name;
+                        pair.framework.development = true;
+                        return;
+                    }
+                }
+            },
+            .production => {
+                if (framework_object.expr.asProperty("production")) |env| {
+                    if (loadFrameworkExpression(pair.framework, env.expr, allocator)) {
+                        pair.framework.package = package_json.name;
+                        pair.framework.development = false;
+                        return;
+                    }
+                }
+            },
+            else => unreachable,
+        }
+
+        if (loadFrameworkExpression(pair.framework, framework_object.expr, allocator)) {
+            pair.framework.package = package_json.name;
+            pair.framework.development = false;
+        }
+    }
 
     pub fn parse(
         comptime ResolverType: type,

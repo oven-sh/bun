@@ -610,7 +610,7 @@ pub const BundleOptions = struct {
 
     hot_module_reloading: bool = false,
     inject: ?[]string = null,
-    public_url: string = "",
+    origin: string = "",
     public_dir: string = "public",
     public_dir_enabled: bool = true,
     output_dir: string = "",
@@ -623,6 +623,7 @@ pub const BundleOptions = struct {
     preserve_extensions: bool = false,
     timings: Timings = Timings{},
     node_modules_bundle: ?*NodeModuleBundle = null,
+    production: bool = false,
 
     append_package_version_in_query_string: bool = false,
 
@@ -670,9 +671,9 @@ pub const BundleOptions = struct {
             .out_extensions = undefined,
         };
 
-        if (transform.public_url) |public_url| {
+        if (transform.origin) |origin| {
             opts.import_path_format = ImportPathFormat.absolute_url;
-            opts.public_url = public_url;
+            opts.origin = origin;
         }
 
         if (transform.jsx) |jsx| {
@@ -780,7 +781,7 @@ pub const BundleOptions = struct {
                 opts.node_modules_bundle = node_mods;
                 const pretty_path = fs.relativeTo(transform.node_modules_bundle_path.?);
                 opts.node_modules_bundle_url = try std.fmt.allocPrint(allocator, "{s}{s}", .{
-                    opts.public_url,
+                    opts.origin,
                     pretty_path,
                 });
             } else if (transform.node_modules_bundle_path) |bundle_path| {
@@ -799,15 +800,15 @@ pub const BundleOptions = struct {
                             var node_module_bundle = try allocator.create(NodeModuleBundle);
                             node_module_bundle.* = bundle;
                             opts.node_modules_bundle = node_module_bundle;
-                            if (opts.public_url.len > 0) {
+                            if (opts.origin.len > 0) {
                                 var relative = node_module_bundle.bundle.import_from_name;
                                 if (relative[0] == std.fs.path.sep) {
                                     relative = relative[1..];
                                 }
 
-                                const buf_size = opts.public_url.len + relative.len + pretty_path.len;
+                                const buf_size = opts.origin.len + relative.len + pretty_path.len;
                                 var buf = try allocator.alloc(u8, buf_size);
-                                opts.node_modules_bundle_url = try std.fmt.bufPrint(buf, "{s}{s}", .{ opts.public_url, relative });
+                                opts.node_modules_bundle_url = try std.fmt.bufPrint(buf, "{s}{s}", .{ opts.origin, relative });
                                 opts.node_modules_bundle_pretty_path = buf[opts.node_modules_bundle_url.len..];
                                 std.mem.copy(
                                     u8,
@@ -829,6 +830,17 @@ pub const BundleOptions = struct {
                                 },
                             );
                             Output.flush();
+                            if (opts.framework == null) {
+                                if (node_module_bundle.container.framework) |loaded_framework| {
+                                    opts.framework = Framework.fromLoadedFramework(loaded_framework);
+                                }
+                            }
+
+                            if (opts.route_config == null) {
+                                if (node_module_bundle.container.routes) |routes| {
+                                    opts.route_config = RouteConfig.fromLoadedRoutes(routes);
+                                }
+                            }
                         } else |err| {
                             Output.disableBuffering();
                             Output.prettyErrorln(
@@ -870,7 +882,7 @@ pub const TransformOptions = struct {
     jsx: ?JSX.Pragma,
     react_fast_refresh: bool = false,
     inject: ?[]string = null,
-    public_url: string = "",
+    origin: string = "",
     preserve_symlinks: bool = false,
     entry_point: Fs.File,
     resolve_paths: bool = false,
@@ -1113,35 +1125,119 @@ pub const TransformResult = struct {
 };
 
 pub const Framework = struct {
-    entry_point: string,
+    client: string,
+    server: string,
+    package: string = "",
+    development: bool = true,
+    resolved: bool = false,
+    from_bundle: bool = false,
+
+    fn normalizedPath(allocator: *std.mem.Allocator, toplevel_path: string, path: string) !string {
+        std.debug.assert(std.fs.path.isAbsolute(path));
+        var str = path;
+        if (strings.indexOf(str, toplevel_path)) |top| {
+            str = str[top + toplevel_path.len ..];
+        }
+
+        // if it *was* a node_module path, we don't do any allocation, we just keep it as a package path
+        if (strings.indexOf(str, "node_modules" ++ std.fs.path.sep_str)) |node_module_i| {
+            return str[node_module_i + "node_modules".len + 1 ..];
+            // otherwise, we allocate a new string and copy the path into it with a leading "./"
+
+        } else {
+            var out = try allocator.alloc(u8, str.len + 2);
+            out[0] = '.';
+            out[1] = '/';
+            std.mem.copy(u8, out[2..], str);
+            return out;
+        }
+    }
+
+    pub fn fromLoadedFramework(loaded: Api.LoadedFramework) Framework {
+        const client = if (loaded.client) loaded.entry_point else "";
+        const server = if (!loaded.client) loaded.entry_point else "";
+        return Framework{
+            .client = client,
+            .server = server,
+            .package = loaded.package,
+            .development = loaded.development,
+            .from_bundle = true,
+        };
+    }
+
+    pub fn toAPI(this: *const Framework, allocator: *std.mem.Allocator, toplevel_path: string, comptime client: bool) ?Api.LoadedFramework {
+        if (comptime client) {
+            if (this.client.len > 0) {
+                return Api.LoadedFramework{
+                    .entry_point = normalizedPath(allocator, toplevel_path, this.client) catch unreachable,
+                    .package = this.package,
+                    .development = this.development,
+                    .client = true,
+                };
+            }
+        } else {
+            if (this.server.len > 0) {
+                return Api.LoadedFramework{
+                    .entry_point = normalizedPath(allocator, toplevel_path, this.server) catch unreachable,
+                    .package = this.package,
+                    .development = this.development,
+                    .client = false,
+                };
+            }
+        }
+
+        return null;
+    }
+
+    pub fn needsResolveFromPackage(this: *const Framework) bool {
+        return !this.resolved and this.package.len > 0;
+    }
 
     pub fn fromApi(
         transform: Api.FrameworkConfig,
     ) !Framework {
         return Framework{
-            .entry_point = transform.entry_point.?,
+            .client = transform.client orelse "",
+            .server = transform.server orelse "",
+            .package = transform.package orelse "",
+            .development = transform.development orelse true,
+            .resolved = false,
         };
     }
 };
 
 pub const RouteConfig = struct {
     /// 
-    dir: string,
+    dir: string = "",
     // TODO: do we need a separate list for data-only extensions?
     // e.g. /foo.json just to get the data for the route, without rendering the html
     // I think it's fine to hardcode as .json for now, but if I personally were writing a framework
     // I would consider using a custom binary format to minimize request size
     // maybe like CBOR
-    extensions: []const string,
+    extensions: []const string = &[_][]const string{},
+
+    pub fn toAPI(this: *const RouteConfig) Api.LoadedRouteConfig {
+        return .{ .dir = this.dir, .extensions = this.extensions };
+    }
 
     pub const DefaultDir = "pages";
     pub const DefaultExtensions = [_]string{ "tsx", "ts", "mjs", "jsx", "js" };
-
-    pub fn fromApi(router_: Api.RouteConfig, allocator: *std.mem.Allocator) !RouteConfig {
-        var router = RouteConfig{
+    pub inline fn zero() RouteConfig {
+        return RouteConfig{
             .dir = DefaultDir,
             .extensions = std.mem.span(&DefaultExtensions),
         };
+    }
+
+    pub fn fromLoadedRoutes(loaded: Api.LoadedRouteConfig) RouteConfig {
+        return RouteConfig{
+            .extensions = loaded.extensions,
+            .dir = loaded.dir,
+        };
+    }
+
+    pub fn fromApi(router_: Api.RouteConfig, allocator: *std.mem.Allocator) !RouteConfig {
+        var router = zero();
 
         var router_dir: string = std.mem.trimRight(u8, router_.dir orelse "", "/\\");
 

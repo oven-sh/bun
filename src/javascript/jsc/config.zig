@@ -24,15 +24,19 @@ pub const DefaultSpeedyDefines = struct {
     };
 };
 
-pub fn configureTransformOptionsForSpeedy(allocator: *std.mem.Allocator, _args: Api.TransformOptions) !Api.TransformOptions {
+pub fn configureTransformOptionsForSpeedyVM(allocator: *std.mem.Allocator, _args: Api.TransformOptions) !Api.TransformOptions {
     var args = _args;
 
-    args.platform = Api.Platform.speedy;
     args.serve = false;
     args.write = false;
     args.resolve = Api.ResolveMode.lazy;
     args.generate_node_module_bundle = false;
+    return try configureTransformOptionsForSpeedy(allocator, args);
+}
 
+pub fn configureTransformOptionsForSpeedy(allocator: *std.mem.Allocator, _args: Api.TransformOptions) !Api.TransformOptions {
+    var args = _args;
+    args.platform = Api.Platform.speedy;
     // We inline process.env.* at bundle time but process.env is a proxy object which will otherwise return undefined.
 
     var env_map = try getNodeEnvMap(allocator);

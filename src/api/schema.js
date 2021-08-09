@@ -362,6 +362,14 @@ function decodeJavascriptBundleContainer(bb) {
       break;
 
     case 3:
+      result["framework"] = decodeLoadedFramework(bb);
+      break;
+
+    case 4:
+      result["routes"] = decodeLoadedRouteConfig(bb);
+      break;
+
+    case 5:
       result["code_length"] = bb.readUint32();
       break;
 
@@ -385,9 +393,21 @@ function encodeJavascriptBundleContainer(message, bb) {
     encodeJavascriptBundle(value, bb);
   }
 
-  var value = message["code_length"];
+  var value = message["framework"];
   if (value != null) {
     bb.writeByte(3);
+    encodeLoadedFramework(value, bb);
+  }
+
+  var value = message["routes"];
+  if (value != null) {
+    bb.writeByte(4);
+    encodeLoadedRouteConfig(value, bb);
+  }
+
+  var value = message["code_length"];
+  if (value != null) {
+    bb.writeByte(5);
     bb.writeUint32(value);
   }
   bb.writeByte(0);
@@ -578,7 +598,19 @@ function decodeFrameworkConfig(bb) {
       return result;
 
     case 1:
-      result["entry_point"] = bb.readString();
+      result["package"] = bb.readString();
+      break;
+
+    case 2:
+      result["client"] = bb.readString();
+      break;
+
+    case 3:
+      result["server"] = bb.readString();
+      break;
+
+    case 4:
+      result["development"] = !!bb.readByte();
       break;
 
     default:
@@ -589,12 +621,105 @@ function decodeFrameworkConfig(bb) {
 
 function encodeFrameworkConfig(message, bb) {
 
-  var value = message["entry_point"];
+  var value = message["package"];
   if (value != null) {
     bb.writeByte(1);
     bb.writeString(value);
   }
+
+  var value = message["client"];
+  if (value != null) {
+    bb.writeByte(2);
+    bb.writeString(value);
+  }
+
+  var value = message["server"];
+  if (value != null) {
+    bb.writeByte(3);
+    bb.writeString(value);
+  }
+
+  var value = message["development"];
+  if (value != null) {
+    bb.writeByte(4);
+    bb.writeByte(value);
+  }
   bb.writeByte(0);
+
+}
+
+function decodeLoadedFramework(bb) {
+  var result = {};
+
+  result["entry_point"] = bb.readString();
+  result["package"] = bb.readString();
+  result["development"] = !!bb.readByte();
+  result["client"] = !!bb.readByte();
+  return result;
+}
+
+function encodeLoadedFramework(message, bb) {
+
+  var value = message["entry_point"];
+  if (value != null) {
+    bb.writeString(value);
+  } else {
+    throw new Error("Missing required field \"entry_point\"");
+  }
+
+  var value = message["package"];
+  if (value != null) {
+    bb.writeString(value);
+  } else {
+    throw new Error("Missing required field \"package\"");
+  }
+
+  var value = message["development"];
+  if (value != null) {
+    bb.writeByte(value);
+  } else {
+    throw new Error("Missing required field \"development\"");
+  }
+
+  var value = message["client"];
+  if (value != null) {
+    bb.writeByte(value);
+  } else {
+    throw new Error("Missing required field \"client\"");
+  }
+
+}
+
+function decodeLoadedRouteConfig(bb) {
+  var result = {};
+
+  result["dir"] = bb.readString();
+  var length = bb.readVarUint();
+  var values = result["extensions"] = Array(length);
+  for (var i = 0; i < length; i++) values[i] = bb.readString();
+  return result;
+}
+
+function encodeLoadedRouteConfig(message, bb) {
+
+  var value = message["dir"];
+  if (value != null) {
+    bb.writeString(value);
+  } else {
+    throw new Error("Missing required field \"dir\"");
+  }
+
+  var value = message["extensions"];
+  if (value != null) {
+    var values = value, n = values.length;
+    bb.writeVarUint(n);
+    for (var i = 0; i < n; i++) {
+      value = values[i];
+      bb.writeString(value);
+    }
+  } else {
+    throw new Error("Missing required field \"extensions\"");
+  }
 
 }
 
@@ -665,7 +790,7 @@ function decodeTransformOptions(bb) {
       break;
 
     case 4:
-      result["public_url"] = bb.readString();
+      result["origin"] = bb.readString();
       break;
 
     case 5:
@@ -747,10 +872,14 @@ function decodeTransformOptions(bb) {
       break;
 
     case 22:
-      result["framework"] = decodeFrameworkConfig(bb);
+      result["node_modules_bundle_path_server"] = bb.readString();
       break;
 
     case 23:
+      result["framework"] = decodeFrameworkConfig(bb);
+      break;
+
+    case 24:
       result["router"] = decodeRouteConfig(bb);
       break;
 
@@ -782,7 +911,7 @@ if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value)
 bb.writeByte(encoded);
   }
 
-  var value = message["public_url"];
+  var value = message["origin"];
   if (value != null) {
     bb.writeByte(4);
     bb.writeString(value);
@@ -919,15 +1048,21 @@ bb.writeByte(encoded);
     bb.writeString(value);
   }
 
-  var value = message["framework"];
+  var value = message["node_modules_bundle_path_server"];
   if (value != null) {
     bb.writeByte(22);
+    bb.writeString(value);
+  }
+
+  var value = message["framework"];
+  if (value != null) {
+    bb.writeByte(23);
     encodeFrameworkConfig(value, bb);
   }
 
   var value = message["router"];
   if (value != null) {
-    bb.writeByte(23);
+    bb.writeByte(24);
     encodeRouteConfig(value, bb);
   }
   bb.writeByte(0);
@@ -1876,6 +2011,10 @@ export { decodeLoaderMap }
 export { encodeLoaderMap }
 export { decodeFrameworkConfig }
 export { encodeFrameworkConfig }
+export { decodeLoadedFramework }
+export { encodeLoadedFramework }
+export { decodeLoadedRouteConfig }
+export { encodeLoadedRouteConfig }
 export { decodeRouteConfig }
 export { encodeRouteConfig }
 export { decodeTransformOptions }

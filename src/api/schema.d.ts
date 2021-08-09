@@ -210,6 +210,8 @@ type uint32 = number;
   export interface JavascriptBundleContainer {
     bundle_format_version?: uint32;
     bundle?: JavascriptBundle;
+    framework?: LoadedFramework;
+    routes?: LoadedRouteConfig;
     code_length?: uint32;
   }
 
@@ -235,7 +237,22 @@ type uint32 = number;
   }
 
   export interface FrameworkConfig {
-    entry_point?: string;
+    package?: string;
+    client?: string;
+    server?: string;
+    development?: boolean;
+  }
+
+  export interface LoadedFramework {
+    entry_point: string;
+    package: string;
+    development: boolean;
+    client: boolean;
+  }
+
+  export interface LoadedRouteConfig {
+    dir: string;
+    extensions: string[];
   }
 
   export interface RouteConfig {
@@ -247,7 +264,7 @@ type uint32 = number;
     jsx?: JSX;
     tsconfig_override?: string;
     resolve?: ResolveMode;
-    public_url?: string;
+    origin?: string;
     absolute_working_dir?: string;
     define?: StringMap;
     preserve_symlinks?: boolean;
@@ -265,6 +282,7 @@ type uint32 = number;
     only_scan_dependencies?: ScanDependencyMode;
     generate_node_module_bundle?: boolean;
     node_modules_bundle_path?: string;
+    node_modules_bundle_path_server?: string;
     framework?: FrameworkConfig;
     router?: RouteConfig;
   }
@@ -420,6 +438,10 @@ type uint32 = number;
   export declare function decodeLoaderMap(buffer: ByteBuffer): LoaderMap;
   export declare function  encodeFrameworkConfig(message: FrameworkConfig, bb: ByteBuffer): void;
   export declare function decodeFrameworkConfig(buffer: ByteBuffer): FrameworkConfig;
+  export declare function  encodeLoadedFramework(message: LoadedFramework, bb: ByteBuffer): void;
+  export declare function decodeLoadedFramework(buffer: ByteBuffer): LoadedFramework;
+  export declare function  encodeLoadedRouteConfig(message: LoadedRouteConfig, bb: ByteBuffer): void;
+  export declare function decodeLoadedRouteConfig(buffer: ByteBuffer): LoadedRouteConfig;
   export declare function  encodeRouteConfig(message: RouteConfig, bb: ByteBuffer): void;
   export declare function decodeRouteConfig(buffer: ByteBuffer): RouteConfig;
   export declare function  encodeTransformOptions(message: TransformOptions, bb: ByteBuffer): void;

@@ -836,7 +836,7 @@ var __HMRModule, __FastRefreshModule, __HMRClient;
             // We must find a React Refresh boundary. This is a module that only exports React components.
             // If we do not find a React Refresh boundary, we must instead perform a full page reload.
             for (
-              let i = HMRModule.dependencies.graph_used;
+              let i = HMRModule.dependencies.graph_used - 1;
               i > this.module_index;
               i--
             ) {

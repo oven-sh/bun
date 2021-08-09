@@ -114,6 +114,7 @@ pub fn loadRoutes(
                             continue :outer;
                         }
                     }
+
                     var abs_parts = [_]string{ entry.dir, entry.base };
                     if (resolver.readDirInfoIgnoreError(this.fs.abs(&abs_parts))) |_dir_info| {
                         const dir_info: *const DirInfo = _dir_info;

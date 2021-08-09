@@ -144,7 +144,7 @@ pub const Cli = struct {
                 clap.parseParam("-e, --external <STR>...           Exclude module from transpilation (can use * wildcards). ex: -e react") catch unreachable,
                 clap.parseParam("-i, --inject <STR>...             Inject module at the top of every file") catch unreachable,
                 clap.parseParam("--cwd <STR>                       Absolute path to resolve entry points from. Defaults to cwd") catch unreachable,
-                clap.parseParam("--public-url <STR>                Rewrite import paths to start with --public-url. Useful for web browsers.") catch unreachable,
+                clap.parseParam("--origin <STR>                Rewrite import paths to start with --origin. Useful for web browsers.") catch unreachable,
                 clap.parseParam("--serve                           Start a local dev server. This also sets resolve to \"lazy\".") catch unreachable,
                 clap.parseParam("--public-dir <STR>                Top-level directory for .html files, fonts, images, or anything external. Only relevant with --serve. Defaults to \"<cwd>/public\", to match create-react-app and Next.js") catch unreachable,
                 clap.parseParam("--jsx-factory <STR>               Changes the function called when compiling JSX elements using the classic JSX runtime") catch unreachable,
@@ -180,7 +180,7 @@ pub const Cli = struct {
             var cwd_paths = [_]string{args.option("--cwd") orelse try std.process.getCwdAlloc(allocator)};
             var cwd = try std.fs.path.resolve(allocator, &cwd_paths);
             var tsconfig_override = if (args.option("--tsconfig-override")) |ts| (Arguments.readFile(allocator, cwd, ts) catch |err| fileReadError(err, stderr, ts, "tsconfig.json")) else null;
-            var public_url = args.option("--public-url");
+            var origin = args.option("--origin");
             var defines_tuple = try DefineColonList.resolve(allocator, args.options("--define"));
             var loader_tuple = try LoaderColonList.resolve(allocator, args.options("--define"));
 
@@ -322,7 +322,7 @@ pub const Cli = struct {
                 .external = externals,
                 .absolute_working_dir = cwd,
                 .tsconfig_override = tsconfig_override,
-                .public_url = public_url,
+                .origin = origin,
                 .define = .{
                     .keys = define_keys,
                     .values = define_values,
@@ -386,7 +386,9 @@ pub const Cli = struct {
                 var log = logger.Log.init(this.allocator);
 
                 var vm = try VirtualMachine.init(this.allocator, this.args, null, &log);
-                var promise = try vm.loadEntryPoint(vm.bundler.options.entry_points[0]);
+                var promise = try vm.loadEntryPoint(
+                    vm.bundler.options.entry_points[0],
+                );
                 if (promise.status(vm.global.vm()) == js.JSPromise.Status.Rejected) {
                     vm.defaultErrorHandler(promise.result(vm.global.vm()));
                 }

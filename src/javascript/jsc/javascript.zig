@@ -33,46 +33,11 @@ pub const GlobalClasses = [_]type{
 };
 
 pub const Wundle = struct {
-    top_level_dir: string,
-
     threadlocal var css_imports_list_strings: [512]ZigString = undefined;
     threadlocal var css_imports_list: [512]Api.StringPointer = undefined;
     threadlocal var css_imports_list_tail: u16 = 0;
     threadlocal var css_imports_buf: std.ArrayList(u8) = undefined;
     threadlocal var css_imports_buf_loaded: bool = false;
-
-    pub fn flushCSSImports() void {
-        if (css_imports_buf_loaded) {
-            css_imports_buf.clearRetainingCapacity();
-            css_imports_list_tail = 0;
-        }
-    }
-
-    pub fn getCSSImports() []ZigString {
-        var i: u16 = 0;
-        const tail = css_imports_list_tail;
-        while (i < tail) : (i += 1) {
-            ZigString.fromStringPointer(css_imports_list[i], css_imports_buf.items, &css_imports_list_strings[i]);
-        }
-        return css_imports_list_strings[0..tail];
-    }
-
-    pub fn getImportedStyles(
-        this: void,
-        ctx: js.JSContextRef,
-        function: js.JSObjectRef,
-        thisObject: js.JSObjectRef,
-        arguments: []const js.JSValueRef,
-        exception: js.ExceptionRef,
-    ) js.JSValueRef {
-        defer flushCSSImports();
-        const styles = getCSSImports();
-        if (styles.len == 0) {
-            return js.JSObjectMakeArray(ctx, 0, null, null);
-        }
-
-        return JSValue.createStringArray(VirtualMachine.vm.global, styles.ptr, styles.len).asRef();
-    }
 
     pub fn onImportCSS(
         resolve_result: *const Resolver.Result,
@@ -99,13 +64,76 @@ pub const Wundle = struct {
         css_imports_list_tail += 1;
     }
 
+    pub fn flushCSSImports() void {
+        if (css_imports_buf_loaded) {
+            css_imports_buf.clearRetainingCapacity();
+            css_imports_list_tail = 0;
+        }
+    }
+
+    pub fn getCSSImports() []ZigString {
+        var i: u16 = 0;
+        const tail = css_imports_list_tail;
+        while (i < tail) : (i += 1) {
+            ZigString.fromStringPointer(css_imports_list[i], css_imports_buf.items, &css_imports_list_strings[i]);
+        }
+        return css_imports_list_strings[0..tail];
+    }
+
+    pub fn getCWD(
+        this: void,
+        ctx: js.JSContextRef,
+        thisObject: js.JSValueRef,
+        prop: js.JSStringRef,
+        exception: js.ExceptionRef,
+    ) js.JSValueRef {
+        return ZigString.init(VirtualMachine.vm.bundler.fs.top_level_dir).toValue(VirtualMachine.vm.global).asRef();
+    }
+
+    pub fn getOrigin(
+        this: void,
+        ctx: js.JSContextRef,
+        thisObject: js.JSValueRef,
+        prop: js.JSStringRef,
+        exception: js.ExceptionRef,
+    ) js.JSValueRef {
+        return ZigString.init(VirtualMachine.vm.bundler.options.origin).toValue(VirtualMachine.vm.global).asRef();
+    }
+
+    pub fn getMain(
+        this: void,
+        ctx: js.JSContextRef,
+        thisObject: js.JSValueRef,
+        prop: js.JSStringRef,
+        exception: js.ExceptionRef,
+    ) js.JSValueRef {
+        return ZigString.init(VirtualMachine.vm.main).toValue(VirtualMachine.vm.global).asRef();
+    }
+
+    pub fn getImportedStyles(
+        this: void,
+        ctx: js.JSContextRef,
+        function: js.JSObjectRef,
+        thisObject: js.JSObjectRef,
+        arguments: []const js.JSValueRef,
+        exception: js.ExceptionRef,
+    ) js.JSValueRef {
+        defer flushCSSImports();
+        const styles = getCSSImports();
+        if (styles.len == 0) {
+            return js.JSObjectMakeArray(ctx, 0, null, null);
+        }
+
+        return JSValue.createStringArray(VirtualMachine.vm.global, styles.ptr, styles.len).asRef();
+    }
+
     pub fn getPublicPath(to: string, comptime Writer: type, writer: Writer) void {
         const relative_path = VirtualMachine.vm.bundler.fs.relativeTo(to);
-        if (VirtualMachine.vm.bundler.options.public_url.len > 0) {
+        if (VirtualMachine.vm.bundler.options.origin.len > 0) {
             writer.print(
                 "{s}/{s}",
                 .{
-                    std.mem.trimRight(u8, VirtualMachine.vm.bundler.options.public_url, "/"),
+                    std.mem.trimRight(u8, VirtualMachine.vm.bundler.options.origin, "/"),
                     std.mem.trimLeft(u8, relative_path, "/"),
                 },
             ) catch unreachable;
@@ -141,6 +169,18 @@ pub const Wundle = struct {
         },
         .{
             .Route = Router.Instance.GetClass(void){},
+            .main = .{
+                .get = getMain,
+                .ts = d.ts{ .name = "main", .@"return" = "string" },
+            },
+            .cwd = .{
+                .get = getCWD,
+                .ts = d.ts{ .name = "cwd", .@"return" = "string" },
+            },
+            .origin = .{
+                .get = getOrigin,
+                .ts = d.ts{ .name = "origin", .@"return" = "string" },
+            },
         },
     );
 };
@@ -165,6 +205,8 @@ pub const VirtualMachine = struct {
     require_cache: RequireCacheType,
     log: *logger.Log,
     event_listeners: EventListenerMixin.Map,
+    main: string = "",
+
     pub var vm_loaded = false;
     pub var vm: *VirtualMachine = undefined;
 
@@ -187,7 +229,7 @@ pub const VirtualMachine = struct {
         const bundler = try Bundler.init(
             allocator,
             log,
-            try configureTransformOptionsForSpeedy(allocator, _args),
+            try configureTransformOptionsForSpeedyVM(allocator, _args),
             existing_bundle,
         );
         VirtualMachine.vm.* = VirtualMachine{
@@ -202,6 +244,7 @@ pub const VirtualMachine = struct {
         };
 
         VirtualMachine.vm.bundler.configureLinker();
+        try VirtualMachine.vm.bundler.configureFramework();
 
         if (_args.serve orelse false) {
             VirtualMachine.vm.bundler.linker.onImportCSS = Wundle.onImportCSS;
@@ -559,6 +602,7 @@ pub const VirtualMachine = struct {
     pub fn loadEntryPoint(this: *VirtualMachine, entry_point: string) !*JSInternalPromise {
         var path = this.bundler.normalizeEntryPointPath(entry_point);
 
+        this.main = entry_point;
         var promise = JSModuleLoader.loadAndEvaluateModule(this.global, ZigString.init(path));
 
         this.global.vm().drainMicrotasks();

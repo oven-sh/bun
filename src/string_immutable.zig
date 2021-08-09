@@ -5,27 +5,27 @@ const JavascriptString = @import("ast/base.zig").JavascriptString;
 
 usingnamespace @import("string_types.zig");
 
-pub fn containsChar(self: string, char: u8) bool {
+pub inline fn containsChar(self: string, char: u8) bool {
     return indexOfChar(self, char) != null;
 }
 
-pub fn contains(self: string, str: string) bool {
+pub inline fn contains(self: string, str: string) bool {
     return std.mem.indexOf(u8, self, str) != null;
 }
 
-pub fn indexOfChar(self: string, char: u8) ?usize {
+pub inline fn indexOfChar(self: string, char: u8) ?usize {
     return std.mem.indexOfScalar(@TypeOf(char), self, char);
 }
 
-pub fn lastIndexOfChar(self: string, char: u8) ?usize {
+pub inline fn lastIndexOfChar(self: string, char: u8) ?usize {
     return std.mem.lastIndexOfScalar(u8, self, char);
 }
 
-pub fn lastIndexOf(self: string, str: string) ?usize {
+pub inline fn lastIndexOf(self: string, str: string) ?usize {
     return std.mem.lastIndexOf(u8, self, str);
 }
 
-pub fn indexOf(self: string, str: string) ?usize {
+pub inline fn indexOf(self: string, str: string) ?usize {
     return std.mem.indexOf(u8, self, str);
 }
 
@@ -131,7 +131,7 @@ pub fn eql(self: string, other: anytype) bool {
     return true;
 }
 
-pub fn eqlInsensitive(self: string, other: anytype) bool {
+pub inline fn eqlInsensitive(self: string, other: anytype) bool {
     return std.ascii.eqlIgnoreCase(self, other);
 }
 
@@ -141,7 +141,7 @@ pub fn eqlComptime(self: string, comptime alt: anytype) bool {
             @compileError("Invalid size passed to eqlComptime");
         },
         2 => {
-            const check = std.mem.readIntNative(u16, alt[0..alt.len]);
+            const check = comptime std.mem.readIntNative(u16, alt[0..alt.len]);
             return self.len == alt.len and std.mem.readIntNative(u16, self[0..2]) == check;
         },
         1, 3 => {
@@ -155,7 +155,7 @@ pub fn eqlComptime(self: string, comptime alt: anytype) bool {
             return true;
         },
         4 => {
-            const check = std.mem.readIntNative(u32, alt[0..alt.len]);
+            const check = comptime std.mem.readIntNative(u32, alt[0..alt.len]);
             return self.len == alt.len and std.mem.readIntNative(u32, self[0..4]) == check;
         },
         6 => {
@@ -217,12 +217,12 @@ pub fn eqlComptime(self: string, comptime alt: anytype) bool {
             return (self.len == alt.len) and first == std.mem.readIntNative(u64, self[0..8]) and second == std.mem.readIntNative(u64, self[8..16]);
         },
         else => {
-            @compileError(alt ++ " is too long.");
+        @compileError(alt ++ " is too long.");
         },
     }
 }
 
-pub fn append(allocator: *std.mem.Allocator, self: string, other: string) !string {
+pub inline fn append(allocator: *std.mem.Allocator, self: string, other: string) !string {
     return std.fmt.allocPrint(allocator, "{s}{s}", .{ self, other });
 }
 

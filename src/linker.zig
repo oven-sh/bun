@@ -536,7 +536,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
                             linker.allocator,
                             "{s}{s}/{s}{s}",
                             .{
-                                linker.options.public_url,
+                                linker.options.origin,
                                 dirname,
                                 basename,
                                 absolute_pathname.ext,
@@ -549,7 +549,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
                             linker.allocator,
                             "{s}{s}{s}{s}",
                             .{
-                                linker.options.public_url,
+                                linker.options.origin,
                                 dirname,
                                 basename,
                                 absolute_pathname.ext,

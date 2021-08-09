@@ -14,14 +14,16 @@ const linker = @import("linker.zig");
 usingnamespace @import("ast/base.zig");
 usingnamespace @import("defines.zig");
 const panicky = @import("panic_handler.zig");
+const sync = @import("./sync.zig");
 const Api = @import("api/schema.zig").Api;
 const resolve_path = @import("./resolver/resolve_path.zig");
-
+const configureTransformOptionsForSpeedy = @import("./javascript/jsc/config.zig").configureTransformOptionsForSpeedy;
 const clap = @import("clap");
 
 const bundler = @import("bundler.zig");
 
 const fs = @import("fs.zig");
+const Router = @import("./router.zig");
 
 const NodeModuleBundle = @import("./node_module_bundle.zig").NodeModuleBundle;
 
@@ -114,7 +116,7 @@ pub const Cli = struct {
                 clap.parseParam("-e, --external <STR>...           Exclude module from transpilation (can use * wildcards). ex: -e react") catch unreachable,
                 clap.parseParam("-i, --inject <STR>...             Inject module at the top of every file") catch unreachable,
                 clap.parseParam("--cwd <STR>                       Absolute path to resolve entry points from. Defaults to cwd") catch unreachable,
-                clap.parseParam("--public-url <STR>                Rewrite import paths to start with --public-url. Useful for web browsers.") catch unreachable,
+                clap.parseParam("--origin <STR>                    Rewrite import paths to start with --origin. Useful for web browsers.") catch unreachable,
                 clap.parseParam("--serve                           Start a local dev server. This also sets resolve to \"lazy\".") catch unreachable,
                 clap.parseParam("--public-dir <STR>                Top-level directory for .html files, fonts, images, or anything external. Only relevant with --serve. Defaults to \"<cwd>/public\", to match create-react-app and Next.js") catch unreachable,
                 clap.parseParam("--jsx-factory <STR>               Changes the function called when compiling JSX elements using the classic JSX runtime") catch unreachable,
@@ -130,7 +132,10 @@ pub const Cli = struct {
                 clap.parseParam("--scan                            Instead of bundling or transpiling, print a list of every file imported by an entry point, recursively") catch unreachable,
                 clap.parseParam("--new-jsb                         Generate a new node_modules.jsb file from node_modules and entry point(s)") catch unreachable,
                 clap.parseParam("--jsb <STR>                       Use a Speedy JavaScript Bundle (default: \"./node_modules.jsb\" if exists)") catch unreachable,
-                clap.parseParam("--framework <STR>                 Use a JavaScript framework (module path)") catch unreachable,
+                clap.parseParam("--jsb-for-server <STR>            Use a server-only Speedy JavaScript Bundle (default: \"./node_modules.server.jsb\" if exists)") catch unreachable,
+                clap.parseParam("--framework <STR>                 Use a JavaScript framework (package name or path to package)") catch unreachable,
+                clap.parseParam("--production                      This sets the defaults to production. Applies to jsx & framework") catch unreachable,
+
                 clap.parseParam("<POS>...                          Entry point(s) to use. Can be individual files, npm packages, or one directory. If one directory, it will auto-detect entry points using a filesystem router. If you're using a framework, passing entry points are optional.") catch unreachable,
             };
 
@@ -150,7 +155,7 @@ pub const Cli = struct {
             var cwd_paths = [_]string{args.option("--cwd") orelse try std.process.getCwdAlloc(allocator)};
             var cwd = try std.fs.path.resolve(allocator, &cwd_paths);
             var tsconfig_override = if (args.option("--tsconfig-override")) |ts| (Arguments.readFile(allocator, cwd, ts) catch |err| fileReadError(err, stderr, ts, "tsconfig.json")) else null;
-            var public_url = args.option("--public-url");
+            var origin = args.option("--origin");
             var defines_tuple = try DefineColonList.resolve(allocator, args.options("--define"));
             var loader_tuple = try LoaderColonList.resolve(allocator, args.options("--define"));
 
@@ -162,6 +167,8 @@ pub const Cli = struct {
             var inject = args.options("--inject");
             var output_dir = args.option("--outdir");
             const serve = args.flag("--serve");
+
+            const production = args.flag("--production");
 
             var write = entry_points.len > 1 or output_dir != null;
             if (write and output_dir == null) {
@@ -180,7 +187,7 @@ pub const Cli = struct {
             var jsx_fragment = args.option("--jsx-fragment");
             var jsx_import_source = args.option("--jsx-import-source");
             var jsx_runtime = args.option("--jsx-runtime");
-            var jsx_production = args.flag("--jsx-production");
+            var jsx_production = args.flag("--jsx-production") or production;
             var react_fast_refresh = false;
 
             var framework_entry_point = args.option("--framework");
@@ -200,10 +207,18 @@ pub const Cli = struct {
                 }
 
                 const node_modules_bundle_path_absolute = resolve_path.joinAbs(cwd, .auto, "node_modules.jsb");
-                std.fs.accessAbsolute(node_modules_bundle_path_absolute, .{}) catch |err| {
+
+                break :brk std.fs.realpathAlloc(allocator, node_modules_bundle_path_absolute) catch null;
+            };
+
+            var node_modules_bundle_path_server = args.option("--jsb-for-server") orelse brk: {
+                if (args.flag("--new-jsb")) {
                     break :brk null;
-                };
-                break :brk try std.fs.realpathAlloc(allocator, node_modules_bundle_path_absolute);
+                }
+
+                const node_modules_bundle_path_absolute = resolve_path.joinAbs(cwd, .auto, "node_modules.server.jsb");
+
+                break :brk std.fs.realpathAlloc(allocator, node_modules_bundle_path_absolute) catch null;
             };
 
             if (args.flag("--new-jsb")) {
@@ -280,11 +295,12 @@ pub const Cli = struct {
 
             if (framework_entry_point) |entry| {
                 javascript_framework = Api.FrameworkConfig{
-                    .entry_point = entry,
+                    .package = entry,
+                    .development = !production,
                 };
             }
 
-            if (entry_points.len == 0 and javascript_framework == null) {
+            if (entry_points.len == 0 and javascript_framework == null and node_modules_bundle_path == null) {
                 try clap.help(stderr.writer(), &params);
                 try diag.report(stderr.writer(), error.MissingEntryPoint);
                 std.process.exit(1);
@@ -297,7 +313,7 @@ pub const Cli = struct {
                 .external = externals,
                 .absolute_working_dir = cwd,
                 .tsconfig_override = tsconfig_override,
-                .public_url = public_url,
+                .origin = origin,
                 .define = .{
                     .keys = define_keys,
                     .values = define_values,
@@ -307,6 +323,7 @@ pub const Cli = struct {
                     .loaders = loader_values,
                 },
                 .node_modules_bundle_path = node_modules_bundle_path,
+                .node_modules_bundle_path_server = node_modules_bundle_path_server,
                 .public_dir = if (args.option("--public-dir")) |public_dir| allocator.dupe(u8, public_dir) catch unreachable else null,
                 .write = write,
                 .serve = serve,
@@ -336,6 +353,7 @@ pub const Cli = struct {
         try std.json.stringify(scan_results.list(), .{}, stdout.writer());
         Output.printError("\nJSON printing took: {d}\n", .{std.time.nanoTimestamp() - print_start});
     }
+    var wait_group: sync.WaitGroup = undefined;
     pub fn startTransform(allocator: *std.mem.Allocator, args: Api.TransformOptions, log: *logger.Log) anyerror!void {}
     pub fn start(allocator: *std.mem.Allocator, stdout: anytype, stderr: anytype, comptime MainPanicHandler: type) anyerror!void {
         const start_time = std.time.nanoTimestamp();
@@ -378,18 +396,128 @@ pub const Cli = struct {
         }
 
         if ((args.generate_node_module_bundle orelse false)) {
-            var this_bundler = try bundler.ServeBundler.init(allocator, &log, args, null);
+            var log_ = try allocator.create(logger.Log);
+            log_.* = log;
+
+            var this_bundler = try bundler.ServeBundler.init(allocator, log_, args, null);
             this_bundler.configureLinker();
-            var filepath = "node_modules.jsb";
-            var node_modules = try bundler.ServeBundler.GenerateNodeModuleBundle.generate(&this_bundler, allocator, filepath);
+            var filepath: [*:0]const u8 = "node_modules.jsb";
+            var server_bundle_filepath: [*:0]const u8 = "node_modules.server.jsb";
+            try this_bundler.configureRouter();
 
-            var elapsed = @divTrunc(std.time.nanoTimestamp() - start_time, @as(i128, std.time.ns_per_ms));
-            var bundle = NodeModuleBundle.init(node_modules, allocator);
+            var loaded_route_config: ?Api.LoadedRouteConfig = brk: {
+                if (this_bundler.options.route_config) |*conf| {
+                    break :brk conf.toAPI();
+                }
+                break :brk null;
+            };
+            var loaded_framework: ?Api.LoadedFramework = brk: {
+                if (this_bundler.options.framework) |*conf| {
+                    break :brk conf.toAPI(allocator, this_bundler.fs.top_level_dir, true);
+                }
+                break :brk null;
+            };
 
-            bundle.printSummary();
-            const indent = comptime " ";
-            Output.prettyln(indent ++ "<d>{d:6}ms elapsed", .{@intCast(u32, elapsed)});
-            Output.prettyln(indent ++ "<r>Saved to ./{s}", .{filepath});
+            wait_group = sync.WaitGroup.init();
+            var server_bundler_generator_thread: ?std.Thread = null;
+            if (this_bundler.options.framework) |*framework| {
+                if (framework.toAPI(allocator, this_bundler.fs.top_level_dir, false)) |_server_conf| {
+                    const ServerBundleGeneratorThread = struct {
+                        inline fn _generate(
+                            logs: *logger.Log,
+                            allocator_: *std.mem.Allocator,
+                            transform_args: Api.TransformOptions,
+                            _filepath: [*:0]const u8,
+                            server_conf: Api.LoadedFramework,
+                            route_conf_: ?Api.LoadedRouteConfig,
+                            router: ?Router,
+                        ) !void {
+                            var server_bundler = try bundler.ServeBundler.init(allocator_, logs, try configureTransformOptionsForSpeedy(allocator_, transform_args), null);
+                            server_bundler.configureLinker();
+                            server_bundler.router = router;
+                            _ = try bundler.ServeBundler.GenerateNodeModuleBundle.generate(
+                                &server_bundler,
+                                allocator_,
+                                server_conf,
+                                route_conf_,
+                                _filepath,
+                            );
+                            std.mem.doNotOptimizeAway(&server_bundler);
+                        }
+                        pub fn generate(
+                            logs: *logger.Log,
+                            transform_args: Api.TransformOptions,
+                            _filepath: [*:0]const u8,
+                            server_conf: Api.LoadedFramework,
+                            route_conf_: ?Api.LoadedRouteConfig,
+                            router: ?Router,
+                        ) void {
+                            try alloc.setup(std.heap.c_allocator);
+                            var stdout_ = std.io.getStdOut();
+                            var stderr_ = std.io.getStdErr();
+                            var output_source = Output.Source.init(stdout_, stderr_);
+                            Output.Source.set(&output_source);
+
+                            defer Output.flush();
+                            defer wait_group.done();
+                            Output.enable_ansi_colors = stderr_.isTty();
+                            _generate(logs, std.heap.c_allocator, transform_args, _filepath, server_conf, route_conf_, router) catch return;
+                        }
+                    };
+
+                    wait_group.add();
+                    server_bundler_generator_thread = try std.Thread.spawn(
+                        .{},
+                        ServerBundleGeneratorThread.generate,
+                        .{
+                            log_,
+                            args,
+                            server_bundle_filepath,
+                            _server_conf,
+                            loaded_route_config,
+                            this_bundler.router,
+                        },
+                    );
+                }
+            }
+
+            defer {
+                if (server_bundler_generator_thread) |thread| {
+                    thread.join();
+                }
+            }
+
+            {
+                // Always generate the client-only bundle
+                // we can revisit this decision if people ask
+                var node_modules = try bundler.ServeBundler.GenerateNodeModuleBundle.generate(
+                    &this_bundler,
+                    allocator,
+                    loaded_framework,
+                    loaded_route_config,
+                    filepath,
+                );
+                if (server_bundler_generator_thread) |thread| {
+                    wait_group.wait();
+                }
+
+                var elapsed = @divTrunc(std.time.nanoTimestamp() - start_time, @as(i128, std.time.ns_per_ms));
+                var bundle = NodeModuleBundle.init(node_modules, allocator);
+
+                if (log.errors > 0 or log.warnings > 0) {
+                    try log.print(Output.errorWriter());
+                } else {
+                    bundle.printSummary();
+                    const indent = comptime " ";
+                    Output.prettyln(indent ++ "<d>{d:6}ms elapsed", .{@intCast(u32, elapsed)});
+
+                    if (server_bundler_generator_thread != null) {
+                        Output.prettyln(indent ++ "<r>Saved to ./{s}, ./{s}", .{ filepath, server_bundle_filepath });
+                    } else {
+                        Output.prettyln(indent ++ "<r>Saved to ./{s}", .{filepath});
+                    }
+                }
+            }
             return;
         }
 

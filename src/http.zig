@@ -134,8 +134,8 @@ pub const RequestContext = struct {
 
     pub fn getFullURL(this: *RequestContext) [:0]const u8 {
         if (this.full_url.len == 0) {
-            if (this.bundler.options.public_url.len > 0) {
-                this.full_url = std.fmt.allocPrintZ(this.allocator, "{s}{s}", .{ this.bundler.options.public_url, this.request.path }) catch unreachable;
+            if (this.bundler.options.origin.len > 0) {
+                this.full_url = std.fmt.allocPrintZ(this.allocator, "{s}{s}", .{ this.bundler.options.origin, this.request.path }) catch unreachable;
             } else {
                 this.full_url = this.allocator.dupeZ(u8, this.request.path) catch unreachable;
             }
@@ -735,16 +735,35 @@ pub const RequestContext = struct {
             std.debug.assert(JavaScript.VirtualMachine.vm_loaded);
             javascript_vm = vm;
 
-            const boot = handler.framework.entry_point;
+            const boot = vm.bundler.options.framework.?.server;
             std.debug.assert(boot.len > 0);
             defer vm.deinit();
             vm.watcher = handler.watcher;
-            var resolved_entry_point = try vm.bundler.resolver.resolve(
-                std.fs.path.dirname(boot) orelse vm.bundler.fs.top_level_dir,
-                vm.bundler.normalizeEntryPointPath(boot),
-                .entry_point,
-            );
-            var load_result = try vm.loadEntryPoint(resolved_entry_point.path_pair.primary.text);
+            var entry_point = boot;
+            if (!std.fs.path.isAbsolute(entry_point)) {
+                const resolved_entry_point = try vm.bundler.resolver.resolve(
+                    std.fs.path.dirname(boot) orelse vm.bundler.fs.top_level_dir,
+                    vm.bundler.normalizeEntryPointPath(boot),
+                    .entry_point,
+                );
+                entry_point = resolved_entry_point.path_pair.primary.text;
+            }
+
+            var load_result = vm.loadEntryPoint(
+                entry_point,
+            ) catch |err| {
+                Output.prettyErrorln(
+                    "<r>JavaScript VM failed to start.\n<red>{s}:<r> while loading <r><b>\"\"",
+                    .{ @errorName(err), entry_point },
+                );
+
+                if (channel.tryReadItem() catch null) |item| {
+                    item.ctx.sendInternalError(error.JSFailedToStart) catch {};
+                    item.ctx.arena.deinit();
+                }
+                return;
+            };
+
             switch (load_result.status(vm.global.vm())) {
                 JSPromise.Status.Fulfilled => {},
                 else => {
@@ -766,6 +785,10 @@ pub const RequestContext = struct {
 
             if (vm.event_listeners.count() == 0) {
                 Output.prettyErrorln("<r><red>error<r>: Framework didn't run <b><cyan>addEventListener(\"fetch\", callback)<r>, which means it can't accept HTTP requests.\nShutting down JS.", .{});
+                if (channel.tryReadItem() catch null) |item| {
+                    item.ctx.sendInternalError(error.JSFailedToStart) catch {};
+                    item.ctx.arena.deinit();
+                }
                 return;
             }
 
@@ -814,15 +837,30 @@ pub const RequestContext = struct {
             if (!has_loaded_channel) {
                 has_loaded_channel = true;
                 channel = Channel.init();
-                try JavaScriptHandler.spawnThread(
-                    HandlerThread{
-                        .args = server.transform_options,
-                        .framework = server.bundler.options.framework.?,
-                        .existing_bundle = server.bundler.options.node_modules_bundle,
-                        .log = &server.log,
-                        .watcher = server.watcher,
-                    },
-                );
+                var transform_options = server.transform_options;
+                if (server.transform_options.node_modules_bundle_path_server) |bundle_path| {
+                    transform_options.node_modules_bundle_path = bundle_path;
+                    transform_options.node_modules_bundle_path_server = null;
+                    try JavaScriptHandler.spawnThread(
+                        HandlerThread{
+                            .args = transform_options,
+                            .framework = server.bundler.options.framework.?,
+                            .existing_bundle = null,
+                            .log = &server.log,
+                            .watcher = server.watcher,
+                        },
+                    );
+                } else {
+                    try JavaScriptHandler.spawnThread(
+                        HandlerThread{
+                            .args = server.transform_options,
+                            .framework = server.bundler.options.framework.?,
+                            .existing_bundle = server.bundler.options.node_modules_bundle,
+                            .log = &server.log,
+                            .watcher = server.watcher,
+                        },
+                    );
+                }
             }
 
             defer ctx.controlled = true;

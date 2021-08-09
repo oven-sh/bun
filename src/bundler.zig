@@ -214,37 +214,39 @@ pub fn NewBundler(cache_files: bool) type {
 
         pub fn configureFramework(this: *ThisBundler) !void {
             if (this.options.framework) |*framework| {
-                var framework_file = this.normalizeEntryPointPath(framework.entry_point);
-                var resolved = this.resolver.resolve(
-                    this.fs.top_level_dir,
-                    framework_file,
-                    .entry_point,
-                ) catch |err| {
-                    Output.prettyErrorln("Failed to load framework: {s}", .{@errorName(err)});
-                    Output.flush();
-                    this.options.framework = null;
-                    return;
-                };
+                if (framework.needsResolveFromPackage()) {
+                    var route_config = this.options.route_config orelse options.RouteConfig.zero();
+                    var pair = PackageJSON.FrameworkRouterPair{ .framework = framework, .router = &route_config };
 
-                framework.entry_point = try this.allocator.dupe(u8, resolved.path_pair.primary.text);
+                    if (framework.development) {
+                        try this.resolver.resolveFramework(framework.package, &pair, .development);
+                    } else {
+                        try this.resolver.resolveFramework(framework.package, &pair, .production);
+                    }
+
+                    if (pair.loaded_routes) {
+                        this.options.route_config = route_config;
+                    }
+                    framework.resolved = true;
+                    this.options.framework = framework.*;
+                } else if (!framework.resolved) {
+                    Global.panic("directly passing framework path is not implemented yet!", .{});
+                }
             }
         }
 
-        pub fn configureFrameworkWithResolveResult(this: *ThisBundler) ?_resolver.Result {
-            if (this.options.framework) |*framework| {
-                var framework_file = this.normalizeEntryPointPath(framework.entry_point);
-                const result = this.resolver.resolve(
-                    this.fs.top_level_dir,
-                    framework_file,
-                    .entry_point,
-                ) catch |err| {
-                    Output.prettyErrorln("Failed to load framework: {s}", .{@errorName(err)});
-                    Output.flush();
-                    this.options.framework = null;
-                    return null;
-                };
-                framework.entry_point = result.path_pair.primary.text;
-                return result;
+        pub fn configureFrameworkWithResolveResult(this: *ThisBundler, comptime client: bool) !?_resolver.Result {
+            if (this.options.framework != null) {
+                try this.configureFramework();
+                if (comptime client) {
+                    if (this.options.framework.?.client.len > 0) {
+                        return try this.resolver.resolve(this.fs.top_level_dir, this.options.framework.?.client, .internal);
+                    }
+                } else {
+                    if (this.options.framework.?.server.len > 0) {
+                        return try this.resolver.resolve(this.fs.top_level_dir, this.options.framework.?.server, .internal);
+                    }
+                }
             }
 
             return null;
@@ -284,9 +286,7 @@ pub fn NewBundler(cache_files: bool) type {
                     }
                 }
             } else if (this.options.route_config) |*route_config| {
-                var paths = [_]string{route_config.dir};
-                var entry = this.fs.abs(&paths);
-                var dir_info_ = try this.resolver.readDirInfo(entry);
+                var dir_info_ = try this.resolver.readDirInfo(route_config.dir);
                 var dir_info = dir_info_ orelse return error.MissingRoutesDir;
 
                 this.options.route_config = options.RouteConfig{
@@ -367,11 +367,24 @@ pub fn NewBundler(cache_files: bool) type {
                 };
             }
 
-            pub fn generate(bundler: *ThisBundler, allocator: *std.mem.Allocator, destination: string) !Api.JavascriptBundleContainer {
-                var tmpdir: std.fs.Dir = bundler.fs.tmpdir();
-                const tmpname = try bundler.fs.tmpname(".jsb");
+            pub fn generate(
+                bundler: *ThisBundler,
+                allocator: *std.mem.Allocator,
+                framework_config: ?Api.LoadedFramework,
+                route_config: ?Api.LoadedRouteConfig,
+                destination: [*:0]const u8,
+            ) !Api.JavascriptBundleContainer {
+                var tmpdir: std.fs.Dir = try bundler.fs.fs.openTmpDir();
+                var tmpname_buf: [64]u8 = undefined;
 
-                var tmpfile = try tmpdir.createFile(tmpname, .{ .read = isDebug });
+                const tmpname = try bundler.fs.tmpname(
+                    ".jsb",
+                    std.mem.span(&tmpname_buf),
+                    std.hash.Wyhash.hash(0, std.mem.span(destination)),
+                );
+
+                var tmpfile = try tmpdir.createFileZ(tmpname, .{ .read = isDebug, .exclusive = true });
+
                 var generator = GenerateNodeModuleBundle{
                     .module_list = std.ArrayList(Api.JavascriptBundledModule).init(allocator),
                     .package_list = std.ArrayList(Api.JavascriptBundledPackage).init(allocator),
@@ -401,15 +414,39 @@ pub fn NewBundler(cache_files: bool) type {
                     bundler.resolver.debug_logs = try DebugLogs.init(allocator);
                 }
 
-                if (bundler.configureFrameworkWithResolveResult()) |result| {
-                    try this.resolve_queue.writeItem(result);
+                if (bundler.router) |router| {
+                    const entry_points = try router.getEntryPoints(allocator);
+                    try this.resolve_queue.ensureUnusedCapacity(entry_points.len + bundler.options.entry_points.len + @intCast(usize, @boolToInt(framework_config != null)));
+                    for (entry_points) |entry_point| {
+                        const source_dir = bundler.fs.top_level_dir;
+                        const resolved = try bundler.linker.resolver.resolve(source_dir, entry_point, .entry_point);
+                        this.resolve_queue.writeItemAssumeCapacity(resolved);
+                    }
+                } else {
+                    try this.resolve_queue.ensureUnusedCapacity(bundler.options.entry_points.len + @intCast(usize, @boolToInt(framework_config != null)));
                 }
 
                 for (bundler.options.entry_points) |entry_point| {
                     const entry_point_path = bundler.normalizeEntryPointPath(entry_point);
                     const source_dir = bundler.fs.top_level_dir;
                     const resolved = try bundler.linker.resolver.resolve(source_dir, entry_point, .entry_point);
-                    try this.resolve_queue.writeItem(resolved);
+                    this.resolve_queue.writeItemAssumeCapacity(resolved);
+                }
+
+                if (framework_config) |conf| {
+                    if (conf.client) {
+                        if (bundler.configureFrameworkWithResolveResult(true)) |result_| {
+                            if (result_) |result| {
+                                this.resolve_queue.writeItemAssumeCapacity(result);
+                            }
+                        } else |err| {}
+                    } else {
+                        if (bundler.configureFrameworkWithResolveResult(false)) |result_| {
+                            if (result_) |result| {
+                                this.resolve_queue.writeItemAssumeCapacity(result);
+                            }
+                        } else |err| {}
+                    }
                 }
 
                 while (this.resolve_queue.readItem()) |resolved| {
@@ -504,7 +541,7 @@ pub fn NewBundler(cache_files: bool) type {
                 javascript_bundle.etag = try std.fmt.allocPrint(allocator, "{x}", .{etag_u64});
                 javascript_bundle.generated_at = @truncate(u32, @intCast(u64, std.time.milliTimestamp()));
 
-                const basename = std.fs.path.basename(destination);
+                const basename = std.fs.path.basename(std.mem.span(destination));
                 const extname = std.fs.path.extension(basename);
                 javascript_bundle.import_from_name = try std.fmt.allocPrint(
                     this.allocator,
@@ -518,6 +555,8 @@ pub fn NewBundler(cache_files: bool) type {
                 javascript_bundle_container.bundle_format_version = current_version;
                 javascript_bundle_container.bundle = javascript_bundle;
                 javascript_bundle_container.code_length = this.code_end_byte_offset;
+                javascript_bundle_container.framework = framework_config;
+                javascript_bundle_container.routes = route_config;
 
                 var start_pos = try this.tmpfile.getPos();
                 var tmpwriter = std.io.bufferedWriter(this.tmpfile.writer());
@@ -544,16 +583,27 @@ pub fn NewBundler(cache_files: bool) type {
                 std.mem.writeIntNative(u32, &code_length_bytes, this.code_end_byte_offset);
                 _ = try std.os.pwrite(this.tmpfile.handle, &code_length_bytes, magic_bytes.len);
 
-                const top_dir = try std.fs.openDirAbsolute(this.bundler.fs.top_level_dir, .{});
+                // Without his mutex, we get a crash at this location:
+                // try std.os.renameat(tmpdir.fd, tmpname, top_dir.fd, destination);
+                // ^
+                const top_dir = try std.fs.openDirAbsolute(Fs.FileSystem.instance.top_level_dir, .{});
                 _ = C.fchmod(
                     this.tmpfile.handle,
                     // chmod 777
                     0000010 | 0000100 | 0000001 | 0001000 | 0000040 | 0000004 | 0000002 | 0000400 | 0000200 | 0000020,
                 );
-                try std.os.renameat(tmpdir.fd, tmpname, top_dir.fd, destination);
+                // Delete if already exists, ignoring errors
+                // std.os.unlinkatZ(top_dir.fd, destination, 0) catch {};
+                tmpdir = bundler.fs.tmpdir();
+                defer {
+                    tmpdir.close();
+                    bundler.fs._tmpdir = null;
+                }
+
+                try std.os.renameatZ(tmpdir.fd, tmpname, top_dir.fd, destination);
 
                 // Print any errors at the end
-                try this.log.print(Output.errorWriter());
+                // try this.log.print(Output.errorWriter());
                 return javascript_bundle_container;
             }
 
@@ -594,7 +644,7 @@ pub fn NewBundler(cache_files: bool) type {
             fn processImportRecord(this: *GenerateNodeModuleBundle, import_record: ImportRecord) !void {}
             const node_module_root_string = "node_modules" ++ std.fs.path.sep_str;
             threadlocal var package_key_buf: [512]u8 = undefined;
-
+            threadlocal var file_path_buf: [4096]u8 = undefined;
             fn processFile(this: *GenerateNodeModuleBundle, _resolve: _resolver.Result) !void {
                 var resolve = _resolve;
                 if (resolve.is_external) return;
@@ -605,6 +655,13 @@ pub fn NewBundler(cache_files: bool) type {
                 defer this.scan_pass_result.reset();
                 defer this.bundler.resetStore();
                 var file_path = resolve.path_pair.primary;
+                std.mem.copy(u8, file_path_buf[0..file_path.text.len], resolve.path_pair.primary.text);
+                file_path.text = file_path_buf[0..file_path.text.len];
+                if (file_path.pretty.len > 0) {
+                    std.mem.copy(u8, file_path_buf[file_path.text.len..], resolve.path_pair.primary.pretty);
+                    file_path.pretty = file_path_buf[file_path.text.len..][0..resolve.path_pair.primary.pretty.len];
+                    file_path.name = Fs.PathName.init(file_path.text);
+                }
                 var hasher = std.hash.Wyhash.init(0);
 
                 // If we're in a node_module, build that almost normally

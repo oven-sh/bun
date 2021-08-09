@@ -290,16 +290,26 @@ JSC::JSObject *GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
                                                                     JSValue key,
                                                                     JSModuleRecord *record,
                                                                     JSValue val) {
-  return nullptr;
-  // auto res = Zig__GlobalObject__createImportMetaProperties(
-  //     globalObject,
-  //     loader,
-  //     JSValue::encode(key),
-  //     record,
-  //     JSValue::encode(val)
-  // );
 
-  // return JSValue::decode(res).getObject();
+  ZigString specifier = Zig::toZigString(key, globalObject);
+  JSC::VM &vm = globalObject->vm();
+  auto scope = DECLARE_THROW_SCOPE(vm);
+
+  JSC::JSObject *metaProperties =
+    JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+  RETURN_IF_EXCEPTION(scope, nullptr);
+
+  metaProperties->putDirect(vm, Identifier::fromString(vm, "filePath"), key);
+  RETURN_IF_EXCEPTION(scope, nullptr);
+
+  // metaProperties->putDirect(vm, Identifier::fromString(vm, "resolve"),
+  //                           globalObject->globalThis()
+  //                             ->get(vm, Identifier::fromString("Wundle"))
+  //                             .getObject()
+  //                             ->get(vm, Identifier::fromString("resolve"))); );
+  // RETURN_IF_EXCEPTION(scope, nullptr);
+
+  return metaProperties;
 }
 
 JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject *globalObject,

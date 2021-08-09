@@ -1946,6 +1946,27 @@ pub const Expr = struct {
         return null;
     }
 
+    pub const ArrayIterator = struct {
+        array: *const E.Array,
+        index: u32,
+
+        pub fn next(this: *ArrayIterator) ?Expr {
+            if (this.index >= this.array.items.len) {
+                return null;
+            }
+            defer this.index += 1;
+            return this.array.items[this.index];
+        }
+    };
+
+    pub fn asArray(expr: *const Expr) ?ArrayIterator {
+        if (std.meta.activeTag(expr.data) != .e_array) return null;
+        const array = expr.data.e_array;
+        if (array.items.len == 0 or @ptrToInt(array.items.ptr) == 0) return null;
+
+        return ArrayIterator{ .array = array, .index = 0 };
+    }
+
     pub fn asString(expr: *const Expr, allocator: *std.mem.Allocator) ?string {
         if (std.meta.activeTag(expr.data) != .e_string) return null;
 

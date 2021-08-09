@@ -10,7 +10,7 @@ const TSConfigJSON = @import("./tsconfig_json.zig").TSConfigJSON;
 const PackageJSON = @import("./package_json.zig").PackageJSON;
 usingnamespace @import("./data_url.zig");
 pub const DirInfo = @import("./dir_info.zig");
-
+const Expr = @import("../js_ast.zig").Expr;
 const Wyhash = std.hash.Wyhash;
 
 const hash_map_v2 = @import("../hash_map_v2.zig");
@@ -249,6 +249,9 @@ pub const LoadResult = struct {
     dirname_fd: StoredFileDescriptorType = 0,
 };
 
+// This is a global so even if multiple resolvers are created, the mutex will still work
+var resolver_Mutex: Mutex = undefined;
+var resolver_Mutex_loaded: bool = false;
 // TODO:
 // - Fix "browser" field mapping
 // - Consider removing the string list abstraction?
@@ -306,7 +309,7 @@ pub fn NewResolver(cache_files: bool) type {
         // reducing parallelism in the resolver helps the rest of the bundler go
         // faster. I'm not sure why this is but please don't change this unless you
         // do a lot of testing with various benchmarks and there aren't any regressions.
-        mutex: Mutex,
+        mutex: *Mutex,
 
         // This cache maps a directory path to information about that directory and
         // all parent directories
@@ -318,10 +321,14 @@ pub fn NewResolver(cache_files: bool) type {
             _fs: *Fs.FileSystem,
             opts: options.BundleOptions,
         ) ThisResolver {
+            if (!resolver_Mutex_loaded) {
+                resolver_Mutex = Mutex.init();
+                resolver_Mutex_loaded = true;
+            }
             return ThisResolver{
                 .allocator = allocator,
                 .dir_cache = DirInfo.HashMap.init(allocator),
-                .mutex = Mutex.init(),
+                .mutex = &resolver_Mutex,
                 .caches = CacheSet.init(allocator),
                 .opts = opts,
                 .fs = _fs,
@@ -355,6 +362,48 @@ pub fn NewResolver(cache_files: bool) type {
             }
         }
         var tracing_start: i128 = if (FeatureFlags.tracing) 0 else undefined;
+
+        pub fn resolveFramework(
+            r: *ThisResolver,
+            package: string,
+            pair: *PackageJSON.FrameworkRouterPair,
+            comptime preference: PackageJSON.LoadFramework,
+        ) !void {
+
+            // TODO: make this only parse package.json once
+            var result = try r.resolve(r.fs.top_level_dir, package, .internal);
+            // support passing a package.json or path to a package
+            const pkg: *const PackageJSON = result.package_json orelse r.packageJSONForResolvedNodeModuleWithIgnoreMissingName(&result, true) orelse return error.MissingPackageJSON;
+
+            const json: Expr = (try r.caches.json.parseJSON(r.log, pkg.source, r.allocator)) orelse return error.JSONParseError;
+            pkg.loadFrameworkWithPreference(pair, json, r.allocator, preference);
+            const dir = pkg.source.path.name.dirWithTrailingSlash();
+            var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+            if (pair.framework.client.len > 0) {
+                var parts = [_]string{ dir, pair.framework.client };
+                const abs = r.fs.abs(&parts);
+                pair.framework.client = try r.allocator.dupe(u8, try std.os.realpath(abs, &buf));
+                pair.framework.resolved = true;
+            }
+
+            if (pair.framework.server.len > 0) {
+                var parts = [_]string{ dir, pair.framework.server };
+                const abs = r.fs.abs(&parts);
+                pair.framework.server = try r.allocator.dupe(u8, try std.os.realpath(abs, &buf));
+                pair.framework.resolved = true;
+            }
+
+            if (pair.loaded_routes) {
+                var parts = [_]string{ r.fs.top_level_dir, std.fs.path.sep_str, pair.router.dir };
+                const abs = r.fs.join(&parts);
+                // must end in trailing slash
+                var realpath = std.os.realpath(abs, &buf) catch return error.RoutesDirNotFound;
+                var out = try r.allocator.alloc(u8, realpath.len + 1);
+                std.mem.copy(u8, out, realpath);
+                out[out.len - 1] = '/';
+                pair.router.dir = out;
+            }
+        }
 
         threadlocal var relative_abs_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 
@@ -695,8 +744,15 @@ pub fn NewResolver(cache_files: bool) type {
             return result;
         }
 
+        pub fn packageJSONForResolvedNodeModule(
+            r: *ThisResolver,
+            result: *const Result,
+        ) ?*const PackageJSON {
+            return @call(.{ .modifier = .always_inline }, packageJSONForResolvedNodeModuleWithIgnoreMissingName, .{ r, result, true });
+        }
+
         // This is a fallback, hopefully not called often. It should be relatively quick because everything should be in the cache.
-        pub fn packageJSONForResolvedNodeModule(r: *ThisResolver, result: *const Result) ?*const PackageJSON {
+        fn packageJSONForResolvedNodeModuleWithIgnoreMissingName(r: *ThisResolver, result: *const Result, comptime ignore_missing_name: bool) ?*const PackageJSON {
             var current_dir = std.fs.path.dirname(result.path_pair.primary.text);
             while (current_dir != null) {
                 var dir_info = (r.dirInfoCached(current_dir orelse unreachable) catch null) orelse return null;
@@ -705,8 +761,10 @@ pub fn NewResolver(cache_files: bool) type {
                     // if it doesn't have a name, assume it's something just for adjusting the main fields (react-bootstrap does this)
                     // In that case, we really would like the top-level package that you download from NPM
                     // so we ignore any unnamed packages
-                    if (pkg.name.len > 0) {
-                        return pkg;
+                    if (comptime !ignore_missing_name) {
+                        if (pkg.name.len > 0) {
+                            return pkg;
+                        }
                     }
                 }
 

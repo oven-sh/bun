@@ -185,6 +185,8 @@ pub const To = struct {
 
 pub const Properties = struct {
     pub const UTF8 = struct {
+        pub var filepath: string = "filepath";
+
         pub const module: string = "module";
         pub const globalThis: string = "globalThis";
         pub const exports: string = "exports";
@@ -245,6 +247,8 @@ pub const Properties = struct {
     };
 
     pub const Refs = struct {
+        pub var filepath: js.JSStringRef = undefined;
+
         pub var module: js.JSStringRef = undefined;
         pub var globalThis: js.JSStringRef = undefined;
         pub var exports: js.JSStringRef = undefined;
@@ -283,7 +287,7 @@ pub const Properties = struct {
                 @field(UTF8, name).len,
             );
 
-            if (isDebug) {
+            if (comptime isDebug) {
                 std.debug.assert(
                     js.JSStringIsEqualToString(@field(Refs, name), @field(UTF8, name).ptr, @field(UTF8, name).len),
                 );

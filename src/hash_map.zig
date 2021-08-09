@@ -69,18 +69,18 @@ pub fn StringHashMapUnmanaged(comptime V: type) type {
     return HashMapUnmanaged([]const u8, V, hashString, eqlString, default_max_load_percentage);
 }
 
-// ❯ hyperfine "./esdev.stringEqlNoPtrCheck --resolve=dev --cwd /Users/jarred/Code/esdev/bench/rome/src entry --platform=node --outdir=/Users/jarred/Code/esdev/bench/rome/src/out --public-url=https://hello.com/" "./esdev-fd-rel-hash --resolve=dev --cwd /Users/jarred/Code/esdev/bench/rome/src entry --platform=node --outdir=/Users/jarred/Code/esdev/bench/rome/src/out --public-url=https://hello.com/" --min-runs=50
-// Benchmark #1: ./esdev.stringEqlNoPtrCheck --resolve=dev --cwd /Users/jarred/Code/esdev/bench/rome/src entry --platform=node --outdir=/Users/jarred/Code/esdev/bench/rome/src/out --public-url=https://hello.com/
+// ❯ hyperfine "./esdev.stringEqlNoPtrCheck --resolve=dev --cwd /Users/jarred/Code/esdev/bench/rome/src entry --platform=node --outdir=/Users/jarred/Code/esdev/bench/rome/src/out --origin=https://hello.com/" "./esdev-fd-rel-hash --resolve=dev --cwd /Users/jarred/Code/esdev/bench/rome/src entry --platform=node --outdir=/Users/jarred/Code/esdev/bench/rome/src/out --origin=https://hello.com/" --min-runs=50
+// Benchmark #1: ./esdev.stringEqlNoPtrCheck --resolve=dev --cwd /Users/jarred/Code/esdev/bench/rome/src entry --platform=node --outdir=/Users/jarred/Code/esdev/bench/rome/src/out --origin=https://hello.com/
 //   Time (mean ± σ):     251.5 ms ±   7.8 ms    [User: 110.0 ms, System: 135.7 ms]
 //   Range (min … max):   239.0 ms … 281.1 ms    50 runs
 
-// Benchmark #2: ./esdev-fd-rel-hash --resolve=dev --cwd /Users/jarred/Code/esdev/bench/rome/src entry --platform=node --outdir=/Users/jarred/Code/esdev/bench/rome/src/out --public-url=https://hello.com/
+// Benchmark #2: ./esdev-fd-rel-hash --resolve=dev --cwd /Users/jarred/Code/esdev/bench/rome/src entry --platform=node --outdir=/Users/jarred/Code/esdev/bench/rome/src/out --origin=https://hello.com/
 //   Time (mean ± σ):     249.3 ms ±   8.3 ms    [User: 110.8 ms, System: 134.0 ms]
 //   Range (min … max):   239.8 ms … 288.7 ms    50 runs
 
 // Summary
-//   './esdev-fd-rel-hash --resolve=dev --cwd /Users/jarred/Code/esdev/bench/rome/src entry --platform=node --outdir=/Users/jarred/Code/esdev/bench/rome/src/out --public-url=https://hello.com/' ran
-//     1.01 ± 0.05 times faster than './esdev.stringEqlNoPtrCheck --resolve=dev --cwd /Users/jarred/Code/esdev/bench/rome/src entry --platform=node --outdir=/Users/jarred/Code/esdev/bench/rome/src/out --public-url=https://hello.com/'
+//   './esdev-fd-rel-hash --resolve=dev --cwd /Users/jarred/Code/esdev/bench/rome/src entry --platform=node --outdir=/Users/jarred/Code/esdev/bench/rome/src/out --origin=https://hello.com/' ran
+//     1.01 ± 0.05 times faster than './esdev.stringEqlNoPtrCheck --resolve=dev --cwd /Users/jarred/Code/esdev/bench/rome/src entry --platform=node --outdir=/Users/jarred/Code/esdev/bench/rome/src/out --origin=https://hello.com/'
 pub fn eqlString(a: []const u8, b: []const u8) bool {
     return mem.eql(u8, a, b);
 }

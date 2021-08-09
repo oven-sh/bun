@@ -27,7 +27,7 @@ pub const DefaultSpeedyDefines = struct {
 pub fn configureTransformOptionsForSpeedyVM(allocator: *std.mem.Allocator, _args: Api.TransformOptions) !Api.TransformOptions {
     var args = _args;
 
-    args.serve = false;
+    // args.serve = false;
     args.write = false;
     args.resolve = Api.ResolveMode.lazy;
     args.generate_node_module_bundle = false;

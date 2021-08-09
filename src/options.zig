@@ -719,6 +719,10 @@ pub const BundleOptions = struct {
         if (transform.serve orelse false) {
             opts.preserve_extensions = true;
             opts.append_package_version_in_query_string = true;
+            if (opts.origin.len == 0) {
+                opts.origin = "/";
+            }
+
             opts.resolve_mode = .lazy;
             var _dirs = [_]string{transform.public_dir orelse opts.public_dir};
             opts.public_dir = try fs.absAlloc(allocator, &_dirs);

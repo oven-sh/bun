@@ -7780,9 +7780,13 @@ pub fn NewParser(
                         // Destructuring patterns have an optional default value
                         var initializer: ?Expr = null;
                         if (errors != null and p.lexer.token == .t_equals) {
-                            (errors orelse unreachable).invalid_expr_default_value = p.lexer.range();
+                            const invalid_expr_default_value_range = p.lexer.range();
                             try p.lexer.next();
                             initializer = try p.parseExpr(.comma);
+                            // ({foo: 1 = })
+                            //          ^ is invalid
+                            // but it's only invalid if we're missing an expression here.
+                            if (initializer == null) errors.?.invalid_expr_default_value = invalid_expr_default_value_range;
                         }
 
                         return G.Property{

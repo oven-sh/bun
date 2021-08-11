@@ -2,7 +2,7 @@ export const Main = ({ productName }) => {
   return (
     <>
       <header>
-        <div className="Title">CSS HMR Stress Test</div>
+        <div className="Title">CSS HMR Stress Test!</div>
         <p className="Description">
           This page visually tests how quickly a bundler can update CSS over Hot
           Module Reloading.
@@ -55,10 +55,10 @@ export const Main = ({ productName }) => {
         <div className="Bundler-container">
           <div className="Bundler">{productName}</div>
           <div className="Bundler-updateRate">
-            Saving a css file every
+            {/* This should loose all the styles
             <span className="highlight">
               <span className="interval"></span>ms
-            </span>
+            </span> */}
           </div>
         </div>
       </footer>

@@ -1,0 +1,32 @@
+{
+  "name": "nexty",
+  "version": "1.0.0",
+  "description": "",
+  "framework": {
+    "router": {
+      "dir": "pages",
+      "extensions": [
+        ".js",
+        ".ts",
+        ".tsx"
+      ]
+    },
+    "static": "public",
+    "development": {
+      "client": "client.development.tsx",
+      "server": "server.development.tsx"
+    },
+    "production": {
+      "client": "client.production.tsx",
+      "server": "server.production.tsx"
+    }
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "next": "^11.1.0"
+  }
+}

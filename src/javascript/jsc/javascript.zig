@@ -110,6 +110,34 @@ pub const Wundle = struct {
         return ZigString.init(VirtualMachine.vm.main).toValue(VirtualMachine.vm.global).asRef();
     }
 
+    pub fn getRoutesDir(
+        this: void,
+        ctx: js.JSContextRef,
+        thisObject: js.JSValueRef,
+        prop: js.JSStringRef,
+        exception: js.ExceptionRef,
+    ) js.JSValueRef {
+        if (!VirtualMachine.vm.bundler.options.routes.routes_enabled or VirtualMachine.vm.bundler.options.routes.dir.len > 0) {
+            return js.JSValueMakeUndefined(ctx);
+        }
+
+        return ZigString.init(VirtualMachine.vm.bundler.options.routes.dir).toValue(VirtualMachine.vm.global).asRef();
+    }
+
+    pub fn routeByName(
+        this: void,
+        ctx: js.JSContextRef,
+        thisObject: js.JSValueRef,
+        prop: js.JSStringRef,
+        exception: js.ExceptionRef,
+    ) js.JSValueRef {
+        if (!VirtualMachine.vm.bundler.options.routes.routes_enabled) {
+            return js.JSValueMakeUndefined(ctx);
+        }
+
+        return ZigString.init(VirtualMachine.vm.bundler.options.routes.dir).toValue(VirtualMachine.vm.global).asRef();
+    }
+
     pub fn getImportedStyles(
         this: void,
         ctx: js.JSContextRef,
@@ -180,6 +208,10 @@ pub const Wundle = struct {
             .origin = .{
                 .get = getOrigin,
                 .ts = d.ts{ .name = "origin", .@"return" = "string" },
+            },
+            .routesDir = .{
+                .get = getRoutesDir,
+                .ts = d.ts{ .name = "routesDir", .@"return" = "string" },
             },
         },
     );
@@ -349,6 +381,7 @@ pub const VirtualMachine = struct {
                     0,
                     fd,
                     hash,
+                    null,
                 ) orelse {
                     return error.ParseError;
                 };

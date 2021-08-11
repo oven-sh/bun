@@ -9,9 +9,10 @@ const CombinedScanner = @import("../../../query_string_map.zig").CombinedScanner
 usingnamespace @import("../bindings/bindings.zig");
 usingnamespace @import("../webcore/response.zig");
 const Router = @This();
-
+const Bundler = @import("../../../bundler.zig");
 const VirtualMachine = JavaScript.VirtualMachine;
 const ScriptSrcStream = std.io.FixedBufferStream([]u8);
+const Fs = @import("../../../fs.zig");
 
 route: *const FilesystemRouter.Match,
 query_string_map: ?QueryStringMap = null,
@@ -73,7 +74,9 @@ fn matchPathNameString(
     ctx: js.JSContextRef,
     pathname: string,
     exception: js.ExceptionRef,
-) js.JSObjectRef {}
+) js.JSObjectRef {
+
+}
 
 fn matchPathName(
     ctx: js.JSContextRef,
@@ -174,6 +177,7 @@ pub const Instance = NewClass(
                 .@"tsdoc" = "URL path as appears in a web browser's address bar",
             },
         },
+        
         .filePath = .{
             .get = getFilePath,
             .ro = true,
@@ -336,6 +340,7 @@ pub fn createQueryObject(ctx: js.JSContextRef, map: *QueryStringMap, exception: 
     return value.asRef();
 }
 
+threadlocal var entry_point_tempbuf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 pub fn getScriptSrc(
     this: *Router,
     ctx: js.JSContextRef,
@@ -344,11 +349,25 @@ pub fn getScriptSrc(
     exception: js.ExceptionRef,
 ) js.JSValueRef {
     const src = this.script_src orelse brk: {
+        // We don't store the framework config including the client parts in the server
+        // instead, we just store a boolean saying whether we should generate this whenever the script is requested
+        // this is kind of bad. we should consider instead a way to inline the contents of the script.
         var writer = this.script_src_buf_writer.writer();
-
-        JavaScript.Wundle.getPublicPath(this.route.file_path, ScriptSrcStream.Writer, writer);
+        if (this.route.client_framework_enabled) {
+            JavaScript.Wundle.getPublicPath(
+                Bundler.ClientEntryPoint.generateEntryPointPath(
+                    &entry_point_tempbuf,
+                    Fs.PathName.init(this.route.file_path),
+                ),
+                ScriptSrcStream.Writer,
+                writer,
+            );
+        } else {
+            JavaScript.Wundle.getPublicPath(this.route.file_path, ScriptSrcStream.Writer, writer);
+        }
         break :brk this.script_src_buf[0..this.script_src_buf_writer.pos];
     };
+    
 
     this.script_src = src;
 

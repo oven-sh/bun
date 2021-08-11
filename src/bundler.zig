@@ -39,7 +39,97 @@ pub const ServeResult = struct {
     mime_type: MimeType,
 };
 
-// const BundleMap =
+pub const ClientEntryPoint = struct {
+    code_buffer: [8096]u8 = undefined,
+    path_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined,
+    source: logger.Source = undefined,
+
+    pub fn isEntryPointPath(extname: string) bool {
+        return strings.startsWith("entry.", extname);
+    }
+
+    pub fn generateEntryPointPath(outbuffer: []u8, original_path: Fs.PathName) string {
+        var joined_base_and_dir_parts = [_]string{ original_path.dir, original_path.base };
+        var generated_path = Fs.FileSystem.instance.absBuf(&joined_base_and_dir_parts, outbuffer);
+
+        std.mem.copy(u8, outbuffer[generated_path.len..], ".entry");
+        generated_path = outbuffer[0 .. generated_path.len + ".entry".len];
+        std.mem.copy(u8, outbuffer[generated_path.len..], original_path.ext);
+        return outbuffer[0 .. generated_path.len + original_path.ext.len];
+    }
+
+    pub fn decodeEntryPointPath(outbuffer: []u8, original_path: Fs.PathName) string {
+        var joined_base_and_dir_parts = [_]string{ original_path.dir, original_path.base };
+        var generated_path = Fs.FileSystem.instance.absBuf(&joined_base_and_dir_parts, outbuffer);
+        var original_ext = original_path.ext;
+        if (strings.indexOf(original_path.ext, "entry")) |entry_i| {
+            original_ext = original_path.ext[entry_i + "entry".len ..];
+        }
+
+        std.mem.copy(u8, outbuffer[generated_path.len..], original_ext);
+
+        return outbuffer[0 .. generated_path.len + original_ext.len];
+    }
+
+    pub fn generate(entry: *ClientEntryPoint, comptime BundlerType: type, bundler: *BundlerType, original_path: Fs.PathName, client: string) !void {
+
+        // This is *extremely* naive.
+        // The basic idea here is this:
+        // --
+        // import * as EntryPoint from 'entry-point';
+        // import boot from 'framework';
+        // boot(EntryPoint);
+        // --
+        // We go through the steps of printing the code -- only to then parse/transpile it because
+        // we want it to go through the linker and the rest of the transpilation process
+
+        const dir_to_use: string = original_path.dirWithTrailingSlash();
+
+        const code = try std.fmt.bufPrint(
+            &entry.code_buffer,
+            \\var lastErrorHandler = globalThis.onerror;
+            \\var loaded = {{boot: false, entry: false, onError: null}};
+            \\if (!lastErrorHandler || !lastErrorHandler.__onceTag) {{
+            \\  globalThis.onerror = function (evt) {{
+            \\      if (this.onError && typeof this.onError == 'function') {{
+            \\          this.onError(evt, loaded);
+            \\      }}
+            \\      console.error(evt.error);
+            \\      debugger;
+            \\  }};
+            \\  globalThis.onerror.__onceTag = true;
+            \\  globalThis.onerror.loaded = loaded;
+            \\}}
+            \\
+            \\import * as boot from '{s}';
+            \\loaded.boot = true;
+            \\if ('setLoaded' in boot) boot.setLoaded(loaded);
+            \\import * as EntryPoint from '{s}{s}';
+            \\loaded.entry = true;
+            \\
+            \\if (!('default' in boot) ) {{
+            \\ const now = Date.now();
+            \\ debugger;
+            \\ const elapsed = Date.now() - now;
+            \\ if (elapsed < 1000) {{
+            \\   throw new Error('Expected framework to export default a function. Instead, framework exported:', Object.keys(boot));
+            \\ }}
+            \\}}
+            \\
+            \\boot.default(EntryPoint, loaded);
+        ,
+            .{
+                client,
+                dir_to_use,
+                original_path.filename,
+            },
+        );
+
+        entry.source = logger.Source.initPathString(generateEntryPointPath(&entry.path_buffer, original_path), code);
+        entry.source.path.namespace = "client-entry";
+    }
+};
+
 pub const ResolveResults = std.AutoHashMap(u64, void);
 pub const ResolveQueue = std.fifo.LinearFifo(_resolver.Result, std.fifo.LinearFifoBufferType.Dynamic);
 
@@ -155,6 +245,9 @@ pub fn NewBundler(cache_files: bool) type {
         linker: Linker,
         timer: Timer = Timer{},
 
+        // must be pointer array because we can't we don't want the source to point to invalid memory if the array size is reallocated
+        virtual_modules: std.ArrayList(*ClientEntryPoint),
+
         pub const isCacheEnabled = cache_files;
 
         // to_bundle:
@@ -199,6 +292,7 @@ pub fn NewBundler(cache_files: bool) type {
                 .resolve_results = resolve_results,
                 .resolve_queue = ResolveQueue.init(allocator),
                 .output_files = std.ArrayList(options.OutputFile).init(allocator),
+                .virtual_modules = std.ArrayList(*ClientEntryPoint).init(allocator),
             };
         }
 
@@ -253,6 +347,7 @@ pub fn NewBundler(cache_files: bool) type {
 
             return null;
         }
+
         pub fn configureRouter(this: *ThisBundler) !void {
             try this.configureFramework();
 
@@ -283,7 +378,14 @@ pub fn NewBundler(cache_files: bool) type {
                         this.options.routes.extensions = std.mem.span(&options.RouteConfig.DefaultExtensions);
                         this.options.routes.routes_enabled = true;
                         this.router = try Router.init(this.fs, this.allocator, this.options.routes);
-                        try this.router.?.loadRoutes(dir_info, Resolver, &this.resolver, std.math.maxInt(u16), true);
+                        try this.router.?.loadRoutes(
+                            dir_info,
+                            Resolver,
+                            &this.resolver,
+                            std.math.maxInt(u16),
+                            true,
+                        );
+                        this.router.?.routes.client_framework_enabled = this.options.isFrontendFrameworkEnabled();
                         return;
                     }
                 }
@@ -295,12 +397,17 @@ pub fn NewBundler(cache_files: bool) type {
 
                 this.router = try Router.init(this.fs, this.allocator, this.options.routes);
                 try this.router.?.loadRoutes(dir_info, Resolver, &this.resolver, std.math.maxInt(u16), true);
+                this.router.?.routes.client_framework_enabled = this.options.isFrontendFrameworkEnabled();
                 return;
             }
 
             // If we get this far, it means they're trying to run the bundler without a preconfigured router
             if (this.options.entry_points.len > 0) {
                 this.options.routes.routes_enabled = false;
+            }
+
+            if (this.router) |*router| {
+                router.routes.client_framework_enabled = this.options.isFrontendFrameworkEnabled();
             }
         }
 
@@ -786,7 +893,15 @@ pub fn NewBundler(cache_files: bool) type {
                                     import_record.is_bundled = true;
 
                                     try this.resolve_queue.writeItem(_resolved_import.*);
-                                } else |err| {}
+                                } else |err| {
+                                    if (comptime isDebug) {
+                                        Output.prettyErrorln("\n<r><red>{s}<r> on resolving \"{s}\" from \"{s}\"", .{
+                                            @errorName(err),
+                                            import_record.path.text,
+                                            source_dir
+                                        });
+                                    }
+                                }
                             }
 
                             const package = resolve.package_json orelse this.bundler.resolver.packageJSONForResolvedNodeModule(&resolve) orelse unreachable;
@@ -1045,6 +1160,7 @@ pub fn NewBundler(cache_files: bool) type {
             filepath_hash: u32,
             comptime WatcherType: type,
             watcher: *WatcherType,
+            client_entry_point: ?*ClientEntryPoint,
         ) !BuildResolveResultPair {
             if (resolve_result.is_external) {
                 return BuildResolveResultPair{
@@ -1126,6 +1242,7 @@ pub fn NewBundler(cache_files: bool) type {
                         resolve_result.dirname_fd,
                         file_descriptor,
                         filepath_hash,
+                        client_entry_point,
                     ) orelse {
                         bundler.resetStore();
                         return BuildResolveResultPair{
@@ -1155,6 +1272,7 @@ pub fn NewBundler(cache_files: bool) type {
             comptime import_path_format: options.BundleOptions.ImportPathFormat,
             comptime Outstream: type,
             outstream: Outstream,
+            client_entry_point_: ?*ClientEntryPoint,
         ) !?options.OutputFile {
             if (resolve_result.is_external) {
                 return null;
@@ -1163,6 +1281,11 @@ pub fn NewBundler(cache_files: bool) type {
             // Step 1. Parse & scan
             const loader = bundler.options.loaders.get(resolve_result.path_pair.primary.name.ext) orelse .file;
             var file_path = resolve_result.path_pair.primary;
+
+            if (client_entry_point_) |client_entry_point| {
+                file_path = client_entry_point.source.path;
+            }
+
             file_path.pretty = Linker.relative_paths_list.append(string, bundler.fs.relativeTo(file_path.text)) catch unreachable;
 
             var output_file = options.OutputFile{
@@ -1193,6 +1316,7 @@ pub fn NewBundler(cache_files: bool) type {
                         resolve_result.dirname_fd,
                         null,
                         null,
+                        client_entry_point_,
                     ) orelse {
                         return null;
                     };
@@ -1416,6 +1540,7 @@ pub fn NewBundler(cache_files: bool) type {
             dirname_fd: StoredFileDescriptorType,
             file_descriptor: ?StoredFileDescriptorType,
             file_hash: ?u32,
+            client_entry_point_: ?*ClientEntryPoint,
         ) ?ParseResult {
             if (FeatureFlags.tracing) {
                 bundler.timer.start();
@@ -1427,15 +1552,23 @@ pub fn NewBundler(cache_files: bool) type {
                 }
             }
             var result: ParseResult = undefined;
-            const entry = bundler.resolver.caches.fs.readFile(
-                bundler.fs,
-                path.text,
-                dirname_fd,
-                true,
-                file_descriptor,
-            ) catch return null;
+            var input_fd: ?StoredFileDescriptorType = null;
 
-            const source = logger.Source.initFile(Fs.File{ .path = path, .contents = entry.contents }, bundler.allocator) catch return null;
+            const source: logger.Source = brk: {
+                if (client_entry_point_) |client_entry_point| {
+                    break :brk client_entry_point.source;
+                } else {
+                    const entry = bundler.resolver.caches.fs.readFile(
+                        bundler.fs,
+                        path.text,
+                        dirname_fd,
+                        true,
+                        file_descriptor,
+                    ) catch return null;
+                    input_fd = entry.fd;
+                    break :brk logger.Source.initFile(Fs.File{ .path = path, .contents = entry.contents }, bundler.allocator) catch return null;
+                }
+            };
 
             switch (loader) {
                 .js,
@@ -1449,7 +1582,7 @@ pub fn NewBundler(cache_files: bool) type {
                     opts.enable_bundling = false;
                     opts.transform_require_to_import = true;
                     opts.can_import_from_bundle = bundler.options.node_modules_bundle != null;
-                    opts.features.hot_module_reloading = bundler.options.hot_module_reloading and bundler.options.platform != .speedy;
+                    opts.features.hot_module_reloading = bundler.options.hot_module_reloading and bundler.options.platform != .speedy and client_entry_point_ == null;
                     opts.features.react_fast_refresh = opts.features.hot_module_reloading and jsx.parse and bundler.options.jsx.supports_fast_refresh;
                     opts.filepath_hash_for_hmr = file_hash orelse 0;
                     const value = (bundler.resolver.caches.js.parse(allocator, opts, bundler.options.define, bundler.log, &source) catch null) orelse return null;
@@ -1457,7 +1590,7 @@ pub fn NewBundler(cache_files: bool) type {
                         .ast = value,
                         .source = source,
                         .loader = loader,
-                        .input_fd = entry.fd,
+                        .input_fd = input_fd,
                     };
                 },
                 .json => {
@@ -1475,7 +1608,7 @@ pub fn NewBundler(cache_files: bool) type {
                         .ast = js_ast.Ast.initTest(parts),
                         .source = source,
                         .loader = loader,
-                        .input_fd = entry.fd,
+                        .input_fd = input_fd,
                     };
                 },
                 .css => {},
@@ -1487,6 +1620,7 @@ pub fn NewBundler(cache_files: bool) type {
 
         // This is public so it can be used by the HTTP handler when matching against public dir.
         pub threadlocal var tmp_buildfile_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        threadlocal var tmp_buildfile_buf2: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 
         // We try to be mostly stateless when serving
         // This means we need a slightly different resolver setup
@@ -1497,6 +1631,7 @@ pub fn NewBundler(cache_files: bool) type {
             allocator: *std.mem.Allocator,
             relative_path: string,
             _extension: string,
+            comptime client_entry_point_enabled: bool,
         ) !ServeResult {
             var extension = _extension;
             var original_resolver_logger = bundler.resolver.log;
@@ -1533,7 +1668,36 @@ pub fn NewBundler(cache_files: bool) type {
             //     absolute_path = absolute_path[0 .. absolute_path.len - ".js".len];
             // }
 
-            const resolved = (try bundler.resolver.resolve(bundler.fs.top_level_dir, absolute_path, .entry_point));
+            const resolved = if (comptime !client_entry_point_enabled) (try bundler.resolver.resolve(bundler.fs.top_level_dir, absolute_path, .stmt)) else brk: {
+                const absolute_pathname = Fs.PathName.init(absolute_path);
+
+                const loader_for_ext = bundler.options.loaders.get(absolute_pathname.ext) orelse .file;
+
+                // The expected pathname looks like:
+                // /pages/index.entry.tsx
+                // /pages/index.entry.js
+                // /pages/index.entry.ts
+                // /pages/index.entry.jsx
+                if (loader_for_ext.supportsClientEntryPoint()) {
+                    const absolute_pathname_pathname = Fs.PathName.init(absolute_pathname.base);
+
+                    if (strings.eqlComptime(absolute_pathname_pathname.ext, ".entry")) {
+                        const trail_dir = absolute_pathname.dirWithTrailingSlash();
+                        var len: usize = trail_dir.len;
+                        std.mem.copy(u8, tmp_buildfile_buf2[0..len], trail_dir);
+
+                        std.mem.copy(u8, tmp_buildfile_buf2[len..], absolute_pathname_pathname.base);
+                        len += absolute_pathname_pathname.base.len;
+                        std.mem.copy(u8, tmp_buildfile_buf2[len..], absolute_pathname.ext);
+                        len += absolute_pathname.ext.len;
+                        std.debug.assert(len > 0);
+                        const decoded_entry_point_path = tmp_buildfile_buf2[0..len];
+                        break :brk (try bundler.resolver.resolve(bundler.fs.top_level_dir, decoded_entry_point_path, .entry_point));
+                    }
+                }
+
+                break :brk (try bundler.resolver.resolve(bundler.fs.top_level_dir, absolute_path, .stmt));
+            };
 
             const loader = bundler.options.loaders.get(resolved.path_pair.primary.name.ext) orelse .file;
 
@@ -1736,28 +1900,62 @@ pub fn NewBundler(cache_files: bool) type {
                 bundler.resolver.debug_logs = try DebugLogs.init(allocator);
             }
 
+            var did_start = false;
+
             if (bundler.options.output_dir_handle == null) {
                 const outstream = std.io.getStdOut();
-                try switch (bundler.options.import_path_format) {
-                    .relative => bundler.processResolveQueue(.relative, @TypeOf(outstream), outstream),
-                    .relative_nodejs => bundler.processResolveQueue(.relative_nodejs, @TypeOf(outstream), outstream),
-                    .absolute_url => bundler.processResolveQueue(.absolute_url, @TypeOf(outstream), outstream),
-                    .absolute_path => bundler.processResolveQueue(.absolute_path, @TypeOf(outstream), outstream),
-                    .package_path => bundler.processResolveQueue(.package_path, @TypeOf(outstream), outstream),
-                };
+
+                if (bundler.options.framework) |*framework| {
+                    if (framework.client.len > 0) {
+                        did_start = true;
+                        try switch (bundler.options.import_path_format) {
+                            .relative => bundler.processResolveQueue(.relative, true, @TypeOf(outstream), outstream),
+                            .relative_nodejs => bundler.processResolveQueue(.relative_nodejs, true, @TypeOf(outstream), outstream),
+                            .absolute_url => bundler.processResolveQueue(.absolute_url, true, @TypeOf(outstream), outstream),
+                            .absolute_path => bundler.processResolveQueue(.absolute_path, true, @TypeOf(outstream), outstream),
+                            .package_path => bundler.processResolveQueue(.package_path, true, @TypeOf(outstream), outstream),
+                        };
+                    }
+                }
+
+                if (!did_start) {
+                    try switch (bundler.options.import_path_format) {
+                        .relative => bundler.processResolveQueue(.relative, false, @TypeOf(outstream), outstream),
+                        .relative_nodejs => bundler.processResolveQueue(.relative_nodejs, false, @TypeOf(outstream), outstream),
+                        .absolute_url => bundler.processResolveQueue(.absolute_url, false, @TypeOf(outstream), outstream),
+                        .absolute_path => bundler.processResolveQueue(.absolute_path, false, @TypeOf(outstream), outstream),
+                        .package_path => bundler.processResolveQueue(.package_path, false, @TypeOf(outstream), outstream),
+                    };
+                }
             } else {
                 const output_dir = bundler.options.output_dir_handle orelse {
                     Output.printError("Invalid or missing output directory.", .{});
+                    Output.flush();
                     Global.crash();
                 };
 
-                try switch (bundler.options.import_path_format) {
-                    .relative => bundler.processResolveQueue(.relative, std.fs.Dir, output_dir),
-                    .relative_nodejs => bundler.processResolveQueue(.relative_nodejs, std.fs.Dir, output_dir),
-                    .absolute_url => bundler.processResolveQueue(.absolute_url, std.fs.Dir, output_dir),
-                    .absolute_path => bundler.processResolveQueue(.absolute_path, std.fs.Dir, output_dir),
-                    .package_path => bundler.processResolveQueue(.package_path, std.fs.Dir, output_dir),
-                };
+                if (bundler.options.framework) |*framework| {
+                    if (framework.client.len > 0) {
+                        did_start = true;
+                        try switch (bundler.options.import_path_format) {
+                            .relative => bundler.processResolveQueue(.relative, true, std.fs.Dir, output_dir),
+                            .relative_nodejs => bundler.processResolveQueue(.relative_nodejs, true, std.fs.Dir, output_dir),
+                            .absolute_url => bundler.processResolveQueue(.absolute_url, true, std.fs.Dir, output_dir),
+                            .absolute_path => bundler.processResolveQueue(.absolute_path, true, std.fs.Dir, output_dir),
+                            .package_path => bundler.processResolveQueue(.package_path, true, std.fs.Dir, output_dir),
+                        };
+                    }
+                }
+
+                if (!did_start) {
+                    try switch (bundler.options.import_path_format) {
+                        .relative => bundler.processResolveQueue(.relative, false, std.fs.Dir, output_dir),
+                        .relative_nodejs => bundler.processResolveQueue(.relative_nodejs, false, std.fs.Dir, output_dir),
+                        .absolute_url => bundler.processResolveQueue(.absolute_url, false, std.fs.Dir, output_dir),
+                        .absolute_path => bundler.processResolveQueue(.absolute_path, false, std.fs.Dir, output_dir),
+                        .package_path => bundler.processResolveQueue(.package_path, false, std.fs.Dir, output_dir),
+                    };
+                }
             }
 
             // if (log.level == .verbose) {
@@ -1790,17 +1988,58 @@ pub fn NewBundler(cache_files: bool) type {
         pub fn processResolveQueue(
             bundler: *ThisBundler,
             comptime import_path_format: options.BundleOptions.ImportPathFormat,
+            comptime wrap_entry_point: bool,
             comptime Outstream: type,
             outstream: Outstream,
         ) !void {
             while (bundler.resolve_queue.readItem()) |item| {
                 js_ast.Expr.Data.Store.reset();
                 js_ast.Stmt.Data.Store.reset();
+
+                if (comptime wrap_entry_point) {
+                    const loader = bundler.options.loaders.get(item.path_pair.primary.name.ext) orelse .file;
+
+                    if (item.import_kind == .entry_point and loader.supportsClientEntryPoint()) {
+                        var client_entry_point = try bundler.allocator.create(ClientEntryPoint);
+                        client_entry_point.* = ClientEntryPoint{};
+                        try client_entry_point.generate(ThisBundler, bundler, item.path_pair.primary.name, bundler.options.framework.?.client);
+                        try bundler.virtual_modules.append(client_entry_point);
+
+                        const entry_point_output_file = bundler.buildWithResolveResultEager(
+                            item,
+                            import_path_format,
+                            Outstream,
+                            outstream,
+                            client_entry_point,
+                        ) catch continue orelse continue;
+                        bundler.output_files.append(entry_point_output_file) catch unreachable;
+
+                        js_ast.Expr.Data.Store.reset();
+                        js_ast.Stmt.Data.Store.reset();
+
+                        // At this point, the entry point will be de-duped.
+                        // So we just immediately build it.
+                        var item_not_entrypointed = item;
+                        item_not_entrypointed.import_kind = .stmt;
+                        const original_output_file = bundler.buildWithResolveResultEager(
+                            item_not_entrypointed,
+                            import_path_format,
+                            Outstream,
+                            outstream,
+                            null,
+                        ) catch continue orelse continue;
+                        bundler.output_files.append(original_output_file) catch unreachable;
+
+                        continue;
+                    }
+                }
+
                 const output_file = bundler.buildWithResolveResultEager(
                     item,
                     import_path_format,
                     Outstream,
                     outstream,
+                    null,
                 ) catch continue orelse continue;
                 bundler.output_files.append(output_file) catch unreachable;
             }

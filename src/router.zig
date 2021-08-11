@@ -281,6 +281,10 @@ pub const RouteMap = struct {
     allocator: *std.mem.Allocator,
     config: Options.RouteConfig,
 
+    // This is passed here and propagated through Match
+    // We put this here to avoid loading the FrameworkConfig for the client, on the server.
+    client_framework_enabled: bool = false,
+
     pub threadlocal var segments_buf: [128]string = undefined;
     pub threadlocal var segments_hash: [128]u32 = undefined;
 
@@ -482,6 +486,7 @@ pub const RouteMap = struct {
                     .hash = index_route_hash,
                     .file_path = Fs.FileSystem.instance.absBuf(&parts, file_path_buf),
                     .query_string = url_path.query_string,
+                    .client_framework_enabled = this.client_framework_enabled,
                 };
             }
 
@@ -512,6 +517,7 @@ pub const RouteMap = struct {
                             .hash = child_hash,
                             .file_path = Fs.FileSystem.instance.absBuf(&parts, file_path_buf),
                             .query_string = url_path.query_string,
+                            .client_framework_enabled = this.client_framework_enabled,
                         };
                     }
                 }
@@ -530,6 +536,7 @@ pub const RouteMap = struct {
                     .pathname = url_path.pathname,
                     .query_string = url_path.query_string,
                     .file_path = Fs.FileSystem.instance.absBuf(&parts, file_path_buf),
+                    .client_framework_enabled = this.client_framework_enabled,
                 };
             }
         }
@@ -575,7 +582,7 @@ pub const RouteMap = struct {
             dynamic_route.name = dynamic_route.name[0 .. dynamic_route.name.len - std.fs.path.extension(dynamic_route.file_path).len];
             std.debug.assert(dynamic_route.name.len > 0);
             if (dynamic_route.name[0] == '/') dynamic_route.name = dynamic_route.name[1..];
-
+            dynamic_route.client_framework_enabled = this.client_framework_enabled;
             return dynamic_route;
         }
 
@@ -701,6 +708,8 @@ pub const Match = struct {
     file_path: string,
     /// route name, like `"posts/[id]"`
     name: string,
+
+    client_framework_enabled: bool = false,
 
     /// basename of the route in the file system, including file extension
     basename: string,

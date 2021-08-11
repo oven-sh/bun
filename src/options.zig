@@ -351,6 +351,13 @@ pub const Loader = enum {
     file,
     json,
 
+    pub fn supportsClientEntryPoint(this: Loader) bool {
+        return switch (this) {
+            .jsx, .js, .ts, .tsx => true,
+            else => false,
+        };
+    }
+
     pub fn toAPI(loader: Loader) Api.Loader {
         return switch (loader) {
             .jsx => .jsx,
@@ -640,6 +647,11 @@ pub const BundleOptions = struct {
     routes: RouteConfig = RouteConfig.zero(),
 
     pub fn asJavascriptBundleConfig(this: *const BundleOptions) Api.JavascriptBundleConfig {}
+
+    pub fn isFrontendFrameworkEnabled(this: *const BundleOptions) bool {
+        const framework: *const Framework = &(this.framework orelse return false);
+        return framework.resolved and framework.client.len > 0;
+    }
 
     pub const ImportPathFormat = enum {
         relative,

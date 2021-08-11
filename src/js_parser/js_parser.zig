@@ -3447,7 +3447,15 @@ pub fn NewParser(
                             item = item.getSpread().value;
                         }
                         const res = p.convertExprToBindingAndInitializer(&item, invalid_loc, is_spread);
-                        items.append(js_ast.ArrayBinding{ .binding = res.binding orelse unreachable, .default_value = res.override_expr }) catch unreachable;
+
+                        items.append(js_ast.ArrayBinding{
+                            // It's valid for it to be missing
+                            // An example:
+                            //      Promise.all(promises).then(([, len]) => true);
+                            //                                   ^ Binding is missing there
+                            .binding = res.binding orelse p.b(B.Missing{}, item.loc),
+                            .default_value = res.override_expr,
+                        }) catch unreachable;
                     }
 
                     return p.b(B.Array{
@@ -11162,6 +11170,13 @@ pub fn NewParser(
                 },
                 .e_import => |e_| {
                     const state = TransposeState{
+                        // we must check that the await_target is an e_import or it will crash
+                        // example from next.js where not checking causes a panic:
+                        // ```
+                        // const {
+                        //     normalizeLocalePath,
+                        //   } = require('../shared/lib/i18n/normalize-locale-path') as typeof import('../shared/lib/i18n/normalize-locale-path')
+                        // ```
                         .is_await_target = if (p.await_target != null) p.await_target.? == .e_import and p.await_target.?.e_import == e_ else false,
                         .is_then_catch_target = p.then_catch_chain.has_catch and std.meta.activeTag(p.then_catch_chain.next_target) == .e_import and expr.data.e_import == p.then_catch_chain.next_target.e_import,
                         .loc = e_.expr.loc,

@@ -1,6 +1,7 @@
 const std = @import("std");
 const logger = @import("logger.zig");
 const root = @import("root");
+usingnamespace @import("global.zig");
 
 const USERLAND_PANIC_MESSAGE = "iNtErNaL sErVeR eRrOr";
 
@@ -47,7 +48,9 @@ pub fn NewPanicHandler(panic_func: fn handle_panic(msg: []const u8, error_return
                 .log = log,
             };
         }
-        pub fn handle_panic(msg: []const u8, error_return_type: ?*std.builtin.StackTrace) callconv(.Inline) noreturn {
+        pub inline fn handle_panic(msg: []const u8, error_return_type: ?*std.builtin.StackTrace) noreturn {
+            Output.flush();
+
             if (@This().Singleton) |singleton| {
                 singleton.panic_count += 1;
             }

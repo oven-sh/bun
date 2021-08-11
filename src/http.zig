@@ -552,6 +552,7 @@ pub const RequestContext = struct {
                         0,
                         fd,
                         id,
+                        null,
                     ) orelse {
                         return WatchBuildResult{
                             .value = .{ .fail = std.mem.zeroes(Api.WebsocketMessageBuildFailure) },
@@ -1258,6 +1259,8 @@ pub const RequestContext = struct {
         }
     }
 
+    threadlocal var client_entry_point: bundler.ClientEntryPoint = undefined;
+
     pub fn renderServeResult(ctx: *RequestContext, result: bundler.ServeResult) !void {
         if (ctx.keep_alive) {
             ctx.appendHeader("Connection", "keep-alive");
@@ -1382,6 +1385,17 @@ pub const RequestContext = struct {
 
                 // It will call flush for us automatically
                 ctx.bundler.resetStore();
+                var client_entry_point_: ?*bundler.ClientEntryPoint = null;
+                if (resolve_result.import_kind == .entry_point and loader.supportsClientEntryPoint()) {
+                    if (ctx.bundler.options.framework) |*framework| {
+                        if (framework.client.len > 0) {
+                            client_entry_point = bundler.ClientEntryPoint{};
+                            try client_entry_point.generate(Bundler, ctx.bundler, resolve_result.path_pair.primary.name, framework.client);
+                            client_entry_point_ = &client_entry_point;
+                        }
+                    }
+                }
+
                 var written = ctx.bundler.buildWithResolveResult(
                     resolve_result,
                     ctx.allocator,
@@ -1393,13 +1407,14 @@ pub const RequestContext = struct {
                     hash,
                     Watcher,
                     ctx.watcher,
+                    client_entry_point_,
                 ) catch |err| {
                     ctx.sendInternalError(err) catch {};
                     return;
                 };
 
                 // CSS handles this specially
-                if (loader != .css) {
+                if (loader != .css and client_entry_point_ == null) {
                     if (written.input_fd) |written_fd| {
                         try ctx.watcher.addFile(
                             written_fd,
@@ -1553,12 +1568,25 @@ pub const RequestContext = struct {
 
         // errdefer ctx.auto500();
 
-        const result = try ctx.bundler.buildFile(
-            &ctx.log,
-            ctx.allocator,
-            ctx.url.path,
-            ctx.url.extname,
-        );
+        const result = brk: {
+            if (ctx.bundler.options.isFrontendFrameworkEnabled()) {
+                break :brk try ctx.bundler.buildFile(
+                    &ctx.log,
+                    ctx.allocator,
+                    ctx.url.path,
+                    ctx.url.extname,
+                    true,
+                );
+            } else {
+                break :brk try ctx.bundler.buildFile(
+                    &ctx.log,
+                    ctx.allocator,
+                    ctx.url.path,
+                    ctx.url.extname,
+                    false,
+                );
+            }
+        };
 
         try @call(.{ .modifier = .always_inline }, RequestContext.renderServeResult, .{ ctx, result });
     }

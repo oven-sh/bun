@@ -41,7 +41,7 @@ pub const enable_bytecode_caching = false;
 //      command ../../build/debug/macos-x86_64/esdev --use=./nexty2 --new-jsb > /dev/null
 //    end
 // It only happens 1 out of every N times, probably like 50.
-pub const parallel_jsb = true;
+pub const parallel_jsb = false;
 
 pub const CSSModulePolyfill = enum {
     // When you import a .css file and you reference the import in JavaScript

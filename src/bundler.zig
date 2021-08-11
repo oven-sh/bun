@@ -898,7 +898,7 @@ pub fn NewBundler(cache_files: bool) type {
                                         Output.prettyErrorln("\n<r><red>{s}<r> on resolving \"{s}\" from \"{s}\"", .{
                                             @errorName(err),
                                             import_record.path.text,
-                                            source_dir
+                                            file_path.text,
                                         });
                                     }
                                 }

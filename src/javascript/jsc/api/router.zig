@@ -74,9 +74,7 @@ fn matchPathNameString(
     ctx: js.JSContextRef,
     pathname: string,
     exception: js.ExceptionRef,
-) js.JSObjectRef {
-
-}
+) js.JSObjectRef {}
 
 fn matchPathName(
     ctx: js.JSContextRef,
@@ -177,7 +175,7 @@ pub const Instance = NewClass(
                 .@"tsdoc" = "URL path as appears in a web browser's address bar",
             },
         },
-        
+
         .filePath = .{
             .get = getFilePath,
             .ro = true,
@@ -283,6 +281,7 @@ const KindEnum = struct {
     pub const optional_catch_all = "optional-catch-all";
     pub const dynamic = "dynamic";
 
+    // this is kinda stupid it should maybe just store it
     pub fn init(name: string) ZigString {
         if (strings.contains(name, "[[...")) {
             return ZigString.init(optional_catch_all);
@@ -367,7 +366,6 @@ pub fn getScriptSrc(
         }
         break :brk this.script_src_buf[0..this.script_src_buf_writer.pos];
     };
-    
 
     this.script_src = src;
 

@@ -7767,7 +7767,8 @@ pub fn NewParser(
                     key = p.e(E.String{ .utf8 = name }, name_range.loc);
 
                     // Parse a shorthand property
-                    if (!opts.is_class and kind == .normal and p.lexer.token != .t_colon and p.lexer.token != .t_open_paren and p.lexer.token != .t_less_than and !opts.is_generator and !js_lexer.Keywords.has(name)) {
+                    const isShorthandProperty = (!opts.is_class and kind == .normal and p.lexer.token != .t_colon and p.lexer.token != .t_open_paren and p.lexer.token != .t_less_than and !opts.is_generator and !opts.is_async and !js_lexer.Keywords.has(name));
+                    if (isShorthandProperty) {
                         if ((p.fn_or_arrow_data_parse.allow_await != .allow_ident and strings.eqlComptime(name, "await")) or (p.fn_or_arrow_data_parse.allow_yield != .allow_ident and strings.eqlComptime(name, "yield"))) {
                             // TODO: add fmt to addRangeError
                             p.log.addRangeError(p.source, name_range, "Cannot use \"yield\" or \"await\" here.") catch unreachable;

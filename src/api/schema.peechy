@@ -152,11 +152,13 @@ struct LoadedFramework {
 struct LoadedRouteConfig {
   string dir;
   string[] extensions;
+  string static_dir;
 }
 
 message RouteConfig {
   string dir = 1;
   string[] extensions = 2;
+  string static_dir = 3;
 }
 
 message TransformOptions {
@@ -188,17 +190,15 @@ message TransformOptions {
 
   string[] extension_order = 17;
 
-  string public_dir = 18;
+  ScanDependencyMode only_scan_dependencies = 18;
 
-  ScanDependencyMode only_scan_dependencies = 19;
+  bool generate_node_module_bundle = 19;
 
-  bool generate_node_module_bundle = 20;
+  string node_modules_bundle_path = 20;
+  string node_modules_bundle_path_server = 21;
 
-  string node_modules_bundle_path = 21;
-  string node_modules_bundle_path_server = 22;
-
-  FrameworkConfig framework = 23;
-  RouteConfig router = 24;
+  FrameworkConfig framework = 22;
+  RouteConfig router = 23;
 }
 
 struct FileHandle {

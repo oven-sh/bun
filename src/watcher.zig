@@ -69,6 +69,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
         ctx: ContextType,
         allocator: *std.mem.Allocator,
         watchloop_handle: ?std.Thread.Id = null,
+        cwd: string,
 
         pub const HashType = u32;
 
@@ -86,6 +87,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 .ctx = ctx,
                 .watchlist = Watchlist{},
                 .mutex = sync.Mutex.init(),
+                .cwd = fs.top_level_dir,
             };
 
             return watcher;
@@ -202,10 +204,11 @@ pub fn NewWatcher(comptime ContextType: type) type {
             event.filter = std.os.EVFILT_VNODE;
 
             // monitor:
-            // - Delete
             // - Write
-            // - Metadata
             // - Rename
+
+            // we should monitor:
+            // - Delete
             event.fflags = std.os.NOTE_WRITE | std.os.NOTE_RENAME;
 
             // id
@@ -241,7 +244,11 @@ pub fn NewWatcher(comptime ContextType: type) type {
             });
 
             if (FeatureFlags.verbose_watcher) {
-                Output.prettyln("<r>Added <b>{s}<r> to watch list.", .{file_path});
+                if (strings.indexOf(file_path, this.cwd)) |i| {
+                    Output.prettyln("<r><d>Added <b>./{s}<r><d> to watch list.<r>", .{file_path[i + this.cwd.len ..]});
+                } else {
+                    Output.prettyln("<r><d>Added <b>{s}<r><d> to watch list.<r>", .{file_path});
+                }
             }
         }
     };

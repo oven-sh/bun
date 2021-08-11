@@ -839,17 +839,22 @@ pub const Api = struct {
         /// extensions
         extensions: []const []const u8,
 
+        /// static_dir
+        static_dir: []const u8,
+
         pub fn decode(reader: anytype) anyerror!LoadedRouteConfig {
             var this = std.mem.zeroes(LoadedRouteConfig);
 
             this.dir = try reader.readValue([]const u8);
             this.extensions = try reader.readArray([]const u8);
+            this.static_dir = try reader.readValue([]const u8);
             return this;
         }
 
         pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
             try writer.writeValue(this.dir);
             try writer.writeArray([]const u8, this.extensions);
+            try writer.writeValue(this.static_dir);
         }
     };
 
@@ -859,6 +864,9 @@ pub const Api = struct {
 
         /// extensions
         extensions: []const []const u8,
+
+        /// static_dir
+        static_dir: ?[]const u8 = null,
 
         pub fn decode(reader: anytype) anyerror!RouteConfig {
             var this = std.mem.zeroes(RouteConfig);
@@ -874,6 +882,9 @@ pub const Api = struct {
                     },
                     2 => {
                         this.extensions = try reader.readArray([]const u8);
+                    },
+                    3 => {
+                        this.static_dir = try reader.readValue([]const u8);
                     },
                     else => {
                         return error.InvalidMessage;
@@ -891,6 +902,10 @@ pub const Api = struct {
             if (this.extensions) |extensions| {
                 try writer.writeFieldID(2);
                 try writer.writeArray([]const u8, extensions);
+            }
+            if (this.static_dir) |static_dir| {
+                try writer.writeFieldID(3);
+                try writer.writeValue(static_dir);
             }
             try writer.endMessage();
         }
@@ -947,9 +962,6 @@ pub const Api = struct {
 
         /// extension_order
         extension_order: []const []const u8,
-
-        /// public_dir
-        public_dir: ?[]const u8 = null,
 
         /// only_scan_dependencies
         only_scan_dependencies: ?ScanDependencyMode = null,
@@ -1030,24 +1042,21 @@ pub const Api = struct {
                         this.extension_order = try reader.readArray([]const u8);
                     },
                     18 => {
-                        this.public_dir = try reader.readValue([]const u8);
-                    },
-                    19 => {
                         this.only_scan_dependencies = try reader.readValue(ScanDependencyMode);
                     },
-                    20 => {
+                    19 => {
                         this.generate_node_module_bundle = try reader.readValue(bool);
                     },
-                    21 => {
+                    20 => {
                         this.node_modules_bundle_path = try reader.readValue([]const u8);
                     },
-                    22 => {
+                    21 => {
                         this.node_modules_bundle_path_server = try reader.readValue([]const u8);
                     },
-                    23 => {
+                    22 => {
                         this.framework = try reader.readValue(FrameworkConfig);
                     },
-                    24 => {
+                    23 => {
                         this.router = try reader.readValue(RouteConfig);
                     },
                     else => {
@@ -1127,32 +1136,28 @@ pub const Api = struct {
                 try writer.writeFieldID(17);
                 try writer.writeArray([]const u8, extension_order);
             }
-            if (this.public_dir) |public_dir| {
-                try writer.writeFieldID(18);
-                try writer.writeValue(public_dir);
-            }
             if (this.only_scan_dependencies) |only_scan_dependencies| {
-                try writer.writeFieldID(19);
+                try writer.writeFieldID(18);
                 try writer.writeEnum(only_scan_dependencies);
             }
             if (this.generate_node_module_bundle) |generate_node_module_bundle| {
-                try writer.writeFieldID(20);
+                try writer.writeFieldID(19);
                 try writer.writeInt(@intCast(u8, @boolToInt(generate_node_module_bundle)));
             }
             if (this.node_modules_bundle_path) |node_modules_bundle_path| {
-                try writer.writeFieldID(21);
+                try writer.writeFieldID(20);
                 try writer.writeValue(node_modules_bundle_path);
             }
             if (this.node_modules_bundle_path_server) |node_modules_bundle_path_server| {
-                try writer.writeFieldID(22);
+                try writer.writeFieldID(21);
                 try writer.writeValue(node_modules_bundle_path_server);
             }
             if (this.framework) |framework| {
-                try writer.writeFieldID(23);
+                try writer.writeFieldID(22);
                 try writer.writeValue(framework);
             }
             if (this.router) |router| {
-                try writer.writeFieldID(24);
+                try writer.writeFieldID(23);
                 try writer.writeValue(router);
             }
             try writer.endMessage();

@@ -697,6 +697,7 @@ function decodeLoadedRouteConfig(bb) {
   var length = bb.readVarUint();
   var values = result["extensions"] = Array(length);
   for (var i = 0; i < length; i++) values[i] = bb.readString();
+  result["static_dir"] = bb.readString();
   return result;
 }
 
@@ -721,6 +722,13 @@ function encodeLoadedRouteConfig(message, bb) {
     throw new Error("Missing required field \"extensions\"");
   }
 
+  var value = message["static_dir"];
+  if (value != null) {
+    bb.writeString(value);
+  } else {
+    throw new Error("Missing required field \"static_dir\"");
+  }
+
 }
 
 function decodeRouteConfig(bb) {
@@ -739,6 +747,10 @@ function decodeRouteConfig(bb) {
       var length = bb.readVarUint();
       var values = result["extensions"] = Array(length);
       for (var i = 0; i < length; i++) values[i] = bb.readString();
+      break;
+
+    case 3:
+      result["static_dir"] = bb.readString();
       break;
 
     default:
@@ -764,6 +776,12 @@ function encodeRouteConfig(message, bb) {
       value = values[i];
       bb.writeString(value);
     }
+  }
+
+  var value = message["static_dir"];
+  if (value != null) {
+    bb.writeByte(3);
+    bb.writeString(value);
   }
   bb.writeByte(0);
 
@@ -856,30 +874,26 @@ function decodeTransformOptions(bb) {
       break;
 
     case 18:
-      result["public_dir"] = bb.readString();
-      break;
-
-    case 19:
       result["only_scan_dependencies"] = ScanDependencyMode[bb.readByte()];
       break;
 
-    case 20:
+    case 19:
       result["generate_node_module_bundle"] = !!bb.readByte();
       break;
 
-    case 21:
+    case 20:
       result["node_modules_bundle_path"] = bb.readString();
       break;
 
-    case 22:
+    case 21:
       result["node_modules_bundle_path_server"] = bb.readString();
       break;
 
-    case 23:
+    case 22:
       result["framework"] = decodeFrameworkConfig(bb);
       break;
 
-    case 24:
+    case 23:
       result["router"] = decodeRouteConfig(bb);
       break;
 
@@ -1022,15 +1036,9 @@ bb.writeByte(encoded);
     }
   }
 
-  var value = message["public_dir"];
-  if (value != null) {
-    bb.writeByte(18);
-    bb.writeString(value);
-  }
-
   var value = message["only_scan_dependencies"];
   if (value != null) {
-    bb.writeByte(19);
+    bb.writeByte(18);
     var encoded = ScanDependencyMode[value];
 if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + " for enum \"ScanDependencyMode\"");
 bb.writeByte(encoded);
@@ -1038,31 +1046,31 @@ bb.writeByte(encoded);
 
   var value = message["generate_node_module_bundle"];
   if (value != null) {
-    bb.writeByte(20);
+    bb.writeByte(19);
     bb.writeByte(value);
   }
 
   var value = message["node_modules_bundle_path"];
   if (value != null) {
-    bb.writeByte(21);
+    bb.writeByte(20);
     bb.writeString(value);
   }
 
   var value = message["node_modules_bundle_path_server"];
   if (value != null) {
-    bb.writeByte(22);
+    bb.writeByte(21);
     bb.writeString(value);
   }
 
   var value = message["framework"];
   if (value != null) {
-    bb.writeByte(23);
+    bb.writeByte(22);
     encodeFrameworkConfig(value, bb);
   }
 
   var value = message["router"];
   if (value != null) {
-    bb.writeByte(24);
+    bb.writeByte(23);
     encodeRouteConfig(value, bb);
   }
   bb.writeByte(0);

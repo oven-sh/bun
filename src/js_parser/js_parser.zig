@@ -1730,14 +1730,14 @@ pub const Parser = struct {
         // if yes, just automatically add the import so that .jsb knows to include the file.
         if (self.options.jsx.parse and p.needs_jsx_import) {
             _ = p.addImportRecord(
-                .internal,
+                .require,
                 logger.Loc{ .start = 0 },
                 p.options.jsx.import_source,
             );
             // Ensure we have both classic and automatic
             // This is to handle cases where they use fragments in the automatic runtime
             _ = p.addImportRecord(
-                .internal,
+                .require,
                 logger.Loc{ .start = 0 },
                 p.options.jsx.classic_import_source,
             );
@@ -1934,7 +1934,7 @@ pub const Parser = struct {
                         decl_i += 1;
                     }
 
-                    const import_record_id = p.addImportRecord(.internal, loc, p.options.jsx.import_source);
+                    const import_record_id = p.addImportRecord(.require, loc, p.options.jsx.import_source);
                     // When everything is CommonJS
                     // We import JSX like this:
                     // var {jsxDev} = require("react/jsx-dev")
@@ -2010,7 +2010,7 @@ pub const Parser = struct {
                         };
                         decl_i += 1;
                     }
-                    const import_record_id = p.addImportRecord(.internal, loc, p.options.jsx.classic_import_source);
+                    const import_record_id = p.addImportRecord(.require, loc, p.options.jsx.classic_import_source);
                     jsx_part_stmts[stmt_i] = p.s(S.Import{
                         .namespace_ref = classic_namespace_ref,
                         .star_name_loc = loc,

@@ -40,7 +40,7 @@ pub const ServeResult = struct {
 };
 
 // const BundleMap =
-pub const ResolveResults = ThreadSafeHashMap.ThreadSafeStringHashMap(_resolver.Result);
+pub const ResolveResults = std.AutoHashMap(u64, void);
 pub const ResolveQueue = std.fifo.LinearFifo(_resolver.Result, std.fifo.LinearFifoBufferType.Dynamic);
 
 // How it works end-to-end
@@ -185,6 +185,8 @@ pub fn NewBundler(cache_files: bool) type {
             // try pool.init(ThreadPool.InitConfig{
             //     .allocator = allocator,
             // });
+            var resolve_results = try allocator.create(ResolveResults);
+            resolve_results.* = ResolveResults.init(allocator);
             return ThisBundler{
                 .options = bundle_options,
                 .fs = fs,
@@ -194,7 +196,7 @@ pub fn NewBundler(cache_files: bool) type {
                 // .thread_pool = pool,
                 .linker = undefined,
                 .result = options.TransformResult{ .outbase = bundle_options.output_dir },
-                .resolve_results = try ResolveResults.init(allocator),
+                .resolve_results = resolve_results,
                 .resolve_queue = ResolveQueue.init(allocator),
                 .output_files = std.ArrayList(options.OutputFile).init(allocator),
             };
@@ -215,7 +217,7 @@ pub fn NewBundler(cache_files: bool) type {
         pub fn configureFramework(this: *ThisBundler) !void {
             if (this.options.framework) |*framework| {
                 if (framework.needsResolveFromPackage()) {
-                    var route_config = this.options.route_config orelse options.RouteConfig.zero();
+                    var route_config = this.options.routes;
                     var pair = PackageJSON.FrameworkRouterPair{ .framework = framework, .router = &route_config };
 
                     if (framework.development) {
@@ -225,7 +227,7 @@ pub fn NewBundler(cache_files: bool) type {
                     }
 
                     if (pair.loaded_routes) {
-                        this.options.route_config = route_config;
+                        this.options.routes = route_config;
                     }
                     framework.resolved = true;
                     this.options.framework = framework.*;
@@ -240,11 +242,11 @@ pub fn NewBundler(cache_files: bool) type {
                 try this.configureFramework();
                 if (comptime client) {
                     if (this.options.framework.?.client.len > 0) {
-                        return try this.resolver.resolve(this.fs.top_level_dir, this.options.framework.?.client, .internal);
+                        return try this.resolver.resolve(this.fs.top_level_dir, this.options.framework.?.client, .stmt);
                     }
                 } else {
                     if (this.options.framework.?.server.len > 0) {
-                        return try this.resolver.resolve(this.fs.top_level_dir, this.options.framework.?.server, .internal);
+                        return try this.resolver.resolve(this.fs.top_level_dir, this.options.framework.?.server, .stmt);
                     }
                 }
             }
@@ -258,7 +260,7 @@ pub fn NewBundler(cache_files: bool) type {
             // for now:
             // - "." is not supported
             // - multiple pages directories is not supported
-            if (this.options.route_config == null and this.options.entry_points.len == 1) {
+            if (!this.options.routes.routes_enabled and this.options.entry_points.len == 1) {
 
                 // When inferring:
                 // - pages directory with a file extension is not supported. e.g. "pages.app/" won't work.
@@ -277,24 +279,28 @@ pub fn NewBundler(cache_files: bool) type {
                         var dir_info_ = this.resolver.readDirInfo(entry) catch return;
                         var dir_info = dir_info_ orelse return;
 
-                        this.options.route_config = options.RouteConfig{
-                            .dir = dir_info.abs_path,
-                            .extensions = std.mem.span(&options.RouteConfig.DefaultExtensions),
-                        };
-                        this.router = try Router.init(this.fs, this.allocator, this.options.route_config.?);
+                        this.options.routes.dir = dir_info.abs_path;
+                        this.options.routes.extensions = std.mem.span(&options.RouteConfig.DefaultExtensions);
+                        this.options.routes.routes_enabled = true;
+                        this.router = try Router.init(this.fs, this.allocator, this.options.routes);
                         try this.router.?.loadRoutes(dir_info, Resolver, &this.resolver, std.math.maxInt(u16), true);
+                        return;
                     }
                 }
-            } else if (this.options.route_config) |*route_config| {
-                var dir_info_ = try this.resolver.readDirInfo(route_config.dir);
+            } else if (this.options.routes.routes_enabled) {
+                var dir_info_ = try this.resolver.readDirInfo(this.options.routes.dir);
                 var dir_info = dir_info_ orelse return error.MissingRoutesDir;
 
-                this.options.route_config = options.RouteConfig{
-                    .dir = dir_info.abs_path,
-                    .extensions = route_config.extensions,
-                };
-                this.router = try Router.init(this.fs, this.allocator, this.options.route_config.?);
+                this.options.routes.dir = dir_info.abs_path;
+
+                this.router = try Router.init(this.fs, this.allocator, this.options.routes);
                 try this.router.?.loadRoutes(dir_info, Resolver, &this.resolver, std.math.maxInt(u16), true);
+                return;
+            }
+
+            // If we get this far, it means they're trying to run the bundler without a preconfigured router
+            if (this.options.entry_points.len > 0) {
+                this.options.routes.routes_enabled = false;
             }
         }
 
@@ -304,11 +310,35 @@ pub fn NewBundler(cache_files: bool) type {
         }
 
         pub const GenerateNodeModuleBundle = struct {
+            pub const PathMap = struct {
+                const HashTable = std.StringHashMap(u32);
+
+                backing: HashTable,
+
+                pub fn init(allocator: *std.mem.Allocator) PathMap {
+                    return PathMap{
+                        .backing = HashTable.init(allocator),
+                    };
+                }
+
+                pub inline fn hashOf(str: string) u64 {
+                    return std.hash.Wyhash.hash(0, str);
+                }
+
+                pub inline fn getOrPut(this: *PathMap, str: string) !HashTable.GetOrPutResult {
+                    return this.backing.getOrPut(str);
+                }
+
+                pub inline fn contains(this: *PathMap, str: string) bool {
+                    return this.backing.contains(str);
+                }
+            };
+
             module_list: std.ArrayList(Api.JavascriptBundledModule),
             package_list: std.ArrayList(Api.JavascriptBundledPackage),
             header_string_buffer: MutableString,
             // Just need to know if we've already enqueued this one
-            resolved_paths: hash_map.StringHashMap(u32),
+            resolved_paths: PathMap,
             package_list_map: std.AutoHashMap(u64, u32),
             resolve_queue: std.fifo.LinearFifo(_resolver.Result, .Dynamic),
             bundler: *ThisBundler,
@@ -376,6 +406,7 @@ pub fn NewBundler(cache_files: bool) type {
             ) !Api.JavascriptBundleContainer {
                 var tmpdir: std.fs.Dir = try bundler.fs.fs.openTmpDir();
                 var tmpname_buf: [64]u8 = undefined;
+                bundler.resetStore();
 
                 const tmpname = try bundler.fs.tmpname(
                     ".jsb",
@@ -391,7 +422,7 @@ pub fn NewBundler(cache_files: bool) type {
                     .scan_pass_result = js_parser.ScanPassResult.init(allocator),
                     .header_string_buffer = try MutableString.init(allocator, 0),
                     .allocator = allocator,
-                    .resolved_paths = hash_map.StringHashMap(u32).init(allocator),
+                    .resolved_paths = PathMap.init(allocator),
                     .resolve_queue = std.fifo.LinearFifo(_resolver.Result, .Dynamic).init(allocator),
                     .bundler = bundler,
                     .tmpfile = tmpfile,
@@ -422,6 +453,7 @@ pub fn NewBundler(cache_files: bool) type {
                         const resolved = try bundler.linker.resolver.resolve(source_dir, entry_point, .entry_point);
                         this.resolve_queue.writeItemAssumeCapacity(resolved);
                     }
+                    this.bundler.resetStore();
                 } else {
                     try this.resolve_queue.ensureUnusedCapacity(bundler.options.entry_points.len + @intCast(usize, @boolToInt(framework_config != null)));
                 }
@@ -449,8 +481,24 @@ pub fn NewBundler(cache_files: bool) type {
                     }
                 }
 
+                this.bundler.resetStore();
+
                 while (this.resolve_queue.readItem()) |resolved| {
                     try this.processFile(resolved);
+                }
+
+                // Normally, this is automatic
+                // However, since we only do the parsing pass, it may not get imported automatically.
+                if (this.has_jsx) {
+                    if (this.bundler.resolver.resolve(
+                        this.bundler.fs.top_level_dir,
+                        this.bundler.options.jsx.import_source,
+                        .stmt,
+                    )) |new_jsx_runtime| {
+                        if (!this.resolved_paths.contains(new_jsx_runtime.path_pair.primary.text)) {
+                            try this.processFile(new_jsx_runtime);
+                        }
+                    } else |err| {}
                 }
 
                 if (this.has_jsx and this.bundler.options.jsx.supports_fast_refresh) {
@@ -592,14 +640,6 @@ pub fn NewBundler(cache_files: bool) type {
                     // chmod 777
                     0000010 | 0000100 | 0000001 | 0001000 | 0000040 | 0000004 | 0000002 | 0000400 | 0000200 | 0000020,
                 );
-                // Delete if already exists, ignoring errors
-                // std.os.unlinkatZ(top_dir.fd, destination, 0) catch {};
-                tmpdir = bundler.fs.tmpdir();
-                defer {
-                    tmpdir.close();
-                    bundler.fs._tmpdir = null;
-                }
-
                 try std.os.renameatZ(tmpdir.fd, tmpname, top_dir.fd, destination);
 
                 // Print any errors at the end
@@ -642,7 +682,7 @@ pub fn NewBundler(cache_files: bool) type {
             }
 
             fn processImportRecord(this: *GenerateNodeModuleBundle, import_record: ImportRecord) !void {}
-            const node_module_root_string = "node_modules" ++ std.fs.path.sep_str;
+            const node_module_root_string = std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str;
             threadlocal var package_key_buf: [512]u8 = undefined;
             threadlocal var file_path_buf: [4096]u8 = undefined;
             fn processFile(this: *GenerateNodeModuleBundle, _resolve: _resolver.Result) !void {
@@ -655,13 +695,6 @@ pub fn NewBundler(cache_files: bool) type {
                 defer this.scan_pass_result.reset();
                 defer this.bundler.resetStore();
                 var file_path = resolve.path_pair.primary;
-                std.mem.copy(u8, file_path_buf[0..file_path.text.len], resolve.path_pair.primary.text);
-                file_path.text = file_path_buf[0..file_path.text.len];
-                if (file_path.pretty.len > 0) {
-                    std.mem.copy(u8, file_path_buf[file_path.text.len..], resolve.path_pair.primary.pretty);
-                    file_path.pretty = file_path_buf[file_path.text.len..][0..resolve.path_pair.primary.pretty.len];
-                    file_path.name = Fs.PathName.init(file_path.text);
-                }
                 var hasher = std.hash.Wyhash.init(0);
 
                 // If we're in a node_module, build that almost normally
@@ -711,6 +744,8 @@ pub fn NewBundler(cache_files: bool) type {
                                     }
 
                                     const absolute_path = resolved_import.path_pair.primary.text;
+                                    const get_or_put_result = try this.resolved_paths.getOrPut(absolute_path);
+
                                     const package_json: *const PackageJSON = (resolved_import.package_json orelse (this.bundler.resolver.packageJSONForResolvedNodeModule(resolved_import) orelse {
                                         this.log.addWarningFmt(
                                             &source,
@@ -724,28 +759,20 @@ pub fn NewBundler(cache_files: bool) type {
                                         continue;
                                     }));
 
+                                    const package_relative_path = bundler.fs.relative(
+                                        package_json.source.path.name.dirWithTrailingSlash(),
+                                        resolved_import.path_pair.primary.text,
+                                    );
+
                                     // trim node_modules/${package.name}/ from the string to save space
                                     // This reduces metadata size by about 30% for a large-ish file
                                     // A future optimization here could be to reuse the string from the original path
-                                    var node_module_root = strings.indexOf(resolved_import.path_pair.primary.text, node_module_root_string) orelse unreachable;
-
-                                    // omit node_modules
-                                    node_module_root += node_module_root_string.len;
-
-                                    // // omit package name
-                                    node_module_root += package_json.name.len;
-
-                                    node_module_root += 1;
-
-                                    // It should be the first index, not the last to support bundling multiple of the same package
                                     import_record.path = Fs.Path.init(
-                                        absolute_path[node_module_root..],
+                                        package_relative_path,
                                     );
 
-                                    const get_or_put_result = try this.resolved_paths.getOrPut(absolute_path);
-
                                     if (get_or_put_result.found_existing) {
-                                        import_record.module_id = get_or_put_result.entry.value;
+                                        import_record.module_id = get_or_put_result.value_ptr.*;
                                         import_record.is_bundled = true;
                                         continue;
                                     }
@@ -755,7 +782,7 @@ pub fn NewBundler(cache_files: bool) type {
                                     hasher.update(std.mem.asBytes(&package_json.hash));
 
                                     import_record.module_id = @truncate(u32, hasher.final());
-                                    get_or_put_result.entry.value = import_record.module_id;
+                                    get_or_put_result.value_ptr.* = import_record.module_id;
                                     import_record.is_bundled = true;
 
                                     try this.resolve_queue.writeItem(_resolved_import.*);
@@ -763,24 +790,7 @@ pub fn NewBundler(cache_files: bool) type {
                             }
 
                             const package = resolve.package_json orelse this.bundler.resolver.packageJSONForResolvedNodeModule(&resolve) orelse unreachable;
-                            const package_relative_path = brk: {
-                                // trim node_modules/${package.name}/ from the string to save space
-                                // This reduces metadata size by about 30% for a large-ish file
-                                // A future optimization here could be to reuse the string from the original path
-                                var node_module_root = strings.indexOf(resolve.path_pair.primary.text, node_module_root_string) orelse unreachable;
-                                // omit node_modules
-                                node_module_root += node_module_root_string.len;
-
-                                file_path.pretty = resolve.path_pair.primary.text[node_module_root..];
-
-                                // omit trailing separator
-                                node_module_root += 1;
-
-                                // omit package name
-                                node_module_root += package.name.len;
-
-                                break :brk resolve.path_pair.primary.text[node_module_root..];
-                            };
+                            var package_relative_path = file_path.packageRelativePathString(package.name);
 
                             // const load_from_symbol_ref = ast.runtime_imports.$$r.?;
                             // const reexport_ref = ast.runtime_imports.__reExport.?;
@@ -788,7 +798,12 @@ pub fn NewBundler(cache_files: bool) type {
                             const E = js_ast.E;
                             const Expr = js_ast.Expr;
                             const Stmt = js_ast.Stmt;
-
+                            if (ast.parts.len == 0) {
+                                if (comptime isDebug) {
+                                    Output.prettyErrorln("Missing AST for file: {s}", .{file_path.text});
+                                    Output.flush();
+                                }
+                            }
                             var part = &ast.parts[ast.parts.len - 1];
                             var new_stmts: [1]Stmt = undefined;
                             var register_args: [3]Expr = undefined;
@@ -975,11 +990,6 @@ pub fn NewBundler(cache_files: bool) type {
                                     // Always enqueue unwalked import paths, but if it's not a node_module, we don't care about the hash
                                     try this.resolve_queue.writeItem(_resolved_import.*);
 
-                                    // trim node_modules/${package.name}/ from the string to save space
-                                    // This reduces metadata size by about 30% for a large-ish file
-                                    // A future optimization here could be to reuse the string from the original path
-                                    var node_module_root = strings.indexOf(resolved_import.path_pair.primary.text, node_module_root_string) orelse continue;
-
                                     const package_json: *const PackageJSON = (resolved_import.package_json orelse (this.bundler.resolver.packageJSONForResolvedNodeModule(resolved_import) orelse {
                                         this.log.addWarningFmt(
                                             &source,
@@ -993,21 +1003,20 @@ pub fn NewBundler(cache_files: bool) type {
                                         continue;
                                     }));
 
-                                    // omit node_modules
-                                    node_module_root += node_module_root_string.len;
-                                    // // omit package name
-                                    node_module_root += package_json.name.len;
-                                    node_module_root += 1;
-
                                     // It should be the first index, not the last to support bundling multiple of the same package
-                                    import_record.path = Fs.Path.init(
-                                        resolved_import.path_pair.primary.text[node_module_root..],
+                                    // This string is printed in the summary.
+
+                                    const package_relative_path = bundler.fs.relative(
+                                        package_json.source.path.name.dirWithTrailingSlash(),
+                                        resolved_import.path_pair.primary.text,
                                     );
+
+                                    import_record.path = Fs.Path.init(package_relative_path);
 
                                     hasher = std.hash.Wyhash.init(0);
                                     hasher.update(import_record.path.text);
                                     hasher.update(std.mem.asBytes(&package_json.hash));
-                                    get_or_put_result.entry.value = @truncate(u32, hasher.final());
+                                    get_or_put_result.value_ptr.* = @truncate(u32, hasher.final());
                                 } else |err| {}
                             }
                         },
@@ -1583,91 +1592,91 @@ pub fn NewBundler(cache_files: bool) type {
             return entry;
         }
 
-        pub fn scanDependencies(
-            allocator: *std.mem.Allocator,
-            log: *logger.Log,
-            _opts: Api.TransformOptions,
-        ) !ScanResult.Summary {
-            var opts = _opts;
-            opts.resolve = .dev;
-            var bundler = try ThisBundler.init(allocator, log, opts, null);
+        // pub fn scanDependencies(
+        //     allocator: *std.mem.Allocator,
+        //     log: *logger.Log,
+        //     _opts: Api.TransformOptions,
+        // ) !ScanResult.Summary {
+        //     var opts = _opts;
+        //     opts.resolve = .dev;
+        //     var bundler = try ThisBundler.init(allocator, log, opts, null);
 
-            bundler.configureLinker();
+        //     bundler.configureLinker();
 
-            var entry_points = try allocator.alloc(_resolver.Result, bundler.options.entry_points.len);
+        //     var entry_points = try allocator.alloc(_resolver.Result, bundler.options.entry_points.len);
 
-            if (log.level == .verbose) {
-                bundler.resolver.debug_logs = try DebugLogs.init(allocator);
-            }
+        //     if (log.level == .verbose) {
+        //         bundler.resolver.debug_logs = try DebugLogs.init(allocator);
+        //     }
 
-            var rfs: *Fs.FileSystem.RealFS = &bundler.fs.fs;
+        //     var rfs: *Fs.FileSystem.RealFS = &bundler.fs.fs;
 
-            var entry_point_i: usize = 0;
-            for (bundler.options.entry_points) |_entry| {
-                var entry: string = bundler.normalizeEntryPointPath(_entry);
+        //     var entry_point_i: usize = 0;
+        //     for (bundler.options.entry_points) |_entry| {
+        //         var entry: string = bundler.normalizeEntryPointPath(_entry);
 
-                defer {
-                    js_ast.Expr.Data.Store.reset();
-                    js_ast.Stmt.Data.Store.reset();
-                }
+        //         defer {
+        //             js_ast.Expr.Data.Store.reset();
+        //             js_ast.Stmt.Data.Store.reset();
+        //         }
 
-                const result = bundler.resolver.resolve(bundler.fs.top_level_dir, entry, .entry_point) catch |err| {
-                    Output.printError("Error resolving \"{s}\": {s}\n", .{ entry, @errorName(err) });
-                    continue;
-                };
+        //         const result = bundler.resolver.resolve(bundler.fs.top_level_dir, entry, .entry_point) catch |err| {
+        //             Output.printError("Error resolving \"{s}\": {s}\n", .{ entry, @errorName(err) });
+        //             continue;
+        //         };
 
-                const key = result.path_pair.primary.text;
-                if (bundler.resolve_results.contains(key)) {
-                    continue;
-                }
-                try bundler.resolve_results.put(key, result);
-                entry_points[entry_point_i] = result;
+        //         const key = result.path_pair.primary.text;
+        //         if (bundler.resolve_results.contains(key)) {
+        //             continue;
+        //         }
+        //         try bundler.resolve_results.put(key, result);
+        //         entry_points[entry_point_i] = result;
 
-                if (isDebug) {
-                    Output.print("Resolved {s} => {s}", .{ entry, result.path_pair.primary.text });
-                }
+        //         if (isDebug) {
+        //             Output.print("Resolved {s} => {s}", .{ entry, result.path_pair.primary.text });
+        //         }
 
-                entry_point_i += 1;
-                bundler.resolve_queue.writeItem(result) catch unreachable;
-            }
-            var scan_results = std.ArrayList(ScanResult).init(allocator);
-            var scan_pass_result = js_parser.ScanPassResult.init(allocator);
+        //         entry_point_i += 1;
+        //         bundler.resolve_queue.writeItem(result) catch unreachable;
+        //     }
+        //     var scan_results = std.ArrayList(ScanResult).init(allocator);
+        //     var scan_pass_result = js_parser.ScanPassResult.init(allocator);
 
-            switch (bundler.options.resolve_mode) {
-                .lazy, .dev, .bundle => {
-                    while (bundler.resolve_queue.readItem()) |item| {
-                        js_ast.Expr.Data.Store.reset();
-                        js_ast.Stmt.Data.Store.reset();
-                        scan_pass_result.named_imports.clearRetainingCapacity();
-                        scan_results.append(bundler.scanWithResolveResult(item, &scan_pass_result) catch continue orelse continue) catch continue;
-                    }
-                },
-                else => Global.panic("Unsupported resolve mode: {s}", .{@tagName(bundler.options.resolve_mode)}),
-            }
+        //     switch (bundler.options.resolve_mode) {
+        //         .lazy, .dev, .bundle => {
+        //             while (bundler.resolve_queue.readItem()) |item| {
+        //                 js_ast.Expr.Data.Store.reset();
+        //                 js_ast.Stmt.Data.Store.reset();
+        //                 scan_pass_result.named_imports.clearRetainingCapacity();
+        //                 scan_results.append(bundler.scanWithResolveResult(item, &scan_pass_result) catch continue orelse continue) catch continue;
+        //             }
+        //         },
+        //         else => Global.panic("Unsupported resolve mode: {s}", .{@tagName(bundler.options.resolve_mode)}),
+        //     }
 
-            // if (log.level == .verbose) {
-            //     for (log.msgs.items) |msg| {
-            //         try msg.writeFormat(std.io.getStdOut().writer());
-            //     }
-            // }
+        //     // if (log.level == .verbose) {
+        //     //     for (log.msgs.items) |msg| {
+        //     //         try msg.writeFormat(std.io.getStdOut().writer());
+        //     //     }
+        //     // }
 
-            if (FeatureFlags.tracing) {
-                Output.printError(
-                    "\n---Tracing---\nResolve time:      {d}\nParsing time:      {d}\n---Tracing--\n\n",
-                    .{
-                        bundler.resolver.elapsed,
-                        bundler.elapsed,
-                    },
-                );
-            }
+        //     if (FeatureFlags.tracing) {
+        //         Output.printError(
+        //             "\n---Tracing---\nResolve time:      {d}\nParsing time:      {d}\n---Tracing--\n\n",
+        //             .{
+        //                 bundler.resolver.elapsed,
+        //                 bundler.elapsed,
+        //             },
+        //         );
+        //     }
 
-            return ScanResult.Summary{
-                .scan_results = scan_results,
-                .import_records = scan_pass_result.import_records,
-            };
-        }
+        //     return ScanResult.Summary{
+        //         .scan_results = scan_results,
+        //         .import_records = scan_pass_result.import_records,
+        //     };
+        // }
 
-        fn enqueueEntryPoints(bundler: *ThisBundler, entry_points: []_resolver.Result, comptime normalize_entry_point: bool) void {
+        fn enqueueEntryPoints(bundler: *ThisBundler, entry_points: []_resolver.Result, comptime normalize_entry_point: bool) usize {
             var entry_point_i: usize = 0;
 
             for (bundler.options.entry_points) |_entry| {
@@ -1683,21 +1692,13 @@ pub fn NewBundler(cache_files: bool) type {
                     continue;
                 };
 
-                const key = result.path_pair.primary.text;
-                if (bundler.resolve_results.contains(key)) {
-                    continue;
+                if (bundler.linker.enqueueResolveResult(&result) catch unreachable) {
+                    entry_points[entry_point_i] = result;
+                    entry_point_i += 1;
                 }
-
-                bundler.resolve_results.put(key, result) catch unreachable;
-                entry_points[entry_point_i] = result;
-
-                if (isDebug) {
-                    Output.print("Resolved {s} => {s}", .{ entry, result.path_pair.primary.text });
-                }
-
-                entry_point_i += 1;
-                bundler.resolve_queue.writeItem(result) catch unreachable;
             }
+
+            return entry_point_i;
         }
 
         pub fn bundle(
@@ -1710,9 +1711,11 @@ pub fn NewBundler(cache_files: bool) type {
             try bundler.configureRouter();
 
             var skip_normalize = false;
-            if (bundler.router) |router| {
-                bundler.options.entry_points = try router.getEntryPoints(allocator);
-                skip_normalize = true;
+            if (bundler.options.routes.routes_enabled) {
+                if (bundler.router) |router| {
+                    bundler.options.entry_points = try router.getEntryPoints(allocator);
+                    skip_normalize = true;
+                }
             }
 
             if (bundler.options.write and bundler.options.output_dir.len > 0) {}
@@ -1724,9 +1727,9 @@ pub fn NewBundler(cache_files: bool) type {
 
             var entry_points = try allocator.alloc(_resolver.Result, bundler.options.entry_points.len);
             if (skip_normalize) {
-                bundler.enqueueEntryPoints(entry_points, false);
+                entry_points = entry_points[0..bundler.enqueueEntryPoints(entry_points, false)];
             } else {
-                bundler.enqueueEntryPoints(entry_points, true);
+                entry_points = entry_points[0..bundler.enqueueEntryPoints(entry_points, true)];
             }
 
             if (log.level == .verbose) {

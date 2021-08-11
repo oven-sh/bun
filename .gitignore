@@ -46,3 +46,5 @@ outcss
 txt.js
 .idea
 .vscode/cpp*
+
+node_modules_*

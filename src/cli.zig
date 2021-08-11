@@ -115,10 +115,10 @@ pub const Cli = struct {
                 clap.parseParam("-o, --outdir <STR>                Save output to directory (default: \"out\" if none provided and multiple entry points passed)") catch unreachable,
                 clap.parseParam("-e, --external <STR>...           Exclude module from transpilation (can use * wildcards). ex: -e react") catch unreachable,
                 clap.parseParam("-i, --inject <STR>...             Inject module at the top of every file") catch unreachable,
-                clap.parseParam("--cwd <STR>                       Absolute path to resolve entry points from. Defaults to cwd") catch unreachable,
-                clap.parseParam("--origin <STR>                    Rewrite import paths to start with --origin. Useful for web browsers.") catch unreachable,
+                clap.parseParam("--cwd <STR>                       Absolute path to resolve entry points from.") catch unreachable,
+                clap.parseParam("--origin <STR>                    Rewrite import paths to start with --origin. Useful for web browsers. Default: \"/\"") catch unreachable,
                 clap.parseParam("--serve                           Start a local dev server. This also sets resolve to \"lazy\".") catch unreachable,
-                clap.parseParam("--public-dir <STR>                Top-level directory for .html files, fonts, images, or anything external. Only relevant with --serve. Defaults to \"<cwd>/public\", to match create-react-app and Next.js") catch unreachable,
+                clap.parseParam("--static-dir <STR>                Top-level directory for .html files, fonts or anything external. Defaults to \"<cwd>/public\", to match create-react-app and Next.js") catch unreachable,
                 clap.parseParam("--jsx-factory <STR>               Changes the function called when compiling JSX elements using the classic JSX runtime") catch unreachable,
                 clap.parseParam("--jsx-fragment <STR>              Changes the function called when compiling JSX fragments using the classic JSX runtime") catch unreachable,
                 clap.parseParam("--jsx-import-source <STR>         Declares the module specifier to be used for importing the jsx and jsxs factory functions. Default: \"react\"") catch unreachable,
@@ -133,7 +133,7 @@ pub const Cli = struct {
                 clap.parseParam("--new-jsb                         Generate a new node_modules.jsb file from node_modules and entry point(s)") catch unreachable,
                 clap.parseParam("--jsb <STR>                       Use a Speedy JavaScript Bundle (default: \"./node_modules.jsb\" if exists)") catch unreachable,
                 clap.parseParam("--jsb-for-server <STR>            Use a server-only Speedy JavaScript Bundle (default: \"./node_modules.server.jsb\" if exists)") catch unreachable,
-                clap.parseParam("--framework <STR>                 Use a JavaScript framework (package name or path to package)") catch unreachable,
+                clap.parseParam("--use <STR>                       Use a JavaScript framework (package name or path to package)") catch unreachable,
                 clap.parseParam("--production                      This sets the defaults to production. Applies to jsx & framework") catch unreachable,
 
                 clap.parseParam("<POS>...                          Entry point(s) to use. Can be individual files, npm packages, or one directory. If one directory, it will auto-detect entry points using a filesystem router. If you're using a framework, passing entry points are optional.") catch unreachable,
@@ -190,7 +190,7 @@ pub const Cli = struct {
             var jsx_production = args.flag("--jsx-production") or production;
             var react_fast_refresh = false;
 
-            var framework_entry_point = args.option("--framework");
+            var framework_entry_point = args.option("--use");
 
             if (serve or args.flag("--new-jsb")) {
                 react_fast_refresh = true;
@@ -223,6 +223,14 @@ pub const Cli = struct {
 
             if (args.flag("--new-jsb")) {
                 node_modules_bundle_path = null;
+                node_modules_bundle_path_server = null;
+            }
+
+            var route_config: ?Api.RouteConfig = null;
+            if (args.option("--static-dir")) |public_dir| {
+                route_config = route_config orelse Api.RouteConfig{ .extensions = &.{} };
+
+                route_config.?.static_dir = public_dir;
             }
 
             const PlatformMatcher = strings.ExactSizeMatcher(8);
@@ -324,8 +332,8 @@ pub const Cli = struct {
                 },
                 .node_modules_bundle_path = node_modules_bundle_path,
                 .node_modules_bundle_path_server = node_modules_bundle_path_server,
-                .public_dir = if (args.option("--public-dir")) |public_dir| allocator.dupe(u8, public_dir) catch unreachable else null,
                 .write = write,
+                .router = route_config,
                 .serve = serve,
                 .inject = inject,
                 .entry_points = entry_points,
@@ -391,9 +399,9 @@ pub const Cli = struct {
             return;
         }
 
-        if ((args.only_scan_dependencies orelse ._none) == .all) {
-            return try printScanResults(try bundler.Bundler.scanDependencies(allocator, &log, args), allocator);
-        }
+        // if ((args.only_scan_dependencies orelse ._none) == .all) {
+        //     return try printScanResults(try bundler.Bundler.scanDependencies(allocator, &log, args), allocator);
+        // }
 
         if ((args.generate_node_module_bundle orelse false)) {
             var log_ = try allocator.create(logger.Log);
@@ -406,8 +414,8 @@ pub const Cli = struct {
             try this_bundler.configureRouter();
 
             var loaded_route_config: ?Api.LoadedRouteConfig = brk: {
-                if (this_bundler.options.route_config) |*conf| {
-                    break :brk conf.toAPI();
+                if (this_bundler.options.routes.routes_enabled) {
+                    break :brk this_bundler.options.routes.toAPI();
                 }
                 break :brk null;
             };
@@ -459,25 +467,40 @@ pub const Cli = struct {
                             Output.Source.set(&output_source);
 
                             defer Output.flush();
-                            defer wait_group.done();
+                            defer {
+                                if (FeatureFlags.parallel_jsb) {
+                                    wait_group.done();
+                                }
+                            }
                             Output.enable_ansi_colors = stderr_.isTty();
                             _generate(logs, std.heap.c_allocator, transform_args, _filepath, server_conf, route_conf_, router) catch return;
                         }
                     };
 
-                    wait_group.add();
-                    server_bundler_generator_thread = try std.Thread.spawn(
-                        .{},
-                        ServerBundleGeneratorThread.generate,
-                        .{
+                    if (FeatureFlags.parallel_jsb) {
+                        wait_group.add();
+                        server_bundler_generator_thread = try std.Thread.spawn(
+                            .{},
+                            ServerBundleGeneratorThread.generate,
+                            .{
+                                log_,
+                                args,
+                                server_bundle_filepath,
+                                _server_conf,
+                                loaded_route_config,
+                                this_bundler.router,
+                            },
+                        );
+                    } else {
+                        ServerBundleGeneratorThread.generate(
                             log_,
                             args,
                             server_bundle_filepath,
                             _server_conf,
                             loaded_route_config,
                             this_bundler.router,
-                        },
-                    );
+                        );
+                    }
                 }
             }
 
@@ -504,8 +527,8 @@ pub const Cli = struct {
                 var elapsed = @divTrunc(std.time.nanoTimestamp() - start_time, @as(i128, std.time.ns_per_ms));
                 var bundle = NodeModuleBundle.init(node_modules, allocator);
 
-                if (log.errors > 0 or log.warnings > 0) {
-                    try log.print(Output.errorWriter());
+                if (log_.errors > 0) {
+                    try log_.print(Output.errorWriter());
                 } else {
                     bundle.printSummary();
                     const indent = comptime " ";
@@ -516,6 +539,8 @@ pub const Cli = struct {
                     } else {
                         Output.prettyln(indent ++ "<r>Saved to ./{s}", .{filepath});
                     }
+
+                    try log_.printForLogLevel(Output.errorWriter());
                 }
             }
             return;

@@ -274,14 +274,14 @@ pub const VirtualMachine = struct {
 
     inline fn _fetch(
         global: *JSGlobalObject,
-        specifier: string,
+        _specifier: string,
         source: string,
         log: *logger.Log,
     ) !ResolvedSource {
         std.debug.assert(VirtualMachine.vm_loaded);
         std.debug.assert(VirtualMachine.vm.global == global);
 
-        if (vm.node_modules != null and strings.eql(vm.bundler.linker.nodeModuleBundleImportPath(), specifier)) {
+        if (vm.node_modules != null and strings.eql(vm.bundler.linker.nodeModuleBundleImportPath(), _specifier)) {
             // We kind of need an abstraction around this.
             // Basically we should subclass JSC::SourceCode with:
             // - hash
@@ -300,7 +300,7 @@ pub const VirtualMachine = struct {
                     &vm.bundler.fs.fs,
                 ) orelse 0),
             };
-        } else if (strings.eqlComptime(specifier, Runtime.Runtime.Imports.Name)) {
+        } else if (strings.eqlComptime(_specifier, Runtime.Runtime.Imports.Name)) {
             return ResolvedSource{
                 .source_code = ZigString.init(Runtime.Runtime.sourceContent()),
                 .specifier = ZigString.init(Runtime.Runtime.Imports.Name),
@@ -313,8 +313,10 @@ pub const VirtualMachine = struct {
             };
         }
 
-        const result = vm.bundler.resolve_results.get(specifier) orelse return error.MissingResolveResult;
-        const path = result.path_pair.primary;
+        const specifier = normalizeSpecifier(_specifier);
+        std.debug.assert(std.fs.path.isAbsolute(specifier)); // if this crashes, it means the resolver was skipped.
+
+        const path = Fs.Path.init(specifier);
         const loader = vm.bundler.options.loaders.get(path.name.ext) orelse .file;
 
         switch (loader) {
@@ -344,7 +346,7 @@ pub const VirtualMachine = struct {
                     vm.bundler.allocator,
                     path,
                     loader,
-                    result.dirname_fd,
+                    0,
                     fd,
                     hash,
                 ) orelse {
@@ -416,17 +418,11 @@ pub const VirtualMachine = struct {
             return;
         }
 
-        const result: Resolver.Result = vm.bundler.resolve_results.get(specifier) orelse brk: {
-            // We don't want to write to the hash table if there's an error
-            // That's why we don't use getOrPut here
-            const res = try vm.bundler.resolver.resolve(
-                Fs.PathName.init(source).dirWithTrailingSlash(),
-                specifier,
-                .stmt,
-            );
-            try vm.bundler.resolve_results.put(res.path_pair.primary.text, res);
-            break :brk res;
-        };
+        const result = try vm.bundler.resolver.resolve(
+            Fs.PathName.init(source).dirWithTrailingSlash(),
+            specifier,
+            .stmt,
+        );
         ret.result = result;
 
         if (vm.node_modules != null and result.isLikelyNodeModule()) {
@@ -507,7 +503,17 @@ pub const VirtualMachine = struct {
 
         res.* = ErrorableZigString.ok(ZigString.init(result.path));
     }
+    pub fn normalizeSpecifier(slice: string) string {
+        if (slice.len == 0) return slice;
 
+        if (VirtualMachine.vm.bundler.options.origin.len > 0) {
+            if (strings.startsWith(slice, VirtualMachine.vm.bundler.options.origin)) {
+                return slice[VirtualMachine.vm.bundler.options.origin.len..];
+            }
+        }
+
+        return slice;
+    }
     threadlocal var errors_stack: [256]*c_void = undefined;
     pub fn fetch(ret: *ErrorableResolvedSource, global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) void {
         var log = logger.Log.init(vm.bundler.allocator);

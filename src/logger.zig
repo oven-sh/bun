@@ -11,12 +11,16 @@ const expect = std.testing.expect;
 const assert = std.debug.assert;
 const ArrayList = std.ArrayList;
 
-pub const Kind = enum {
+pub const Kind = enum(i8) {
     err,
     warn,
     note,
     debug,
     verbose,
+
+    pub inline fn shouldPrint(this: Kind, other: Log.Level) bool {
+        return @enumToInt(this) - @enumToInt(other) >= 0;
+    }
 
     pub fn string(self: Kind) string {
         return switch (self) {
@@ -323,7 +327,7 @@ pub const Log = struct {
     warnings: usize = 0,
     errors: usize = 0,
     msgs: ArrayList(Msg),
-    level: Level = Level.debug,
+    level: Level = Level.info,
 
     pub fn toAPI(this: *const Log, allocator: *std.mem.Allocator) !Api.Log {
         return Api.Log{
@@ -333,7 +337,7 @@ pub const Log = struct {
         };
     }
 
-    pub const Level = enum {
+    pub const Level = enum(i8) {
         verbose,
         debug,
         info,
@@ -513,6 +517,14 @@ pub const Log = struct {
     pub fn print(self: *Log, to: anytype) !void {
         for (self.msgs.items) |msg| {
             try msg.writeFormat(to);
+        }
+    }
+
+    pub fn printForLogLevel(self: *Log, to: anytype) !void {
+        for (self.msgs.items) |msg| {
+            if (msg.kind.shouldPrint(self.level)) {
+                try msg.writeFormat(to);
+            }
         }
     }
 

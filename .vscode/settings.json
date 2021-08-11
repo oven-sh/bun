@@ -8,7 +8,7 @@
   },
   "search.followSymlinks": false,
   "search.useIgnoreFiles": true,
-
+  "zig.buildOnSave": false,
   "C_Cpp.files.exclude": {
     "**/.vscode": true,
     "src/javascript/jsc/WebKit/JSTests": true,

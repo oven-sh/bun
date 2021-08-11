@@ -577,7 +577,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
             // Run the resolver
             // Don't parse/print automatically.
             if (linker.options.resolve_mode != .lazy) {
-                try linker.enqueueResolveResult(resolve_result);
+                _ = try linker.enqueueResolveResult(resolve_result);
             }
 
             import_record.path = try linker.generateImportPath(
@@ -595,7 +595,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
             }
         }
 
-        pub fn resolveResultHashKey(linker: *ThisLinker, resolve_result: *const Resolver.Result) string {
+        pub fn resolveResultHashKey(linker: *ThisLinker, resolve_result: *const Resolver.Result) u64 {
             var hash_key = resolve_result.path_pair.primary.text;
 
             // Shorter hash key is faster to hash
@@ -603,18 +603,19 @@ pub fn NewLinker(comptime BundlerType: type) type {
                 hash_key = resolve_result.path_pair.primary.text[linker.fs.top_level_dir.len..];
             }
 
-            return hash_key;
+            return std.hash.Wyhash.hash(0, hash_key);
         }
 
-        pub fn enqueueResolveResult(linker: *ThisLinker, resolve_result: *const Resolver.Result) !void {
+        pub fn enqueueResolveResult(linker: *ThisLinker, resolve_result: *const Resolver.Result) !bool {
             const hash_key = linker.resolveResultHashKey(resolve_result);
 
-            const get_or_put_entry = try linker.resolve_results.backing.getOrPut(hash_key);
+            const get_or_put_entry = try linker.resolve_results.getOrPut(hash_key);
 
             if (!get_or_put_entry.found_existing) {
-                get_or_put_entry.entry.value = resolve_result.*;
                 try linker.resolve_queue.writeItem(resolve_result.*);
             }
+
+            return !get_or_put_entry.found_existing;
         }
     };
 }

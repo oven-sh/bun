@@ -253,11 +253,13 @@ type uint32 = number;
   export interface LoadedRouteConfig {
     dir: string;
     extensions: string[];
+    static_dir: string;
   }
 
   export interface RouteConfig {
     dir?: string;
     extensions?: string[];
+    static_dir?: string;
   }
 
   export interface TransformOptions {
@@ -278,7 +280,6 @@ type uint32 = number;
     platform?: Platform;
     serve?: boolean;
     extension_order?: string[];
-    public_dir?: string;
     only_scan_dependencies?: ScanDependencyMode;
     generate_node_module_bundle?: boolean;
     node_modules_bundle_path?: string;

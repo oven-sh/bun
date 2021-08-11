@@ -31,18 +31,25 @@ pub const NodeEnvBufMap = struct {
         std.mem.copy(u8, bufkeybuf["process.env.".len..], key);
         var key_slice = bufkeybuf[0 .. key.len + "process.env.".len];
         var value_slice = value;
-        const max_value_slice_len = std.math.min(value.len, bufkeybuf.len - key_slice.len);
-        if (value_slice[0] != '"' and value_slice[value.len - 1] != '"') {
-            value_slice = bufkeybuf[key_slice.len..][0 .. max_value_slice_len + 2];
-            value_slice[0] = '"';
-            std.mem.copy(u8, value_slice[1..], value[0..max_value_slice_len]);
-            value_slice[value_slice.len - 1] = '"';
-        } else if (value_slice[0] != '"') {
-            value_slice[0] = '"';
-            std.mem.copy(u8, value_slice[1..], value[0..max_value_slice_len]);
-        } else if (value_slice[value.len - 1] != '"') {
-            std.mem.copy(u8, value_slice[1..], value[0..max_value_slice_len]);
-            value_slice[value_slice.len - 1] = '"';
+        if (value_slice.len > 0) {
+            const max_value_slice_len = std.math.min(value.len, bufkeybuf.len - key_slice.len);
+            if (key_slice.len < bufkeybuf.len and value_slice[0] != '"' and value_slice[value.len - 1] != '"') {
+                value_slice = bufkeybuf[key_slice.len..];
+                if (value_slice.len > 0) {
+                    value_slice = value_slice[0 .. max_value_slice_len + 2];
+                    value_slice[0] = '"';
+                    std.mem.copy(u8, value_slice[1..], value[0..max_value_slice_len]);
+                    value_slice[value_slice.len - 1] = '"';
+                } else {
+                    value_slice.len = 0;
+                }
+            } else if (value_slice[0] != '"') {
+                value_slice[0] = '"';
+                std.mem.copy(u8, value_slice[1..], value[0..max_value_slice_len]);
+            } else if (value_slice[value.len - 1] != '"') {
+                std.mem.copy(u8, value_slice[1..], value[0..max_value_slice_len]);
+                value_slice[value_slice.len - 1] = '"';
+            }
         }
 
         return this.backing.put(key_slice, value_slice);

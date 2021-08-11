@@ -34,6 +34,15 @@ pub const css_supports_fence = true;
 pub const disable_entry_cache = false;
 pub const enable_bytecode_caching = false;
 
+// Disabled due to concurrency bug I don't have time to fix right now.
+// I suspect it's like 3 undefined memory issues.
+// This was the command I ran to reproduce it:
+//    for i in (seq 1000)
+//      command ../../build/debug/macos-x86_64/esdev --use=./nexty2 --new-jsb > /dev/null
+//    end
+// It only happens 1 out of every N times, probably like 50.
+pub const parallel_jsb = true;
+
 pub const CSSModulePolyfill = enum {
     // When you import a .css file and you reference the import in JavaScript
     // Just return whatever the property key they referenced was

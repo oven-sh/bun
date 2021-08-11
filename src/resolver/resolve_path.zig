@@ -648,6 +648,15 @@ pub fn joinAbsString(_cwd: []const u8, parts: anytype, comptime _platform: Platf
     );
 }
 
+pub fn joinAbsStringZ(_cwd: []const u8, parts: anytype, comptime _platform: Platform) [:0]const u8 {
+    return joinAbsStringBufZ(
+        _cwd,
+        &parser_join_input_buffer,
+        parts,
+        _platform,
+    );
+}
+
 pub fn joinStringBuf(buf: []u8, _parts: anytype, comptime _platform: Platform) []const u8 {
     if (FeatureFlags.use_std_path_join) {
         var alloc = std.heap.FixedBufferAllocator.init(buf);
@@ -701,8 +710,19 @@ pub fn joinStringBuf(buf: []u8, _parts: anytype, comptime _platform: Platform) [
 }
 
 pub fn joinAbsStringBuf(_cwd: []const u8, buf: []u8, _parts: anytype, comptime _platform: Platform) []const u8 {
+    return _joinAbsStringBuf(false, []const u8, _cwd, buf, _parts, _platform);
+}
+
+pub fn joinAbsStringBufZ(_cwd: []const u8, buf: []u8, _parts: anytype, comptime _platform: Platform) [:0]const u8 {
+    return _joinAbsStringBuf(true, [:0]const u8, _cwd, buf, _parts, _platform);
+}
+
+inline fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: type, _cwd: []const u8, buf: []u8, _parts: anytype, comptime _platform: Platform) ReturnType {
     var parts: []const []const u8 = _parts;
     if (parts.len == 0) {
+        if (comptime is_sentinel) {
+            unreachable;
+        }
         return _cwd;
     }
 
@@ -779,7 +799,12 @@ pub fn joinAbsStringBuf(_cwd: []const u8, buf: []u8, _parts: anytype, comptime _
 
     std.mem.copy(u8, buf[leading_separator.len .. result.len + leading_separator.len], result);
 
-    return buf[0 .. result.len + leading_separator.len];
+    if (comptime is_sentinel) {
+        buf.ptr[result.len + leading_separator.len + 1] = 0;
+        return buf[0 .. result.len + leading_separator.len :0];
+    } else {
+        return buf[0 .. result.len + leading_separator.len];
+    }
 }
 
 pub fn isSepPosix(char: u8) bool {

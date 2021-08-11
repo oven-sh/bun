@@ -611,13 +611,12 @@ pub const BundleOptions = struct {
     hot_module_reloading: bool = false,
     inject: ?[]string = null,
     origin: string = "",
-    public_dir: string = "public",
-    public_dir_enabled: bool = true,
+
     output_dir: string = "",
     output_dir_handle: ?std.fs.Dir = null,
     node_modules_bundle_url: string = "",
     node_modules_bundle_pretty_path: string = "",
-    public_dir_handle: ?std.fs.Dir = null,
+
     write: bool = false,
     preserve_symlinks: bool = false,
     preserve_extensions: bool = false,
@@ -638,7 +637,7 @@ pub const BundleOptions = struct {
     out_extensions: std.StringHashMap(string),
     import_path_format: ImportPathFormat = ImportPathFormat.relative,
     framework: ?Framework = null,
-    route_config: ?RouteConfig = null,
+    routes: RouteConfig = RouteConfig.zero(),
 
     pub fn asJavascriptBundleConfig(this: *const BundleOptions) Api.JavascriptBundleConfig {}
 
@@ -701,85 +700,6 @@ pub const BundleOptions = struct {
             else => {},
         }
 
-        if (transform.main_fields.len > 0) {
-            opts.main_fields = transform.main_fields;
-        }
-
-        opts.external = ExternalModules.init(allocator, &fs.fs, fs.top_level_dir, transform.external, log, opts.platform);
-        opts.out_extensions = opts.platform.outExtensions(allocator);
-
-        if (transform.framework) |_framework| {
-            opts.framework = try Framework.fromApi(_framework);
-        }
-
-        if (transform.router) |route_config| {
-            opts.route_config = try RouteConfig.fromApi(route_config, allocator);
-        }
-
-        if (transform.serve orelse false) {
-            opts.preserve_extensions = true;
-            opts.append_package_version_in_query_string = true;
-            if (opts.origin.len == 0) {
-                opts.origin = "/";
-            }
-
-            opts.resolve_mode = .lazy;
-            var _dirs = [_]string{transform.public_dir orelse opts.public_dir};
-            opts.public_dir = try fs.absAlloc(allocator, &_dirs);
-            opts.public_dir_handle = std.fs.openDirAbsolute(opts.public_dir, .{ .iterate = true }) catch |err| brk: {
-                var did_warn = false;
-                switch (err) {
-                    error.FileNotFound => {
-                        // Be nice.
-                        // Check "static" since sometimes people use that instead.
-                        // Don't switch to it, but just tell "hey try --public-dir=static" next time
-                        if (transform.public_dir == null or transform.public_dir.?.len == 0) {
-                            _dirs[0] = "static";
-                            const check_static = try fs.joinAlloc(allocator, &_dirs);
-                            defer allocator.free(check_static);
-
-                            std.fs.accessAbsolute(check_static, .{}) catch {
-                                Output.prettyErrorln("warn: \"public\" folder missing. If there are external assets used in your project, pass --public-dir=\"public-folder-name\"", .{});
-                                did_warn = true;
-                            };
-                        }
-
-                        if (!did_warn) {
-                            Output.prettyErrorln("warn: \"public\" folder missing. If you want to use \"static\" as the public folder, pass --public-dir=\"static\".", .{});
-                        }
-                        opts.public_dir_enabled = false;
-                    },
-                    error.AccessDenied => {
-                        Output.prettyErrorln(
-                            "error: access denied when trying to open public_dir: \"{s}\".\nPlease re-open Speedy with access to this folder or pass a different folder via \"--public-dir\". Note: --public-dir is relative to --cwd (or the process' current working directory).\n\nThe public folder is where static assets such as images, fonts, and .html files go.",
-                            .{opts.public_dir},
-                        );
-                        std.process.exit(1);
-                    },
-                    else => {
-                        Output.prettyErrorln(
-                            "error: \"{s}\" when accessing public folder: \"{s}\"",
-                            .{ @errorName(err), opts.public_dir },
-                        );
-                        std.process.exit(1);
-                    },
-                }
-
-                break :brk null;
-            };
-
-            // Windows has weird locking rules for file access.
-            // so it's a bad idea to keep a file handle open for a long time on Windows.
-            if (isWindows and opts.public_dir_handle != null) {
-                opts.public_dir_handle.?.close();
-            }
-            opts.hot_module_reloading = true;
-        }
-
-        if (opts.write and opts.output_dir.len > 0) {
-            opts.output_dir_handle = try openOutputDir(opts.output_dir);
-        }
-
         if (!(transform.generate_node_module_bundle orelse false)) {
             if (node_modules_bundle_existing) |node_mods| {
                 opts.node_modules_bundle = node_mods;
@@ -834,15 +754,15 @@ pub const BundleOptions = struct {
                                 },
                             );
                             Output.flush();
-                            if (opts.framework == null) {
+                            if (transform.framework == null) {
                                 if (node_module_bundle.container.framework) |loaded_framework| {
                                     opts.framework = Framework.fromLoadedFramework(loaded_framework);
                                 }
                             }
 
-                            if (opts.route_config == null) {
+                            if (transform.router == null) {
                                 if (node_module_bundle.container.routes) |routes| {
-                                    opts.route_config = RouteConfig.fromLoadedRoutes(routes);
+                                    opts.routes = RouteConfig.fromLoadedRoutes(routes);
                                 }
                             }
                         } else |err| {
@@ -856,6 +776,89 @@ pub const BundleOptions = struct {
                     }
                 }
             }
+        }
+
+        if (transform.main_fields.len > 0) {
+            opts.main_fields = transform.main_fields;
+        }
+
+        opts.external = ExternalModules.init(allocator, &fs.fs, fs.top_level_dir, transform.external, log, opts.platform);
+        opts.out_extensions = opts.platform.outExtensions(allocator);
+
+        if (transform.framework) |_framework| {
+            opts.framework = try Framework.fromApi(_framework);
+        }
+
+        if (transform.router) |routes| {
+            opts.routes = try RouteConfig.fromApi(routes, allocator);
+        }
+
+        if (transform.serve orelse false) {
+            opts.preserve_extensions = true;
+            opts.append_package_version_in_query_string = true;
+            if (opts.origin.len == 0) {
+                opts.origin = "/";
+            }
+
+            opts.resolve_mode = .lazy;
+
+            var dir_to_use: string = opts.routes.static_dir;
+            const static_dir_set = opts.routes.static_dir_enabled;
+
+            var _dirs = [_]string{dir_to_use};
+            opts.routes.static_dir = try fs.absAlloc(allocator, &_dirs);
+            opts.routes.static_dir_handle = std.fs.openDirAbsolute(opts.routes.static_dir, .{ .iterate = true }) catch |err| brk: {
+                var did_warn = false;
+                switch (err) {
+                    error.FileNotFound => {
+                        // Be nice.
+                        // Check "static" since sometimes people use that instead.
+                        // Don't switch to it, but just tell "hey try --public-dir=static" next time
+                        if (!static_dir_set) {
+                            _dirs[0] = "static";
+                            const check_static = try fs.joinAlloc(allocator, &_dirs);
+                            defer allocator.free(check_static);
+
+                            std.fs.accessAbsolute(check_static, .{}) catch {
+                                Output.prettyErrorln("warn: \"{s}\" folder missing. If there are external assets used in your project, pass --public-dir=\"public-folder-name\"", .{_dirs[0]});
+                                did_warn = true;
+                            };
+                        }
+
+                        if (!did_warn) {
+                            Output.prettyErrorln("warn: \"{s}\" folder missing. If you want to use \"static\" as the public folder, pass --public-dir=\"static\".", .{_dirs[0]});
+                        }
+                        opts.routes.static_dir_enabled = false;
+                    },
+                    error.AccessDenied => {
+                        Output.prettyErrorln(
+                            "error: access denied when trying to open dir: \"{s}\".\nPlease re-open Speedy with access to this folder or pass a different folder via \"--public-dir\". Note: --public-dir is relative to --cwd (or the process' current working directory).\n\nThe public folder is where static assets such as images, fonts, and .html files go.",
+                            .{opts.routes.static_dir},
+                        );
+                        std.process.exit(1);
+                    },
+                    else => {
+                        Output.prettyErrorln(
+                            "error: \"{s}\" when accessing public folder: \"{s}\"",
+                            .{ @errorName(err), opts.routes.static_dir },
+                        );
+                        std.process.exit(1);
+                    },
+                }
+
+                break :brk null;
+            };
+
+            // Windows has weird locking rules for file access.
+            // so it's a bad idea to keep a file handle open for a long time on Windows.
+            if (isWindows and opts.routes.static_dir_handle != null) {
+                opts.routes.static_dir_handle.?.close();
+            }
+            opts.hot_module_reloading = opts.platform.isWebLike();
+        }
+
+        if (opts.write and opts.output_dir.len > 0) {
+            opts.output_dir_handle = try openOutputDir(opts.output_dir);
         }
 
         return opts;
@@ -1211,7 +1214,6 @@ pub const Framework = struct {
 };
 
 pub const RouteConfig = struct {
-    /// 
     dir: string = "",
     // TODO: do we need a separate list for data-only extensions?
     // e.g. /foo.json just to get the data for the route, without rendering the html
@@ -1219,17 +1221,29 @@ pub const RouteConfig = struct {
     // I would consider using a custom binary format to minimize request size
     // maybe like CBOR
     extensions: []const string = &[_][]const string{},
+    routes_enabled: bool = false,
+
+    static_dir: string = "",
+    static_dir_handle: ?std.fs.Dir = null,
+    static_dir_enabled: bool = false,
 
     pub fn toAPI(this: *const RouteConfig) Api.LoadedRouteConfig {
-        return .{ .dir = this.dir, .extensions = this.extensions };
+        return .{
+            .dir = if (this.routes_enabled) this.dir else "",
+            .extensions = this.extensions,
+            .static_dir = if (this.static_dir_enabled) this.static_dir else "",
+        };
     }
 
     pub const DefaultDir = "pages";
+    pub const DefaultStaticDir = "public";
     pub const DefaultExtensions = [_]string{ "tsx", "ts", "mjs", "jsx", "js" };
     pub inline fn zero() RouteConfig {
         return RouteConfig{
             .dir = DefaultDir,
             .extensions = std.mem.span(&DefaultExtensions),
+            .static_dir = DefaultStaticDir,
+            .routes_enabled = false,
         };
     }
 
@@ -1237,6 +1251,9 @@ pub const RouteConfig = struct {
         return RouteConfig{
             .extensions = loaded.extensions,
             .dir = loaded.dir,
+            .static_dir = loaded.static_dir,
+            .routes_enabled = loaded.dir.len > 0,
+            .static_dir_enabled = loaded.static_dir.len > 0,
         };
     }
 
@@ -1244,9 +1261,15 @@ pub const RouteConfig = struct {
         var router = zero();
 
         var router_dir: string = std.mem.trimRight(u8, router_.dir orelse "", "/\\");
+        var static_dir: string = std.mem.trimRight(u8, router_.static_dir orelse "", "/\\");
 
         if (router_dir.len != 0) {
             router.dir = router_dir;
+            router.routes_enabled = true;
+        }
+
+        if (static_dir.len > 0) {
+            router.static_dir = static_dir;
         }
 
         if (router_.extensions.len > 0) {

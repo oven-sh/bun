@@ -10,7 +10,7 @@
         "./routes",
         "--resolve=dev",
         "--outdir=out"
-        // "--public-url=https://localhost:9000/"
+        // "--origin=https://localhost:9000/"
       ],
       "cwd": "${workspaceFolder}/demos/css-stress-test",
       "console": "internalConsole"
@@ -39,15 +39,13 @@
     {
       "type": "lldb",
       "request": "launch",
-      "name": "Eval Small TEst",
-      "program": "${workspaceFolder}/build/debug/macos-x86_64/spjs",
+      "name": "Transpile small",
+      "program": "${workspaceFolder}/build/debug/macos-x86_64/esdev",
       "args": [
-        "./quoted-escape.js",
-        "--resolve=dev",
-        "--outdir=outcss"
-        // "--public-url=https://localhost:9000/"
+        "demos/css-stress-test/pages/index.tsx"
+        // "--origin=https://localhost:9000/"
       ],
-      "cwd": "${workspaceFolder}/src/test/fixtures",
+      "cwd": "${workspaceFolder}",
       "console": "internalConsole"
     },
     {
@@ -59,7 +57,7 @@
         "error.js",
         "--resolve=dev",
         "--outdir=outcss"
-        // "--public-url=https://localhost:9000/"
+        // "--origin=https://localhost:9000/"
       ],
       "cwd": "${workspaceFolder}",
       "console": "internalConsole"
@@ -71,7 +69,7 @@
       "program": "${workspaceFolder}/build/debug/macos-x86_64/spjs",
       "args": [
         "./src/index.tsx"
-        // "--public-url=https://localhost:9000/"
+        // "--origin=https://localhost:9000/"
       ],
       "cwd": "${workspaceFolder}/demos/css-stress-test",
       "console": "internalConsole"
@@ -86,7 +84,7 @@
         "./simple.css",
         "--resolve=dev",
         "--outdir=outcss",
-        "--public-url=https://localhost:9000/"
+        "--origin=https://localhost:9000/"
       ],
       "cwd": "${workspaceFolder}/src/test/fixtures",
       "console": "internalConsole"
@@ -97,14 +95,7 @@
       "request": "launch",
       "name": "Demo Serve",
       "program": "${workspaceFolder}/build/debug/macos-x86_64/esdev",
-      "args": [
-        "pages",
-        "--resolve=lazy",
-        "--outdir=public",
-        "--framework=framework.tsx",
-        "--serve",
-        "--public-url=http://localhost:9000/"
-      ],
+      "args": ["--serve", "--origin=http://localhost:9000/"],
       "cwd": "${workspaceFolder}/demos/css-stress-test",
       "console": "internalConsole"
     },
@@ -116,7 +107,7 @@
       "args": [
         "./src/index.tsx",
         "--resolve=lazy",
-        "--public-url=http://localhost:9000/"
+        "--origin=http://localhost:9000/"
       ],
       "cwd": "${workspaceFolder}/demos/simple-react",
       "console": "internalConsole"
@@ -132,7 +123,7 @@
         "--resolve=dev",
         "--outdir=outcss",
         "--platform=browser",
-        "--public-url=http://localhost:9000/"
+        "--origin=http://localhost:9000/"
       ],
       "cwd": "${workspaceFolder}/demos/css-stress-test",
       "console": "internalConsole"
@@ -146,7 +137,7 @@
       "args": [
         "./src/index.tsx",
         "--resolve=lazy",
-        "--public-url=http://localhost:9000/"
+        "--origin=http://localhost:9000/"
       ],
       "cwd": "${workspaceFolder}/demos/simple-react",
       "console": "internalConsole"
@@ -158,11 +149,20 @@
       "name": "Demo Build .jsb",
       "program": "${workspaceFolder}/build/debug/macos-x86_64/esdev",
       "args": [
-        "./src/index.tsx",
-        "--public-url=http://localhost:9000/",
-        "--new-jsb"
+        "--origin=http://localhost:9000/",
+        "--new-jsb",
+        "--use=./nexty2"
       ],
-      "cwd": "${workspaceFolder}/demos/simple-react",
+      "cwd": "${workspaceFolder}/demos/css-stress-test",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "PNPM Resolve symlink",
+      "program": "${workspaceFolder}/build/debug/macos-x86_64/esdev",
+      "args": ["--resolve=dev", "test-pnpm.js"],
+      "cwd": "${workspaceFolder}/demos/css-stress-test",
       "console": "internalConsole"
     },
     {
@@ -265,7 +265,7 @@
     //     "pages/index.jsx",
     //     "-o",
     //     "out",
-    //     "--public-url=https://hello.com/",
+    //     "--origin=https://hello.com/",
     //     "--serve"
     //   ],
     //   "cwd": "${workspaceFolder}",
@@ -288,7 +288,7 @@
         // "@romejs/js-analysis/evaluators/modules/ImportCall.ts",
         "--outdir=${workspaceFolder}/bench/rome/src/out",
         // "@romejs/cli-diagnostics/banners/success.json",
-        "--public-url=https://hello.com/"
+        "--origin=https://hello.com/"
       ],
       "cwd": "${workspaceFolder}/bench/rome/src",
       "console": "internalConsole"
@@ -310,7 +310,7 @@
         // "@romejs/js-analysis/evaluators/modules/ImportCall.ts",
         "--outdir=${workspaceFolder}/bench/rome/src/out",
         // "@romejs/cli-diagnostics/banners/success.json",
-        "--public-url=https://hello.com/"
+        "--origin=https://hello.com/"
       ],
       "cwd": "${workspaceFolder}/bench/rome/src",
       "console": "internalConsole"

@@ -170,16 +170,16 @@ pub const RequestContext = struct {
     }
 
     fn matchPublicFolder(this: *RequestContext) ?bundler.ServeResult {
-        if (!this.bundler.options.public_dir_enabled) return null;
+        if (!this.bundler.options.routes.static_dir_enabled) return null;
         const relative_path = this.url.path;
         var extension = this.url.extname;
         var tmp_buildfile_buf = std.mem.span(&Bundler.tmp_buildfile_buf);
 
         // On Windows, we don't keep the directory handle open forever because Windows doesn't like that.
-        const public_dir: std.fs.Dir = this.bundler.options.public_dir_handle orelse std.fs.openDirAbsolute(this.bundler.options.public_dir, .{}) catch |err| {
+        const public_dir: std.fs.Dir = this.bundler.options.routes.static_dir_handle orelse std.fs.openDirAbsolute(this.bundler.options.routes.static_dir, .{}) catch |err| {
             this.bundler.log.addErrorFmt(null, logger.Loc.Empty, this.allocator, "Opening public directory failed: {s}", .{@errorName(err)}) catch unreachable;
             Output.printErrorln("Opening public directory failed: {s}", .{@errorName(err)});
-            this.bundler.options.public_dir_enabled = false;
+            this.bundler.options.routes.static_dir_enabled = false;
             return null;
         };
 
@@ -244,7 +244,7 @@ pub const RequestContext = struct {
 
         if (_file) |*file| {
             var stat = file.stat() catch return null;
-            var absolute_path = resolve_path.joinAbs(this.bundler.options.public_dir, .auto, relative_unrooted_path);
+            var absolute_path = resolve_path.joinAbs(this.bundler.options.routes.static_dir, .auto, relative_unrooted_path);
 
             if (stat.kind == .SymLink) {
                 absolute_path = std.fs.realpath(absolute_path, &Bundler.tmp_buildfile_buf) catch return null;
@@ -1920,7 +1920,7 @@ pub const Server = struct {
 
         try server.initWatcher();
 
-        if (server.bundler.router != null and server.bundler.options.public_dir_enabled) {
+        if (server.bundler.router != null and server.bundler.options.routes.static_dir_enabled) {
             try server.run(
                 ConnectionFeatures{ .public_folder = true, .filesystem_router = true },
             );
@@ -1928,7 +1928,7 @@ pub const Server = struct {
             try server.run(
                 ConnectionFeatures{ .public_folder = false, .filesystem_router = true },
             );
-        } else if (server.bundler.options.public_dir_enabled) {
+        } else if (server.bundler.options.routes.static_dir_enabled) {
             try server.run(
                 ConnectionFeatures{ .public_folder = true, .filesystem_router = false },
             );

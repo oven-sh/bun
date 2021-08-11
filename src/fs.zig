@@ -179,29 +179,8 @@ pub const FileSystem = struct {
             }
             // entry.name only lives for the duration of the iteration
 
-            var name: []u8 = undefined;
+            const name = try FileSystem.FilenameStore.instance.appendLowerCase(@TypeOf(entry.name), entry.name);
 
-            switch (_kind) {
-                .file => {
-                    name = FileSystem.FilenameStore.editableSlice(try FileSystem.FilenameStore.instance.append(@TypeOf(entry.name), entry.name));
-                },
-                .dir => {
-                    // FileSystem.FilenameStore here because it's not an absolute path
-                    // it's a path relative to the parent directory
-                    // so it's a tiny path like "foo" instead of "/bar/baz/foo"
-                    name = FileSystem.FilenameStore.editableSlice(try FileSystem.FilenameStore.instance.append(@TypeOf(entry.name), entry.name));
-                },
-            }
-
-            for (name) |c, i| {
-                name[i] = std.ascii.toLower(c);
-            }
-
-            var symlink: []u8 = "";
-
-            if (entry.kind == std.fs.Dir.Entry.Kind.SymLink) {
-                symlink = name;
-            }
             const index = try EntryStore.instance.append(Entry{
                 .base = name,
                 .dir = dir.dir,
@@ -211,7 +190,7 @@ pub const FileSystem = struct {
                 // for each entry was a big performance issue for that package.
                 .need_stat = entry.kind == .SymLink,
                 .cache = Entry.Cache{
-                    .symlink = symlink,
+                    .symlink = "",
                     .kind = _kind,
                 },
             });
@@ -332,8 +311,6 @@ pub const FileSystem = struct {
         };
 
         pub fn kind(entry: *Entry, fs: *Implementation) Kind {
-            // entry.mutex.lock();
-            // defer entry.mutex.unlock();
             if (entry.need_stat) {
                 entry.need_stat = false;
                 entry.cache = fs.kind(entry.dir, entry.base) catch unreachable;
@@ -342,8 +319,6 @@ pub const FileSystem = struct {
         }
 
         pub fn symlink(entry: *Entry, fs: *Implementation) string {
-            // entry.mutex.lock();
-            // defer entry.mutex.unlock();
             if (entry.need_stat) {
                 entry.need_stat = false;
                 entry.cache = fs.kind(entry.dir, entry.base) catch unreachable;
@@ -464,7 +439,7 @@ pub const FileSystem = struct {
         entries_mutex: Mutex = Mutex.init(),
         entries: *EntriesOption.Map,
         allocator: *std.mem.Allocator,
-        limiter: Limiter,
+        limiter: *Limiter,
         cwd: string,
         parent_fs: *FileSystem = undefined,
         file_limit: usize = 32,
@@ -529,18 +504,28 @@ pub const FileSystem = struct {
             return limit.cur;
         }
 
+        threadlocal var _entries_option_map: *EntriesOption.Map = undefined;
+        threadlocal var _entries_option_map_loaded: bool = false;
+        var __limiter: Limiter = undefined;
         pub fn init(
             allocator: *std.mem.Allocator,
             cwd: string,
         ) RealFS {
             const file_limit = adjustUlimit();
+
+            if (!_entries_option_map_loaded) {
+                _entries_option_map = EntriesOption.Map.init(allocator);
+                _entries_option_map_loaded = true;
+                __limiter = Limiter.init(allocator, file_limit);
+            }
+
             return RealFS{
-                .entries = EntriesOption.Map.init(allocator),
+                .entries = _entries_option_map,
                 .allocator = allocator,
                 .cwd = cwd,
                 .file_limit = file_limit,
                 .file_quota = file_limit,
-                .limiter = Limiter.init(allocator, file_limit),
+                .limiter = &__limiter,
             };
         }
 
@@ -637,7 +622,7 @@ pub const FileSystem = struct {
             // This custom map implementation:
             // - Preallocates a fixed amount of directory name space
             // - Doesn't store directory names which don't exist.
-            pub const Map = allocators.BSSMap(EntriesOption, Preallocate.Counts.dir_entry, false, 128);
+            pub const Map = allocators.TBSSMap(EntriesOption, Preallocate.Counts.dir_entry, false, 128);
         };
 
         // Limit the number of files open simultaneously to avoid ulimit issues
@@ -668,7 +653,7 @@ pub const FileSystem = struct {
         };
 
         pub fn openDir(fs: *RealFS, unsafe_dir_string: string) std.fs.File.OpenError!std.fs.Dir {
-            return try std.fs.openDirAbsolute(unsafe_dir_string, std.fs.Dir.OpenDirOptions{ .iterate = true, .access_sub_paths = true, .no_follow = true });
+            return try std.fs.openDirAbsolute(unsafe_dir_string, std.fs.Dir.OpenDirOptions{ .iterate = true, .access_sub_paths = true, .no_follow = false });
         }
 
         fn readdir(
@@ -843,60 +828,38 @@ pub const FileSystem = struct {
         pub fn kind(fs: *RealFS, _dir: string, base: string) !Entry.Cache {
             var dir = _dir;
             var combo = [2]string{ dir, base };
-            var entry_path = path_handler.joinAbsString(fs.cwd, &combo, .auto);
+            var outpath: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+            var entry_path = path_handler.joinAbsStringBuf(fs.cwd, &outpath, &combo, .auto);
+
+            outpath[entry_path.len + 1] = 0;
+            outpath[entry_path.len] = 0;
+
+            const absolute_path_c: [:0]const u8 = outpath[0..entry_path.len :0];
 
             fs.limiter.before();
             defer fs.limiter.after();
-
-            const file = try std.fs.openFileAbsolute(entry_path, .{ .read = true, .write = false });
-            defer {
-                if (fs.needToCloseFiles()) {
-                    file.close();
-                }
-            }
-            var stat = try file.stat();
-
+            var stat = try C.lstat_absolute(absolute_path_c);
+            const is_symlink = stat.kind == std.fs.File.Kind.SymLink;
             var _kind = stat.kind;
             var cache = Entry.Cache{ .kind = Entry.Kind.file, .symlink = "" };
             var symlink: []const u8 = "";
-            if (_kind == .SymLink) {
-                // windows has a max filepath of 255 chars
-                // we give it a little longer for other platforms
-                var out_buffer = std.mem.zeroes([512]u8);
-                var out_slice = &out_buffer;
-                symlink = entry_path;
-                var links_walked: u8 = 0;
+            if (is_symlink) {
+                var file = try std.fs.openFileAbsoluteZ(absolute_path_c, .{ .read = true });
+                setMaxFd(file.handle);
 
-                while (links_walked < 255) : (links_walked += 1) {
-                    var link: string = try std.os.readlink(symlink, out_slice);
-
-                    if (!std.fs.path.isAbsolute(link)) {
-                        combo[0] = dir;
-                        combo[1] = link;
-
-                        link = path_handler.joinAbsStringBuf(fs.cwd, out_slice, &combo, .auto);
+                defer {
+                    if (fs.needToCloseFiles()) {
+                        file.close();
                     }
-                    // TODO: do we need to clean the path?
-                    symlink = link;
-
-                    const file2 = std.fs.openFileAbsolute(symlink, std.fs.File.OpenFlags{ .read = true, .write = false }) catch return cache;
-                    // These ones we always close
-                    defer file2.close();
-
-                    const stat2 = file2.stat() catch return cache;
-
-                    // Re-run "lstat" on the symlink target
-                    _kind = stat2.kind;
-                    if (_kind != .SymLink) {
-                        break;
-                    }
-                    dir = std.fs.path.dirname(link) orelse return cache;
                 }
+                const _stat = try file.stat();
 
-                if (links_walked > 255) {
-                    return cache;
-                }
+                symlink = try std.os.getFdPath(file.handle, &outpath);
+
+                _kind = _stat.kind;
             }
+
+            std.debug.assert(_kind != .SymLink);
 
             if (_kind == .Directory) {
                 cache.kind = .dir;
@@ -931,6 +894,7 @@ pub const PathName = struct {
     base: string,
     dir: string,
     ext: string,
+    filename: string,
 
     // For readability, the names of certain automatically-generated symbols are
     // derived from the file name. For example, instead of the CommonJS wrapper for
@@ -1004,6 +968,7 @@ pub const PathName = struct {
             .dir = dir,
             .base = base,
             .ext = ext,
+            .filename = if (dir.len > 0) _path[dir.len + 1 ..] else _path,
         };
     }
 };
@@ -1014,9 +979,41 @@ threadlocal var join_buf: [1024]u8 = undefined;
 pub const Path = struct {
     pretty: string,
     text: string,
+    non_symlink: string = "",
     namespace: string = "unspecified",
     name: PathName,
     is_disabled: bool = false,
+
+    // "/foo/bar/node_modules/react/index.js" => "index.js"
+    // "/foo/bar/node_modules/.pnpm/react@17.0.1/node_modules/react/index.js" => "index.js"
+    pub fn packageRelativePathString(this: *const Path, name: string) string {
+        // TODO: we don't need to print this buffer, this is inefficient
+        var buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        const search_path = std.fmt.bufPrint(&buffer, std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str ++ "{s}" ++ std.fs.path.sep_str, .{name}) catch return this.text;
+        if (strings.lastIndexOf(this.canonicalNodeModuleText(), search_path)) |i| {
+            return this.canonicalNodeModuleText()[i + search_path.len ..];
+        }
+
+        return this.canonicalNodeModuleText();
+    }
+
+    pub fn nodeModulesRelativePathString(
+        this: *const Path,
+        name: string,
+    ) string {
+        // TODO: we don't need to print this buffer, this is inefficient
+        var buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        const search_path = std.fmt.bufPrint(&buffer, std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str ++ "{s}" ++ std.fs.path.sep_str, .{name}) catch return this.text;
+        if (strings.lastIndexOf(this.canonicalNodeModuleText(), search_path)) |i| {
+            return this.canonicalNodeModuleText()[i + search_path.len - name.len - 1 ..];
+        }
+
+        return this.canonicalNodeModuleText();
+    }
+
+    pub inline fn canonicalNodeModuleText(this: *const Path) string {
+        return this.text;
+    }
 
     pub fn jsonStringify(self: *const @This(), options: anytype, writer: anytype) !void {
         return try std.json.stringify(self.text, options, writer);

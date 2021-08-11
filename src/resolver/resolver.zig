@@ -49,13 +49,13 @@ pub const PathPair = struct {
     pub const Iter = struct {
         index: u2,
         ctx: *PathPair,
-        pub fn next(i: *Iter) ?Path {
+        pub fn next(i: *Iter) ?*Path {
             const ind = i.index;
             i.index += 1;
 
             switch (ind) {
-                0 => return i.ctx.primary,
-                1 => return i.ctx.secondary,
+                0 => return &i.ctx.primary,
+                1 => return if (i.ctx.secondary) |*sec| sec else null,
                 else => return null,
             }
         }
@@ -402,6 +402,7 @@ pub fn NewResolver(cache_files: bool) type {
                 std.mem.copy(u8, out, realpath);
                 out[out.len - 1] = '/';
                 pair.router.dir = out;
+                pair.router.routes_enabled = true;
             }
         }
 
@@ -488,17 +489,56 @@ pub fn NewResolver(cache_files: bool) type {
 
             r.mutex.lock();
             defer r.mutex.unlock();
-
-            const result = r.resolveWithoutSymlinks(source_dir, import_path, kind) catch |err| {
+            errdefer (r.flushDebugLogs(.fail) catch {});
+            var result = (try r.resolveWithoutSymlinks(source_dir, import_path, kind)) orelse {
                 r.flushDebugLogs(.fail) catch {};
-                return err;
+                return error.ModuleNotFound;
             };
 
-            defer {
-                if (result == null) r.flushDebugLogs(.fail) catch {} else r.flushDebugLogs(.success) catch {};
+            try r.finalizeResult(&result);
+            r.flushDebugLogs(.success) catch {};
+            return result;
+        }
+
+        pub fn finalizeResult(r: *ThisResolver, result: *Result) !void {
+            if (result.package_json) |package_json| {
+                result.module_type = switch (package_json.module_type) {
+                    .esm, .cjs => package_json.module_type,
+                    .unknown => result.module_type,
+                };
             }
 
-            return result orelse return error.ModuleNotFound;
+            var iter = result.path_pair.iter();
+            while (iter.next()) |path| {
+                var dir: *DirInfo = (r.readDirInfo(path.name.dir) catch continue) orelse continue;
+                if (dir.getEntries()) |entries| {
+                    if (entries.get(path.name.filename)) |query| {
+                        const symlink_path = query.entry.symlink(&r.fs.fs);
+                        if (symlink_path.len > 0) {
+                            path.non_symlink = path.text;
+                            // Is this entry itself a symlink?
+                            path.text = symlink_path;
+                            path.name = Fs.PathName.init(path.text);
+
+                            if (r.debug_logs) |*debug| {
+                                debug.addNoteFmt("Resolved symlink \"{s}\" to \"{s}\"", .{ path.non_symlink, path.text }) catch {};
+                            }
+                        } else if (dir.abs_real_path.len > 0) {
+                            path.non_symlink = path.text;
+                            var parts = [_]string{ dir.abs_real_path, query.entry.base };
+                            var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+                            var out = r.fs.absBuf(&parts, &buf);
+                            const symlink = try Fs.FileSystem.FilenameStore.instance.append(@TypeOf(out), out);
+                            if (r.debug_logs) |*debug| {
+                                debug.addNoteFmt("Resolved symlink \"{s}\" to \"{s}\"", .{ symlink, path.text }) catch {};
+                            }
+                            query.entry.cache.symlink = symlink;
+
+                            path.name = Fs.PathName.init(path.text);
+                        }
+                    }
+                }
+            }
         }
 
         pub fn resolveWithoutSymlinks(r: *ThisResolver, source_dir: string, import_path: string, kind: ast.ImportKind) !?Result {
@@ -716,7 +756,7 @@ pub fn NewResolver(cache_files: bool) type {
             }
 
             var iter = result.path_pair.iter();
-            while (iter.next()) |*path| {
+            while (iter.next()) |path| {
                 const dirname = std.fs.path.dirname(path.text) orelse continue;
                 const base_dir_info = ((r.dirInfoCached(dirname) catch null)) orelse continue;
                 const dir_info = base_dir_info.getEnclosingBrowserScope() orelse continue;
@@ -752,11 +792,13 @@ pub fn NewResolver(cache_files: bool) type {
         }
 
         // This is a fallback, hopefully not called often. It should be relatively quick because everything should be in the cache.
-        fn packageJSONForResolvedNodeModuleWithIgnoreMissingName(r: *ThisResolver, result: *const Result, comptime ignore_missing_name: bool) ?*const PackageJSON {
-            var current_dir = std.fs.path.dirname(result.path_pair.primary.text);
-            while (current_dir != null) {
-                var dir_info = (r.dirInfoCached(current_dir orelse unreachable) catch null) orelse return null;
-
+        fn packageJSONForResolvedNodeModuleWithIgnoreMissingName(
+            r: *ThisResolver,
+            result: *const Result,
+            comptime ignore_missing_name: bool,
+        ) ?*const PackageJSON {
+            var dir_info = (r.dirInfoCached(result.path_pair.primary.name.dir) catch null) orelse return null;
+            while (true) {
                 if (dir_info.package_json) |pkg| {
                     // if it doesn't have a name, assume it's something just for adjusting the main fields (react-bootstrap does this)
                     // In that case, we really would like the top-level package that you download from NPM
@@ -765,13 +807,15 @@ pub fn NewResolver(cache_files: bool) type {
                         if (pkg.name.len > 0) {
                             return pkg;
                         }
+                    } else {
+                        return pkg;
                     }
                 }
 
-                current_dir = std.fs.path.dirname(current_dir.?);
+                dir_info = dir_info.getParent() orelse return null;
             }
 
-            return null;
+            unreachable;
         }
 
         pub fn loadNodeModules(r: *ThisResolver, import_path: string, kind: ast.ImportKind, _dir_info: *DirInfo) ?MatchResult {
@@ -916,24 +960,31 @@ pub fn NewResolver(cache_files: bool) type {
             r: *ThisResolver,
             path: string,
         ) !?*DirInfo {
-            return try r.dirInfoCachedMaybeLog(path, true);
+            return try r.dirInfoCachedMaybeLog(path, true, true);
         }
 
         pub fn readDirInfo(
             r: *ThisResolver,
             path: string,
         ) !?*DirInfo {
-            return try r.dirInfoCachedMaybeLog(path, false);
+            return try r.dirInfoCachedMaybeLog(path, false, true);
         }
 
         pub fn readDirInfoIgnoreError(
             r: *ThisResolver,
             path: string,
         ) ?*const DirInfo {
-            return r.dirInfoCachedMaybeLog(path, false) catch null;
+            return r.dirInfoCachedMaybeLog(path, false, true) catch null;
         }
 
-        inline fn dirInfoCachedMaybeLog(r: *ThisResolver, path: string, comptime enable_logging: bool) !?*DirInfo {
+        pub inline fn readDirInfoCacheOnly(
+            r: *ThisResolver,
+            path: string,
+        ) ?*DirInfo {
+            return r.dir_cache.get(path);
+        }
+
+        inline fn dirInfoCachedMaybeLog(r: *ThisResolver, path: string, comptime enable_logging: bool, comptime follow_symlinks: bool) !?*DirInfo {
             const top_result = try r.dir_cache.getOrPut(path);
             if (top_result.status != .unknown) {
                 return r.dir_cache.atIndex(top_result.index);
@@ -1021,9 +1072,18 @@ pub fn NewResolver(cache_files: bool) type {
 
                 var _open_dir: anyerror!std.fs.Dir = undefined;
                 if (open_dir_count > 0) {
-                    _open_dir = _open_dirs[open_dir_count - 1].openDir(std.fs.path.basename(queue_top.unsafe_path), .{ .iterate = true });
+                    _open_dir = _open_dirs[open_dir_count - 1].openDir(
+                        std.fs.path.basename(queue_top.unsafe_path),
+                        .{ .iterate = true, .no_follow = !follow_symlinks },
+                    );
                 } else {
-                    _open_dir = std.fs.openDirAbsolute(queue_top.unsafe_path, .{ .iterate = true });
+                    _open_dir = std.fs.openDirAbsolute(
+                        queue_top.unsafe_path,
+                        .{
+                            .iterate = true,
+                            .no_follow = !follow_symlinks,
+                        },
+                    );
                 }
 
                 const open_dir = _open_dir catch |err| {
@@ -1684,7 +1744,7 @@ pub fn NewResolver(cache_files: bool) type {
                         debug.addNoteFmt("Found file \"{s}\" ", .{base}) catch {};
                     }
                     const abs_path_parts = [_]string{ query.entry.dir, query.entry.base };
-                    const abs_path = r.fs.filename_store.append(string, r.fs.joinBuf(&abs_path_parts, &TemporaryBuffer.ExtensionPathBuf)) catch unreachable;
+                    const abs_path = r.fs.filename_store.append(string, r.fs.absBuf(&abs_path_parts, &TemporaryBuffer.ExtensionPathBuf)) catch unreachable;
 
                     return LoadResult{
                         .path = abs_path,

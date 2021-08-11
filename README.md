@@ -1,10 +1,10 @@
-# Speedy - a fast web bundler & JavaScript runtime environment
+# A fast bundler & JS Runtime built for developer iteration cycle
 
-Speedy bundles & transpiles JavaScript, TypeScript, and CSS. Speedy is probably the fastest bundler out today.
+Speedy is a fast bundler, transpiler, and runtime environment for JavaScript & TypeScript. It also supports bundling CSS.
 
-### Speed hacking
+### Performance optimizations
 
-Here are some techniques Speedy uses to make your builds shockingly fast. Most are small wins. Some are big.
+Here are some techniques Speedy uses to go fast. Most are small wins. Some are big.
 
 #### Compare comptime-known strings by nearest `(u64 || u32 || u16 || u8)`-sized integer
 

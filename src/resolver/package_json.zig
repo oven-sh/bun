@@ -84,40 +84,50 @@ pub const PackageJSON = struct {
     pub fn loadFrameworkWithPreference(package_json: *const PackageJSON, pair: *FrameworkRouterPair, json: js_ast.Expr, allocator: *std.mem.Allocator, comptime load_framework: LoadFramework) void {
         const framework_object = json.asProperty("framework") orelse return;
 
-        if (framework_object.expr.asProperty("router")) |router| {
-            if (router.expr.asProperty("dir")) |route_dir| {
-                if (route_dir.expr.asString(allocator)) |str| {
-                    if (str.len > 0) {
-                        pair.router.dir = str;
-                        pair.loaded_routes = true;
-                    }
+        if (framework_object.expr.asProperty("static")) |static_prop| {
+            if (static_prop.expr.asString(allocator)) |str| {
+                if (str.len > 0) {
+                    pair.router.static_dir = str;
                 }
             }
+        }
 
-            if (router.expr.asProperty("extensions")) |extensions_expr| {
-                if (extensions_expr.expr.asArray()) |*array| {
-                    const count = array.array.items.len;
-                    var valid_count: usize = 0;
-
-                    while (array.next()) |expr| {
-                        if (expr.data != .e_string) continue;
-                        const e_str: *const js_ast.E.String = expr.data.e_string;
-                        if (e_str.utf8.len == 0 or e_str.utf8[0] != '.') continue;
-                        valid_count += 1;
+        if (!pair.router.routes_enabled) {
+            if (framework_object.expr.asProperty("router")) |router| {
+                if (router.expr.asProperty("dir")) |route_dir| {
+                    if (route_dir.expr.asString(allocator)) |str| {
+                        if (str.len > 0) {
+                            pair.router.dir = str;
+                            pair.loaded_routes = true;
+                        }
                     }
+                }
 
-                    if (valid_count > 0) {
-                        var extensions = allocator.alloc(string, valid_count) catch unreachable;
-                        array.index = 0;
-                        var i: usize = 0;
+                if (router.expr.asProperty("extensions")) |extensions_expr| {
+                    if (extensions_expr.expr.asArray()) |*array| {
+                        const count = array.array.items.len;
+                        var valid_count: usize = 0;
 
-                        // We don't need to allocate the strings because we keep the package.json source string in memory
                         while (array.next()) |expr| {
                             if (expr.data != .e_string) continue;
                             const e_str: *const js_ast.E.String = expr.data.e_string;
                             if (e_str.utf8.len == 0 or e_str.utf8[0] != '.') continue;
-                            extensions[i] = e_str.utf8;
-                            i += 1;
+                            valid_count += 1;
+                        }
+
+                        if (valid_count > 0) {
+                            var extensions = allocator.alloc(string, valid_count) catch unreachable;
+                            array.index = 0;
+                            var i: usize = 0;
+
+                            // We don't need to allocate the strings because we keep the package.json source string in memory
+                            while (array.next()) |expr| {
+                                if (expr.data != .e_string) continue;
+                                const e_str: *const js_ast.E.String = expr.data.e_string;
+                                if (e_str.utf8.len == 0 or e_str.utf8[0] != '.') continue;
+                                extensions[i] = e_str.utf8;
+                                i += 1;
+                            }
                         }
                     }
                 }
@@ -130,6 +140,15 @@ pub const PackageJSON = struct {
                     if (loadFrameworkExpression(pair.framework, env.expr, allocator)) {
                         pair.framework.package = package_json.name;
                         pair.framework.development = true;
+                        if (env.expr.asProperty("static")) |static_prop| {
+                            if (static_prop.expr.asString(allocator)) |str| {
+                                if (str.len > 0) {
+                                    pair.router.static_dir = str;
+                                    pair.router.static_dir_enabled = true;
+                                }
+                            }
+                        }
+
                         return;
                     }
                 }
@@ -139,6 +158,16 @@ pub const PackageJSON = struct {
                     if (loadFrameworkExpression(pair.framework, env.expr, allocator)) {
                         pair.framework.package = package_json.name;
                         pair.framework.development = false;
+
+                        if (env.expr.asProperty("static")) |static_prop| {
+                            if (static_prop.expr.asString(allocator)) |str| {
+                                if (str.len > 0) {
+                                    pair.router.static_dir = str;
+                                    pair.router.static_dir_enabled = true;
+                                }
+                            }
+                        }
+
                         return;
                     }
                 }
@@ -159,8 +188,9 @@ pub const PackageJSON = struct {
         dirname_fd: StoredFileDescriptorType,
         comptime generate_hash: bool,
     ) ?PackageJSON {
-        const parts = [_]string{ input_path, "package.json" };
 
+        // TODO: remove this extra copy
+        const parts = [_]string{ input_path, "package.json" };
         const package_json_path_ = r.fs.abs(&parts);
         const package_json_path = r.fs.filename_store.append(@TypeOf(package_json_path_), package_json_path_) catch unreachable;
 

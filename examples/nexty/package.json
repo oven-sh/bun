@@ -11,13 +11,14 @@
         ".tsx"
       ]
     },
+    "static": "public",
     "development": {
-      "client": "framework.client.development.tsx",
-      "server": "framework.server.development.tsx"
+      "client": "client.development.tsx",
+      "server": "server.development.tsx"
     },
     "production": {
-      "client": "framework.client.production.tsx",
-      "server": "framework.server.production.tsx"
+      "client": "client.production.tsx",
+      "server": "server.production.tsx"
     }
   },
   "scripts": {

@@ -160,6 +160,7 @@ threadlocal var relative_abs_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 threadlocal var load_as_file_or_directory_via_tsconfig_base_path: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 threadlocal var node_modules_check_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 threadlocal var field_abs_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+threadlocal var tsconfig_path_abs_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 
 pub const DebugLogs = struct {
     what: string = "",
@@ -1249,14 +1250,11 @@ pub fn NewResolver(cache_files: bool) type {
 
                             if (!std.fs.path.isAbsolute(absolute_original_path)) {
                                 const parts = [_]string{ abs_base_url, original_path };
-                                absolute_original_path = r.fs.absAlloc(r.allocator, &parts) catch unreachable;
-                                was_alloc = true;
+                                absolute_original_path = r.fs.absBuf(&parts, &tsconfig_path_abs_buf);
                             }
 
                             if (r.loadAsFileOrDirectory(absolute_original_path, kind)) |res| {
                                 return res;
-                            } else if (was_alloc) {
-                                r.allocator.free(absolute_original_path);
                             }
                         }
 

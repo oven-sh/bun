@@ -460,11 +460,15 @@ pub const Cli = struct {
                             route_conf_: ?Api.LoadedRouteConfig,
                             router: ?Router,
                         ) void {
-                            try alloc.setup(std.heap.c_allocator);
-                            var stdout_ = std.io.getStdOut();
-                            var stderr_ = std.io.getStdErr();
-                            var output_source = Output.Source.init(stdout_, stderr_);
-                            Output.Source.set(&output_source);
+                            if (FeatureFlags.parallel_jsb) {
+                                try alloc.setup(std.heap.c_allocator);
+                                var stdout_ = std.io.getStdOut();
+                                var stderr_ = std.io.getStdErr();
+                                var output_source = Output.Source.init(stdout_, stderr_);
+                                Output.Source.set(&output_source);
+
+                                Output.enable_ansi_colors = stderr_.isTty();
+                            }
 
                             defer Output.flush();
                             defer {
@@ -472,7 +476,7 @@ pub const Cli = struct {
                                     wait_group.done();
                                 }
                             }
-                            Output.enable_ansi_colors = stderr_.isTty();
+
                             _generate(logs, std.heap.c_allocator, transform_args, _filepath, server_conf, route_conf_, router) catch return;
                         }
                     };
@@ -513,34 +517,38 @@ pub const Cli = struct {
             {
                 // Always generate the client-only bundle
                 // we can revisit this decision if people ask
-                var node_modules = try bundler.ServeBundler.GenerateNodeModuleBundle.generate(
+                var node_modules_ = try bundler.ServeBundler.GenerateNodeModuleBundle.generate(
                     &this_bundler,
                     allocator,
                     loaded_framework,
                     loaded_route_config,
                     filepath,
                 );
+
                 if (server_bundler_generator_thread) |thread| {
                     wait_group.wait();
                 }
 
-                var elapsed = @divTrunc(std.time.nanoTimestamp() - start_time, @as(i128, std.time.ns_per_ms));
-                var bundle = NodeModuleBundle.init(node_modules, allocator);
-
-                if (log_.errors > 0) {
-                    try log_.print(Output.errorWriter());
-                } else {
-                    bundle.printSummary();
-                    const indent = comptime " ";
-                    Output.prettyln(indent ++ "<d>{d:6}ms elapsed", .{@intCast(u32, elapsed)});
-
-                    if (server_bundler_generator_thread != null) {
-                        Output.prettyln(indent ++ "<r>Saved to ./{s}, ./{s}", .{ filepath, server_bundle_filepath });
+                if (node_modules_) |node_modules| {
+                    if (log_.errors > 0) {
+                        try log_.print(Output.errorWriter());
                     } else {
-                        Output.prettyln(indent ++ "<r>Saved to ./{s}", .{filepath});
-                    }
+                        var elapsed = @divTrunc(std.time.nanoTimestamp() - start_time, @as(i128, std.time.ns_per_ms));
+                        var bundle = NodeModuleBundle.init(node_modules, allocator);
+                        bundle.printSummary();
+                        const indent = comptime " ";
+                        Output.prettyln(indent ++ "<d>{d:6}ms elapsed", .{@intCast(u32, elapsed)});
 
-                    try log_.printForLogLevel(Output.errorWriter());
+                        if (server_bundler_generator_thread != null) {
+                            Output.prettyln(indent ++ "<r>Saved to ./{s}, ./{s}", .{ filepath, server_bundle_filepath });
+                        } else {
+                            Output.prettyln(indent ++ "<r>Saved to ./{s}", .{filepath});
+                        }
+
+                        try log_.printForLogLevel(Output.errorWriter());
+                    }
+                } else {
+                    try log_.print(Output.errorWriter());
                 }
             }
             return;

@@ -10315,11 +10315,14 @@ pub fn NewParser(
                     e_.must_keep_due_to_with_stmt = result.is_inside_with_scope;
                     e_.ref = result.ref;
 
+                    // TODO: fix the underyling cause here
+                    // The problem seems to be that result.ref.inner_index is not always set.
+
                     // Handle assigning to a constant
-                    if (in.assign_target != .none and p.symbols.items[result.ref.inner_index].kind == .cconst) {
-                        const r = js_lexer.rangeOfIdentifier(p.source, expr.loc);
-                        p.log.addRangeErrorFmt(p.source, r, p.allocator, "Cannot assign to {s} because it is a constant", .{name}) catch unreachable;
-                    }
+                    // if (in.assign_target != .none and p.symbols.items[result.ref.inner_index].kind == .cconst) {
+                    //     const r = js_lexer.rangeOfIdentifier(p.source, expr.loc);
+                    //     p.log.addRangeErrorFmt(p.source, r, p.allocator, "Cannot assign to {s} because it is a constant", .{name}) catch unreachable;
+                    // }
 
                     var original_name: ?string = null;
 

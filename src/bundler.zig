@@ -31,7 +31,7 @@ const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 const DebugLogs = _resolver.DebugLogs;
 const NodeModuleBundle = @import("./node_module_bundle.zig").NodeModuleBundle;
 const Router = @import("./router.zig");
-
+const isPackagePath = _resolver.isPackagePath;
 const Css = @import("css_scanner.zig");
 
 pub const ServeResult = struct {
@@ -510,7 +510,7 @@ pub fn NewBundler(cache_files: bool) type {
                 framework_config: ?Api.LoadedFramework,
                 route_config: ?Api.LoadedRouteConfig,
                 destination: [*:0]const u8,
-            ) !Api.JavascriptBundleContainer {
+            ) !?Api.JavascriptBundleContainer {
                 var tmpdir: std.fs.Dir = try bundler.fs.fs.openTmpDir();
                 var tmpname_buf: [64]u8 = undefined;
                 bundler.resetStore();
@@ -618,6 +618,12 @@ pub fn NewBundler(cache_files: bool) type {
                             try this.processFile(refresh_runtime);
                         }
                     } else |err| {}
+                }
+
+                if (this.log.errors > 0) {
+                    // We stop here because if there are errors we don't know if the bundle is valid
+                    // This manifests as a crash when sorting through the module list because we may have added files to the bundle which were never actually finished being added.
+                    return null;
                 }
 
                 // Ensure we never overflow
@@ -901,11 +907,64 @@ pub fn NewBundler(cache_files: bool) type {
                                             file_path.text,
                                         });
                                     }
+
+                                    switch (err) {
+                                        error.ModuleNotFound => {
+                                            if (isPackagePath(import_record.path.text)) {
+                                                if (this.bundler.options.platform.isWebLike() and options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
+                                                    try this.log.addResolveError(
+                                                        &source,
+                                                        import_record.range,
+                                                        this.allocator,
+                                                        "Could not resolve Node.js builtin: \"{s}\".",
+                                                        .{import_record.path.text},
+                                                        import_record.kind,
+                                                    );
+                                                } else {
+                                                    try this.log.addResolveError(
+                                                        &source,
+                                                        import_record.range,
+                                                        this.allocator,
+                                                        "Could not resolve: \"{s}\". Maybe you need to \"npm install\" (or yarn/pnpm)?",
+                                                        .{import_record.path.text},
+                                                        import_record.kind,
+                                                    );
+                                                }
+                                            } else {
+                                                try this.log.addResolveError(
+                                                    &source,
+                                                    import_record.range,
+                                                    this.allocator,
+                                                    "Could not resolve: \"{s}\"",
+                                                    .{
+                                                        import_record.path.text,
+                                                    },
+                                                    import_record.kind,
+                                                );
+                                            }
+                                        },
+                                        // assume other errors are already in the log
+                                        else => {},
+                                    }
                                 }
                             }
 
                             const package = resolve.package_json orelse this.bundler.resolver.packageJSONForResolvedNodeModule(&resolve) orelse unreachable;
-                            var package_relative_path = file_path.packageRelativePathString(package.name);
+                            var package_relative_path_ = file_path.packageRelativePathString(package.name);
+                            var package_relative_path = package_relative_path_.path;
+
+                            {
+                                // avoid recursion
+                                // this would only come up if you had a package like this
+                                // node_modules/next/next/next/next/next/next/next/next/next/next/next/dist/compiled/foo/index.js
+                                //                                                                                      ^ package.json in the dir
+                                // 24 is arbitrary, but it sounds too high to be realistic
+                                var i: u8 = 0;
+                                while (package_relative_path_.is_parent_package and i < 24) : (i += 1) {
+                                    package_relative_path_ = file_path.packageRelativePathString(package_relative_path_.name);
+                                    package_relative_path = package_relative_path_.path;
+                                }
+                            }
 
                             // const load_from_symbol_ref = ast.runtime_imports.$$r.?;
                             // const reexport_ref = ast.runtime_imports.__reExport.?;
@@ -1023,6 +1082,12 @@ pub fn NewBundler(cache_files: bool) type {
                             const code_length = this.tmpfile_byte_offset - code_offset;
                             // std.debug.assert(code_length == written);
                             var package_get_or_put_entry = try this.package_list_map.getOrPut(package.hash);
+
+                            if (comptime isDebug) {
+                                Output.prettyln("{s}/{s} \n", .{ package.name, package_relative_path });
+                                Output.flush();
+                            }
+
                             if (!package_get_or_put_entry.found_existing) {
                                 package_get_or_put_entry.value_ptr.* = @truncate(u32, this.package_list.items.len);
                                 try this.package_list.append(
@@ -1132,7 +1197,46 @@ pub fn NewBundler(cache_files: bool) type {
                                     hasher.update(import_record.path.text);
                                     hasher.update(std.mem.asBytes(&package_json.hash));
                                     get_or_put_result.value_ptr.* = @truncate(u32, hasher.final());
-                                } else |err| {}
+                                } else |err| {
+                                    switch (err) {
+                                        error.ModuleNotFound => {
+                                            if (isPackagePath(import_record.path.text)) {
+                                                if (this.bundler.options.platform.isWebLike() and options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
+                                                    try this.log.addResolveError(
+                                                        &source,
+                                                        import_record.range,
+                                                        this.allocator,
+                                                        "Could not resolve Node.js builtin: \"{s}\".",
+                                                        .{import_record.path.text},
+                                                        import_record.kind,
+                                                    );
+                                                } else {
+                                                    try this.log.addResolveError(
+                                                        &source,
+                                                        import_record.range,
+                                                        this.allocator,
+                                                        "Could not resolve: \"{s}\". Maybe you need to \"npm install\" (or yarn/pnpm)?",
+                                                        .{import_record.path.text},
+                                                        import_record.kind,
+                                                    );
+                                                }
+                                            } else {
+                                                try this.log.addResolveError(
+                                                    &source,
+                                                    import_record.range,
+                                                    this.allocator,
+                                                    "Could not resolve: \"{s}\"",
+                                                    .{
+                                                        import_record.path.text,
+                                                    },
+                                                    import_record.kind,
+                                                );
+                                            }
+                                        },
+                                        // assume other errors are already in the log
+                                        else => {},
+                                    }
+                                }
                             }
                         },
                         // TODO:

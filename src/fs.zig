@@ -984,17 +984,31 @@ pub const Path = struct {
     name: PathName,
     is_disabled: bool = false,
 
+    const PackageRelative = struct {
+        path: string,
+        name: string,
+        is_parent_package: bool = false,
+    };
     // "/foo/bar/node_modules/react/index.js" => "index.js"
     // "/foo/bar/node_modules/.pnpm/react@17.0.1/node_modules/react/index.js" => "index.js"
-    pub fn packageRelativePathString(this: *const Path, name: string) string {
+    // "/css-stress-test/node_modules/next/dist/compiled/neo-async/async.js" => "dist/compiled/neo-async/async.js "
+    pub fn packageRelativePathString(this: *const Path, name: string) PackageRelative {
         // TODO: we don't need to print this buffer, this is inefficient
         var buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-        const search_path = std.fmt.bufPrint(&buffer, std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str ++ "{s}" ++ std.fs.path.sep_str, .{name}) catch return this.text;
+        const search_path = std.fmt.bufPrint(&buffer, std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str ++ "{s}" ++ std.fs.path.sep_str, .{name}) catch return .{ .name = name, .path = this.text };
         if (strings.lastIndexOf(this.canonicalNodeModuleText(), search_path)) |i| {
-            return this.canonicalNodeModuleText()[i + search_path.len ..];
+            return .{ .path = this.canonicalNodeModuleText()[i + search_path.len ..], .name = name };
         }
 
-        return this.canonicalNodeModuleText();
+        if (strings.lastIndexOf(this.text, search_path[0.."/node_modules/".len])) |i| {
+            const node_modules_relative = this.text[i + "/node_modules/".len ..];
+
+            if (strings.indexOfChar(node_modules_relative, std.fs.path.sep)) |j| {
+                return .{ .path = node_modules_relative[j + 1 ..], .name = node_modules_relative[0..j], .is_parent_package = true };
+            }
+        }
+
+        return .{ .path = this.text, .name = name };
     }
 
     pub fn nodeModulesRelativePathString(

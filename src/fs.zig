@@ -984,7 +984,7 @@ pub const Path = struct {
     name: PathName,
     is_disabled: bool = false,
 
-    const PackageRelative = struct {
+    pub const PackageRelative = struct {
         path: string,
         name: string,
         is_parent_package: bool = false,

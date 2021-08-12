@@ -794,6 +794,30 @@ pub fn NewBundler(cache_files: bool) type {
                 generator.tmpfile_byte_offset += @truncate(u32, bytes.len);
             }
 
+            const BundledModuleData = struct {
+                import_path: string,
+                package_path: string,
+                package: *const PackageJSON,
+                module_id: u32,
+
+                pub fn get(this: *GenerateNodeModuleBundle, resolve_result: *const _resolver.Result) ?BundledModuleData {
+                    const package_json: *const PackageJSON = this.bundler.resolver.rootNodeModulePackageJSON(resolve_result) orelse return null;
+                    const package_base_path = package_json.source.path.name.dirWithTrailingSlash();
+                    const import_path = resolve_result.path_pair.primary.text[package_base_path.len..];
+                    const package_path = resolve_result.path_pair.primary.text[package_base_path.len - package_json.name.len - 1 ..];
+                    var hasher = std.hash.Wyhash.init(0);
+                    hasher.update(import_path);
+                    hasher.update(std.mem.asBytes(&package_json.hash));
+
+                    return BundledModuleData{
+                        .import_path = import_path,
+                        .package_path = package_path,
+                        .package = package_json,
+                        .module_id = @truncate(u32, hasher.final()),
+                    };
+                }
+            };
+
             fn processImportRecord(this: *GenerateNodeModuleBundle, import_record: ImportRecord) !void {}
             const node_module_root_string = std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str;
             threadlocal var package_key_buf: [512]u8 = undefined;
@@ -809,6 +833,8 @@ pub fn NewBundler(cache_files: bool) type {
                 defer this.bundler.resetStore();
                 var file_path = resolve.path_pair.primary;
                 var hasher = std.hash.Wyhash.init(0);
+
+                var module_data: BundledModuleData = undefined;
 
                 // If we're in a node_module, build that almost normally
                 if (is_from_node_modules) {
@@ -859,46 +885,15 @@ pub fn NewBundler(cache_files: bool) type {
                                     const absolute_path = resolved_import.path_pair.primary.text;
                                     const get_or_put_result = try this.resolved_paths.getOrPut(absolute_path);
 
-                                    const package_json: *const PackageJSON = (resolved_import.package_json orelse (this.bundler.resolver.packageJSONForResolvedNodeModule(resolved_import) orelse {
-                                        this.log.addWarningFmt(
-                                            &source,
-                                            import_record.range.loc,
-                                            this.allocator,
-                                            "Failed to find package.json for \"{s}\". This will be unresolved and might break at runtime. If it's external, you could add it to the external list.",
-                                            .{
-                                                resolved_import.path_pair.primary.text,
-                                            },
-                                        ) catch {};
-                                        continue;
-                                    }));
-
-                                    const package_relative_path = bundler.fs.relative(
-                                        package_json.source.path.name.dirWithTrailingSlash(),
-                                        resolved_import.path_pair.primary.text,
-                                    );
-
-                                    // trim node_modules/${package.name}/ from the string to save space
-                                    // This reduces metadata size by about 30% for a large-ish file
-                                    // A future optimization here could be to reuse the string from the original path
-                                    import_record.path = Fs.Path.init(
-                                        package_relative_path,
-                                    );
-
-                                    if (get_or_put_result.found_existing) {
-                                        import_record.module_id = get_or_put_result.value_ptr.*;
-                                        import_record.is_bundled = true;
-                                        continue;
-                                    }
-
-                                    hasher = std.hash.Wyhash.init(0);
-                                    hasher.update(import_record.path.text);
-                                    hasher.update(std.mem.asBytes(&package_json.hash));
-
-                                    import_record.module_id = @truncate(u32, hasher.final());
-                                    get_or_put_result.value_ptr.* = import_record.module_id;
+                                    module_data = BundledModuleData.get(this, resolved_import) orelse continue;
+                                    import_record.module_id = module_data.module_id;
                                     import_record.is_bundled = true;
+                                    import_record.path = Fs.Path.init(module_data.import_path);
+                                    get_or_put_result.value_ptr.* = import_record.module_id;
 
-                                    try this.resolve_queue.writeItem(_resolved_import.*);
+                                    if (!get_or_put_result.found_existing) {
+                                        try this.resolve_queue.writeItem(_resolved_import.*);
+                                    }
                                 } else |err| {
                                     if (comptime isDebug) {
                                         Output.prettyErrorln("\n<r><red>{s}<r> on resolving \"{s}\" from \"{s}\"", .{
@@ -949,22 +944,10 @@ pub fn NewBundler(cache_files: bool) type {
                                 }
                             }
 
-                            const package = resolve.package_json orelse this.bundler.resolver.packageJSONForResolvedNodeModule(&resolve) orelse unreachable;
-                            var package_relative_path_ = file_path.packageRelativePathString(package.name);
-                            var package_relative_path = package_relative_path_.path;
-
-                            {
-                                // avoid recursion
-                                // this would only come up if you had a package like this
-                                // node_modules/next/next/next/next/next/next/next/next/next/next/next/dist/compiled/foo/index.js
-                                //                                                                                      ^ package.json in the dir
-                                // 24 is arbitrary, but it sounds too high to be realistic
-                                var i: u8 = 0;
-                                while (package_relative_path_.is_parent_package and i < 24) : (i += 1) {
-                                    package_relative_path_ = file_path.packageRelativePathString(package_relative_path_.name);
-                                    package_relative_path = package_relative_path_.path;
-                                }
-                            }
+                            module_data = BundledModuleData.get(this, &_resolve) orelse return error.ResolveError;
+                            const module_id = module_data.module_id;
+                            const package = module_data.package;
+                            const package_relative_path = module_data.import_path;
 
                             // const load_from_symbol_ref = ast.runtime_imports.$$r.?;
                             // const reexport_ref = ast.runtime_imports.__reExport.?;
@@ -983,7 +966,7 @@ pub fn NewBundler(cache_files: bool) type {
                             var register_args: [3]Expr = undefined;
 
                             var package_json_string = E.String{ .utf8 = package.name };
-                            var module_path_string = E.String{ .utf8 = package_relative_path };
+                            var module_path_string = E.String{ .utf8 = module_data.import_path };
                             var target_identifier = E.Identifier{ .ref = register_ref };
                             var cjs_args: [2]js_ast.G.Arg = undefined;
                             var module_binding = js_ast.B.Identifier{ .ref = ast.module_ref.? };
@@ -1048,10 +1031,6 @@ pub fn NewBundler(cache_files: bool) type {
 
                             var writer = js_printer.NewFileWriter(this.tmpfile);
                             var symbols: [][]js_ast.Symbol = &([_][]js_ast.Symbol{ast.symbols});
-                            hasher = std.hash.Wyhash.init(0);
-                            hasher.update(package_relative_path);
-                            hasher.update(std.mem.asBytes(&package.hash)[0..4]);
-                            const module_id = @truncate(u32, hasher.final());
 
                             const code_offset = @truncate(u32, try this.tmpfile.getPos());
                             const written = @truncate(
@@ -1170,33 +1149,10 @@ pub fn NewBundler(cache_files: bool) type {
                                     // Always enqueue unwalked import paths, but if it's not a node_module, we don't care about the hash
                                     try this.resolve_queue.writeItem(_resolved_import.*);
 
-                                    const package_json: *const PackageJSON = (resolved_import.package_json orelse (this.bundler.resolver.packageJSONForResolvedNodeModule(resolved_import) orelse {
-                                        this.log.addWarningFmt(
-                                            &source,
-                                            import_record.range.loc,
-                                            this.allocator,
-                                            "Failed to find package.json for \"{s}\". This will be unresolved and might break at runtime. If it's external, you could add it to the external list.",
-                                            .{
-                                                resolved_import.path_pair.primary.text,
-                                            },
-                                        ) catch {};
-                                        continue;
-                                    }));
-
-                                    // It should be the first index, not the last to support bundling multiple of the same package
-                                    // This string is printed in the summary.
-
-                                    const package_relative_path = bundler.fs.relative(
-                                        package_json.source.path.name.dirWithTrailingSlash(),
-                                        resolved_import.path_pair.primary.text,
-                                    );
-
-                                    import_record.path = Fs.Path.init(package_relative_path);
-
-                                    hasher = std.hash.Wyhash.init(0);
-                                    hasher.update(import_record.path.text);
-                                    hasher.update(std.mem.asBytes(&package_json.hash));
-                                    get_or_put_result.value_ptr.* = @truncate(u32, hasher.final());
+                                    if (BundledModuleData.get(this, resolved_import)) |module| {
+                                        import_record.path = Fs.Path.init(module.import_path);
+                                        get_or_put_result.value_ptr.* = module.module_id;
+                                    }
                                 } else |err| {
                                     switch (err) {
                                         error.ModuleNotFound => {

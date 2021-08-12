@@ -827,6 +827,20 @@ pub fn NewResolver(cache_files: bool) type {
 
             unreachable;
         }
+        const node_module_root_string = std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str;
+
+        pub fn rootNodeModulePackageJSON(
+            r: *ThisResolver,
+            result: *const Result,
+        ) ?*const PackageJSON {
+            const absolute = result.path_pair.primary.text;
+            var end = strings.lastIndexOf(absolute, node_module_root_string) orelse return null;
+            end += node_module_root_string.len;
+            end += strings.indexOfChar(absolute[end..], std.fs.path.sep) orelse return null;
+
+            const dir_info = (r.dirInfoCached(absolute[0 .. end + 1]) catch null) orelse return null;
+            return dir_info.package_json;
+        }
 
         pub fn loadNodeModules(r: *ThisResolver, import_path: string, kind: ast.ImportKind, _dir_info: *DirInfo) ?MatchResult {
             var res = _loadNodeModules(r, import_path, kind, _dir_info) orelse return null;

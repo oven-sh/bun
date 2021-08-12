@@ -99,6 +99,7 @@ pub const Result = struct {
 
     dirname_fd: StoredFileDescriptorType = 0,
     file_fd: StoredFileDescriptorType = 0,
+    import_kind: ast.ImportKind = undefined,
 
     // remember: non-node_modules can have package.json
     // checking package.json may not be relevant
@@ -151,8 +152,14 @@ pub const Result = struct {
 pub const DirEntryResolveQueueItem = struct { result: allocators.Result, unsafe_path: string };
 threadlocal var _dir_entry_paths_to_resolve: [256]DirEntryResolveQueueItem = undefined;
 threadlocal var _open_dirs: [256]std.fs.Dir = undefined;
-
+threadlocal var resolve_without_remapping_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+threadlocal var index_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+threadlocal var dir_info_uncached_filename_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 threadlocal var tsconfig_base_url_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+threadlocal var relative_abs_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+threadlocal var load_as_file_or_directory_via_tsconfig_base_path: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+threadlocal var node_modules_check_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+threadlocal var field_abs_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 
 pub const DebugLogs = struct {
     what: string = "",
@@ -406,8 +413,6 @@ pub fn NewResolver(cache_files: bool) type {
             }
         }
 
-        threadlocal var relative_abs_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-
         pub fn resolve(r: *ThisResolver, source_dir: string, import_path: string, kind: ast.ImportKind) !Result {
             if (FeatureFlags.tracing) {
                 tracing_start = std.time.nanoTimestamp();
@@ -446,6 +451,7 @@ pub fn NewResolver(cache_files: bool) type {
                 }
                 r.flushDebugLogs(.success) catch {};
                 return Result{
+                    .import_kind = kind,
                     .path_pair = PathPair{
                         .primary = Path.init(import_path),
                     },
@@ -497,10 +503,13 @@ pub fn NewResolver(cache_files: bool) type {
 
             try r.finalizeResult(&result);
             r.flushDebugLogs(.success) catch {};
+            result.import_kind = kind;
             return result;
         }
 
         pub fn finalizeResult(r: *ThisResolver, result: *Result) !void {
+            if (result.is_external) return;
+
             if (result.package_json) |package_json| {
                 result.module_type = switch (package_json.module_type) {
                     .esm, .cjs => package_json.module_type,
@@ -824,8 +833,6 @@ pub fn NewResolver(cache_files: bool) type {
             return res;
         }
 
-        threadlocal var load_as_file_or_directory_via_tsconfig_base_path: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-
         pub fn _loadNodeModules(r: *ThisResolver, import_path: string, kind: ast.ImportKind, _dir_info: *DirInfo) ?MatchResult {
             var dir_info = _dir_info;
             if (r.debug_logs) |*debug| {
@@ -868,7 +875,7 @@ pub fn NewResolver(cache_files: bool) type {
                 // don't ever want to search for "node_modules/node_modules"
                 if (dir_info.has_node_modules) {
                     var _paths = [_]string{ dir_info.abs_path, "node_modules", import_path };
-                    const abs_path = r.fs.abs(&_paths);
+                    const abs_path = r.fs.absBuf(&_paths, &node_modules_check_buf);
                     if (r.debug_logs) |*debug| {
                         debug.addNoteFmt("Checking for a package in the directory \"{s}\"", .{abs_path}) catch {};
                     }
@@ -890,7 +897,6 @@ pub fn NewResolver(cache_files: bool) type {
             return null;
         }
 
-        threadlocal var resolve_without_remapping_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
         pub fn resolveWithoutRemapping(r: *ThisResolver, source_dir_info: *DirInfo, import_path: string, kind: ast.ImportKind) ?MatchResult {
             if (isPackagePath(import_path)) {
                 return r.loadNodeModules(import_path, kind, source_dir_info);
@@ -1433,7 +1439,7 @@ pub fn NewResolver(cache_files: bool) type {
                 }
             }
             const _paths = [_]string{ path, field_rel_path };
-            const field_abs_path = r.fs.abs(&_paths);
+            const field_abs_path = r.fs.absBuf(&_paths, &field_abs_path_buf);
 
             // Is this a file?
             if (r.loadAsFile(field_abs_path, extension_order)) |result| {
@@ -1474,7 +1480,8 @@ pub fn NewResolver(cache_files: bool) type {
                     if (entries.get(base)) |lookup| {
                         if (lookup.entry.kind(rfs) == .file) {
                             const parts = [_]string{ path, base };
-                            const out_buf = r.fs.absAlloc(r.allocator, &parts) catch unreachable;
+                            const out_buf_ = r.fs.absBuf(&parts, &index_buf);
+                            const out_buf = r.fs.filename_store.append(@TypeOf(out_buf_), out_buf_) catch unreachable;
                             if (r.debug_logs) |*debug| {
                                 debug.addNoteFmt("Found file: \"{s}\"", .{out_buf}) catch unreachable;
                             }
@@ -1834,7 +1841,6 @@ pub fn NewResolver(cache_files: bool) type {
             return null;
         }
 
-        threadlocal var dir_info_uncached_filename_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
         fn dirInfoUncached(
             r: *ThisResolver,
             path: string,

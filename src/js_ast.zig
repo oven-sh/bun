@@ -157,12 +157,18 @@ pub const ImportItemStatus = enum(u2) {
     // The printer will replace this import with "undefined"
 
     missing,
+    pub fn jsonStringify(self: @This(), opts: anytype, o: anytype) !void {
+        return try std.json.stringify(@tagName(self), opts, o);
+    }
 };
 
 pub const AssignTarget = enum(u2) {
     none,
     replace, // "a = b"
     update, // "a += b"
+    pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
+        return try std.json.stringify(@tagName(self), opts, o);
+    }
 };
 
 pub const LocRef = struct { loc: logger.Loc, ref: ?Ref };
@@ -292,6 +298,10 @@ pub const Binding = struct {
         b_property,
         b_object,
         b_missing,
+
+        pub fn jsonStringify(self: @This(), opts: anytype, o: anytype) !void {
+            return try std.json.stringify(@tagName(self), opts, o);
+        }
     };
 
     pub var icount: usize = 0;
@@ -456,6 +466,9 @@ pub const G = struct {
             get,
             set,
             spread,
+            pub fn jsonStringify(self: @This(), opts: anytype, o: anytype) !void {
+                return try std.json.stringify(@tagName(self), opts, o);
+            }
         };
     };
 
@@ -693,6 +706,10 @@ pub const Symbol = struct {
 
         // This annotates all other symbols that don't have special behavior.
         other,
+
+        pub fn jsonStringify(self: @This(), opts: anytype, o: anytype) !void {
+            return try std.json.stringify(@tagName(self), opts, o);
+        }
     };
 
     pub const Use = struct {
@@ -778,12 +795,17 @@ pub const Symbol = struct {
 
 pub const OptionalChain = enum(u2) {
 
-// "a?.b"
-start,
+    // "a?.b"
+    start,
 
-// "a?.b.c" => ".c" is OptionalChainContinue
-// "(a?.b).c" => ".c" is OptionalChain null
-ccontinue };
+    // "a?.b.c" => ".c" is OptionalChainContinue
+    // "(a?.b).c" => ".c" is OptionalChain null
+    ccontinue,
+
+    pub fn jsonStringify(self: @This(), opts: anytype, o: anytype) !void {
+        return try std.json.stringify(@tagName(self), opts, o);
+    }
+};
 
 pub const E = struct {
     pub const Array = struct {
@@ -1577,6 +1599,10 @@ pub const Stmt = struct {
         s_type_script,
         s_while,
         s_with,
+
+        pub fn jsonStringify(self: @This(), opts: anytype, o: anytype) !void {
+            return try std.json.stringify(@tagName(self), opts, o);
+        }
 
         pub fn isExportLike(tag: Tag) bool {
             return switch (tag) {
@@ -2462,6 +2488,10 @@ pub const Expr = struct {
         e_class,
         e_require,
 
+        pub fn jsonStringify(self: @This(), opts: anytype, o: anytype) !void {
+            return try std.json.stringify(@tagName(self), opts, o);
+        }
+
         pub fn isArray(self: Tag) bool {
             switch (self) {
                 .e_array => {
@@ -3257,6 +3287,9 @@ pub const S = struct {
             k_var,
             k_let,
             k_const,
+            pub fn jsonStringify(self: @This(), opts: anytype, o: anytype) !void {
+                return try std.json.stringify(@tagName(self), opts, o);
+            }
         };
     };
 
@@ -3349,6 +3382,10 @@ pub const Op = struct {
         bin_nullish_coalescing_assign,
         bin_logical_or_assign,
         bin_logical_and_assign,
+
+        pub fn jsonStringify(self: @This(), opts: anytype, o: anytype) !void {
+            return try std.json.stringify(@tagName(self), opts, o);
+        }
 
         pub fn unaryAssignTarget(code: Op.Code) AssignTarget {
             if (@enumToInt(code) >= @enumToInt(Op.Code.un_pre_dec) and @enumToInt(code) <= @enumToInt(Op.Code.un_post_inc)) {
@@ -3595,31 +3632,36 @@ pub const Span = struct {
 };
 
 pub const ExportsKind = enum {
-// This file doesn't have any kind of export, so it's impossible to say what
-// kind of file this is. An empty file is in this category, for example.
-none,
+    // This file doesn't have any kind of export, so it's impossible to say what
+    // kind of file this is. An empty file is in this category, for example.
+    none,
 
-// The exports are stored on "module" and/or "exports". Calling "require()"
-// on this module returns "module.exports". All imports to this module are
-// allowed but may return undefined.
-cjs,
+    // The exports are stored on "module" and/or "exports". Calling "require()"
+    // on this module returns "module.exports". All imports to this module are
+    // allowed but may return undefined.
+    cjs,
 
-// All export names are known explicitly. Calling "require()" on this module
-// generates an exports object (stored in "exports") with getters for the
-// export names. Named imports to this module are only allowed if they are
-// in the set of export names.
-esm,
+    // All export names are known explicitly. Calling "require()" on this module
+    // generates an exports object (stored in "exports") with getters for the
+    // export names. Named imports to this module are only allowed if they are
+    // in the set of export names.
+    esm,
 
-// Some export names are known explicitly, but others fall back to a dynamic
-// run-time object. This is necessary when using the "export * from" syntax
-// with either a CommonJS module or an external module (i.e. a module whose
-// export names are not known at compile-time).
-//
-// Calling "require()" on this module generates an exports object (stored in
-// "exports") with getters for the export names. All named imports to this
-// module are allowed. Direct named imports reference the corresponding export
-// directly. Other imports go through property accesses on "exports".
-esm_with_dyn };
+    // Some export names are known explicitly, but others fall back to a dynamic
+    // run-time object. This is necessary when using the "export * from" syntax
+    // with either a CommonJS module or an external module (i.e. a module whose
+    // export names are not known at compile-time).
+    //
+    // Calling "require()" on this module generates an exports object (stored in
+    // "exports") with getters for the export names. All named imports to this
+    // module are allowed. Direct named imports reference the corresponding export
+    // directly. Other imports go through property accesses on "exports".
+    esm_with_dyn,
+
+    pub fn jsonStringify(self: @This(), opts: anytype, o: anytype) !void {
+        return try std.json.stringify(@tagName(self), opts, o);
+    }
+};
 
 pub fn isDynamicExport(exp: ExportsKind) bool {
     return kind == .cjs || kind == .esm_with_dyn;
@@ -3725,6 +3767,9 @@ pub const StrictModeKind = enum(u7) {
     implicit_strict_mode_export,
     implicit_strict_mode_top_level_await,
     implicit_strict_mode_class,
+    pub fn jsonStringify(self: @This(), opts: anytype, o: anytype) !void {
+        return try std.json.stringify(@tagName(self), opts, o);
+    }
 };
 
 pub const Scope = struct {
@@ -3772,6 +3817,10 @@ pub const Scope = struct {
         entry, // This is a module, TypeScript enum, or TypeScript namespace
         function_args,
         function_body,
+
+        pub fn jsonStringify(self: @This(), opts: anytype, o: anytype) !void {
+            return try std.json.stringify(@tagName(self), opts, o);
+        }
     };
 
     pub fn recursiveSetStrictMode(s: *Scope, kind: StrictModeKind) void {

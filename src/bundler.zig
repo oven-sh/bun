@@ -819,7 +819,6 @@ pub fn NewBundler(cache_files: bool) type {
             };
 
             fn processImportRecord(this: *GenerateNodeModuleBundle, import_record: ImportRecord) !void {}
-            const node_module_root_string = std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str;
             threadlocal var package_key_buf: [512]u8 = undefined;
             threadlocal var file_path_buf: [4096]u8 = undefined;
             fn processFile(this: *GenerateNodeModuleBundle, _resolve: _resolver.Result) !void {

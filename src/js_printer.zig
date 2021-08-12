@@ -340,6 +340,7 @@ pub fn NewPrinter(
                 }
 
                 p.printBinding(arg.binding);
+
                 if (arg.default) |default| {
                     p.printSpace();
                     p.print("=");
@@ -2019,9 +2020,7 @@ pub fn NewPrinter(
                                                         continue;
                                                     }
                                                 },
-                                                else => {
-                                                    p.printExpr(property.key, .lowest, ExprFlag.None());
-                                                },
+                                                else => {},
                                             }
                                         } else if (p.canPrintIdentifierUTF16(str.value)) {
                                             p.addSourceMapping(property.key.loc);
@@ -2036,9 +2035,7 @@ pub fn NewPrinter(
                                                         continue;
                                                     }
                                                 },
-                                                else => {
-                                                    p.printExpr(property.key, .lowest, ExprFlag.None());
-                                                },
+                                                else => {},
                                             }
                                         } else {
                                             p.printExpr(property.key, .lowest, ExprFlag.None());

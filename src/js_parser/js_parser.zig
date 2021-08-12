@@ -10855,6 +10855,8 @@ pub fn NewParser(
                         )) |val| {
                             return val;
                         }
+                    } else {
+                        e_.index = p.visitExpr(e_.index);
                     }
 
                     // Create an error for assigning to an import namespace when bundling. Even
@@ -12095,8 +12097,8 @@ pub fn NewParser(
                     // TODO: simplify boolean expression
                 },
                 .s_do_while => |data| {
-                    data.test_ = p.visitExpr(data.test_);
                     data.body = p.visitLoopBody(data.body);
+                    data.test_ = p.visitExpr(data.test_);
 
                     // TODO: simplify boolean expression
                 },

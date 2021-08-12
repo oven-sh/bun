@@ -150,13 +150,13 @@ pub const TSConfigJSON = struct {
                 switch (paths_prop.expr.data) {
                     .e_object => {
                         var paths = paths_prop.expr.getObject();
-                        result.base_url_for_paths = result.base_url;
+                        result.base_url_for_paths = if (result.base_url.len > 0) result.base_url else ".";
                         result.paths = PathsMap.init(allocator);
                         for (paths.properties) |property| {
                             const key_prop = property.key orelse continue;
                             const key = (key_prop.asString(allocator)) orelse continue;
 
-                            if (!TSConfigJSON.isValidTSConfigPathNoBaseURLPattern(key, log, &source, allocator, key_prop.loc)) {
+                            if (!TSConfigJSON.isValidTSConfigPathPattern(key, log, &source, key_prop.loc, allocator)) {
                                 continue;
                             }
 

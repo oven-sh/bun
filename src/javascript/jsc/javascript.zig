@@ -117,7 +117,7 @@ pub const Wundle = struct {
         prop: js.JSStringRef,
         exception: js.ExceptionRef,
     ) js.JSValueRef {
-        if (!VirtualMachine.vm.bundler.options.routes.routes_enabled or VirtualMachine.vm.bundler.options.routes.dir.len > 0) {
+        if (!VirtualMachine.vm.bundler.options.routes.routes_enabled or VirtualMachine.vm.bundler.options.routes.dir.len == 0) {
             return js.JSValueMakeUndefined(ctx);
         }
 
@@ -238,6 +238,7 @@ pub const VirtualMachine = struct {
     log: *logger.Log,
     event_listeners: EventListenerMixin.Map,
     main: string = "",
+    process: js.JSObjectRef = null,
 
     pub var vm_loaded = false;
     pub var vm: *VirtualMachine = undefined;

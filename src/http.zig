@@ -1573,7 +1573,7 @@ pub const RequestContext = struct {
                 break :brk try ctx.bundler.buildFile(
                     &ctx.log,
                     ctx.allocator,
-                    ctx.url.path,
+                    ctx.url.pathWithoutOrigin(ctx.bundler.options.origin),
                     ctx.url.extname,
                     true,
                 );
@@ -1581,7 +1581,7 @@ pub const RequestContext = struct {
                 break :brk try ctx.bundler.buildFile(
                     &ctx.log,
                     ctx.allocator,
-                    ctx.url.path,
+                    ctx.url.pathWithoutOrigin(ctx.bundler.options.origin),
                     ctx.url.extname,
                     false,
                 );

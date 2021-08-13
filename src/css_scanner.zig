@@ -898,16 +898,21 @@ pub fn NewWriter(
             switch (chunk.content) {
                 .t_url => |url| {},
                 .t_import => |import| {
-                    try writer.buildCtx.addCSSImport(
-                        try writer.linker.resolveCSS(
-                            writer.source.path,
-                            import.text.utf8,
-                            chunk.range,
-                            import_record.ImportKind.at,
-                            Options.BundleOptions.ImportPathFormat.absolute_path,
-                            true,
-                        ),
+                    const resolved = try writer.linker.resolveCSS(
+                        writer.source.path,
+                        import.text.utf8,
+                        chunk.range,
+                        import_record.ImportKind.at,
+                        Options.BundleOptions.ImportPathFormat.absolute_path,
+                        true,
                     );
+
+                    // TODO: just check is_external instead
+                    if (strings.startsWith(import.text.utf8, "https://") or strings.startsWith(import.text.utf8, "http://")) {
+                        return;
+                    }
+
+                    try writer.buildCtx.addCSSImport(resolved);
                 },
                 .t_verbatim => |verbatim| {},
             }

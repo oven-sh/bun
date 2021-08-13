@@ -16,6 +16,7 @@ const Fs = @import("../../../fs.zig");
 
 route: *const FilesystemRouter.Match,
 query_string_map: ?QueryStringMap = null,
+param_map: ?QueryStringMap = null,
 script_src: ?string = null,
 script_src_buf: [1024]u8 = undefined,
 
@@ -223,6 +224,23 @@ pub const Instance = NewClass(
             .ts = d.ts{
                 .@"return" = "Record<string, string | string[]>",
                 .tsdoc = 
+                \\Route parameters & parsed query string values as a key-value object
+                \\
+                \\@example 
+                \\```js
+                \\console.assert(router.query.id === "123");
+                \\console.assert(router.pathname === "/blog/posts/123");
+                \\console.assert(router.route === "blog/posts/[id]");
+                \\```
+                ,
+            },
+        },
+        .params = .{
+            .@"get" = getParams,
+            .ro = true,
+            .ts = d.ts{
+                .@"return" = "Record<string, string | string[]>",
+                .tsdoc = 
                 \\Route parameters as a key-value object
                 \\
                 \\@example 
@@ -370,6 +388,34 @@ pub fn getScriptSrc(
     this.script_src = src;
 
     return js.JSValueMakeString(ctx, ZigString.init(src).toJSStringRef());
+}
+
+pub fn getParams(
+    this: *Router,
+    ctx: js.JSContextRef,
+    thisObject: js.JSObjectRef,
+    prop: js.JSStringRef,
+    exception: js.ExceptionRef,
+) js.JSValueRef {
+    if (this.param_map == null) {
+        if (this.route.params.len > 0) {
+            if (QueryStringMap.initWithScanner(getAllocator(ctx), CombinedScanner.init(
+                "",
+                this.route.pathnameWithoutLeadingSlash(),
+                this.route.name,
+                this.route.params,
+            ))) |map| {
+                this.param_map = map;
+            } else |err| {}
+        }
+    }
+
+    // If it's still null, there are no params
+    if (this.param_map) |*map| {
+        return createQueryObject(ctx, map, exception);
+    } else {
+        return JSValue.createEmptyObject(VirtualMachine.vm.global, 0).asRef();
+    }
 }
 
 pub fn getQuery(

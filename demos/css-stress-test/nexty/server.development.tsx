@@ -1,70 +1,67 @@
-import ReactDOMServer from "react-dom/server.browser";
+import { render } from "./renderDocument";
 
-addEventListener(
-  "fetch",
+let buildId = 0;
 
-  // Anything imported in here will automatically reload in development.
-  // The module registry cache is reset at the end of each page load
-  async (event: FetchEvent) => {
-    var appRoute;
+var DocumentNamespacePromise;
 
+DocumentNamespacePromise = import(Wundle.routesDir + "_document");
+var DocumentLoaded = false;
+var DocumentNamespace;
+
+addEventListener("fetch", async (event: FetchEvent) => {
+  if (!DocumentLoaded) {
+    DocumentLoaded = true;
     try {
-      appRoute = await import(Wundle.routesDir + "_app");
+      DocumentNamespace = await DocumentNamespacePromise;
     } catch (exception) {
-      appRoute = null;
+      DocumentNamespace = null;
     }
-
-    var route = Wundle.match(event);
-
-    // This imports the currently matched route.
-    const { default: PageComponent } = await import(route.filePath);
-
-    // This returns all .css files that were imported in the line above.
-    // It's recursive, so any file that imports a CSS file will be included.
-    const stylesheets = Wundle.getImportedStyles() as string[];
-
-    // Ordinarily, this is just the formatted filepath URL (rewritten to match the public url of the HTTP server)
-    // But, when you set `client` in the package.json for the framework, this becomes a path like this:
-    // "/pages/index.js" -> "pages/index.entry.js" ("entry" is for entry point)
-    const src = route.scriptSrc;
-
-    // From there, the inside of that script like this:
-    // ```
-    // import * as Framework from 'framework-path';
-    // import * as EntryPoint from 'entry-point';
-    //
-    // Framework.default(EntryPoint);
-    // ```
-    // That's how the client-side framework loads
-
-    const response = new Response(`
-  <!DOCTYPE html>
-<html>
-  <head>
-  ${stylesheets
-    .map((style) => `<link rel="stylesheet" href="${style}">`)
-    .join("\n")}
-
-    <link
-      rel="stylesheet"
-      crossorigin="anonymous"
-      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;700&family=Space+Mono:wght@400;700"
-    />
-  </head>
-  <body>
-
-    <div id="#__next">${ReactDOMServer.renderToString(<PageComponent />)}</div>
-
-    <script src="${src}" async type="module"></script>
-  </body>
-</html>
-  `);
-
-    event.respondWith(response);
   }
-);
+
+  var appRoute;
+
+  try {
+    appRoute = await import(Wundle.routesDir + "_app");
+  } catch (exception) {
+    appRoute = null;
+  }
+  const appStylesheets = Wundle.getImportedStyles() as string[];
+
+  var route = Wundle.match(event);
+
+  // This imports the currently matched route.
+  const PageNamespace = await import(route.filePath);
+
+  // This returns all .css files that were imported in the line above.
+  // It's recursive, so any file that imports a CSS file will be included.
+  const pageStylesheets = Wundle.getImportedStyles() as string[];
+
+  event.respondWith(
+    await render({
+      route,
+      PageNamespace,
+      appStylesheets,
+      pageStylesheets,
+      DocumentNamespace,
+      AppNamespace: appRoute,
+      buildId,
+    })
+  );
+  buildId++;
+});
 
 // typescript isolated modules
 export {};
 
 declare var Wundle: any;
+
+function getNextData(request: Request, route) {
+  return {
+    NEXT_DATA: {
+      query: route.query,
+      props: {},
+      page: route.path,
+      buildId: buildId.toString(16),
+    },
+  };
+}

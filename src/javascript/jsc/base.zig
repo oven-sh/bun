@@ -205,6 +205,8 @@ pub const Properties = struct {
         pub const default: string = "default";
         pub const include: string = "include";
 
+        pub const env: string = "env";
+
         pub const GET = "GET";
         pub const PUT = "PUT";
         pub const POST = "POST";
@@ -278,6 +280,8 @@ pub const Properties = struct {
 
         pub var navigate: js.JSStringRef = undefined;
         pub var follow: js.JSStringRef = undefined;
+
+        pub const env: js.JSStringRef = undefined;
     };
 
     pub fn init() void {

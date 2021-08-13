@@ -250,6 +250,17 @@ pub const Platform = enum {
     speedy,
     node,
 
+    const browser_define_value_true = "true";
+    const browser_define_value_false = "false";
+
+    pub fn processBrowserDefineValue(this: Platform) ?string {
+        return switch (this) {
+            .browser => browser_define_value_true,
+            .speedy, .node => browser_define_value_false,
+            else => null,
+        };
+    }
+
     pub fn isWebLike(platform: Platform) bool {
         return switch (platform) {
             .neutral, .browser => true,
@@ -545,9 +556,20 @@ pub const DefaultUserDefines = struct {
         pub const Key = "process.env.NODE_ENV";
         pub const Value = "\"development\"";
     };
+
+    pub const PlatformDefine = struct {
+        pub const Key = "process.browser";
+        pub const Value = []string{ "false", "true" };
+    };
 };
 
-pub fn definesFromTransformOptions(allocator: *std.mem.Allocator, log: *logger.Log, _input_define: ?Api.StringMap, hmr: bool) !*defines.Define {
+pub fn definesFromTransformOptions(
+    allocator: *std.mem.Allocator,
+    log: *logger.Log,
+    _input_define: ?Api.StringMap,
+    hmr: bool,
+    platform: Platform,
+) !*defines.Define {
     var input_user_define = _input_define orelse std.mem.zeroes(Api.StringMap);
 
     var user_defines = try stringHashMapFromArrays(
@@ -562,6 +584,12 @@ pub fn definesFromTransformOptions(allocator: *std.mem.Allocator, log: *logger.L
 
     if (hmr) {
         try user_defines.put(DefaultUserDefines.HotModuleReloading.Key, DefaultUserDefines.HotModuleReloading.Value);
+    }
+
+    // Automatically set `process.browser` to `true` for browsers and false for node+js
+    // This enables some extra dead code elimination
+    if (platform.processBrowserDefineValue()) |value| {
+        _ = try user_defines.getOrPutValue(DefaultUserDefines.PlatformDefine.Key, value);
     }
 
     var resolved_defines = try defines.DefineData.from_input(user_defines, log, allocator);
@@ -672,7 +700,7 @@ pub const BundleOptions = struct {
         var opts: BundleOptions = BundleOptions{
             .log = log,
             .resolve_mode = transform.resolve orelse .dev,
-            .define = try definesFromTransformOptions(allocator, log, transform.define, transform.serve orelse false),
+            .define = undefined,
             .loaders = try loadersFromTransformOptions(allocator, transform.loaders),
             .output_dir = try fs.absAlloc(allocator, &output_dir_parts),
             .platform = Platform.from(transform.platform),
@@ -711,6 +739,8 @@ pub const BundleOptions = struct {
             },
             else => {},
         }
+
+        opts.define = try definesFromTransformOptions(allocator, log, transform.define, transform.serve orelse false, opts.platform);
 
         if (!(transform.generate_node_module_bundle orelse false)) {
             if (node_modules_bundle_existing) |node_mods| {

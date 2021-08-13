@@ -2835,9 +2835,15 @@ pub fn NewPrinter(
                         }
                     } else if (record.is_bundled) {
                         p.print("import {");
+
                         p.printLoadFromBundleWithoutCall(s.import_record_index);
-                        p.print(" as ");
-                        p.printSymbol(s.namespace_ref);
+
+                        if (!record.contains_import_star) {
+                            p.print(" as ");
+
+                            p.printSymbol(s.namespace_ref);
+                        }
+
                         p.print("} from ");
                         p.printQuotedUTF8(record.path.text, false);
                         p.printSemicolonAfterStatement();
@@ -2846,6 +2852,7 @@ pub fn NewPrinter(
                             p.printIndent();
                             p.printSpaceBeforeIdentifier();
                             p.print("var {");
+
                             for (s.items) |item, i| {
                                 p.print(item.alias);
                                 const name = p.renamer.nameForSymbol(item.name.ref.?);
@@ -2859,21 +2866,42 @@ pub fn NewPrinter(
                                 }
                             }
                             p.print("} = ");
-                            p.printSymbol(s.namespace_ref);
+
+                            if (!record.contains_import_star) {
+                                p.printSymbol(s.namespace_ref);
+                            } else {
+                                p.printLoadFromBundleWithoutCall(s.import_record_index);
+                            }
                             p.print("()");
                             p.printSemicolonAfterStatement();
                         } else if (s.default_name) |default_name| {
                             p.printIndent();
                             p.printSpaceBeforeIdentifier();
+
                             p.print("var {default: ");
+
                             p.printSymbol(default_name.ref.?);
                             p.print("} = ");
+
+                            if (!record.contains_import_star) {
+                                p.printSymbol(s.namespace_ref);
+                            } else {
+                                p.printLoadFromBundleWithoutCall(s.import_record_index);
+                            }
+
+                            p.print("()");
+                            p.printSemicolonAfterStatement();
+                        } else if (record.contains_import_star) {
+                            p.print("var ");
                             p.printSymbol(s.namespace_ref);
+                            p.print(" = ");
+                            p.printLoadFromBundleWithoutCall(s.import_record_index);
                             p.print("()");
                             p.printSemicolonAfterStatement();
                         }
                         return;
                     }
+
 
                     p.print("import");
                     p.printSpace();

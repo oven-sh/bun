@@ -101,13 +101,13 @@ pub const ClientEntryPoint = struct {
             \\  globalThis.onerror.loaded = loaded;
             \\}}
             \\
-            \\import * as boot from '{s}';
+            \\import boot from '{s}';
             \\loaded.boot = true;
             \\if ('setLoaded' in boot) boot.setLoaded(loaded);
             \\import * as EntryPoint from '{s}{s}';
             \\loaded.entry = true;
             \\
-            \\if (!('default' in boot) ) {{
+            \\if (!boot) {{
             \\ const now = Date.now();
             \\ debugger;
             \\ const elapsed = Date.now() - now;
@@ -116,7 +116,7 @@ pub const ClientEntryPoint = struct {
             \\ }}
             \\}}
             \\
-            \\boot.default(EntryPoint, loaded);
+            \\boot(EntryPoint, loaded);
         ,
             .{
                 client,
@@ -2126,15 +2126,15 @@ pub const Transformer = struct {
     ) !options.TransformResult {
         js_ast.Expr.Data.Store.create(allocator);
         js_ast.Stmt.Data.Store.create(allocator);
+        const platform = options.Platform.from(opts.platform);
 
-        var define = try options.definesFromTransformOptions(allocator, log, opts.define, false);
+        var define = try options.definesFromTransformOptions(allocator, log, opts.define, false, platform);
 
         const cwd = if (opts.absolute_working_dir) |workdir| try std.fs.realpathAlloc(allocator, workdir) else try std.process.getCwdAlloc(allocator);
 
         const output_dir_parts = [_]string{ try std.process.getCwdAlloc(allocator), opts.output_dir orelse "out" };
         const output_dir = try std.fs.path.join(allocator, &output_dir_parts);
         var output_files = try std.ArrayList(options.OutputFile).initCapacity(allocator, opts.entry_points.len);
-        const platform = options.Platform.from(opts.platform);
         const out_extensions = platform.outExtensions(allocator);
 
         var loader_map = try options.loadersFromTransformOptions(allocator, opts.loaders);

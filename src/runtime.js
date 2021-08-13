@@ -63,7 +63,7 @@ export var __commonJS = (cb, name) => {
           get() {
             return mod.exports;
           },
-          enumerable: false,
+          enumerable: true,
         });
         // If it's a namespace export without .default, pretend .default is the same as mod.exports
       } else if (
@@ -74,7 +74,7 @@ export var __commonJS = (cb, name) => {
           get() {
             return mod.exports;
           },
-          enumerable: false,
+          enumerable: true,
         });
       }
 

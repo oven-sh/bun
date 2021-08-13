@@ -70,7 +70,7 @@ pub const ImportScanner = struct {
             var stmt: Stmt = _stmt;
             switch (stmt.data) {
                 .s_import => |st| {
-                    var record: ImportRecord = p.import_records.items[st.import_record_index];
+                    var record: *ImportRecord = &p.import_records.items[st.import_record_index];
 
                     // The official TypeScript compiler always removes unused imported
                     // symbols. However, we deliberately deviate from the official
@@ -285,7 +285,7 @@ pub const ImportScanner = struct {
                             // it's really stupid to import all 1,000 components from that design system
                             // when you just want <Button />
                             const namespace_ref = st.namespace_ref;
-                            const convert_star_to_clause = p.symbols.items[namespace_ref.inner_index].use_count_estimate == 0;
+                            const convert_star_to_clause = p.symbols.items[namespace_ref.inner_index].use_count_estimate == 0 and st.default_name == null;
 
                             if (convert_star_to_clause and !keep_unused_imports) {
                                 st.star_name_loc = null;
@@ -1879,7 +1879,7 @@ pub const Parser = struct {
                 var decls = try p.allocator.alloc(G.Decl, decls_count);
                 var jsx_part_stmts = try p.allocator.alloc(Stmt, stmts_count);
                 // Use the same array for storing the require call target of potentially both JSX runtimes
-                var require_call_args_base = p.allocator.alloc(Expr, imports_count) catch unreachable;
+                var require_call_args_base = p.allocator.alloc(Expr, if (p.options.can_import_from_bundle) 0 else imports_count) catch unreachable;
                 var import_records = try p.allocator.alloc(u32, imports_count);
 
                 var decl_i: usize = 0;
@@ -1889,16 +1889,21 @@ pub const Parser = struct {
                 var stmt_i: usize = 0;
 
                 if (jsx_symbol.use_count_estimate > 0) {
-                    require_call_args_base[require_call_args_i] = p.e(E.Identifier{ .ref = automatic_namespace_ref }, loc);
-                    require_call_args_i += 1;
-
-                    var require_call_args = require_call_args_base[0..require_call_args_i];
-
                     declared_symbols[declared_symbols_i] = .{ .ref = p.jsx_runtime_ref, .is_top_level = true };
                     declared_symbols_i += 1;
                     declared_symbols[declared_symbols_i] = .{ .ref = automatic_namespace_ref, .is_top_level = true };
                     declared_symbols_i += 1;
-                    var require_call = p.callRequireOrBundledRequire(require_call_args);
+
+                    const automatic_identifier = p.e(E.Identifier{ .ref = automatic_namespace_ref }, loc);
+                    const dot_call_target = brk: {
+                        if (p.options.can_import_from_bundle) {
+                            break :brk automatic_identifier;
+                        } else {
+                            require_call_args_base[require_call_args_i] = automatic_identifier;
+                            require_call_args_i += 1;
+                            break :brk p.callUnbundledRequire(require_call_args_base[0..require_call_args_i]);
+                        }
+                    };
 
                     decls[decl_i] = G.Decl{
                         .binding = p.b(
@@ -1909,7 +1914,7 @@ pub const Parser = struct {
                         ),
                         .value = p.e(
                             E.Dot{
-                                .target = require_call,
+                                .target = dot_call_target,
                                 .name = p.options.jsx.jsx,
                                 .name_loc = loc,
                                 .can_be_removed_if_unused = true,
@@ -1938,6 +1943,7 @@ pub const Parser = struct {
                     // When everything is CommonJS
                     // We import JSX like this:
                     // var {jsxDev} = require("react/jsx-dev")
+
                     jsx_part_stmts[stmt_i] = p.s(S.Import{
                         .namespace_ref = automatic_namespace_ref,
                         .star_name_loc = loc,
@@ -1962,9 +1968,20 @@ pub const Parser = struct {
                 }
 
                 if (jsx_classic_symbol.use_count_estimate > 0) {
-                    require_call_args_base[require_call_args_i] = p.e(E.Identifier{ .ref = classic_namespace_ref }, loc);
-                    var require_call_args = require_call_args_base[require_call_args_i..];
-                    var require_call = p.callRequireOrBundledRequire(require_call_args);
+                    const classic_identifier = p.e(E.Identifier{ .ref = classic_namespace_ref }, loc);
+
+                    const dot_call_target = brk: {
+                        // var react = $aopaSD123();
+
+                        if (p.options.can_import_from_bundle) {
+                            break :brk classic_identifier;
+                        } else {
+                            require_call_args_base[require_call_args_i] = classic_identifier;
+                            require_call_args_i += 1;
+                            break :brk p.callUnbundledRequire(require_call_args_base[0..require_call_args_i]);
+                        }
+                    };
+
                     if (jsx_factory_symbol.use_count_estimate > 0) {
                         declared_symbols[declared_symbols_i] = .{ .ref = p.jsx_factory_ref, .is_top_level = true };
                         declared_symbols_i += 1;
@@ -1977,7 +1994,7 @@ pub const Parser = struct {
                             ),
                             .value = p.e(
                                 E.Dot{
-                                    .target = require_call,
+                                    .target = dot_call_target,
                                     .name = p.options.jsx.factory[p.options.jsx.factory.len - 1],
                                     .name_loc = loc,
                                     .can_be_removed_if_unused = true,
@@ -2000,7 +2017,7 @@ pub const Parser = struct {
                             ),
                             .value = p.e(
                                 E.Dot{
-                                    .target = require_call,
+                                    .target = dot_call_target,
                                     .name = p.options.jsx.fragment[p.options.jsx.fragment.len - 1],
                                     .name_loc = loc,
                                     .can_be_removed_if_unused = true,
@@ -2676,7 +2693,7 @@ pub fn NewParser(
                         cjs_import_name,
                         base_identifier_name,
                     );
-                    std.mem.copy(u8, cjs_import_name[base_identifier_name.len..], suffix);
+                    std.mem.copy(u8, cjs_import_name[base_identifier_name.len - 1 ..], suffix);
 
                     const namespace_ref = p.declareSymbol(.hoisted, arg.loc, cjs_import_name) catch unreachable;
 
@@ -2895,12 +2912,8 @@ pub fn NewParser(
         // If we're auto-importing JSX and it's bundled, we use the bundled version
         // This means we need to transform from require(react) to react()
         // unless we're building inside of speedy, then it's just normal commonjs
-        pub fn callRequireOrBundledRequire(p: *P, require_args: []Expr) Expr {
-            if (p.options.can_import_from_bundle) {
-                return p.e(E.Call{ .target = require_args[0] }, require_args[0].loc);
-            } else {
-                return p.callRuntime(require_args[0].loc, "__require", require_args);
-            }
+        pub fn callUnbundledRequire(p: *P, require_args: []Expr) Expr {
+            return p.callRuntime(require_args[0].loc, "__require", require_args);
         }
 
         pub fn recordExport(p: *P, loc: logger.Loc, alias: string, ref: Ref) !void {

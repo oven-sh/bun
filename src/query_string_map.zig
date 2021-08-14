@@ -1,6 +1,304 @@
 const std = @import("std");
 const Api = @import("./api/schema.zig").Api;
+const resolve_path = @import("./resolver/resolve_path.zig");
 usingnamespace @import("./global.zig");
+
+// This is close to WHATWG URL, but we don't want the validation errors
+pub const URL = struct {
+    hash: string = "",
+    host: string = "",
+    hostname: string = "",
+    href: string = "",
+    origin: string = "",
+    password: string = "",
+    pathname: string = "/",
+    path: string = "/",
+    port: string = "",
+    protocol: string = "",
+    search: string = "",
+    searchParams: ?QueryStringMap = null,
+    username: string = "",
+
+    port_was_automatically_set: bool = false,
+
+    pub fn hasHTTPLikeProtocol(this: *const URL) bool {
+        return strings.eqlComptime(this.protocol, "http") or strings.eqlComptime(this.protocol, "https");
+    }
+
+    pub fn getPort(this: *const URL) ?u16 {
+        return std.fmt.parseInt(u16, this.port, 10) catch null;
+    }
+
+    pub fn hasValidPort(this: *const URL) bool {
+        return (this.getPort() orelse 0) > 1;
+    }
+
+    pub fn isEmpty(this: *const URL) bool {
+        return this.href.len == 0;
+    }
+
+    pub fn isAbsolute(this: *const URL) bool {
+        return this.hostname.len > 0 and this.pathname.len > 0;
+    }
+
+    pub fn joinNormalize(out: []u8, prefix: string, dirname: string, basename: string, extname: string) string {
+        var buf: [2048]u8 = undefined;
+
+        var path_parts: [10]string = undefined;
+        var path_end: usize = 0;
+
+        path_parts[0] = "/";
+        path_end += 1;
+
+        if (prefix.len > 0) {
+            path_parts[path_end] = prefix;
+            path_end += 1;
+        }
+
+        if (dirname.len > 0) {
+            path_parts[path_end] = std.mem.trim(u8, dirname, "/\\");
+            path_end += 1;
+        }
+
+        if (basename.len > 0) {
+            if (dirname.len > 0) {
+                path_parts[path_end] = "/";
+                path_end += 1;
+            }
+
+            path_parts[path_end] = std.mem.trim(u8, basename, "/\\");
+            path_end += 1;
+        }
+
+        if (extname.len > 0) {
+            path_parts[path_end] = extname;
+            path_end += 1;
+        }
+
+        var buf_i: usize = 0;
+        for (path_parts[0..path_end]) |part| {
+            std.mem.copy(u8, buf[buf_i..], part);
+            buf_i += part.len;
+        }
+        return resolve_path.normalizeStringBuf(buf[0..buf_i], out, false, .loose, false);
+    }
+
+    pub fn joinWrite(
+        this: *const URL,
+        comptime Writer: type,
+        writer: Writer,
+        prefix: string,
+        dirname: string,
+        basename: string,
+        extname: string,
+    ) !void {
+        var out: [2048]u8 = undefined;
+        const normalized_path = joinNormalize(&out, prefix, dirname, basename, extname);
+
+        try writer.print("{s}/{s}", .{ this.origin, normalized_path });
+    }
+
+    pub fn joinAlloc(this: *const URL, allocator: *std.mem.Allocator, prefix: string, dirname: string, basename: string, extname: string) !string {
+        var out: [2048]u8 = undefined;
+        const normalized_path = joinNormalize(&out, prefix, dirname, basename, extname);
+
+        return try std.fmt.allocPrint(allocator, "{s}/{s}", .{ this.origin, normalized_path });
+    }
+
+    pub fn parse(base_: string) URL {
+        const base = std.mem.trim(u8, base_, &std.ascii.spaces);
+        if (base.len == 0) return URL{};
+        var url = URL{};
+        url.href = base;
+        var offset: u31 = 0;
+        switch (base[0]) {
+            '@' => {
+                offset += url.parsePassword(base[offset..]) orelse 0;
+                offset += url.parseHost(base[offset..]) orelse 0;
+            },
+            'a'...'z', 'A'...'Z', '0'...'9', '-', '_', ':' => {
+                offset += url.parseProtocol(base[offset..]) orelse 0;
+
+                // if there's no protocol or @, it's ambiguous whether the colon is a port or a username.
+                if (offset > 0) {
+                    if ((std.mem.indexOfScalar(u8, base[offset..], '@') orelse 0) > (std.mem.indexOfScalar(u8, base[offset..], ':') orelse 0)) {
+                        offset += url.parseUsername(base[offset..]) orelse 0;
+                        offset += url.parsePassword(base[offset..]) orelse 0;
+                    }
+                }
+
+                offset += url.parseHost(base[offset..]) orelse 0;
+            },
+            else => {},
+        }
+
+        url.origin = base[0..offset];
+
+        if (offset > base.len) {
+            return url;
+        }
+
+        const path_offset = offset;
+
+        var can_update_path = true;
+        if (base.len > offset + 1 and base[offset] == '/' and base[offset..].len > 0) {
+            url.path = base[offset..];
+            url.pathname = url.path;
+        }
+
+        if (strings.indexOfChar(base[offset..], '?')) |q| {
+            offset += @intCast(u31, q);
+            url.path = base[path_offset..][0..q];
+            can_update_path = false;
+            url.search = base[offset..];
+        }
+
+        if (strings.indexOfChar(base[offset..], '#')) |hash| {
+            offset += @intCast(u31, hash);
+            if (can_update_path) {
+                url.path = base[path_offset..][0..hash];
+            }
+            url.hash = base[offset..];
+
+            if (url.search.len > 0) {
+                url.search = url.search[0 .. url.search.len - url.hash.len];
+            }
+        }
+
+        if (base.len > path_offset and base[path_offset] == '/' and offset > 0) {
+            url.pathname = base[path_offset..std.math.min(offset, base.len)];
+            url.origin = base[0..path_offset];
+        }
+
+        if (url.path.len > 1) {
+            const trimmed = std.mem.trim(u8, url.path, "/");
+            if (trimmed.len > 1) {
+                url.path = url.path[std.math.max(@ptrToInt(trimmed.ptr) - @ptrToInt(url.path.ptr), 1) - 1 ..];
+            } else {
+                url.path = "/";
+            }
+        } else {
+            url.path = "/";
+        }
+
+        if (url.pathname.len == 0) {
+            url.pathname = "/";
+        }
+
+        url.origin = std.mem.trim(u8, url.origin, "/ ?#");
+        return url;
+    }
+
+    pub fn parseProtocol(url: *URL, str: string) ?u31 {
+        var i: u31 = 0;
+        if (str.len < "://".len) return null;
+        while (i < str.len) : (i += 1) {
+            switch (str[i]) {
+                '/', '?', '%' => {
+                    return null;
+                },
+                ':' => {
+                    if (i + 3 <= str.len and str[i + 1] == '/' and str[i + 2] == '/') {
+                        url.protocol = str[0..i];
+                        return i + 3;
+                    }
+                },
+                else => {},
+            }
+        }
+
+        return null;
+    }
+
+    pub fn parseUsername(url: *URL, str: string) ?u31 {
+        var i: u31 = 0;
+
+        // reset it
+        url.username = "";
+
+        if (str.len < "@".len) return null;
+
+        while (i < str.len) : (i += 1) {
+            switch (str[i]) {
+                ':', '@' => {
+                    // we found a username, everything before this point in the slice is a username
+                    url.username = str[0..i];
+                    return i + 1;
+                },
+                // if we reach a slash, there's no username
+                '/' => {
+                    return null;
+                },
+                else => {},
+            }
+        }
+        return null;
+    }
+
+    pub fn parsePassword(url: *URL, str: string) ?u31 {
+        var i: u31 = 0;
+
+        // reset it
+        url.password = "";
+
+        if (str.len < "@".len) return null;
+
+        while (i < str.len) : (i += 1) {
+            switch (str[i]) {
+                '@' => {
+                    // we found a password, everything before this point in the slice is a password
+                    url.password = str[0..i];
+                    std.debug.assert(str[i..].len < 2 or std.mem.readIntNative(u16, str[i..][0..2]) != std.mem.readIntNative(u16, "//"));
+                    return i + 1;
+                },
+                // if we reach a slash, there's no password
+                '/' => {
+                    return null;
+                },
+                else => {},
+            }
+        }
+        return null;
+    }
+
+    pub fn parseHost(url: *URL, str: string) ?u31 {
+        var i: u31 = 0;
+
+        // reset it
+        url.host = "";
+        url.hostname = "";
+        url.port = "";
+
+        // look for the first "/"
+        // if we have a slash, anything before that is the host
+        // anything before the colon is the hostname
+        // anything after the colon but before the slash is the port
+        // the origin is the scheme before the slash
+
+        var colon_i: ?u31 = null;
+        while (i < str.len) : (i += 1) {
+            colon_i = if (colon_i == null and str[i] == ':') i else colon_i;
+
+            switch (str[i]) {
+                // alright, we found the slash
+                '/' => {
+                    break;
+                },
+                else => {},
+            }
+        }
+
+        url.host = str[0..i];
+        if (colon_i) |colon| {
+            url.hostname = str[0..colon];
+            url.port = str[colon + 1 .. i];
+        } else {
+            url.hostname = str[0..i];
+        }
+
+        return i;
+    }
+};
 
 /// QueryString array-backed hash table that does few allocations and preserves the original order
 pub const QueryStringMap = struct {
@@ -824,4 +1122,123 @@ test "QueryStringMap Iterator" {
     try expectEqual(result.values.len, 1);
 
     try expect(iter.next(buf) == null);
+}
+
+test "URL - parse" {
+    var url = URL.parse("https://url.spec.whatwg.org/foo#include-credentials");
+    try expectString("https", url.protocol);
+    try expectString("url.spec.whatwg.org", url.host);
+    try expectString("/foo", url.pathname);
+    try expectString("#include-credentials", url.hash);
+
+    url = URL.parse("https://url.spec.whatwg.org/#include-credentials");
+    try expectString("https", url.protocol);
+    try expectString("url.spec.whatwg.org", url.host);
+    try expectString("/", url.pathname);
+    try expectString("#include-credentials", url.hash);
+
+    url = URL.parse("://url.spec.whatwg.org/#include-credentials");
+    try expectString("", url.protocol);
+    try expectString("url.spec.whatwg.org", url.host);
+    try expectString("/", url.pathname);
+    try expectString("#include-credentials", url.hash);
+
+    url = URL.parse("/#include-credentials");
+    try expectString("", url.protocol);
+    try expectString("", url.host);
+    try expectString("/", url.pathname);
+    try expectString("#include-credentials", url.hash);
+
+    url = URL.parse("https://username:password@url.spec.whatwg.org/#include-credentials");
+    try expectString("https", url.protocol);
+    try expectString("username", url.username);
+    try expectString("password", url.password);
+    try expectString("url.spec.whatwg.org", url.host);
+    try expectString("/", url.pathname);
+    try expectString("#include-credentials", url.hash);
+
+    url = URL.parse("https://username:password@url.spec.whatwg.org:3000/#include-credentials");
+    try expectString("https", url.protocol);
+    try expectString("username", url.username);
+    try expectString("password", url.password);
+    try expectString("url.spec.whatwg.org:3000", url.host);
+    try expectString("3000", url.port);
+    try expectString("/", url.pathname);
+    try expectString("#include-credentials", url.hash);
+
+    url = URL.parse("example.com/#include-credentials");
+    try expectString("", url.protocol);
+    try expectString("", url.username);
+    try expectString("", url.password);
+    try expectString("example.com", url.host);
+    try expectString("/", url.pathname);
+    try expectString("#include-credentials", url.hash);
+
+    url = URL.parse("example.com:8080/#include-credentials");
+    try expectString("", url.protocol);
+    try expectString("", url.username);
+    try expectString("", url.password);
+    try expectString("example.com:8080", url.host);
+    try expectString("example.com", url.hostname);
+    try expectString("8080", url.port);
+    try expectString("/", url.pathname);
+    try expectString("#include-credentials", url.hash);
+
+    url = URL.parse("example.com:8080/////#include-credentials");
+    try expectString("", url.protocol);
+    try expectString("", url.username);
+    try expectString("", url.password);
+    try expectString("example.com:8080", url.host);
+    try expectString("example.com", url.hostname);
+    try expectString("8080", url.port);
+    try expectString("/////", url.pathname);
+    try expectString("/", url.path);
+    try expectString("#include-credentials", url.hash);
+    url = URL.parse("example.com:8080/////hi?wow#include-credentials");
+    try expectString("", url.protocol);
+    try expectString("", url.username);
+    try expectString("", url.password);
+    try expectString("example.com:8080", url.host);
+    try expectString("example.com", url.hostname);
+    try expectString("8080", url.port);
+    try expectString("/////hi?wow", url.pathname);
+    try expectString("/hi", url.path);
+    try expectString("#include-credentials", url.hash);
+    try expectString("?wow", url.search);
+
+    url = URL.parse("/src/index");
+    try expectString("", url.protocol);
+    try expectString("", url.username);
+    try expectString("", url.password);
+    try expectString("", url.host);
+    try expectString("", url.hostname);
+    try expectString("", url.port);
+    try expectString("/src/index", url.path);
+    try expectString("/src/index", url.pathname);
+
+    try expectString("", url.hash);
+    try expectString("", url.search);
+
+    url = URL.parse("http://localhost:3000/");
+    try expectString("http", url.protocol);
+    try expectString("", url.username);
+    try expectString("", url.password);
+    try expectString("localhost:3000", url.host);
+    try expectString("localhost", url.hostname);
+    try expectString("3000", url.port);
+    try expectString("/", url.path);
+    try expectString("/", url.pathname);
+}
+
+test "URL - joinAlloc" {
+    var url = URL.parse("http://localhost:3000");
+
+    var absolute_url = try url.joinAlloc(std.heap.c_allocator, "/_next/", "src/components", "button", ".js");
+    try expectString("http://localhost:3000/_next/src/components/button.js", absolute_url);
+
+    absolute_url = try url.joinAlloc(std.heap.c_allocator, "compiled-", "src/components", "button", ".js");
+    try expectString("http://localhost:3000/compiled-src/components/button.js", absolute_url);
+
+    absolute_url = try url.joinAlloc(std.heap.c_allocator, "compiled-", "", "button", ".js");
+    try expectString("http://localhost:3000/compiled-button.js", absolute_url);
 }

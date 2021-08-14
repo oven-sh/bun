@@ -1,5 +1,6 @@
 import "../src/font.css";
 import "../src/index.css";
+
 import App from "next/app";
 
 class MyApp extends App {

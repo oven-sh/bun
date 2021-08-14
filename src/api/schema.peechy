@@ -140,6 +140,10 @@ message FrameworkConfig {
   string client = 2;
   string server = 3;
   bool development = 4;
+  StringMap client_defines = 5;
+  StringMap server_defines = 6;
+  string client_defines_prefix = 7;
+  string server_defines_prefix = 8;
 }
 
 struct LoadedFramework {
@@ -147,18 +151,23 @@ struct LoadedFramework {
   string package;
   bool development;
   bool client;
+  StringMap define_defaults;
+  string define_prefix;
+  bool has_define_prefix;
 }
 
 struct LoadedRouteConfig {
   string dir;
   string[] extensions;
   string static_dir;
+  string asset_prefix;
 }
 
 message RouteConfig {
   string dir = 1;
   string[] extensions = 2;
   string static_dir = 3;
+  string asset_prefix = 4;
 }
 
 message TransformOptions {
@@ -385,3 +394,5 @@ struct WebsocketMessageManifestFailure {
   Loader loader;
   Log log;
 }
+
+

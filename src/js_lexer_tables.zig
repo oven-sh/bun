@@ -535,6 +535,26 @@ pub const TypescriptStmtKeyword = enum {
 
 pub const JSXEntityMap = std.StringHashMap(CodePoint);
 
+//  Error: meta is a void element tag and must neither have `children` nor use `dangerouslySetInnerHTML`.
+pub const ChildlessJSXTags = std.ComptimeStringMap(void, .{
+    .{ "area", void },
+    .{ "base", void },
+    .{ "br", void },
+    .{ "col", void },
+    .{ "embed", void },
+    .{ "hr", void },
+    .{ "img", void },
+    .{ "input", void },
+    .{ "keygen", void },
+    .{ "link", void },
+    .{ "meta", void },
+    .{ "param", void },
+    .{ "source", void },
+    .{ "track", void },
+    .{ "wbr", void },
+    .{ "menuitem", void },
+});
+
 pub var jsxEntity: JSXEntityMap = undefined;
 var has_loaded_jsx_map = false;
 

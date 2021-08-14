@@ -43,7 +43,11 @@ pub fn init(
     };
 }
 
-pub fn getEntryPoints(this: *const Router, allocator: *std.mem.Allocator) ![]const string {
+pub const EntryPointList = struct {
+    entry_points: []const string,
+    buffer: []u8,
+};
+pub fn getEntryPointsWithBuffer(this: *const Router, allocator: *std.mem.Allocator, comptime absolute: bool) !EntryPointList {
     var i: u16 = 0;
     const route_count: u16 = @truncate(u16, this.routes.routes.len);
 
@@ -73,15 +77,26 @@ pub fn getEntryPoints(this: *const Router, allocator: *std.mem.Allocator) ![]con
         const children = this.routes.routes.items(.children)[i];
         if (children.len == 0) {
             if (Fs.FileSystem.DirEntry.EntryStore.instance.at(this.routes.routes.items(.entry_index)[i])) |entry| {
-                var parts = [_]string{ entry.dir, entry.base };
-                entry_points[entry_point_i] = this.fs.absBuf(&parts, remain);
+                if (comptime absolute) {
+                    var parts = [_]string{ entry.dir, entry.base };
+                    entry_points[entry_point_i] = this.fs.absBuf(&parts, remain);
+                } else {
+                    var parts = [_]string{ "/", this.config.asset_prefix_path, this.fs.relativeTo(entry.dir), entry.base };
+                    entry_points[entry_point_i] = this.fs.joinBuf(&parts, remain);
+                }
+
                 remain = remain[entry_points[entry_point_i].len..];
                 entry_point_i += 1;
             }
         }
     }
 
-    return entry_points;
+    return EntryPointList{ .entry_points = entry_points, .buffer = buffer };
+}
+
+pub fn getEntryPoints(this: *const Router, allocator: *std.mem.Allocator) ![]const string {
+    const list = try getEntryPointsWithBuffer(this, allocator, true);
+    return list.entry_points;
 }
 
 const banned_dirs = [_]string{

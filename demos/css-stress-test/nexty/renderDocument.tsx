@@ -20,6 +20,7 @@ import {
 import * as NextDocument from "next/document";
 import * as ReactDOMServer from "react-dom/server.browser";
 import * as url from "url";
+import * as React from "react";
 
 const dev = process.env.NODE_ENV === "development";
 
@@ -47,9 +48,7 @@ function getScripts(files: DocumentFiles) {
     return (
       <script
         key={file}
-        src={`${assetPrefix}/_next/${encodeURI(
-          file
-        )}${devOnlyCacheBusterQueryString}`}
+        src={`${encodeURI(file)}${devOnlyCacheBusterQueryString}`}
         nonce={props.nonce}
         async
         crossOrigin={props.crossOrigin || process.env.__NEXT_CROSS_ORIGIN}
@@ -58,6 +57,33 @@ function getScripts(files: DocumentFiles) {
     );
   });
 }
+
+// function fixLink(from: string) {
+//   if (from.startsWith("/_next/http://") || from.startsWith("/_next/https://"))
+//     return from.substring("/_next".length);
+//   return from;
+// }
+
+// function cloneWithOverwrittenLink(element: React.ReactElement<any>) {
+//   const props = { ...element.props };
+//   if ("href" in element.props) {
+//     props.href = fixLink(props.href);
+//   }
+
+//   if ("n-href" in element.props) {
+//     props["n-href"] = fixLink(props["n-href"]);
+//   }
+
+//   if ("n-src" in element.props) {
+//     props["n-src"] = fixLink(props["n-src"]);
+//   }
+
+//   if ("src" in element.props) {
+//     props["src"] = fixLink(props.src);
+//   }
+
+//   return React.cloneElement(element, props);
+// }
 
 interface DomainLocale {
   defaultLocale: string;
@@ -161,6 +187,8 @@ function renderDocument(
             defaultLocale,
             domainLocales,
             isPreview,
+
+            pages: buildManifest.pages,
           },
           buildManifest,
           docComponentsRendered,
@@ -300,6 +328,7 @@ export async function render({
   pageStylesheets = [],
   DocumentNamespace = null,
   buildId,
+  routePaths = [],
 }: {
   buildId: number;
   route: any;
@@ -308,6 +337,7 @@ export async function render({
   DocumentNamespace: Object | null;
   appStylesheets: string[];
   pageStylesheets: string[];
+  routePaths: string[];
 }): Promise<Response> {
   const { default: Component, getStaticProps = null } = PageNamespace || {};
   const { default: AppComponent_ } = AppNamespace || {};
@@ -316,6 +346,25 @@ export async function render({
   // These are reversed in our Router versus Next.js...mostly due to personal preference.
   const pathname = "/" + route.name;
   var asPath = route.pathname;
+  const pages = {};
+
+  for (let path of routePaths) {
+    const filePath = path.substring(
+      path.indexOf("_next/pages/") + "_next/pages".length
+    );
+    const name = filePath.substring(0, filePath.indexOf("."));
+    pages[name] = [path];
+  }
+
+  pages[pathname] = [route.scriptSrc];
+
+  if (appStylesheets.length > 0) {
+    if (pages["/_app"]) {
+      pages["/_app"].push(...appStylesheets);
+    } else {
+      pages["/_app"] = appStylesheets;
+    }
+  }
 
   const AppComponent = AppComponent_ || App.default;
   const Document =
@@ -377,8 +426,8 @@ export async function render({
   }
 
   let head: JSX.Element[] = [
-    <meta charSet="utf-8" />,
-    <meta name="viewport" content="width=device-width" />,
+    // <meta charSet="utf-8" />,
+    // <meta name="viewport" content="width=device-width" />,
   ];
 
   const nextExport = isAutoExport || isFallback;
@@ -516,8 +565,10 @@ export async function render({
   //   query: origQuery,
   // });
   const docComponentsRendered: DocumentProps["docComponentsRendered"] = {};
+
   const isPreview = false;
   const getServerSideProps = PageNamespace.getServerSideProps;
+
   let html = renderDocument(Document, {
     docComponentsRendered,
     ...renderOpts,
@@ -528,10 +579,7 @@ export async function render({
       allFiles: [],
       polyfillFiles: [],
       lowPriorityFiles: [],
-      pages: {
-        "/_app": [Wundle.routesDir + "_app", ...appStylesheets],
-        [pathname]: [...pageStylesheets, route.scriptSrc],
-      },
+      pages: pages,
     },
     // Only enabled in production as development mode has features relying on HMR (style injection for example)
     unstable_runtimeJS: true,
@@ -563,6 +611,8 @@ export async function render({
     isPreview: isPreview === true ? true : undefined,
     autoExport: isAutoExport === true ? true : undefined,
     nextExport: nextExport === true ? true : undefined,
-  }).replaceAll("/_next//_next", "/_next");
+  })
+    .replaceAll("/_next/http://", "http://")
+    .replaceAll("/_next/https://", "https://");
   return new Response(html);
 }

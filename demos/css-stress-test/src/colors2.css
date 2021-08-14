@@ -1,0 +1,3 @@
+body {
+  filter: sepia(50%) brightness(200%);
+}

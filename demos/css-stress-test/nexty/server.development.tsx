@@ -25,8 +25,7 @@ addEventListener("fetch", async (event: FetchEvent) => {
   } catch (exception) {
     appRoute = null;
   }
-  const appStylesheets = Wundle.getImportedStyles() as string[];
-
+  const appStylesheets = (Wundle.getImportedStyles() as string[]).slice();
   var route = Wundle.match(event);
 
   // This imports the currently matched route.
@@ -34,7 +33,7 @@ addEventListener("fetch", async (event: FetchEvent) => {
 
   // This returns all .css files that were imported in the line above.
   // It's recursive, so any file that imports a CSS file will be included.
-  const pageStylesheets = Wundle.getImportedStyles() as string[];
+  const pageStylesheets = (Wundle.getImportedStyles() as string[]).slice();
 
   event.respondWith(
     await render({
@@ -45,6 +44,7 @@ addEventListener("fetch", async (event: FetchEvent) => {
       DocumentNamespace,
       AppNamespace: appRoute,
       buildId,
+      routePaths: Wundle.getRouteFiles(),
     })
   );
   buildId++;

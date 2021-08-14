@@ -241,6 +241,10 @@ type uint32 = number;
     client?: string;
     server?: string;
     development?: boolean;
+    client_defines?: StringMap;
+    server_defines?: StringMap;
+    client_defines_prefix?: string;
+    server_defines_prefix?: string;
   }
 
   export interface LoadedFramework {
@@ -248,18 +252,23 @@ type uint32 = number;
     package: string;
     development: boolean;
     client: boolean;
+    define_defaults: StringMap;
+    define_prefix: string;
+    has_define_prefix: boolean;
   }
 
   export interface LoadedRouteConfig {
     dir: string;
     extensions: string[];
     static_dir: string;
+    asset_prefix: string;
   }
 
   export interface RouteConfig {
     dir?: string;
     extensions?: string[];
     static_dir?: string;
+    asset_prefix?: string;
   }
 
   export interface TransformOptions {

@@ -769,7 +769,7 @@ pub const SideEffects = enum(u2) {
                 // A call that has been marked "__PURE__" can be removed if all arguments
                 // can be removed. The annotation causes us to ignore the target.
                 if (call.can_be_unwrapped_if_unused) {
-                    return Expr.joinAllWithComma(call.args, p.allocator);
+                    return Expr.joinAllWithCommaCallback(call.args, @TypeOf(p), p, simpifyUnusedExpr, p.allocator);
                 }
             },
 
@@ -802,7 +802,7 @@ pub const SideEffects = enum(u2) {
                         // the right expression can be completely removed. Otherwise, the left
                         // expression is important for the branch.
                         bin.right = simpifyUnusedExpr(p, bin.right) orelse bin.right.toEmpty();
-                        if (!bin.right.isEmpty()) {
+                        if (bin.right.isEmpty()) {
                             return simpifyUnusedExpr(p, bin.left);
                         }
                     },
@@ -10374,7 +10374,7 @@ pub fn NewParser(
                     p.panic("Unexpected private identifier. This is an internal error - not your fault.", .{});
                 },
                 .e_jsx_element => |e_| {
-                    const tag = tagger: {
+                    const tag: Expr = tagger: {
                         if (e_.tag) |_tag| {
                             break :tagger p.visitExpr(_tag);
                         } else {
@@ -10397,13 +10397,26 @@ pub fn NewParser(
                     }
 
                     const runtime = if (p.options.jsx.runtime == .automatic and !e_.flags.is_key_before_rest) options.JSX.Runtime.automatic else options.JSX.Runtime.classic;
+                    var children_count = e_.children.len;
+
+                    const is_childless_tag = FeatureFlags.react_specific_warnings and children_count > 0 and tag.data == .e_string and tag.data.e_string.isUTF8() and js_lexer.ChildlessJSXTags.has(tag.data.e_string.utf8);
+
+                    if (is_childless_tag) {
+                        children_count = 0;
+                    }
+
+                    if (children_count != e_.children.len) {
+                        // Error: meta is a void element tag and must neither have `children` nor use `dangerouslySetInnerHTML`.
+                        // ^ from react-dom
+                        p.log.addWarningFmt(p.source, tag.loc, p.allocator, "<{s} /> is a void element and must not have \"children\"", .{tag.data.e_string.utf8}) catch {};
+                    }
 
                     // TODO: maybe we should split these into two different AST Nodes
                     // That would reduce the amount of allocations a little
                     switch (runtime) {
                         .classic => {
                             // Arguments to createElement()
-                            const args = p.allocator.alloc(Expr, 1 + e_.children.len) catch unreachable;
+                            const args = p.allocator.alloc(Expr, 1 + children_count) catch unreachable;
                             var i: usize = 1;
                             if (e_.properties.len > 0) {
                                 if (e_.key) |key| {
@@ -10417,7 +10430,7 @@ pub fn NewParser(
                                 args[0] = p.e(E.Null{}, expr.loc);
                             }
 
-                            for (e_.children) |child| {
+                            for (e_.children[0..children_count]) |child| {
                                 args[i] = p.visitExpr(child);
                                 i += 1;
                             }
@@ -10444,12 +10457,11 @@ pub fn NewParser(
                             //    ...props,
                             //    children: []
                             // }
-                            for (e_.children) |child, i| {
+                            for (e_.children[0..children_count]) |child, i| {
                                 e_.children[i] = p.visitExpr(child);
                             }
                             const children_key = Expr{ .data = jsxChildrenKeyData, .loc = expr.loc };
 
-                            //
                             props.append(G.Property{
                                 .key = children_key,
                                 .value = p.e(E.Array{

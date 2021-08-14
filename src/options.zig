@@ -10,6 +10,7 @@ const Api = api.Api;
 const defines = @import("./defines.zig");
 const resolve_path = @import("./resolver/resolve_path.zig");
 const NodeModuleBundle = @import("./node_module_bundle.zig").NodeModuleBundle;
+const URL = @import("./query_string_map.zig").URL;
 usingnamespace @import("global.zig");
 
 const assert = std.debug.assert;
@@ -593,6 +594,7 @@ pub fn definesFromTransformOptions(
     }
 
     var resolved_defines = try defines.DefineData.from_input(user_defines, log, allocator);
+
     return try defines.Define.init(
         allocator,
         resolved_defines,
@@ -645,7 +647,7 @@ pub const BundleOptions = struct {
 
     hot_module_reloading: bool = false,
     inject: ?[]string = null,
-    origin: string = "",
+    origin: URL = URL{},
 
     output_dir: string = "",
     output_dir_handle: ?std.fs.Dir = null,
@@ -711,8 +713,7 @@ pub const BundleOptions = struct {
         };
 
         if (transform.origin) |origin| {
-            opts.import_path_format = ImportPathFormat.absolute_url;
-            opts.origin = origin;
+            opts.origin = URL.parse(origin);
         }
 
         if (transform.jsx) |jsx| {
@@ -726,6 +727,29 @@ pub const BundleOptions = struct {
         if (transform.platform) |plat| {
             opts.platform = Platform.from(plat);
             opts.main_fields = Platform.DefaultMainFields.get(opts.platform);
+        }
+
+        if (transform.serve orelse false) {
+            // When we're serving, we need some kind of URL.
+            if (!opts.origin.isAbsolute()) {
+                const protocol: string = if (opts.origin.hasHTTPLikeProtocol()) opts.origin.protocol else "http";
+
+                const had_valid_port = opts.origin.hasValidPort();
+                const port: string = if (had_valid_port) opts.origin.port else "3000";
+
+                opts.origin = URL.parse(
+                    try std.fmt.allocPrint(
+                        allocator,
+                        "{s}://localhost:{s}{s}",
+                        .{
+                            protocol,
+                            port,
+                            opts.origin.path,
+                        },
+                    ),
+                );
+                opts.origin.port_was_automatically_set = !had_valid_port;
+            }
         }
 
         switch (opts.platform) {
@@ -766,21 +790,9 @@ pub const BundleOptions = struct {
                             var node_module_bundle = try allocator.create(NodeModuleBundle);
                             node_module_bundle.* = bundle;
                             opts.node_modules_bundle = node_module_bundle;
-                            if (opts.origin.len > 0) {
-                                var relative = node_module_bundle.bundle.import_from_name;
-                                if (relative[0] == std.fs.path.sep) {
-                                    relative = relative[1..];
-                                }
-
-                                const buf_size = opts.origin.len + relative.len + pretty_path.len;
-                                var buf = try allocator.alloc(u8, buf_size);
-                                opts.node_modules_bundle_url = try std.fmt.bufPrint(buf, "{s}{s}", .{ opts.origin, relative });
-                                opts.node_modules_bundle_pretty_path = buf[opts.node_modules_bundle_url.len..];
-                                std.mem.copy(
-                                    u8,
-                                    buf[opts.node_modules_bundle_url.len..],
-                                    pretty_path,
-                                );
+                            if (opts.origin.isAbsolute()) {
+                                opts.node_modules_bundle_url = try opts.origin.joinAlloc(allocator, "", "", node_module_bundle.bundle.import_from_name, "");
+                                opts.node_modules_bundle_pretty_path = opts.node_modules_bundle_url[opts.node_modules_bundle_url.len - node_module_bundle.bundle.import_from_name.len - 1 ..];
                             } else {
                                 opts.node_modules_bundle_pretty_path = try allocator.dupe(u8, pretty_path);
                             }
@@ -838,9 +850,6 @@ pub const BundleOptions = struct {
         if (transform.serve orelse false) {
             opts.preserve_extensions = true;
             opts.append_package_version_in_query_string = true;
-            if (opts.origin.len == 0) {
-                opts.origin = "/";
-            }
 
             opts.resolve_mode = .lazy;
 
@@ -897,6 +906,10 @@ pub const BundleOptions = struct {
                 opts.routes.static_dir_handle.?.close();
             }
             opts.hot_module_reloading = opts.platform.isWebLike();
+        }
+
+        if (opts.origin.isAbsolute()) {
+            opts.import_path_format = ImportPathFormat.absolute_url;
         }
 
         if (opts.write and opts.output_dir.len > 0) {
@@ -1181,6 +1194,22 @@ pub const Framework = struct {
     resolved: bool = false,
     from_bundle: bool = false,
 
+    client_env: ?Env = null,
+    server_env: ?Env = null,
+
+    pub const Env = struct {
+        pub const Map = std.StringArrayHashMap(string);
+        defaults: Map,
+        prefix: string = "",
+
+        pub fn init(allocator: *std.mem.Allocator, prefix: string) Env {
+            return Env{
+                .defaults = Map.init(allocator),
+                .prefix = prefix,
+            };
+        }
+    };
+
     fn normalizedPath(allocator: *std.mem.Allocator, toplevel_path: string, path: string) !string {
         std.debug.assert(std.fs.path.isAbsolute(path));
         var str = path;
@@ -1257,6 +1286,11 @@ pub const Framework = struct {
 
 pub const RouteConfig = struct {
     dir: string = "",
+
+    // Frameworks like Next.js (and others) use a special prefix for bundled/transpiled assets
+    // This is combined with "origin" when printing import paths
+    asset_prefix_path: string = "",
+
     // TODO: do we need a separate list for data-only extensions?
     // e.g. /foo.json just to get the data for the route, without rendering the html
     // I think it's fine to hardcode as .json for now, but if I personally were writing a framework
@@ -1271,6 +1305,7 @@ pub const RouteConfig = struct {
 
     pub fn toAPI(this: *const RouteConfig) Api.LoadedRouteConfig {
         return .{
+            .asset_prefix = this.asset_prefix_path,
             .dir = if (this.routes_enabled) this.dir else "",
             .extensions = this.extensions,
             .static_dir = if (this.static_dir_enabled) this.static_dir else "",
@@ -1293,6 +1328,7 @@ pub const RouteConfig = struct {
         return RouteConfig{
             .extensions = loaded.extensions,
             .dir = loaded.dir,
+            .asset_prefix_path = loaded.asset_prefix,
             .static_dir = loaded.static_dir,
             .routes_enabled = loaded.dir.len > 0,
             .static_dir_enabled = loaded.static_dir.len > 0,
@@ -1304,6 +1340,7 @@ pub const RouteConfig = struct {
 
         var router_dir: string = std.mem.trimRight(u8, router_.dir orelse "", "/\\");
         var static_dir: string = std.mem.trimRight(u8, router_.static_dir orelse "", "/\\");
+        var asset_prefix: string = std.mem.trimRight(u8, router_.asset_prefix orelse "", "/\\");
 
         if (router_dir.len != 0) {
             router.dir = router_dir;
@@ -1312,6 +1349,10 @@ pub const RouteConfig = struct {
 
         if (static_dir.len > 0) {
             router.static_dir = static_dir;
+        }
+
+        if (asset_prefix.len > 0) {
+            router.asset_prefix_path = asset_prefix;
         }
 
         if (router_.extensions.len > 0) {

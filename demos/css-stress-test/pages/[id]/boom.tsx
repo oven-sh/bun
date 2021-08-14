@@ -1,9 +1,11 @@
 import { Main } from "../../src/main";
 
-export default function IndexRoute() {
+function IndexRoute() {
   return (
     <div>
       <Main productName={"Boom id"} />
     </div>
   );
 }
+
+export { IndexRoute as default };

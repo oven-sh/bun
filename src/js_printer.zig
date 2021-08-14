@@ -2838,12 +2838,6 @@ pub fn NewPrinter(
 
                         p.printLoadFromBundleWithoutCall(s.import_record_index);
 
-                        if (!record.contains_import_star) {
-                            p.print(" as ");
-
-                            p.printSymbol(s.namespace_ref);
-                        }
-
                         p.print("} from ");
                         p.printQuotedUTF8(record.path.text, false);
                         p.printSemicolonAfterStatement();
@@ -2867,11 +2861,8 @@ pub fn NewPrinter(
                             }
                             p.print("} = ");
 
-                            if (!record.contains_import_star) {
-                                p.printSymbol(s.namespace_ref);
-                            } else {
-                                p.printLoadFromBundleWithoutCall(s.import_record_index);
-                            }
+                            p.printLoadFromBundleWithoutCall(s.import_record_index);
+
                             p.print("()");
                             p.printSemicolonAfterStatement();
                         } else if (s.default_name) |default_name| {
@@ -2883,11 +2874,7 @@ pub fn NewPrinter(
                             p.printSymbol(default_name.ref.?);
                             p.print("} = ");
 
-                            if (!record.contains_import_star) {
-                                p.printSymbol(s.namespace_ref);
-                            } else {
-                                p.printLoadFromBundleWithoutCall(s.import_record_index);
-                            }
+                            p.printLoadFromBundleWithoutCall(s.import_record_index);
 
                             p.print("()");
                             p.printSemicolonAfterStatement();
@@ -2901,7 +2888,6 @@ pub fn NewPrinter(
                         }
                         return;
                     }
-
 
                     p.print("import");
                     p.printSpace();

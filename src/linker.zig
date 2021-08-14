@@ -460,6 +460,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
                 },
                 .relative => {
                     var relative_name = linker.fs.relative(source_dir, source_path);
+
                     var pretty: string = undefined;
                     if (use_hashed_name) {
                         var basepath = Fs.Path.init(source_path);
@@ -529,35 +530,13 @@ pub fn NewLinker(comptime BundlerType: type) type {
                         basename = try linker.getHashedFilename(basepath, null);
                     }
 
-                    const needs_slash = dirname.len > 0 and dirname[dirname.len - 1] != '/';
-
-                    if (needs_slash) {
-                        const absolute_url = try std.fmt.allocPrint(
-                            linker.allocator,
-                            "{s}{s}/{s}{s}",
-                            .{
-                                linker.options.origin,
-                                dirname,
-                                basename,
-                                absolute_pathname.ext,
-                            },
-                        );
-
-                        return Fs.Path.initWithPretty(absolute_url, absolute_url);
-                    } else {
-                        const absolute_url = try std.fmt.allocPrint(
-                            linker.allocator,
-                            "{s}{s}{s}{s}",
-                            .{
-                                linker.options.origin,
-                                dirname,
-                                basename,
-                                absolute_pathname.ext,
-                            },
-                        );
-
-                        return Fs.Path.initWithPretty(absolute_url, absolute_url);
-                    }
+                    return Fs.Path.init(try linker.options.origin.joinAlloc(
+                        linker.allocator,
+                        linker.options.routes.asset_prefix_path,
+                        dirname,
+                        basename,
+                        absolute_pathname.ext,
+                    ));
                 },
 
                 else => unreachable,

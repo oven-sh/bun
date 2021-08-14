@@ -70,6 +70,57 @@ pub const PackageJSON = struct {
             }
         }
 
+        // "env": {
+        //   "client": {
+        //     "NEXT_TRAILING_SLASH": false,
+        //   },
+        //   "clientPrefix": "NEXT_PUBLIC_",
+        //   "server": {
+        //     "NEXT_TRAILING_SLASH": false,
+        //   },
+        //   "serverPrefix": "",
+        // }
+
+        if (json.asProperty("env")) |defines| {
+            if (defines.expr.asProperty("client")) |client| {
+                if (client.expr.data == .e_object) {
+                    const object = client.expr.data.e_object;
+                    var i: usize = 0;
+                    for (object.properties) |prop| {
+                        // must be strings
+                        const key = prop.key orelse continue;
+                        const value = prop.value orelse continue;
+                        i += @intCast(usize, @boolToInt(key.data == .e_string and value.data == .e_string));
+                    }
+
+                    if (i > 0) {
+                        if (framework.client_env == null) {
+                            framework.client_env = options.Framework.Env.init(allocator, "");
+                        }
+                        var env = &framework.client_env.?;
+                        try env.defaults.ensureUnusedCapacity(i);
+
+                        for (object.properties) |prop| {
+                            // must be strings
+                            // not for any good reason.
+                            // we should fix this later
+
+                            const key = prop.key orelse continue;
+                            const value = prop.value orelse continue;
+                            if (key.data != .e_string or value.data != .e_string) continue;
+
+                            var res = try define.getOrPut(try key.asString(allocator));
+                            if (!res.found_existing) {
+                                res.value_ptr.* = try value.asString(allocator);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (defines.expr.asProperty("server")) |server| {}
+        }
+
         if (json.asProperty("server")) |server| {
             if (server.expr.asString(allocator)) |str| {
                 if (str.len > 0) {
@@ -88,6 +139,15 @@ pub const PackageJSON = struct {
             if (static_prop.expr.asString(allocator)) |str| {
                 if (str.len > 0) {
                     pair.router.static_dir = str;
+                }
+            }
+        }
+
+        if (framework_object.expr.asProperty("assetPrefix")) |asset_prefix| {
+            if (asset_prefix.expr.asString(allocator)) |_str| {
+                const str = std.mem.trimRight(u8, _str, " ");
+                if (str.len > 0) {
+                    pair.router.asset_prefix_path = str;
                 }
             }
         }

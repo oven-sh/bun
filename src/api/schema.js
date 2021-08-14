@@ -613,6 +613,22 @@ function decodeFrameworkConfig(bb) {
       result["development"] = !!bb.readByte();
       break;
 
+    case 5:
+      result["client_defines"] = decodeStringMap(bb);
+      break;
+
+    case 6:
+      result["server_defines"] = decodeStringMap(bb);
+      break;
+
+    case 7:
+      result["client_defines_prefix"] = bb.readString();
+      break;
+
+    case 8:
+      result["server_defines_prefix"] = bb.readString();
+      break;
+
     default:
       throw new Error("Attempted to parse invalid message");
     }
@@ -644,6 +660,30 @@ function encodeFrameworkConfig(message, bb) {
     bb.writeByte(4);
     bb.writeByte(value);
   }
+
+  var value = message["client_defines"];
+  if (value != null) {
+    bb.writeByte(5);
+    encodeStringMap(value, bb);
+  }
+
+  var value = message["server_defines"];
+  if (value != null) {
+    bb.writeByte(6);
+    encodeStringMap(value, bb);
+  }
+
+  var value = message["client_defines_prefix"];
+  if (value != null) {
+    bb.writeByte(7);
+    bb.writeString(value);
+  }
+
+  var value = message["server_defines_prefix"];
+  if (value != null) {
+    bb.writeByte(8);
+    bb.writeString(value);
+  }
   bb.writeByte(0);
 
 }
@@ -655,6 +695,9 @@ function decodeLoadedFramework(bb) {
   result["package"] = bb.readString();
   result["development"] = !!bb.readByte();
   result["client"] = !!bb.readByte();
+  result["define_defaults"] = decodeStringMap(bb);
+  result["define_prefix"] = bb.readString();
+  result["has_define_prefix"] = !!bb.readByte();
   return result;
 }
 
@@ -688,6 +731,27 @@ function encodeLoadedFramework(message, bb) {
     throw new Error("Missing required field \"client\"");
   }
 
+  var value = message["define_defaults"];
+  if (value != null) {
+    encodeStringMap(value, bb);
+  } else {
+    throw new Error("Missing required field \"define_defaults\"");
+  }
+
+  var value = message["define_prefix"];
+  if (value != null) {
+    bb.writeString(value);
+  } else {
+    throw new Error("Missing required field \"define_prefix\"");
+  }
+
+  var value = message["has_define_prefix"];
+  if (value != null) {
+    bb.writeByte(value);
+  } else {
+    throw new Error("Missing required field \"has_define_prefix\"");
+  }
+
 }
 
 function decodeLoadedRouteConfig(bb) {
@@ -698,6 +762,7 @@ function decodeLoadedRouteConfig(bb) {
   var values = result["extensions"] = Array(length);
   for (var i = 0; i < length; i++) values[i] = bb.readString();
   result["static_dir"] = bb.readString();
+  result["asset_prefix"] = bb.readString();
   return result;
 }
 
@@ -729,6 +794,13 @@ function encodeLoadedRouteConfig(message, bb) {
     throw new Error("Missing required field \"static_dir\"");
   }
 
+  var value = message["asset_prefix"];
+  if (value != null) {
+    bb.writeString(value);
+  } else {
+    throw new Error("Missing required field \"asset_prefix\"");
+  }
+
 }
 
 function decodeRouteConfig(bb) {
@@ -751,6 +823,10 @@ function decodeRouteConfig(bb) {
 
     case 3:
       result["static_dir"] = bb.readString();
+      break;
+
+    case 4:
+      result["asset_prefix"] = bb.readString();
       break;
 
     default:
@@ -781,6 +857,12 @@ function encodeRouteConfig(message, bb) {
   var value = message["static_dir"];
   if (value != null) {
     bb.writeByte(3);
+    bb.writeString(value);
+  }
+
+  var value = message["asset_prefix"];
+  if (value != null) {
+    bb.writeByte(4);
     bb.writeString(value);
   }
   bb.writeByte(0);

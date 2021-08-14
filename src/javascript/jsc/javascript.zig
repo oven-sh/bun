@@ -39,6 +39,8 @@ pub const Wundle = struct {
     threadlocal var css_imports_buf: std.ArrayList(u8) = undefined;
     threadlocal var css_imports_buf_loaded: bool = false;
 
+    threadlocal var routes_list_strings: [1024]ZigString = undefined;
+
     pub fn onImportCSS(
         resolve_result: *const Resolver.Result,
         import_record: *ImportRecord,
@@ -97,7 +99,7 @@ pub const Wundle = struct {
         prop: js.JSStringRef,
         exception: js.ExceptionRef,
     ) js.JSValueRef {
-        return ZigString.init(VirtualMachine.vm.bundler.options.origin).toValue(VirtualMachine.vm.global).asRef();
+        return ZigString.init(VirtualMachine.vm.bundler.options.origin.origin).toValue(VirtualMachine.vm.global).asRef();
     }
 
     pub fn getMain(
@@ -110,6 +112,16 @@ pub const Wundle = struct {
         return ZigString.init(VirtualMachine.vm.main).toValue(VirtualMachine.vm.global).asRef();
     }
 
+    pub fn getAssetPrefix(
+        this: void,
+        ctx: js.JSContextRef,
+        thisObject: js.JSValueRef,
+        prop: js.JSStringRef,
+        exception: js.ExceptionRef,
+    ) js.JSValueRef {
+        return ZigString.init(VirtualMachine.vm.bundler.options.routes.asset_prefix_path).toValue(VirtualMachine.vm.global).asRef();
+    }
+
     pub fn getRoutesDir(
         this: void,
         ctx: js.JSContextRef,
@@ -118,20 +130,6 @@ pub const Wundle = struct {
         exception: js.ExceptionRef,
     ) js.JSValueRef {
         if (!VirtualMachine.vm.bundler.options.routes.routes_enabled or VirtualMachine.vm.bundler.options.routes.dir.len == 0) {
-            return js.JSValueMakeUndefined(ctx);
-        }
-
-        return ZigString.init(VirtualMachine.vm.bundler.options.routes.dir).toValue(VirtualMachine.vm.global).asRef();
-    }
-
-    pub fn routeByName(
-        this: void,
-        ctx: js.JSContextRef,
-        thisObject: js.JSValueRef,
-        prop: js.JSStringRef,
-        exception: js.ExceptionRef,
-    ) js.JSValueRef {
-        if (!VirtualMachine.vm.bundler.options.routes.routes_enabled) {
             return js.JSValueMakeUndefined(ctx);
         }
 
@@ -155,15 +153,39 @@ pub const Wundle = struct {
         return JSValue.createStringArray(VirtualMachine.vm.global, styles.ptr, styles.len).asRef();
     }
 
+    pub fn getRouteFiles(
+        this: void,
+        ctx: js.JSContextRef,
+        function: js.JSObjectRef,
+        thisObject: js.JSObjectRef,
+        arguments: []const js.JSValueRef,
+        exception: js.ExceptionRef,
+    ) js.JSValueRef {
+        if (VirtualMachine.vm.bundler.router == null) return js.JSValueMakeNull(ctx);
+
+        const router = &(VirtualMachine.vm.bundler.router orelse unreachable);
+        const list = router.getEntryPointsWithBuffer(VirtualMachine.vm.allocator, false) catch unreachable;
+        VirtualMachine.vm.flush_list.append(list.buffer) catch {};
+        defer VirtualMachine.vm.allocator.free(list.entry_points);
+
+        for (routes_list_strings[0..std.math.min(list.entry_points.len, routes_list_strings.len)]) |_, i| {
+            routes_list_strings[i] = ZigString.init(list.entry_points[i]);
+        }
+
+        const ref = JSValue.createStringArray(VirtualMachine.vm.global, &routes_list_strings, list.entry_points.len).asRef();
+        return ref;
+    }
+
     pub fn getPublicPath(to: string, comptime Writer: type, writer: Writer) void {
         const relative_path = VirtualMachine.vm.bundler.fs.relativeTo(to);
-        if (VirtualMachine.vm.bundler.options.origin.len > 0) {
-            writer.print(
-                "{s}/{s}",
-                .{
-                    std.mem.trimRight(u8, VirtualMachine.vm.bundler.options.origin, "/"),
-                    std.mem.trimLeft(u8, relative_path, "/"),
-                },
+        if (VirtualMachine.vm.bundler.options.origin.isAbsolute()) {
+            VirtualMachine.vm.bundler.options.origin.joinWrite(
+                Writer,
+                writer,
+                VirtualMachine.vm.bundler.options.routes.asset_prefix_path,
+                "",
+                relative_path,
+                "",
             ) catch unreachable;
         } else {
             writer.writeAll(std.mem.trimLeft(u8, relative_path, "/")) catch unreachable;
@@ -194,6 +216,13 @@ pub const Wundle = struct {
                     .@"return" = "string[]",
                 },
             },
+            .getRouteFiles = .{
+                .rfn = Wundle.getRouteFiles,
+                .ts = d.ts{
+                    .name = "getRouteFiles",
+                    .@"return" = "string[]",
+                },
+            },
         },
         .{
             .Route = Router.Instance.GetClass(void){},
@@ -212,6 +241,10 @@ pub const Wundle = struct {
             .routesDir = .{
                 .get = getRoutesDir,
                 .ts = d.ts{ .name = "routesDir", .@"return" = "string" },
+            },
+            .assetPrefix = .{
+                .get = getAssetPrefix,
+                .ts = d.ts{ .name = "assetPrefix", .@"return" = "string" },
             },
         },
     );
@@ -239,6 +272,8 @@ pub const VirtualMachine = struct {
     event_listeners: EventListenerMixin.Map,
     main: string = "",
     process: js.JSObjectRef = null,
+
+    flush_list: std.ArrayList(string),
 
     pub var vm_loaded = false;
     pub var vm: *VirtualMachine = undefined;
@@ -274,6 +309,7 @@ pub const VirtualMachine = struct {
             .console = console,
             .node_modules = bundler.options.node_modules_bundle,
             .log = log,
+            .flush_list = std.ArrayList(string).init(allocator),
         };
 
         VirtualMachine.vm.bundler.configureLinker();
@@ -304,6 +340,13 @@ pub const VirtualMachine = struct {
 
     threadlocal var source_code_printer: js_printer.BufferPrinter = undefined;
     threadlocal var source_code_printer_loaded: bool = false;
+
+    pub fn flush(this: *VirtualMachine) void {
+        for (this.flush_list.items) |item| {
+            this.allocator.free(item);
+        }
+        this.flush_list.shrinkRetainingCapacity(0);
+    }
 
     inline fn _fetch(
         global: *JSGlobalObject,
@@ -537,12 +580,23 @@ pub const VirtualMachine = struct {
 
         res.* = ErrorableZigString.ok(ZigString.init(result.path));
     }
-    pub fn normalizeSpecifier(slice: string) string {
+    pub fn normalizeSpecifier(slice_: string) string {
+        var slice = slice_;
         if (slice.len == 0) return slice;
 
-        if (VirtualMachine.vm.bundler.options.origin.len > 0) {
-            if (strings.startsWith(slice, VirtualMachine.vm.bundler.options.origin)) {
-                return slice[VirtualMachine.vm.bundler.options.origin.len..];
+        if (strings.startsWith(slice, VirtualMachine.vm.bundler.options.origin.host)) {
+            slice = slice[VirtualMachine.vm.bundler.options.origin.host.len..];
+        }
+
+        if (VirtualMachine.vm.bundler.options.origin.path.len > 1) {
+            if (strings.startsWith(slice, VirtualMachine.vm.bundler.options.origin.path)) {
+                slice = slice[VirtualMachine.vm.bundler.options.origin.path.len..];
+            }
+        }
+
+        if (VirtualMachine.vm.bundler.options.routes.asset_prefix_path.len > 0) {
+            if (strings.startsWith(slice, VirtualMachine.vm.bundler.options.routes.asset_prefix_path)) {
+                slice = slice[VirtualMachine.vm.bundler.options.routes.asset_prefix_path.len..];
             }
         }
 
@@ -559,6 +613,15 @@ pub const VirtualMachine = struct {
         if (log.errors > 0) {
             processFetchLog(specifier, source, &log, ret, error.LinkError);
             return;
+        }
+
+        if (log.warnings > 0) {
+            var writer = Output.errorWriter();
+            for (log.msgs.items) |msg| {
+                if (msg.kind == .warn) {
+                    msg.writeFormat(writer) catch {};
+                }
+            }
         }
 
         ret.result.value = result;

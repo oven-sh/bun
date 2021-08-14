@@ -358,6 +358,29 @@ pub fn createQueryObject(ctx: js.JSContextRef, map: *QueryStringMap, exception: 
 }
 
 threadlocal var entry_point_tempbuf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+pub fn getScriptSrcString(
+    comptime Writer: type,
+    writer: Writer,
+    file_path: string,
+    client_framework_enabled: bool,
+) void {
+    // We don't store the framework config including the client parts in the server
+    // instead, we just store a boolean saying whether we should generate this whenever the script is requested
+    // this is kind of bad. we should consider instead a way to inline the contents of the script.
+    if (client_framework_enabled) {
+        JavaScript.Wundle.getPublicPath(
+            Bundler.ClientEntryPoint.generateEntryPointPath(
+                &entry_point_tempbuf,
+                Fs.PathName.init(file_path),
+            ),
+            ScriptSrcStream.Writer,
+            writer,
+        );
+    } else {
+        JavaScript.Wundle.getPublicPath(file_path, ScriptSrcStream.Writer, writer);
+    }
+}
+
 pub fn getScriptSrc(
     this: *Router,
     ctx: js.JSContextRef,
@@ -366,22 +389,7 @@ pub fn getScriptSrc(
     exception: js.ExceptionRef,
 ) js.JSValueRef {
     const src = this.script_src orelse brk: {
-        // We don't store the framework config including the client parts in the server
-        // instead, we just store a boolean saying whether we should generate this whenever the script is requested
-        // this is kind of bad. we should consider instead a way to inline the contents of the script.
-        var writer = this.script_src_buf_writer.writer();
-        if (this.route.client_framework_enabled) {
-            JavaScript.Wundle.getPublicPath(
-                Bundler.ClientEntryPoint.generateEntryPointPath(
-                    &entry_point_tempbuf,
-                    Fs.PathName.init(this.route.file_path),
-                ),
-                ScriptSrcStream.Writer,
-                writer,
-            );
-        } else {
-            JavaScript.Wundle.getPublicPath(this.route.file_path, ScriptSrcStream.Writer, writer);
-        }
+        getScriptSrcString(ScriptSrcStream.Writer, this.script_src_buf_writer.writer(), this.route.file_path, this.route.client_framework_enabled);
         break :brk this.script_src_buf[0..this.script_src_buf_writer.pos];
     };
 

@@ -14,11 +14,11 @@ const toMutable = allocators.constStrToU8;
 
 // TODO: use a real URL parser
 // this treats a URL like /_next/ identically to /
-pub fn pathWithoutOrigin(this: *const URLPath, _origin: string) string {
-    if (_origin.len == 0) return this.path;
-    const leading_slash_offset: usize = if (_origin[0] == '/') 1 else 0;
+pub fn pathWithoutAssetPrefix(this: *const URLPath, asset_prefix: string) string {
+    if (asset_prefix.len == 0) return this.path;
+    const leading_slash_offset: usize = if (asset_prefix[0] == '/') 1 else 0;
     const base = this.path;
-    const origin = _origin[leading_slash_offset..];
+    const origin = asset_prefix[leading_slash_offset..];
 
     return if (base.len >= origin.len and strings.eql(base[0..origin.len], origin)) base[origin.len..] else base;
 }

@@ -1042,7 +1042,7 @@ pub const E = struct {
     };
 
     pub const Object = struct {
-        properties: []G.Property,
+        properties: []G.Property = &[_]G.Property{},
         comma_after_spread: ?logger.Loc = null,
         is_single_line: bool = false,
         is_parenthesized: bool = false,
@@ -2091,6 +2091,44 @@ pub const Expr = struct {
                 var expr = all[0];
                 while (i < all.len) : (i += 1) {
                     expr = Expr.joinWithComma(expr, all[i], allocator);
+                }
+
+                return expr;
+            },
+        }
+    }
+
+    pub fn joinAllWithCommaCallback(all: []Expr, comptime Context: type, ctx: Context, callback: (fn (ctx: anytype, expr: anytype) ?Expr), allocator: *std.mem.Allocator) ?Expr {
+        std.debug.assert(all.len > 0);
+        switch (all.len) {
+            1 => {
+                return callback(ctx, all[0]);
+            },
+            2 => {
+                return Expr.joinWithComma(
+                    callback(ctx, all[0]) orelse Expr{
+                        .data = .{ .e_missing = .{} },
+                        .loc = all[0].loc,
+                    },
+                    callback(ctx, all[1]) orelse Expr{
+                        .data = .{ .e_missing = .{} },
+                        .loc = all[1].loc,
+                    },
+                    allocator,
+                );
+            },
+            else => {
+                var i: usize = 1;
+                var expr = callback(ctx, all[0]) orelse Expr{
+                    .data = .{ .e_missing = .{} },
+                    .loc = all[0].loc,
+                };
+
+                while (i < all.len) : (i += 1) {
+                    expr = Expr.joinWithComma(expr, callback(ctx, all[i]) orelse Expr{
+                        .data = .{ .e_missing = .{} },
+                        .loc = all[i].loc,
+                    }, allocator);
                 }
 
                 return expr;

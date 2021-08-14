@@ -447,7 +447,7 @@ pub const Log = struct {
     pub fn addWarningFmt(log: *Log, source: ?*const Source, l: Loc, allocator: *std.mem.Allocator, comptime text: string, args: anytype) !void {
         log.warnings += 1;
         try log.addMsg(Msg{
-            .kind = .err,
+            .kind = .warn,
             .data = rangeData(source, Range{ .loc = l }, std.fmt.allocPrint(allocator, text, args) catch unreachable),
         });
     }

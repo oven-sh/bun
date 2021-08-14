@@ -134,8 +134,8 @@ pub const RequestContext = struct {
 
     pub fn getFullURL(this: *RequestContext) [:0]const u8 {
         if (this.full_url.len == 0) {
-            if (this.bundler.options.origin.len > 0) {
-                this.full_url = std.fmt.allocPrintZ(this.allocator, "{s}{s}", .{ this.bundler.options.origin, this.request.path }) catch unreachable;
+            if (this.bundler.options.origin.isAbsolute()) {
+                this.full_url = std.fmt.allocPrintZ(this.allocator, "{s}{s}", .{ this.bundler.options.origin.origin, this.request.path }) catch unreachable;
             } else {
                 this.full_url = this.allocator.dupeZ(u8, this.request.path) catch unreachable;
             }
@@ -733,6 +733,7 @@ pub const RequestContext = struct {
                 Output.flush();
                 return;
             };
+            vm.bundler.configureRouter() catch {};
             std.debug.assert(JavaScript.VirtualMachine.vm_loaded);
             javascript_vm = vm;
 
@@ -740,62 +741,67 @@ pub const RequestContext = struct {
             std.debug.assert(boot.len > 0);
             defer vm.deinit();
             vm.watcher = handler.watcher;
-            var entry_point = boot;
-            if (!std.fs.path.isAbsolute(entry_point)) {
-                const resolved_entry_point = try vm.bundler.resolver.resolve(
-                    std.fs.path.dirname(boot) orelse vm.bundler.fs.top_level_dir,
-                    vm.bundler.normalizeEntryPointPath(boot),
-                    .entry_point,
-                );
-                entry_point = resolved_entry_point.path_pair.primary.text;
-            }
+            {
+                defer vm.flush();
 
-            var load_result = vm.loadEntryPoint(
-                entry_point,
-            ) catch |err| {
-                Output.prettyErrorln(
-                    "<r>JavaScript VM failed to start.\n<red>{s}:<r> while loading <r><b>\"\"",
-                    .{ @errorName(err), entry_point },
-                );
-
-                if (channel.tryReadItem() catch null) |item| {
-                    item.ctx.sendInternalError(error.JSFailedToStart) catch {};
-                    item.ctx.arena.deinit();
-                }
-                return;
-            };
-
-            switch (load_result.status(vm.global.vm())) {
-                JSPromise.Status.Fulfilled => {},
-                else => {
-                    Output.prettyErrorln(
-                        "JavaScript VM failed to start",
-                        .{},
+                var entry_point = boot;
+                if (!std.fs.path.isAbsolute(entry_point)) {
+                    const resolved_entry_point = try vm.bundler.resolver.resolve(
+                        std.fs.path.dirname(boot) orelse vm.bundler.fs.top_level_dir,
+                        vm.bundler.normalizeEntryPointPath(boot),
+                        .entry_point,
                     );
-                    var result = load_result.result(vm.global.vm());
+                    entry_point = resolved_entry_point.path_pair.primary.text;
+                }
 
-                    vm.defaultErrorHandler(result);
+                var load_result = vm.loadEntryPoint(
+                    entry_point,
+                ) catch |err| {
+                    Output.prettyErrorln(
+                        "<r>JavaScript VM failed to start.\n<red>{s}:<r> while loading <r><b>\"\"",
+                        .{ @errorName(err), entry_point },
+                    );
 
                     if (channel.tryReadItem() catch null) |item| {
                         item.ctx.sendInternalError(error.JSFailedToStart) catch {};
                         item.ctx.arena.deinit();
                     }
                     return;
-                },
-            }
+                };
 
-            if (vm.event_listeners.count() == 0) {
-                Output.prettyErrorln("<r><red>error<r>: Framework didn't run <b><cyan>addEventListener(\"fetch\", callback)<r>, which means it can't accept HTTP requests.\nShutting down JS.", .{});
-                if (channel.tryReadItem() catch null) |item| {
-                    item.ctx.sendInternalError(error.JSFailedToStart) catch {};
-                    item.ctx.arena.deinit();
+                switch (load_result.status(vm.global.vm())) {
+                    JSPromise.Status.Fulfilled => {},
+                    else => {
+                        Output.prettyErrorln(
+                            "JavaScript VM failed to start",
+                            .{},
+                        );
+                        var result = load_result.result(vm.global.vm());
+
+                        vm.defaultErrorHandler(result);
+
+                        if (channel.tryReadItem() catch null) |item| {
+                            item.ctx.sendInternalError(error.JSFailedToStart) catch {};
+                            item.ctx.arena.deinit();
+                        }
+                        return;
+                    },
                 }
-                return;
+
+                if (vm.event_listeners.count() == 0) {
+                    Output.prettyErrorln("<r><red>error<r>: Framework didn't run <b><cyan>addEventListener(\"fetch\", callback)<r>, which means it can't accept HTTP requests.\nShutting down JS.", .{});
+                    if (channel.tryReadItem() catch null) |item| {
+                        item.ctx.sendInternalError(error.JSFailedToStart) catch {};
+                        item.ctx.arena.deinit();
+                    }
+                    return;
+                }
             }
 
             js_ast.Stmt.Data.Store.reset();
             js_ast.Expr.Data.Store.reset();
             JavaScript.Wundle.flushCSSImports();
+            vm.flush();
 
             try runLoop(vm);
         }
@@ -805,6 +811,7 @@ pub const RequestContext = struct {
 
             while (true) {
                 defer {
+                    JavaScript.VirtualMachine.vm.flush();
                     std.debug.assert(ZigGlobalObject.resetModuleRegistryMap(vm.global, module_map));
                     js_ast.Stmt.Data.Store.reset();
                     js_ast.Expr.Data.Store.reset();
@@ -1573,7 +1580,7 @@ pub const RequestContext = struct {
                 break :brk try ctx.bundler.buildFile(
                     &ctx.log,
                     ctx.allocator,
-                    ctx.url.pathWithoutOrigin(ctx.bundler.options.origin),
+                    ctx.url.pathWithoutAssetPrefix(ctx.bundler.options.routes.asset_prefix_path),
                     ctx.url.extname,
                     true,
                 );
@@ -1581,7 +1588,7 @@ pub const RequestContext = struct {
                 break :brk try ctx.bundler.buildFile(
                     &ctx.log,
                     ctx.allocator,
-                    ctx.url.pathWithoutOrigin(ctx.bundler.options.origin),
+                    ctx.url.pathWithoutAssetPrefix(ctx.bundler.options.routes.asset_prefix_path),
                     ctx.url.extname,
                     false,
                 );
@@ -1743,7 +1750,16 @@ pub const Server = struct {
 
         // try listener.ack(true);
 
-        try listener.bind(ip.Address.initIPv4(IPv4.unspecified, 9000));
+        var port: u16 = 3000;
+
+        if (server.bundler.options.origin.getPort()) |_port| {
+            port = _port;
+        }
+
+        try listener.bind(ip.Address.initIPv4(
+            IPv4.unspecified,
+            port,
+        ));
         try listener.listen(1280);
         const addr = try listener.getLocalAddress();
 

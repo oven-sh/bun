@@ -217,7 +217,7 @@ pub fn eqlComptime(self: string, comptime alt: anytype) bool {
             return (self.len == alt.len) and first == std.mem.readIntNative(u64, self[0..8]) and second == std.mem.readIntNative(u64, self[8..16]);
         },
         else => {
-        @compileError(alt ++ " is too long.");
+            @compileError(alt ++ " is too long.");
         },
     }
 }
@@ -497,6 +497,21 @@ pub const CodepointIterator = struct {
         };
 
         return it.c;
+    }
+
+    pub fn nextCodepointNoReturn(it: *CodepointIterator) void {
+        const slice = it.nextCodepointSlice();
+        it.width = @intCast(u3, slice.len);
+        @setRuntimeSafety(false);
+
+        it.c = switch (it.width) {
+            0 => -1,
+            1 => @intCast(CodePoint, slice[0]),
+            2 => @intCast(CodePoint, std.unicode.utf8Decode2(slice) catch unreachable),
+            3 => @intCast(CodePoint, std.unicode.utf8Decode3(slice) catch unreachable),
+            4 => @intCast(CodePoint, std.unicode.utf8Decode4(slice) catch unreachable),
+            else => unreachable,
+        };
     }
 
     /// Look ahead at the next n codepoints without advancing the iterator.

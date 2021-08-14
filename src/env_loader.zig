@@ -6,12 +6,16 @@ const CodepointIterator = @import("./string_immutable.zig").CodepointIterator;
 const Variable = struct {
     key: string,
     value: string,
+    has_nested_value: bool = false,
 };
 
 // i don't expect anyone to actually use the escape line feed character
 const escLineFeed = 0x0C;
 // arbitrary character that is invalid in a real text file
 const implicitQuoteCharacter = 8;
+
+// you get 4k. I hope you don't need more than that.
+threadlocal var temporary_nested_value_buffer: [4096]u8 = undefined;
 
 pub const Lexer = struct {
     source: *const logger.Source,
@@ -20,7 +24,7 @@ pub const Lexer = struct {
     current: usize = 0,
     start: usize = 0,
     end: usize = 0,
-    has_nested_values: bool = false,
+    has_nested_value: bool = false,
     has_newline_before: bool = true,
 
     pub inline fn codepoint(this: *Lexer) CodePoint {
@@ -31,6 +35,65 @@ pub const Lexer = struct {
         @call(.{ .modifier = .always_inline }, CodepointIterator.nextCodepointNoReturn, .{&this.iter});
         this._codepoint = this.iter.c;
         this.current += 1;
+    }
+
+    pub fn eatNestedValue(
+        lexer: *Lexer,
+        comptime ContextType: type,
+        ctx: *ContextType,
+        comptime Writer: type,
+        writer: Writer,
+        variable: Variable,
+        getter: fn (ctx: *const ContextType, key: string) ?string,
+    ) !void {
+        var i: usize = 0;
+        var last_flush: usize = 0;
+
+        top: while (i < variable.value.len) {
+            switch (variable.value[i]) {
+                '$' => {
+                    i += 1;
+                    const start = i;
+
+                    while (i < variable.value.len) {
+                        switch (variable.value[i]) {
+                            'a'...'z', 'A'...'Z', '0'...'9', '-', '_' => {
+                                i += 1;
+                            },
+                            else => {
+                                break;
+                            },
+                        }
+                    }
+
+                    try writer.writeAll(variable.value[last_flush .. start - 1]);
+                    last_flush = i;
+                    const name = variable.value[start..i];
+
+                    if (getter(ctx, name)) |new_value| {
+                        if (new_value.len > 0) {
+                            try writer.writeAll(new_value);
+                        }
+                    }
+
+                    continue :top;
+                },
+                '\\' => {
+                    i += 1;
+                    switch (variable.value[i]) {
+                        '$' => {
+                            i += 1;
+                            continue;
+                        },
+                        else => {},
+                    }
+                },
+                else => {},
+            }
+            i += 1;
+        }
+
+        try writer.writeAll(variable.value[last_flush..]);
     }
 
     pub fn eatValue(
@@ -47,14 +110,24 @@ pub const Lexer = struct {
                     lexer.step();
                     // Handle Windows CRLF
                     last_non_space += 1;
-                    if (lexer.codepoint() == '\r') {
-                        lexer.step();
-                        last_non_space += 1;
-                        if (lexer.codepoint() == '\n') {
+
+                    switch (lexer.codepoint()) {
+                        '\r' => {
                             lexer.step();
                             last_non_space += 1;
-                        }
-                        continue;
+                            if (lexer.codepoint() == '\n') {
+                                lexer.step();
+                                last_non_space += 1;
+                            }
+                            continue;
+                        },
+                        '$' => {
+                            lexer.step();
+                            continue;
+                        },
+                        else => {
+                            continue;
+                        },
                     }
                 },
                 -1 => {
@@ -63,7 +136,7 @@ pub const Lexer = struct {
                     return lexer.source.contents[start..][0 .. last_non_space + 1];
                 },
                 '$' => {
-                    lexer.has_nested_values = true;
+                    lexer.has_nested_value = true;
                     last_non_space += 1;
                 },
 
@@ -188,15 +261,24 @@ pub const Lexer = struct {
                                 if (key.len == 0) return null;
                                 this.step();
 
+                                this.has_nested_value = false;
                                 inner: while (true) {
                                     switch (this.codepoint()) {
                                         '"' => {
                                             const value = this.eatValue('"');
-                                            return Variable{ .key = key, .value = value };
+                                            return Variable{
+                                                .key = key,
+                                                .value = value,
+                                                .has_nested_value = this.has_nested_value,
+                                            };
                                         },
                                         '\'' => {
                                             const value = this.eatValue('\'');
-                                            return Variable{ .key = key, .value = value };
+                                            return Variable{
+                                                .key = key,
+                                                .value = value,
+                                                .has_nested_value = this.has_nested_value,
+                                            };
                                         },
                                         0, -1 => {
                                             return Variable{ .key = key, .value = "" };
@@ -214,7 +296,11 @@ pub const Lexer = struct {
                                         // except we don't terminate on that character
                                         else => {
                                             const value = this.eatValue(implicitQuoteCharacter);
-                                            return Variable{ .key = key, .value = value };
+                                            return Variable{
+                                                .key = key,
+                                                .value = value,
+                                                .has_nested_value = this.has_nested_value,
+                                            };
                                         },
                                     }
                                 }
@@ -247,8 +333,19 @@ pub const Parser = struct {
         var map = Map.init(allocator);
 
         var lexer = Lexer.init(source);
+        var fbs = std.io.fixedBufferStream(&temporary_nested_value_buffer);
+        var writer = fbs.writer();
         while (lexer.next()) |variable| {
-            map.put(variable.key, variable.value) catch {};
+            if (variable.has_nested_value) {
+                writer.context.reset();
+                lexer.eatNestedValue(Map, &map, @TypeOf(writer), writer, variable, Map.get) catch unreachable;
+                const new_value = fbs.buffer[0..fbs.pos];
+                if (new_value.len > 0) {
+                    map.put(variable.key, allocator.dupe(u8, new_value) catch unreachable) catch unreachable;
+                }
+            } else {
+                map.put(variable.key, variable.value) catch unreachable;
+            }
         }
 
         return map;
@@ -272,7 +369,7 @@ pub const Map = struct {
         try this.map.put(key, value);
     }
 
-    pub inline fn get(
+    pub fn get(
         this: *const Map,
         key: string,
     ) ?string {
@@ -282,6 +379,10 @@ pub const Map = struct {
     pub inline fn putDefault(this: *Map, key: string, value: string) !void {
         _ = try this.map.getOrPutValue(key, value);
     }
+
+    pub fn merge(this: *Map, other: *Map) !void {}
+
+    pub fn copyPrefixed(this: *Map, other: *Map) !void {}
 };
 
 const expectString = std.testing.expectEqualStrings;
@@ -313,9 +414,18 @@ test "DotEnv Loader" {
         \\
         \\IGNORING_DOESNT_BREAK_OTHER_LINES='yes'
         \\
+        \\NESTED_VALUE='$API_KEY'
+        \\
+        \\RECURSIVE_NESTED_VALUE=$NESTED_VALUE:$API_KEY
+        \\
+        \\NESTED_VALUES_RESPECT_ESCAPING='\$API_KEY'
+        \\
     ;
     const source = logger.Source.initPathString(".env", VALID_ENV);
     const map = Parser.parse(&source, std.heap.c_allocator);
+    try expectString(map.get("NESTED_VALUE").?, "'verysecure'");
+    try expectString(map.get("RECURSIVE_NESTED_VALUE").?, "'verysecure':verysecure");
+    try expectString(map.get("NESTED_VALUES_RESPECT_ESCAPING").?, "'\\$API_KEY'");
     try expectString(map.get("API_KEY").?, "verysecure");
     try expectString(map.get("process.env.WAT").?, "ABCDEFGHIJKLMNOPQRSTUVWXYZZ10239457123");
     try expectString(map.get("DOUBLE-QUOTED_SHOULD_PRESERVE_NEWLINES").?, "\"\nya\n\"");

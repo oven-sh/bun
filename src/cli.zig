@@ -21,6 +21,7 @@ const configureTransformOptionsForSpeedy = @import("./javascript/jsc/config.zig"
 const clap = @import("clap");
 
 const bundler = @import("bundler.zig");
+const DotEnv = @import("./env_loader.zig");
 
 const fs = @import("fs.zig");
 const Router = @import("./router.zig");
@@ -407,11 +408,11 @@ pub const Cli = struct {
             var log_ = try allocator.create(logger.Log);
             log_.* = log;
 
-            var this_bundler = try bundler.ServeBundler.init(allocator, log_, args, null);
+            var this_bundler = try bundler.ServeBundler.init(allocator, log_, args, null, null);
             this_bundler.configureLinker();
             var filepath: [*:0]const u8 = "node_modules.jsb";
             var server_bundle_filepath: [*:0]const u8 = "node_modules.server.jsb";
-            try this_bundler.configureRouter();
+            try this_bundler.configureRouter(true);
 
             var loaded_route_config: ?Api.LoadedRouteConfig = brk: {
                 if (this_bundler.options.routes.routes_enabled) {
@@ -425,7 +426,7 @@ pub const Cli = struct {
                 }
                 break :brk null;
             };
-
+            var env_loader = this_bundler.env;
             wait_group = sync.WaitGroup.init();
             var server_bundler_generator_thread: ?std.Thread = null;
             if (this_bundler.options.framework) |*framework| {
@@ -433,6 +434,7 @@ pub const Cli = struct {
                     const ServerBundleGeneratorThread = struct {
                         inline fn _generate(
                             logs: *logger.Log,
+                            env_loader_: *DotEnv.Loader,
                             allocator_: *std.mem.Allocator,
                             transform_args: Api.TransformOptions,
                             _filepath: [*:0]const u8,
@@ -440,9 +442,16 @@ pub const Cli = struct {
                             route_conf_: ?Api.LoadedRouteConfig,
                             router: ?Router,
                         ) !void {
-                            var server_bundler = try bundler.ServeBundler.init(allocator_, logs, try configureTransformOptionsForSpeedy(allocator_, transform_args), null);
+                            var server_bundler = try bundler.ServeBundler.init(
+                                allocator_,
+                                logs,
+                                try configureTransformOptionsForSpeedy(allocator_, transform_args),
+                                null,
+                                env_loader_,
+                            );
                             server_bundler.configureLinker();
                             server_bundler.router = router;
+                            try server_bundler.configureDefines();
                             _ = try bundler.ServeBundler.GenerateNodeModuleBundle.generate(
                                 &server_bundler,
                                 allocator_,
@@ -454,6 +463,7 @@ pub const Cli = struct {
                         }
                         pub fn generate(
                             logs: *logger.Log,
+                            env_loader_: *DotEnv.Loader,
                             transform_args: Api.TransformOptions,
                             _filepath: [*:0]const u8,
                             server_conf: Api.LoadedFramework,
@@ -477,7 +487,7 @@ pub const Cli = struct {
                                 }
                             }
 
-                            _generate(logs, std.heap.c_allocator, transform_args, _filepath, server_conf, route_conf_, router) catch return;
+                            _generate(logs, env_loader_, std.heap.c_allocator, transform_args, _filepath, server_conf, route_conf_, router) catch return;
                         }
                     };
 
@@ -488,6 +498,7 @@ pub const Cli = struct {
                             ServerBundleGeneratorThread.generate,
                             .{
                                 log_,
+                                env_loader,
                                 args,
                                 server_bundle_filepath,
                                 _server_conf,
@@ -498,6 +509,7 @@ pub const Cli = struct {
                     } else {
                         ServerBundleGeneratorThread.generate(
                             log_,
+                            env_loader,
                             args,
                             server_bundle_filepath,
                             _server_conf,

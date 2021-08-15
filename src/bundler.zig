@@ -33,7 +33,7 @@ const NodeModuleBundle = @import("./node_module_bundle.zig").NodeModuleBundle;
 const Router = @import("./router.zig");
 const isPackagePath = _resolver.isPackagePath;
 const Css = @import("css_scanner.zig");
-
+const DotEnv = @import("./env_loader.zig");
 pub const ServeResult = struct {
     file: options.OutputFile,
     mime_type: MimeType,
@@ -244,6 +244,7 @@ pub fn NewBundler(cache_files: bool) type {
 
         linker: Linker,
         timer: Timer = Timer{},
+        env: *DotEnv.Loader,
 
         // must be pointer array because we can't we don't want the source to point to invalid memory if the array size is reallocated
         virtual_modules: std.ArrayList(*ClientEntryPoint),
@@ -259,6 +260,7 @@ pub fn NewBundler(cache_files: bool) type {
             log: *logger.Log,
             opts: Api.TransformOptions,
             existing_bundle: ?*NodeModuleBundle,
+            env_loader_: ?*DotEnv.Loader,
         ) !ThisBundler {
             js_ast.Expr.Data.Store.create(allocator);
             js_ast.Stmt.Data.Store.create(allocator);
@@ -274,6 +276,14 @@ pub fn NewBundler(cache_files: bool) type {
                 existing_bundle,
             );
 
+            var env_loader = env_loader_ orelse brk: {
+                var map = try allocator.create(DotEnv.Map);
+                map.* = DotEnv.Map.init(allocator);
+
+                var loader = try allocator.create(DotEnv.Loader);
+                loader.* = DotEnv.Loader.init(map, allocator);
+                break :brk loader;
+            };
             // var pool = try allocator.create(ThreadPool);
             // try pool.init(ThreadPool.InitConfig{
             //     .allocator = allocator,
@@ -293,6 +303,7 @@ pub fn NewBundler(cache_files: bool) type {
                 .resolve_queue = ResolveQueue.init(allocator),
                 .output_files = std.ArrayList(options.OutputFile).init(allocator),
                 .virtual_modules = std.ArrayList(*ClientEntryPoint).init(allocator),
+                .env = env_loader,
             };
         }
 
@@ -308,16 +319,64 @@ pub fn NewBundler(cache_files: bool) type {
             );
         }
 
-        pub fn configureFramework(this: *ThisBundler) !void {
+        pub fn runEnvLoader(this: *ThisBundler) !void {
+            switch (this.options.env.behavior) {
+                .prefix, .load_all => {
+                    // Step 1. Load the project root.
+                    var dir: *Fs.FileSystem.DirEntry = ((this.resolver.readDirInfo(this.fs.top_level_dir) catch return) orelse return).getEntries() orelse return;
+
+                    // Process always has highest priority.
+                    this.env.loadProcess();
+                    if (this.options.production) {
+                        try this.env.load(&this.fs.fs, dir, false);
+                    } else {
+                        try this.env.load(&this.fs.fs, dir, true);
+                    }
+                },
+                else => {},
+            }
+        }
+
+        // This must be run after a framework is configured, if a framework is enabled
+        pub fn configureDefines(this: *ThisBundler) !void {
+            if (this.options.defines_loaded) {
+                return;
+            }
+
+            try this.runEnvLoader();
+
+            if (this.options.framework) |framework| {
+                if (this.options.platform.isClient()) {
+                    try this.options.loadDefines(this.allocator, this.env, &framework.client_env);
+                } else {
+                    try this.options.loadDefines(this.allocator, this.env, &framework.server_env);
+                }
+            } else {
+                try this.options.loadDefines(this.allocator, this.env, &this.options.env);
+            }
+        }
+
+        pub fn configureFramework(
+            this: *ThisBundler,
+            comptime load_defines: bool,
+        ) !void {
             if (this.options.framework) |*framework| {
                 if (framework.needsResolveFromPackage()) {
                     var route_config = this.options.routes;
                     var pair = PackageJSON.FrameworkRouterPair{ .framework = framework, .router = &route_config };
 
                     if (framework.development) {
-                        try this.resolver.resolveFramework(framework.package, &pair, .development);
+                        try this.resolver.resolveFramework(framework.package, &pair, .development, load_defines);
                     } else {
-                        try this.resolver.resolveFramework(framework.package, &pair, .production);
+                        try this.resolver.resolveFramework(framework.package, &pair, .production, load_defines);
+                    }
+
+                    if (this.options.areDefinesUnset()) {
+                        if (this.options.platform.isClient()) {
+                            this.options.env = framework.client_env;
+                        } else {
+                            this.options.env = framework.server_env;
+                        }
                     }
 
                     if (pair.loaded_routes) {
@@ -333,7 +392,7 @@ pub fn NewBundler(cache_files: bool) type {
 
         pub fn configureFrameworkWithResolveResult(this: *ThisBundler, comptime client: bool) !?_resolver.Result {
             if (this.options.framework != null) {
-                try this.configureFramework();
+                try this.configureFramework(true);
                 if (comptime client) {
                     if (this.options.framework.?.client.len > 0) {
                         return try this.resolver.resolve(this.fs.top_level_dir, this.options.framework.?.client, .stmt);
@@ -348,8 +407,13 @@ pub fn NewBundler(cache_files: bool) type {
             return null;
         }
 
-        pub fn configureRouter(this: *ThisBundler) !void {
-            try this.configureFramework();
+        pub fn configureRouter(this: *ThisBundler, comptime load_defines: bool) !void {
+            try this.configureFramework(load_defines);
+            defer {
+                if (load_defines) {
+                    this.configureDefines() catch {};
+                }
+            }
 
             // if you pass just a directory, activate the router configured for the pages directory
             // for now:
@@ -1683,7 +1747,6 @@ pub fn NewBundler(cache_files: bool) type {
 
         // We try to be mostly stateless when serving
         // This means we need a slightly different resolver setup
-        // Essentially:
         pub fn buildFile(
             bundler: *ThisBundler,
             log: *logger.Log,
@@ -1929,15 +1992,18 @@ pub fn NewBundler(cache_files: bool) type {
             log: *logger.Log,
             opts: Api.TransformOptions,
         ) !options.TransformResult {
-            var bundler = try ThisBundler.init(allocator, log, opts, null);
+            var bundler = try ThisBundler.init(allocator, log, opts, null, null);
             bundler.configureLinker();
-            try bundler.configureRouter();
+            try bundler.configureRouter(false);
+            try bundler.configureDefines();
 
             var skip_normalize = false;
-            if (bundler.options.routes.routes_enabled) {
+            var load_from_routes = false;
+            if (bundler.options.routes.routes_enabled and bundler.options.entry_points.len == 0) {
                 if (bundler.router) |router| {
                     bundler.options.entry_points = try router.getEntryPoints(allocator);
                     skip_normalize = true;
+                    load_from_routes = true;
                 }
             }
 
@@ -1964,16 +2030,18 @@ pub fn NewBundler(cache_files: bool) type {
             if (bundler.options.output_dir_handle == null) {
                 const outstream = std.io.getStdOut();
 
-                if (bundler.options.framework) |*framework| {
-                    if (framework.client.len > 0) {
-                        did_start = true;
-                        try switch (bundler.options.import_path_format) {
-                            .relative => bundler.processResolveQueue(.relative, true, @TypeOf(outstream), outstream),
-                            .relative_nodejs => bundler.processResolveQueue(.relative_nodejs, true, @TypeOf(outstream), outstream),
-                            .absolute_url => bundler.processResolveQueue(.absolute_url, true, @TypeOf(outstream), outstream),
-                            .absolute_path => bundler.processResolveQueue(.absolute_path, true, @TypeOf(outstream), outstream),
-                            .package_path => bundler.processResolveQueue(.package_path, true, @TypeOf(outstream), outstream),
-                        };
+                if (load_from_routes) {
+                    if (bundler.options.framework) |*framework| {
+                        if (framework.client.len > 0) {
+                            did_start = true;
+                            try switch (bundler.options.import_path_format) {
+                                .relative => bundler.processResolveQueue(.relative, true, @TypeOf(outstream), outstream),
+                                .relative_nodejs => bundler.processResolveQueue(.relative_nodejs, true, @TypeOf(outstream), outstream),
+                                .absolute_url => bundler.processResolveQueue(.absolute_url, true, @TypeOf(outstream), outstream),
+                                .absolute_path => bundler.processResolveQueue(.absolute_path, true, @TypeOf(outstream), outstream),
+                                .package_path => bundler.processResolveQueue(.package_path, true, @TypeOf(outstream), outstream),
+                            };
+                        }
                     }
                 }
 
@@ -1993,16 +2061,18 @@ pub fn NewBundler(cache_files: bool) type {
                     Global.crash();
                 };
 
-                if (bundler.options.framework) |*framework| {
-                    if (framework.client.len > 0) {
-                        did_start = true;
-                        try switch (bundler.options.import_path_format) {
-                            .relative => bundler.processResolveQueue(.relative, true, std.fs.Dir, output_dir),
-                            .relative_nodejs => bundler.processResolveQueue(.relative_nodejs, true, std.fs.Dir, output_dir),
-                            .absolute_url => bundler.processResolveQueue(.absolute_url, true, std.fs.Dir, output_dir),
-                            .absolute_path => bundler.processResolveQueue(.absolute_path, true, std.fs.Dir, output_dir),
-                            .package_path => bundler.processResolveQueue(.package_path, true, std.fs.Dir, output_dir),
-                        };
+                if (load_from_routes) {
+                    if (bundler.options.framework) |*framework| {
+                        if (framework.client.len > 0) {
+                            did_start = true;
+                            try switch (bundler.options.import_path_format) {
+                                .relative => bundler.processResolveQueue(.relative, true, std.fs.Dir, output_dir),
+                                .relative_nodejs => bundler.processResolveQueue(.relative_nodejs, true, std.fs.Dir, output_dir),
+                                .absolute_url => bundler.processResolveQueue(.absolute_url, true, std.fs.Dir, output_dir),
+                                .absolute_path => bundler.processResolveQueue(.absolute_path, true, std.fs.Dir, output_dir),
+                                .package_path => bundler.processResolveQueue(.package_path, true, std.fs.Dir, output_dir),
+                            };
+                        }
                     }
                 }
 
@@ -2030,8 +2100,8 @@ pub fn NewBundler(cache_files: bool) type {
             }
 
             if (FeatureFlags.tracing) {
-                Output.printError(
-                    "\n---Tracing---\nResolve time:      {d}\nParsing time:      {d}\n---Tracing--\n\n",
+                Output.prettyErrorln(
+                    "<r><d>\n---Tracing---\nResolve time:      {d}\nParsing time:      {d}\n---Tracing--\n\n<r>",
                     .{
                         bundler.resolver.elapsed,
                         bundler.elapsed,
@@ -2128,7 +2198,15 @@ pub const Transformer = struct {
         js_ast.Stmt.Data.Store.create(allocator);
         const platform = options.Platform.from(opts.platform);
 
-        var define = try options.definesFromTransformOptions(allocator, log, opts.define, false, platform);
+        var define = try options.definesFromTransformOptions(
+            allocator,
+            log,
+            opts.define,
+            false,
+            platform,
+            null,
+            null,
+        );
 
         const cwd = if (opts.absolute_working_dir) |workdir| try std.fs.realpathAlloc(allocator, workdir) else try std.process.getCwdAlloc(allocator);
 

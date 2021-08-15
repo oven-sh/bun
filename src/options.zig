@@ -13,6 +13,8 @@ const NodeModuleBundle = @import("./node_module_bundle.zig").NodeModuleBundle;
 const URL = @import("./query_string_map.zig").URL;
 usingnamespace @import("global.zig");
 
+const DotEnv = @import("./env_loader.zig");
+
 const assert = std.debug.assert;
 
 pub const WriteDestination = enum {
@@ -39,7 +41,7 @@ pub fn stringHashMapFromArrays(comptime t: type, allocator: *std.mem.Allocator, 
     if (keys.len > 0) {
         try hash_map.ensureCapacity(@intCast(u32, keys.len));
         for (keys) |key, i| {
-            try hash_map.put(key, values[i]);
+            hash_map.putAssumeCapacity(key, values[i]);
         }
     }
 
@@ -251,10 +253,17 @@ pub const Platform = enum {
     speedy,
     node,
 
+    pub inline fn isClient(this: Platform) bool {
+        return switch (this) {
+            .speedy => false,
+            else => true,
+        };
+    }
+
     const browser_define_value_true = "true";
     const browser_define_value_false = "false";
 
-    pub fn processBrowserDefineValue(this: Platform) ?string {
+    pub inline fn processBrowserDefineValue(this: Platform) ?string {
         return switch (this) {
             .browser => browser_define_value_true,
             .speedy, .node => browser_define_value_false,
@@ -262,7 +271,7 @@ pub const Platform = enum {
         };
     }
 
-    pub fn isWebLike(platform: Platform) bool {
+    pub inline fn isWebLike(platform: Platform) bool {
         return switch (platform) {
             .neutral, .browser => true,
             else => false,
@@ -570,6 +579,8 @@ pub fn definesFromTransformOptions(
     _input_define: ?Api.StringMap,
     hmr: bool,
     platform: Platform,
+    loader: ?*DotEnv.Loader,
+    framework_env: ?*const Env,
 ) !*defines.Define {
     var input_user_define = _input_define orelse std.mem.zeroes(Api.StringMap);
 
@@ -579,6 +590,29 @@ pub fn definesFromTransformOptions(
         input_user_define.keys,
         input_user_define.values,
     );
+
+    if (loader) |_loader| {
+        if (framework_env) |framework| {
+            _ = try _loader.copyForDefine(
+                defines.RawDefines,
+                &user_defines,
+                framework.toAPI().defaults,
+                framework.behavior,
+                framework.prefix,
+                allocator,
+            );
+        } else {
+            _ = try _loader.copyForDefine(
+                defines.RawDefines,
+                &user_defines,
+                std.mem.zeroes(Api.StringMap),
+                Api.DotEnvBehavior.disable,
+                "",
+                allocator,
+            );
+        }
+    }
+
     if (input_user_define.keys.len == 0) {
         try user_defines.put(DefaultUserDefines.NodeEnv.Key, DefaultUserDefines.NodeEnv.Value);
     }
@@ -675,6 +709,29 @@ pub const BundleOptions = struct {
     import_path_format: ImportPathFormat = ImportPathFormat.relative,
     framework: ?Framework = null,
     routes: RouteConfig = RouteConfig.zero(),
+    defines_loaded: bool = false,
+    env: Env = Env{},
+    transform_options: Api.TransformOptions,
+
+    pub fn areDefinesUnset(this: *const BundleOptions) bool {
+        return !this.defines_loaded;
+    }
+
+    pub fn loadDefines(this: *BundleOptions, allocator: *std.mem.Allocator, loader: ?*DotEnv.Loader, env: ?*const Env) !void {
+        if (this.defines_loaded) {
+            return;
+        }
+        this.define = try definesFromTransformOptions(
+            allocator,
+            this.log,
+            this.transform_options.define,
+            this.transform_options.serve orelse false,
+            this.platform,
+            loader,
+            env,
+        );
+        this.defines_loaded = true;
+    }
 
     pub fn asJavascriptBundleConfig(this: *const BundleOptions) Api.JavascriptBundleConfig {}
 
@@ -697,7 +754,13 @@ pub const BundleOptions = struct {
         pub var ExtensionOrder = [_]string{ ".tsx", ".ts", ".jsx", ".js", ".json", ".css" };
     };
 
-    pub fn fromApi(allocator: *std.mem.Allocator, fs: *Fs.FileSystem, log: *logger.Log, transform: Api.TransformOptions, node_modules_bundle_existing: ?*NodeModuleBundle) !BundleOptions {
+    pub fn fromApi(
+        allocator: *std.mem.Allocator,
+        fs: *Fs.FileSystem,
+        log: *logger.Log,
+        transform: Api.TransformOptions,
+        node_modules_bundle_existing: ?*NodeModuleBundle,
+    ) !BundleOptions {
         const output_dir_parts = [_]string{ try std.process.getCwdAlloc(allocator), transform.output_dir orelse "out" };
         var opts: BundleOptions = BundleOptions{
             .log = log,
@@ -710,6 +773,8 @@ pub const BundleOptions = struct {
             .external = undefined,
             .entry_points = transform.entry_points,
             .out_extensions = undefined,
+            .env = Env.init(allocator),
+            .transform_options = transform,
         };
 
         if (transform.origin) |origin| {
@@ -764,8 +829,6 @@ pub const BundleOptions = struct {
             else => {},
         }
 
-        opts.define = try definesFromTransformOptions(allocator, log, transform.define, transform.serve orelse false, opts.platform);
-
         if (!(transform.generate_node_module_bundle orelse false)) {
             if (node_modules_bundle_existing) |node_mods| {
                 opts.node_modules_bundle = node_mods;
@@ -798,19 +861,29 @@ pub const BundleOptions = struct {
                             }
 
                             const elapsed = @intToFloat(f64, (std.time.nanoTimestamp() - time_start)) / std.time.ns_per_ms;
+                            Output.printElapsed(elapsed);
                             Output.prettyErrorln(
-                                "<r><b><d>\"{s}\"<r><d> - {d} modules, {d} packages <b>[{d:>.2}ms]<r>",
+                                " <b><d>\"{s}\"<r><d> - {d} modules, {d} packages<r>",
                                 .{
                                     pretty_path,
                                     node_module_bundle.bundle.modules.len,
                                     node_module_bundle.bundle.packages.len,
-                                    elapsed,
                                 },
                             );
                             Output.flush();
                             if (transform.framework == null) {
                                 if (node_module_bundle.container.framework) |loaded_framework| {
-                                    opts.framework = Framework.fromLoadedFramework(loaded_framework);
+                                    opts.framework = Framework.fromLoadedFramework(loaded_framework, allocator);
+                                    opts.framework.?.client_env.allocator = allocator;
+                                    opts.framework.?.server_env.allocator = allocator;
+
+                                    if (transform.define == null) {
+                                        if (opts.platform.isClient()) {
+                                            opts.env = opts.framework.?.client_env;
+                                        } else {
+                                            opts.env = opts.framework.?.server_env;
+                                        }
+                                    }
                                 }
                             }
 
@@ -832,20 +905,30 @@ pub const BundleOptions = struct {
             }
         }
 
+        if (transform.framework) |_framework| {
+            opts.framework = try Framework.fromApi(_framework);
+
+            if (_framework.client_env) |env| {
+                opts.framework.?.client_env.allocator = allocator;
+                try opts.framework.?.client_env.setFromAPI(env);
+            }
+
+            if (_framework.server_env) |env| {
+                opts.framework.?.server_env.allocator = allocator;
+                try opts.framework.?.server_env.setFromAPI(env);
+            }
+        }
+
+        if (transform.router) |routes| {
+            opts.routes = try RouteConfig.fromApi(routes, allocator);
+        }
+
         if (transform.main_fields.len > 0) {
             opts.main_fields = transform.main_fields;
         }
 
         opts.external = ExternalModules.init(allocator, &fs.fs, fs.top_level_dir, transform.external, log, opts.platform);
         opts.out_extensions = opts.platform.outExtensions(allocator);
-
-        if (transform.framework) |_framework| {
-            opts.framework = try Framework.fromApi(_framework);
-        }
-
-        if (transform.router) |routes| {
-            opts.routes = try RouteConfig.fromApi(routes, allocator);
-        }
 
         if (transform.serve orelse false) {
             opts.preserve_extensions = true;
@@ -1186,6 +1269,105 @@ pub const TransformResult = struct {
     }
 };
 
+pub const Env = struct {
+    const Entry = struct {
+        key: string,
+        value: string,
+    };
+    const List = std.MultiArrayList(Entry);
+
+    behavior: Api.DotEnvBehavior = Api.DotEnvBehavior.disable,
+    prefix: string = "",
+    defaults: List = List{},
+    allocator: *std.mem.Allocator = undefined,
+
+    pub fn init(
+        allocator: *std.mem.Allocator,
+    ) Env {
+        return Env{
+            .allocator = allocator,
+            .defaults = List{},
+            .prefix = "",
+            .behavior = Api.DotEnvBehavior.disable,
+        };
+    }
+
+    pub fn ensureTotalCapacity(this: *Env, capacity: u64) !void {
+        try this.defaults.ensureTotalCapacity(this.allocator, capacity);
+    }
+
+    pub fn setDefaultsMap(this: *Env, defaults: Api.StringMap) !void {
+        this.defaults.shrinkRetainingCapacity(0);
+
+        if (defaults.keys.len == 0) {
+            return;
+        }
+
+        try this.defaults.ensureTotalCapacity(this.allocator, defaults.keys.len);
+
+        for (defaults.keys) |key, i| {
+            this.defaults.appendAssumeCapacity(.{ .key = key, .value = defaults.values[i] });
+        }
+    }
+
+    // For reading from API
+    pub fn setFromAPI(this: *Env, config: Api.EnvConfig) !void {
+        this.setBehaviorFromPrefix(config.prefix orelse "");
+
+        if (config.defaults) |defaults| {
+            try this.setDefaultsMap(defaults);
+        }
+    }
+
+    pub fn setBehaviorFromPrefix(this: *Env, prefix: string) void {
+        this.behavior = Api.DotEnvBehavior.disable;
+        this.prefix = "";
+
+        if (strings.eqlComptime(prefix, "*")) {
+            this.behavior = Api.DotEnvBehavior.load_all;
+        } else if (prefix.len > 0) {
+            this.behavior = Api.DotEnvBehavior.prefix;
+            this.prefix = prefix;
+        }
+    }
+
+    pub fn setFromLoaded(this: *Env, config: Api.LoadedEnvConfig, allocator: *std.mem.Allocator) !void {
+        this.allocator = allocator;
+        this.behavior = switch (config.dotenv) {
+            Api.DotEnvBehavior.prefix => Api.DotEnvBehavior.prefix,
+            Api.DotEnvBehavior.load_all => Api.DotEnvBehavior.load_all,
+            else => Api.DotEnvBehavior.disable,
+        };
+
+        this.prefix = config.prefix;
+
+        try this.setDefaultsMap(config.defaults);
+    }
+
+    pub fn toAPI(this: *const Env) Api.LoadedEnvConfig {
+        var slice = this.defaults.slice();
+
+        return Api.LoadedEnvConfig{
+            .dotenv = this.behavior,
+            .prefix = this.prefix,
+            .defaults = .{ .keys = slice.items(.key), .values = slice.items(.value) },
+        };
+    }
+
+    // For reading from package.json
+    pub fn getOrPutValue(this: *Env, key: string, value: string) !void {
+        var slice = this.defaults.slice();
+        const keys = slice.items(.key);
+        for (keys) |_key, i| {
+            if (strings.eql(key, _key)) {
+                return;
+            }
+        }
+
+        try this.defaults.append(this.allocator, .{ .key = key, .value = value });
+    }
+};
+
 pub const Framework = struct {
     client: string,
     server: string,
@@ -1194,21 +1376,8 @@ pub const Framework = struct {
     resolved: bool = false,
     from_bundle: bool = false,
 
-    client_env: ?Env = null,
-    server_env: ?Env = null,
-
-    pub const Env = struct {
-        pub const Map = std.StringArrayHashMap(string);
-        defaults: Map,
-        prefix: string = "",
-
-        pub fn init(allocator: *std.mem.Allocator, prefix: string) Env {
-            return Env{
-                .defaults = Map.init(allocator),
-                .prefix = prefix,
-            };
-        }
-    };
+    client_env: Env = Env{},
+    server_env: Env = Env{},
 
     fn normalizedPath(allocator: *std.mem.Allocator, toplevel_path: string, path: string) !string {
         std.debug.assert(std.fs.path.isAbsolute(path));
@@ -1231,16 +1400,24 @@ pub const Framework = struct {
         }
     }
 
-    pub fn fromLoadedFramework(loaded: Api.LoadedFramework) Framework {
+    pub fn fromLoadedFramework(loaded: Api.LoadedFramework, allocator: *std.mem.Allocator) Framework {
         const client = if (loaded.client) loaded.entry_point else "";
         const server = if (!loaded.client) loaded.entry_point else "";
-        return Framework{
+        var framework = Framework{
             .client = client,
             .server = server,
             .package = loaded.package,
             .development = loaded.development,
             .from_bundle = true,
         };
+
+        if (loaded.client) {
+            framework.client_env.setFromLoaded(loaded.env, allocator) catch {};
+        } else {
+            framework.server_env.setFromLoaded(loaded.env, allocator) catch {};
+        }
+
+        return framework;
     }
 
     pub fn toAPI(this: *const Framework, allocator: *std.mem.Allocator, toplevel_path: string, comptime client: bool) ?Api.LoadedFramework {
@@ -1251,6 +1428,7 @@ pub const Framework = struct {
                     .package = this.package,
                     .development = this.development,
                     .client = true,
+                    .env = this.client_env.toAPI(),
                 };
             }
         } else {
@@ -1260,6 +1438,7 @@ pub const Framework = struct {
                     .package = this.package,
                     .development = this.development,
                     .client = false,
+                    .env = this.server_env.toAPI(),
                 };
             }
         }

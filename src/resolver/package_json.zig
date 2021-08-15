@@ -61,7 +61,71 @@ pub const PackageJSON = struct {
     //
     browser_map: BrowserMap,
 
-    fn loadFrameworkExpression(framework: *options.Framework, json: js_ast.Expr, allocator: *std.mem.Allocator) bool {
+    fn loadDefineDefaults(
+        env: *options.Env,
+        json: *const js_ast.E.Object,
+        allocator: *std.mem.Allocator,
+    ) !void {
+        var valid_count: usize = 0;
+        for (json.properties) |prop| {
+            if (prop.value.?.data != .e_string) continue;
+            valid_count += 1;
+        }
+
+        env.defaults.shrinkRetainingCapacity(0);
+        env.defaults.ensureTotalCapacity(allocator, valid_count) catch {};
+
+        for (json.properties) |prop| {
+            if (prop.value.?.data != .e_string) continue;
+            env.defaults.appendAssumeCapacity(.{
+                .key = prop.key.?.data.e_string.string(allocator) catch unreachable,
+                .value = prop.value.?.data.e_string.string(allocator) catch unreachable,
+            });
+        }
+    }
+
+    fn loadDefineExpression(
+        env: *options.Env,
+        json: *const js_ast.E.Object,
+        allocator: *std.mem.Allocator,
+    ) anyerror!void {
+        for (json.properties) |prop| {
+            switch (prop.key.?.data) {
+                .e_string => |e_str| {
+                    const str = e_str.string(allocator) catch "";
+
+                    if (strings.eqlComptime(str, "defaults")) {
+                        switch (prop.value.?.data) {
+                            .e_object => |obj| {
+                                try loadDefineDefaults(env, obj, allocator);
+                            },
+                            else => {
+                                env.defaults.shrinkRetainingCapacity(0);
+                            },
+                        }
+                    } else if (strings.eqlComptime(str, ".env")) {
+                        switch (prop.value.?.data) {
+                            .e_string => |value_str| {
+                                env.setBehaviorFromPrefix(value_str.string(allocator) catch "");
+                            },
+                            else => {
+                                env.behavior = .disable;
+                                env.prefix = "";
+                            },
+                        }
+                    }
+                },
+                else => continue,
+            }
+        }
+    }
+
+    fn loadFrameworkExpression(
+        framework: *options.Framework,
+        json: js_ast.Expr,
+        allocator: *std.mem.Allocator,
+        comptime read_define: bool,
+    ) bool {
         if (json.asProperty("client")) |client| {
             if (client.expr.asString(allocator)) |str| {
                 if (str.len > 0) {
@@ -70,55 +134,30 @@ pub const PackageJSON = struct {
             }
         }
 
-        // "env": {
-        //   "client": {
-        //     "NEXT_TRAILING_SLASH": false,
-        //   },
-        //   "clientPrefix": "NEXT_PUBLIC_",
-        //   "server": {
-        //     "NEXT_TRAILING_SLASH": false,
-        //   },
-        //   "serverPrefix": "",
-        // }
+        if (comptime read_define) {
+            if (json.asProperty("define")) |defines| {
+                if (defines.expr.asProperty("client")) |client| {
+                    if (client.expr.data == .e_object) {
+                        const object = client.expr.data.e_object;
+                        framework.client_env = options.Env.init(
+                            allocator,
+                        );
 
-        if (json.asProperty("env")) |defines| {
-            if (defines.expr.asProperty("client")) |client| {
-                if (client.expr.data == .e_object) {
-                    const object = client.expr.data.e_object;
-                    var i: usize = 0;
-                    for (object.properties) |prop| {
-                        // must be strings
-                        const key = prop.key orelse continue;
-                        const value = prop.value orelse continue;
-                        i += @intCast(usize, @boolToInt(key.data == .e_string and value.data == .e_string));
+                        loadDefineExpression(&framework.client_env, object, allocator) catch {};
                     }
+                }
 
-                    if (i > 0) {
-                        if (framework.client_env == null) {
-                            framework.client_env = options.Framework.Env.init(allocator, "");
-                        }
-                        var env = &framework.client_env.?;
-                        try env.defaults.ensureUnusedCapacity(i);
+                if (defines.expr.asProperty("server")) |server| {
+                    if (server.expr.data == .e_object) {
+                        const object = server.expr.data.e_object;
+                        framework.server_env = options.Env.init(
+                            allocator,
+                        );
 
-                        for (object.properties) |prop| {
-                            // must be strings
-                            // not for any good reason.
-                            // we should fix this later
-
-                            const key = prop.key orelse continue;
-                            const value = prop.value orelse continue;
-                            if (key.data != .e_string or value.data != .e_string) continue;
-
-                            var res = try define.getOrPut(try key.asString(allocator));
-                            if (!res.found_existing) {
-                                res.value_ptr.* = try value.asString(allocator);
-                            }
-                        }
+                        loadDefineExpression(&framework.server_env, object, allocator) catch {};
                     }
                 }
             }
-
-            if (defines.expr.asProperty("server")) |server| {}
         }
 
         if (json.asProperty("server")) |server| {
@@ -132,7 +171,14 @@ pub const PackageJSON = struct {
         return framework.client.len > 0;
     }
 
-    pub fn loadFrameworkWithPreference(package_json: *const PackageJSON, pair: *FrameworkRouterPair, json: js_ast.Expr, allocator: *std.mem.Allocator, comptime load_framework: LoadFramework) void {
+    pub fn loadFrameworkWithPreference(
+        package_json: *const PackageJSON,
+        pair: *FrameworkRouterPair,
+        json: js_ast.Expr,
+        allocator: *std.mem.Allocator,
+        comptime read_defines: bool,
+        comptime load_framework: LoadFramework,
+    ) void {
         const framework_object = json.asProperty("framework") orelse return;
 
         if (framework_object.expr.asProperty("static")) |static_prop| {
@@ -197,7 +243,7 @@ pub const PackageJSON = struct {
         switch (comptime load_framework) {
             .development => {
                 if (framework_object.expr.asProperty("development")) |env| {
-                    if (loadFrameworkExpression(pair.framework, env.expr, allocator)) {
+                    if (loadFrameworkExpression(pair.framework, env.expr, allocator, read_defines)) {
                         pair.framework.package = package_json.name;
                         pair.framework.development = true;
                         if (env.expr.asProperty("static")) |static_prop| {
@@ -215,7 +261,7 @@ pub const PackageJSON = struct {
             },
             .production => {
                 if (framework_object.expr.asProperty("production")) |env| {
-                    if (loadFrameworkExpression(pair.framework, env.expr, allocator)) {
+                    if (loadFrameworkExpression(pair.framework, env.expr, allocator, read_defines)) {
                         pair.framework.package = package_json.name;
                         pair.framework.development = false;
 
@@ -235,7 +281,7 @@ pub const PackageJSON = struct {
             else => unreachable,
         }
 
-        if (loadFrameworkExpression(pair.framework, framework_object.expr, allocator)) {
+        if (loadFrameworkExpression(pair.framework, framework_object.expr, allocator, read_defines)) {
             pair.framework.package = package_json.name;
             pair.framework.development = false;
         }

@@ -96,6 +96,19 @@ type uint32 = number;
     2: "require",
     require: "require"
   }
+  export enum DotEnvBehavior {
+    disable = 1,
+    prefix = 2,
+    load_all = 3
+  }
+  export const DotEnvBehaviorKeys = {
+    1: "disable",
+    disable: "disable",
+    2: "prefix",
+    prefix: "prefix",
+    3: "load_all",
+    load_all: "load_all"
+  }
   export enum TransformResponseStatus {
     success = 1,
     fail = 2
@@ -236,15 +249,24 @@ type uint32 = number;
     loaders: Loader[];
   }
 
+  export interface EnvConfig {
+    prefix?: string;
+    defaults?: StringMap;
+  }
+
+  export interface LoadedEnvConfig {
+    dotenv: DotEnvBehavior;
+    defaults: StringMap;
+    prefix: string;
+  }
+
   export interface FrameworkConfig {
     package?: string;
     client?: string;
     server?: string;
     development?: boolean;
-    client_defines?: StringMap;
-    server_defines?: StringMap;
-    client_defines_prefix?: string;
-    server_defines_prefix?: string;
+    client_env?: EnvConfig;
+    server_env?: EnvConfig;
   }
 
   export interface LoadedFramework {
@@ -252,9 +274,7 @@ type uint32 = number;
     package: string;
     development: boolean;
     client: boolean;
-    define_defaults: StringMap;
-    define_prefix: string;
-    has_define_prefix: boolean;
+    env: LoadedEnvConfig;
   }
 
   export interface LoadedRouteConfig {
@@ -446,6 +466,10 @@ type uint32 = number;
   export declare function decodeStringMap(buffer: ByteBuffer): StringMap;
   export declare function  encodeLoaderMap(message: LoaderMap, bb: ByteBuffer): void;
   export declare function decodeLoaderMap(buffer: ByteBuffer): LoaderMap;
+  export declare function  encodeEnvConfig(message: EnvConfig, bb: ByteBuffer): void;
+  export declare function decodeEnvConfig(buffer: ByteBuffer): EnvConfig;
+  export declare function  encodeLoadedEnvConfig(message: LoadedEnvConfig, bb: ByteBuffer): void;
+  export declare function decodeLoadedEnvConfig(buffer: ByteBuffer): LoadedEnvConfig;
   export declare function  encodeFrameworkConfig(message: FrameworkConfig, bb: ByteBuffer): void;
   export declare function decodeFrameworkConfig(buffer: ByteBuffer): FrameworkConfig;
   export declare function  encodeLoadedFramework(message: LoadedFramework, bb: ByteBuffer): void;

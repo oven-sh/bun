@@ -588,6 +588,97 @@ bb.writeByte(encoded);
   }
 
 }
+const DotEnvBehavior = {
+  "1": 1,
+  "2": 2,
+  "3": 3,
+  "disable": 1,
+  "prefix": 2,
+  "load_all": 3
+};
+const DotEnvBehaviorKeys = {
+  "1": "disable",
+  "2": "prefix",
+  "3": "load_all",
+  "disable": "disable",
+  "prefix": "prefix",
+  "load_all": "load_all"
+};
+
+function decodeEnvConfig(bb) {
+  var result = {};
+
+  while (true) {
+    switch (bb.readByte()) {
+    case 0:
+      return result;
+
+    case 1:
+      result["prefix"] = bb.readString();
+      break;
+
+    case 2:
+      result["defaults"] = decodeStringMap(bb);
+      break;
+
+    default:
+      throw new Error("Attempted to parse invalid message");
+    }
+  }
+}
+
+function encodeEnvConfig(message, bb) {
+
+  var value = message["prefix"];
+  if (value != null) {
+    bb.writeByte(1);
+    bb.writeString(value);
+  }
+
+  var value = message["defaults"];
+  if (value != null) {
+    bb.writeByte(2);
+    encodeStringMap(value, bb);
+  }
+  bb.writeByte(0);
+
+}
+
+function decodeLoadedEnvConfig(bb) {
+  var result = {};
+
+  result["dotenv"] = DotEnvBehavior[bb.readVarUint()];
+  result["defaults"] = decodeStringMap(bb);
+  result["prefix"] = bb.readString();
+  return result;
+}
+
+function encodeLoadedEnvConfig(message, bb) {
+
+  var value = message["dotenv"];
+  if (value != null) {
+    var encoded = DotEnvBehavior[value];
+if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + " for enum \"DotEnvBehavior\"");
+bb.writeVarUint(encoded);
+  } else {
+    throw new Error("Missing required field \"dotenv\"");
+  }
+
+  var value = message["defaults"];
+  if (value != null) {
+    encodeStringMap(value, bb);
+  } else {
+    throw new Error("Missing required field \"defaults\"");
+  }
+
+  var value = message["prefix"];
+  if (value != null) {
+    bb.writeString(value);
+  } else {
+    throw new Error("Missing required field \"prefix\"");
+  }
+
+}
 
 function decodeFrameworkConfig(bb) {
   var result = {};
@@ -614,19 +705,11 @@ function decodeFrameworkConfig(bb) {
       break;
 
     case 5:
-      result["client_defines"] = decodeStringMap(bb);
+      result["client_env"] = decodeEnvConfig(bb);
       break;
 
     case 6:
-      result["server_defines"] = decodeStringMap(bb);
-      break;
-
-    case 7:
-      result["client_defines_prefix"] = bb.readString();
-      break;
-
-    case 8:
-      result["server_defines_prefix"] = bb.readString();
+      result["server_env"] = decodeEnvConfig(bb);
       break;
 
     default:
@@ -661,28 +744,16 @@ function encodeFrameworkConfig(message, bb) {
     bb.writeByte(value);
   }
 
-  var value = message["client_defines"];
+  var value = message["client_env"];
   if (value != null) {
     bb.writeByte(5);
-    encodeStringMap(value, bb);
+    encodeEnvConfig(value, bb);
   }
 
-  var value = message["server_defines"];
+  var value = message["server_env"];
   if (value != null) {
     bb.writeByte(6);
-    encodeStringMap(value, bb);
-  }
-
-  var value = message["client_defines_prefix"];
-  if (value != null) {
-    bb.writeByte(7);
-    bb.writeString(value);
-  }
-
-  var value = message["server_defines_prefix"];
-  if (value != null) {
-    bb.writeByte(8);
-    bb.writeString(value);
+    encodeEnvConfig(value, bb);
   }
   bb.writeByte(0);
 
@@ -695,9 +766,7 @@ function decodeLoadedFramework(bb) {
   result["package"] = bb.readString();
   result["development"] = !!bb.readByte();
   result["client"] = !!bb.readByte();
-  result["define_defaults"] = decodeStringMap(bb);
-  result["define_prefix"] = bb.readString();
-  result["has_define_prefix"] = !!bb.readByte();
+  result["env"] = decodeLoadedEnvConfig(bb);
   return result;
 }
 
@@ -731,25 +800,11 @@ function encodeLoadedFramework(message, bb) {
     throw new Error("Missing required field \"client\"");
   }
 
-  var value = message["define_defaults"];
+  var value = message["env"];
   if (value != null) {
-    encodeStringMap(value, bb);
+    encodeLoadedEnvConfig(value, bb);
   } else {
-    throw new Error("Missing required field \"define_defaults\"");
-  }
-
-  var value = message["define_prefix"];
-  if (value != null) {
-    bb.writeString(value);
-  } else {
-    throw new Error("Missing required field \"define_prefix\"");
-  }
-
-  var value = message["has_define_prefix"];
-  if (value != null) {
-    bb.writeByte(value);
-  } else {
-    throw new Error("Missing required field \"has_define_prefix\"");
+    throw new Error("Missing required field \"env\"");
   }
 
 }
@@ -2099,6 +2154,12 @@ export { decodeStringMap }
 export { encodeStringMap }
 export { decodeLoaderMap }
 export { encodeLoaderMap }
+export { DotEnvBehavior }
+export { DotEnvBehaviorKeys }
+export { decodeEnvConfig }
+export { encodeEnvConfig }
+export { decodeLoadedEnvConfig }
+export { encodeLoadedEnvConfig }
 export { decodeFrameworkConfig }
 export { encodeFrameworkConfig }
 export { decodeLoadedFramework }

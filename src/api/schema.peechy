@@ -135,15 +135,31 @@ struct LoaderMap {
   Loader[] loaders;
 }
 
+enum DotEnvBehavior {
+  disable = 1;
+  prefix = 2;
+  load_all = 3;
+}
+
+message EnvConfig {
+  string prefix = 1;
+  StringMap defaults = 2;
+}
+
+struct LoadedEnvConfig {
+  DotEnvBehavior dotenv;
+
+  StringMap defaults;
+  string prefix;
+}
+
 message FrameworkConfig {
   string package = 1;
   string client = 2;
   string server = 3;
   bool development = 4;
-  StringMap client_defines = 5;
-  StringMap server_defines = 6;
-  string client_defines_prefix = 7;
-  string server_defines_prefix = 8;
+  EnvConfig client_env = 5;
+  EnvConfig server_env = 6;
 }
 
 struct LoadedFramework {
@@ -151,9 +167,7 @@ struct LoadedFramework {
   string package;
   bool development;
   bool client;
-  StringMap define_defaults;
-  string define_prefix;
-  bool has_define_prefix;
+  LoadedEnvConfig env;
 }
 
 struct LoadedRouteConfig {

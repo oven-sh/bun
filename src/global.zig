@@ -79,6 +79,9 @@ pub const Output = struct {
         }
     }
 
+    pub fn printElapsed(elapsed: f64) void {
+        Output.prettyError("<r><d>[<b>{d:>.2}ms<r><d>]<r>", .{elapsed});
+    }
     pub fn printErrorable(comptime fmt: string, args: anytype) !void {
         if (comptime isWasm) {
             try source.stream.seekTo(0);

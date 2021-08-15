@@ -21,6 +21,7 @@ usingnamespace @import("./bindings/bindings.zig");
 const Runtime = @import("../../runtime.zig");
 const Router = @import("./api/router.zig");
 const ImportRecord = ast.ImportRecord;
+const DotEnv = @import("../../env_loader.zig");
 
 pub const GlobalClasses = [_]type{
     Request.Class,
@@ -283,6 +284,7 @@ pub const VirtualMachine = struct {
         _args: Api.TransformOptions,
         existing_bundle: ?*NodeModuleBundle,
         _log: ?*logger.Log,
+        env_loader: *DotEnv.Loader,
     ) !*VirtualMachine {
         var log: *logger.Log = undefined;
         if (_log) |__log| {
@@ -299,6 +301,7 @@ pub const VirtualMachine = struct {
             log,
             try configureTransformOptionsForSpeedyVM(allocator, _args),
             existing_bundle,
+            env_loader,
         );
         VirtualMachine.vm.* = VirtualMachine{
             .global = undefined,
@@ -313,7 +316,7 @@ pub const VirtualMachine = struct {
         };
 
         VirtualMachine.vm.bundler.configureLinker();
-        try VirtualMachine.vm.bundler.configureFramework();
+        try VirtualMachine.vm.bundler.configureFramework(false);
 
         if (_args.serve orelse false) {
             VirtualMachine.vm.bundler.linker.onImportCSS = Wundle.onImportCSS;

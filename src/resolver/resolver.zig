@@ -376,6 +376,7 @@ pub fn NewResolver(cache_files: bool) type {
             package: string,
             pair: *PackageJSON.FrameworkRouterPair,
             comptime preference: PackageJSON.LoadFramework,
+            comptime load_defines: bool,
         ) !void {
 
             // TODO: make this only parse package.json once
@@ -384,7 +385,7 @@ pub fn NewResolver(cache_files: bool) type {
             const pkg: *const PackageJSON = result.package_json orelse r.packageJSONForResolvedNodeModuleWithIgnoreMissingName(&result, true) orelse return error.MissingPackageJSON;
 
             const json: Expr = (try r.caches.json.parseJSON(r.log, pkg.source, r.allocator)) orelse return error.JSONParseError;
-            pkg.loadFrameworkWithPreference(pair, json, r.allocator, preference);
+            pkg.loadFrameworkWithPreference(pair, json, r.allocator, load_defines, preference);
             const dir = pkg.source.path.name.dirWithTrailingSlash();
             var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
             if (pair.framework.client.len > 0) {

@@ -15,6 +15,7 @@ const Css = @import("css_scanner.zig");
 const NodeModuleBundle = @import("./node_module_bundle.zig").NodeModuleBundle;
 const resolve_path = @import("./resolver/resolve_path.zig");
 const OutputFile = Options.OutputFile;
+const DotEnv = @import("./env_loader.zig");
 pub fn constStrToU8(s: string) []u8 {
     return @intToPtr([*]u8, @ptrToInt(s.ptr))[0..s.len];
 }
@@ -691,6 +692,7 @@ pub const RequestContext = struct {
             existing_bundle: ?*NodeModuleBundle,
             log: ?*logger.Log = null,
             watcher: *Watcher,
+            env_loader: *DotEnv.Loader,
         };
 
         pub const Channel = sync.Channel(*JavaScriptHandler, .{ .Static = 100 });
@@ -725,7 +727,13 @@ pub const RequestContext = struct {
             js_ast.Expr.Data.Store.create(std.heap.c_allocator);
 
             defer Output.flush();
-            var vm = JavaScript.VirtualMachine.init(std.heap.c_allocator, handler.args, handler.existing_bundle, handler.log) catch |err| {
+            var vm = JavaScript.VirtualMachine.init(
+                std.heap.c_allocator,
+                handler.args,
+                handler.existing_bundle,
+                handler.log,
+                handler.env_loader,
+            ) catch |err| {
                 Output.prettyErrorln(
                     "JavaScript VM failed to start: <r><red>{s}<r>",
                     .{@errorName(err)},
@@ -733,7 +741,8 @@ pub const RequestContext = struct {
                 Output.flush();
                 return;
             };
-            vm.bundler.configureRouter() catch {};
+            vm.bundler.configureRouter(false) catch {};
+            try vm.bundler.configureDefines();
             std.debug.assert(JavaScript.VirtualMachine.vm_loaded);
             javascript_vm = vm;
 
@@ -856,6 +865,7 @@ pub const RequestContext = struct {
                             .existing_bundle = null,
                             .log = &server.log,
                             .watcher = server.watcher,
+                            .env_loader = server.bundler.env,
                         },
                     );
                 } else {
@@ -866,6 +876,7 @@ pub const RequestContext = struct {
                             .existing_bundle = server.bundler.options.node_modules_bundle,
                             .log = &server.log,
                             .watcher = server.watcher,
+                            .env_loader = server.bundler.env,
                         },
                     );
                 }
@@ -1958,9 +1969,9 @@ pub const Server = struct {
             .transform_options = options,
             .timer = try std.time.Timer.start(),
         };
-        server.bundler = try Bundler.init(allocator, &server.log, options, null);
+        server.bundler = try Bundler.init(allocator, &server.log, options, null, null);
         server.bundler.configureLinker();
-        try server.bundler.configureRouter();
+        try server.bundler.configureRouter(true);
 
         try server.initWatcher();
 

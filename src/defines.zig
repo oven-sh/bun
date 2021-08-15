@@ -25,7 +25,7 @@ const Globals = struct {
 };
 
 const defines_path = fs.Path.initWithNamespace("defines.json", "internal");
-pub const RawDefines = std.StringHashMap(string);
+pub const RawDefines = std.StringArrayHashMap(string);
 pub const UserDefines = std.StringHashMap(DefineData);
 
 pub const DefineData = struct {
@@ -59,10 +59,8 @@ pub const DefineData = struct {
         };
     }
 
-    pub fn from_input(defines: RawDefines, log: *logger.Log, allocator: *std.mem.Allocator) !UserDefines {
-        var user_defines = UserDefines.init(allocator);
-        try user_defines.ensureCapacity(defines.count());
-
+    pub fn from_mergable_input(defines: RawDefines, user_defines: *UserDefines, log: *logger.Log, allocator: *std.mem.Allocator) !void {
+        try user_defines.ensureUnusedCapacity(@truncate(u32, defines.count()));
         var iter = defines.iterator();
         while (iter.next()) |entry| {
             var splitter = std.mem.split(entry.key_ptr.*, ".");
@@ -153,6 +151,11 @@ pub const DefineData = struct {
                 .value = data,
             });
         }
+    }
+
+    pub fn from_input(defines: RawDefines, log: *logger.Log, allocator: *std.mem.Allocator) !UserDefines {
+        var user_defines = UserDefines.init(allocator);
+        try from_mergable_input(defines, &user_defines, log, allocator);
 
         return user_defines;
     }

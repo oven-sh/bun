@@ -259,11 +259,11 @@ pub const FileSystem = struct {
                 query[i] = std.ascii.toLower(c);
             };
 
-            const query_hashed = DirEntry.EntryMap.getHash(&query);
+            const query_hashed = comptime DirEntry.EntryMap.getHash(&query);
 
             const result_index = entry.data.getWithHash(&query, query_hashed) orelse return null;
             const result = EntryStore.instance.at(result_index) orelse return null;
-            if (!strings.eql(result.base, query)) {
+            if (!strings.eqlComptime(result.base, query)) {
                 return Entry.Lookup{ .entry = result, .diff_case = Entry.Lookup.DifferentCase{
                     .dir = entry.dir,
                     .query = &query,
@@ -272,6 +272,18 @@ pub const FileSystem = struct {
             }
 
             return Entry.Lookup{ .entry = result, .diff_case = null };
+        }
+
+        pub fn hasComptimeQuery(entry: *const DirEntry, comptime query_str: anytype) bool {
+            comptime var query: [query_str.len]u8 = undefined;
+            comptime for (query_str) |c, i| {
+                query[i] = std.ascii.toLower(c);
+            };
+
+            const query_hashed = comptime DirEntry.EntryMap.getHash(&query);
+
+            const result_index = entry.data.getWithHash(&query, query_hashed) orelse return false;
+            return result_index.index != allocators.NotFound.index and result_index.index != allocators.Unassigned.index;
         }
     };
 

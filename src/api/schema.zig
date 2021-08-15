@@ -779,6 +779,98 @@ pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
 
 };
 
+pub const DotEnvBehavior = enum(u32) {
+
+_none,
+  /// disable
+  disable,
+
+  /// prefix
+  prefix,
+
+  /// load_all
+  load_all,
+
+_,
+
+                pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
+                    return try std.json.stringify(@tagName(self), opts, o);
+                }
+
+                
+};
+
+pub const EnvConfig = struct {
+/// prefix
+prefix: ?[]const u8 = null,
+
+/// defaults
+defaults: ?StringMap = null,
+
+
+pub fn decode(reader: anytype) anyerror!EnvConfig {
+  var this = std.mem.zeroes(EnvConfig);
+
+  while(true) {
+    switch (try reader.readByte()) {
+      0 => { return this; },
+
+      1 => {
+        this.prefix = try reader.readValue([]const u8); 
+},
+      2 => {
+        this.defaults = try reader.readValue(StringMap); 
+},
+      else => {
+      return error.InvalidMessage;
+      },
+      }
+      }
+unreachable;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+if (this.prefix) |prefix| {
+  try writer.writeFieldID(1);
+   try writer.writeValue(prefix);
+}
+if (this.defaults) |defaults| {
+  try writer.writeFieldID(2);
+   try writer.writeValue(defaults);
+}
+try writer.endMessage();
+}
+
+};
+
+pub const LoadedEnvConfig = struct {
+/// dotenv
+dotenv: DotEnvBehavior,
+
+/// defaults
+defaults: StringMap,
+
+/// prefix
+prefix: []const u8,
+
+
+pub fn decode(reader: anytype) anyerror!LoadedEnvConfig {
+  var this = std.mem.zeroes(LoadedEnvConfig);
+
+  this.dotenv = try reader.readValue(DotEnvBehavior); 
+  this.defaults = try reader.readValue(StringMap); 
+  this.prefix = try reader.readValue([]const u8); 
+   return this;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+   try writer.writeEnum(this.dotenv);
+   try writer.writeValue(this.defaults);
+   try writer.writeValue(this.prefix);
+}
+
+};
+
 pub const FrameworkConfig = struct {
 /// package
 package: ?[]const u8 = null,
@@ -792,17 +884,11 @@ server: ?[]const u8 = null,
 /// development
 development: ?bool = null,
 
-/// client_defines
-client_defines: ?StringMap = null,
+/// client_env
+client_env: ?EnvConfig = null,
 
-/// server_defines
-server_defines: ?StringMap = null,
-
-/// client_defines_prefix
-client_defines_prefix: ?[]const u8 = null,
-
-/// server_defines_prefix
-server_defines_prefix: ?[]const u8 = null,
+/// server_env
+server_env: ?EnvConfig = null,
 
 
 pub fn decode(reader: anytype) anyerror!FrameworkConfig {
@@ -825,16 +911,10 @@ pub fn decode(reader: anytype) anyerror!FrameworkConfig {
         this.development = try reader.readValue(bool); 
 },
       5 => {
-        this.client_defines = try reader.readValue(StringMap); 
+        this.client_env = try reader.readValue(EnvConfig); 
 },
       6 => {
-        this.server_defines = try reader.readValue(StringMap); 
-},
-      7 => {
-        this.client_defines_prefix = try reader.readValue([]const u8); 
-},
-      8 => {
-        this.server_defines_prefix = try reader.readValue([]const u8); 
+        this.server_env = try reader.readValue(EnvConfig); 
 },
       else => {
       return error.InvalidMessage;
@@ -861,21 +941,13 @@ if (this.development) |development| {
   try writer.writeFieldID(4);
    try writer.writeInt(@intCast(u8, @boolToInt(development)));
 }
-if (this.client_defines) |client_defines| {
+if (this.client_env) |client_env| {
   try writer.writeFieldID(5);
-   try writer.writeValue(client_defines);
+   try writer.writeValue(client_env);
 }
-if (this.server_defines) |server_defines| {
+if (this.server_env) |server_env| {
   try writer.writeFieldID(6);
-   try writer.writeValue(server_defines);
-}
-if (this.client_defines_prefix) |client_defines_prefix| {
-  try writer.writeFieldID(7);
-   try writer.writeValue(client_defines_prefix);
-}
-if (this.server_defines_prefix) |server_defines_prefix| {
-  try writer.writeFieldID(8);
-   try writer.writeValue(server_defines_prefix);
+   try writer.writeValue(server_env);
 }
 try writer.endMessage();
 }
@@ -895,14 +967,8 @@ development: bool = false,
 /// client
 client: bool = false,
 
-/// define_defaults
-define_defaults: StringMap,
-
-/// define_prefix
-define_prefix: []const u8,
-
-/// has_define_prefix
-has_define_prefix: bool = false,
+/// env
+env: LoadedEnvConfig,
 
 
 pub fn decode(reader: anytype) anyerror!LoadedFramework {
@@ -912,9 +978,7 @@ pub fn decode(reader: anytype) anyerror!LoadedFramework {
   this.package = try reader.readValue([]const u8); 
   this.development = try reader.readValue(bool); 
   this.client = try reader.readValue(bool); 
-  this.define_defaults = try reader.readValue(StringMap); 
-  this.define_prefix = try reader.readValue([]const u8); 
-  this.has_define_prefix = try reader.readValue(bool); 
+  this.env = try reader.readValue(LoadedEnvConfig); 
    return this;
 }
 
@@ -923,9 +987,7 @@ pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
    try writer.writeValue(this.package);
    try writer.writeInt(@intCast(u8, @boolToInt(this.development)));
    try writer.writeInt(@intCast(u8, @boolToInt(this.client)));
-   try writer.writeValue(this.define_defaults);
-   try writer.writeValue(this.define_prefix);
-   try writer.writeInt(@intCast(u8, @boolToInt(this.has_define_prefix)));
+   try writer.writeValue(this.env);
 }
 
 };

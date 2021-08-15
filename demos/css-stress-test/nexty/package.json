@@ -3,6 +3,8 @@
   "version": "1.0.0",
   "description": "",
   "framework": {
+    "static": "public",
+    "assetPrefix": "_next/",
     "router": {
       "dir": "pages",
       "extensions": [
@@ -11,11 +13,26 @@
         ".tsx"
       ]
     },
-    "static": "public",
-    "assetPrefix": "_next/",
     "development": {
       "client": "client.development.tsx",
-      "server": "server.development.tsx"
+      "server": "server.development.tsx",
+      "define": {
+        "client": {
+          ".env": "NEXT_PUBLIC_",
+          "defaults": {
+            "process.env.__NEXT_TRAILING_SLASH": "false"
+          }
+        },
+        "server": {
+          ".env": "*",
+          "defaults": {
+            "process.env.__NEXT_TRAILING_SLASH": "false",
+            "process.env.__NEXT_OPTIMIZE_FONTS": "false",
+            "process.env.__NEXT_OPTIMIZE_IMAGES": "false",
+            "process.env.__NEXT_OPTIMIZE_CSS": "false"
+          }
+        }
+      }
     },
     "production": {
       "client": "client.production.tsx",

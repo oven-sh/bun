@@ -604,8 +604,10 @@ pub const Lexer = struct {
             lexer.string_literal = lexer.string_literal_buffer.items;
         }
 
-        if (quote == '\'' and lexer.json_options != null) {
-            try lexer.addRangeError(lexer.range(), "JSON strings must use double quotes", .{}, true);
+        if (comptime !FeatureFlags.allow_json_single_quotes) {
+            if (quote == '\'' and lexer.json_options != null) {
+                try lexer.addRangeError(lexer.range(), "JSON strings must use double quotes", .{}, true);
+            }
         }
 
         // for (text)

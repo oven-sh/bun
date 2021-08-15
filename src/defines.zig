@@ -120,7 +120,7 @@ pub const DefineData = struct {
             var data: js_ast.Expr.Data = undefined;
             switch (expr.data) {
                 .e_missing => {
-                    continue;
+                    data = .{ .e_missing = js_ast.E.Missing{} };
                 },
                 // We must copy so we don't recycle
                 .e_string => {

@@ -120,6 +120,61 @@ const ExprFlag = packed struct {
     }
 };
 
+const ImportVariant = enum {
+    path_only,
+    import_star,
+    import_default,
+    import_star_and_import_default,
+    import_items,
+    import_items_and_default,
+    import_items_and_star,
+    import_items_and_default_and_star,
+
+    pub inline fn hasItems(import_variant: @This()) @This() {
+        return switch (import_variant) {
+            .import_default => .import_items_and_default,
+            .import_star => .import_items_and_star,
+            .import_star_and_import_default => .import_items_and_default_and_star,
+            else => .import_items,
+        };
+    }
+
+    // We always check star first so don't need to be exhaustive here
+    pub inline fn hasStar(import_variant: @This()) @This() {
+        return switch (import_variant) {
+            .path_only => .import_star,
+            else => import_variant,
+        };
+    }
+
+    // We check default after star
+    pub inline fn hasDefault(import_variant: @This()) @This() {
+        return switch (import_variant) {
+            .path_only => .import_default,
+            .import_star => .import_star_and_import_default,
+            else => import_variant,
+        };
+    }
+
+    pub fn determine(record: *const importRecord.ImportRecord, namespace: Symbol, s_import: *const S.Import) ImportVariant {
+        var variant = ImportVariant.path_only;
+
+        if (record.contains_import_star) {
+            variant = variant.hasStar();
+        }
+
+        if (record.contains_default_alias or s_import.default_name != null) {
+            variant = variant.hasDefault();
+        }
+
+        if (s_import.items.len > 0) {
+            variant = variant.hasItems();
+        }
+
+        return variant;
+    }
+};
+
 pub fn NewPrinter(
     comptime ascii_only: bool,
     comptime Writer: type,
@@ -2847,18 +2902,34 @@ pub fn NewPrinter(
                             p.printSpaceBeforeIdentifier();
                             p.print("var {");
 
-                            for (s.items) |item, i| {
-                                p.print(item.alias);
-                                const name = p.renamer.nameForSymbol(item.name.ref.?);
-                                if (!strings.eql(name, item.alias)) {
-                                    p.print(":");
-                                    p.printSymbol(item.name.ref.?);
+                            if (s.default_name) |default_name| {
+                                p.print("default: ");
+                                p.printSymbol(default_name.ref.?);
+                                p.print(", ");
+                                for (s.items) |item, i| {
+                                    p.print(item.alias);
+                                    const name = p.renamer.nameForSymbol(item.name.ref.?);
+                                    if (!strings.eql(name, item.alias)) {
+                                        p.print(": ");
+                                        p.printSymbol(item.name.ref.?);
+                                    }
+                                    p.print(" , ");
                                 }
+                            } else {
+                                for (s.items) |item, i| {
+                                    p.print(item.alias);
+                                    const name = p.renamer.nameForSymbol(item.name.ref.?);
+                                    if (!strings.eql(name, item.alias)) {
+                                        p.print(":");
+                                        p.printSymbol(item.name.ref.?);
+                                    }
 
-                                if (i < s.items.len - 1) {
-                                    p.print(", ");
+                                    if (i < s.items.len - 1) {
+                                        p.print(", ");
+                                    }
                                 }
                             }
+
                             p.print("} = ");
 
                             p.printLoadFromBundleWithoutCall(s.import_record_index);
@@ -3048,60 +3119,7 @@ pub fn NewPrinter(
                 return;
             }
 
-            const ImportVariant = enum {
-                path_only,
-                import_star,
-                import_default,
-                import_star_and_import_default,
-                import_items,
-                import_items_and_default,
-                import_items_and_star,
-                import_items_and_default_and_star,
-
-                pub fn hasItems(import_variant: @This()) @This() {
-                    return switch (import_variant) {
-                        .import_default => .import_items_and_default,
-                        .import_star => .import_items_and_star,
-                        .import_star_and_import_default => .import_items_and_default_and_star,
-                        else => .import_items,
-                    };
-                }
-
-                // We always check star first so don't need to be exhaustive here
-                pub fn hasStar(import_variant: @This()) @This() {
-                    return switch (import_variant) {
-                        .path_only => .import_star,
-                        else => import_variant,
-                    };
-                }
-
-                // We check default after star
-                pub fn hasDefault(import_variant: @This()) @This() {
-                    return switch (import_variant) {
-                        .path_only => .import_default,
-                        .import_star => .import_star_and_import_default,
-                        else => import_variant,
-                    };
-                }
-            };
-
-            var variant = ImportVariant.path_only;
-
-            var namespace = p.symbols.get(s.namespace_ref).?;
-
-            if (record.contains_import_star) {
-                variant = variant.hasStar();
-            }
-
-            if (record.contains_default_alias or s.default_name != null) {
-                variant = variant.hasDefault();
-            }
-
-            if (s.items.len > 0) {
-                variant = variant.hasItems();
-            }
-
-            switch (variant) {
+            switch (ImportVariant.determine(&record, p.symbols.get(s.namespace_ref).?, s)) {
                 // we treat path_only the same as import_star because we may have property accesses using it.
                 .path_only, .import_star => {
                     p.print("var ");

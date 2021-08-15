@@ -741,8 +741,7 @@ pub const RequestContext = struct {
                 Output.flush();
                 return;
             };
-            vm.bundler.configureRouter(false) catch {};
-            try vm.bundler.configureDefines();
+
             std.debug.assert(JavaScript.VirtualMachine.vm_loaded);
             javascript_vm = vm;
 
@@ -752,6 +751,29 @@ pub const RequestContext = struct {
             vm.watcher = handler.watcher;
             {
                 defer vm.flush();
+                vm.bundler.configureRouter(false) catch {};
+                vm.bundler.configureDefines() catch |err| {
+                    if (vm.log.msgs.items.len > 0) {
+                        for (vm.log.msgs.items) |msg| {
+                            msg.writeFormat(Output.errorWriter()) catch continue;
+                        }
+                    }
+
+                    Output.prettyErrorln(
+                        "<r>JavaScript VM failed to start due to <red>{s}<r>.",
+                        .{
+                            @errorName(err),
+                        },
+                    );
+
+                    Output.flush();
+
+                    if (channel.tryReadItem() catch null) |item| {
+                        item.ctx.sendInternalError(error.JSFailedToStart) catch {};
+                        item.ctx.arena.deinit();
+                    }
+                    return;
+                };
 
                 var entry_point = boot;
                 if (!std.fs.path.isAbsolute(entry_point)) {

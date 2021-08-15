@@ -345,6 +345,11 @@ pub fn NewBundler(cache_files: bool) type {
 
             try this.runEnvLoader();
 
+            js_ast.Expr.Data.Store.create(this.allocator);
+            js_ast.Stmt.Data.Store.create(this.allocator);
+            defer js_ast.Expr.Data.Store.reset();
+            defer js_ast.Stmt.Data.Store.reset();
+
             if (this.options.framework) |framework| {
                 if (this.options.platform.isClient()) {
                     try this.options.loadDefines(this.allocator, this.env, &framework.client_env);
@@ -578,6 +583,7 @@ pub fn NewBundler(cache_files: bool) type {
                 var tmpdir: std.fs.Dir = try bundler.fs.fs.openTmpDir();
                 var tmpname_buf: [64]u8 = undefined;
                 bundler.resetStore();
+                try bundler.configureDefines();
 
                 const tmpname = try bundler.fs.tmpname(
                     ".jsb",

@@ -1,9 +1,3 @@
-globalThis.process = {
-  platform: "posix",
-  env: {},
-  browser: true,
-};
-
 import * as ReactDOM from "react-dom";
 import App from "next/app";
 import mitt, { MittEmitter } from "next/dist/shared/lib/mitt";
@@ -36,7 +30,6 @@ import {
   createRouter,
   makePublicRouterInstance,
 } from "next/dist/client/router";
-import "./renderDocument";
 export const emitter: MittEmitter<string> = mitt();
 
 export default function boot(EntryPointNamespace, loader) {

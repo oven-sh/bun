@@ -20,16 +20,31 @@
         "client": {
           ".env": "NEXT_PUBLIC_",
           "defaults": {
-            "process.env.__NEXT_TRAILING_SLASH": "false"
+            "process.env.__NEXT_TRAILING_SLASH": "false",
+            "process.env.NODE_ENV": "\"development\"",
+            "process.env.__NEXT_ROUTER_BASEPATH": "''",
+            "process.env.__NEXT_SCROLL_RESTORATION": "false",
+            "process.env.__NEXT_I18N_SUPPORT": "false",
+            "process.env.__NEXT_HAS_REWRITES": "false",
+            "process.env.__NEXT_ANALYTICS_ID": "null",
+            "process.env.__NEXT_OPTIMIZE_CSS": "false",
+            "process.env.__NEXT_CROSS_ORIGIN": "''"
           }
         },
         "server": {
-          ".env": "*",
+          ".env": "NEXT_",
           "defaults": {
             "process.env.__NEXT_TRAILING_SLASH": "false",
             "process.env.__NEXT_OPTIMIZE_FONTS": "false",
+            "process.env.NODE_ENV": "\"development\"",
             "process.env.__NEXT_OPTIMIZE_IMAGES": "false",
-            "process.env.__NEXT_OPTIMIZE_CSS": "false"
+            "process.env.__NEXT_OPTIMIZE_CSS": "false",
+            "process.env.__NEXT_ROUTER_BASEPATH": "''",
+            "process.env.__NEXT_SCROLL_RESTORATION": "false",
+            "process.env.__NEXT_I18N_SUPPORT": "false",
+            "process.env.__NEXT_HAS_REWRITES": "false",
+            "process.env.__NEXT_ANALYTICS_ID": "null",
+            "process.env.__NEXT_CROSS_ORIGIN": "''"
           }
         }
       }

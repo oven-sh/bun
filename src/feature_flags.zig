@@ -34,6 +34,9 @@ pub const css_supports_fence = true;
 pub const disable_entry_cache = false;
 pub const enable_bytecode_caching = false;
 
+// This feature flag exists so when you have defines inside package.json, you can use single quotes in nested strings.
+pub const allow_json_single_quotes = true;
+
 pub const react_specific_warnings = true;
 // Disabled due to concurrency bug I don't have time to fix right now.
 // I suspect it's like 3 undefined memory issues.

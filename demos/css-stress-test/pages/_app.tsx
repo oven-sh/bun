@@ -1,4 +1,3 @@
-import "../src/font.css";
 import "../src/index.css";
 
 import App from "next/app";

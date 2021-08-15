@@ -2900,7 +2900,7 @@ pub fn NewPrinter(
                         if (s.items.len > 0) {
                             p.printIndent();
                             p.printSpaceBeforeIdentifier();
-                            p.print("var {");
+                            p.print("var { ");
 
                             if (s.default_name) |default_name| {
                                 p.print("default: ");
@@ -2913,7 +2913,10 @@ pub fn NewPrinter(
                                         p.print(": ");
                                         p.printSymbol(item.name.ref.?);
                                     }
-                                    p.print(" , ");
+
+                                    if (i < s.items.len - 1) {
+                                        p.print(", ");
+                                    }
                                 }
                             } else {
                                 for (s.items) |item, i| {

@@ -468,7 +468,7 @@ export async function render({
       isFallback: isFallback,
     },
     true,
-    Wundle.origin,
+    Bun.origin,
     null,
     [], // renderOpts.locales,
     null, //renderOpts.defaultLocale,
@@ -573,7 +573,7 @@ export async function render({
     docComponentsRendered,
     ...renderOpts,
     disableOptimizedLoading: false,
-    canonicalBase: Wundle.origin,
+    canonicalBase: Bun.origin,
     buildManifest: {
       devFiles: [],
       allFiles: [],

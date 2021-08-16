@@ -250,12 +250,12 @@ pub const ModuleType = enum {
 pub const Platform = enum {
     neutral,
     browser,
-    speedy,
+    bun,
     node,
 
     pub inline fn isClient(this: Platform) bool {
         return switch (this) {
-            .speedy => false,
+            .bun => false,
             else => true,
         };
     }
@@ -266,7 +266,7 @@ pub const Platform = enum {
     pub inline fn processBrowserDefineValue(this: Platform) ?string {
         return switch (this) {
             .browser => browser_define_value_true,
-            .speedy, .node => browser_define_value_false,
+            .bun, .node => browser_define_value_false,
             else => null,
         };
     }
@@ -315,7 +315,7 @@ pub const Platform = enum {
         return switch (plat orelse api.Api.Platform._none) {
             .node => .node,
             .browser => .browser,
-            .speedy => .speedy,
+            .bun => .bun,
             else => .browser,
         };
     }
@@ -352,7 +352,7 @@ pub const Platform = enum {
         // which will crash or fail to be bundled when targeting the browser.
         var listc = [_]string{ MAIN_FIELD_NAMES[0], MAIN_FIELD_NAMES[1], MAIN_FIELD_NAMES[2] };
         array.set(Platform.browser, &listc);
-        array.set(Platform.speedy, &listc);
+        array.set(Platform.bun, &listc);
 
         // The neutral platform is for people that don't want esbuild to try to
         // pick good defaults for their platform. In that case, the list of main
@@ -822,7 +822,7 @@ pub const BundleOptions = struct {
             .node => {
                 opts.import_path_format = .relative_nodejs;
             },
-            .speedy => {
+            .bun => {
                 // If we're doing SSR, we want all the URLs to be the same as what it would be in the browser
                 // If we're not doing SSR, we want all the import paths to be absolute
                 opts.import_path_format = if (opts.import_path_format == .absolute_url) .absolute_url else .absolute_path;
@@ -967,7 +967,7 @@ pub const BundleOptions = struct {
                     },
                     error.AccessDenied => {
                         Output.prettyErrorln(
-                            "error: access denied when trying to open dir: \"{s}\".\nPlease re-open Speedy with access to this folder or pass a different folder via \"--public-dir\". Note: --public-dir is relative to --cwd (or the process' current working directory).\n\nThe public folder is where static assets such as images, fonts, and .html files go.",
+                            "error: access denied when trying to open dir: \"{s}\".\nPlease re-open Bun with access to this folder or pass a different folder via \"--public-dir\". Note: --public-dir is relative to --cwd (or the process' current working directory).\n\nThe public folder is where static assets such as images, fonts, and .html files go.",
                             .{opts.routes.static_dir},
                         );
                         std.process.exit(1);

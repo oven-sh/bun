@@ -1,5 +1,7 @@
 import { Main } from "src/main";
 
-export default function IndexPage() {
+export function IndexPage() {
   return <Main />;
 }
+
+export default IndexPage;

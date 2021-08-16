@@ -1,12 +1,16 @@
 {
-  "name": "nexty",
-  "version": "1.0.0",
+  "name": "wipwipwipwip-next-donotuse",
+  "version": "4.0.0",
   "description": "",
+  "main": "package.json",
   "framework": {
     "static": "public",
     "assetPrefix": "_next/",
     "router": {
-      "dir": "pages",
+      "dir": [
+        "pages",
+        "src/pages"
+      ],
       "extensions": [
         ".js",
         ".ts",
@@ -28,7 +32,8 @@
             "process.env.__NEXT_HAS_REWRITES": "false",
             "process.env.__NEXT_ANALYTICS_ID": "null",
             "process.env.__NEXT_OPTIMIZE_CSS": "false",
-            "process.env.__NEXT_CROSS_ORIGIN": "''"
+            "process.env.__NEXT_CROSS_ORIGIN": "''",
+            "process.env.__NEXT_STRICT_MODE": "false"
           }
         },
         "server": {
@@ -44,7 +49,8 @@
             "process.env.__NEXT_I18N_SUPPORT": "false",
             "process.env.__NEXT_HAS_REWRITES": "false",
             "process.env.__NEXT_ANALYTICS_ID": "null",
-            "process.env.__NEXT_CROSS_ORIGIN": "''"
+            "process.env.__NEXT_CROSS_ORIGIN": "''",
+            "process.env.__NEXT_STRICT_MODE": "false"
           }
         }
       }
@@ -58,8 +64,5 @@
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "",
-  "license": "ISC",
-  "dependencies": {
-    "next": "^11.1.0"
-  }
+  "license": "ISC"
 }

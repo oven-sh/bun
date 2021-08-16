@@ -159,8 +159,8 @@ pub const Cli = struct {
                 clap.parseParam("--main-fields <STR>...            Main fields to lookup in package.json. Defaults to --platform dependent") catch unreachable,
                 clap.parseParam("--scan                            Instead of bundling or transpiling, print a list of every file imported by an entry point, recursively") catch unreachable,
                 clap.parseParam("--new-jsb                         Generate a new node_modules.jsb file from node_modules and entry point(s)") catch unreachable,
-                clap.parseParam("--jsb <STR>                       Use a Speedy JavaScript Bundle (default: \"./node_modules.jsb\" if exists)") catch unreachable,
-                // clap.parseParam("--no-jsb                          Use a Speedy JavaScript Bundle (default: \"./node_modules.jsb\" if exists)") catch unreachable,
+                clap.parseParam("--jsb <STR>                       Use a Bun JavaScript Bundle (default: \"./node_modules.jsb\" if exists)") catch unreachable,
+                // clap.parseParam("--no-jsb                          Use a Bun JavaScript Bundle (default: \"./node_modules.jsb\" if exists)") catch unreachable,
                 clap.parseParam("<POS>...                          Entry points to use") catch unreachable,
             };
 
@@ -334,7 +334,7 @@ pub const Cli = struct {
                 .node_modules_bundle_path = node_modules_bundle_path,
                 .public_dir = if (args.option("--public-dir")) |public_dir| allocator.dupe(u8, public_dir) catch unreachable else null,
                 .write = write,
-                .platform = .speedy,
+                .platform = .bun,
                 .serve = serve,
                 .inject = inject,
                 .entry_points = entry_points,

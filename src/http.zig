@@ -131,7 +131,7 @@ pub const RequestContext = struct {
     match_file_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined,
     res_headers_count: usize = 0,
 
-    pub const bundle_prefix = "__speedy";
+    pub const bundle_prefix = "__bun";
 
     pub fn getFullURL(this: *RequestContext) [:0]const u8 {
         if (this.full_url.len == 0) {
@@ -838,7 +838,7 @@ pub const RequestContext = struct {
 
             js_ast.Stmt.Data.Store.reset();
             js_ast.Expr.Data.Store.reset();
-            JavaScript.Wundle.flushCSSImports();
+            JavaScript.Bun.flushCSSImports();
             vm.flush();
 
             try runLoop(vm);
@@ -853,7 +853,7 @@ pub const RequestContext = struct {
                     std.debug.assert(ZigGlobalObject.resetModuleRegistryMap(vm.global, module_map));
                     js_ast.Stmt.Data.Store.reset();
                     js_ast.Expr.Data.Store.reset();
-                    JavaScript.Wundle.flushCSSImports();
+                    JavaScript.Bun.flushCSSImports();
                 }
                 var handler: *JavaScriptHandler = try channel.readItem();
 
@@ -1070,7 +1070,7 @@ pub const RequestContext = struct {
             ctx.appendHeader("Connection", "Upgrade");
             ctx.appendHeader("Upgrade", "websocket");
             ctx.appendHeader("Sec-WebSocket-Accept", key);
-            ctx.appendHeader("Sec-WebSocket-Protocol", "speedy-hmr");
+            ctx.appendHeader("Sec-WebSocket-Protocol", "bun-hmr");
             try ctx.writeStatus(101);
             try ctx.flushHeaders();
             Output.println("101 - Websocket connected.", .{});
@@ -1808,7 +1808,7 @@ pub const Server = struct {
         try listener.listen(1280);
         const addr = try listener.getLocalAddress();
 
-        Output.prettyln("<r>Started Speedy at <b><cyan>http://{s}<r>", .{addr});
+        Output.prettyln("<r>Started Bun at <b><cyan>http://{s}<r>", .{addr});
         Output.flush();
         // var listener_handle = try std.os.kqueue();
         // var change_list = std.mem.zeroes([2]os.Kevent);

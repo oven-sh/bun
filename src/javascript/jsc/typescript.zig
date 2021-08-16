@@ -43,14 +43,14 @@ pub fn main() anyerror!void {
     try index_file.writeAll(
         \\/// <reference no-default-lib="true" />
         \\/// <reference lib="esnext" />
-        \\/// <reference types="speedy.js/types/globals" />
-        \\/// <reference types="speedy.js/types/modules" />
+        \\/// <reference types="bun.js/types/globals" />
+        \\/// <reference types="bun.js/types/modules" />
         \\
     );
 
     var global_file = try dir.createFile("globals.d.ts", .{});
     try global_file.writeAll(
-        \\// Speedy.js v
+        \\// Bun.js v
         \\
         \\
     );
@@ -58,7 +58,7 @@ pub fn main() anyerror!void {
 
     var module_file = try dir.createFile("modules.d.ts", .{});
     try module_file.writeAll(
-        \\// Speedy.js v
+        \\// Bun.js v
         \\
         \\
     );
@@ -79,7 +79,7 @@ pub fn main() anyerror!void {
 
     inline for (modules) |decl| {
         comptime var module: d.ts.module = decl.module;
-        const basepath = comptime module.path["speedy.js/".len..];
+        const basepath = comptime module.path["bun.js/".len..];
         if (std.fs.path.dirname(basepath)) |dirname| {
             try dir.makePath(dirname);
         }

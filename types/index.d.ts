@@ -1,4 +1,4 @@
 /// <reference no-default-lib="true" />
 /// <reference lib="esnext" />
-/// <reference types="speedy.js/types/globals" />
-/// <reference types="speedy.js/types/modules" />
+/// <reference types="bun.js/types/globals" />
+/// <reference types="bun.js/types/modules" />

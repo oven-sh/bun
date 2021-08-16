@@ -42,7 +42,7 @@ pub const react_specific_warnings = true;
 // I suspect it's like 3 undefined memory issues.
 // This was the command I ran to reproduce it:
 //    for i in (seq 1000)
-//      command ../../build/debug/macos-x86_64/esdev --use=./nexty2 --new-jsb > /dev/null
+//      command ../../build/debug/macos-x86_64/bun --use=./nexty2 --new-jsb > /dev/null
 //    end
 // It only happens 1 out of every N times, probably like 50.
 pub const parallel_jsb = false;

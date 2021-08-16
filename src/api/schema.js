@@ -56,15 +56,15 @@ const Platform = {
   "3": 3,
   "browser": 1,
   "node": 2,
-  "speedy": 3
+  "bun": 3
 };
 const PlatformKeys = {
   "1": "browser",
   "2": "node",
-  "3": "speedy",
+  "3": "bun",
   "browser": "browser",
   "node": "node",
-  "speedy": "speedy"
+  "bun": "bun"
 };
 const JSXRuntime = {
   "1": 1,

@@ -1,8 +1,10 @@
-// Speedy.js v
+// Bun.js v
 
 declare global {
-
-  function addEventListener(name: "fetch", callback: (event: FetchEvent) => void): void;
+  function addEventListener(
+    name: "fetch",
+    callback: (event: FetchEvent) => void
+  ): void;
 }
 
 declare global {

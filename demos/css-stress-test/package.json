@@ -15,7 +15,8 @@
     "react-dom": "^17.0.2",
     "react-form": "^4.0.1",
     "react-hook-form": "^7.8.3",
-    "url": "^0.11.0"
+    "url": "^0.11.0",
+    "wipwipwipwip-next-donotuse": "4.0.0"
   },
   "parcel": "parceldist/index.js",
   "targets": {

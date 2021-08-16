@@ -93,17 +93,17 @@ pub fn build(b: *std.build.Builder) void {
 
     if (target.getOsTag() == .wasi) {
         exe.enable_wasmtime = true;
-        exe = b.addExecutable("esdev", "src/main_wasi.zig");
+        exe = b.addExecutable("bun", "src/main_wasi.zig");
         exe.linkage = .dynamic;
         exe.setOutputDir(output_dir);
     } else if (target.getCpuArch().isWasm()) {
         // exe = b.addExecutable(
-        //     "esdev",
+        //     "bun",
         //     "src/main_wasm.zig",
         // );
         // exe.is_linking_libc = false;
         // exe.is_dynamic = true;
-        var lib = b.addExecutable("esdev", "src/main_wasm.zig");
+        var lib = b.addExecutable("bun", "src/main_wasm.zig");
         lib.single_threaded = true;
         // exe.want_lto = true;
         // exe.linkLibrary(lib);
@@ -143,7 +143,7 @@ pub fn build(b: *std.build.Builder) void {
 
         return;
     } else {
-        exe = b.addExecutable("esdev", "src/main.zig");
+        exe = b.addExecutable("bun", "src/main.zig");
     }
     // exe.setLibCFile("libc.txt");
     exe.linkLibC();
@@ -292,7 +292,7 @@ pub fn build(b: *std.build.Builder) void {
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
-    var log_step = b.addLog("Destination: {s}/{s}\n", .{ output_dir, "esdev" });
+    var log_step = b.addLog("Destination: {s}/{s}\n", .{ output_dir, "bun" });
     log_step.step.dependOn(&exe.step);
 
     var typings_cmd: *std.build.RunStep = typings_exe.run();

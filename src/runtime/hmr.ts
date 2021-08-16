@@ -423,7 +423,7 @@ var __HMRModule, __FastRefreshModule, __HMRClient;
 
       const baseURL = new URL(location.origin + "/_api.hmr");
       baseURL.protocol = location.protocol === "https:" ? "wss" : "ws";
-      this.socket = new WebSocket(baseURL.toString(), ["speedy-hmr"]);
+      this.socket = new WebSocket(baseURL.toString(), ["bun-hmr"]);
       this.socket.binaryType = "arraybuffer";
       this.socket.onclose = this.handleClose;
       this.socket.onerror = this.handleError;
@@ -1143,19 +1143,19 @@ var __HMRModule, __FastRefreshModule, __HMRClient;
 
   var __hmrlog = {
     debug(...args) {
-      // console.debug("[speedy]", ...args);
+      // console.debug("[bun]", ...args);
       console.debug(...args);
     },
     error(...args) {
-      // console.error("[speedy]", ...args);
+      // console.error("[bun]", ...args);
       console.error(...args);
     },
     log(...args) {
-      // console.log("[speedy]", ...args);
+      // console.log("[bun]", ...args);
       console.log(...args);
     },
     warn(...args) {
-      // console.warn("[speedy]", ...args);
+      // console.warn("[bun]", ...args);
       console.warn(...args);
     },
   };

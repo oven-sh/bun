@@ -17,7 +17,7 @@ const panicky = @import("panic_handler.zig");
 const sync = @import("./sync.zig");
 const Api = @import("api/schema.zig").Api;
 const resolve_path = @import("./resolver/resolve_path.zig");
-const configureTransformOptionsForSpeedy = @import("./javascript/jsc/config.zig").configureTransformOptionsForSpeedy;
+const configureTransformOptionsForBun = @import("./javascript/jsc/config.zig").configureTransformOptionsForBun;
 const clap = @import("clap");
 
 const bundler = @import("bundler.zig");
@@ -132,8 +132,8 @@ pub const Cli = struct {
                 clap.parseParam("--main-fields <STR>...            Main fields to lookup in package.json. Defaults to --platform dependent") catch unreachable,
                 clap.parseParam("--scan                            Instead of bundling or transpiling, print a list of every file imported by an entry point, recursively") catch unreachable,
                 clap.parseParam("--new-jsb                         Generate a new node_modules.jsb file from node_modules and entry point(s)") catch unreachable,
-                clap.parseParam("--jsb <STR>                       Use a Speedy JavaScript Bundle (default: \"./node_modules.jsb\" if exists)") catch unreachable,
-                clap.parseParam("--jsb-for-server <STR>            Use a server-only Speedy JavaScript Bundle (default: \"./node_modules.server.jsb\" if exists)") catch unreachable,
+                clap.parseParam("--jsb <STR>                       Use a Bun JavaScript Bundle (default: \"./node_modules.jsb\" if exists)") catch unreachable,
+                clap.parseParam("--jsb-for-server <STR>            Use a server-only Bun JavaScript Bundle (default: \"./node_modules.server.jsb\" if exists)") catch unreachable,
                 clap.parseParam("--use <STR>                       Use a JavaScript framework (package name or path to package)") catch unreachable,
                 clap.parseParam("--production                      This sets the defaults to production. Applies to jsx & framework") catch unreachable,
 
@@ -446,7 +446,7 @@ pub const Cli = struct {
                             var server_bundler = try bundler.ServeBundler.init(
                                 allocator_,
                                 logs,
-                                try configureTransformOptionsForSpeedy(allocator_, transform_args),
+                                try configureTransformOptionsForBun(allocator_, transform_args),
                                 null,
                                 env_loader_,
                             );

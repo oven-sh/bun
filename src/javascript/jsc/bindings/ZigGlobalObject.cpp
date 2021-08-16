@@ -340,7 +340,7 @@ JSC::JSObject *GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
 
   // metaProperties->putDirect(vm, Identifier::fromString(vm, "resolve"),
   //                           globalObject->globalThis()
-  //                             ->get(vm, Identifier::fromString("Wundle"))
+  //                             ->get(vm, Identifier::fromString("Bun"))
   //                             .getObject()
   //                             ->get(vm, Identifier::fromString("resolve"))); );
   // RETURN_IF_EXCEPTION(scope, nullptr);

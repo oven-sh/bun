@@ -1,10 +1,10 @@
 # A fast bundler & JS Runtime built for developer iteration cycle
 
-Speedy is a fast bundler, transpiler, and runtime environment for JavaScript & TypeScript. It also supports bundling CSS.
+Bun is a fast bundler, transpiler, and runtime environment for JavaScript & TypeScript. It also supports bundling CSS.
 
 ### Performance optimizations
 
-Here are some techniques Speedy uses to go fast. Most are small wins. Some are big.
+Here are some techniques Bun uses to go fast. Most are small wins. Some are big.
 
 #### Compare comptime-known strings by nearest `(u64 || u32 || u16 || u8)`-sized integer
 
@@ -126,7 +126,7 @@ It's much faster to reuse the memory from reading the contents of the JavaScript
 
 #### CSS ~Parser~ Scanner
 
-Speedy (currently) does not have a CSS Parser. But, it still processes CSS.
+Bun (currently) does not have a CSS Parser. But, it still processes CSS.
 
 Most CSS processors work something like this:
 
@@ -136,7 +136,7 @@ Most CSS processors work something like this:
 4. Perform 1 or more passes over the AST. For tools like PostCSS, every plugin typically adds 1+ passes over the AST. (visiting)
 5. Print the source code (printing)
 
-Speedy's CSS Scanner scans, rewrites, and prints CSS in a single pass without generating an AST. It works like this:
+Bun's CSS Scanner scans, rewrites, and prints CSS in a single pass without generating an AST. It works like this:
 
 1. Copy the CSS source code to a byte array
 2. Iterate through every unicode codepoint, searching for lines starting with `@import` or property values with `url(`
@@ -146,15 +146,15 @@ Speedy's CSS Scanner scans, rewrites, and prints CSS in a single pass without ge
    3. Write the import URL
 4. When end of file is reached, flush to disk.
 
-Speedy's CSS Scanner is about 56x faster than PostCSS with the `postcss-import` and `postcss-url` plugins enabled (and sourcemaps disabled). On the other hand, auto-prefixing and minification won't work. Minifying whitespace is possible with some modifications, but minifiying CSS syntax correctly needs an AST.
+Bun's CSS Scanner is about 56x faster than PostCSS with the `postcss-import` and `postcss-url` plugins enabled (and sourcemaps disabled). On the other hand, auto-prefixing and minification won't work. Minifying whitespace is possible with some modifications, but minifiying CSS syntax correctly needs an AST.
 
 This approach is fast, but not without tradeoffs!
 
-Speedy's CSS Scanner is based on esbuild's CSS Lexer. Thank you @evanwallace.
+Bun's CSS Scanner is based on esbuild's CSS Lexer. Thank you @evanwallace.
 
 #### Compile-time generated JavaScript Parsers
 
-At the time of writing, there are 8 different comptime-generated variations of Speedy's JavaScript parser.
+At the time of writing, there are 8 different comptime-generated variations of Bun's JavaScript parser.
 
 ```zig
 pub fn NewParser(
@@ -173,16 +173,16 @@ When this is `false`, branches that only apply to parsing TypeScript are removed
 **Performance impact: +2%?**
 
 ```bash
-❯ hyperfine "../../build/macos-x86_64/esdev node_modules/react-dom/cjs/react-dom.development.js --resolve=disable" "../../esdev.before-comptime-js-parser node_modules/react-dom/cjs/react-dom.development.js --resolve=disable" --min-runs=500
-Benchmark #1: ../../build/macos-x86_64/esdev node_modules/react-dom/cjs/react-dom.development.js --resolve=disable
+❯ hyperfine "../../build/macos-x86_64/bun node_modules/react-dom/cjs/react-dom.development.js --resolve=disable" "../../bun.before-comptime-js-parser node_modules/react-dom/cjs/react-dom.development.js --resolve=disable" --min-runs=500
+Benchmark #1: ../../build/macos-x86_64/bun node_modules/react-dom/cjs/react-dom.development.js --resolve=disable
   Time (mean ± σ):      25.1 ms ±   1.1 ms    [User: 20.4 ms, System: 3.1 ms]
   Range (min … max):    23.5 ms …  31.7 ms    500 runs
 
-Benchmark #2: ../../esdev.before-comptime-js-parser node_modules/react-dom/cjs/react-dom.development.js --resolve=disable
+Benchmark #2: ../../bun.before-comptime-js-parser node_modules/react-dom/cjs/react-dom.development.js --resolve=disable
   Time (mean ± σ):      25.6 ms ±   1.3 ms    [User: 20.9 ms, System: 3.1 ms]
   Range (min … max):    24.1 ms …  39.7 ms    500 runs
-'../../build/macos-x86_64/esdev node_modules/react-dom/cjs/react-dom.development.js --resolve=disable' ran
-1.02 ± 0.07 times faster than '../../esdev.before-comptime-js-parser node_modules/react-dom/cjs/react-dom.development.js --resolve=disable'
+'../../build/macos-x86_64/bun node_modules/react-dom/cjs/react-dom.development.js --resolve=disable' ran
+1.02 ± 0.07 times faster than '../../bun.before-comptime-js-parser node_modules/react-dom/cjs/react-dom.development.js --resolve=disable'
 ```
 
 When this is `false`, branches that only apply to parsing JSX are removed.
@@ -197,7 +197,7 @@ This is only used for application code when generating `node_modules.jsb`. This 
  comptime only_scan_imports_and_do_not_visit: bool,
 ```
 
-At runtime, Speedy chooses the appropriate JavaScript parser to use based on the `loader`. In practical terms, this moves all the branches checking whether a parsing step should be run from inside several tight loops to just once, before parsing starts.
+At runtime, Bun chooses the appropriate JavaScript parser to use based on the `loader`. In practical terms, this moves all the branches checking whether a parsing step should be run from inside several tight loops to just once, before parsing starts.
 
 #### Max out per-process file handle limit automatically, leave file handles open.
 
@@ -209,13 +209,13 @@ This also enabled a kqueue-based File System watcher on macOS. FSEvents, the mor
 
 ### Architecture
 
-#### The Speedy Bundle Format
+#### The Bun Bundle Format
 
 TODO: document
 
 ### Hot Module Reloading
 
-Speedy's Hot Module Reloader uses a custom binary protocol that's around 8x more space efficient than other bundlers.
+Bun's Hot Module Reloader uses a custom binary protocol that's around 8x more space efficient than other bundlers.
 
 - File change notifications cost 9 bytes.
 - Build metadata costs 13 bytes + length of the module path that was rebuilt + size of the built file.
@@ -224,13 +224,13 @@ For comparison, Vite's HMR implementation uses 104 bytes + length of the module 
 
 #### Instant CSS
 
-When using `<link rel="stylesheet">`, Speedy HMR "just works", with zero configuration and without modifying HTML.
+When using `<link rel="stylesheet">`, Bun HMR "just works", with zero configuration and without modifying HTML.
 
 Here's how:
 
 - On page load, CSS files are built per request
 - When you make a change to a local CSS file, a file change notification is pushed over the websocket connection to the browser (HMR client)
 - For the first update, instead of asking for a new file to build, it asks for a list of files that the file within the `<link rel="stylesheet">` imports, and any those `@import`, recursively. If `index.css` imports `link.css` and `link.css` imports `colors.css`, that list will include `index.css`, `link.css`, and `colors.css`.
-- Preserving import order, the link tags are replaced in a single DOM update. This time, an additional query string flag is added `?noimport` which tells the Speedy CSS Scanner to remove any `@import` statements from the built CSS file.
+- Preserving import order, the link tags are replaced in a single DOM update. This time, an additional query string flag is added `?noimport` which tells the Bun CSS Scanner to remove any `@import` statements from the built CSS file.
 
 While this approach today is fast, there are more scalable alternatives to large codebases worth considering (such as, a bundling format that supports loading individual files unbundled). This may change in the near future.

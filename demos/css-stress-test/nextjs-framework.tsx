@@ -1,13 +1,13 @@
-import { renderNextJSPage } from "speedy-nextjs/server";
+import { renderNextJSPage } from "bun-nextjs/server";
 
 addEventListener("fetch", (event: FetchEvent) => {
   const AppComponent = module.requireFirst(
     "pages/_app",
-    "speedy-nextjs/pages/_app"
+    "bun-nextjs/pages/_app"
   );
   const Document = module.requireFirst(
     "pages/_document",
-    "speedy-nextjs/pages/_document"
+    "bun-nextjs/pages/_document"
   );
 });
 

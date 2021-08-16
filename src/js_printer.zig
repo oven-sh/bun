@@ -197,7 +197,7 @@ pub fn NewPrinter(
     comptime Writer: type,
     comptime Linker: type,
     comptime rewrite_esm_to_cjs: bool,
-    comptime speedy: bool,
+    comptime bun: bool,
 ) type {
     return struct {
         symbols: Symbol.Map,
@@ -394,7 +394,7 @@ pub fn NewPrinter(
         pub fn printSymbol(p: *Printer, ref: Ref) void {
             debug("<printSymbol>\n   {s}", .{ref});
             defer debugl("</printSymbol>");
-            if (speedy) {
+            if (bun) {
                 if (p.options.require_ref) |require| {
                     if (ref.eql(require)) {
                         return p.printIdentifier("module.require");
@@ -752,7 +752,7 @@ pub fn NewPrinter(
 
                     p.printSpaceBeforeIdentifier();
 
-                    if (speedy) {
+                    if (bun) {
                         p.print("module.require(");
                     } else {
                         p.print("require(");
@@ -3182,7 +3182,7 @@ pub fn NewPrinter(
                     p.printSymbol(s.default_name.?.ref.?);
                     p.print(" = ");
                     p.printLoadFromBundle(s.import_record_index);
-                    if (!speedy) {
+                    if (!bun) {
                         p.print(".default");
                     }
 
@@ -3197,7 +3197,7 @@ pub fn NewPrinter(
                     p.printSymbol(s.default_name.?.ref.?);
                     p.print(" = ");
                     p.printSymbol(s.namespace_ref);
-                    if (!speedy) {
+                    if (!bun) {
                         p.print(".default");
                     }
                     p.printSemicolonAfterStatement();
@@ -3326,7 +3326,7 @@ pub fn NewPrinter(
             }
         }
         pub fn printLoadFromBundle(p: *Printer, import_record_index: u32) void {
-            if (speedy) {
+            if (bun) {
                 const record = p.import_records[import_record_index];
                 p.print("module.require(\"");
                 p.print(record.path.text);

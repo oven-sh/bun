@@ -20,7 +20,7 @@ smol ResolveMode {
 smol Platform {
   browser = 1;
   node = 2;
-  speedy = 3;
+  bun = 3;
 }
 
 smol JSXRuntime {

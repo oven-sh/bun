@@ -32,10 +32,10 @@ pub const GlobalClasses = [_]type{
     EventListenerMixin.addEventListener(VirtualMachine),
     BuildError.Class,
     ResolveError.Class,
-    Wundle.Class,
+    Bun.Class,
 };
 
-pub const Wundle = struct {
+pub const Bun = struct {
     threadlocal var css_imports_list_strings: [512]ZigString = undefined;
     threadlocal var css_imports_list: [512]Api.StringPointer = undefined;
     threadlocal var css_imports_list_tail: u16 = 0;
@@ -198,12 +198,12 @@ pub const Wundle = struct {
     pub const Class = NewClass(
         void,
         .{
-            .name = "Wundle",
+            .name = "Bun",
             .read_only = true,
             .ts = .{
                 .module = .{
-                    .path = "speedy.js/router",
-                    .tsdoc = "Filesystem Router supporting dynamic routes, exact routes, catch-all routes, and optional catch-all routes. Implemented in native code and only available with Speedy.js.",
+                    .path = "bun.js/router",
+                    .tsdoc = "Filesystem Router supporting dynamic routes, exact routes, catch-all routes, and optional catch-all routes. Implemented in native code and only available with Bun.js.",
                 },
             },
         },
@@ -213,14 +213,14 @@ pub const Wundle = struct {
                 .ts = Router.match_type_definition,
             },
             .getImportedStyles = .{
-                .rfn = Wundle.getImportedStyles,
+                .rfn = Bun.getImportedStyles,
                 .ts = d.ts{
                     .name = "getImportedStyles",
                     .@"return" = "string[]",
                 },
             },
             .getRouteFiles = .{
-                .rfn = Wundle.getRouteFiles,
+                .rfn = Bun.getRouteFiles,
                 .ts = d.ts{
                     .name = "getRouteFiles",
                     .@"return" = "string[]",
@@ -302,7 +302,7 @@ pub const VirtualMachine = struct {
         const bundler = try Bundler.init(
             allocator,
             log,
-            try configureTransformOptionsForSpeedyVM(allocator, _args),
+            try configureTransformOptionsForBunVM(allocator, _args),
             existing_bundle,
             env_loader,
         );
@@ -322,7 +322,7 @@ pub const VirtualMachine = struct {
         try VirtualMachine.vm.bundler.configureFramework(false);
 
         if (_args.serve orelse false) {
-            VirtualMachine.vm.bundler.linker.onImportCSS = Wundle.onImportCSS;
+            VirtualMachine.vm.bundler.linker.onImportCSS = Bun.onImportCSS;
         }
 
         var global_classes: [GlobalClasses.len]js.JSClassRef = undefined;

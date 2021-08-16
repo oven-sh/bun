@@ -937,10 +937,10 @@ fn _JSCellStub(comptime str: []const u8) type {
     }
 }
 
-fn _Wundle(comptime str: []const u8) type {
+fn _Bun(comptime str: []const u8) type {
     if (is_bindgen) {
         return opaque {
-            pub const name = "Wundle::" ++ str ++ "";
+            pub const name = "Bun::" ++ str ++ "";
         };
     } else {
         return opaque {};

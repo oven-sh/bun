@@ -1,5 +1,5 @@
 
-speedy: speedy-prod-native speedy-prod-wasi speedy-prod-wasm
+bun: bun-prod-native bun-prod-wasi bun-prod-wasm
 
 api: 
 	peechy --schema src/api/schema.peechy --esm src/api/schema.js --ts src/api/schema.d.ts --zig src/api/schema.zig
@@ -62,30 +62,30 @@ sizegen:
 picohttp:
 	 clang -O3 -g -c src/deps/picohttpparser.c -Isrc/deps -o src/deps/picohttpparser.o; cd ../../	
 
-speedy-prod-native-macos: picohttp
+bun-prod-native-macos: picohttp
 	zig build -Drelease-fast -Dtarget=x86_64-macos-gnu
 
-speedy-prod-native-macos-lib: 
+bun-prod-native-macos-lib: 
 	zig build lib -Drelease-fast -Dtarget=x86_64-macos-gnu
 
-speedy-m1:
+bun-m1:
 	zig build -Drelease-fast -Dtarget=aarch64-macos-gnu
 
-speedy-prod-wasm: 
+bun-prod-wasm: 
 	zig build -Drelease-fast -Dtarget=wasm32-freestanding
 
-speedy-prod-wasi: 
+bun-prod-wasi: 
 	zig build -Drelease-fast -Dtarget=wasm32-wasi
 
-speedy-dev: speedy-dev-native speedy-dev-wasi speedy-dev-wasm
+bun-dev: bun-dev-native bun-dev-wasi bun-dev-wasm
 
-speedy-dev-native: 
+bun-dev-native: 
 	zig build
 
-speedy-dev-wasm: 
+bun-dev-wasm: 
 	zig build -Dtarget=wasm32-freestanding
 
-speedy-dev-wasi: 
+bun-dev-wasi: 
 	zig build -Dtarget=wasm32-wasi
 
 
@@ -138,9 +138,9 @@ bench-rome:
 	echo 'Line count:' && (find bench/rome/src -name '*.ts' && find bench/rome/src -name '*.js') | xargs wc -l | tail -n 1
 
 
-bench-rome-speedy: | bench/rome-verify 
+bench-rome-bun: | bench/rome-verify 
 	cd bench/rome/src
-	/Users/jarred/Code/esdev/build/macos-x86_64/esdev --outdir=dist ./entry.ts
+	/Users/jarred/Code/bun/build/macos-x86_64/bun --outdir=dist ./entry.ts
 
 github-rome: 
 	mkdir -p github/rome

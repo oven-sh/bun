@@ -353,8 +353,8 @@ _none,
   /// node
   node,
 
-  /// speedy
-  speedy,
+  /// bun
+  bun,
 
 _,
 

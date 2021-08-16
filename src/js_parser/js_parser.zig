@@ -2991,7 +2991,7 @@ pub fn NewParser(
 
         // If we're auto-importing JSX and it's bundled, we use the bundled version
         // This means we need to transform from require(react) to react()
-        // unless we're building inside of speedy, then it's just normal commonjs
+        // unless we're building inside of bun, then it's just normal commonjs
         pub fn callUnbundledRequire(p: *P, require_args: []Expr) Expr {
             return p.callRuntime(require_args[0].loc, "__require", require_args);
         }
@@ -14294,16 +14294,16 @@ pub fn NewParser(
 }
 
 // Doing this seems to yield a 1% performance improvement parsing larger files
-// ❯ hyperfine "../../build/macos-x86_64/esdev node_modules/react-dom/cjs/react-dom.development.js --resolve=disable" "../../esdev.before-comptime-js-parser node_modules/react-dom/cjs/react-dom.development.js --resolve=disable" --min-runs=500
-// Benchmark #1: ../../build/macos-x86_64/esdev node_modules/react-dom/cjs/react-dom.development.js --resolve=disable
+// ❯ hyperfine "../../build/macos-x86_64/bun node_modules/react-dom/cjs/react-dom.development.js --resolve=disable" "../../bun.before-comptime-js-parser node_modules/react-dom/cjs/react-dom.development.js --resolve=disable" --min-runs=500
+// Benchmark #1: ../../build/macos-x86_64/bun node_modules/react-dom/cjs/react-dom.development.js --resolve=disable
 //   Time (mean ± σ):      25.1 ms ±   1.1 ms    [User: 20.4 ms, System: 3.1 ms]
 //   Range (min … max):    23.5 ms …  31.7 ms    500 runs
 
-// Benchmark #2: ../../esdev.before-comptime-js-parser node_modules/react-dom/cjs/react-dom.development.js --resolve=disable
+// Benchmark #2: ../../bun.before-comptime-js-parser node_modules/react-dom/cjs/react-dom.development.js --resolve=disable
 //   Time (mean ± σ):      25.6 ms ±   1.3 ms    [User: 20.9 ms, System: 3.1 ms]
 //   Range (min … max):    24.1 ms …  39.7 ms    500 runs
-// '../../build/macos-x86_64/esdev node_modules/react-dom/cjs/react-dom.development.js --resolve=disable' ran
-// 1.02 ± 0.07 times faster than '../../esdev.before-comptime-js-parser node_modules/react-dom/cjs/react-dom.development.js --resolve=disable'
+// '../../build/macos-x86_64/bun node_modules/react-dom/cjs/react-dom.development.js --resolve=disable' ran
+// 1.02 ± 0.07 times faster than '../../bun.before-comptime-js-parser node_modules/react-dom/cjs/react-dom.development.js --resolve=disable'
 const JavaScriptParser = NewParser(.{});
 const JSXParser = NewParser(.{ .jsx = true });
 const TSXParser = NewParser(.{ .jsx = true, .typescript = true });

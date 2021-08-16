@@ -1,6 +1,6 @@
 {
   "compilerOptions": {
-    "baseUrl": "/Users/jarredsumner/Code/esdev/src/test/fixtures",
+    "baseUrl": "/Users/jarredsumner/Code/bun/src/test/fixtures",
     "paths": {
       "components": ["components/*"]
     },

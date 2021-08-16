@@ -1,8 +1,7 @@
-// Speedy.js v
+// Bun.js v
 
-/**  Filesystem Router supporting dynamic routes, exact routes, catch-all routes, and optional catch-all routes. Implemented in native code and only available with Speedy.js.  */
-declare module "speedy.js/router" {
-
+/**  Filesystem Router supporting dynamic routes, exact routes, catch-all routes, and optional catch-all routes. Implemented in native code and only available with Bun.js.  */
+declare module "bun.js/router" {
   /**  Match a {@link https://developer.mozilla.org/en-US/docs/Web/API/FetchEvent FetchEvent} to a `Route` from the local filesystem. Returns `null` if there is no match.  */
   function match(event: FetchEvent): Route | null;
 
@@ -27,19 +26,19 @@ declare module "speedy.js/router" {
      *  `"blog/posts/[id]"`
      *  `"blog/posts/[id]/[[...slug]]"`
      *  `"blog"`
-    */
+     */
     readonly name: string;
 
     /**
      *  Route parameters as a key-value object
-     *  
+     *
      *  @example
      *  ```js
      *  console.assert(router.query.id === "123");
      *  console.assert(router.pathname === "/blog/posts/123");
      *  console.assert(router.route === "blog/posts/[id]");
      *  ```
-    */
+     */
     readonly query: Record<string, string | string[]>;
 
     /**  Synchronously load & evaluate the file corresponding to the route. Returns the exports of the route. This is similar to `await import(route.filepath)`, except it's synchronous. It is recommended to use this function instead of `import`.  */

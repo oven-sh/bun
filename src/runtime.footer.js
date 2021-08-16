@@ -1,6 +1,6 @@
 // ---
 // Public exports from runtime
-// Compatible with Speedy's Runtime Environment and web browsers.
+// Compatible with Bun's Runtime Environment and web browsers.
 export var $$m =
   "$primordials" in globalThis ? $primordials.require : SPEEDY_RUNTIME.$$m;
 export var __HMRModule = SPEEDY_RUNTIME.__HMRModule;

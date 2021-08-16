@@ -45,7 +45,7 @@ pub const NodeModuleBundle = struct {
 
     bytecode_cache_fetcher: Fs.BytecodeCacheFetcher = Fs.BytecodeCacheFetcher{},
 
-    pub const magic_bytes = "#!/usr/bin/env speedy\n\n";
+    pub const magic_bytes = "#!/usr/bin/env bun\n\n";
     threadlocal var jsbundle_prefix: [magic_bytes.len + 5]u8 = undefined;
 
     // TODO: support preact-refresh, others by not hard coding

@@ -141,7 +141,6 @@ pub const ServerEntryPoint = struct {
         bundler: *BundlerType,
         original_path: Fs.PathName,
         name: string,
-        
     ) !void {
 
         // This is *extremely* naive.
@@ -594,10 +593,10 @@ pub fn NewBundler(cache_files: bool) type {
                 }
             }
 
-            // The Speedy Bundle Format
+            // The Bun Bundle Format
             // Your entire node_modules folder in a single compact file designed for web browsers.
             // A binary JavaScript bundle format prioritizing bundle time and serialization/deserialization time
-            pub const magic_bytes = "#!/usr/bin/env speedy\n\n";
+            pub const magic_bytes = "#!/usr/bin/env bun\n\n";
             // This makes it possible to do ./path-to-bundle on posix systems you can see the raw JS contents
             // https://en.wikipedia.org/wiki/Magic_number_(programming)#In_files
             // Immediately after the magic bytes, the next character is a uint32 followed by a newline
@@ -1815,10 +1814,10 @@ pub fn NewBundler(cache_files: bool) type {
                     opts.enable_bundling = false;
                     opts.transform_require_to_import = true;
                     opts.can_import_from_bundle = bundler.options.node_modules_bundle != null;
-                    opts.features.hot_module_reloading = bundler.options.hot_module_reloading and bundler.options.platform != .speedy; // and client_entry_point_ == null;
+                    opts.features.hot_module_reloading = bundler.options.hot_module_reloading and bundler.options.platform != .bun; // and client_entry_point_ == null;
                     opts.features.react_fast_refresh = opts.features.hot_module_reloading and jsx.parse and bundler.options.jsx.supports_fast_refresh;
                     opts.filepath_hash_for_hmr = file_hash orelse 0;
-                    opts.warn_about_unbundled_modules = bundler.options.platform != .speedy;
+                    opts.warn_about_unbundled_modules = bundler.options.platform != .bun;
                     const value = (bundler.resolver.caches.js.parse(allocator, opts, bundler.options.define, bundler.log, &source) catch null) orelse return null;
                     return ParseResult{
                         .ast = value,

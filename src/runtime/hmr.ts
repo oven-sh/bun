@@ -390,16 +390,39 @@ var __HMRModule, __FastRefreshModule, __HMRClient;
       };
     }
 
+    nextReconnectAttempt = 0;
+    reconnectDelay = 16;
+    debouncedReconnect = () => {
+      if (
+        this.socket &&
+        (this.socket.readyState == this.socket.OPEN ||
+          this.socket.readyState == this.socket.CONNECTING)
+      )
+        return;
+
+      this.nextReconnectAttempt = setTimeout(
+        this.attemptReconnect,
+        this.reconnectDelay
+      );
+    };
+
+    attemptReconnect = () => {
+      globalThis.clearTimeout(this.nextReconnectAttempt);
+      if (
+        this.socket &&
+        (this.socket.readyState == this.socket.OPEN ||
+          this.socket.readyState == this.socket.CONNECTING)
+      )
+        return;
+      this.connect();
+      this.reconnectDelay += Math.floor(Math.random() * 128);
+    };
+
     connect() {
       clientStartTime = performance.now();
 
-      if (this.reconnect) {
-        globalThis.clearInterval(this.reconnect);
-        this.reconnect = 0;
-      }
-
       const baseURL = new URL(location.origin + "/_api.hmr");
-      baseURL.protocol = location.protocol === "https" ? "wss" : "ws";
+      baseURL.protocol = location.protocol === "https:" ? "wss" : "ws";
       this.socket = new WebSocket(baseURL.toString(), ["speedy-hmr"]);
       this.socket.binaryType = "arraybuffer";
       this.socket.onclose = this.handleClose;
@@ -460,8 +483,7 @@ var __HMRModule, __FastRefreshModule, __HMRClient;
       if (this.reconnect !== 0) {
         return;
       }
-
-      this.reconnect = setInterval(this.connect, 500) as any as number;
+      this.debouncedReconnect();
     };
 
     handleBuildSuccess(buffer: ByteBuffer, timestamp: number) {
@@ -645,9 +667,15 @@ var __HMRModule, __FastRefreshModule, __HMRClient;
     buildCommandUArray = new Uint32Array(1);
     buildCommandUArrayEight = new Uint8Array(this.buildCommandUArray.buffer);
 
+    // On open, reset the delay for reconnecting
     handleOpen = (event: Event) => {
-      globalThis.clearInterval(this.reconnect);
-      this.reconnect = 0;
+      globalThis.clearTimeout(this.nextReconnectAttempt);
+      setTimeout(() => {
+        if (this.socket && this.socket.readyState == this.socket.OPEN) {
+          globalThis.clearTimeout(this.nextReconnectAttempt);
+          this.reconnectDelay = 16;
+        }
+      }, 16);
     };
 
     handleMessage = (event: MessageEvent) => {
@@ -699,11 +727,7 @@ var __HMRModule, __FastRefreshModule, __HMRClient;
         return;
       }
 
-      this.reconnect = globalThis.setInterval(
-        this.connect,
-        500
-      ) as any as number;
-      __hmrlog.warn("HMR disconnected. Attempting to reconnect.");
+      this.debouncedReconnect();
     };
   }
   let pendingUpdateCount = 0;
@@ -836,9 +860,9 @@ var __HMRModule, __FastRefreshModule, __HMRClient;
             // We must find a React Refresh boundary. This is a module that only exports React components.
             // If we do not find a React Refresh boundary, we must instead perform a full page reload.
             for (
-              let i = HMRModule.dependencies.graph_used - 1;
-              i > this.module_index;
-              i--
+              let i = 0;
+              i <= this.module_index;
+              i++ // let i = HMRModule.dependencies.graph_used - 1; // i > this.module_index; // i--
             ) {
               let handled =
                 !HMRModule.dependencies.modules[i].exports.__hmrDisable;
@@ -1136,6 +1160,7 @@ var __HMRModule, __FastRefreshModule, __HMRClient;
     },
   };
 
+  // __HMRModule = FastRefreshModule;
   __HMRModule = HMRModule;
   __FastRefreshModule = FastRefreshModule;
   __HMRClient = HMRClient;

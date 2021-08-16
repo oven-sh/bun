@@ -50,7 +50,9 @@
             "process.env.__NEXT_HAS_REWRITES": "false",
             "process.env.__NEXT_ANALYTICS_ID": "null",
             "process.env.__NEXT_CROSS_ORIGIN": "''",
-            "process.env.__NEXT_STRICT_MODE": "false"
+            "process.env.__NEXT_STRICT_MODE": "false",
+            "global": "globalThis",
+            "window": "undefined"
           }
         }
       }

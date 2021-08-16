@@ -285,7 +285,7 @@ type uint32 = number;
   }
 
   export interface RouteConfig {
-    dir?: string;
+    dir?: string[];
     extensions?: string[];
     static_dir?: string;
     asset_prefix?: string;

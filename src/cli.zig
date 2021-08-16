@@ -229,7 +229,7 @@ pub const Cli = struct {
 
             var route_config: ?Api.RouteConfig = null;
             if (args.option("--static-dir")) |public_dir| {
-                route_config = route_config orelse Api.RouteConfig{ .extensions = &.{} };
+                route_config = route_config orelse Api.RouteConfig{ .extensions = &.{}, .dir = &.{} };
 
                 route_config.?.static_dir = public_dir;
             }
@@ -429,6 +429,7 @@ pub const Cli = struct {
             var env_loader = this_bundler.env;
             wait_group = sync.WaitGroup.init();
             var server_bundler_generator_thread: ?std.Thread = null;
+            var generated_server = false;
             if (this_bundler.options.framework) |*framework| {
                 if (framework.toAPI(allocator, this_bundler.fs.top_level_dir, false)) |_server_conf| {
                     const ServerBundleGeneratorThread = struct {
@@ -506,6 +507,7 @@ pub const Cli = struct {
                                 this_bundler.router,
                             },
                         );
+                        generated_server = true;
                     } else {
                         ServerBundleGeneratorThread.generate(
                             log_,
@@ -516,6 +518,7 @@ pub const Cli = struct {
                             loaded_route_config,
                             this_bundler.router,
                         );
+                        generated_server = true;
                     }
                 }
             }
@@ -551,7 +554,7 @@ pub const Cli = struct {
                         const indent = comptime " ";
                         Output.prettyln(indent ++ "<d>{d:6}ms elapsed", .{@intCast(u32, elapsed)});
 
-                        if (server_bundler_generator_thread != null) {
+                        if (generated_server) {
                             Output.prettyln(indent ++ "<r>Saved to ./{s}, ./{s}", .{ filepath, server_bundle_filepath });
                         } else {
                             Output.prettyln(indent ++ "<r>Saved to ./{s}", .{filepath});

@@ -403,12 +403,25 @@ pub fn NewResolver(cache_files: bool) type {
             }
 
             if (pair.loaded_routes) {
-                var parts = [_]string{ r.fs.top_level_dir, std.fs.path.sep_str, pair.router.dir };
-                const abs = r.fs.join(&parts);
-                // must end in trailing slash
-                var realpath = std.os.realpath(abs, &buf) catch return error.RoutesDirNotFound;
-                var out = try r.allocator.alloc(u8, realpath.len + 1);
-                std.mem.copy(u8, out, realpath);
+                const chosen_dir: string = brk: {
+                    if (pair.router.possible_dirs.len > 0) {
+                        for (pair.router.possible_dirs) |route_dir| {
+                            var parts = [_]string{ r.fs.top_level_dir, std.fs.path.sep_str, route_dir };
+                            const abs = r.fs.join(&parts);
+                            // must end in trailing slash
+                            break :brk (std.os.realpath(abs, &buf) catch continue);
+                        }
+                        return error.MissingRouteDir;
+                    } else {
+                        var parts = [_]string{ r.fs.top_level_dir, std.fs.path.sep_str, pair.router.dir };
+                        const abs = r.fs.join(&parts);
+                        // must end in trailing slash
+                        break :brk std.os.realpath(abs, &buf) catch return error.MissingRouteDir;
+                    }
+                };
+
+                var out = try r.allocator.alloc(u8, chosen_dir.len + 1);
+                std.mem.copy(u8, out, chosen_dir);
                 out[out.len - 1] = '/';
                 pair.router.dir = out;
                 pair.router.routes_enabled = true;

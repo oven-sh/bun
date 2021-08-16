@@ -496,7 +496,7 @@ pub const RequestContext = struct {
         allocator: *std.mem.Allocator,
         printer: js_printer.BufferPrinter,
         timer: std.time.Timer,
-
+        count: usize = 0,
         pub const WatchBuildResult = struct {
             value: Value,
             id: u32,
@@ -513,6 +513,13 @@ pub const RequestContext = struct {
             };
         };
         pub fn build(this: *WatchBuilder, id: u32, from_timestamp: u32) !WatchBuildResult {
+            if (this.count == 0) {
+                var writer = try js_printer.BufferWriter.init(this.allocator);
+                this.printer = js_printer.BufferPrinter.init(writer);
+                this.printer.ctx.append_null_byte = false;
+            }
+
+            defer this.count += 1;
             var log = logger.Log.init(this.allocator);
             errdefer log.deinit();
 
@@ -789,7 +796,7 @@ pub const RequestContext = struct {
                     entry_point,
                 ) catch |err| {
                     Output.prettyErrorln(
-                        "<r>JavaScript VM failed to start.\n<red>{s}:<r> while loading <r><b>\"\"",
+                        "<r>JavaScript VM failed to start.\n<red>{s}:<r> while loading <r><b>\"{s}\"",
                         .{ @errorName(err), entry_point },
                     );
 
@@ -920,18 +927,20 @@ pub const RequestContext = struct {
         message_buffer: MutableString,
         pub var open_websockets: std.ArrayList(*WebsocketHandler) = undefined;
         var open_websockets_lock = sync.RwLock.init();
-        pub fn addWebsocket(ctx: *RequestContext) !*WebsocketHandler {
+        pub fn addWebsocket(ctx: *RequestContext, server: *Server) !*WebsocketHandler {
             open_websockets_lock.lock();
             defer open_websockets_lock.unlock();
-            var clone = try ctx.allocator.create(WebsocketHandler);
+
+            var clone = try server.allocator.create(WebsocketHandler);
             clone.ctx = ctx.*;
             clone.conn = ctx.conn.*;
-            clone.message_buffer = try MutableString.init(ctx.allocator, 0);
+            clone.message_buffer = try MutableString.init(server.allocator, 0);
             clone.ctx.conn = &clone.conn;
-            var printer_writer = try js_printer.BufferWriter.init(ctx.allocator);
+
+            var printer_writer = try js_printer.BufferWriter.init(server.allocator);
 
             clone.builder = WatchBuilder{
-                .allocator = ctx.allocator,
+                .allocator = server.allocator,
                 .bundler = ctx.bundler,
                 .printer = js_printer.BufferPrinter.init(printer_writer),
                 .timer = ctx.timer,
@@ -940,6 +949,7 @@ pub const RequestContext = struct {
 
             clone.websocket = Websocket.Websocket.create(&clone.conn, SOCKET_FLAGS);
             clone.tombstone = false;
+
             try open_websockets.append(clone);
             return clone;
         }
@@ -1017,6 +1027,9 @@ pub const RequestContext = struct {
             Output.enable_ansi_colors = stderr.isTty();
             js_ast.Stmt.Data.Store.create(self.ctx.allocator);
             js_ast.Expr.Data.Store.create(self.ctx.allocator);
+            self.builder.printer = js_printer.BufferPrinter.init(
+                js_printer.BufferWriter.init(self.ctx.allocator) catch unreachable,
+            );
             _handle(self) catch {};
         }
 
@@ -1032,7 +1045,6 @@ pub const RequestContext = struct {
                 switch (err) {
                     error.BadRequest => {
                         try ctx.sendBadRequest();
-                        ctx.done();
                     },
                     else => {
                         return err;
@@ -1277,9 +1289,9 @@ pub const RequestContext = struct {
         return false;
     }
 
-    pub fn handleWebsocket(ctx: *RequestContext) anyerror!void {
+    pub fn handleWebsocket(ctx: *RequestContext, server: *Server) anyerror!void {
         ctx.controlled = true;
-        var handler = try WebsocketHandler.addWebsocket(ctx);
+        var handler = try WebsocketHandler.addWebsocket(ctx, server);
         _ = try std.Thread.spawn(.{}, WebsocketHandler.handle, .{handler});
     }
 
@@ -1590,14 +1602,14 @@ pub const RequestContext = struct {
         }
     }
 
-    pub fn handleReservedRoutes(ctx: *RequestContext) !bool {
+    pub fn handleReservedRoutes(ctx: *RequestContext, server: *Server) !bool {
         if (strings.eqlComptime(ctx.url.extname, "jsb") and ctx.bundler.options.node_modules_bundle != null) {
             try ctx.sendJSB();
             return true;
         }
 
         if (strings.eqlComptime(ctx.url.path, "_api.hmr")) {
-            try ctx.handleWebsocket();
+            try ctx.handleWebsocket(server);
             return true;
         }
 
@@ -1879,7 +1891,7 @@ pub const Server = struct {
             req_ctx.keep_alive = false;
         }
 
-        var finished = req_ctx.handleReservedRoutes() catch |err| {
+        var finished = req_ctx.handleReservedRoutes(server) catch |err| {
             Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
             return;
         };

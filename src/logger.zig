@@ -596,6 +596,8 @@ pub const Source = struct {
     }
 
     pub fn rangeOfString(self: *const Source, loc: Loc) Range {
+        if (loc.start < 0) return Range.None;
+
         const text = self.contents[loc.i()..];
 
         if (text.len == 0) {

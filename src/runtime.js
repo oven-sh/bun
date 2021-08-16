@@ -70,9 +70,13 @@ export var __commonJS = (cb, name) => {
         typeof mod.exports === "object" &&
         !("default" in mod.exports)
       ) {
+        var defaultValue = mod.exports;
         Object.defineProperty(mod.exports, "default", {
           get() {
-            return mod.exports;
+            return defaultValue;
+          },
+          set(value) {
+            defaultValue = value;
           },
           enumerable: true,
         });

@@ -429,6 +429,7 @@ pub const JSX = struct {
         import_source: string = "react/jsx-dev-runtime",
         classic_import_source: string = "react",
         package_name: []const u8 = "react",
+        refresh_runtime: string = "react-refresh/runtime",
         supports_fast_refresh: bool = false,
 
         jsx: string = "jsxDEV",
@@ -1465,6 +1466,7 @@ pub const Framework = struct {
 
 pub const RouteConfig = struct {
     dir: string = "",
+    possible_dirs: []const string = &[_]string{},
 
     // Frameworks like Next.js (and others) use a special prefix for bundled/transpiled assets
     // This is combined with "origin" when printing import paths
@@ -1517,13 +1519,26 @@ pub const RouteConfig = struct {
     pub fn fromApi(router_: Api.RouteConfig, allocator: *std.mem.Allocator) !RouteConfig {
         var router = zero();
 
-        var router_dir: string = std.mem.trimRight(u8, router_.dir orelse "", "/\\");
         var static_dir: string = std.mem.trimRight(u8, router_.static_dir orelse "", "/\\");
         var asset_prefix: string = std.mem.trimRight(u8, router_.asset_prefix orelse "", "/\\");
 
-        if (router_dir.len != 0) {
-            router.dir = router_dir;
-            router.routes_enabled = true;
+        switch (router_.dir.len) {
+            0 => {},
+            1 => {
+                router.dir = std.mem.trimRight(u8, router_.dir[0], "/\\");
+                router.routes_enabled = router.dir.len > 0;
+            },
+            else => {
+                router.possible_dirs = router_.dir;
+                for (router_.dir) |dir| {
+                    const trimmed = std.mem.trimRight(u8, dir, "/\\");
+                    if (trimmed.len > 0) {
+                        router.dir = trimmed;
+                    }
+                }
+
+                router.routes_enabled = router.dir.len > 0;
+            },
         }
 
         if (static_dir.len > 0) {

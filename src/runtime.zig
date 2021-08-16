@@ -62,6 +62,7 @@ pub const Runtime = struct {
         lazy_export: ?Ref = null,
         __HMRModule: ?Ref = null,
         __HMRClient: ?Ref = null,
+        __FastRefreshModule: ?Ref = null,
 
         pub const all = [_][]const u8{
             "__name",
@@ -78,6 +79,7 @@ pub const Runtime = struct {
             "lazy_export",
             "__HMRModule",
             "__HMRClient",
+            "__FastRefreshModule",
         };
         pub const Name = "<RUNTIME";
 
@@ -156,6 +158,11 @@ pub const Runtime = struct {
                                 return Entry{ .key = 11, .value = val };
                             }
                         },
+                        12 => {
+                            if (@field(this.runtime_imports, all[12])) |val| {
+                                return Entry{ .key = 12, .value = val };
+                            }
+                        },
 
                         else => {
                             return null;
@@ -213,6 +220,7 @@ pub const Runtime = struct {
                 9 => @field(imports, all[9]),
                 10 => @field(imports, all[10]),
                 11 => @field(imports, all[11]),
+                12 => @field(imports, all[12]),
                 else => null,
             };
         }

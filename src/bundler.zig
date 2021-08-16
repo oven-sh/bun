@@ -130,6 +130,58 @@ pub const ClientEntryPoint = struct {
     }
 };
 
+pub const ServerEntryPoint = struct {
+    code_buffer: [std.fs.MAX_PATH_BYTES * 2 + 500]u8 = undefined,
+    output_code_buffer: [std.fs.MAX_PATH_BYTES * 8 + 500]u8 = undefined,
+    source: logger.Source = undefined,
+
+    pub fn generate(
+        entry: *ServerEntryPoint,
+        comptime BundlerType: type,
+        bundler: *BundlerType,
+        original_path: Fs.PathName,
+        name: string,
+        
+    ) !void {
+
+        // This is *extremely* naive.
+        // The basic idea here is this:
+        // --
+        // import * as EntryPoint from 'entry-point';
+        // import boot from 'framework';
+        // boot(EntryPoint);
+        // --
+        // We go through the steps of printing the code -- only to then parse/transpile it because
+        // we want it to go through the linker and the rest of the transpilation process
+
+        const dir_to_use: string = original_path.dirWithTrailingSlash();
+
+        const code = try std.fmt.bufPrint(
+            &entry.code_buffer,
+            \\//Auto-generated file
+            \\import * as start from '{s}{s}';
+            \\if ('default' in start && typeof start.default === 'function') {{
+            \\  const result = start.default();
+            \\  if (result && typeof result === 'object' && result instanceof Promise) {{
+            \\    result.then(undefined, undefined);
+            \\  }}
+            \\}}
+            \\export * from '{s}{s}';
+        ,
+            .{
+                dir_to_use,
+                original_path.filename,
+                dir_to_use,
+                original_path.filename,
+            },
+        );
+
+        entry.source = logger.Source.initPathString(name, code);
+        entry.source.path.text = name;
+        entry.source.path.namespace = "server-entry";
+    }
+};
+
 pub const ResolveResults = std.AutoHashMap(u64, void);
 pub const ResolveQueue = std.fifo.LinearFifo(_resolver.Result, std.fifo.LinearFifoBufferType.Dynamic);
 
@@ -528,6 +580,20 @@ pub fn NewBundler(cache_files: bool) type {
 
             pub const current_version: u32 = 1;
 
+            pub fn enqueueItem(this: *GenerateNodeModuleBundle, resolve: _resolver.Result) !void {
+                var this_module_resolved_path = try this.resolved_paths.getOrPut(resolve.path_pair.primary.text);
+
+                if (!this_module_resolved_path.found_existing) {
+                    if (resolve.isLikelyNodeModule()) {
+                        if (BundledModuleData.get(this, &resolve)) |module_data_| {
+                            this_module_resolved_path.value_ptr.* = module_data_.module_id;
+                        }
+                    }
+
+                    this.resolve_queue.writeItemAssumeCapacity(resolve);
+                }
+            }
+
             // The Speedy Bundle Format
             // Your entire node_modules folder in a single compact file designed for web browsers.
             // A binary JavaScript bundle format prioritizing bundle time and serialization/deserialization time
@@ -621,73 +687,85 @@ pub fn NewBundler(cache_files: bool) type {
                 if (bundler.log.level == .verbose) {
                     bundler.resolver.debug_logs = try DebugLogs.init(allocator);
                 }
+                temp_stmts_list = @TypeOf(temp_stmts_list).init(allocator);
+                const include_refresh_runtime = !this.bundler.options.production and this.bundler.options.jsx.supports_fast_refresh and bundler.options.platform.isWebLike();
+
+                const resolve_queue_estimate = bundler.options.entry_points.len +
+                    @intCast(usize, @boolToInt(framework_config != null)) +
+                    @intCast(usize, @boolToInt(include_refresh_runtime)) +
+                    @intCast(usize, @boolToInt(bundler.options.jsx.parse));
 
                 if (bundler.router) |router| {
+                    defer this.bundler.resetStore();
+
                     const entry_points = try router.getEntryPoints(allocator);
-                    try this.resolve_queue.ensureUnusedCapacity(entry_points.len + bundler.options.entry_points.len + @intCast(usize, @boolToInt(framework_config != null)));
+                    try this.resolve_queue.ensureUnusedCapacity(entry_points.len + resolve_queue_estimate);
                     for (entry_points) |entry_point| {
                         const source_dir = bundler.fs.top_level_dir;
                         const resolved = try bundler.linker.resolver.resolve(source_dir, entry_point, .entry_point);
-                        this.resolve_queue.writeItemAssumeCapacity(resolved);
+                        try this.enqueueItem(resolved);
                     }
                     this.bundler.resetStore();
                 } else {
-                    try this.resolve_queue.ensureUnusedCapacity(bundler.options.entry_points.len + @intCast(usize, @boolToInt(framework_config != null)));
+                    try this.resolve_queue.ensureUnusedCapacity(resolve_queue_estimate);
                 }
 
                 for (bundler.options.entry_points) |entry_point| {
+                    defer this.bundler.resetStore();
+
                     const entry_point_path = bundler.normalizeEntryPointPath(entry_point);
                     const source_dir = bundler.fs.top_level_dir;
                     const resolved = try bundler.linker.resolver.resolve(source_dir, entry_point, .entry_point);
-                    this.resolve_queue.writeItemAssumeCapacity(resolved);
+                    try this.enqueueItem(resolved);
                 }
 
                 if (framework_config) |conf| {
+                    defer this.bundler.resetStore();
+
                     if (conf.client) {
                         if (bundler.configureFrameworkWithResolveResult(true)) |result_| {
                             if (result_) |result| {
-                                this.resolve_queue.writeItemAssumeCapacity(result);
+                                try this.enqueueItem(result);
                             }
                         } else |err| {}
                     } else {
                         if (bundler.configureFrameworkWithResolveResult(false)) |result_| {
                             if (result_) |result| {
-                                this.resolve_queue.writeItemAssumeCapacity(result);
+                                try this.enqueueItem(result);
                             }
                         } else |err| {}
                     }
+                }
+
+                // Normally, this is automatic
+                // However, since we only do the parsing pass, it may not get imported automatically.
+                if (bundler.options.jsx.parse) {
+                    defer this.bundler.resetStore();
+                    if (this.bundler.resolver.resolve(
+                        this.bundler.fs.top_level_dir,
+                        this.bundler.options.jsx.import_source,
+                        .require,
+                    )) |new_jsx_runtime| {
+                        try this.enqueueItem(new_jsx_runtime);
+                    } else |err| {}
+                }
+
+                if (include_refresh_runtime) {
+                    defer this.bundler.resetStore();
+
+                    if (this.bundler.resolver.resolve(
+                        this.bundler.fs.top_level_dir,
+                        this.bundler.options.jsx.refresh_runtime,
+                        .require,
+                    )) |refresh_runtime| {
+                        try this.enqueueItem(refresh_runtime);
+                    } else |err| {}
                 }
 
                 this.bundler.resetStore();
 
                 while (this.resolve_queue.readItem()) |resolved| {
                     try this.processFile(resolved);
-                }
-
-                // Normally, this is automatic
-                // However, since we only do the parsing pass, it may not get imported automatically.
-                if (this.has_jsx) {
-                    if (this.bundler.resolver.resolve(
-                        this.bundler.fs.top_level_dir,
-                        this.bundler.options.jsx.import_source,
-                        .stmt,
-                    )) |new_jsx_runtime| {
-                        if (!this.resolved_paths.contains(new_jsx_runtime.path_pair.primary.text)) {
-                            try this.processFile(new_jsx_runtime);
-                        }
-                    } else |err| {}
-                }
-
-                if (this.has_jsx and this.bundler.options.jsx.supports_fast_refresh) {
-                    if (this.bundler.resolver.resolve(
-                        this.bundler.fs.top_level_dir,
-                        "react-refresh/runtime",
-                        .require,
-                    )) |refresh_runtime| {
-                        if (!this.resolved_paths.contains(refresh_runtime.path_pair.primary.text)) {
-                            try this.processFile(refresh_runtime);
-                        }
-                    } else |err| {}
                 }
 
                 if (this.log.errors > 0) {
@@ -891,6 +969,8 @@ pub fn NewBundler(cache_files: bool) type {
             fn processImportRecord(this: *GenerateNodeModuleBundle, import_record: ImportRecord) !void {}
             threadlocal var package_key_buf: [512]u8 = undefined;
             threadlocal var file_path_buf: [4096]u8 = undefined;
+
+            threadlocal var temp_stmts_list: std.ArrayList(js_ast.Stmt) = undefined;
             fn processFile(this: *GenerateNodeModuleBundle, _resolve: _resolver.Result) !void {
                 var resolve = _resolve;
                 if (resolve.is_external) return;
@@ -929,7 +1009,7 @@ pub fn NewBundler(cache_files: bool) type {
                             var opts = js_parser.Parser.Options.init(jsx, loader);
                             opts.transform_require_to_import = false;
                             opts.enable_bundling = true;
-
+                            opts.warn_about_unbundled_modules = false;
                             var ast: js_ast.Ast = (try bundler.resolver.caches.js.parse(
                                 bundler.allocator,
                                 opts,
@@ -1024,12 +1104,26 @@ pub fn NewBundler(cache_files: bool) type {
                             const E = js_ast.E;
                             const Expr = js_ast.Expr;
                             const Stmt = js_ast.Stmt;
+
+                            var prepend_part: js_ast.Part = undefined;
+                            var needs_prepend_part = false;
+                            if (ast.parts.len > 1) {
+                                for (ast.parts) |part| {
+                                    if (part.tag != .none and part.stmts.len > 0) {
+                                        prepend_part = part;
+                                        needs_prepend_part = true;
+                                        break;
+                                    }
+                                }
+                            }
+
                             if (ast.parts.len == 0) {
                                 if (comptime isDebug) {
                                     Output.prettyErrorln("Missing AST for file: {s}", .{file_path.text});
                                     Output.flush();
                                 }
                             }
+
                             var part = &ast.parts[ast.parts.len - 1];
                             var new_stmts: [1]Stmt = undefined;
                             var register_args: [3]Expr = undefined;
@@ -1058,6 +1152,7 @@ pub fn NewBundler(cache_files: bool) type {
                                     .data = .{ .b_identifier = &exports_binding },
                                 },
                             };
+
                             var closure = E.Arrow{
                                 .args = &cjs_args,
                                 .body = .{
@@ -1101,6 +1196,9 @@ pub fn NewBundler(cache_files: bool) type {
                             var writer = js_printer.NewFileWriter(this.tmpfile);
                             var symbols: [][]js_ast.Symbol = &([_][]js_ast.Symbol{ast.symbols});
 
+                            // It should only have one part.
+                            ast.parts = ast.parts[ast.parts.len - 1 ..];
+
                             const code_offset = @truncate(u32, try this.tmpfile.getPos());
                             const written = @truncate(
                                 u32,
@@ -1119,6 +1217,8 @@ pub fn NewBundler(cache_files: bool) type {
                                         .indent = 0,
                                         .module_hash = module_id,
                                         .runtime_imports = ast.runtime_imports,
+                                        .prepend_part_value = &prepend_part,
+                                        .prepend_part_key = if (needs_prepend_part) closure.body.stmts.ptr else null,
                                     },
                                     Linker,
                                     &bundler.linker,
@@ -1219,7 +1319,6 @@ pub fn NewBundler(cache_files: bool) type {
                                     try this.resolve_queue.writeItem(_resolved_import.*);
 
                                     if (BundledModuleData.get(this, resolved_import)) |module| {
-                                        import_record.path = Fs.Path.init(module.import_path);
                                         get_or_put_result.value_ptr.* = module.module_id;
                                     }
                                 } else |err| {
@@ -1301,7 +1400,12 @@ pub fn NewBundler(cache_files: bool) type {
             errdefer bundler.resetStore();
 
             var file_path = resolve_result.path_pair.primary;
-            file_path.pretty = allocator.dupe(u8, bundler.fs.relativeTo(file_path.text)) catch unreachable;
+
+            if (strings.indexOf(file_path.text, bundler.fs.top_level_dir)) |i| {
+                file_path.pretty = file_path.text[i + bundler.fs.top_level_dir.len ..];
+            } else {
+                file_path.pretty = allocator.dupe(u8, bundler.fs.relativeTo(file_path.text)) catch unreachable;
+            }
 
             var old_bundler_allocator = bundler.allocator;
             bundler.allocator = allocator;
@@ -1711,9 +1815,10 @@ pub fn NewBundler(cache_files: bool) type {
                     opts.enable_bundling = false;
                     opts.transform_require_to_import = true;
                     opts.can_import_from_bundle = bundler.options.node_modules_bundle != null;
-                    opts.features.hot_module_reloading = bundler.options.hot_module_reloading and bundler.options.platform != .speedy and client_entry_point_ == null;
+                    opts.features.hot_module_reloading = bundler.options.hot_module_reloading and bundler.options.platform != .speedy; // and client_entry_point_ == null;
                     opts.features.react_fast_refresh = opts.features.hot_module_reloading and jsx.parse and bundler.options.jsx.supports_fast_refresh;
                     opts.filepath_hash_for_hmr = file_hash orelse 0;
+                    opts.warn_about_unbundled_modules = bundler.options.platform != .speedy;
                     const value = (bundler.resolver.caches.js.parse(allocator, opts, bundler.options.define, bundler.log, &source) catch null) orelse return null;
                     return ParseResult{
                         .ast = value,

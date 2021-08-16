@@ -8,7 +8,9 @@ const logger = @import("../../logger.zig");
 const Api = @import("../../api/schema.zig").Api;
 const options = @import("../../options.zig");
 const Bundler = @import("../../bundler.zig").ServeBundler;
+const ServerEntryPoint = @import("../../bundler.zig").ServerEntryPoint;
 const js_printer = @import("../../js_printer.zig");
+const js_parser = @import("../../js_parser.zig");
 const hash_map = @import("../../hash_map.zig");
 const http = @import("../../http.zig");
 const ImportKind = ast.ImportKind;
@@ -22,7 +24,7 @@ const Runtime = @import("../../runtime.zig");
 const Router = @import("./api/router.zig");
 const ImportRecord = ast.ImportRecord;
 const DotEnv = @import("../../env_loader.zig");
-
+const ParseResult = @import("../../bundler.zig").ParseResult;
 pub const GlobalClasses = [_]type{
     Request.Class,
     Response.Class,
@@ -275,6 +277,7 @@ pub const VirtualMachine = struct {
     process: js.JSObjectRef = null,
 
     flush_list: std.ArrayList(string),
+    entry_point: ServerEntryPoint = undefined,
 
     pub var vm_loaded = false;
     pub var vm: *VirtualMachine = undefined;
@@ -390,9 +393,77 @@ pub const VirtualMachine = struct {
                     Runtime.Runtime.byteCodeCacheFile(&vm.bundler.fs.fs) orelse 0,
                 ),
             };
+            // This is all complicated because the imports have to be linked and we want to run the printer on it
+            // so it consistently handles bundled imports
+            // we can't take the shortcut of just directly importing the file, sadly.
+        } else if (strings.eqlComptime(_specifier, main_file_name)) {
+            var bundler = &vm.bundler;
+            var old = vm.bundler.log;
+            vm.bundler.log = log;
+            vm.bundler.linker.log = log;
+            vm.bundler.resolver.log = log;
+            defer {
+                vm.bundler.log = old;
+                vm.bundler.linker.log = old;
+                vm.bundler.resolver.log = old;
+            }
+
+            var jsx = bundler.options.jsx;
+            jsx.parse = false;
+            var opts = js_parser.Parser.Options.init(jsx, .js);
+            opts.enable_bundling = false;
+            opts.transform_require_to_import = true;
+            opts.can_import_from_bundle = bundler.options.node_modules_bundle != null;
+            opts.features.hot_module_reloading = false;
+            opts.features.react_fast_refresh = false;
+            opts.filepath_hash_for_hmr = 0;
+            opts.warn_about_unbundled_modules = false;
+            const main_ast = (bundler.resolver.caches.js.parse(vm.allocator, opts, bundler.options.define, bundler.log, &vm.entry_point.source) catch null) orelse {
+                return error.ParseError;
+            };
+            var parse_result = ParseResult{ .source = vm.entry_point.source, .ast = main_ast, .loader = .js, .input_fd = null };
+            var file_path = Fs.Path.init(bundler.fs.top_level_dir);
+            file_path.name.dir = bundler.fs.top_level_dir;
+            file_path.name.base = "bun:main";
+            try bundler.linker.link(
+                file_path,
+                &parse_result,
+                .absolute_path,
+                true,
+            );
+
+            if (!source_code_printer_loaded) {
+                var writer = try js_printer.BufferWriter.init(vm.allocator);
+                source_code_printer = js_printer.BufferPrinter.init(writer);
+                source_code_printer.ctx.append_null_byte = false;
+
+                source_code_printer_loaded = true;
+            }
+
+            source_code_printer.ctx.reset();
+
+            var written = try vm.bundler.print(
+                parse_result,
+                @TypeOf(&source_code_printer),
+                &source_code_printer,
+                .esm,
+            );
+
+            if (written == 0) {
+                return error.PrintingErrorWriteFailed;
+            }
+
+            return ResolvedSource{
+                .source_code = ZigString.init(vm.allocator.dupe(u8, source_code_printer.ctx.written) catch unreachable),
+                .specifier = ZigString.init(std.mem.span(main_file_name)),
+                .source_url = ZigString.init(std.mem.span(main_file_name)),
+                .hash = 0,
+                .bytecodecache_fd = 0,
+            };
         }
 
         const specifier = normalizeSpecifier(_specifier);
+
         std.debug.assert(std.fs.path.isAbsolute(specifier)); // if this crashes, it means the resolver was skipped.
 
         const path = Fs.Path.init(specifier);
@@ -496,10 +567,14 @@ pub const VirtualMachine = struct {
         } else if (vm.node_modules != null and strings.eql(specifier, vm.bundler.linker.nodeModuleBundleImportPath())) {
             ret.path = vm.bundler.linker.nodeModuleBundleImportPath();
             return;
+        } else if (strings.eqlComptime(specifier, main_file_name)) {
+            ret.result = null;
+            ret.path = vm.entry_point.source.path.text;
+            return;
         }
 
         const result = try vm.bundler.resolver.resolve(
-            Fs.PathName.init(source).dirWithTrailingSlash(),
+            if (!strings.eqlComptime(source, main_file_name)) Fs.PathName.init(source).dirWithTrailingSlash() else VirtualMachine.vm.bundler.fs.top_level_dir,
             specifier,
             .stmt,
         );
@@ -605,6 +680,7 @@ pub const VirtualMachine = struct {
 
         return slice;
     }
+    const main_file_name: string = "bun:main";
     threadlocal var errors_stack: [256]*c_void = undefined;
     pub fn fetch(ret: *ErrorableResolvedSource, global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) void {
         var log = logger.Log.init(vm.bundler.allocator);
@@ -705,11 +781,10 @@ pub const VirtualMachine = struct {
         }
     }
 
-    pub fn loadEntryPoint(this: *VirtualMachine, entry_point: string) !*JSInternalPromise {
-        var path = this.bundler.normalizeEntryPointPath(entry_point);
-
-        this.main = entry_point;
-        var promise = JSModuleLoader.loadAndEvaluateModule(this.global, ZigString.init(path));
+    pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) !*JSInternalPromise {
+        try this.entry_point.generate(@TypeOf(this.bundler), &this.bundler, Fs.PathName.init(entry_path), main_file_name);
+        this.main = entry_path;
+        var promise = JSModuleLoader.loadAndEvaluateModule(this.global, ZigString.init(std.mem.span(main_file_name)));
 
         this.global.vm().drainMicrotasks();
 

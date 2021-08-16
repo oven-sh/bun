@@ -3757,6 +3757,14 @@ pub const Part = struct {
     // This is true if this file has been marked as live by the tree shaking
     // algorithm.
     is_live: bool = false,
+
+    tag: Tag = Tag.none,
+
+    pub const Tag = enum {
+        none,
+        jsx_import,
+    };
+
     pub const SymbolUseMap = AutoHashMap(Ref, Symbol.Use);
     pub fn jsonStringify(self: *const Part, options: std.json.StringifyOptions, writer: anytype) !void {
         return std.json.stringify(self.stmts, options, writer);

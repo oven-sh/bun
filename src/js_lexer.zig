@@ -689,6 +689,7 @@ pub const Lexer = struct {
             // what caused us to get on this slow path in the first place.
             if (lexer.code_point == '\\') {
                 try lexer.step();
+
                 if (lexer.code_point != 'u') {
                     try lexer.syntaxError();
                 }

@@ -178,7 +178,7 @@ struct LoadedRouteConfig {
 }
 
 message RouteConfig {
-  string dir = 1;
+  string[] dir = 1;
   string[] extensions = 2;
   string static_dir = 3;
   string asset_prefix = 4;

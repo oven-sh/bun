@@ -201,11 +201,51 @@ pub const PackageJSON = struct {
         if (!pair.router.routes_enabled) {
             if (framework_object.expr.asProperty("router")) |router| {
                 if (router.expr.asProperty("dir")) |route_dir| {
-                    if (route_dir.expr.asString(allocator)) |str| {
-                        if (str.len > 0) {
-                            pair.router.dir = str;
-                            pair.loaded_routes = true;
-                        }
+                    switch (route_dir.expr.data) {
+                        .e_string => |estr| {
+                            const str = estr.string(allocator) catch unreachable;
+                            if (str.len > 0) {
+                                pair.router.dir = str;
+                                pair.router.possible_dirs = &[_]string{};
+
+                                pair.loaded_routes = true;
+                            }
+                        },
+                        .e_array => |array| {
+                            var count: usize = 0;
+                            for (array.items) |item| {
+                                count += @boolToInt(item.data == .e_string and item.data.e_string.utf8.len > 0);
+                            }
+                            switch (count) {
+                                0 => {},
+                                1 => {
+                                    const str = array.items[0].data.e_string.string(allocator) catch unreachable;
+                                    if (str.len > 0) {
+                                        pair.router.dir = str;
+                                        pair.router.possible_dirs = &[_]string{};
+
+                                        pair.loaded_routes = true;
+                                    }
+                                },
+                                else => {
+                                    const list = allocator.alloc(string, count) catch unreachable;
+
+                                    var list_i: usize = 0;
+                                    for (array.items) |item| {
+                                        if (item.data == .e_string and item.data.e_string.utf8.len > 0) {
+                                            list[list_i] = item.data.e_string.string(allocator) catch unreachable;
+                                            list_i += 1;
+                                        }
+                                    }
+
+                                    pair.router.dir = list[0];
+                                    pair.router.possible_dirs = list;
+
+                                    pair.loaded_routes = true;
+                                },
+                            }
+                        },
+                        else => {},
                     }
                 }
 

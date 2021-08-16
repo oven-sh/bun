@@ -1027,7 +1027,7 @@ pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
 
 pub const RouteConfig = struct {
 /// dir
-dir: ?[]const u8 = null,
+dir: []const []const u8,
 
 /// extensions
 extensions: []const []const u8,
@@ -1047,7 +1047,7 @@ pub fn decode(reader: anytype) anyerror!RouteConfig {
       0 => { return this; },
 
       1 => {
-        this.dir = try reader.readValue([]const u8); 
+        this.dir = try reader.readArray([]const u8); 
 },
       2 => {
         this.extensions = try reader.readArray([]const u8); 
@@ -1069,7 +1069,7 @@ unreachable;
 pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
 if (this.dir) |dir| {
   try writer.writeFieldID(1);
-   try writer.writeValue(dir);
+   try writer.writeArray([]const u8, dir);
 }
 if (this.extensions) |extensions| {
   try writer.writeFieldID(2);

@@ -1680,6 +1680,8 @@ pub const Parser = struct {
         filepath_hash_for_hmr: u32 = 0,
         features: RuntimeFeatures = RuntimeFeatures{},
 
+        warn_about_unbundled_modules: bool = true,
+
         // Used when bundling node_modules
         enable_bundling: bool = false,
         transform_require_to_import: bool = true,
@@ -1822,6 +1824,8 @@ pub const Parser = struct {
         var parts = List(js_ast.Part).init(p.allocator);
         try p.appendPart(&parts, stmts);
 
+        var did_import_fast_refresh = false;
+
         // Auto-import JSX
         if (p.options.jsx.parse) {
             const jsx_symbol: Symbol = p.symbols.items[p.jsx_runtime_ref.inner_index];
@@ -1869,7 +1873,7 @@ pub const Parser = struct {
                     @intCast(u32, @boolToInt(jsx_filename_symbol.use_count_estimate > 0));
 
                 const imports_count =
-                    @intCast(u32, @boolToInt(jsx_symbol.use_count_estimate > 0)) + @intCast(u32, std.math.max(jsx_factory_symbol.use_count_estimate, jsx_fragment_symbol.use_count_estimate));
+                    @intCast(u32, @boolToInt(jsx_symbol.use_count_estimate > 0)) + @intCast(u32, std.math.max(jsx_factory_symbol.use_count_estimate, jsx_fragment_symbol.use_count_estimate)) + @intCast(u32, @boolToInt(p.options.features.react_fast_refresh));
                 const stmts_count = imports_count + 1;
                 const symbols_count: u32 = imports_count + decls_count;
                 const loc = logger.Loc{ .start = 0 };
@@ -1896,7 +1900,7 @@ pub const Parser = struct {
 
                     const automatic_identifier = p.e(E.Identifier{ .ref = automatic_namespace_ref }, loc);
                     const dot_call_target = brk: {
-                        if (p.options.can_import_from_bundle) {
+                        if (p.options.can_import_from_bundle or p.options.enable_bundling) {
                             break :brk automatic_identifier;
                         } else {
                             require_call_args_base[require_call_args_i] = automatic_identifier;
@@ -1973,7 +1977,7 @@ pub const Parser = struct {
                     const dot_call_target = brk: {
                         // var react = $aopaSD123();
 
-                        if (p.options.can_import_from_bundle) {
+                        if (p.options.can_import_from_bundle or p.options.enable_bundling) {
                             break :brk classic_identifier;
                         } else {
                             require_call_args_base[require_call_args_i] = classic_identifier;
@@ -2051,6 +2055,36 @@ pub const Parser = struct {
                     declared_symbols_i += 1;
                 }
 
+                if (p.options.features.react_fast_refresh) {
+                    defer did_import_fast_refresh = true;
+                    const refresh_runtime_symbol: Symbol = p.symbols.items[p.jsx_refresh_runtime_ref.inner_index];
+
+                    declared_symbols[declared_symbols_i] = .{ .ref = p.jsx_refresh_runtime_ref, .is_top_level = true };
+                    declared_symbols_i += 1;
+
+                    const import_record_id = p.addImportRecord(.require, loc, p.options.jsx.refresh_runtime);
+                    jsx_part_stmts[stmt_i] = p.s(S.Import{
+                        .namespace_ref = p.jsx_refresh_runtime_ref,
+                        .star_name_loc = loc,
+                        .is_single_line = true,
+                        .import_record_index = import_record_id,
+                    }, loc);
+
+                    stmt_i += 1;
+                    p.named_imports.put(
+                        p.jsx_refresh_runtime_ref,
+                        js_ast.NamedImport{
+                            .alias = refresh_runtime_symbol.original_name,
+                            .alias_is_star = true,
+                            .alias_loc = loc,
+                            .namespace_ref = p.jsx_refresh_runtime_ref,
+                            .import_record_index = import_record_id,
+                        },
+                    ) catch unreachable;
+                    p.is_import_item.put(p.jsx_refresh_runtime_ref, true) catch unreachable;
+                    import_records[import_record_i] = import_record_id;
+                }
+
                 jsx_part_stmts[stmt_i] = p.s(S.Local{ .kind = .k_var, .decls = decls[0..decl_i] }, loc);
                 stmt_i += 1;
 
@@ -2059,8 +2093,48 @@ pub const Parser = struct {
                     .declared_symbols = declared_symbols,
                     .import_record_indices = import_records,
                     .symbol_uses = SymbolUseMap.init(p.allocator),
+                    .tag = .jsx_import,
                 }) catch unreachable;
             }
+        }
+
+        if (!did_import_fast_refresh and p.options.features.react_fast_refresh) {
+            std.debug.assert(!p.options.enable_bundling);
+            var declared_symbols = try p.allocator.alloc(js_ast.DeclaredSymbol, 1);
+            const loc = logger.Loc.Empty;
+            const import_record_id = p.addImportRecord(.require, loc, p.options.jsx.refresh_runtime);
+            var import_stmt = p.s(S.Import{
+                .namespace_ref = p.jsx_refresh_runtime_ref,
+                .star_name_loc = loc,
+                .is_single_line = true,
+                .import_record_index = import_record_id,
+            }, loc);
+
+            p.recordUsage(p.jsx_refresh_runtime_ref);
+            const refresh_runtime_symbol: Symbol = p.symbols.items[p.jsx_refresh_runtime_ref.inner_index];
+            p.named_imports.put(
+                p.jsx_refresh_runtime_ref,
+                js_ast.NamedImport{
+                    .alias = refresh_runtime_symbol.original_name,
+                    .alias_is_star = true,
+                    .alias_loc = loc,
+                    .namespace_ref = p.jsx_refresh_runtime_ref,
+                    .import_record_index = import_record_id,
+                },
+            ) catch unreachable;
+            p.is_import_item.put(p.jsx_refresh_runtime_ref, true) catch unreachable;
+            var import_records = try p.allocator.alloc(@TypeOf(import_record_id), 1);
+            import_records[0] = import_record_id;
+            declared_symbols[0] = .{ .ref = p.jsx_refresh_runtime_ref, .is_top_level = true };
+            var part_stmts = try p.allocator.alloc(Stmt, 1);
+            part_stmts[0] = import_stmt;
+
+            before.append(js_ast.Part{
+                .stmts = part_stmts,
+                .declared_symbols = declared_symbols,
+                .import_record_indices = import_records,
+                .symbol_uses = SymbolUseMap.init(p.allocator),
+            }) catch unreachable;
         }
 
         // Analyze cross-part dependencies for tree shaking and code splitting
@@ -2102,6 +2176,7 @@ pub const Parser = struct {
                 ) catch unreachable;
             }
         }
+
         if (has_cjs_imports) {
             var import_records = try p.allocator.alloc(u32, p.cjs_import_stmts.items.len);
             var declared_symbols = try p.allocator.alloc(js_ast.DeclaredSymbol, p.cjs_import_stmts.items.len);
@@ -2467,6 +2542,9 @@ pub fn NewParser(
         jsx_automatic_ref: js_ast.Ref = Ref.None,
         jsx_classic_ref: js_ast.Ref = Ref.None,
 
+        // only applicable when is_react_fast_refresh_enabled
+        jsx_refresh_runtime_ref: js_ast.Ref = Ref.None,
+
         jsx_source_list_ref: js_ast.Ref = Ref.None,
 
         // Imports (both ES6 and CommonJS) are tracked at the top level
@@ -2651,9 +2729,11 @@ pub fn NewParser(
                 }, state.loc);
             }
 
-            // Use a debug log so people can see this if they want to
-            const r = js_lexer.rangeOfIdentifier(p.source, state.loc);
-            p.log.addRangeDebug(p.source, r, "This \"import\" expression will not be bundled because the argument is not a string literal") catch unreachable;
+            if (p.options.warn_about_unbundled_modules) {
+                // Use a debug log so people can see this if they want to
+                const r = js_lexer.rangeOfIdentifier(p.source, state.loc);
+                p.log.addRangeDebug(p.source, r, "This \"import\" expression cannot be bundled because the argument is not a string literal") catch unreachable;
+            }
 
             return p.e(E.Import{
                 .expr = arg,
@@ -3242,10 +3322,18 @@ pub fn NewParser(
 
             if (p.options.features.hot_module_reloading) {
                 p.hmr_module_ref = try p.declareSymbol(.hoisted, logger.Loc.Empty, "__hmrModule");
-                p.runtime_imports.__HMRModule = try p.declareSymbol(.hoisted, logger.Loc.Empty, "__HMRModule");
+                if (is_react_fast_refresh_enabled) {
+                    p.jsx_refresh_runtime_ref = try p.declareSymbol(.hoisted, logger.Loc.Empty, "__RefreshRuntime");
+
+                    p.runtime_imports.__FastRefreshModule = try p.declareSymbol(.hoisted, logger.Loc.Empty, "__FastRefreshModule");
+                    p.recordUsage(p.runtime_imports.__FastRefreshModule.?);
+                } else {
+                    p.runtime_imports.__HMRModule = try p.declareSymbol(.hoisted, logger.Loc.Empty, "__HMRModule");
+                    p.recordUsage(p.runtime_imports.__HMRModule.?);
+                }
+
                 p.runtime_imports.__HMRClient = try p.declareSymbol(.hoisted, logger.Loc.Empty, "__HMRClient");
                 p.recordUsage(p.hmr_module_ref);
-                p.recordUsage(p.runtime_imports.__HMRModule.?);
                 p.recordUsage(p.runtime_imports.__HMRClient.?);
             } else {
                 p.runtime_imports.__export = p.exports_ref;
@@ -11254,7 +11342,7 @@ pub fn NewParser(
                         // error from the unbundled require() call failing.
                         if (e_.args.len == 1) {
                             return p.require_transposer.maybeTransposeIf(e_.args[0], null);
-                        } else {
+                        } else if (p.options.warn_about_unbundled_modules) {
                             const r = js_lexer.rangeOfIdentifier(p.source, e_.target.loc);
                             p.log.addRangeDebug(p.source, r, "This call to \"require\" will not be bundled because it has multiple arguments") catch unreachable;
                         }
@@ -13697,9 +13785,17 @@ pub fn NewParser(
                 // 6. __hmrModule.onSetExports = (newExports) => {
                 // $named_exports_count   __hmrExport_exportName = newExports.exportName; <-- ${named_exports_count}
                 // }
+
+                // if there are no exports:
+                // - there shouldn't be an export statement
+                // - we don't need the S.Local for wrapping the exports
+                // We still call exportAll just with an empty object.
+                const has_any_exports = named_exports_count > 0;
+
+                const toplevel_stmts_count = 4 + (@intCast(usize, @boolToInt(has_any_exports)) * 2);
                 var _stmts = p.allocator.alloc(
                     Stmt,
-                    end_iife_stmts_count + 6 + (named_exports_count * 2) + imports_count + exports_from_count,
+                    end_iife_stmts_count + toplevel_stmts_count + (named_exports_count * 2) + imports_count + exports_from_count,
                 ) catch unreachable;
                 // Normally, we'd have to grow that inner function's stmts list by one
                 // But we can avoid that by just making them all use this same array.
@@ -13715,7 +13811,7 @@ pub fn NewParser(
                 // Second pass: move any imports from the part's stmts array to the new stmts
                 var imports_list = curr_stmts[0..imports_count];
                 curr_stmts = curr_stmts[imports_list.len..];
-                var toplevel_stmts = curr_stmts[0..6];
+                var toplevel_stmts = curr_stmts[0..toplevel_stmts_count];
                 curr_stmts = curr_stmts[toplevel_stmts.len..];
                 var exports_from = curr_stmts[0..exports_from_count];
                 curr_stmts = curr_stmts[exports_from.len..];
@@ -13752,21 +13848,27 @@ pub fn NewParser(
                 }
 
                 var args_list: []Expr = if (isDebug) &Prefill.HotModuleReloading.DebugEnabledArgs else &Prefill.HotModuleReloading.DebugDisabled;
-                var call_args = try p.allocator.alloc(Expr, 3);
-                var new_call_args = call_args[0..2];
+
+                const new_call_args_count: usize = if (is_react_fast_refresh_enabled) 3 else 2;
+                var call_args = try p.allocator.alloc(Expr, new_call_args_count + 1);
+                var new_call_args = call_args[0..new_call_args_count];
                 var hmr_module_ident = p.e(E.Identifier{ .ref = p.hmr_module_ref }, logger.Loc.Empty);
 
                 new_call_args[0] = p.e(E.Number{ .value = @intToFloat(f64, p.options.filepath_hash_for_hmr) }, logger.Loc.Empty);
                 // This helps us provide better error messages
                 new_call_args[1] = p.e(E.String{ .utf8 = p.source.path.pretty }, logger.Loc.Empty);
+                if (is_react_fast_refresh_enabled) {
+                    new_call_args[2] = p.e(E.Identifier{ .ref = p.jsx_refresh_runtime_ref }, logger.Loc.Empty);
+                }
                 var exports_dot = p.e(E.Dot{
                     .target = hmr_module_ident,
                     .name = ExportsStringName,
                     .name_loc = logger.Loc.Empty,
                 }, logger.Loc.Empty);
                 var hmr_module_class_ident = p.e(E.Identifier{ .ref = p.runtime_imports.__HMRClient.? }, logger.Loc.Empty);
+                var toplevel_stmts_i: u8 = 0;
                 // HMRClient.activate(true)
-                toplevel_stmts[0] = p.s(
+                toplevel_stmts[toplevel_stmts_i] = p.s(
                     S.SExpr{
                         .value = p.e(E.Call{
                             .target = p.e(E.Dot{
@@ -13780,16 +13882,23 @@ pub fn NewParser(
                     },
                     logger.Loc.Empty,
                 );
+                toplevel_stmts_i += 1;
                 var decls = try p.allocator.alloc(G.Decl, 2 + named_exports_count);
                 var first_decl = decls[0..2];
                 // We cannot rely on import.meta.url because if we import it within a blob: url, it will be nonsensical
                 // var __hmrModule = new HMRModule(123123124, "/index.js"), __exports = __hmrModule.exports;
+                const hmr_import_ref = if (is_react_fast_refresh_enabled) p.runtime_imports.__FastRefreshModule else p.runtime_imports.__HMRModule;
 
                 first_decl[0] = G.Decl{
                     .binding = p.b(B.Identifier{ .ref = p.hmr_module_ref }, logger.Loc.Empty),
                     .value = p.e(E.New{
                         .args = new_call_args,
-                        .target = p.e(E.Identifier{ .ref = p.runtime_imports.__HMRModule.? }, logger.Loc.Empty),
+                        .target = p.e(
+                            E.Identifier{
+                                .ref = hmr_import_ref.?,
+                            },
+                            logger.Loc.Empty,
+                        ),
                     }, logger.Loc.Empty),
                 };
                 first_decl[1] = G.Decl{
@@ -13914,12 +14023,14 @@ pub fn NewParser(
                     logger.Loc.Empty,
                 );
 
-                toplevel_stmts[1] = p.s(
+                toplevel_stmts[toplevel_stmts_i] = p.s(
                     S.Local{
                         .decls = first_decl,
                     },
                     logger.Loc.Empty,
                 );
+
+                toplevel_stmts_i += 1;
 
                 var func = p.e(
                     E.Function{
@@ -13936,7 +14047,7 @@ pub fn NewParser(
                 );
 
                 // (__hmrModule._load = function())()
-                toplevel_stmts[2] = p.s(
+                toplevel_stmts[toplevel_stmts_i] = p.s(
                     S.SExpr{
                         .value = p.e(
                             E.Call{
@@ -13959,13 +14070,19 @@ pub fn NewParser(
                     logger.Loc.Empty,
                 );
 
-                toplevel_stmts[3] = p.s(
-                    S.Local{
-                        .decls = exports_decls,
-                    },
-                    logger.Loc.Empty,
-                );
-                toplevel_stmts[4] = p.s(
+                toplevel_stmts_i += 1;
+
+                if (has_any_exports) {
+                    toplevel_stmts[toplevel_stmts_i] = p.s(
+                        S.Local{
+                            .decls = exports_decls,
+                        },
+                        logger.Loc.Empty,
+                    );
+                    toplevel_stmts_i += 1;
+                }
+
+                toplevel_stmts[toplevel_stmts_i] = p.s(
                     S.SExpr{
                         .value = Expr.assign(
                             p.e(
@@ -13992,12 +14109,15 @@ pub fn NewParser(
                     },
                     logger.Loc.Empty,
                 );
-                toplevel_stmts[5] = p.s(
-                    S.ExportClause{
-                        .items = export_clauses,
-                    },
-                    logger.Loc.Empty,
-                );
+                toplevel_stmts_i += 1;
+                if (export_clauses.len > 0) {
+                    toplevel_stmts[toplevel_stmts_i] = p.s(
+                        S.ExportClause{
+                            .items = export_clauses,
+                        },
+                        logger.Loc.Empty,
+                    );
+                }
 
                 part.stmts = stmts_for_top_part;
             }

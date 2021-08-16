@@ -867,7 +867,9 @@ function decodeRouteConfig(bb) {
       return result;
 
     case 1:
-      result["dir"] = bb.readString();
+      var length = bb.readVarUint();
+      var values = result["dir"] = Array(length);
+      for (var i = 0; i < length; i++) values[i] = bb.readString();
       break;
 
     case 2:
@@ -895,7 +897,12 @@ function encodeRouteConfig(message, bb) {
   var value = message["dir"];
   if (value != null) {
     bb.writeByte(1);
-    bb.writeString(value);
+    var values = value, n = values.length;
+    bb.writeVarUint(n);
+    for (var i = 0; i < n; i++) {
+      value = values[i];
+      bb.writeString(value);
+    }
   }
 
   var value = message["extensions"];

@@ -303,7 +303,8 @@ pub fn NewGlobalObject(comptime Type: type) type {
                 return @call(.{ .modifier = .always_inline }, Type.onCrash, .{});
             }
 
-            Global.panic("C++ crashed :(", .{});
+            Output.flush();
+            std.os.abort();
         }
     };
 }

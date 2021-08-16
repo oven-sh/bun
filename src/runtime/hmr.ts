@@ -419,6 +419,13 @@ var __HMRModule, __FastRefreshModule, __HMRClient;
     };
 
     connect() {
+      if (
+        this.socket &&
+        (this.socket.readyState == this.socket.OPEN ||
+          this.socket.readyState == this.socket.CONNECTING)
+      )
+        return;
+
       clientStartTime = performance.now();
 
       const baseURL = new URL(location.origin + "/_api.hmr");

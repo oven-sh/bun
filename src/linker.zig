@@ -189,6 +189,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
             const source_dir = file_path.name.dir;
             var externals = std.ArrayList(u32).init(linker.allocator);
             var needs_bundle = false;
+            const process_import_record_path = file_path.text[0..std.math.min(source_dir.len + 1, file_path.text.len)];
 
             // Step 1. Resolve imports & requires
             switch (result.loader) {
@@ -303,7 +304,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
                                 linker.options.loaders.get(resolved_import.path_pair.primary.name.ext) orelse .file,
 
                                 // Include trailing slash
-                                file_path.text[0 .. source_dir.len + 1],
+                                process_import_record_path,
                                 resolved_import,
                                 import_record,
                                 import_path_format,

@@ -80,6 +80,23 @@ pub const Options = struct {
     source_path: ?fs.Path = null,
     bundle_export_ref: ?js_ast.Ref = null,
     rewrite_require_resolve: bool = true,
+
+    // TODO: remove this
+    // The reason for this is:
+    // 1. You're bundling a React component
+    // 2. jsx auto imports are prepended to the list of parts
+    // 3. The AST modification for bundling only applies to the final part
+    // 4. This means that it will try to add a toplevel part which is not wrapped in the arrow function, which is an error
+    //     TypeError: $30851277 is not a function. (In '$30851277()', '$30851277' is undefined)
+    //        at (anonymous) (0/node_modules.server.e1b5ffcd183e9551.jsb:1463:21)
+    //        at #init_react/jsx-dev-runtime.js (0/node_modules.server.e1b5ffcd183e9551.jsb:1309:8)
+    //        at (esm) (0/node_modules.server.e1b5ffcd183e9551.jsb:1480:30)
+
+    // The temporary fix here is to tag a stmts ptr as the one we want to prepend to
+    // Then, when we're JUST about to print it, we print the body of prepend_part_value first
+    prepend_part_key: ?*c_void = null,
+    prepend_part_value: ?*js_ast.Part = null,
+
     // If we're writing out a source map, this table of line start indices lets
     // us do binary search on to figure out what line a given AST node came from
     // line_offset_tables: []LineOffsetTable
@@ -311,16 +328,36 @@ pub fn NewPrinter(
                 },
             }
         }
+
+        pub fn printBlockBody(p: *Printer, stmts: []Stmt) void {
+            for (stmts) |stmt| {
+                p.printSemicolonIfNeeded();
+                p.printStmt(stmt) catch unreachable;
+            }
+        }
+
         pub fn printBlock(p: *Printer, loc: logger.Loc, stmts: []Stmt) void {
             p.addSourceMapping(loc);
             p.print("{");
             p.printNewline();
 
             p.options.indent += 1;
-            for (stmts) |stmt| {
-                p.printSemicolonIfNeeded();
-                p.printStmt(stmt) catch unreachable;
-            }
+            p.printBlockBody(stmts);
+            p.options.unindent();
+            p.needs_semicolon = false;
+
+            p.printIndent();
+            p.print("}");
+        }
+
+        pub fn printTwoBlocksInOne(p: *Printer, loc: logger.Loc, stmts: []Stmt, prepend: []Stmt) void {
+            p.addSourceMapping(loc);
+            p.print("{");
+            p.printNewline();
+
+            p.options.indent += 1;
+            p.printBlockBody(prepend);
+            p.printBlockBody(stmts);
             p.options.unindent();
             p.needs_semicolon = false;
 
@@ -1147,6 +1184,15 @@ pub fn NewPrinter(
                     p.printSpace();
 
                     var wasPrinted = false;
+
+                    // This is more efficient than creating a new Part just for the JSX auto imports when bundling
+                    if (comptime rewrite_esm_to_cjs) {
+                        if (@ptrToInt(p.options.prepend_part_key) > 0 and @ptrToInt(e.body.stmts.ptr) == @ptrToInt(p.options.prepend_part_key)) {
+                            p.printTwoBlocksInOne(e.body.loc, e.body.stmts, p.options.prepend_part_value.?.stmts);
+                            wasPrinted = true;
+                        }
+                    }
+
                     if (e.body.stmts.len == 1 and e.prefer_expr) {
                         switch (e.body.stmts[0].data) {
                             .s_return => {

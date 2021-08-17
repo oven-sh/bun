@@ -371,7 +371,44 @@ pub fn NewResolver(cache_files: bool) type {
         }
         var tracing_start: i128 = if (FeatureFlags.tracing) 0 else undefined;
 
+        pub const bunFrameworkPackagePrefix = "bun-framework-";
         pub fn resolveFramework(
+            r: *ThisResolver,
+            package: string,
+            pair: *PackageJSON.FrameworkRouterPair,
+            comptime preference: PackageJSON.LoadFramework,
+            comptime load_defines: bool,
+        ) !void {
+
+            // We want to enable developers to integrate frameworks without waiting on official support.
+            // But, we still want the command to do the actual framework integration to be succint
+            // This lets users type "--use next" instead of "--use bun-framework-next"
+            // If they're using a local file path, we skip this.
+            if (isPackagePath(package)) {
+                var prefixed_package_buf: [512]u8 = undefined;
+                // Prevent the extra lookup if the package is already prefixed, i.e. avoid "bun-framework-next-bun-framework-next"
+                if (strings.startsWith(package, bunFrameworkPackagePrefix) or package.len + bunFrameworkPackagePrefix.len >= prefixed_package_buf.len) {
+                    return try r._resolveFramework(package, pair, preference, load_defines);
+                }
+
+                prefixed_package_buf[0..bunFrameworkPackagePrefix.len].* = bunFrameworkPackagePrefix.*;
+                std.mem.copy(u8, prefixed_package_buf[bunFrameworkPackagePrefix.len..], package);
+                return r._resolveFramework(prefixed_package_buf[0 .. bunFrameworkPackagePrefix.len + package.len], pair, preference, load_defines) catch |err| {
+                    switch (err) {
+                        error.ModuleNotFound => {
+                            return try r._resolveFramework(package, pair, preference, load_defines);
+                        },
+                        else => {
+                            return err;
+                        },
+                    }
+                };
+            }
+
+            return try r._resolveFramework(package, pair, preference, load_defines);
+        }
+
+        fn _resolveFramework(
             r: *ThisResolver,
             package: string,
             pair: *PackageJSON.FrameworkRouterPair,

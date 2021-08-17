@@ -3,13 +3,23 @@ usingnamespace @import("ast/base.zig");
 usingnamespace @import("global.zig");
 const std = @import("std");
 pub const ProdSourceContent = @embedFile("./runtime.out.js");
-
+const resolve_path = @import("./resolver/resolve_path.zig");
 const Fs = @import("./fs.zig");
 
 pub const Runtime = struct {
     pub fn sourceContent() string {
         if (comptime isDebug) {
-            var runtime_path = std.fs.path.join(std.heap.c_allocator, &[_]string{ std.fs.path.dirname(@src().file).?, "runtime.out.js" }) catch unreachable;
+            var dirpath = std.fs.path.dirname(@src().file).?;
+            var env = std.process.getEnvMap(std.heap.c_allocator) catch unreachable;
+
+            const dir = std.mem.replaceOwned(
+                u8,
+                std.heap.c_allocator,
+                dirpath,
+                "jarred",
+                env.get("USER").?,
+            ) catch unreachable;
+            var runtime_path = std.fs.path.join(std.heap.c_allocator, &[_]string{ dir, "runtime.out.js" }) catch unreachable;
             const file = std.fs.openFileAbsolute(runtime_path, .{}) catch unreachable;
             defer file.close();
             return file.readToEndAlloc(std.heap.c_allocator, (file.stat() catch unreachable).size) catch unreachable;

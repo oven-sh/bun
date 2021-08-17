@@ -4,7 +4,6 @@
   "main": "index.js",
   "license": "MIT",
   "dependencies": {
-    "bun-framework-next": "0.0.0-6",
     "next": "^11.1.0",
     "path": "^0.12.7",
     "react": "^17.0.2",

@@ -1,6 +1,6 @@
 {
   "name": "bun-framework-next",
-  "version": "0.0.0-0",
+  "version": "0.0.0-5",
   "description": "",
   "main": "package.json",
   "framework": {
@@ -33,7 +33,8 @@
             "process.env.__NEXT_ANALYTICS_ID": "null",
             "process.env.__NEXT_OPTIMIZE_CSS": "false",
             "process.env.__NEXT_CROSS_ORIGIN": "''",
-            "process.env.__NEXT_STRICT_MODE": "false"
+            "process.env.__NEXT_STRICT_MODE": "false",
+            "process.env.__NEXT_IMAGE_OPTS": "null"
           }
         },
         "server": {
@@ -51,6 +52,7 @@
             "process.env.__NEXT_ANALYTICS_ID": "null",
             "process.env.__NEXT_CROSS_ORIGIN": "''",
             "process.env.__NEXT_STRICT_MODE": "false",
+            "process.env.__NEXT_IMAGE_OPTS": "null",
             "global": "globalThis",
             "window": "undefined"
           }

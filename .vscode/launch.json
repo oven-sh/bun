@@ -31,6 +31,18 @@
     {
       "type": "lldb",
       "request": "launch",
+      "name": ".bun",
+      "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+      "args": [
+        "./demos/hello-next/node_modules.server.bun"
+        // "--origin=https://localhost:9000/"
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
       "name": "Discord",
       "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
       "args": [
@@ -128,12 +140,12 @@
       "name": "Demo Build .bun",
       "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
       "args": [
+        "bun",
         "--origin=http://localhost:9000/",
-        "--new-bun",
-        "--use=ipwipwipwip-next-donotuse",
+        "--use=bun-framework-next",
         "--platform=browser"
       ],
-      "cwd": "${workspaceFolder}/demos/css-stress-test",
+      "cwd": "${workspaceFolder}/demos/hello-next",
       "console": "internalConsole"
     },
     {

@@ -10484,7 +10484,7 @@ pub fn NewParser(
                         }
                     }
 
-                    const runtime = if (p.options.jsx.runtime == .automatic and !e_.flags.is_key_before_rest) options.JSX.Runtime.automatic else options.JSX.Runtime.classic;
+                    const runtime = if (e_.tag != null and p.options.jsx.runtime == .automatic and !e_.flags.is_key_before_rest) options.JSX.Runtime.automatic else options.JSX.Runtime.classic;
                     var children_count = e_.children.len;
 
                     const is_childless_tag = FeatureFlags.react_specific_warnings and children_count > 0 and tag.data == .e_string and tag.data.e_string.isUTF8() and js_lexer.ChildlessJSXTags.has(tag.data.e_string.utf8);
@@ -10546,18 +10546,22 @@ pub fn NewParser(
                             //    children: []
                             // }
 
-                            if (children_count > 0) {
-                                for (e_.children[0..children_count]) |child, i| {
-                                    e_.children[i] = p.visitExpr(child);
-                                }
-                                const children_key = Expr{ .data = jsxChildrenKeyData, .loc = expr.loc };
-                                props.append(G.Property{
-                                    .key = children_key,
-                                    .value = p.e(E.Array{
-                                        .items = e_.children,
-                                        .is_single_line = e_.children.len < 2,
-                                    }, expr.loc),
-                                }) catch unreachable;
+                            switch (children_count) {
+                                0 => {},
+
+                                else => {
+                                    for (e_.children[0..children_count]) |child, i| {
+                                        e_.children[i] = p.visitExpr(child);
+                                    }
+                                    const children_key = Expr{ .data = jsxChildrenKeyData, .loc = expr.loc };
+                                    props.append(G.Property{
+                                        .key = children_key,
+                                        .value = p.e(E.Array{
+                                            .items = e_.children,
+                                            .is_single_line = e_.children.len < 2,
+                                        }, expr.loc),
+                                    }) catch unreachable;
+                                },
                             }
 
                             args[1] = p.e(E.Object{

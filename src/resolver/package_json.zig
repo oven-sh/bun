@@ -21,6 +21,25 @@ pub const PackageJSON = struct {
         production,
     };
 
+    const node_modules_path = std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str;
+    pub fn nameForImport(this: *const PackageJSON, allocator: *std.mem.Allocator) !string {
+        if (strings.indexOf(this.source.path.text, node_modules_path)) |_| {
+            return this.name;
+        } else {
+            const parent = this.source.path.name.dirWithTrailingSlash();
+            if (strings.indexOf(parent, fs.FileSystem.instance.top_level_dir)) |i| {
+                const relative_dir = parent[i + fs.FileSystem.instance.top_level_dir.len ..];
+                var out_dir = try allocator.alloc(u8, relative_dir.len + 2);
+                std.mem.copy(u8, out_dir[2..], relative_dir);
+                out_dir[0] = '.';
+                out_dir[1] = '/';
+                return out_dir;
+            }
+
+            return this.name;
+        }
+    }
+
     pub const FrameworkRouterPair = struct {
         framework: *options.Framework,
         router: *options.RouteConfig,
@@ -284,7 +303,7 @@ pub const PackageJSON = struct {
             .development => {
                 if (framework_object.expr.asProperty("development")) |env| {
                     if (loadFrameworkExpression(pair.framework, env.expr, allocator, read_defines)) {
-                        pair.framework.package = package_json.name;
+                        pair.framework.package = package_json.nameForImport(allocator) catch unreachable;
                         pair.framework.development = true;
                         if (env.expr.asProperty("static")) |static_prop| {
                             if (static_prop.expr.asString(allocator)) |str| {
@@ -302,7 +321,7 @@ pub const PackageJSON = struct {
             .production => {
                 if (framework_object.expr.asProperty("production")) |env| {
                     if (loadFrameworkExpression(pair.framework, env.expr, allocator, read_defines)) {
-                        pair.framework.package = package_json.name;
+                        pair.framework.package = package_json.nameForImport(allocator) catch unreachable;
                         pair.framework.development = false;
 
                         if (env.expr.asProperty("static")) |static_prop| {
@@ -322,7 +341,7 @@ pub const PackageJSON = struct {
         }
 
         if (loadFrameworkExpression(pair.framework, framework_object.expr, allocator, read_defines)) {
-            pair.framework.package = package_json.name;
+            pair.framework.package = package_json.nameForImport(allocator) catch unreachable;
             pair.framework.development = false;
         }
     }

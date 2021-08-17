@@ -629,6 +629,7 @@ if (typeof window !== "undefined") {
         // If so, it will use it.
         // Else, it will fall back to live reloading.
         case API.Loader.js:
+        case API.Loader.jsx:
         case API.Loader.json:
         case API.Loader.ts:
         case API.Loader.tsx: {

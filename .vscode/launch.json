@@ -31,6 +31,18 @@
     {
       "type": "lldb",
       "request": "launch",
+      "name": "Discord",
+      "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+      "args": [
+        "discord"
+        // "--origin=https://localhost:9000/"
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
       "name": "Eval",
       "program": "${workspaceFolder}/build/debug/macos-x86_64/spjs",
       "args": [
@@ -99,7 +111,7 @@
     {
       "type": "lldb",
       "request": "launch",
-      "name": "Demo .jsb",
+      "name": "Demo .bun",
       "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
       "args": [
         "./src/index.tsx",
@@ -113,11 +125,11 @@
     {
       "type": "lldb",
       "request": "launch",
-      "name": "Demo Build .jsb",
+      "name": "Demo Build .bun",
       "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
       "args": [
         "--origin=http://localhost:9000/",
-        "--new-jsb",
+        "--new-bun",
         "--use=ipwipwipwip-next-donotuse",
         "--platform=browser"
       ],
@@ -136,9 +148,9 @@
     {
       "type": "lldb",
       "request": "launch",
-      "name": "Demo Print .jsb",
+      "name": "Demo Print .bun",
       "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
-      "args": ["./node_modules.jsb"],
+      "args": ["./node_modules.bun"],
       "cwd": "${workspaceFolder}/demos/simple-react",
       "console": "internalConsole"
     },

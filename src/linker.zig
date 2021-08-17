@@ -245,7 +245,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
                                                     null,
                                                     logger.Loc.Empty,
                                                     linker.allocator,
-                                                    "\"{s}\" version changed, we'll need to regenerate the .jsb.\nOld version: \"{s}\"\nNew version: \"{s}\"",
+                                                    "\"{s}\" version changed, please regenerate the .bun.\nOld version: \"{s}\"\nNew version: \"{s}\"\nRun this command:\nbun bun",
                                                     .{
                                                         package_json.name,
                                                         node_modules_bundle.str(node_modules_bundle.bundle.packages[possible_pkg_ids[0]].version),
@@ -271,7 +271,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
                                                     null,
                                                     logger.Loc.Empty,
                                                     linker.allocator,
-                                                    "New dependency import: \"{s}/{s}\"\nWe'll need to regenerate the .jsb.",
+                                                    "New dependency import: \"{s}/{s}\"\nPlease run `bun bun` to update the .bun.",
                                                     .{
                                                         package_json.name,
                                                         package_relative_path,

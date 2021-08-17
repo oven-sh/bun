@@ -37,7 +37,7 @@ out.*
 out
 .parcel-cache
 esbuilddir
-*.jsb
+*.bun
 parceldist
 esbuilddir
 outdir/
@@ -48,3 +48,4 @@ txt.js
 .vscode/cpp*
 
 node_modules_*
+*.jsb

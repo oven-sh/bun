@@ -555,11 +555,11 @@ pub const Timings = struct {
 
 pub const DefaultUserDefines = struct {
     pub const HotModuleReloading = struct {
-        pub const Key = "process.env.SPEEDY_HMR_ENABLED";
+        pub const Key = "process.env.BUN_HMR_ENABLED";
         pub const Value = "true";
     };
     pub const HotModuleReloadingVerbose = struct {
-        pub const Key = "process.env.SPEEDY_HMR_VERBOSE";
+        pub const Key = "process.env.BUN_HMR_VERBOSE";
         pub const Value = "true";
     };
     // This must be globally scoped so it doesn't disappear

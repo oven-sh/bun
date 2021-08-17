@@ -117,7 +117,6 @@ pub fn NewWatcher(comptime ContextType: type) type {
             var stderr = std.io.getStdErr();
             var output_source = Output.Source.init(stdout, stderr);
             Output.Source.set(&output_source);
-            Output.enable_ansi_colors = stderr.isTty();
 
             defer Output.flush();
             if (FeatureFlags.verbose_watcher) Output.prettyln("Watcher started", .{});

@@ -89,16 +89,16 @@ export var __commonJS = (cb, name) => {
 
 var require_cache = new WeakMap();
 
-export var __SPEEDY_INTERNAL_DO_NOT_USE_OR_YOU_WILL_BE_FIRED = {
+export var __BUN_INTERNAL_DO_NOT_USE_OR_YOU_WILL_BE_FIRED = {
   RequireFailedError: class {},
 };
 
 // __name(
-//   __SPEEDY_INTERNAL_DO_NOT_USE_OR_YOU_WILL_BE_FIRED__MODULE_LOAD_CACHE.RequireFailedError,
+//   __BUN_INTERNAL_DO_NOT_USE_OR_YOU_WILL_BE_FIRED__MODULE_LOAD_CACHE.RequireFailedError,
 //   "RequireFailedError"
 // );
 // __name(
-//   __SPEEDY_INTERNAL_DO_NOT_USE_OR_YOU_WILL_BE_FIRED__MODULE_LOAD_CACHE.Module,
+//   __BUN_INTERNAL_DO_NOT_USE_OR_YOU_WILL_BE_FIRED__MODULE_LOAD_CACHE.Module,
 //   "Module"
 // );
 
@@ -115,7 +115,7 @@ export var __require = (namespace) => {
       : namespace;
 
   if (typeof target !== "function") {
-    throw new __SPEEDY_INTERNAL_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.RequireFailedError(
+    throw new __BUN_INTERNAL_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.RequireFailedError(
       `Couldn't find module "${
         typeof namespace === "string"
           ? namespace
@@ -131,21 +131,21 @@ export var __require = (namespace) => {
 
 if (
   !(
-    "__SPEEDY_INTERNAL_DO_NOT_USE_OR_YOU_WILL_BE_FIRED__MODULE_LOAD_CACHE" in
+    "__BUN_INTERNAL_DO_NOT_USE_OR_YOU_WILL_BE_FIRED__MODULE_LOAD_CACHE" in
     globalThis
   )
 ) {
-  globalThis.__SPEEDY_INTERNAL_DO_NOT_USE_OR_YOU_WILL_BE_FIRED__MODULE_LOAD_CACHE =
+  globalThis.__BUN_INTERNAL_DO_NOT_USE_OR_YOU_WILL_BE_FIRED__MODULE_LOAD_CACHE =
     new Map();
 }
 
 if (
   !(
-    "__SPEEDY_INTERNAL_DO_NOT_USE_OR_YOU_WILL_BE_FIRED__MODULE_REGISTRY" in
+    "__BUN_INTERNAL_DO_NOT_USE_OR_YOU_WILL_BE_FIRED__MODULE_REGISTRY" in
     globalThis
   )
 ) {
-  globalThis.__SPEEDY_INTERNAL_DO_NOT_USE_OR_YOU_WILL_BE_FIRED__MODULE_REGISTRY =
+  globalThis.__BUN_INTERNAL_DO_NOT_USE_OR_YOU_WILL_BE_FIRED__MODULE_REGISTRY =
     new Map();
 }
 

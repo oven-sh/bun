@@ -187,6 +187,7 @@ let CachedComponent: React.ComponentType;
 
 function _boot(EntryPointNamespace) {
   const PageComponent = EntryPointNamespace.default;
+  
   ReactDOM.hydrate(
     <Container fn={(error) => <div>{JSON.stringify(error)}</div>}>
       <App Component={PageComponent} pageProps={data.props}></App>

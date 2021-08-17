@@ -131,8 +131,6 @@ pub const RequestContext = struct {
     match_file_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined,
     res_headers_count: usize = 0,
 
-    pub const bundle_prefix = "__bun";
-
     pub fn getFullURL(this: *RequestContext) [:0]const u8 {
         if (this.full_url.len == 0) {
             if (this.bundler.options.origin.isAbsolute()) {
@@ -729,7 +727,7 @@ pub const RequestContext = struct {
             // defer stdout.flush() catch {};
             // defer stderr.flush() catch {};
             Output.Source.set(&output_source);
-            Output.enable_ansi_colors = stderr.isTty();
+
             js_ast.Stmt.Data.Store.create(std.heap.c_allocator);
             js_ast.Expr.Data.Store.create(std.heap.c_allocator);
 
@@ -1206,7 +1204,7 @@ pub const RequestContext = struct {
                                 }
                             },
                             else => {
-                                Output.prettyErrorln("<r>[Websocket]: Unknown cmd: <b>{d}<r>. This might be a version mismatch. Try updating your node_modules.jsb", .{@enumToInt(cmd.kind)});
+                                Output.prettyErrorln("<r>[Websocket]: Unknown cmd: <b>{d}<r>. This might be a version mismatch. Try updating your node_modules.bun", .{@enumToInt(cmd.kind)});
                             },
                         }
                     },
@@ -1603,7 +1601,7 @@ pub const RequestContext = struct {
     }
 
     pub fn handleReservedRoutes(ctx: *RequestContext, server: *Server) !bool {
-        if (strings.eqlComptime(ctx.url.extname, "jsb") and ctx.bundler.options.node_modules_bundle != null) {
+        if (strings.eqlComptime(ctx.url.extname, "bun") and ctx.bundler.options.node_modules_bundle != null) {
             try ctx.sendJSB();
             return true;
         }

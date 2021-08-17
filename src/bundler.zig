@@ -159,12 +159,6 @@ pub const ServerEntryPoint = struct {
             &entry.code_buffer,
             \\//Auto-generated file
             \\import * as start from '{s}{s}';
-            \\if ('default' in start && typeof start.default === 'function') {{
-            \\  const result = start.default();
-            \\  if (result && typeof result === 'object' && result instanceof Promise) {{
-            \\    result.then(undefined, undefined);
-            \\  }}
-            \\}}
             \\export * from '{s}{s}';
         ,
             .{
@@ -651,7 +645,7 @@ pub fn NewBundler(cache_files: bool) type {
                 try bundler.configureDefines();
 
                 const tmpname = try bundler.fs.tmpname(
-                    ".jsb",
+                    ".bun",
                     std.mem.span(&tmpname_buf),
                     std.hash.Wyhash.hash(0, std.mem.span(destination)),
                 );
@@ -853,7 +847,7 @@ pub fn NewBundler(cache_files: bool) type {
                 const extname = std.fs.path.extension(basename);
                 javascript_bundle.import_from_name = try std.fmt.allocPrint(
                     this.allocator,
-                    "/{s}.{x}.jsb",
+                    "/{s}.{x}.bun",
                     .{
                         basename[0 .. basename.len - extname.len],
                         etag_u64,

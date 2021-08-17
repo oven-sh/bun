@@ -239,7 +239,7 @@ const Mutex = @import("./sync.zig").Mutex;
 /// Stores an initial count in .bss section of the object file
 /// Overflows to heap when count is exceeded.
 pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type {
-    // I experimented with string interning here and it was around...maybe 1% when generating a .jsb?
+    // I experimented with string interning here and it was around...maybe 1% when generating a .bun?
     // I tried:
     // - arraybacked list
     // - hashmap list

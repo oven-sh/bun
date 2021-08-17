@@ -354,7 +354,7 @@ var __HMRModule, __FastRefreshModule, __HMRClient;
     }
   }
 
-  class HMRClient {
+  class HMRClient extends EventTarget {
     static client: HMRClient;
     socket: WebSocket;
     hasWelcomed: boolean = false;
@@ -366,6 +366,7 @@ var __HMRModule, __FastRefreshModule, __HMRClient;
     loaders = {
       css: new CSSLoader(),
     };
+
     start() {
       if (runOnce) {
         __hmrlog.warn(
@@ -460,7 +461,7 @@ var __HMRModule, __FastRefreshModule, __HMRClient;
       this.client = new HMRClient();
       this.client.verbose = verbose;
       this.client.start();
-      globalThis["SPEEDY_HMR"] = this.client;
+      globalThis["BUN_HMR"] = this.client;
     }
 
     handleBuildFailure(buffer: ByteBuffer, timestamp: number) {

@@ -213,15 +213,13 @@ message TransformOptions {
 
   string[] extension_order = 17;
 
-  ScanDependencyMode only_scan_dependencies = 18;
+  bool generate_node_module_bundle = 18;
 
-  bool generate_node_module_bundle = 19;
+  string node_modules_bundle_path = 19;
+  string node_modules_bundle_path_server = 20;
 
-  string node_modules_bundle_path = 20;
-  string node_modules_bundle_path_server = 21;
-
-  FrameworkConfig framework = 22;
-  RouteConfig router = 23;
+  FrameworkConfig framework = 21;
+  RouteConfig router = 22;
 }
 
 struct FileHandle {

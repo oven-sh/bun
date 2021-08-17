@@ -38,7 +38,6 @@ pub fn main() anyerror!void {
     var output_source = Output.Source.init(stdout, stderr);
 
     Output.Source.set(&output_source);
-    Output.enable_ansi_colors = stderr.isTty();
     defer Output.flush();
     try cli.Cli.start(std.heap.c_allocator, stdout, stderr, MainPanicHandler);
 

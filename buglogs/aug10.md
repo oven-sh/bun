@@ -2,7 +2,7 @@
 ModuleNotFound on resolving "object-assign" from "/Users/jarred/Code/bun/demos/css-stress-test/node_modules/react-dom/cjs/"
 ```
 
-Happens with `--platform=browser` when importing react while building the .jsb
+Happens with `--platform=browser` when importing react while building the .bun
 
 `object-assign` doesn't have a `main` field set. That's not a bug; this should work.
 

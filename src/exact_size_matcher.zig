@@ -47,13 +47,6 @@ pub fn ExactSizeMatcher(comptime max_bytes: usize) type {
                 @compileError("str: \"" ++ str ++ "\" too long");
             }
         }
-
-        fn hash(comptime str: anytype) ?T {
-            if (str.len > max_bytes) return null;
-            var tmp = [_]u8{0} ** max_bytes;
-            std.mem.copy(u8, &tmp, str[0..str.len]);
-            return std.mem.readIntNative(T, &tmp);
-        }
     };
 }
 

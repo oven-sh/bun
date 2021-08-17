@@ -1140,9 +1140,6 @@ serve: ?bool = null,
 /// extension_order
 extension_order: []const []const u8,
 
-/// only_scan_dependencies
-only_scan_dependencies: ?ScanDependencyMode = null,
-
 /// generate_node_module_bundle
 generate_node_module_bundle: ?bool = null,
 
@@ -1218,21 +1215,18 @@ pub fn decode(reader: anytype) anyerror!TransformOptions {
         this.extension_order = try reader.readArray([]const u8); 
 },
       18 => {
-        this.only_scan_dependencies = try reader.readValue(ScanDependencyMode); 
-},
-      19 => {
         this.generate_node_module_bundle = try reader.readValue(bool); 
 },
-      20 => {
+      19 => {
         this.node_modules_bundle_path = try reader.readValue([]const u8); 
 },
-      21 => {
+      20 => {
         this.node_modules_bundle_path_server = try reader.readValue([]const u8); 
 },
-      22 => {
+      21 => {
         this.framework = try reader.readValue(FrameworkConfig); 
 },
-      23 => {
+      22 => {
         this.router = try reader.readValue(RouteConfig); 
 },
       else => {
@@ -1312,28 +1306,24 @@ if (this.extension_order) |extension_order| {
   try writer.writeFieldID(17);
    try writer.writeArray([]const u8, extension_order);
 }
-if (this.only_scan_dependencies) |only_scan_dependencies| {
-  try writer.writeFieldID(18);
-   try writer.writeEnum(only_scan_dependencies);
-}
 if (this.generate_node_module_bundle) |generate_node_module_bundle| {
-  try writer.writeFieldID(19);
+  try writer.writeFieldID(18);
    try writer.writeInt(@intCast(u8, @boolToInt(generate_node_module_bundle)));
 }
 if (this.node_modules_bundle_path) |node_modules_bundle_path| {
-  try writer.writeFieldID(20);
+  try writer.writeFieldID(19);
    try writer.writeValue(node_modules_bundle_path);
 }
 if (this.node_modules_bundle_path_server) |node_modules_bundle_path_server| {
-  try writer.writeFieldID(21);
+  try writer.writeFieldID(20);
    try writer.writeValue(node_modules_bundle_path_server);
 }
 if (this.framework) |framework| {
-  try writer.writeFieldID(22);
+  try writer.writeFieldID(21);
    try writer.writeValue(framework);
 }
 if (this.router) |router| {
-  try writer.writeFieldID(23);
+  try writer.writeFieldID(22);
    try writer.writeValue(router);
 }
 try writer.endMessage();

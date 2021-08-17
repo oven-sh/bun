@@ -104,7 +104,7 @@ pub const NodeModuleBundle = struct {
                 // Saving us an allocation
                 if (@ptrToInt(prev_package_ids_for_name.ptr) != @ptrToInt(entry.value_ptr.ptr)) {
                     Output.prettyErrorln(
-                        \\<r><red>Fatal<r>: incorrect package sorting order detected in .jsb file.\n
+                        \\<r><red>Fatal<r>: incorrect package sorting order detected in .bun file.\n
                         \\This is a bug! Please create an issue.\n
                         \\If this bug blocks you from doing work, for now 
                         \\please <b>avoid having multiple versions of <cyan>"{s}"<r> in the same bundle.\n

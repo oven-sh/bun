@@ -46,7 +46,7 @@ pub fn main() anyerror!void {
     // defer stdout.flush() catch {};
     // defer stderr.flush() catch {};
     Output.Source.set(&output_source);
-    Output.enable_ansi_colors = stderr.isTty();
+
     defer Output.flush();
     try Cli.start(
         std.heap.c_allocator,
@@ -213,7 +213,7 @@ pub const Cli = struct {
             var jsx_production = args.flag("--jsx-production");
             var react_fast_refresh = false;
 
-            if (serve or args.flag("--new-jsb")) {
+            if (serve or args.flag("--new-bun")) {
                 react_fast_refresh = true;
                 if (args.flag("--disable-react-fast-refresh") or jsx_production) {
                     react_fast_refresh = false;
@@ -222,12 +222,12 @@ pub const Cli = struct {
 
             var main_fields = args.options("--main-fields");
 
-            var node_modules_bundle_path = args.option("--jsb") orelse brk: {
-                if (args.flag("--new-jsb")) {
+            var node_modules_bundle_path = args.option("--bun") orelse brk: {
+                if (args.flag("--new-bun")) {
                     break :brk null;
                 }
 
-                const node_modules_bundle_path_absolute = resolve_path.joinAbs(cwd, .auto, "node_modules.jsb");
+                const node_modules_bundle_path_absolute = resolve_path.joinAbs(cwd, .auto, "node_modules.bun");
                 std.fs.accessAbsolute(node_modules_bundle_path_absolute, .{}) catch |err| {
                     break :brk null;
                 };
@@ -239,7 +239,7 @@ pub const Cli = struct {
                 node_modules_bundle_path = try std.fs.realpathAlloc(allocator, node_modules_bundle_path.?);
             }
 
-            if (args.flag("--new-jsb")) {
+            if (args.flag("--new-bun")) {
                 node_modules_bundle_path = null;
             }
 
@@ -340,8 +340,7 @@ pub const Cli = struct {
                 .entry_points = entry_points,
                 .extension_order = args.options("--extension-order"),
                 .main_fields = args.options("--main-fields"),
-                .only_scan_dependencies = if (args.flag("--scan")) Api.ScanDependencyMode.all else Api.ScanDependencyMode._none,
-                .generate_node_module_bundle = if (args.flag("--new-jsb")) true else false,
+                .generate_node_module_bundle = if (args.flag("--new-bun")) true else false,
             };
         }
     };
@@ -381,7 +380,6 @@ pub const Cli = struct {
                 // defer stdout.flush() catch {};
                 // defer stderr.flush() catch {};
                 Output.Source.set(&output_source);
-                Output.enable_ansi_colors = stderr.isTty();
 
                 var log = logger.Log.init(this.allocator);
 

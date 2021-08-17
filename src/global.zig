@@ -8,6 +8,7 @@ pub const FeatureFlags = @import("feature_flags.zig");
 
 pub const Output = struct {
     threadlocal var source: Source = undefined;
+    threadlocal var source_set: bool = false;
     pub const Source = struct {
         pub const StreamType: type = brk: {
             if (isWasm) {
@@ -32,6 +33,7 @@ pub const Output = struct {
             stream: StreamType,
             err: StreamType,
         ) Source {
+            source_set = true;
             return Source{
                 .stream = stream,
                 .error_stream = err,
@@ -42,10 +44,18 @@ pub const Output = struct {
 
         pub fn set(_source: *Source) void {
             source = _source.*;
+            source_set = true;
+
+            enable_ansi_colors = _source.error_stream.supportsAnsiEscapeCodes();
+
+            is_stdout_piped = !_source.stream.isTty();
+            is_stderr_piped = !_source.error_stream.isTty();
         }
     };
     pub var enable_ansi_colors = isNative;
     pub var enable_buffering = true;
+    pub var is_stdout_piped = false;
+    pub var is_stderr_piped = false;
 
     pub fn enableBuffering() void {
         enable_buffering = true;
@@ -59,19 +69,22 @@ pub const Output = struct {
     pub const WriterType: type = @typeInfo(std.meta.declarationInfo(Source.StreamType, "writer").data.Fn.fn_type).Fn.return_type.?;
 
     pub fn errorWriter() WriterType {
+        std.debug.assert(source_set);
         return source.error_stream.writer();
     }
 
     pub fn errorStream() Source.StreamType {
+        std.debug.assert(source_set);
         return source.error_stream;
     }
 
     pub fn writer() WriterType {
+        std.debug.assert(source_set);
         return source.stream.writer();
     }
 
     pub fn flush() void {
-        if (isNative) {
+        if (isNative and source_set) {
             source.buffered_stream.flush() catch {};
             source.buffered_error_stream.flush() catch {};
             // source.stream.flush() catch {};
@@ -106,6 +119,7 @@ pub const Output = struct {
     fn _noop(comptime fmt: string, args: anytype) void {}
 
     pub fn _debug(comptime fmt: string, args: anytype) void {
+        std.debug.assert(source_set);
         if (fmt[fmt.len - 1] != '\n') {
             return print(fmt ++ "\n", args);
         }
@@ -114,6 +128,8 @@ pub const Output = struct {
     }
 
     pub fn print(comptime fmt: string, args: anytype) void {
+        std.debug.assert(source_set);
+
         if (comptime isWasm) {
             source.stream.seekTo(0) catch return;
             source.stream.writer().print(fmt, args) catch return;

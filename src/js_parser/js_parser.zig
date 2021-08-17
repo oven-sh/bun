@@ -1729,7 +1729,7 @@ pub const Parser = struct {
 
         // Symbol use counts are unavailable
         // So we say "did we parse any JSX?"
-        // if yes, just automatically add the import so that .jsb knows to include the file.
+        // if yes, just automatically add the import so that .bun knows to include the file.
         if (self.options.jsx.parse and p.needs_jsx_import) {
             _ = p.addImportRecord(
                 .require,

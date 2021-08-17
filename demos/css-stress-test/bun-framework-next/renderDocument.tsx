@@ -356,7 +356,7 @@ export async function render({
     pages[name] = [path];
   }
 
-  pages[pathname] = [route.scriptSrc];
+  pages[pathname] = [route.scriptSrc, ...pageStylesheets];
 
   if (appStylesheets.length > 0) {
     if (pages["/_app"]) {

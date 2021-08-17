@@ -1,3 +1,4 @@
+globalThis.global = globalThis;
 import { render } from "./renderDocument";
 
 let buildId = 0;

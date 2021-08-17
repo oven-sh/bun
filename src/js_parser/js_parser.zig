@@ -10545,18 +10545,20 @@ pub fn NewParser(
                             //    ...props,
                             //    children: []
                             // }
-                            for (e_.children[0..children_count]) |child, i| {
-                                e_.children[i] = p.visitExpr(child);
-                            }
-                            const children_key = Expr{ .data = jsxChildrenKeyData, .loc = expr.loc };
 
-                            props.append(G.Property{
-                                .key = children_key,
-                                .value = p.e(E.Array{
-                                    .items = e_.children,
-                                    .is_single_line = e_.children.len < 2,
-                                }, expr.loc),
-                            }) catch unreachable;
+                            if (children_count > 0) {
+                                for (e_.children[0..children_count]) |child, i| {
+                                    e_.children[i] = p.visitExpr(child);
+                                }
+                                const children_key = Expr{ .data = jsxChildrenKeyData, .loc = expr.loc };
+                                props.append(G.Property{
+                                    .key = children_key,
+                                    .value = p.e(E.Array{
+                                        .items = e_.children,
+                                        .is_single_line = e_.children.len < 2,
+                                    }, expr.loc),
+                                }) catch unreachable;
+                            }
 
                             args[1] = p.e(E.Object{
                                 .properties = props.toOwnedSlice(),

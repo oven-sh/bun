@@ -1,3 +1,13 @@
+var onlyChildPolyfill = React.Children.only;
+React.Children.only = function (children) {
+  if (children && typeof children === "object" && children.length == 1) {
+    return onlyChildPolyfill(children[0]);
+  }
+
+  return onlyChildPolyfill(children);
+};
+
+globalThis.global = globalThis;
 import * as ReactDOM from "react-dom";
 import App from "next/app";
 import mitt, { MittEmitter } from "next/dist/shared/lib/mitt";
@@ -21,7 +31,7 @@ import {
   NEXT_DATA,
   ST,
 } from "next/dist/shared/lib/utils";
-import { Portal } from "next/dist/client/portal";
+// import { Portal } from "next/dist/client/portal";
 import initHeadManager from "next/dist/client/head-manager";
 import PageLoader, { StyleSheetTuple } from "next/dist/client/page-loader";
 import measureWebVitals from "next/dist/client/performance-relayer";
@@ -187,7 +197,7 @@ let CachedComponent: React.ComponentType;
 
 function _boot(EntryPointNamespace) {
   const PageComponent = EntryPointNamespace.default;
-  
+
   ReactDOM.hydrate(
     <Container fn={(error) => <div>{JSON.stringify(error)}</div>}>
       <App Component={PageComponent} pageProps={data.props}></App>

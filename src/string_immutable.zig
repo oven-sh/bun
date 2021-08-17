@@ -52,19 +52,8 @@ pub fn startsWith(self: string, str: string) bool {
     return true;
 }
 
-pub fn endsWith(self: string, str: string) bool {
-    if (str.len > self.len) {
-        return false;
-    }
-
-    var i: usize = str.len - 1;
-    while (i > 0) : (i -= 1) {
-        if (str[i] != self[i]) {
-            return false;
-        }
-    }
-
-    return true;
+pub inline fn endsWith(self: string, str: string) bool {
+    return @call(.{ .modifier = .always_inline }, std.mem.endsWith, .{ u8, self, str });
 }
 
 pub fn endsWithAny(self: string, str: string) bool {

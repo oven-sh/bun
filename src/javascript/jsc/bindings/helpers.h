@@ -76,6 +76,12 @@ static const WTF::String toString(ZigString str) {
   return WTF::String(WTF::StringImpl::createWithoutCopying(str.ptr, str.len));
 }
 
+static const WTF::String toStringCopy(ZigString str) {
+  if (str.len == 0 || str.ptr == nullptr) { return WTF::String(); }
+
+  return WTF::String(WTF::StringImpl::create(str.ptr, str.len));
+}
+
 static WTF::String toStringNotConst(ZigString str) {
   if (str.len == 0 || str.ptr == nullptr) { return WTF::String(); }
 

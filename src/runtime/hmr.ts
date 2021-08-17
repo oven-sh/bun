@@ -2,8 +2,8 @@ import { ByteBuffer } from "peechy";
 import * as API from "../api/schema";
 
 var __HMRModule, __FastRefreshModule, __HMRClient;
-// We add a scope here to minimize chances of namespace collisions
-{
+if (typeof window !== "undefined") {
+  // We add a scope here to minimize chances of namespace collisions
   var runOnce = false;
   var clientStartTime = 0;
 
@@ -354,7 +354,7 @@ var __HMRModule, __FastRefreshModule, __HMRClient;
     }
   }
 
-  class HMRClient extends EventTarget {
+  class HMRClient {
     static client: HMRClient;
     socket: WebSocket;
     hasWelcomed: boolean = false;

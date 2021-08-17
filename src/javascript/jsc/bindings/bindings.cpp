@@ -348,7 +348,7 @@ JSC__JSValue JSC__JSValue__createStringArray(JSC__JSGlobalObject *globalObject, 
 
       for (size_t i = 0; i < arg2; ++i) {
         array->initializeIndexWithoutBarrier(initializationScope, i,
-                                             JSC::jsString(vm, Zig::toString(arg1[i])));
+                                             JSC::jsString(vm, Zig::toStringCopy(arg1[i])));
       }
     }
   }

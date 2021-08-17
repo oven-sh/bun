@@ -86,8 +86,8 @@
       "name": "Demo Serve",
       "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
       // "args": ["--serve", "--origin=http://localhost:3000"],
-      "args": ["--serve", "--origin=https://dev.jarredsumner.com"],
-      "cwd": "${workspaceFolder}/demos/css-stress-test",
+      "args": ["dev", "--origin=https://dev.jarredsumner.com"],
+      "cwd": "${workspaceFolder}/demos/hello-next",
       "console": "internalConsole"
     },
     {

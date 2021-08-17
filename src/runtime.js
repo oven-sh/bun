@@ -163,8 +163,6 @@ export var __name = (target, name) => {
   return target;
 };
 
-export const __esModule = true;
-
 // Used to implement ES6 exports to CommonJS
 export var __export = (target, all) => {
   for (var name in all)

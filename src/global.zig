@@ -57,6 +57,10 @@ pub const Output = struct {
     pub var is_stdout_piped = false;
     pub var is_stderr_piped = false;
 
+    pub inline fn isEmojiEnabled() bool {
+        return enable_ansi_colors and !isWindows;
+    }
+
     pub fn enableBuffering() void {
         enable_buffering = true;
     }

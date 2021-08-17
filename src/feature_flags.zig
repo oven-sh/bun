@@ -45,7 +45,7 @@ pub const react_specific_warnings = true;
 //      command ../../build/debug/macos-x86_64/bun --use=./nexty2 --new-jsb > /dev/null
 //    end
 // It only happens 1 out of every N times, probably like 50.
-pub const parallel_jsb = false;
+pub const parallel_bun = false;
 
 pub const CSSModulePolyfill = enum {
     // When you import a .css file and you reference the import in JavaScript

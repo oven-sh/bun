@@ -1101,7 +1101,8 @@ pub const FetchEvent = struct {
         switch (status) {
             .Fulfilled => {},
             else => {
-                this.request_context.sendInternalError(error.rejectedPromise) catch {};
+                VirtualMachine.vm.defaultErrorHandler(resolved.result(VirtualMachine.vm.global.vm()));
+                this.request_context.sendInternalError(error.rejectedPromiseSeeConsole) catch {};
                 return js.JSValueMakeUndefined(ctx);
             },
         }

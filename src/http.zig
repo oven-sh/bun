@@ -1036,12 +1036,19 @@ pub const RequestContext = struct {
             defer handler.tombstone = true;
             defer removeWebsocket(handler);
             defer ctx.arena.deinit();
-            defer ctx.conn.deinit();
+            var is_socket_closed = false;
+            defer {
+                if (!is_socket_closed) {
+                    ctx.conn.deinit();
+                }
+            }
             defer Output.flush();
 
             handler.checkUpgradeHeaders() catch |err| {
                 switch (err) {
                     error.BadRequest => {
+                        defer is_socket_closed = true;
+
                         try ctx.sendBadRequest();
                     },
                     else => {
@@ -1059,6 +1066,7 @@ pub const RequestContext = struct {
                     try ctx.writeStatus(426);
                     try ctx.flushHeaders();
                     ctx.done();
+                    is_socket_closed = true;
                     return;
                 },
             }
@@ -1103,6 +1111,7 @@ pub const RequestContext = struct {
             try welcome_message.encode(&writer);
             if ((try handler.websocket.writeBinary(fbs.getWritten())) == 0) {
                 handler.tombstone = true;
+                is_socket_closed = true;
                 Output.prettyErrorln("<r><red>ERR:<r> <b>Websocket failed to write.<r>", .{});
             }
 
@@ -1111,6 +1120,7 @@ pub const RequestContext = struct {
                 handler.conn.client.getError() catch |err| {
                     Output.prettyErrorln("<r><red>ERR:<r> <b>{s}<r>", .{err});
                     handler.tombstone = true;
+                    is_socket_closed = true;
                 };
 
                 var frame = handler.websocket.read() catch |err| {
@@ -1118,6 +1128,7 @@ pub const RequestContext = struct {
                         error.ConnectionClosed => {
                             Output.prettyln("Websocket closed.", .{});
                             handler.tombstone = true;
+                            is_socket_closed = true;
                             continue;
                         },
                         else => {
@@ -1129,6 +1140,7 @@ pub const RequestContext = struct {
                 switch (frame.header.opcode) {
                     .Close => {
                         Output.prettyln("Websocket closed.", .{});
+                        is_socket_closed = true;
                         return;
                     },
                     .Text => {
@@ -1204,7 +1216,7 @@ pub const RequestContext = struct {
                                 }
                             },
                             else => {
-                                Output.prettyErrorln("<r>[Websocket]: Unknown cmd: <b>{d}<r>. This might be a version mismatch. Try updating your node_modules.bun", .{@enumToInt(cmd.kind)});
+                                Output.prettyErrorln("<r>[Websocket]: Unknown cmd: <b>{d}<r>. This might be a version mismatch. Try updating your node_modules.jsb", .{@enumToInt(cmd.kind)});
                             },
                         }
                     },

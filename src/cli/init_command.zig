@@ -20,5 +20,7 @@ const bundler = @import("../bundler.zig");
 const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
 
 pub const InitCommand = struct {
-    pub fn exec(ctx: Command.Context) !void {}
+    pub fn exec(ctx: Command.Context) !void {
+        Output.prettyErrorln("<r><red>nOt<r> <magenta>iMpLeMeNtEd<r> <yellow>yEt<r>", .{});
+    }
 };

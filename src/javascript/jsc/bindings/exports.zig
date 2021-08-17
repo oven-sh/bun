@@ -6,7 +6,20 @@ const JS = @import("../javascript.zig");
 const JSBase = @import("../base.zig");
 const Handler = struct {
     pub export fn global_signal_handler_fn(sig: i32, info: *const std.os.siginfo_t, ctx_ptr: ?*const c_void) callconv(.C) void {
-        Global.panic("C++ Crash!!", .{});
+        var stdout = std.io.getStdOut();
+        var stderr = std.io.getStdErr();
+        var source = Output.Source.init(stdout, stderr);
+        Output.Source.set(&source);
+
+        if (Output.isEmojiEnabled()) {
+            Output.prettyErrorln("<r><red>Bun will crash now<r> 😭😭😭\n", .{});
+            Output.flush();
+        } else {
+            stderr.writeAll("Bun has crashed :'(\n") catch {};
+        }
+        std.mem.doNotOptimizeAway(source);
+
+        std.os.exit(6);
     }
 };
 

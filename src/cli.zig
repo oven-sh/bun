@@ -41,12 +41,12 @@ pub const Cli = struct {
     pub fn startTransform(allocator: *std.mem.Allocator, args: Api.TransformOptions, log: *logger.Log) anyerror!void {}
     pub fn start(allocator: *std.mem.Allocator, stdout: anytype, stderr: anytype, comptime MainPanicHandler: type) anyerror!void {
         start_time = std.time.nanoTimestamp();
-        var log = logger.Log.init(allocator);
-        var panicker = MainPanicHandler.init(&log);
+        var log = try allocator.create(logger.Log);
+        log.* = logger.Log.init(allocator);
+        var panicker = MainPanicHandler.init(log);
         MainPanicHandler.Singleton = &panicker;
 
-        try Command.start(allocator, &log);
-        std.mem.doNotOptimizeAway(&log);
+        try Command.start(allocator, log);
     }
 };
 
@@ -137,7 +137,7 @@ pub const Arguments = struct {
         }
     }
 
-    const ParamType = clap.Param(clap.Help);
+    pub const ParamType = clap.Param(clap.Help);
 
     const params: [25]ParamType = brk: {
         @setEvalBranchQuota(9999);
@@ -448,6 +448,31 @@ const HelpCommand = struct {
     }
 };
 
+pub const PrintBundleCommand = struct {
+    pub fn exec(ctx: Command.Context) !void {
+        const entry_point = ctx.args.entry_points[0];
+        var out_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        var stdout = std.io.getStdOut();
+
+        var input = try std.fs.openFileAbsolute(try std.os.realpath(ctx.args.entry_points[0], &out_buffer), .{ .read = true });
+        const params = comptime [_]Arguments.ParamType{
+            clap.parseParam("--summary  Peek inside the .bun") catch unreachable,
+        };
+
+        var jsBundleArgs = clap.parse(clap.Help, &params, .{ .allocator = ctx.allocator }) catch |err| {
+            try NodeModuleBundle.printBundle(std.fs.File, input, @TypeOf(stdout), stdout);
+            return;
+        };
+
+        if (jsBundleArgs.flag("--summary")) {
+            NodeModuleBundle.printSummaryFromDisk(std.fs.File, input, @TypeOf(stdout), stdout, ctx.allocator) catch {};
+            return;
+        }
+
+        try NodeModuleBundle.printBundle(std.fs.File, input, @TypeOf(stdout), stdout);
+    }
+};
+
 pub const Command = struct {
     pub const Context = struct {
         start_time: i128,
@@ -535,6 +560,13 @@ pub const Command = struct {
                         },
                     }
                 };
+
+                if (ctx.args.entry_points.len == 1 and
+                    std.mem.endsWith(u8, ctx.args.entry_points[0], ".bun"))
+                {
+                    try PrintBundleCommand.exec(ctx);
+                    return;
+                }
 
                 try BuildCommand.exec(ctx);
             },

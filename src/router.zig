@@ -195,13 +195,13 @@ pub fn loadRoutes(
     if (comptime isDebug) {
         if (comptime is_root) {
             var i: usize = 0;
-            Output.prettyln("Routes:", .{});
+            Output.prettyErrorln("Routes (last segment only):", .{});
             while (i < this.routes.routes.len) : (i += 1) {
                 const route = this.routes.routes.get(i);
 
-                Output.prettyln("   {s}: {s}", .{ route.name, route.path });
+                Output.prettyErrorln("   {s}: {s}", .{ route.name, route.path });
             }
-            Output.prettyln("  {d} routes", .{this.routes.routes.len});
+            Output.prettyErrorln("  {d} routes\n", .{this.routes.routes.len});
             Output.flush();
         }
     }

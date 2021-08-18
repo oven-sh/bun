@@ -50,13 +50,6 @@ usingnamespace @import("./javascript/jsc/bindings/exports.zig");
 const Router = @import("./router.zig");
 pub const Watcher = watcher.NewWatcher(*Server);
 
-const ENABLE_LOGGER = false;
-pub fn println(comptime fmt: string, args: anytype) void {
-    // if (ENABLE_LOGGER) {
-    Output.println(fmt, args);
-    // }
-}
-
 const HTTPStatusCode = u10;
 const URLPath = @import("./http/url_path.zig");
 
@@ -1079,7 +1072,7 @@ pub const RequestContext = struct {
             ctx.appendHeader("Sec-WebSocket-Protocol", "bun-hmr");
             try ctx.writeStatus(101);
             try ctx.flushHeaders();
-            Output.println("101 - Websocket connected.", .{});
+            Output.prettyln("<r><green>101<r><d> Hot Module Reloading connected.", .{});
             Output.flush();
 
             var cmd: Api.WebsocketCommand = undefined;
@@ -1988,9 +1981,30 @@ pub const Server = struct {
             const status = req_ctx.status orelse @intCast(HTTPStatusCode, 500);
 
             if (req_ctx.log.msgs.items.len == 0) {
-                println("{d} – {s} {s} as {s}", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
+                switch (status) {
+                    101, 199...399 => {
+                        Output.prettyln("<r><green>{d}<r><d> {s} <r>{s}<d> as {s}<r>", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
+                    },
+                    400...499 => {
+                        Output.prettyln("<r><yellow>{d}<r><d> {s} <r>{s}<d> as {s}<r>", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
+                    },
+                    else => {
+                        Output.prettyln("<r><red>{d}<r><d> {s} <r>{s}<d> as {s}<r>", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
+                    },
+                }
             } else {
-                println("{s} {s}", .{ @tagName(req_ctx.method), req.path });
+                switch (status) {
+                    101, 199...399 => {
+                        Output.prettyln("<r><green>{d}<r><d> <r>{s}<d> {s} as {s}<r>", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
+                    },
+                    400...499 => {
+                        Output.prettyln("<r><yellow>{d}<r><d> <r>{s}<d> {s} as {s}<r>", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
+                    },
+                    else => {
+                        Output.prettyln("<r><red>{d}<r><d> <r>{s}<d> {s} as {s}<r>", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
+                    },
+                }
+
                 for (req_ctx.log.msgs.items) |msg| {
                     msg.writeFormat(Output.errorWriter()) catch continue;
                 }

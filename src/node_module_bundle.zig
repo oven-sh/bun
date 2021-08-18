@@ -428,6 +428,7 @@ pub const NodeModuleBundle = struct {
                 }
             }
         };
+
         if (isMac) {
             // darwin only allows reading ahead on/off, not specific amount
             _ = std.os.fcntl(input.handle, std.os.F_RDAHEAD, 1) catch 0;

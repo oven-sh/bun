@@ -3738,10 +3738,6 @@ const FileWriterInternal = struct {
     }
 
     pub fn init(file: std.fs.File) FileWriterInternal {
-        // if (isMac) {
-        //     _ = std.os.fcntl(file.handle, std.os.F_NOCACHE, 1) catch 0;
-        // }
-
         if (!has_loaded_buffer) {
             buffer = MutableString.init(alloc.dynamic, 0) catch unreachable;
             has_loaded_buffer = true;

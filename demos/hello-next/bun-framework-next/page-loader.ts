@@ -3,10 +3,15 @@ import NextPageLoader from "next/dist/client/page-loader";
 export default class PageLoader extends NextPageLoader {
   public routeLoader: RouteLoader;
 
-  getPageList() {
+  constructor(_, __, pages) {
+    super(_, __);
 
+    this.pages = pages;
   }
 
+  getPageList() {
+    return Object.keys(this.pages);
+  }
 
   loadPage(route: string): Promise<GoodPageCache> {
     return this.routeLoader.loadRoute(route).then((res) => {
@@ -24,6 +29,7 @@ export default class PageLoader extends NextPageLoader {
     });
   }
 
+  // not used in development!
   prefetch(route: string): Promise<void> {
     return this.routeLoader.prefetch(route);
   }

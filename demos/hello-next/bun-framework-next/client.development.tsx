@@ -19,6 +19,7 @@ import Router, {
   hasBasePath,
   PrivateRouteInfo,
 } from "next/dist/shared/lib/router/router";
+
 import { isDynamicRoute } from "next/dist/shared/lib/router/utils/is-dynamic";
 import {
   urlQueryToSearchParams,
@@ -33,7 +34,8 @@ import {
 } from "next/dist/shared/lib/utils";
 // import { Portal } from "next/dist/client/portal";
 import initHeadManager from "next/dist/client/head-manager";
-import PageLoader, { StyleSheetTuple } from "next/dist/client/page-loader";
+import { HeadManagerContext } from "next/dist/shared/lib/head-manager-context";
+import PageLoader from "./page-loader";
 import measureWebVitals from "next/dist/client/performance-relayer";
 import { RouteAnnouncer } from "next/dist/client/route-announcer";
 import {
@@ -97,7 +99,7 @@ if (hasBasePath(asPath)) {
   asPath = delBasePath(asPath);
 }
 
-const pageLoader: PageLoader = new PageLoader(buildId, prefix);
+const pageLoader: PageLoader = new PageLoader(buildId, prefix, data.pages);
 
 const headManager: {
   mountedInstances: Set<unknown>;
@@ -195,14 +197,69 @@ class Container extends React.Component<{
 
 let CachedComponent: React.ComponentType;
 
+const wrapApp =
+  (App: AppComponent) =>
+  (wrappedAppProps: Record<string, any>): JSX.Element => {
+    const appProps: AppProps = {
+      ...wrappedAppProps,
+      Component: CachedComponent,
+      err: hydrateErr,
+      router,
+    };
+    return (
+      <AppContainer>
+        <App {...appProps} />
+      </AppContainer>
+    );
+  };
+
+function AppContainer({
+  children,
+}: React.PropsWithChildren<{}>): React.ReactElement {
+  return (
+    <Container fn={(error) => <div>{JSON.stringify(error)}</div>}>
+      <RouterContext.Provider value={makePublicRouterInstance(router)}>
+        <HeadManagerContext.Provider value={headManager}>
+          {children}
+        </HeadManagerContext.Provider>
+      </RouterContext.Provider>
+    </Container>
+  );
+}
+
+router = createRouter(page, query, asPath, {
+  initialProps: hydrateProps,
+  pageLoader,
+  App: CachedApp,
+  Component: CachedComponent,
+  wrapApp,
+  err: null,
+  isFallback: Boolean(isFallback),
+  subscription: (info, App, scroll) =>
+    render(
+      Object.assign<
+        {},
+        Omit<RenderRouteInfo, "App" | "scroll">,
+        Pick<RenderRouteInfo, "App" | "scroll">
+      >({}, info, {
+        App,
+        scroll,
+      }) as RenderRouteInfo
+    ),
+  locale,
+  locales,
+  defaultLocale: "",
+  domainLocales,
+  isPreview,
+});
+
 function _boot(EntryPointNamespace) {
   const PageComponent = EntryPointNamespace.default;
 
   ReactDOM.hydrate(
-    <Container fn={(error) => <div>{JSON.stringify(error)}</div>}>
+    <AppContainer>
       <App Component={PageComponent} pageProps={data.props}></App>
-    </Container>,
-
+    </AppContainer>,
     document.querySelector("#__next")
   );
 }

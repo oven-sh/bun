@@ -20,6 +20,7 @@ import Router, {
   PrivateRouteInfo,
 } from "next/dist/shared/lib/router/router";
 
+import * as NextRouteLoader from "next/dist/client/route-loader";
 import { isDynamicRoute } from "next/dist/shared/lib/router/utils/is-dynamic";
 import {
   urlQueryToSearchParams,
@@ -113,7 +114,7 @@ export let router: Router;
 let CachedApp: AppComponent, onPerfEntry: (metric: any) => void;
 
 export default function boot(EntryPointNamespace, loader) {
-  _boot(EntryPointNamespace);
+  _boot(EntryPointNamespace).then(() => {});
 }
 
 class Container extends React.Component<{
@@ -227,39 +228,98 @@ function AppContainer({
   );
 }
 
-router = createRouter(page, query, asPath, {
-  initialProps: hydrateProps,
-  pageLoader,
-  App: CachedApp,
-  Component: CachedComponent,
-  wrapApp,
-  err: null,
-  isFallback: Boolean(isFallback),
-  subscription: (info, App, scroll) =>
-    render(
-      Object.assign<
-        {},
-        Omit<RenderRouteInfo, "App" | "scroll">,
-        Pick<RenderRouteInfo, "App" | "scroll">
-      >({}, info, {
-        App,
-        scroll,
-      }) as RenderRouteInfo
-    ),
-  locale,
-  locales,
-  defaultLocale: "",
-  domainLocales,
-  isPreview,
-});
+async function _boot(EntryPointNamespace) {
+  NextRouteLoader.default.getClientBuildManifest = () => Promise.resolve({});
 
-function _boot(EntryPointNamespace) {
   const PageComponent = EntryPointNamespace.default;
 
+  const appScripts = globalThis.__NEXT_DATA__.pages["/_app"];
+  if (appScripts && appScripts.length > 0) {
+    let appSrc;
+    for (let asset of appScripts) {
+      if (!asset.endsWith(".css")) {
+        appSrc = asset;
+        break;
+      }
+    }
+
+    if (appSrc) {
+      const AppModule = await import(appSrc);
+      console.assert(
+        AppModule.default,
+        appSrc + " must have a default export'd React component"
+      );
+
+      CachedApp = AppModule.default;
+    }
+  }
+
+  router = createRouter(page, query, asPath, {
+    initialProps: hydrateProps,
+    pageLoader,
+    App: CachedApp,
+    Component: CachedComponent,
+    wrapApp,
+    err: null,
+    isFallback: Boolean(isFallback),
+    subscription: async (info, App, scroll) => {
+      return render(
+        Object.assign<
+          {},
+          Omit<RenderRouteInfo, "App" | "scroll">,
+          Pick<RenderRouteInfo, "App" | "scroll">
+        >({}, info, {
+          App,
+          scroll,
+        })
+      );
+    },
+    locale,
+    locales,
+    defaultLocale: "",
+    domainLocales,
+    isPreview,
+  });
+
   ReactDOM.hydrate(
+    <TopLevelRender
+      App={CachedApp}
+      Component={PageComponent}
+      props={{ pageProps: hydrateProps }}
+    />,
+    document.querySelector("#__next")
+  );
+}
+
+function TopLevelRender({ App, Component, props, scroll }) {
+  return (
+    <AppContainer scroll={scroll}>
+      <App Component={Component} {...props}></App>
+    </AppContainer>
+  );
+}
+
+export function render(props) {
+  ReactDOM.render(
+    <TopLevelRender {...props} />,
+    document.querySelector("#__next")
+  );
+}
+
+export function renderError(e) {
+  debugger;
+  ReactDOM.render(
     <AppContainer>
-      <App Component={PageComponent} pageProps={data.props}></App>
+      <App Component={<div>UH OH!!!!</div>} pageProps={data.props}></App>
     </AppContainer>,
     document.querySelector("#__next")
   );
 }
+
+globalThis.next = {
+  version: "11.1.0",
+  router,
+  emitter,
+  render,
+  renderError,
+};

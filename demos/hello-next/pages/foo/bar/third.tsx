@@ -6,10 +6,19 @@ export default function Baz({}) {
       <h1>Third</h1>
       <ul>
         <li>
-          <a href="/">Root page</a>
+          <Link href="/">
+            <a>Root page</a>
+          </Link>
         </li>
         <li>
-          <a href="/second">Second page</a>
+          <Link href="/second">
+            <a>Second page</a>
+          </Link>
+        </li>
+        <li>
+          <Link href="/posts/123">
+            <a>Post page 123</a>
+          </Link>
         </li>
       </ul>
     </div>

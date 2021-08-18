@@ -204,6 +204,7 @@ pub const PackageJSON = struct {
             if (static_prop.expr.asString(allocator)) |str| {
                 if (str.len > 0) {
                     pair.router.static_dir = str;
+                    pair.router.static_dir_enabled = true;
                 }
             }
         }

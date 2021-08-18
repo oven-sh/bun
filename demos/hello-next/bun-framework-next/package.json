@@ -1,6 +1,6 @@
 {
   "name": "bun-framework-next",
-  "version": "0.0.0-6",
+  "version": "0.0.0-8",
   "description": "",
   "main": "package.json",
   "framework": {
@@ -68,5 +68,9 @@
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "",
-  "license": "ISC"
+  "license": "ISC",
+  "dependencies": {
+    "buffer": "^6.0.3",
+    "path": "^0.12.7"
+  }
 }

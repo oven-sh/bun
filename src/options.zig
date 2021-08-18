@@ -432,7 +432,8 @@ pub const JSX = struct {
         refresh_runtime: string = "react-refresh/runtime",
         supports_fast_refresh: bool = false,
 
-        jsx: string = "jsxDEV",
+        jsx: string = Defaults.JSXFunction,
+        jsx_static: string = Defaults.JSXStaticFunction,
 
         development: bool = true,
         parse: bool = true,
@@ -465,6 +466,7 @@ pub const JSX = struct {
             pub const ImportSourceDev = "react/jsx-dev-runtime";
             pub const ImportSource = "react/jsx-runtime";
             pub const JSXFunction = "jsx";
+            pub const JSXStaticFunction = "jsxs";
             pub const JSXFunctionDev = "jsxDEV";
         };
 

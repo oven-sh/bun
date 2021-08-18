@@ -1829,6 +1829,8 @@ pub const Parser = struct {
         // Auto-import JSX
         if (p.options.jsx.parse) {
             const jsx_symbol: Symbol = p.symbols.items[p.jsx_runtime_ref.inner_index];
+            const jsx_static_symbol: Symbol = p.symbols.items[p.jsxs_runtime_ref.inner_index];
+
             const jsx_fragment_symbol: Symbol = p.symbols.items[p.jsx_fragment_ref.inner_index];
             const jsx_factory_symbol: Symbol = p.symbols.items[p.jsx_factory_ref.inner_index];
             const jsx_filename_symbol = p.symbols.items[p.jsx_filename_ref.inner_index];
@@ -1840,7 +1842,7 @@ pub const Parser = struct {
             // So a jsx_symbol usage means a jsx_factory_symbol usage
             // This is kind of a broken way of doing it because it wouldn't work if it was more than one level deep
             if (FeatureFlags.jsx_runtime_is_cjs) {
-                if (jsx_symbol.use_count_estimate > 0) {
+                if (jsx_symbol.use_count_estimate > 0 or jsx_static_symbol.use_count_estimate > 0) {
                     p.recordUsage(p.jsx_automatic_ref);
                 }
 
@@ -1867,13 +1869,13 @@ pub const Parser = struct {
                 const automatic_namespace_ref = p.jsx_automatic_ref;
 
                 const decls_count: u32 =
-                    @intCast(u32, @boolToInt(jsx_symbol.use_count_estimate > 0)) +
+                    @intCast(u32, @boolToInt(jsx_symbol.use_count_estimate > 0)) * 2 + @intCast(u32, @boolToInt(jsx_static_symbol.use_count_estimate > 0)) * 2 +
                     @intCast(u32, @boolToInt(jsx_factory_symbol.use_count_estimate > 0)) +
                     @intCast(u32, @boolToInt(jsx_fragment_symbol.use_count_estimate > 0)) +
                     @intCast(u32, @boolToInt(jsx_filename_symbol.use_count_estimate > 0));
 
                 const imports_count =
-                    @intCast(u32, @boolToInt(jsx_symbol.use_count_estimate > 0)) + @intCast(u32, std.math.max(jsx_factory_symbol.use_count_estimate, jsx_fragment_symbol.use_count_estimate)) + @intCast(u32, @boolToInt(p.options.features.react_fast_refresh));
+                    @intCast(u32, @boolToInt(std.math.max(jsx_symbol.use_count_estimate, jsx_static_symbol.use_count_estimate) > 0)) + @intCast(u32, std.math.max(jsx_factory_symbol.use_count_estimate, jsx_fragment_symbol.use_count_estimate)) + @intCast(u32, @boolToInt(p.options.features.react_fast_refresh));
                 const stmts_count = imports_count + 1;
                 const symbols_count: u32 = imports_count + decls_count;
                 const loc = logger.Loc{ .start = 0 };
@@ -1892,9 +1894,7 @@ pub const Parser = struct {
                 var require_call_args_i: usize = 0;
                 var stmt_i: usize = 0;
 
-                if (jsx_symbol.use_count_estimate > 0) {
-                    declared_symbols[declared_symbols_i] = .{ .ref = p.jsx_runtime_ref, .is_top_level = true };
-                    declared_symbols_i += 1;
+                if (jsx_symbol.use_count_estimate > 0 or jsx_static_symbol.use_count_estimate > 0) {
                     declared_symbols[declared_symbols_i] = .{ .ref = automatic_namespace_ref, .is_top_level = true };
                     declared_symbols_i += 1;
 
@@ -1909,24 +1909,54 @@ pub const Parser = struct {
                         }
                     };
 
-                    decls[decl_i] = G.Decl{
-                        .binding = p.b(
-                            B.Identifier{
-                                .ref = p.jsx_runtime_ref,
-                            },
-                            loc,
-                        ),
-                        .value = p.e(
-                            E.Dot{
-                                .target = dot_call_target,
-                                .name = p.options.jsx.jsx,
-                                .name_loc = loc,
-                                .can_be_removed_if_unused = true,
-                            },
-                            loc,
-                        ),
-                    };
-                    decl_i += 1;
+                    if (jsx_symbol.use_count_estimate > 0) {
+                        declared_symbols[declared_symbols_i] = .{ .ref = p.jsx_runtime_ref, .is_top_level = true };
+                        declared_symbols_i += 1;
+
+                        decls[decl_i] = G.Decl{
+                            .binding = p.b(
+                                B.Identifier{
+                                    .ref = p.jsx_runtime_ref,
+                                },
+                                loc,
+                            ),
+                            .value = p.e(
+                                E.Dot{
+                                    .target = dot_call_target,
+                                    .name = p.options.jsx.jsx,
+                                    .name_loc = loc,
+                                    .can_be_removed_if_unused = true,
+                                },
+                                loc,
+                            ),
+                        };
+                        decl_i += 1;
+                    }
+
+                    if (jsx_static_symbol.use_count_estimate > 0) {
+                        declared_symbols[declared_symbols_i] = .{ .ref = p.jsxs_runtime_ref, .is_top_level = true };
+                        declared_symbols_i += 1;
+
+                        decls[decl_i] = G.Decl{
+                            .binding = p.b(
+                                B.Identifier{
+                                    .ref = p.jsxs_runtime_ref,
+                                },
+                                loc,
+                            ),
+                            .value = p.e(
+                                E.Dot{
+                                    .target = dot_call_target,
+                                    .name = p.options.jsx.jsx_static,
+                                    .name_loc = loc,
+                                    .can_be_removed_if_unused = true,
+                                },
+                                loc,
+                            ),
+                        };
+
+                        decl_i += 1;
+                    }
 
                     if (jsx_filename_symbol.use_count_estimate > 0) {
                         declared_symbols[declared_symbols_i] = .{ .ref = p.jsx_filename_ref, .is_top_level = true };
@@ -2360,8 +2390,6 @@ pub const Prefill = struct {
     };
     pub const Runtime = struct {
         pub var JSXFilename = "__jsxFilename";
-        pub var JSXDevelopmentImportName = "jsxDEV";
-        pub var JSXImportName = "jsx";
         pub var MarkAsModule = "__markAsModule";
         pub var CommonJS = "__commonJS";
         pub var ReExport = "__reExport";
@@ -2540,6 +2568,7 @@ pub fn NewParser(
         jsx_factory_ref: js_ast.Ref = Ref.None,
         jsx_fragment_ref: js_ast.Ref = Ref.None,
         jsx_automatic_ref: js_ast.Ref = Ref.None,
+        jsxs_runtime_ref: js_ast.Ref = Ref.None,
         jsx_classic_ref: js_ast.Ref = Ref.None,
 
         // only applicable when is_react_fast_refresh_enabled
@@ -3344,9 +3373,9 @@ pub fn NewParser(
                 if (p.options.jsx.development) {
                     p.jsx_filename_ref = p.newSymbol(.hoisted, Prefill.Runtime.JSXFilename) catch unreachable;
                 }
-                const jsx_importname = p.options.jsx.jsx;
                 p.jsx_fragment_ref = p.declareSymbol(.hoisted, logger.Loc.Empty, p.options.jsx.fragment[p.options.jsx.fragment.len - 1]) catch unreachable;
-                p.jsx_runtime_ref = p.declareSymbol(.hoisted, logger.Loc.Empty, jsx_importname) catch unreachable;
+                p.jsx_runtime_ref = p.declareSymbol(.hoisted, logger.Loc.Empty, p.options.jsx.jsx) catch unreachable;
+                p.jsxs_runtime_ref = p.declareSymbol(.hoisted, logger.Loc.Empty, p.options.jsx.jsx_static) catch unreachable;
                 p.jsx_factory_ref = p.declareSymbol(.hoisted, logger.Loc.Empty, p.options.jsx.factory[p.options.jsx.factory.len - 1]) catch unreachable;
 
                 if (p.options.jsx.factory.len > 1 or FeatureFlags.jsx_runtime_is_cjs) {
@@ -10525,7 +10554,7 @@ pub fn NewParser(
 
                             // Call createElement()
                             return p.e(E.Call{
-                                .target = p.jsxStringsToMemberExpression(expr.loc, p.jsx_runtime_ref),
+                                .target = p.jsxStringsToMemberExpression(expr.loc, p.jsx_factory_ref),
                                 .args = args,
                                 // Enable tree shaking
                                 .can_be_unwrapped_if_unused = !p.options.ignore_dce_annotations,
@@ -10546,9 +10575,31 @@ pub fn NewParser(
                             //    children: []
                             // }
 
+                            const is_static_jsx = e_.children.len == 0 or e_.children.len > 1 or e_.children[0].data != .e_array;
+
+                            // if (p.options.jsx.development) {
                             switch (children_count) {
                                 0 => {},
-
+                                1 => {
+                                    // static jsx must always be an array
+                                    if (is_static_jsx) {
+                                        const children_key = Expr{ .data = jsxChildrenKeyData, .loc = expr.loc };
+                                        e_.children[0] = p.visitExpr(e_.children[0]);
+                                        props.append(G.Property{
+                                            .key = children_key,
+                                            .value = p.e(E.Array{
+                                                .items = e_.children,
+                                                .is_single_line = e_.children.len < 2,
+                                            }, expr.loc),
+                                        }) catch unreachable;
+                                    } else {
+                                        const children_key = Expr{ .data = jsxChildrenKeyData, .loc = expr.loc };
+                                        props.append(G.Property{
+                                            .key = children_key,
+                                            .value = p.visitExpr(e_.children[0]),
+                                        }) catch unreachable;
+                                    }
+                                },
                                 else => {
                                     for (e_.children[0..children_count]) |child, i| {
                                         e_.children[i] = p.visitExpr(child);
@@ -10572,18 +10623,26 @@ pub fn NewParser(
                                 args[2] = key;
                             } else {
                                 // if (maybeKey !== undefined)
-                                args[2] = Expr{ .loc = expr.loc, .data = .{
-                                    .e_undefined = E.Undefined{},
-                                } };
+                                args[2] = Expr{
+                                    .loc = expr.loc,
+                                    .data = .{
+                                        .e_undefined = E.Undefined{},
+                                    },
+                                };
                             }
 
                             if (p.options.jsx.development) {
                                 // is the return type of the first child an array?
                                 // It's dynamic
                                 // Else, it's static
-                                args[3] = Expr{ .loc = expr.loc, .data = .{ .e_boolean = .{
-                                    .value = e_.children.len == 0 or e_.children.len > 1 or std.meta.activeTag(e_.children[0].data) != .e_array,
-                                } } };
+                                args[3] = Expr{
+                                    .loc = expr.loc,
+                                    .data = .{
+                                        .e_boolean = .{
+                                            .value = is_static_jsx,
+                                        },
+                                    },
+                                };
 
                                 var source = p.allocator.alloc(G.Property, 2) catch unreachable;
                                 p.recordUsage(p.jsx_filename_ref);
@@ -10610,7 +10669,7 @@ pub fn NewParser(
                             }
 
                             return p.e(E.Call{
-                                .target = p.jsxStringsToMemberExpressionAutomatic(expr.loc),
+                                .target = p.jsxStringsToMemberExpressionAutomatic(expr.loc, is_static_jsx),
                                 .args = args,
                                 // Enable tree shaking
                                 .can_be_unwrapped_if_unused = !p.options.ignore_dce_annotations,
@@ -11700,8 +11759,8 @@ pub fn NewParser(
             return false;
         }
 
-        pub fn jsxStringsToMemberExpressionAutomatic(p: *P, loc: logger.Loc) Expr {
-            return p.jsxStringsToMemberExpression(loc, p.jsx_runtime_ref);
+        pub fn jsxStringsToMemberExpressionAutomatic(p: *P, loc: logger.Loc, is_static: bool) Expr {
+            return p.jsxStringsToMemberExpression(loc, if (is_static and !p.options.jsx.development) p.jsxs_runtime_ref else p.jsx_runtime_ref);
         }
 
         // If we are currently in a hoisted child of the module scope, relocate these

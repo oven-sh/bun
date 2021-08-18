@@ -1,3 +1,19 @@
+import React from "react";
+class URL {
+  constructor(base, source) {
+    this.pathname = source;
+    this.href = base + source;
+  }
+}
+var onlyChildPolyfill = React.Children.only;
+React.Children.only = function (children) {
+  if (children && typeof children === "object" && children.length == 1) {
+    return onlyChildPolyfill(children[0]);
+  }
+
+  return onlyChildPolyfill(children);
+};
+globalThis.URL = URL;
 globalThis.global = globalThis;
 import { render } from "./renderDocument";
 

@@ -993,7 +993,7 @@ pub fn NewBundler(cache_files: bool) type {
                                 true,
                                 null,
                             );
-                            const source = logger.Source.initFile(Fs.File{ .path = file_path, .contents = entry.contents }, bundler.allocator) catch return null;
+                            const source = logger.Source.initRecycledFile(Fs.File{ .path = file_path, .contents = entry.contents }, bundler.allocator) catch return null;
                             const source_dir = file_path.name.dirWithTrailingSlash();
 
                             var jsx = bundler.options.jsx;
@@ -1275,7 +1275,7 @@ pub fn NewBundler(cache_files: bool) type {
                                 null,
                             ) catch return;
 
-                            const source = logger.Source.initFile(Fs.File{ .path = file_path, .contents = entry.contents }, bundler.allocator) catch return null;
+                            const source = logger.Source.initRecycledFile(Fs.File{ .path = file_path, .contents = entry.contents }, bundler.allocator) catch return null;
                             const source_dir = file_path.name.dirWithTrailingSlash();
 
                             var jsx = bundler.options.jsx;
@@ -1594,8 +1594,8 @@ pub fn NewBundler(cache_files: bool) type {
                     ) catch return null;
 
                     const _file = Fs.File{ .path = file_path, .contents = entry.contents };
-                    const source = try logger.Source.initFile(_file, bundler.allocator);
-
+                    var source = try logger.Source.initFile(_file, bundler.allocator);
+                    source.contents_is_recycled = !cache_files;
                     var css_writer = CSSWriter.init(
                         &source,
                         file,
@@ -1792,7 +1792,7 @@ pub fn NewBundler(cache_files: bool) type {
                         file_descriptor,
                     ) catch return null;
                     input_fd = entry.fd;
-                    break :brk logger.Source.initFile(Fs.File{ .path = path, .contents = entry.contents }, bundler.allocator) catch return null;
+                    break :brk logger.Source.initRecycledFile(Fs.File{ .path = path, .contents = entry.contents }, bundler.allocator) catch return null;
                 }
             };
 

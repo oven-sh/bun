@@ -365,6 +365,25 @@ pub const Log = struct {
         self.msgs.deinit();
     }
 
+    pub fn appendToMaybeRecycled(self: *Log, other: *Log, source: *const Source) !void {
+        if (source.contents_is_recycled) {
+            for (self.msgs.items) |*_msg| {
+                var msg: *Msg = _msg;
+                if (msg.data.location) |*location| {
+                    if (location.line_text) |line_text| {
+                        location.line_text = try other.msgs.allocator.dupe(u8, line_text);
+                    }
+                }
+            }
+        }
+
+        try other.msgs.appendSlice(self.msgs.items);
+        other.warnings += self.warnings;
+        other.errors += self.errors;
+
+        self.msgs.deinit();
+    }
+
     pub fn deinit(self: *Log) void {
         self.msgs.deinit();
     }
@@ -547,6 +566,7 @@ pub const Source = struct {
     key_path: fs.Path,
     index: u32 = 0,
     contents: string,
+    contents_is_recycled: bool = false,
 
     // An identifier that is mixed in to automatically-generated symbol names to
     // improve readability. For example, if the identifier is "util" then the
@@ -571,6 +591,22 @@ pub const Source = struct {
             .contents = file.contents,
         };
         source.path.namespace = "file";
+        return source;
+    }
+
+    pub fn initRecycledFile(file: fs.File, allocator: *std.mem.Allocator) !Source {
+        var name = file.path.name;
+        var identifier_name = name.nonUniqueNameString(allocator) catch unreachable;
+
+        var source = Source{
+            .path = file.path,
+            .key_path = fs.Path.init(file.path.text),
+            .identifier_name = identifier_name,
+            .contents = file.contents,
+            .contents_is_recycled = true,
+        };
+        source.path.namespace = "file";
+
         return source;
     }
 

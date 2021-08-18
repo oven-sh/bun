@@ -49,3 +49,4 @@ txt.js
 
 node_modules_*
 *.jsb
+.zip

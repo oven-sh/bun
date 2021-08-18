@@ -185,7 +185,7 @@ pub fn NewCache(comptime cache_files: bool) type {
                 source: *const logger.Source,
             ) anyerror!?js_ast.Ast {
                 var temp_log = logger.Log.init(allocator);
-                defer temp_log.appendTo(log) catch {};
+                defer temp_log.appendToMaybeRecycled(log, source) catch {};
                 var parser = js_parser.Parser.init(opts, &temp_log, source, defines, allocator) catch |err| {
                     return null;
                 };
@@ -205,7 +205,7 @@ pub fn NewCache(comptime cache_files: bool) type {
                 source: *const logger.Source,
             ) anyerror!void {
                 var temp_log = logger.Log.init(allocator);
-                defer temp_log.appendTo(log) catch {};
+                defer temp_log.appendToMaybeRecycled(log, source) catch {};
 
                 var parser = js_parser.Parser.init(opts, &temp_log, source, defines, allocator) catch |err| {
                     return;

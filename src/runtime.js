@@ -41,7 +41,7 @@ export var __commonJS = (cb, name) => {
   var has_run = false;
 
   return {
-    [`#init_${name}`]() {
+    [`[load] ${name}`]() {
       if (has_run) {
         return mod.exports;
       }
@@ -84,7 +84,7 @@ export var __commonJS = (cb, name) => {
 
       return mod.exports;
     },
-  }[`#init_${name}`];
+  }[`[load] ${name}`];
 };
 
 var require_cache = new WeakMap();

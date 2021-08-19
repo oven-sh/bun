@@ -597,7 +597,7 @@ pub fn NewBundler(cache_files: bool) type {
             // 0x00000000\n
             // That uint32 denotes the byte offset in the file where the code for the bundle ends
             //     - If the value is 0, that means the file did not finish writing or there are no modules
-            //     - This imposes a maximum bundle size of around 4,294,967,295 bytes. If your JS is more than 4 GB, you probably should fix that...
+            //     - This imposes a maximum bundle size of around 4,294,967,295 bytes. If your JS is more than 4 GB, you're a
             // The raw JavaScript is encoded as a UTF-8 string starting from the current position + 1 until the above byte offset.
             // This uint32 is useful for HTTP servers to separate:
             // - Which part of the bundle is the JS code?
@@ -1734,6 +1734,7 @@ pub fn NewBundler(cache_files: bool) type {
                         .externals = ast.externals,
                         .runtime_imports = ast.runtime_imports,
                         .require_ref = ast.require_ref,
+                        .css_import_behavior = bundler.options.cssImportBehavior(),
                     },
                     Linker,
                     &bundler.linker,
@@ -1750,6 +1751,8 @@ pub fn NewBundler(cache_files: bool) type {
                         .externals = ast.externals,
                         .runtime_imports = ast.runtime_imports,
                         .require_ref = ast.require_ref,
+
+                        .css_import_behavior = bundler.options.cssImportBehavior(),
                     },
                     Linker,
                     &bundler.linker,
@@ -1867,6 +1870,7 @@ pub fn NewBundler(cache_files: bool) type {
             defer bundler.resolver.log = original_resolver_logger;
             bundler.log = log;
             bundler.linker.allocator = allocator;
+
             bundler.resolver.log = log;
 
             if (strings.eqlComptime(relative_path, "__runtime.js")) {

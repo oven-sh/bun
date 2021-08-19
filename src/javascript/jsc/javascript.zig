@@ -294,6 +294,7 @@ pub const VirtualMachine = struct {
             log = __log;
         } else {
             log = try allocator.create(logger.Log);
+            log.* = logger.Log.init(allocator);
         }
 
         VirtualMachine.vm = try allocator.create(VirtualMachine);

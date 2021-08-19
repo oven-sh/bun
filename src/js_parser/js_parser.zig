@@ -8359,7 +8359,6 @@ pub fn NewParser(
             var left = _left;
             var loc = p.lexer.loc();
             var optional_chain: ?js_ast.OptionalChain = null;
-
             while (true) {
                 if (p.lexer.loc().start == p.after_arrow_body_loc.start) {
                     while (true) {
@@ -9115,11 +9114,12 @@ pub fn NewParser(
         }
 
         pub fn panic(p: *P, comptime str: string, args: anytype) noreturn {
+            @setCold(true);
             var panic_buffer = p.allocator.alloc(u8, 32 * 1024) catch unreachable;
             var panic_stream = std.io.fixedBufferStream(panic_buffer);
             p.log.addRangeErrorFmt(p.source, p.lexer.range(), p.allocator, str, args) catch unreachable;
             p.log.print(panic_stream.writer()) catch unreachable;
-            Global.panic("{s}", .{panic_buffer});
+            Global.panic("{s}", .{panic_buffer[0..panic_stream.pos]});
         }
 
         pub fn _parsePrefix(p: *P, level: Level, errors: *DeferredErrors, flags: Expr.EFlags) anyerror!Expr {
@@ -9293,7 +9293,7 @@ pub fn NewParser(
                         _ = p.pushScopeForParsePass(.function_args, loc) catch unreachable;
                         defer p.popScope();
                         // Output.print("HANDLE START ", .{});
-                        return p.e(p.parseArrowBody(args, p.m(FnOrArrowDataParse{})) catch unreachable, loc);
+                        return p.e(try p.parseArrowBody(args, p.m(FnOrArrowDataParse{})), loc);
                     }
 
                     const ref = p.storeNameInRef(name) catch unreachable;
@@ -9680,14 +9680,14 @@ pub fn NewParser(
                         if (is_ts_arrow_fn) {
                             try p.skipTypeScriptTypeParameters();
                             try p.lexer.expect(.t_open_paren);
-                            return p.parseParenExpr(loc, level, ParenExprOpts{ .force_arrow_fn = true }) catch unreachable;
+                            return try p.parseParenExpr(loc, level, ParenExprOpts{ .force_arrow_fn = true });
                         }
                     }
 
                     if (is_jsx_enabled) {
                         // Use NextInsideJSXElement() instead of Next() so we parse "<<" as "<"
                         try p.lexer.nextInsideJSXElement();
-                        const element = p.parseJSXElement(loc) catch unreachable;
+                        const element = try p.parseJSXElement(loc);
 
                         // The call to parseJSXElement() above doesn't consume the last
                         // TGreaterThan because the caller knows what Next() function to call.
@@ -9704,7 +9704,7 @@ pub fn NewParser(
                         // "<T>(x) => {}"
                         if (p.trySkipTypeScriptTypeParametersThenOpenParenWithBacktracking()) {
                             try p.lexer.expect(.t_open_paren);
-                            return p.parseParenExpr(loc, level, ParenExprOpts{}) catch unreachable;
+                            return p.parseParenExpr(loc, level, ParenExprOpts{});
                         }
 
                         // "<T>x"
@@ -9795,7 +9795,7 @@ pub fn NewParser(
             range: logger.Range,
             name: string = "",
 
-            pub fn parse(p: *P) !JSXTag {
+            pub fn parse(p: *P) anyerror!JSXTag {
                 const loc = p.lexer.loc();
 
                 // A missing tag is a fragment
@@ -9838,7 +9838,7 @@ pub fn NewParser(
 
                     if (strings.indexOfChar(member, '-')) |index| {
                         try p.log.addError(p.source, logger.Loc{ .start = member_range.loc.start + @intCast(i32, index) }, "Unexpected \"-\"");
-                        p.panic("", .{});
+                        return error.SyntaxError;
                     }
 
                     var _name = try p.allocator.alloc(u8, name.len + 1 + member.len);
@@ -9872,7 +9872,7 @@ pub fn NewParser(
             }
         }
 
-        pub fn parseJSXElement(p: *P, loc: logger.Loc) !Expr {
+        pub fn parseJSXElement(p: *P, loc: logger.Loc) anyerror!Expr {
             if (only_scan_imports_and_do_not_visit) {
                 p.needs_jsx_import = true;
             }
@@ -10032,7 +10032,7 @@ pub fn NewParser(
 
                         if (p.lexer.token != .t_slash) {
                             // This is a child element
-                            children.append(p.parseJSXElement(less_than_loc) catch unreachable) catch unreachable;
+                            children.append(try p.parseJSXElement(less_than_loc)) catch unreachable;
 
                             // The call to parseJSXElement() above doesn't consume the last
                             // TGreaterThan because the caller knows what Next() function to call.
@@ -10047,10 +10047,10 @@ pub fn NewParser(
                         const end_tag = try JSXTag.parse(p);
                         if (!strings.eql(end_tag.name, tag.name)) {
                             try p.log.addRangeErrorFmt(p.source, end_tag.range, p.allocator, "Expected closing tag </{s}> to match opening tag <{s}>", .{
-                                tag.name,
                                 end_tag.name,
+                                tag.name,
                             });
-                            p.panic("", .{});
+                            return error.SyntaxError;
                         }
 
                         if (p.lexer.token != .t_greater_than) {

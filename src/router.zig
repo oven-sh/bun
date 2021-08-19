@@ -151,7 +151,7 @@ pub fn loadRoutes(
                             dir_info,
                             ResolverType,
                             resolver,
-                            route.children.offset,
+                            route.children.offset - 1,
                             false,
                         );
 
@@ -437,10 +437,20 @@ pub const RouteMap = struct {
                     for (this.segments[0..segment_i]) |segment| {
                         segment_offset += @truncate(u16, segment.len);
                     }
+                    var total_offset: u16 = 0;
+
+                    var current_i: u16 = head.parent;
+                    const slices = this.map.routes;
+                    const names = slices.items(.name);
+                    const parents = slices.items(.parent);
+                    while (current_i != Route.top_level_parent) : (current_i = parents[current_i]) {
+                        total_offset += @truncate(u16, names[current_i].len);
+                    }
+
                     this.params.append(
                         this.allocator,
                         Param{
-                            .key = .{ .offset = head.part.name.offset, .len = head.part.name.len },
+                            .key = .{ .offset = head.part.name.offset + total_offset + segment_i, .len = head.part.name.len },
                             .value = .{ .offset = segment_offset, .len = @truncate(u16, this.segments[segment_i].len) },
                             .kind = head.part.tag,
                         },

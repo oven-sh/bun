@@ -19,10 +19,21 @@ pub const Kind = enum(i8) {
     verbose,
 
     pub inline fn shouldPrint(this: Kind, other: Log.Level) bool {
-        return @enumToInt(this) - @enumToInt(other) >= 0;
+        return switch (other) {
+            .err => switch (this) {
+                .err, .note => true,
+                else => false,
+            },
+            .warn => switch (this) {
+                .err, .warn, .note => true,
+                else => false,
+            },
+            .info, .debug => this != .verbose,
+            .verbose => true,
+        };
     }
 
-    pub fn string(self: Kind) string {
+    pub inline fn string(self: Kind) string {
         return switch (self) {
             .err => "error",
             .warn => "warn",
@@ -32,7 +43,7 @@ pub const Kind = enum(i8) {
         };
     }
 
-    pub fn toAPI(kind: Kind) Api.MessageKind {
+    pub inline fn toAPI(kind: Kind) Api.MessageKind {
         return switch (kind) {
             .err => err,
             .warn => warn,
@@ -46,23 +57,23 @@ pub const Kind = enum(i8) {
 pub const Loc = packed struct {
     start: i32 = -1,
 
-    pub fn toNullable(loc: *Loc) ?Loc {
+    pub inline fn toNullable(loc: *Loc) ?Loc {
         return if (loc.start == -1) null else loc.*;
     }
 
     // TODO: remove this stupidity
-    pub fn toUsize(self: *const Loc) usize {
+    pub inline fn toUsize(self: *const Loc) usize {
         return @intCast(usize, self.start);
     }
 
     // TODO: remove this stupidity
-    pub fn i(self: *const Loc) usize {
+    pub inline fn i(self: *const Loc) usize {
         return @intCast(usize, self.start);
     }
 
     pub const Empty = Loc{ .start = -1 };
 
-    pub fn eql(loc: *Loc, other: Loc) bool {
+    pub inline fn eql(loc: *Loc, other: Loc) bool {
         return loc.start == other.start;
     }
 
@@ -327,7 +338,7 @@ pub const Log = struct {
     warnings: usize = 0,
     errors: usize = 0,
     msgs: ArrayList(Msg),
-    level: Level = Level.info,
+    level: Level = if (isDebug) Level.info else Level.warn,
 
     pub fn toAPI(this: *const Log, allocator: *std.mem.Allocator) !Api.Log {
         return Api.Log{
@@ -366,20 +377,26 @@ pub const Log = struct {
     }
 
     pub fn appendToMaybeRecycled(self: *Log, other: *Log, source: *const Source) !void {
+        try other.msgs.appendSlice(self.msgs.items);
+        other.warnings += self.warnings;
+        other.errors += self.errors;
+
         if (source.contents_is_recycled) {
-            for (self.msgs.items) |*_msg| {
-                var msg: *Msg = _msg;
-                if (msg.data.location) |*location| {
+            var i: usize = 0;
+            var j: usize = other.msgs.items.len - self.msgs.items.len;
+
+            while (i < self.msgs.items.len) : ({
+                i += 1;
+                j += 1;
+            }) {
+                const msg = self.msgs.items[i];
+                if (msg.data.location) |location| {
                     if (location.line_text) |line_text| {
-                        location.line_text = try other.msgs.allocator.dupe(u8, line_text);
+                        other.msgs.items[j].data.location.?.line_text = try other.msgs.allocator.dupe(u8, line_text);
                     }
                 }
             }
         }
-
-        try other.msgs.appendSlice(self.msgs.items);
-        other.warnings += self.warnings;
-        other.errors += self.errors;
 
         self.msgs.deinit();
     }
@@ -389,6 +406,8 @@ pub const Log = struct {
     }
 
     pub fn addVerboseWithNotes(log: *Log, source: ?*const Source, loc: Loc, text: string, notes: []Data) !void {
+        if (!Kind.shouldPrint(.verbose, log.level)) return;
+
         try log.addMsg(Msg{
             .kind = .verbose,
             .data = rangeData(source, Range{ .loc = loc }, text),
@@ -456,6 +475,7 @@ pub const Log = struct {
     }
 
     pub fn addRangeWarning(log: *Log, source: ?*const Source, r: Range, text: string) !void {
+        if (!Kind.shouldPrint(.warn, log.level)) return;
         log.warnings += 1;
         try log.addMsg(Msg{
             .kind = .warn,
@@ -464,6 +484,7 @@ pub const Log = struct {
     }
 
     pub fn addWarningFmt(log: *Log, source: ?*const Source, l: Loc, allocator: *std.mem.Allocator, comptime text: string, args: anytype) !void {
+        if (!Kind.shouldPrint(.warn, log.level)) return;
         log.warnings += 1;
         try log.addMsg(Msg{
             .kind = .warn,
@@ -472,6 +493,7 @@ pub const Log = struct {
     }
 
     pub fn addRangeWarningFmt(log: *Log, source: ?*const Source, r: Range, allocator: *std.mem.Allocator, comptime text: string, args: anytype) !void {
+        if (!Kind.shouldPrint(.warn, log.level)) return;
         log.warnings += 1;
         try log.addMsg(Msg{
             .kind = .warn,
@@ -480,6 +502,7 @@ pub const Log = struct {
     }
 
     pub fn addWarning(log: *Log, source: ?*const Source, l: Loc, text: string) !void {
+        if (!Kind.shouldPrint(.warn, log.level)) return;
         log.warnings += 1;
         try log.addMsg(Msg{
             .kind = .warn,
@@ -488,6 +511,7 @@ pub const Log = struct {
     }
 
     pub fn addRangeDebug(log: *Log, source: ?*const Source, r: Range, text: string) !void {
+        if (!Kind.shouldPrint(.debug, log.level)) return;
         try log.addMsg(Msg{
             .kind = .debug,
             .data = rangeData(source, r, text),
@@ -495,6 +519,7 @@ pub const Log = struct {
     }
 
     pub fn addRangeDebugWithNotes(log: *Log, source: ?*const Source, r: Range, text: string, notes: []Data) !void {
+        if (!Kind.shouldPrint(.debug, log.level)) return;
         // log.de += 1;
         try log.addMsg(Msg{
             .kind = Kind.debug,
@@ -513,6 +538,7 @@ pub const Log = struct {
     }
 
     pub fn addRangeWarningWithNotes(log: *Log, source: ?*const Source, r: Range, text: string, notes: []Data) !void {
+        if (!Kind.shouldPrint(.warn, log.level)) return;
         log.warnings += 1;
         try log.addMsg(Msg{
             .kind = .warning,
@@ -540,11 +566,15 @@ pub const Log = struct {
     }
 
     pub fn printForLogLevel(self: *Log, to: anytype) !void {
+        var printed = false;
         for (self.msgs.items) |msg| {
             if (msg.kind.shouldPrint(self.level)) {
                 try msg.writeFormat(to);
+                printed = true;
             }
         }
+
+        if (printed) _ = try to.write("\n");
     }
 
     pub fn toZigException(this: *const Log, allocator: *std.mem.Allocator) *js.ZigException.Holder {

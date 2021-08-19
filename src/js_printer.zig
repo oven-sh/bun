@@ -8,6 +8,7 @@ const alloc = @import("alloc.zig");
 const rename = @import("renamer.zig");
 const runtime = @import("runtime.zig");
 
+const Api = @import("./api/schema.zig").Api;
 const fs = @import("fs.zig");
 usingnamespace @import("global.zig");
 usingnamespace @import("ast/base.zig");
@@ -80,6 +81,8 @@ pub const Options = struct {
     source_path: ?fs.Path = null,
     bundle_export_ref: ?js_ast.Ref = null,
     rewrite_require_resolve: bool = true,
+
+    css_import_behavior: Api.CssInJsBehavior = Api.CssInJsBehavior.facade,
 
     // TODO: remove this
     // The reason for this is:
@@ -2869,26 +2872,46 @@ pub fn NewPrinter(
                     p.needs_semicolon = false;
                 },
                 .s_import => |s| {
-                    if (FeatureFlags.css_in_js_import_behavior == .facade) {
-                        // TODO: check loader instead
-                        if (strings.eqlComptime(p.import_records[s.import_record_index].path.name.ext, ".css")) {
-                            // This comment exists to let tooling authors know which files CSS originated from
-                            // To parse this, you just look for a line that starts with //@import url("
-                            p.print("//@import url(\"");
-                            // We do not URL escape here.
-                            p.print(p.import_records[s.import_record_index].path.text);
 
-                            // If they actually use the code, then we emit a facade that just echos whatever they write
-                            if (s.default_name) |name| {
-                                p.print("\"); css-module-facade\nvar ");
-                                p.printSymbol(name.ref.?);
-                                p.print(" = new Proxy({}, {get(_,className,__){return className;}});\n");
-                            } else {
-                                p.print("\"); css-import-facade\n");
-                            }
+                    // TODO: check loader instead
+                    if (strings.eqlComptime(p.import_records[s.import_record_index].path.name.ext, ".css")) {
+                        switch (p.options.css_import_behavior) {
+                            .facade => {
 
-                            return;
+                                // This comment exists to let tooling authors know which files CSS originated from
+                                // To parse this, you just look for a line that starts with //@import url("
+                                p.print("//@import url(\"");
+                                // We do not URL escape here.
+                                p.print(p.import_records[s.import_record_index].path.text);
+
+                                // If they actually use the code, then we emit a facade that just echos whatever they write
+                                if (s.default_name) |name| {
+                                    p.print("\"); css-module-facade\nvar ");
+                                    p.printSymbol(name.ref.?);
+                                    p.print(" = new Proxy({}, {get(_,className,__){return className;}});\n");
+                                } else {
+                                    p.print("\"); css-import-facade\n");
+                                }
+
+                                return;
+                            },
+
+                            .facade_onimportcss => {
+                                p.print("globalThis.document?.dispatchEvent(new CustomEvent(\"onimportcss\", {detail: \"");
+                                p.print(p.import_records[s.import_record_index].path.text);
+                                p.print("\"}));\n");
+
+                                // If they actually use the code, then we emit a facade that just echos whatever they write
+                                if (s.default_name) |name| {
+                                    p.print("var ");
+                                    p.printSymbol(name.ref.?);
+                                    p.print(" = new Proxy({}, {get(_,className,__){return className;}});\n");
+                                }
+                            },
+                            else => {},
                         }
+
+                        return;
                     }
 
                     const record = p.import_records[s.import_record_index];

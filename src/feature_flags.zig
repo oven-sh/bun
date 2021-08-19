@@ -17,7 +17,7 @@ pub const store_file_descriptors = !env.isWindows and !env.isBrowser;
 // This doesn't really seem to do anything for us
 pub const disable_filesystem_cache = false and std.Target.current.os.tag == .macos;
 
-pub const css_in_js_import_behavior = CSSModulePolyfill.facade;
+pub const css_in_js_import_behavior = CSSInJSImportBehavior.facade;
 
 pub const only_output_esm = true;
 
@@ -47,10 +47,11 @@ pub const react_specific_warnings = true;
 // It only happens 1 out of every N times, probably like 50.
 pub const parallel_bun = false;
 
-pub const CSSModulePolyfill = enum {
+pub const CSSInJSImportBehavior = enum {
     // When you import a .css file and you reference the import in JavaScript
     // Just return whatever the property key they referenced was
     facade,
+    facade_onimportcss,
 };
 
 // having issues compiling WebKit with this enabled

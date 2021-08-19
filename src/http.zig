@@ -376,8 +376,8 @@ pub const RequestContext = struct {
             .request = req,
             .arena = arena,
             .bundler = bundler_,
-            .url = URLPath.parse(req.path),
             .log = undefined,
+            .url = URLPath.parse(req.path),
             .conn = conn,
             .allocator = undefined,
             .method = Method.which(req.method) orelse return error.InvalidMethod,
@@ -927,7 +927,7 @@ pub const RequestContext = struct {
             clone.conn = ctx.conn.*;
             clone.message_buffer = try MutableString.init(server.allocator, 0);
             clone.ctx.conn = &clone.conn;
-
+            clone.ctx.log = logger.Log.init(server.allocator);
             var printer_writer = try js_printer.BufferWriter.init(server.allocator);
 
             clone.builder = WatchBuilder{
@@ -1298,22 +1298,6 @@ pub const RequestContext = struct {
         _ = try std.Thread.spawn(.{}, WebsocketHandler.handle, .{handler});
     }
 
-    pub fn auto500(ctx: *RequestContext) void {
-        if (ctx.has_called_done) {
-            return;
-        }
-
-        defer ctx.done();
-
-        if (ctx.status == null) {
-            ctx.writeStatus(500) catch {};
-        }
-
-        if (!ctx.has_written_last_header) {
-            ctx.flushHeaders() catch {};
-        }
-    }
-
     threadlocal var client_entry_point: bundler.ClientEntryPoint = undefined;
 
     pub fn renderServeResult(ctx: *RequestContext, result: bundler.ServeResult) !void {
@@ -1321,7 +1305,7 @@ pub const RequestContext = struct {
             ctx.appendHeader("Connection", "keep-alive");
         }
 
-        if (std.meta.activeTag(result.file.value) == .noop) {
+        if (result.file.value == .noop) {
             return try ctx.sendNotFound();
         }
 
@@ -1616,9 +1600,6 @@ pub const RequestContext = struct {
     }
 
     pub fn handleGet(ctx: *RequestContext) !void {
-
-        // errdefer ctx.auto500();
-
         const result = brk: {
             if (ctx.bundler.options.isFrontendFrameworkEnabled()) {
                 break :brk try ctx.bundler.buildFile(
@@ -1859,11 +1840,7 @@ pub const Server = struct {
 
         var request_arena = std.heap.ArenaAllocator.init(server.allocator);
         var req_ctx: RequestContext = undefined;
-        defer {
-            if (!req_ctx.controlled) {
-                req_ctx.arena.deinit();
-            }
-        }
+
         req_ctx = RequestContext.init(
             req,
             request_arena,
@@ -1877,8 +1854,72 @@ pub const Server = struct {
             return;
         };
 
+        defer {
+            if (!req_ctx.controlled) {
+                req_ctx.arena.deinit();
+            }
+        }
+
         req_ctx.allocator = &req_ctx.arena.allocator;
         req_ctx.log = logger.Log.init(req_ctx.allocator);
+        var log = &req_ctx.log;
+
+        req_ctx.bundler.log = log;
+        req_ctx.bundler.linker.log = log;
+        req_ctx.bundler.resolver.log = log;
+        req_ctx.bundler.options.log = log;
+
+        var did_print: bool = false;
+
+        defer {
+            if (!req_ctx.controlled) {
+                if (!req_ctx.has_called_done) {
+                    if (comptime isDebug) {
+                        if (@errorReturnTrace()) |trace| {
+                            std.debug.dumpStackTrace(trace.*);
+                            Output.printError("\n", .{});
+                        }
+                    }
+
+                    req_ctx.sendInternalError(error.InternalError) catch {};
+                }
+                const status = req_ctx.status orelse @intCast(HTTPStatusCode, 500);
+
+                if (log.msgs.items.len == 0) {
+                    if (!did_print) {
+                        switch (status) {
+                            101, 199...399 => {
+                                Output.prettyln("<r><green>{d}<r><d> {s} <r>{s}<d> as {s}<r>", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
+                            },
+                            400...499 => {
+                                Output.prettyln("<r><yellow>{d}<r><d> {s} <r>{s}<d> as {s}<r>", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
+                            },
+                            else => {
+                                Output.prettyln("<r><red>{d}<r><d> {s} <r>{s}<d> as {s}<r>", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
+                            },
+                        }
+                    }
+                } else {
+                    defer Output.flush();
+                    defer log.deinit();
+                    log.printForLogLevel(Output.errorWriter()) catch {};
+
+                    if (!did_print) {
+                        switch (status) {
+                            101, 199...399 => {
+                                Output.prettyln("<r><green>{d}<r><d> <r>{s}<d> {s} as {s}<r>", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
+                            },
+                            400...499 => {
+                                Output.prettyln("<r><yellow>{d}<r><d> <r>{s}<d> {s} as {s}<r>", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
+                            },
+                            else => {
+                                Output.prettyln("<r><red>{d}<r><d> <r>{s}<d> {s} as {s}<r>", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
+                            },
+                        }
+                    }
+                }
+            }
+        }
 
         if (comptime FeatureFlags.keep_alive) {
             if (req_ctx.header("Connection")) |connection| {
@@ -1892,6 +1933,7 @@ pub const Server = struct {
 
         var finished = req_ctx.handleReservedRoutes(server) catch |err| {
             Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
+            did_print = true;
             return;
         };
 
@@ -1901,6 +1943,7 @@ pub const Server = struct {
                     finished = true;
                     req_ctx.renderServeResult(result) catch |err| {
                         Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
+                        did_print = true;
                         return;
                     };
                 }
@@ -1914,6 +1957,7 @@ pub const Server = struct {
                         },
                         else => {
                             Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
+                            did_print = true;
                             return;
                         },
                     }
@@ -1925,6 +1969,7 @@ pub const Server = struct {
                     finished = true;
                     req_ctx.renderServeResult(result) catch |err| {
                         Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
+                        did_print = true;
                         return;
                     };
                 }
@@ -1938,6 +1983,7 @@ pub const Server = struct {
                         },
                         else => {
                             Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
+                            did_print = true;
                             return;
                         },
                     }
@@ -1952,6 +1998,7 @@ pub const Server = struct {
                         },
                         else => {
                             Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
+                            did_print = true;
                             return;
                         },
                     }
@@ -1966,45 +2013,11 @@ pub const Server = struct {
                         },
                         else => {
                             Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
+                            did_print = true;
                             return;
                         },
                     }
                 };
-            }
-        }
-
-        if (!req_ctx.controlled) {
-            const status = req_ctx.status orelse @intCast(HTTPStatusCode, 500);
-
-            if (req_ctx.log.msgs.items.len == 0) {
-                switch (status) {
-                    101, 199...399 => {
-                        Output.prettyln("<r><green>{d}<r><d> {s} <r>{s}<d> as {s}<r>", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
-                    },
-                    400...499 => {
-                        Output.prettyln("<r><yellow>{d}<r><d> {s} <r>{s}<d> as {s}<r>", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
-                    },
-                    else => {
-                        Output.prettyln("<r><red>{d}<r><d> {s} <r>{s}<d> as {s}<r>", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
-                    },
-                }
-            } else {
-                switch (status) {
-                    101, 199...399 => {
-                        Output.prettyln("<r><green>{d}<r><d> <r>{s}<d> {s} as {s}<r>", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
-                    },
-                    400...499 => {
-                        Output.prettyln("<r><yellow>{d}<r><d> <r>{s}<d> {s} as {s}<r>", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
-                    },
-                    else => {
-                        Output.prettyln("<r><red>{d}<r><d> <r>{s}<d> {s} as {s}<r>", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
-                    },
-                }
-
-                for (req_ctx.log.msgs.items) |msg| {
-                    msg.writeFormat(Output.errorWriter()) catch continue;
-                }
-                req_ctx.log.deinit();
             }
         }
     }

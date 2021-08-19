@@ -716,6 +716,19 @@ pub const BundleOptions = struct {
     env: Env = Env{},
     transform_options: Api.TransformOptions,
 
+    pub inline fn cssImportBehavior(this: *const BundleOptions) Api.CssInJsBehavior {
+        switch (this.platform) {
+            .neutral, .browser => {
+                if (this.framework) |framework| {
+                    return framework.client_css_in_js;
+                }
+
+                return .facade;
+            },
+            else => return .facade,
+        }
+    }
+
     pub fn areDefinesUnset(this: *const BundleOptions) bool {
         return !this.defines_loaded;
     }
@@ -1382,6 +1395,8 @@ pub const Framework = struct {
     client_env: Env = Env{},
     server_env: Env = Env{},
 
+    client_css_in_js: Api.CssInJsBehavior = .facade,
+
     fn normalizedPath(allocator: *std.mem.Allocator, toplevel_path: string, path: string) !string {
         std.debug.assert(std.fs.path.isAbsolute(path));
         var str = path;
@@ -1412,6 +1427,7 @@ pub const Framework = struct {
             .package = loaded.package,
             .development = loaded.development,
             .from_bundle = true,
+            .client_css_in_js = loaded.client_css_in_js,
         };
 
         if (loaded.client) {
@@ -1432,6 +1448,7 @@ pub const Framework = struct {
                     .development = this.development,
                     .client = true,
                     .env = this.client_env.toAPI(),
+                    .client_css_in_js = this.client_css_in_js,
                 };
             }
         } else {
@@ -1442,6 +1459,7 @@ pub const Framework = struct {
                     .development = this.development,
                     .client = false,
                     .env = this.server_env.toAPI(),
+                    .client_css_in_js = this.client_css_in_js,
                 };
             }
         }
@@ -1462,6 +1480,10 @@ pub const Framework = struct {
             .package = transform.package orelse "",
             .development = transform.development orelse true,
             .resolved = false,
+            .client_css_in_js = switch (transform.client_css_in_js orelse .facade) {
+                .facade_onimportcss => .facade_onimportcss,
+                else => .facade,
+            },
         };
     }
 };

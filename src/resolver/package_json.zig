@@ -153,6 +153,16 @@ pub const PackageJSON = struct {
             }
         }
 
+        if (json.asProperty("css")) |css_prop| {
+            if (css_prop.expr.asString(allocator)) |str| {
+                if (strings.eqlComptime(str, "onimportcss")) {
+                    framework.client_css_in_js = .facade_onimportcss;
+                } else {
+                    framework.client_css_in_js = .facade;
+                }
+            }
+        }
+
         if (comptime read_define) {
             if (json.asProperty("define")) |defines| {
                 if (defines.expr.asProperty("client")) |client| {

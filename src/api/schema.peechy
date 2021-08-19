@@ -23,6 +23,11 @@ smol Platform {
   bun = 3;
 }
 
+smol CSSInJSBehavior {
+  facade = 1;
+  facade_onimportcss = 2;
+}
+
 smol JSXRuntime {
   automatic = 1;
   classic = 2;
@@ -31,7 +36,7 @@ smol JSXRuntime {
 struct JSX {
   string factory;
   JSXRuntime runtime;
-  string fragment;
+  string fragment;\
   bool development;
 
   // Probably react
@@ -160,6 +165,8 @@ message FrameworkConfig {
   bool development = 4;
   EnvConfig client_env = 5;
   EnvConfig server_env = 6;
+
+  CSSInJSBehavior client_css_in_js = 7;
 }
 
 struct LoadedFramework {
@@ -168,6 +175,8 @@ struct LoadedFramework {
   bool development;
   bool client;
   LoadedEnvConfig env;
+
+  CSSInJSBehavior client_css_in_js;
 }
 
 struct LoadedRouteConfig {

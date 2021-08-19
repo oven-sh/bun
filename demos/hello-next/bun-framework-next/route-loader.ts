@@ -226,35 +226,6 @@ function resolvePromiseWithTimeout<T>(
   });
 }
 
-// TODO: stop exporting or cache the failure
-// It'd be best to stop exporting this. It's an implementation detail. We're
-// only exporting it for backwards compatibility with the `page-loader`.
-// Only cache this response as a last resort if we cannot eliminate all other
-// code branches that use the Build Manifest Callback and push them through
-// the Route Loader interface.
-export function getClientBuildManifest(): Promise<ClientBuildManifest> {
-  console.log("hiiiiiiiiiiiii");
-  if (self.__BUILD_MANIFEST) {
-    return Promise.resolve(self.__BUILD_MANIFEST);
-  }
-
-  const onBuildManifest: Promise<ClientBuildManifest> =
-    new Promise<ClientBuildManifest>((resolve) => {
-      // Mandatory because this is not concurrent safe:
-      const cb = self.__BUILD_MANIFEST_CB;
-      self.__BUILD_MANIFEST_CB = () => {
-        resolve(self.__BUILD_MANIFEST!);
-        cb && cb();
-      };
-    });
-
-  return resolvePromiseWithTimeout<ClientBuildManifest>(
-    onBuildManifest,
-    MS_MAX_IDLE_DELAY,
-    markAssetError(new Error("Failed to load client build manifest"))
-  );
-}
-
 interface RouteFiles {
   scripts: string[];
   css: string[];
@@ -263,28 +234,14 @@ function getFilesForRoute(
   assetPrefix: string,
   route: string
 ): Promise<RouteFiles> {
-  if (process.env.NODE_ENV === "development") {
-    return Promise.resolve({
-      scripts: [
-        encodeURI(
-          globalThis.__NEXT_DATA.pages[route].filter((k) => !k.endsWith(".css"))
-        ),
-      ],
-      // Styles are handled by `style-loader` in development:
-      css: [],
-    });
-  }
-  return getClientBuildManifest().then((manifest) => {
-    if (!(route in manifest)) {
-      throw markAssetError(new Error(`Failed to lookup route: ${route}`));
-    }
-    const allFiles = manifest[route].map(
-      (entry) => assetPrefix + "/_next/" + encodeURI(entry)
-    );
-    return {
-      scripts: allFiles.filter((v) => v.endsWith(".js")),
-      css: allFiles.filter((v) => v.endsWith(".css")),
-    };
+  return Promise.resolve({
+    scripts: [
+      encodeURI(
+        globalThis.__NEXT_DATA.pages[route].filter((k) => !k.endsWith(".css"))
+      ),
+    ],
+    // Styles are handled by `style-loader` in development:
+    css: [],
   });
 }
 
@@ -297,6 +254,8 @@ export default function createRouteLoader(assetPrefix: string): RouteLoader {
     new Map();
 
   function maybeExecuteScript(src: string): Promise<unknown> {
+    debugger;
+
     let prom: Promise<unknown> | undefined = loadedScripts.get(src);
     if (prom) {
       return prom;
@@ -360,7 +319,7 @@ export default function createRouteLoader(assetPrefix: string): RouteLoader {
             devBuildResolve = resolve;
           });
         }
-
+        debugger;
         return resolvePromiseWithTimeout(
           getFilesForRoute(assetPrefix, route)
             .then(({ scripts, css }) => {

@@ -13,7 +13,7 @@ export default function Second({}) {
         </li>
         <li>
           <Link href="/foo/bar/third">
-            <a>Third page</a>
+            <a>Third! page</a>
           </Link>
         </li>
       </ul>

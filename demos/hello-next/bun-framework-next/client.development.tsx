@@ -251,6 +251,8 @@ async function _boot(EntryPointNamespace) {
       );
 
       CachedApp = AppModule.default;
+    } else {
+      CachedApp = App;
     }
   }
 
@@ -281,6 +283,8 @@ async function _boot(EntryPointNamespace) {
     isPreview,
   });
 
+  globalThis.next.router = router;
+
   ReactDOM.hydrate(
     <TopLevelRender
       App={CachedApp}
@@ -300,6 +304,7 @@ function TopLevelRender({ App, Component, props, scroll }) {
 }
 
 export function render(props) {
+  
   ReactDOM.render(
     <TopLevelRender {...props} />,
     document.querySelector("#__next")

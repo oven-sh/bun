@@ -17,9 +17,11 @@
         ".tsx"
       ]
     },
+    "css": "onimportcss",
     "development": {
       "client": "client.development.tsx",
       "server": "server.development.tsx",
+      "css": "onimportcss",
       "define": {
         "client": {
           ".env": "NEXT_PUBLIC_",
@@ -61,7 +63,8 @@
     },
     "production": {
       "client": "client.production.tsx",
-      "server": "server.production.tsx"
+      "server": "server.production.tsx",
+      "css": "onimportcss"
     }
   },
   "scripts": {

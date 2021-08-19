@@ -3,6 +3,7 @@ import Link from "next/link";
 
 export default function Post({}) {
   const router = useRouter();
+  
   return (
     <div style={{ padding: 16 }}>
       <h1>Post: {router.query.id}</h1>

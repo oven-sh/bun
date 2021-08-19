@@ -411,14 +411,14 @@ export async function render({
   const isAutoExport = false;
 
   if (isAutoExport || isFallback) {
-    // remove query values except ones that will be set during export
-    query = {
-      ...(query.amp
-        ? {
-            amp: query.amp,
-          }
-        : {}),
-    };
+    // // remove query values except ones that will be set during export
+    // query = {
+    //   ...(query.amp
+    //     ? {
+    //         amp: query.amp,
+    //       }
+    //     : {}),
+    // };
     asPath = `${asPath}${
       // ensure trailing slash is present for non-dynamic auto-export pages
       asPath.endsWith("/") && asPath !== "/" && !pageIsDynamic ? "/" : ""

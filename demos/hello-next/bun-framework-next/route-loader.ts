@@ -1,3 +1,4 @@
+<<<<<<< Updated upstream
 import { ComponentType } from "react";
 // import { ClientBuildManifest } from "../build/webpack/plugins/build-manifest-plugin";
 import getAssetPathFromRoute from "next/dist/shared/lib/router/utils/get-asset-path-from-route";
@@ -390,3 +391,5 @@ export default function createRouteLoader(assetPrefix: string): RouteLoader {
     },
   };
 }
+=======
+>>>>>>> Stashed changes

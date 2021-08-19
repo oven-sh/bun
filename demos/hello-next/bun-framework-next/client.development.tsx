@@ -323,7 +323,6 @@ export function renderError(e) {
 
 globalThis.next = {
   version: "11.1.0",
-  router,
   emitter,
   render,
   renderError,

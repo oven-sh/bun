@@ -1,6 +1,6 @@
 import NextPageLoader from "next/dist/client/page-loader";
 import getAssetPathFromRoute from "next/dist/shared/lib/router/utils/get-asset-path-from-route";
-import createRouteLoader from "./route-loader";
+// import createRouteLoader from "./route-loader";
 
 function insertStyleSheet(url: string) {
   if (document.querySelector(`link[href="${url}"]`)) {
@@ -10,11 +10,11 @@ function insertStyleSheet(url: string) {
   return new Promise((resolve, reject) => {
     const link = document.createElement("link");
     link.rel = "stylesheet";
+
+    link.onload = () => resolve();
+    link.onerror = () => reject();
+
     link.href = url;
-
-    link.onload = () => void resolve();
-
-    link.onerror = () => void reject();
     document.head.appendChild(link);
   });
 }
@@ -26,7 +26,7 @@ export default class PageLoader extends NextPageLoader {
     super(_, __);
 
     // TODO: assetPrefix?
-    this.routeLoader = createRouteLoader("");
+    // this.routeLoader = {}; //createRouteLoader("");
 
     // Rewrite the pages object to omit the entry script
     // At this point, the entry point has been loaded so we don't want to do that again.
@@ -60,8 +60,9 @@ export default class PageLoader extends NextPageLoader {
   cssQueue = [];
 
   onImportCSS = (event) => {
-    this.cssQueue.push(insertStyleSheet(event.detail).then(() => void 0));
+    this.cssQueue.push(insertStyleSheet(event.detail));
   };
+
   async loadPage(route: string): Promise<GoodPageCache> {
     const assets =
       this.pages[route] || this.pages[getAssetPathFromRoute(route)];
@@ -81,8 +82,16 @@ export default class PageLoader extends NextPageLoader {
     document.addEventListener("onimportcss", this.onImportCSS, {
       passive: true,
     });
+
     try {
       const res = await import(src);
+
+      if (this.cssQueue.length > 0) {
+        await Promise.all(this.cssQueue);
+        this.cssQueue.length = 0;
+      }
+
+      document.removeEventListener("onimportcss", this.onImportCSS);
 
       if (this.cssQueue.length > 0) {
         await Promise.all(this.cssQueue);
@@ -97,10 +106,8 @@ export default class PageLoader extends NextPageLoader {
         __N_SSG: false,
         __N_SSP: false,
       };
-
-      debugger;
     } catch (exception) {
-      debugger;
+      console.error({ exception });
     }
 
     // return this.routeLoader.loadRoute(route).then((res) => {
@@ -120,7 +127,7 @@ export default class PageLoader extends NextPageLoader {
   }
 
   // not used in development!
-  prefetch(route: string): Promise<void> {
-    return this.routeLoader.prefetch(route);
-  }
+  // prefetch(route: string): Promise<void> {
+  //   return this.routeLoader.prefetch(route);
+  // }
 }

@@ -3,7 +3,7 @@ usingnamespace @import("global.zig");
 const sync = @import("sync.zig");
 const alloc = @import("alloc.zig");
 const expect = std.testing.expect;
-const Mutex = sync.Mutex;
+const Mutex = @import("./lock.zig").Lock;
 const Semaphore = sync.Semaphore;
 const Fs = @This();
 const path_handler = @import("./resolver/resolve_path.zig");

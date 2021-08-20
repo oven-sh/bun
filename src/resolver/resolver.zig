@@ -14,7 +14,7 @@ const Expr = @import("../js_ast.zig").Expr;
 const Wyhash = std.hash.Wyhash;
 
 const hash_map_v2 = @import("../hash_map_v2.zig");
-const Mutex = sync.Mutex;
+const Mutex = @import("../lock.zig").Lock;
 const StringBoolMap = std.StringHashMap(bool);
 
 const allocators = @import("../allocators.zig");
@@ -2046,3 +2046,31 @@ pub const Resolver = NewResolver(
 pub const ResolverUncached = NewResolver(
     false,
 );
+
+const Dirname = struct {
+    pub fn dirname(path: string) string {
+        if (path.len == 0)
+            return "/";
+
+        var end_index: usize = path.len - 1;
+        while (path[end_index] == '/') {
+            if (end_index == 0)
+                return "/";
+            end_index -= 1;
+        }
+
+        while (path[end_index] != '/') {
+            if (end_index == 0)
+                return "/";
+            end_index -= 1;
+        }
+
+        if (end_index == 0 and path[0] == '/')
+            return path[0..1];
+
+        if (end_index == 0)
+            return "/";
+
+        return path[0 .. end_index + 1];
+    }
+};

@@ -1138,7 +1138,7 @@ pub fn NewBundler(
 
             if (watcher_index == null) {
                 var file = try std.fs.openFileAbsolute(absolute_path, .{ .read = true });
-                try this.watcher.appendFile(file.handle, absolute_path, hash, .css, true);
+                try this.watcher.appendFile(file.handle, absolute_path, hash, .css, 0, true);
             }
 
             try this.import_queue.writeItem(hash);

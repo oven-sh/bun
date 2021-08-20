@@ -9,7 +9,7 @@ const Define = @import("./defines.zig").Define;
 const std = @import("std");
 const fs = @import("./fs.zig");
 const sync = @import("sync.zig");
-const Mutex = sync.Mutex;
+const Mutex = @import("./lock.zig").Lock;
 
 const import_record = @import("./import_record.zig");
 const ImportRecord = import_record.ImportRecord;

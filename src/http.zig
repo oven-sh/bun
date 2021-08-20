@@ -530,8 +530,11 @@ pub const RequestContext = struct {
 
             const path = Fs.Path.init(file_path_str);
             var old_log = this.bundler.log;
-            defer this.bundler.log = old_log;
-            this.bundler.log = &log;
+            this.bundler.setLog(&log);
+
+            defer {
+                this.bundler.setLog(old_log);
+            }
 
             switch (loader) {
                 .json, .ts, .tsx, .js, .jsx => {
@@ -562,9 +565,6 @@ pub const RequestContext = struct {
 
                     this.printer.ctx.reset();
 
-                    var old_linker_allocator = this.bundler.linker.allocator;
-                    defer this.bundler.linker.allocator = old_linker_allocator;
-                    this.bundler.linker.allocator = this.allocator;
                     try this.bundler.linker.link(
                         Fs.Path.init(file_path_str),
                         &parse_result,
@@ -916,6 +916,7 @@ pub const RequestContext = struct {
         tombstone: bool = false,
         builder: WatchBuilder,
         message_buffer: MutableString,
+        bundler: Bundler,
         pub var open_websockets: std.ArrayList(*WebsocketHandler) = undefined;
         var open_websockets_lock = sync.RwLock.init();
         pub fn addWebsocket(ctx: *RequestContext, server: *Server) !*WebsocketHandler {
@@ -925,6 +926,9 @@ pub const RequestContext = struct {
             var clone = try server.allocator.create(WebsocketHandler);
             clone.ctx = ctx.*;
             clone.conn = ctx.conn.*;
+            try ctx.bundler.clone(server.allocator, &clone.bundler);
+            ctx.bundler = &clone.bundler;
+
             clone.message_buffer = try MutableString.init(server.allocator, 0);
             clone.ctx.conn = &clone.conn;
             clone.ctx.log = logger.Log.init(server.allocator);
@@ -1420,6 +1424,7 @@ pub const RequestContext = struct {
 
                 // It will call flush for us automatically
                 ctx.bundler.resetStore();
+
                 var client_entry_point_: ?*bundler.ClientEntryPoint = null;
                 if (resolve_result.import_kind == .entry_point and loader.supportsClientEntryPoint()) {
                     if (ctx.bundler.options.framework) |*framework| {
@@ -1456,8 +1461,10 @@ pub const RequestContext = struct {
                             result.file.input.text,
                             hash,
                             loader,
+                            resolve_result.dirname_fd,
                             true,
                         );
+
                         if (ctx.watcher.watchloop_handle == null) {
                             try ctx.watcher.start();
                         }
@@ -1490,6 +1497,7 @@ pub const RequestContext = struct {
                             result.file.input.text,
                             Watcher.getHash(result.file.input.text),
                             result.file.loader,
+                            file.dir,
                             true,
                         )) {
                             if (ctx.watcher.watchloop_handle == null) {
@@ -1703,7 +1711,11 @@ pub const Server = struct {
 
     threadlocal var filechange_buf: [32]u8 = undefined;
 
-    pub fn onFileUpdate(ctx: *Server, events: []watcher.WatchEvent, watchlist: watcher.Watchlist) void {
+    pub fn onFileUpdate(
+        ctx: *Server,
+        events: []watcher.WatchEvent,
+        watchlist: watcher.Watchlist,
+    ) void {
         if (ctx.javascript_enabled) {
             _onFileUpdate(ctx, events, watchlist, true);
         } else {
@@ -1724,11 +1736,16 @@ pub const Server = struct {
             .kind = .file_change_notification,
         };
         message_type.encode(&writer) catch unreachable;
+        var slice = watchlist.slice();
+        const file_paths = slice.items(.file_path);
+        var counts = slice.items(.count);
+        const kinds = slice.items(.kind);
         var header = fbs.getWritten();
         for (events) |event| {
-            const file_path = watchlist.items(.file_path)[event.index];
-            const update_count = watchlist.items(.count)[event.index] + 1;
-            watchlist.items(.count)[event.index] = update_count;
+            const file_path = file_paths[event.index];
+            const update_count = counts[event.index] + 1;
+            counts[event.index] = update_count;
+            const kind = kinds[event.index];
 
             // so it's consistent with the rest
             // if we use .extname we might run into an issue with whether or not the "." is included.
@@ -1742,20 +1759,32 @@ pub const Server = struct {
                     // RequestContext.JavaScriptHandler.javascript_vm.incrementUpdateCounter(id, update_count);
                 }
             }
-            const change_message = Api.WebsocketMessageFileChangeNotification{
-                .id = id,
-                .loader = (ctx.bundler.options.loaders.get(path.ext) orelse .file).toAPI(),
-            };
 
-            var content_writer = ByteApiWriter.init(&content_fbs);
-            change_message.encode(&content_writer) catch unreachable;
-            const change_buf = content_fbs.getWritten();
-            const written_buf = filechange_buf[0 .. header.len + change_buf.len];
             defer Output.flush();
-            RequestContext.WebsocketHandler.broadcast(written_buf) catch |err| {
-                Output.prettyln("Error writing change notification: {s}", .{@errorName(err)});
-            };
-            Output.prettyln("<r><d>Detected file change: {s}", .{ctx.bundler.fs.relativeTo(file_path)});
+
+            switch (kind) {
+                .file => {
+                    const change_message = Api.WebsocketMessageFileChangeNotification{
+                        .id = id,
+                        .loader = (ctx.bundler.options.loaders.get(path.ext) orelse .file).toAPI(),
+                    };
+
+                    var content_writer = ByteApiWriter.init(&content_fbs);
+                    change_message.encode(&content_writer) catch unreachable;
+                    const change_buf = content_fbs.getWritten();
+                    const written_buf = filechange_buf[0 .. header.len + change_buf.len];
+                    RequestContext.WebsocketHandler.broadcast(written_buf) catch |err| {
+                        Output.prettyln("Error writing change notification: {s}", .{@errorName(err)});
+                    };
+
+                    Output.prettyln("<r><d>Detected file change: {s}", .{ctx.bundler.fs.relativeTo(file_path)});
+                },
+                .directory => {
+                    var rfs: *Fs.FileSystem.RealFS = &ctx.bundler.fs.fs;
+                    rfs.bustEntriesCache(file_path);
+                    Output.prettyln("<r><d>Detected folder change: {s}", .{ctx.bundler.fs.relativeTo(file_path)});
+                },
+            }
         }
     }
 
@@ -1861,13 +1890,11 @@ pub const Server = struct {
         }
 
         req_ctx.allocator = &req_ctx.arena.allocator;
-        req_ctx.log = logger.Log.init(req_ctx.allocator);
+        req_ctx.log = logger.Log.init(server.allocator);
         var log = &req_ctx.log;
 
-        req_ctx.bundler.log = log;
-        req_ctx.bundler.linker.log = log;
-        req_ctx.bundler.resolver.log = log;
-        req_ctx.bundler.options.log = log;
+        req_ctx.bundler.setLog(log);
+        // req_ctx.bundler.setAllocator(req_ctx.allocator);
 
         var did_print: bool = false;
 
@@ -2028,7 +2055,8 @@ pub const Server = struct {
 
     pub fn start(allocator: *std.mem.Allocator, options: Api.TransformOptions) !void {
         var log = logger.Log.init(allocator);
-        var server = Server{
+        var server = try allocator.create(Server);
+        server.* = Server{
             .allocator = allocator,
             .log = log,
             .bundler = undefined,

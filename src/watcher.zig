@@ -1,12 +1,14 @@
 const Fs = @import("./fs.zig");
 const std = @import("std");
 usingnamespace @import("global.zig");
-const sync = @import("sync.zig");
 const options = @import("./options.zig");
+const IndexType = @import("./allocators.zig").IndexType;
 
 const os = std.os;
 const KEvent = std.os.Kevent;
 
+const Mutex = @import("./lock.zig").Lock;
+const ParentWatchItemIndex = u31;
 pub const WatchItem = struct {
     file_path: string,
     // filepath hash for quick comparison
@@ -15,6 +17,10 @@ pub const WatchItem = struct {
     loader: options.Loader,
     fd: StoredFileDescriptorType,
     count: u32,
+    parent_watch_item: ?ParentWatchItemIndex,
+    kind: Kind,
+
+    pub const Kind = enum { file, directory };
 };
 
 pub const WatchEvent = struct {
@@ -51,7 +57,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
         watchlist: Watchlist,
         watched_count: usize = 0,
-        mutex: sync.Mutex,
+        mutex: Mutex,
 
         // Internal
         changelist: [128]KEvent = undefined,
@@ -86,7 +92,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 .watched_count = 0,
                 .ctx = ctx,
                 .watchlist = Watchlist{},
-                .mutex = sync.Mutex.init(),
+                .mutex = Mutex.init(),
                 .cwd = fs.top_level_dir,
             };
 
@@ -176,25 +182,25 @@ pub fn NewWatcher(comptime ContextType: type) type {
             file_path: string,
             hash: u32,
             loader: options.Loader,
+            dir_fd: StoredFileDescriptorType,
             comptime copy_file_path: bool,
         ) !void {
             if (this.indexOf(hash) != null) {
                 return;
             }
 
-            try this.appendFile(fd, file_path, hash, loader, copy_file_path);
+            try this.appendFile(fd, file_path, hash, loader, dir_fd, copy_file_path);
         }
 
-        pub fn appendFile(
+        fn appendFileAssumeCapacity(
             this: *Watcher,
             fd: StoredFileDescriptorType,
             file_path: string,
             hash: u32,
             loader: options.Loader,
+            parent_watch_item: ?ParentWatchItemIndex,
             comptime copy_file_path: bool,
         ) !void {
-            try this.watchlist.ensureUnusedCapacity(this.allocator, 1);
-
             // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html
             var event = std.mem.zeroes(KEvent);
 
@@ -240,13 +246,175 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 .count = 0,
                 .eventlist_index = @truncate(u32, index),
                 .loader = loader,
+                .parent_watch_item = parent_watch_item,
+                .kind = .file,
             });
+        }
+
+        fn appendDirectoryAssumeCapacity(
+            this: *Watcher,
+            fd_: StoredFileDescriptorType,
+            file_path: string,
+            hash: u32,
+            comptime copy_file_path: bool,
+        ) !ParentWatchItemIndex {
+            const fd = brk: {
+                if (fd_ > 0) break :brk fd_;
+
+                const dir = try std.fs.openDirAbsolute(file_path, .{ .iterate = true });
+                break :brk @truncate(StoredFileDescriptorType, dir.fd);
+            };
+
+            // It's not a big deal if we can't watch the parent directory
+            // For now at least.
+            const parent_watch_item: ?ParentWatchItemIndex = brk: {
+                if (!this.isEligibleDirectory(file_path)) break :brk null;
+
+                const parent_dir = Fs.PathName.init(file_path).dirWithTrailingSlash();
+                const hashes = this.watchlist.items(.hash);
+                break :brk @truncate(ParentWatchItemIndex, std.mem.indexOfScalar(HashType, hashes, Watcher.getHash(parent_dir)) orelse break :brk null);
+            };
+
+            // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html
+            var event = std.mem.zeroes(KEvent);
+
+            event.flags = os.EV_ADD | os.EV_CLEAR | os.EV_ENABLE;
+            // we want to know about the vnode
+            event.filter = std.os.EVFILT_VNODE;
+
+            // monitor:
+            // - Write
+            // - Rename
+
+            // we should monitor:
+            // - Delete
+            event.fflags = std.os.NOTE_WRITE | std.os.NOTE_RENAME;
+
+            // id
+            event.ident = @intCast(usize, fd);
+
+            const index = this.eventlist_used;
+            this.eventlist_used += 1;
+            const watchlist_id = this.watchlist.len;
+            // Store the hash for fast filtering later
+            event.udata = @intCast(usize, watchlist_id);
+            this.eventlist[index] = event;
+
+            // This took a lot of work to figure out the right permutation
+            // Basically:
+            // - We register the event here.
+            // our while(true) loop above receives notification of changes to any of the events created here.
+            _ = std.os.system.kevent(
+                try this.getQueue(),
+                this.eventlist[index .. index + 1].ptr,
+                1,
+                this.eventlist[index .. index + 1].ptr,
+                0,
+                null,
+            );
+
+            this.watchlist.appendAssumeCapacity(.{
+                .file_path = if (copy_file_path) try this.allocator.dupe(u8, file_path) else file_path,
+                .fd = fd,
+                .hash = hash,
+                .count = 0,
+                .eventlist_index = @truncate(u32, index),
+                .loader = options.Loader.file,
+                .parent_watch_item = parent_watch_item,
+                .kind = .directory,
+            });
+            return @truncate(ParentWatchItemIndex, this.watchlist.len - 1);
+        }
+
+        pub fn isEligibleDirectory(this: *Watcher, dir: string) bool {
+            return strings.indexOf(this.fs.top_level_dir, dir) != null;
+        }
+
+        pub fn addDirectory(
+            this: *Watcher,
+            fd: StoredFileDescriptorType,
+            file_path: string,
+            hash: u32,
+            comptime copy_file_path: bool,
+        ) !void {
+            if (this.indexOf(hash) != null) {
+                return;
+            }
+
+            this.mutex.lock();
+            defer this.mutex.unlock();
+
+            try this.watchlist.ensureUnusedCapacity(this.allocator, 1);
+
+            _ = try this.appendDirectoryAssumeCapacity(fd, file_path, hash, copy_file_path);
+        }
+
+        pub fn appendFile(
+            this: *Watcher,
+            fd: StoredFileDescriptorType,
+            file_path: string,
+            hash: u32,
+            loader: options.Loader,
+            dir_fd: StoredFileDescriptorType,
+            comptime copy_file_path: bool,
+        ) !void {
+            this.mutex.lock();
+            defer this.mutex.unlock();
+            std.debug.assert(file_path.len > 1);
+            const pathname = Fs.PathName.init(file_path);
+
+            const parent_dir = pathname.dirWithTrailingSlash();
+            var parent_dir_hash: ?u32 = undefined;
+            var watchlist_slice = this.watchlist.slice();
+
+            var parent_watch_item: ?ParentWatchItemIndex = null;
+            const autowatch_parent_dir = (comptime FeatureFlags.watch_directories) and this.isEligibleDirectory(parent_dir);
+            if (autowatch_parent_dir) {
+                if (dir_fd > 0) {
+                    var fds = watchlist_slice.items(.fd);
+                    if (std.mem.indexOfScalar(StoredFileDescriptorType, fds, dir_fd)) |i| {
+                        parent_watch_item = @truncate(ParentWatchItemIndex, i);
+                    }
+                }
+
+                if (parent_watch_item == null) {
+                    const hashes = watchlist_slice.items(.hash);
+                    parent_dir_hash = Watcher.getHash(parent_dir);
+                    if (std.mem.indexOfScalar(HashType, hashes, parent_dir_hash.?)) |i| {
+                        parent_watch_item = @truncate(ParentWatchItemIndex, i);
+                    }
+                }
+            }
+            try this.watchlist.ensureUnusedCapacity(this.allocator, 1 + @intCast(usize, @boolToInt(parent_watch_item == null)));
+
+            if (autowatch_parent_dir) {
+                parent_watch_item = parent_watch_item orelse try this.appendDirectoryAssumeCapacity(dir_fd, parent_dir, parent_dir_hash orelse Watcher.getHash(parent_dir), copy_file_path);
+            }
+
+            try this.appendFileAssumeCapacity(
+                fd,
+                file_path,
+                hash,
+                loader,
+                parent_watch_item,
+                copy_file_path,
+            );
 
             if (FeatureFlags.verbose_watcher) {
-                if (strings.indexOf(file_path, this.cwd)) |i| {
-                    Output.prettyln("<r><d>Added <b>./{s}<r><d> to watch list.<r>", .{file_path[i + this.cwd.len ..]});
+                if (!autowatch_parent_dir or parent_watch_item == null) {
+                    if (strings.indexOf(file_path, this.cwd)) |i| {
+                        Output.prettyln("<r><d>Added <b>./{s}<r><d> to watch list.<r>", .{file_path[i + this.cwd.len ..]});
+                    } else {
+                        Output.prettyln("<r><d>Added <b>{s}<r><d> to watch list.<r>", .{file_path});
+                    }
                 } else {
-                    Output.prettyln("<r><d>Added <b>{s}<r><d> to watch list.<r>", .{file_path});
+                    if (strings.indexOf(file_path, this.cwd)) |i| {
+                        Output.prettyln("<r><d>Added <b>./{s}<r><d> to watch list (and parent dir).<r>", .{
+                            file_path[i + this.cwd.len ..],
+                        });
+                    } else {
+                        Output.prettyln("<r><d>Added <b>{s}<r><d> to watch list (and parent dir).<r>", .{file_path});
+                    }
                 }
             }
         }

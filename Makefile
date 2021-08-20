@@ -16,43 +16,86 @@ jsc-bindings-headers:
 jsc-copy-headers:
 	find src/JavaScript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/Headers/JavaScriptCore/ -name "*.h" -exec cp {} src/JavaScript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/PrivateHeaders/JavaScriptCore \;
 
-jsc-build-mac:
+jsc-build-mac-compile:
 	cd src/javascript/jsc/WebKit && ICU_INCLUDE_DIRS="/usr/local/opt/icu4c/include" ./Tools/Scripts/build-jsc --jsc-only --cmakeargs="-DENABLE_STATIC_JSC=ON -DCMAKE_BUILD_TYPE=relwithdebinfo" && echo "Ignore the \"has no symbols\" errors"
+
+jsc-build-mac: jsc-build-mac-compile jsc-build-mac-copy
+
+jsc-build-mac-copy:
+	cp src/JavaScript/jsc/WebKit/WebKitBuild/Release/lib/libJavaScriptCore.a src/deps/libJavaScriptCore.a
+	cp src/JavaScript/jsc/WebKit/WebKitBuild/Release/lib/libWTF.a src/deps/libWTF.a
+	cp src/JavaScript/jsc/WebKit/WebKitBuild/Release/lib/libbmalloc.a src/deps/libbmalloc.a
 	 
+JSC_FILES := src/deps/libJavaScriptCore.a \
+	src/deps/libWTF.a \
+	src/deps/libbmalloc.a 
 
 SRC_DIR := src/javascript/jsc/bindings
 OBJ_DIR := src/javascript/jsc/bindings-obj
 SRC_FILES := $(wildcard $(SRC_DIR)/*.cpp)
 OBJ_FILES := $(patsubst $(SRC_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(SRC_FILES))
-CLANG_FLAGS = -Isrc/JavaScript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/PrivateHeaders \
+INCLUDE_DIRS := -Isrc/JavaScript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/PrivateHeaders \
 		-Isrc/javascript/jsc/WebKit/WebKitBuild/Release/WTF/Headers \
 		-Isrc/javascript/jsc/WebKit/WebKitBuild/Release/ICU/Headers \
+		-Isrc/JavaScript/jsc/WebKit/WebKitBuild/Release/ \
+		-Isrc/JavaScript/jsc/bindings/ \
+		-Isrc/javascript/jsc/WebKit/Source/bmalloc 
+
+CLANG_FLAGS = 
+		$(INCLUDE_DIRS) \
+		-std=gnu++1z \
+		-stdlib=libc++ \
 		-DSTATICALLY_LINKED_WITH_JavaScriptCore=1 \
 		-DSTATICALLY_LINKED_WITH_WTF=1 \
 		-DBUILDING_WITH_CMAKE=1 \
 		-DNDEBUG=1 \
 		-DNOMINMAX \
 		-DIS_BUILD \
-		-O1 \
 		-g \
 		-DENABLE_INSPECTOR_ALTERNATE_DISPATCHERS=0 \
 		-DBUILDING_JSCONLY__ \
 		-DASSERT_ENABLED=0\
-		-Isrc/JavaScript/jsc/WebKit/WebKitBuild/Release/ \
-		-Isrc/JavaScript/jsc/bindings/ \
-		-Isrc/javascript/jsc/WebKit/Source/bmalloc \
-		-std=gnu++1z \
-		-stdlib=libc++ \
 		-DDU_DISABLE_RENAMING=1 \
 		-march=native 
 
 jsc-bindings-mac: $(OBJ_FILES)
 
+MACOS_ICU_FILES := /usr/local/opt/icu4c/lib/libicudata.a \
+	/usr/local/opt/icu4c/lib/libicui18n.a \
+	/usr/local/opt/icu4c/lib/libicuuc.a 
+
+MACOS_ICU_INCLUDE := /usr/local/opt/icu4c/include
+
+MACOS_ICU_FLAGS := -l icucore \
+	$(MACOS_ICU_FILES) \
+	-I$(MACOS_ICU_INCLUDE)
+
+BUN_LLD_FLAGS := $(OBJ_FILES) \
+		${MACOS_ICU_FLAGS} \
+		${JSC_FILES} \
+		src/deps/picohttpparser.o \
+		$(CLANG_FLAGS) \
+		-fpie \
+	
+
+bun-link-lld-debug:
+	clang++ $(BUN_LLD_FLAGS) \
+		build/debug/macos-x86_64/bun.o \
+		-o build/debug/macos-x86_64/bun		
+
+bun-link-lld-release:
+	clang++ $(BUN_LLD_FLAGS) \
+		build/macos-x86_64/bun.o \
+		-o build/macos-x86_64/bun \
+		-Wl,-dead_strip \
+		-flto 
+
 # We do this outside of build.zig for performance reasons
 # The C compilation stuff with build.zig is really slow and we don't need to run this as often as the rest
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 	clang++ -c -o $@ $< \
-		$(CLANG_FLAGS)
+		$(CLANG_FLAGS) \
+		-O1
 
 sizegen:
 	clang++ src/javascript/jsc/headergen/sizegen.cpp -o /tmp/sizegen $(CLANG_FLAGS)

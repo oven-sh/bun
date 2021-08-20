@@ -304,7 +304,6 @@ function TopLevelRender({ App, Component, props, scroll }) {
 }
 
 export function render(props) {
-  
   ReactDOM.render(
     <TopLevelRender {...props} />,
     document.querySelector("#__next")
@@ -312,7 +311,6 @@ export function render(props) {
 }
 
 export function renderError(e) {
-  debugger;
   ReactDOM.render(
     <AppContainer>
       <App Component={<div>UH OH!!!!</div>} pageProps={data.props}></App>

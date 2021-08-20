@@ -60,8 +60,17 @@ export default class PageLoader extends NextPageLoader {
   cssQueue = [];
 
   onImportCSS = (event) => {
-    this.cssQueue.push(insertStyleSheet(event.detail));
+    this.cssQueue.push(
+      insertStyleSheet(event.detail).then(
+        () => {},
+        () => {}
+      )
+    );
   };
+
+  prefetch(route) {
+    return Promise.resolve({});
+  }
 
   async loadPage(route: string): Promise<GoodPageCache> {
     const assets =
@@ -98,7 +107,7 @@ export default class PageLoader extends NextPageLoader {
 
         this.cssQueue.length = 0;
       }
-      document.removeEventListener("onimportcss", this.onImportCSS);
+
       return {
         page: res.default,
         mod: res,

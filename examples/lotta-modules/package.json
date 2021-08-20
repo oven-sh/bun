@@ -1,0 +1,11 @@
+{
+  "name": "lotta-modules",
+  "version": "1.0.0",
+  "main": "index.js",
+  "license": "MIT",
+  "dependencies": {
+    "lodash": "^4.17.21",
+    "three.js": "^0.77.1",
+    "underscore": "^1.13.1"
+  }
+}

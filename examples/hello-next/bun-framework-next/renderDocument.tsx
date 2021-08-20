@@ -426,8 +426,8 @@ export async function render({
   }
 
   let head: JSX.Element[] = [
-    // <meta charSet="utf-8" />,
-    // <meta name="viewport" content="width=device-width" />,
+    <meta charSet="utf-8" />,
+    <meta name="viewport" content="width=device-width" />,
   ];
 
   const nextExport = isAutoExport || isFallback;

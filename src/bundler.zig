@@ -296,6 +296,26 @@ pub fn NewBundler(cache_files: bool) type {
 
         pub const isCacheEnabled = cache_files;
 
+        pub fn clone(this: *ThisBundler, allocator: *std.mem.Allocator, to: *ThisBundler) !void {
+            to.* = this.*;
+            to.setAllocator(allocator);
+            to.log = try allocator.create(logger.Log);
+            to.log.* = logger.Log.init(allocator);
+            to.setLog(to.log);
+        }
+
+        pub fn setLog(this: *ThisBundler, log: *logger.Log) void {
+            this.log = log;
+            this.linker.log = log;
+            this.resolver.log = log;
+        }
+
+        pub fn setAllocator(this: *ThisBundler, allocator: *std.mem.Allocator) void {
+            this.allocator = allocator;
+            this.linker.allocator = allocator;
+            this.resolver.allocator = allocator;
+        }
+
         // to_bundle:
 
         // thread_pool: *ThreadPool,

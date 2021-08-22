@@ -8,7 +8,8 @@ const os = std.os;
 const KEvent = std.os.Kevent;
 
 const Mutex = @import("./lock.zig").Lock;
-const ParentWatchItemIndex = u31;
+const WatchItemIndex = u16;
+const NoWatchItem: WatchItemIndex = std.math.maxInt(WatchItemIndex);
 pub const WatchItem = struct {
     file_path: string,
     // filepath hash for quick comparison
@@ -17,14 +18,14 @@ pub const WatchItem = struct {
     loader: options.Loader,
     fd: StoredFileDescriptorType,
     count: u32,
-    parent_watch_item: ?ParentWatchItemIndex,
+    parent_hash: u32,
     kind: Kind,
 
     pub const Kind = enum { file, directory };
 };
 
 pub const WatchEvent = struct {
-    index: u32,
+    index: WatchItemIndex,
     op: Op,
 
     pub fn fromKEvent(this: *WatchEvent, kevent: *const KEvent) void {
@@ -32,7 +33,7 @@ pub const WatchEvent = struct {
         this.op.metadata = (kevent.fflags & std.os.NOTE_ATTRIB) > 0;
         this.op.rename = (kevent.fflags & std.os.NOTE_RENAME) > 0;
         this.op.write = (kevent.fflags & std.os.NOTE_WRITE) > 0;
-        this.index = @truncate(u32, kevent.udata);
+        this.index = @truncate(WatchItemIndex, kevent.udata);
     }
 
     pub const Op = packed struct {
@@ -54,6 +55,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
         const Watcher = @This();
 
         const KEventArrayList = std.ArrayList(KEvent);
+        const WATCHER_MAX_LIST = 8096;
 
         watchlist: Watchlist,
         watched_count: usize = 0,
@@ -66,7 +68,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
         watch_events: [128]WatchEvent = undefined,
 
         // Everything being watched
-        eventlist: [8096]KEvent = undefined,
+        eventlist: [WATCHER_MAX_LIST]KEvent = undefined,
         eventlist_used: usize = 0,
 
         fs: *Fs.FileSystem,
@@ -78,6 +80,8 @@ pub fn NewWatcher(comptime ContextType: type) type {
         cwd: string,
 
         pub const HashType = u32;
+
+        var evict_list: [WATCHER_MAX_LIST]WatchItemIndex = undefined;
 
         pub fn getHash(filepath: string) HashType {
             return @truncate(HashType, std.hash.Wyhash.hash(0, filepath));
@@ -137,11 +141,63 @@ pub fn NewWatcher(comptime ContextType: type) type {
             };
         }
 
+        var evict_list_i: WatchItemIndex = 0;
+        pub fn removeAtIndex(this: *Watcher, index: WatchItemIndex, hash: HashType, parents: []HashType, comptime kind: WatchItem.Kind) void {
+            std.debug.assert(index != NoWatchItem);
+
+            evict_list[evict_list_i] = index;
+            evict_list_i += 1;
+
+            if (comptime kind == .directory) {
+                for (parents) |parent, i| {
+                    if (parent == hash) {
+                        evict_list[evict_list_i] = @truncate(WatchItemIndex, parent);
+                        evict_list_i += 1;
+                    }
+                }
+            }
+        }
+
+        pub fn flushEvictions(this: *Watcher) void {
+            if (evict_list_i == 0) return;
+            this.mutex.lock();
+            defer this.mutex.unlock();
+            defer evict_list_i = 0;
+
+            // swapRemove messes up the order
+            // But, it only messes up the order if any elements in the list appear after the item being removed
+            // So if we just sort the list by the biggest index first, that should be fine
+            std.sort.sort(
+                WatchItemIndex,
+                evict_list[0..evict_list_i],
+                {},
+                comptime std.sort.desc(WatchItemIndex),
+            );
+
+            var slice = this.watchlist.slice();
+            var fds = slice.items(.fd);
+            var last_item = NoWatchItem;
+
+            for (evict_list[0..evict_list_i]) |item, i| {
+                // catch duplicates, since the list is sorted, duplicates will appear right after each other
+                if (item == last_item) continue;
+                // close the file descriptors here. this should automatically remove it from being watched too.
+                std.os.close(fds[item]);
+                last_item = item;
+            }
+
+            last_item = NoWatchItem;
+            // This is split into two passes because reading the slice while modified is potentially unsafe.
+            for (evict_list[0..evict_list_i]) |item, i| {
+                if (item == last_item) continue;
+                this.watchlist.swapRemove(item);
+                last_item = item;
+            }
+        }
+
         fn _watchLoop(this: *Watcher) !void {
             const time = std.time;
 
-            // poll at 1 second intervals if it hasn't received any events.
-            // var timeout_spec = null;
             std.debug.assert(this.fd > 0);
 
             var changelist_array: [1]KEvent = std.mem.zeroes([1]KEvent);
@@ -167,7 +223,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
             }
         }
 
-        pub fn indexOf(this: *Watcher, hash: u32) ?usize {
+        pub fn indexOf(this: *Watcher, hash: HashType) ?usize {
             for (this.watchlist.items(.hash)) |other, i| {
                 if (hash == other) {
                     return i;
@@ -180,7 +236,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
             this: *Watcher,
             fd: StoredFileDescriptorType,
             file_path: string,
-            hash: u32,
+            hash: HashType,
             loader: options.Loader,
             dir_fd: StoredFileDescriptorType,
             comptime copy_file_path: bool,
@@ -196,9 +252,9 @@ pub fn NewWatcher(comptime ContextType: type) type {
             this: *Watcher,
             fd: StoredFileDescriptorType,
             file_path: string,
-            hash: u32,
+            hash: HashType,
             loader: options.Loader,
-            parent_watch_item: ?ParentWatchItemIndex,
+            parent_hash: HashType,
             comptime copy_file_path: bool,
         ) !void {
             // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html
@@ -214,7 +270,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
             // we should monitor:
             // - Delete
-            event.fflags = std.os.NOTE_WRITE | std.os.NOTE_RENAME;
+            event.fflags = std.os.NOTE_WRITE | std.os.NOTE_RENAME | std.os.NOTE_DELETE;
 
             // id
             event.ident = @intCast(usize, fd);
@@ -246,7 +302,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 .count = 0,
                 .eventlist_index = @truncate(u32, index),
                 .loader = loader,
-                .parent_watch_item = parent_watch_item,
+                .parent_hash = parent_hash,
                 .kind = .file,
             });
         }
@@ -255,9 +311,9 @@ pub fn NewWatcher(comptime ContextType: type) type {
             this: *Watcher,
             fd_: StoredFileDescriptorType,
             file_path: string,
-            hash: u32,
+            hash: HashType,
             comptime copy_file_path: bool,
-        ) !ParentWatchItemIndex {
+        ) !WatchItemIndex {
             const fd = brk: {
                 if (fd_ > 0) break :brk fd_;
 
@@ -265,15 +321,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 break :brk @truncate(StoredFileDescriptorType, dir.fd);
             };
 
-            // It's not a big deal if we can't watch the parent directory
-            // For now at least.
-            const parent_watch_item: ?ParentWatchItemIndex = brk: {
-                if (!this.isEligibleDirectory(file_path)) break :brk null;
-
-                const parent_dir = Fs.PathName.init(file_path).dirWithTrailingSlash();
-                const hashes = this.watchlist.items(.hash);
-                break :brk @truncate(ParentWatchItemIndex, std.mem.indexOfScalar(HashType, hashes, Watcher.getHash(parent_dir)) orelse break :brk null);
-            };
+            const parent_hash = Watcher.getHash(Fs.PathName.init(file_path).dirWithTrailingSlash());
 
             // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html
             var event = std.mem.zeroes(KEvent);
@@ -288,7 +336,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
             // we should monitor:
             // - Delete
-            event.fflags = std.os.NOTE_WRITE | std.os.NOTE_RENAME;
+            event.fflags = std.os.NOTE_WRITE | std.os.NOTE_RENAME | std.os.NOTE_DELETE;
 
             // id
             event.ident = @intCast(usize, fd);
@@ -320,21 +368,21 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 .count = 0,
                 .eventlist_index = @truncate(u32, index),
                 .loader = options.Loader.file,
-                .parent_watch_item = parent_watch_item,
+                .parent_hash = parent_hash,
                 .kind = .directory,
             });
-            return @truncate(ParentWatchItemIndex, this.watchlist.len - 1);
+            return @truncate(WatchItemIndex, this.watchlist.len - 1);
         }
 
-        pub fn isEligibleDirectory(this: *Watcher, dir: string) bool {
-            return strings.indexOf(this.fs.top_level_dir, dir) != null;
+        pub inline fn isEligibleDirectory(this: *Watcher, dir: string) bool {
+            return strings.indexOf(dir, this.fs.top_level_dir) != null and strings.indexOf(dir, "node_modules") == null;
         }
 
         pub fn addDirectory(
             this: *Watcher,
             fd: StoredFileDescriptorType,
             file_path: string,
-            hash: u32,
+            hash: HashType,
             comptime copy_file_path: bool,
         ) !void {
             if (this.indexOf(hash) != null) {
@@ -353,7 +401,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
             this: *Watcher,
             fd: StoredFileDescriptorType,
             file_path: string,
-            hash: u32,
+            hash: HashType,
             loader: options.Loader,
             dir_fd: StoredFileDescriptorType,
             comptime copy_file_path: bool,
@@ -364,31 +412,31 @@ pub fn NewWatcher(comptime ContextType: type) type {
             const pathname = Fs.PathName.init(file_path);
 
             const parent_dir = pathname.dirWithTrailingSlash();
-            var parent_dir_hash: ?u32 = undefined;
-            var watchlist_slice = this.watchlist.slice();
+            var parent_dir_hash: HashType = Watcher.getHash(parent_dir);
 
-            var parent_watch_item: ?ParentWatchItemIndex = null;
+            var parent_watch_item: ?WatchItemIndex = null;
             const autowatch_parent_dir = (comptime FeatureFlags.watch_directories) and this.isEligibleDirectory(parent_dir);
             if (autowatch_parent_dir) {
+                var watchlist_slice = this.watchlist.slice();
+
                 if (dir_fd > 0) {
                     var fds = watchlist_slice.items(.fd);
                     if (std.mem.indexOfScalar(StoredFileDescriptorType, fds, dir_fd)) |i| {
-                        parent_watch_item = @truncate(ParentWatchItemIndex, i);
+                        parent_watch_item = @truncate(WatchItemIndex, i);
                     }
                 }
 
                 if (parent_watch_item == null) {
                     const hashes = watchlist_slice.items(.hash);
-                    parent_dir_hash = Watcher.getHash(parent_dir);
-                    if (std.mem.indexOfScalar(HashType, hashes, parent_dir_hash.?)) |i| {
-                        parent_watch_item = @truncate(ParentWatchItemIndex, i);
+                    if (std.mem.indexOfScalar(HashType, hashes, parent_dir_hash)) |i| {
+                        parent_watch_item = @truncate(WatchItemIndex, i);
                     }
                 }
             }
             try this.watchlist.ensureUnusedCapacity(this.allocator, 1 + @intCast(usize, @boolToInt(parent_watch_item == null)));
 
             if (autowatch_parent_dir) {
-                parent_watch_item = parent_watch_item orelse try this.appendDirectoryAssumeCapacity(dir_fd, parent_dir, parent_dir_hash orelse Watcher.getHash(parent_dir), copy_file_path);
+                parent_watch_item = parent_watch_item orelse try this.appendDirectoryAssumeCapacity(dir_fd, parent_dir, parent_dir_hash, copy_file_path);
             }
 
             try this.appendFileAssumeCapacity(
@@ -396,25 +444,15 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 file_path,
                 hash,
                 loader,
-                parent_watch_item,
+                parent_dir_hash,
                 copy_file_path,
             );
 
-            if (FeatureFlags.verbose_watcher) {
-                if (!autowatch_parent_dir or parent_watch_item == null) {
-                    if (strings.indexOf(file_path, this.cwd)) |i| {
-                        Output.prettyln("<r><d>Added <b>./{s}<r><d> to watch list.<r>", .{file_path[i + this.cwd.len ..]});
-                    } else {
-                        Output.prettyln("<r><d>Added <b>{s}<r><d> to watch list.<r>", .{file_path});
-                    }
+            if (comptime FeatureFlags.verbose_watcher) {
+                if (strings.indexOf(file_path, this.cwd)) |i| {
+                    Output.prettyln("<r><d>Added <b>./{s}<r><d> to watch list.<r>", .{file_path[i + this.cwd.len ..]});
                 } else {
-                    if (strings.indexOf(file_path, this.cwd)) |i| {
-                        Output.prettyln("<r><d>Added <b>./{s}<r><d> to watch list (and parent dir).<r>", .{
-                            file_path[i + this.cwd.len ..],
-                        });
-                    } else {
-                        Output.prettyln("<r><d>Added <b>{s}<r><d> to watch list (and parent dir).<r>", .{file_path});
-                    }
+                    Output.prettyln("<r><d>Added <b>{s}<r><d> to watch list.<r>", .{file_path});
                 }
             }
         }

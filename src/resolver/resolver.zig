@@ -11,6 +11,7 @@ const PackageJSON = @import("./package_json.zig").PackageJSON;
 usingnamespace @import("./data_url.zig");
 pub const DirInfo = @import("./dir_info.zig");
 const Expr = @import("../js_ast.zig").Expr;
+const HTTPWatcher = @import("../http.zig").Watcher;
 const Wyhash = std.hash.Wyhash;
 
 const hash_map_v2 = @import("../hash_map_v2.zig");
@@ -276,6 +277,9 @@ pub fn NewResolver(cache_files: bool) type {
 
         debug_logs: ?DebugLogs = null,
         elapsed: i128 = 0, // tracing
+
+        onStartWatchingDirectory: ?fn (*HTTPWatcher, dir_path: string, dir_fd: StoredFileDescriptorType) void = null,
+        onStartWatchingDirectoryCtx: ?*HTTPWatcher = null,
 
         caches: CacheSet,
 
@@ -586,7 +590,7 @@ pub fn NewResolver(cache_files: bool) type {
                             }
                         } else if (dir.abs_real_path.len > 0) {
                             path.non_symlink = path.text;
-                            var parts = [_]string{ dir.abs_real_path, query.entry.base };
+                            var parts = [_]string{ dir.abs_real_path, query.entry.base() };
                             var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
                             var out = r.fs.absBuf(&parts, &buf);
                             const symlink = try Fs.FileSystem.FilenameStore.instance.append(@TypeOf(out), out);
@@ -688,7 +692,7 @@ pub fn NewResolver(cache_files: bool) type {
                     }
 
                     return Result{
-                        .path_pair = .{ .primary = Path.init(r.fs.filename_store.append(@TypeOf(abs_path), abs_path) catch unreachable) },
+                        .path_pair = .{ .primary = Path.init(r.fs.dirname_store.append(@TypeOf(abs_path), abs_path) catch unreachable) },
                         .is_external = true,
                     };
                 }
@@ -703,7 +707,7 @@ pub fn NewResolver(cache_files: bool) type {
                             if (r.checkBrowserMap(pkg, rel_path)) |remap| {
                                 // Is the path disabled?
                                 if (remap.len == 0) {
-                                    var _path = Path.init(r.fs.filename_store.append(string, abs_path) catch unreachable);
+                                    var _path = Path.init(r.fs.dirname_store.append(string, abs_path) catch unreachable);
                                     _path.is_disabled = true;
                                     return Result{
                                         .path_pair = PathPair{
@@ -996,14 +1000,14 @@ pub fn NewResolver(cache_files: bool) type {
                 // this might leak
                 if (!std.fs.path.isAbsolute(result.base_url)) {
                     const paths = [_]string{ file_dir, result.base_url };
-                    result.base_url = r.fs.filename_store.append(string, r.fs.absBuf(&paths, &tsconfig_base_url_buf)) catch unreachable;
+                    result.base_url = r.fs.dirname_store.append(string, r.fs.absBuf(&paths, &tsconfig_base_url_buf)) catch unreachable;
                 }
             }
 
             if (result.paths.count() > 0 and (result.base_url_for_paths.len == 0 or !std.fs.path.isAbsolute(result.base_url_for_paths))) {
                 // this might leak
                 const paths = [_]string{ file_dir, result.base_url };
-                result.base_url_for_paths = r.fs.filename_store.append(string, r.fs.absBuf(&paths, &tsconfig_base_url_buf)) catch unreachable;
+                result.base_url_for_paths = r.fs.dirname_store.append(string, r.fs.absBuf(&paths, &tsconfig_base_url_buf)) catch unreachable;
             }
 
             return result;
@@ -1544,7 +1548,7 @@ pub fn NewResolver(cache_files: bool) type {
                         if (lookup.entry.kind(rfs) == .file) {
                             const parts = [_]string{ path, base };
                             const out_buf_ = r.fs.absBuf(&parts, &index_buf);
-                            const out_buf = r.fs.filename_store.append(@TypeOf(out_buf_), out_buf_) catch unreachable;
+                            const out_buf = r.fs.dirname_store.append(@TypeOf(out_buf_), out_buf_) catch unreachable;
                             if (r.debug_logs) |*debug| {
                                 debug.addNoteFmt("Found file: \"{s}\"", .{out_buf}) catch unreachable;
                             }
@@ -1657,6 +1661,7 @@ pub fn NewResolver(cache_files: bool) type {
                 debug.addNoteFmt("Attempting to load \"{s}\" as a directory", .{path}) catch {};
                 debug.increaseIndent() catch {};
             }
+
             defer {
                 if (r.debug_logs) |*debug| {
                     debug.decreaseIndent() catch {};
@@ -1813,8 +1818,8 @@ pub fn NewResolver(cache_files: bool) type {
                     if (r.debug_logs) |*debug| {
                         debug.addNoteFmt("Found file \"{s}\" ", .{base}) catch {};
                     }
-                    const abs_path_parts = [_]string{ query.entry.dir, query.entry.base };
-                    const abs_path = r.fs.filename_store.append(string, r.fs.absBuf(&abs_path_parts, &TemporaryBuffer.ExtensionPathBuf)) catch unreachable;
+                    const abs_path_parts = [_]string{ query.entry.dir, query.entry.base() };
+                    const abs_path = r.fs.dirname_store.append(string, r.fs.absBuf(&abs_path_parts, &TemporaryBuffer.ExtensionPathBuf)) catch unreachable;
 
                     return LoadResult{
                         .path = abs_path,
@@ -1843,7 +1848,7 @@ pub fn NewResolver(cache_files: bool) type {
 
                         // now that we've found it, we allocate it.
                         return LoadResult{
-                            .path = r.fs.filename_store.append(@TypeOf(buffer), buffer) catch unreachable,
+                            .path = r.fs.dirname_store.append(@TypeOf(buffer), buffer) catch unreachable,
                             .diff_case = query.diff_case,
                             .dirname_fd = entries.fd,
                         };
@@ -1885,7 +1890,7 @@ pub fn NewResolver(cache_files: bool) type {
                                 }
 
                                 return LoadResult{
-                                    .path = r.fs.filename_store.append(@TypeOf(buffer), buffer) catch unreachable,
+                                    .path = r.fs.dirname_store.append(@TypeOf(buffer), buffer) catch unreachable,
                                     .diff_case = query.diff_case,
                                     .dirname_fd = entries.fd,
                                 };
@@ -1900,6 +1905,15 @@ pub fn NewResolver(cache_files: bool) type {
 
             if (r.debug_logs) |*debug| {
                 debug.addNoteFmt("Failed to find \"{s}\" ", .{path}) catch {};
+            }
+
+            if (comptime FeatureFlags.watch_directories) {
+                // For existent directories which don't find a match
+                // Start watching it automatically,
+                // onStartWatchingDirectory fn decides whether to actually watch.
+                if (r.onStartWatchingDirectoryCtx) |ctx| {
+                    r.onStartWatchingDirectory.?(ctx, entries.dir, entries.fd);
+                }
             }
             return null;
         }
@@ -1957,7 +1971,7 @@ pub fn NewResolver(cache_files: bool) type {
                             } else if (parent.?.abs_real_path.len > 0) {
                                 // this might leak a little i'm not sure
                                 const parts = [_]string{ parent.?.abs_real_path, base };
-                                symlink = r.fs.filename_store.append(string, r.fs.joinBuf(&parts, &dir_info_uncached_filename_buf)) catch unreachable;
+                                symlink = r.fs.dirname_store.append(string, r.fs.joinBuf(&parts, &dir_info_uncached_filename_buf)) catch unreachable;
 
                                 if (r.debug_logs) |*logs| {
                                     try logs.addNote(std.fmt.allocPrint(r.allocator, "Resolved symlink \"{s}\" to \"{s}\"", .{ path, symlink }) catch unreachable);

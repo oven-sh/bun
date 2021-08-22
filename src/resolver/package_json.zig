@@ -368,7 +368,7 @@ pub const PackageJSON = struct {
         // TODO: remove this extra copy
         const parts = [_]string{ input_path, "package.json" };
         const package_json_path_ = r.fs.abs(&parts);
-        const package_json_path = r.fs.filename_store.append(@TypeOf(package_json_path_), package_json_path_) catch unreachable;
+        const package_json_path = r.fs.dirname_store.append(@TypeOf(package_json_path_), package_json_path_) catch unreachable;
 
         const entry = r.caches.fs.readFile(
             r.fs,

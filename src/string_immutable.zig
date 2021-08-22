@@ -38,21 +38,25 @@ pub fn cat(allocator: *std.mem.Allocator, first: string, second: string) !string
 
 // 30 character string or a slice
 pub const StringOrTinyString = struct {
-    const Buffer = [30]u8;
+    pub const Max = 30;
+    const Buffer = [Max]u8;
+
     remainder_buf: Buffer = undefined,
     remainder_len: u7 = 0,
     is_tiny_string: u1 = 0,
     pub inline fn slice(this: *const StringOrTinyString) []const u8 {
-        switch (this.is_tiny_string) {
-            1 => {
-                return this.remainder_buf[0..this.remainder_len];
-            },
-            // TODO: maybe inline the readIntNative call?
-            0 => {
-                const ptr = @intToPtr([*]const u8, std.mem.readIntNative(usize, this.remainder_buf[0..@sizeOf(usize)]));
-                return ptr[0..std.mem.readIntNative(usize, this.remainder_buf[@sizeOf(usize) .. @sizeOf(usize) * 2])];
-            },
-        }
+        // This is a switch expression instead of a statement to make sure it uses the faster assembly
+        return switch (this.is_tiny_string) {
+            1 => this.remainder_buf[0..this.remainder_len],
+            0 => @intToPtr([*]const u8, std.mem.readIntNative(usize, this.remainder_buf[0..@sizeOf(usize)]))[0..std.mem.readIntNative(usize, this.remainder_buf[@sizeOf(usize) .. @sizeOf(usize) * 2])],
+        };
+    }
+
+    pub fn deinit(this: *StringOrTinyString, allocator: *std.mem.Allocator) void {
+        if (this.is_tiny_string == 1) return;
+
+        // var slice_ = this.slice();
+        // allocator.free(slice_);
     }
 
     pub fn init(stringy: string) StringOrTinyString {

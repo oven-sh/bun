@@ -124,8 +124,9 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
         pub var backing_buf_used: u16 = 0;
         const Allocator = std.mem.Allocator;
         const Self = @This();
+        const OverflowListType = std.ArrayListUnmanaged(ValueType);
 
-        overflow_list: std.ArrayListUnmanaged(ValueType),
+        overflow_list: OverflowListType,
         allocator: *Allocator,
 
         pub var instance: Self = undefined;
@@ -133,7 +134,7 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
         pub fn init(allocator: *std.mem.Allocator) *Self {
             instance = Self{
                 .allocator = allocator,
-                .overflow_list = std.ArrayListUnmanaged(ValueType){},
+                .overflow_list = OverflowListType{},
             };
 
             return &instance;
@@ -533,32 +534,30 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, store_keys: boo
             }
         }
 
-        pub fn remove(self: *Self, key: string) IndexType {
+        pub fn remove(self: *Self, key: []const u8) void {
             const _key = Wyhash.hash(Seed, key);
-            const index = self.index.get(_key) orelse return;
-            switch (index) {
-                Unassigned.index => {
-                    self.index.remove(_key);
-                },
-                NotFound.index => {
-                    self.index.remove(_key);
-                },
-                0...max_index => {
-                    if (hasDeinit(ValueType)) {
-                        backing_buf[index].deinit();
-                    }
-                    backing_buf[index] = undefined;
-                },
-                else => {
-                    const i = index - count;
-                    if (hasDeinit(ValueType)) {
-                        self.overflow_list.items[i].deinit();
-                    }
-                    self.overflow_list.items[index - count] = undefined;
-                },
-            }
+            _ = self.index.remove(_key);
+            // const index = self.index.get(_key) orelse return;
+            // switch (index) {
+            //     Unassigned.index, NotFound.index => {
+            //         self.index.remove(_key);
+            //     },
+            //     0...max_index => {
+            //         if (comptime hasDeinit(ValueType)) {
+            //             backing_buf[index].deinit();
+            //         }
 
-            return index;
+            //         backing_buf[index] = undefined;
+            //     },
+            //     else => {
+            //         const i = index - count;
+            //         if (hasDeinit(ValueType)) {
+            //             self.overflow_list.items[i].deinit();
+            //         }
+            //         self.overflow_list.items[index - count] = undefined;
+            //     },
+            // }
+
         }
     };
     if (!store_keys) {
@@ -573,11 +572,14 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, store_keys: boo
         var key_list_buffer_used: usize = 0;
         var key_list_slices: [count][]u8 = undefined;
         var key_list_overflow: std.ArrayListUnmanaged([]u8) = undefined;
-
+        var instance_loaded = false;
         pub fn init(allocator: *std.mem.Allocator) *Self {
-            instance = Self{
-                .map = BSSMapType.init(allocator),
-            };
+            if (!instance_loaded) {
+                instance = Self{
+                    .map = BSSMapType.init(allocator),
+                };
+                instance_loaded = true;
+            }
 
             return &instance;
         }
@@ -660,7 +662,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, store_keys: boo
         }
 
         // For now, don't free the keys.
-        pub fn remove(self: *Self, key: string) IndexType {
+        pub fn remove(self: *Self, key: []const u8) void {
             return self.map.remove(key);
         }
     };
@@ -770,20 +772,17 @@ pub fn TBSSMap(comptime ValueType: type, comptime count: anytype, store_keys: bo
             }
         }
 
-        pub fn remove(self: *Self, key: string) IndexType {
+        pub fn remove(self: *Self, key: []const u8) IndexType {
             const _key = Wyhash.hash(Seed, key);
             const index = self.index.get(_key) orelse return;
+            defer _ = self.index.remove(_key);
+
             switch (index) {
-                Unassigned.index => {
-                    self.index.remove(_key);
-                },
-                NotFound.index => {
-                    self.index.remove(_key);
-                },
+                NotFound.index, Unassigned.index => {},
                 0...max_index => {
-                    if (hasDeinit(ValueType)) {
-                        backing_buf[index].deinit();
-                    }
+                    // if (hasDeinit(ValueType)) {
+                    //     backing_buf[index].deinit();
+                    // }
                     backing_buf[index] = undefined;
                 },
                 else => {

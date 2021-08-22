@@ -160,6 +160,10 @@ pub const FileSystem = struct {
         fd: StoredFileDescriptorType = 0,
         data: EntryMap,
 
+        pub fn removeEntry(dir: *DirEntry, name: string) !void {
+            dir.data.remove(name);
+        }
+
         pub fn addEntry(dir: *DirEntry, entry: std.fs.Dir.Entry) !void {
             var _kind: Entry.Kind = undefined;
             switch (entry.kind) {
@@ -179,10 +183,13 @@ pub const FileSystem = struct {
             }
             // entry.name only lives for the duration of the iteration
 
-            const name = try FileSystem.FilenameStore.instance.appendLowerCase(@TypeOf(entry.name), entry.name);
+            const name = if (entry.name.len >= strings.StringOrTinyString.Max)
+                strings.StringOrTinyString.init(try FileSystem.FilenameStore.instance.appendLowerCase(@TypeOf(entry.name), entry.name))
+            else
+                strings.StringOrTinyString.initLowerCase(entry.name);
 
-            const index = try EntryStore.instance.append(Entry{
-                .base = name,
+            const result = Entry{
+                .base_ = name,
                 .dir = dir.dir,
                 .mutex = Mutex.init(),
                 // Call "stat" lazily for performance. The "@material-ui/icons" package
@@ -193,9 +200,10 @@ pub const FileSystem = struct {
                     .symlink = "",
                     .kind = _kind,
                 },
-            });
+            };
+            const index = try EntryStore.instance.append(result);
 
-            try dir.data.put(name, index);
+            try dir.data.put(EntryStore.instance.at(index).?.base(), index);
         }
 
         pub fn updateDir(i: *DirEntry, dir: string) void {
@@ -242,11 +250,11 @@ pub const FileSystem = struct {
             const query = scratch_lookup_buffer[0 .. end + 1];
             const result_index = entry.data.get(query) orelse return null;
             const result = EntryStore.instance.at(result_index) orelse return null;
-            if (!strings.eql(result.base, query)) {
+            if (!strings.eql(result.base(), query)) {
                 return Entry.Lookup{ .entry = result, .diff_case = Entry.Lookup.DifferentCase{
                     .dir = entry.dir,
                     .query = _query,
-                    .actual = result.base,
+                    .actual = result.base(),
                 } };
             }
 
@@ -263,11 +271,11 @@ pub const FileSystem = struct {
 
             const result_index = entry.data.getWithHash(&query, query_hashed) orelse return null;
             const result = EntryStore.instance.at(result_index) orelse return null;
-            if (!strings.eqlComptime(result.base, query)) {
+            if (!strings.eqlComptime(result.base(), query)) {
                 return Entry.Lookup{ .entry = result, .diff_case = Entry.Lookup.DifferentCase{
                     .dir = entry.dir,
                     .query = &query,
-                    .actual = result.base,
+                    .actual = result.base(),
                 } };
             }
 
@@ -290,9 +298,13 @@ pub const FileSystem = struct {
     pub const Entry = struct {
         cache: Cache = Cache{},
         dir: string,
-        base: string,
+        base_: strings.StringOrTinyString,
         mutex: Mutex,
         need_stat: bool = true,
+
+        pub inline fn base(this: *const Entry) string {
+            return this.base_.slice();
+        }
 
         pub const Lookup = struct {
             entry: *Entry,
@@ -306,7 +318,8 @@ pub const FileSystem = struct {
         };
 
         pub fn deinit(e: *Entry, allocator: *std.mem.Allocator) void {
-            allocator.free(e.base);
+            e.base_.deinit(allocator);
+
             allocator.free(e.dir);
             allocator.free(e.cache.symlink);
             allocator.destroy(e);
@@ -325,7 +338,7 @@ pub const FileSystem = struct {
         pub fn kind(entry: *Entry, fs: *Implementation) Kind {
             if (entry.need_stat) {
                 entry.need_stat = false;
-                entry.cache = fs.kind(entry.dir, entry.base) catch unreachable;
+                entry.cache = fs.kind(entry.dir, entry.base()) catch unreachable;
             }
             return entry.cache.kind;
         }
@@ -333,7 +346,7 @@ pub const FileSystem = struct {
         pub fn symlink(entry: *Entry, fs: *Implementation) string {
             if (entry.need_stat) {
                 entry.need_stat = false;
-                entry.cache = fs.kind(entry.dir, entry.base) catch unreachable;
+                entry.cache = fs.kind(entry.dir, entry.base()) catch unreachable;
             }
             return entry.cache.symlink;
         }
@@ -503,6 +516,10 @@ pub const FileSystem = struct {
             return !(rfs.file_limit > 254 and rfs.file_limit > (FileSystem.max_fd + 1) * 2);
         }
 
+        pub fn bustEntriesCache(rfs: *RealFS, file_path: string) void {
+            rfs.entries.remove(file_path);
+        }
+
         // Always try to max out how many files we can keep open
         pub fn adjustUlimit() usize {
             var limit = std.os.getrlimit(.NOFILE) catch return 32;
@@ -634,7 +651,7 @@ pub const FileSystem = struct {
             // This custom map implementation:
             // - Preallocates a fixed amount of directory name space
             // - Doesn't store directory names which don't exist.
-            pub const Map = allocators.TBSSMap(EntriesOption, Preallocate.Counts.dir_entry, false, 128);
+            pub const Map = allocators.BSSMap(EntriesOption, Preallocate.Counts.dir_entry, false, 128);
         };
 
         // Limit the number of files open simultaneously to avoid ulimit issues
@@ -693,7 +710,7 @@ pub const FileSystem = struct {
         }
 
         fn readDirectoryError(fs: *RealFS, dir: string, err: anyerror) !*EntriesOption {
-            if (FeatureFlags.disable_entry_cache) {
+            if (FeatureFlags.enable_entry_cache) {
                 fs.entries_mutex.lock();
                 defer fs.entries_mutex.unlock();
                 var get_or_put_result = try fs.entries.getOrPut(dir);
@@ -716,7 +733,7 @@ pub const FileSystem = struct {
             var dir = _dir;
             var cache_result: ?allocators.Result = null;
 
-            if (FeatureFlags.disable_entry_cache) {
+            if (FeatureFlags.enable_entry_cache) {
                 fs.entries_mutex.lock();
                 defer fs.entries_mutex.unlock();
 
@@ -750,7 +767,7 @@ pub const FileSystem = struct {
                 return fs.readDirectoryError(dir, err) catch unreachable;
             };
 
-            if (FeatureFlags.disable_entry_cache) {
+            if (FeatureFlags.enable_entry_cache) {
                 fs.entries_mutex.lock();
                 defer fs.entries_mutex.unlock();
                 const result = EntriesOption{
@@ -1081,4 +1098,3 @@ test "PathName.init" {
 }
 
 test {}
-

@@ -62,7 +62,7 @@ pub fn getEntryPointsWithBuffer(this: *const Router, allocator: *std.mem.Allocat
         );
         if (children.len == 0) {
             if (Fs.FileSystem.DirEntry.EntryStore.instance.at(this.routes.routes.items(.entry_index)[i])) |entry| {
-                str_len += entry.base.len + entry.dir.len;
+                str_len += entry.base().len + entry.dir.len;
             }
         }
     }
@@ -78,10 +78,10 @@ pub fn getEntryPointsWithBuffer(this: *const Router, allocator: *std.mem.Allocat
         if (children.len == 0) {
             if (Fs.FileSystem.DirEntry.EntryStore.instance.at(this.routes.routes.items(.entry_index)[i])) |entry| {
                 if (comptime absolute) {
-                    var parts = [_]string{ entry.dir, entry.base };
+                    var parts = [_]string{ entry.dir, entry.base() };
                     entry_points[entry_point_i] = this.fs.absBuf(&parts, remain);
                 } else {
-                    var parts = [_]string{ "/", this.config.asset_prefix_path, this.fs.relativeTo(entry.dir), entry.base };
+                    var parts = [_]string{ "/", this.config.asset_prefix_path, this.fs.relativeTo(entry.dir), entry.base() };
                     entry_points[entry_point_i] = this.fs.joinBuf(&parts, remain);
                 }
 
@@ -118,24 +118,24 @@ pub fn loadRoutes(
         var iter = entries.data.iterator();
         outer: while (iter.next()) |entry_ptr| {
             const entry = Fs.FileSystem.DirEntry.EntryStore.instance.at(entry_ptr.value) orelse continue;
-            if (entry.base[0] == '.') {
+            if (entry.base()[0] == '.') {
                 continue :outer;
             }
 
             switch (entry.kind(fs)) {
                 .dir => {
                     inline for (banned_dirs) |banned_dir| {
-                        if (strings.eqlComptime(entry.base, comptime banned_dir)) {
+                        if (strings.eqlComptime(entry.base(), comptime banned_dir)) {
                             continue :outer;
                         }
                     }
 
-                    var abs_parts = [_]string{ entry.dir, entry.base };
+                    var abs_parts = [_]string{ entry.dir, entry.base() };
                     if (resolver.readDirInfoIgnoreError(this.fs.abs(&abs_parts))) |_dir_info| {
                         const dir_info: *const DirInfo = _dir_info;
 
                         var route: Route = Route.parse(
-                            entry.base,
+                            entry.base(),
                             Fs.PathName.init(entry.dir[this.config.dir.len..]).dirWithTrailingSlash(),
                             "",
                             entry_ptr.value,
@@ -160,14 +160,14 @@ pub fn loadRoutes(
                 },
 
                 .file => {
-                    const extname = std.fs.path.extension(entry.base);
+                    const extname = std.fs.path.extension(entry.base());
                     // exclude "." or ""
                     if (extname.len < 2) continue;
 
                     for (this.config.extensions) |_extname| {
                         if (strings.eql(extname[1..], _extname)) {
                             var route = Route.parse(
-                                entry.base,
+                                entry.base(),
                                 // we extend the pointer length by one to get it's slash
                                 entry.dir.ptr[this.config.dir.len..entry.dir.len],
                                 extname,
@@ -411,7 +411,7 @@ pub const RouteMap = struct {
                 return null;
             } else {
                 if (Fs.FileSystem.DirEntry.EntryStore.instance.at(head.entry_index)) |entry| {
-                    var parts = [_]string{ entry.dir, entry.base };
+                    var parts = [_]string{ entry.dir, entry.base() };
                     const file_path = Fs.FileSystem.instance.absBuf(&parts, this.matched_route_buf);
 
                     match_result = Match{
@@ -421,7 +421,7 @@ pub const RouteMap = struct {
                         .hash = head.full_hash,
                         .query_string = this.url_path.query_string,
                         .pathname = this.url_path.pathname,
-                        .basename = entry.base,
+                        .basename = entry.base(),
                         .file_path = file_path,
                     };
 
@@ -500,14 +500,14 @@ pub const RouteMap = struct {
         if (path.len == 0) {
             if (this.index) |index| {
                 const entry = Fs.FileSystem.DirEntry.EntryStore.instance.at(routes_slice.items(.entry_index)[index]).?;
-                const parts = [_]string{ entry.dir, entry.base };
+                const parts = [_]string{ entry.dir, entry.base() };
 
                 return Match{
                     .params = params,
                     .name = routes_slice.items(.name)[index],
                     .path = routes_slice.items(.path)[index],
                     .pathname = url_path.pathname,
-                    .basename = entry.base,
+                    .basename = entry.base(),
                     .hash = index_route_hash,
                     .file_path = Fs.FileSystem.instance.absBuf(&parts, file_path_buf),
                     .query_string = url_path.query_string,
@@ -531,14 +531,14 @@ pub const RouteMap = struct {
                 for (children) |child_hash, i| {
                     if (child_hash == index_route_hash) {
                         const entry = Fs.FileSystem.DirEntry.EntryStore.instance.at(routes_slice.items(.entry_index)[i + route.children.offset]).?;
-                        const parts = [_]string{ entry.dir, entry.base };
+                        const parts = [_]string{ entry.dir, entry.base() };
 
                         return Match{
                             .params = params,
                             .name = routes_slice.items(.name)[i],
                             .path = routes_slice.items(.path)[i],
                             .pathname = url_path.pathname,
-                            .basename = entry.base,
+                            .basename = entry.base(),
                             .hash = child_hash,
                             .file_path = Fs.FileSystem.instance.absBuf(&parts, file_path_buf),
                             .query_string = url_path.query_string,
@@ -550,14 +550,14 @@ pub const RouteMap = struct {
                 // /foo/bar => /foo/bar.js
             } else {
                 const entry = Fs.FileSystem.DirEntry.EntryStore.instance.at(route.entry_index).?;
-                const parts = [_]string{ entry.dir, entry.base };
+                const parts = [_]string{ entry.dir, entry.base() };
                 return Match{
                     .params = params,
                     .name = route.name,
                     .path = route.path,
                     .redirect_path = if (redirect) path else null,
                     .hash = full_hash,
-                    .basename = entry.base,
+                    .basename = entry.base(),
                     .pathname = url_path.pathname,
                     .query_string = url_path.query_string,
                     .file_path = Fs.FileSystem.instance.absBuf(&parts, file_path_buf),

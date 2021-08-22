@@ -1740,7 +1740,13 @@ pub const Server = struct {
         const file_paths = slice.items(.file_path);
         var counts = slice.items(.count);
         const kinds = slice.items(.kind);
+        const hashes = slice.items(.hash);
+        const parent_hashes = slice.items(.parent_hash);
+        const fds = slice.items(.fd);
         var header = fbs.getWritten();
+        defer ctx.watcher.flushEvictions();
+        defer Output.flush();
+
         for (events) |event| {
             const file_path = file_paths[event.index];
             const update_count = counts[event.index] + 1;
@@ -1760,29 +1766,46 @@ pub const Server = struct {
                 }
             }
 
-            defer Output.flush();
-
             switch (kind) {
                 .file => {
-                    const change_message = Api.WebsocketMessageFileChangeNotification{
-                        .id = id,
-                        .loader = (ctx.bundler.options.loaders.get(path.ext) orelse .file).toAPI(),
-                    };
+                    if (event.op.delete or event.op.rename) {
+                        var rfs: *Fs.FileSystem.RealFS = &ctx.bundler.fs.fs;
+                        ctx.watcher.removeAtIndex(
+                            event.index,
+                            0,
+                            &.{},
+                            .file,
+                        );
 
-                    var content_writer = ByteApiWriter.init(&content_fbs);
-                    change_message.encode(&content_writer) catch unreachable;
-                    const change_buf = content_fbs.getWritten();
-                    const written_buf = filechange_buf[0 .. header.len + change_buf.len];
-                    RequestContext.WebsocketHandler.broadcast(written_buf) catch |err| {
-                        Output.prettyln("Error writing change notification: {s}", .{@errorName(err)});
-                    };
+                        if (comptime FeatureFlags.verbose_watcher) {
+                            Output.prettyln("<r><d>File changed: {s}<r>", .{ctx.bundler.fs.relativeTo(file_path)});
+                        }
+                    } else {
+                        const change_message = Api.WebsocketMessageFileChangeNotification{
+                            .id = id,
+                            .loader = (ctx.bundler.options.loaders.get(path.ext) orelse .file).toAPI(),
+                        };
 
-                    Output.prettyln("<r><d>Detected file change: {s}", .{ctx.bundler.fs.relativeTo(file_path)});
+                        var content_writer = ByteApiWriter.init(&content_fbs);
+                        change_message.encode(&content_writer) catch unreachable;
+                        const change_buf = content_fbs.getWritten();
+                        const written_buf = filechange_buf[0 .. header.len + change_buf.len];
+                        RequestContext.WebsocketHandler.broadcast(written_buf) catch |err| {
+                            Output.prettyln("Error writing change notification: {s}<r>", .{@errorName(err)});
+                        };
+                        Output.prettyln("<r><d>Detected edit: {s}<r>", .{ctx.bundler.fs.relativeTo(file_path)});
+                    }
                 },
                 .directory => {
                     var rfs: *Fs.FileSystem.RealFS = &ctx.bundler.fs.fs;
                     rfs.bustEntriesCache(file_path);
-                    Output.prettyln("<r><d>Detected folder change: {s}", .{ctx.bundler.fs.relativeTo(file_path)});
+                    ctx.bundler.resolver.dir_cache.remove(file_path);
+
+                    if (event.op.delete or event.op.rename) {
+                        ctx.watcher.removeAtIndex(event.index, hashes[event.index], parent_hashes, .directory);
+                    }
+
+                    Output.prettyln("<r><d>Folder change: {s}<r>", .{ctx.bundler.fs.relativeTo(file_path)});
                 },
             }
         }
@@ -2051,6 +2074,20 @@ pub const Server = struct {
 
     pub fn initWatcher(server: *Server) !void {
         server.watcher = try Watcher.init(server, server.bundler.fs, server.allocator);
+
+        if (comptime FeatureFlags.watch_directories) {
+            server.bundler.resolver.onStartWatchingDirectoryCtx = server.watcher;
+            server.bundler.resolver.onStartWatchingDirectory = onMaybeWatchDirectory;
+        }
+    }
+
+    pub fn onMaybeWatchDirectory(watch: *Watcher, file_path: string, dir_fd: StoredFileDescriptorType) void {
+        // We don't want to watch:
+        // - Directories outside the root directory
+        // - Directories inside node_modules
+        if (std.mem.indexOf(u8, file_path, "node_modules") == null and std.mem.indexOf(u8, file_path, watch.fs.top_level_dir) != null) {
+            watch.addDirectory(dir_fd, file_path, Watcher.getHash(file_path), false) catch {};
+        }
     }
 
     pub fn start(allocator: *std.mem.Allocator, options: Api.TransformOptions) !void {

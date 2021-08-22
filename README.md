@@ -1,236 +1,132 @@
-# A fast bundler & JS Runtime built for developer iteration cycle
+# Bun: a fast bundler & transpiler for developing web software
 
-Bun is a fast bundler, transpiler, and runtime environment for JavaScript & TypeScript. It also supports bundling CSS.
+Bun is a new:
 
-### Performance optimizations
+- JavaScript/TypeScript/JSX transpiler (`bun ./file.tsx`)
+- JavaScript bundler (run `bun bun ./file1.ts ./file2.jsx` and it will flatten node_module imports into one `.bun`)
+- Development server with 60fps Hot Module Reloading (& WIP support for React Fast Refresh) (run `bun dev`)
+- CSS bundler `bun ./file.css` (it flattens `@import` into one file)
+- JavaScript Runtime Environment (powered by JavaScriptCore, what WebKit/Safari uses)
 
-Here are some techniques Bun uses to go fast. Most are small wins. Some are big.
+All in one simple tool.
 
-#### Compare comptime-known strings by nearest `(u64 || u32 || u16 || u8)`-sized integer
+Most of Bun is written in [Zig](https://), a fast low-level programming language with manual memory management.
 
-Parsers & lexers search source code for many tokens. For JavaScript, some of these include:
+## Install:
 
-- `yield`
-- `await`
-- `for`
-- `of`
-- `in`
-- `while`
-
-You get the idea.
-
-When you know the string you're looking for ahead of time, it's faster to compare multiple characters at a time than a single character.
-
-<details>
-
-<summary>Here's a function that does this. This is used in many places throughout the code.</summary>
-
-```zig
-pub fn eqlComptime(self: string, comptime alt: anytype) bool {
-    switch (comptime alt.len) {
-        0 => {
-            @compileError("Invalid size passed to eqlComptime");
-        },
-        2 => {
-            const check = std.mem.readIntNative(u16, alt[0..alt.len]);
-            return self.len == alt.len and std.mem.readIntNative(u16, self[0..2]) == check;
-        },
-        1, 3 => {
-            if (alt.len != self.len) {
-                return false;
-            }
-
-            inline for (alt) |c, i| {
-                if (self[i] != c) return false;
-            }
-            return true;
-        },
-        4 => {
-            const check = std.mem.readIntNative(u32, alt[0..alt.len]);
-            return self.len == alt.len and std.mem.readIntNative(u32, self[0..4]) == check;
-        },
-        6 => {
-            const first = std.mem.readIntNative(u32, alt[0..4]);
-            const second = std.mem.readIntNative(u16, alt[4..6]);
-
-            return self.len == alt.len and first == std.mem.readIntNative(u32, self[0..4]) and
-                second == std.mem.readIntNative(u16, self[4..6]);
-        },
-        5, 7 => {
-            const check = std.mem.readIntNative(u32, alt[0..4]);
-            if (self.len != alt.len or std.mem.readIntNative(u32, self[0..4]) != check) {
-                return false;
-            }
-            const remainder = self[4..];
-            inline for (alt[4..]) |c, i| {
-                if (remainder[i] != c) return false;
-            }
-            return true;
-        },
-        8 => {
-            const check = std.mem.readIntNative(u64, alt[0..alt.len]);
-            return self.len == alt.len and std.mem.readIntNative(u64, self[0..8]) == check;
-        },
-        9...11 => {
-            const first = std.mem.readIntNative(u64, alt[0..8]);
-
-            if (self.len != alt.len or first != std.mem.readIntNative(u64, self[0..8])) {
-                return false;
-            }
-
-            inline for (alt[8..]) |c, i| {
-                if (self[i + 8] != c) return false;
-            }
-            return true;
-        },
-        12 => {
-            const first = std.mem.readIntNative(u64, alt[0..8]);
-            const second = std.mem.readIntNative(u32, alt[8..12]);
-            return (self.len == alt.len) and first == std.mem.readIntNative(u64, self[0..8]) and second == std.mem.readIntNative(u32, self[8..12]);
-        },
-        13...15 => {
-            const first = std.mem.readIntNative(u64, alt[0..8]);
-            const second = std.mem.readIntNative(u32, alt[8..12]);
-
-            if (self.len != alt.len or first != std.mem.readIntNative(u64, self[0..8]) or second != std.mem.readIntNative(u32, self[8..12])) {
-                return false;
-            }
-
-            inline for (alt[13..]) |c, i| {
-                if (self[i + 13] != c) return false;
-            }
-
-            return true;
-        },
-        16 => {
-            const first = std.mem.readIntNative(u64, alt[0..8]);
-            const second = std.mem.readIntNative(u64, alt[8..15]);
-            return (self.len == alt.len) and first == std.mem.readIntNative(u64, self[0..8]) and second == std.mem.readIntNative(u64, self[8..16]);
-        },
-        else => {
-            @compileError(alt ++ " is too long.");
-        },
-    }
-}
+```
+# Global install is recommended so bun appears in your $PATH
+npm install -g bun-cli
 ```
 
-</details>
+# Getting started
 
-#### Skip decoding UTF-16 when safe
+## Using Bun with Next.js
 
-JavaScript engines represent strings as UTF-16 byte arrays. That means every character in a string occupies at least 2 bytes of memory. Most applications (and documents) use UTF-8, which uses at least 1 byte of memory.
-
-Most JavaScript bundlers store JavaScript strings as UTF-16, either because the bundler is written in JavaScript, or to simplify the code.
-
-It's much faster to reuse the memory from reading the contents of the JavaScript source and store the byte offset + length into the source file, than allocating a new string for each JavaScript string. This is safe when the string doesn't have a codepoint > 127, which mostly means `A-Za-z0-9` and punctuation. Most JavaScript strings don't use lots of emoji, so this saves from many tiny allocations.
-
-#### CSS ~Parser~ Scanner
-
-Bun (currently) does not have a CSS Parser. But, it still processes CSS.
-
-Most CSS processors work something like this:
-
-1. Copy the CSS source code to a byte array
-2. Iterate through every unicode codepoint, generating tokens (lexing)
-3. Convert each token into an AST node (parsing)
-4. Perform 1 or more passes over the AST. For tools like PostCSS, every plugin typically adds 1+ passes over the AST. (visiting)
-5. Print the source code (printing)
-
-Bun's CSS Scanner scans, rewrites, and prints CSS in a single pass without generating an AST. It works like this:
-
-1. Copy the CSS source code to a byte array
-2. Iterate through every unicode codepoint, searching for lines starting with `@import` or property values with `url(`
-3. For each url or import:
-   1. Flush everything before the url or import
-   2. Resolve the import URL
-   3. Write the import URL
-4. When end of file is reached, flush to disk.
-
-Bun's CSS Scanner is about 56x faster than PostCSS with the `postcss-import` and `postcss-url` plugins enabled (and sourcemaps disabled). On the other hand, auto-prefixing and minification won't work. Minifying whitespace is possible with some modifications, but minifiying CSS syntax correctly needs an AST.
-
-This approach is fast, but not without tradeoffs!
-
-Bun's CSS Scanner is based on esbuild's CSS Lexer. Thank you @evanwallace.
-
-#### Compile-time generated JavaScript Parsers
-
-At the time of writing, there are 8 different comptime-generated variations of Bun's JavaScript parser.
-
-```zig
-pub fn NewParser(
-    comptime is_typescript_enabled: bool,
-    comptime is_jsx_enabled: bool,
-    comptime only_scan_imports_and_do_not_visit: bool,
-) type {
-```
-
-When this is `false`, branches that only apply to parsing TypeScript are removed.
-
-```zig
- comptime is_typescript_enabled: bool,
-```
-
-**Performance impact: +2%?**
+In your project folder root (where `package.json` is):
 
 ```bash
-❯ hyperfine "../../build/macos-x86_64/bun node_modules/react-dom/cjs/react-dom.development.js --resolve=disable" "../../bun.before-comptime-js-parser node_modules/react-dom/cjs/react-dom.development.js --resolve=disable" --min-runs=500
-Benchmark #1: ../../build/macos-x86_64/bun node_modules/react-dom/cjs/react-dom.development.js --resolve=disable
-  Time (mean ± σ):      25.1 ms ±   1.1 ms    [User: 20.4 ms, System: 3.1 ms]
-  Range (min … max):    23.5 ms …  31.7 ms    500 runs
-
-Benchmark #2: ../../bun.before-comptime-js-parser node_modules/react-dom/cjs/react-dom.development.js --resolve=disable
-  Time (mean ± σ):      25.6 ms ±   1.3 ms    [User: 20.9 ms, System: 3.1 ms]
-  Range (min … max):    24.1 ms …  39.7 ms    500 runs
-'../../build/macos-x86_64/bun node_modules/react-dom/cjs/react-dom.development.js --resolve=disable' ran
-1.02 ± 0.07 times faster than '../../bun.before-comptime-js-parser node_modules/react-dom/cjs/react-dom.development.js --resolve=disable'
+npm install bun-framework-next path buffer
+bun bun --use next
+open http://localhost:3000; bun dev --origin "http://localhost:3000"
 ```
 
-When this is `false`, branches that only apply to parsing JSX are removed.
+Here are some features of Next.js that **aren't supported** yet:
 
-```zig
- comptime is_jsx_enabled: bool,
+- `getStaticProps`,`getServerSideProps`, `getInitialProps`, `getStaticPaths`. These functions will not be called.
+- locales, zones, `assetPrefix` (workaround: change `--origin \"http://localhsot:3000/assetPrefixInhere\"`)
+- `next/image` - `<Image />` component
+
+Currently, any time you import new dependencies from `node_modules`, you will need to re-run `bun bun --use next`. This will eventually be automatic.
+
+## Using Bun without a framework or with Create React App
+
+In your project folder root (where `package.json` is):
+
+```bash
+bun bun ./entry-point-1.js ./entry-point-2.jsx
+bun dev ./entry-point-1.js ./entry-point-2.jsx --origin https://localhost:3000
 ```
 
-This is only used for application code when generating `node_modules.jsb`. This skips the visiting pass. It reduces parsing time by about 30%, but the source code cannot be printed without visiting. It's only useful for scanning `import` and `require`.
+By default, `bun dev` will look for any HTML files in the `public` directory and serve that. For browsers navigating to the page, the `.html` file extension is optional in the URL, and `index.html` will automatically rewrite for the directory.
 
-```zig
- comptime only_scan_imports_and_do_not_visit: bool,
+Here are examples of routing from `public/` and how they're matched:
+| File Path | Dev Server URL |
+| --------- | ------------- |
+| public/dir/index.html | /dir |
+| public/index.html | / |
+| public/hi.html | /hi |
+| public/file.html | /file |
+| public/font/Inter.woff2 | /font/Inter.woff2 |
+
+For **Create React App** users, note that Bun does not transpile HTML yet, so `%PUBLIC_URL%` will need to be replaced with '/'`.
+
+From there, Bun relies on the filesystem for mapping dev server paths to source files. All URL paths are relative to the project root (where `package.json` is).
+
+Here are examples of routing source code file paths:
+
+| File Path                 | Dev Server URL             |
+| ------------------------- | -------------------------- |
+| src/components/Button.tsx | /src/components/Button.tsx |
+| src/index.tsx             | /src/index.tsx             |
+| pages/index.js            | /pages/index.js            |
+
+## Using Bun without `bun dev`
+
+`bun dev` is the recommended way to use Bun. Today, Bun is primarily intended to speed up your frontend development iteration cycle. `bun` does not implement a JavaScript minifier yet, and does not implement all the optimizations other tools do for shrinking bundle size. That means you probably should look to other tools for bundling in production. To make this split smoother, Bun strives for ecosystem compatibility (e.g. by integrating with Next.js)
+
+```
+bun bun ./entry-point-1.js ./entry-point-2.jsx
+bun build ./entry-point-1.js ./entry-point-2.jsx --origin https://localhost:3000 --outdir=./out
 ```
 
-At runtime, Bun chooses the appropriate JavaScript parser to use based on the `loader`. In practical terms, this moves all the branches checking whether a parsing step should be run from inside several tight loops to just once, before parsing starts.
+You can also pass Bun a folder, and it will assume all JavaScript-like files are entry-points. This lets you use Bun's native filesystem router without a framework.
 
-#### Max out per-process file handle limit automatically, leave file handles open.
+For a `routes` directory with these files:
 
-**Performance impact: +5%**
+- `routes/index.js`
+- `routes/hello/bar.js`
+- `routes/hello/baz.jsx`
+- `routes/wut/wat.jsx`
 
-It turns out, lots of time is spent opening and closing file handles. This is feature flagged off on Windows.
+This would be the corresponding command:
 
-This also enabled a kqueue-based File System watcher on macOS. FSEvents, the more common macOS File System watcher uses kqueue internally to watch directories. Watching file handles is faster than directories. It was surprising to learn that none of the popular filesystem watchers for Node.js adjust the process ulimit, leaving many developers to deal with "too many open file handles" errors.
+```bash
+bun bun ./routes
+bun build ./routes --outdir=./out
+```
 
-### Architecture
+# The Bun Bundling Format
 
-#### The Bun Bundle Format
+`bun bun` generates a `node_modules.bun` and (optionally) a `node_modules.server.bun`. This is a new binary file format that makes it very efficient to serialize/deserialize `node_modules`. With a 2.4 GHz 8-Core Intel Core i9, metadata for
 
-TODO: document
+Unlike many other bundlers, `Bun` only bundles `node_modules`. This is great for development, where most people add/update packages much less frequently than app code (which is also great for caching in browsers). To make that distinction clear, the filename defaults to `node_modules.bun`. We recommend storing `node_modules.bun` in your git repository. Since it's a binary file, it shouldn't clutter your git history and it will make your entire frontend development team move faster if they don't have to re-bundle dependencies.
 
-### Hot Module Reloading
+# Credits
 
-Bun's Hot Module Reloader uses a custom binary protocol that's around 8x more space efficient than other bundlers.
+- While written in Zig instead of Go, Bun's JS transpiler & CSS lexer source code is based off of @evanw's esbuild project. @evanw did a fantastic job with esbuild.
 
-- File change notifications cost 9 bytes.
-- Build metadata costs 13 bytes + length of the module path that was rebuilt + size of the built file.
+# License
 
-For comparison, Vite's HMR implementation uses 104 bytes + length of the module path that was rebuilt (at the time of writing)
+Bun itself is MIT-licensed.
 
-#### Instant CSS
+However, JavaScriptCore (and WebKit) is LGPL-2 and Bun statically links it.
 
-When using `<link rel="stylesheet">`, Bun HMR "just works", with zero configuration and without modifying HTML.
+Per LGPL2:
 
-Here's how:
+> (1) If you statically link against an LGPL'd library, you must also provide your application in an object (not necessarily source) format, so that a user has the opportunity to modify the library and relink the application.
 
-- On page load, CSS files are built per request
-- When you make a change to a local CSS file, a file change notification is pushed over the websocket connection to the browser (HMR client)
-- For the first update, instead of asking for a new file to build, it asks for a list of files that the file within the `<link rel="stylesheet">` imports, and any those `@import`, recursively. If `index.css` imports `link.css` and `link.css` imports `colors.css`, that list will include `index.css`, `link.css`, and `colors.css`.
-- Preserving import order, the link tags are replaced in a single DOM update. This time, an additional query string flag is added `?noimport` which tells the Bun CSS Scanner to remove any `@import` statements from the built CSS file.
+You can find the patched version of WebKit used by Bun here: https://github.com/jarred-sumner/webkit. If you would like to relink Bun with changes:
 
-While this approach today is fast, there are more scalable alternatives to large codebases worth considering (such as, a bundling format that supports loading individual files unbundled). This may change in the near future.
+- `git submodule update --init --recursive`
+- `make jsc`
+- `zig build`
+
+This compiles JavaScriptCore, compiles Bun's `.cpp` bindings for JavaScriptCore (which are the object files using JavaScriptCore) and outputs a new `bun` binary with your changes.
+
+To successfully run `zig build`, you will need to install a fork of Zig you can find here: https://github.com/jarred-sumner/zig/tree/jarred/zig-sloppy.
+
+Bun also statically links:
+
+- `libicu`, which can be found here: https://github.com/unicode-org/icu/blob/main/icu4c/LICENSE
+- [`picohttp`](https://github.com/h2o/picohttpparser), which is dual-licensed under the Perl License or the MIT License

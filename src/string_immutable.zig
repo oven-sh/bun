@@ -36,6 +36,126 @@ pub fn cat(allocator: *std.mem.Allocator, first: string, second: string) !string
     return out;
 }
 
+// 30 character string or a slice
+pub const StringOrTinyString = struct {
+    const Buffer = [30]u8;
+    remainder_buf: Buffer = undefined,
+    remainder_len: u7 = 0,
+    is_tiny_string: u1 = 0,
+    pub inline fn slice(this: *const StringOrTinyString) []const u8 {
+        switch (this.is_tiny_string) {
+            1 => {
+                return this.remainder_buf[0..this.remainder_len];
+            },
+            // TODO: maybe inline the readIntNative call?
+            0 => {
+                const ptr = @intToPtr([*]const u8, std.mem.readIntNative(usize, this.remainder_buf[0..@sizeOf(usize)]));
+                return ptr[0..std.mem.readIntNative(usize, this.remainder_buf[@sizeOf(usize) .. @sizeOf(usize) * 2])];
+            },
+        }
+    }
+
+    pub fn init(stringy: string) StringOrTinyString {
+        switch (stringy.len) {
+            0 => {
+                return StringOrTinyString{ .is_tiny_string = 1, .remainder_len = 0 };
+            },
+            1...(@sizeOf(Buffer)) => {
+                @setRuntimeSafety(false);
+                var tiny = StringOrTinyString{
+                    .is_tiny_string = 1,
+                    .remainder_len = @truncate(u7, stringy.len),
+                };
+                std.mem.copy(u8, &tiny.remainder_buf, stringy);
+                return tiny;
+            },
+            else => {
+                var tiny = StringOrTinyString{
+                    .is_tiny_string = 0,
+                    .remainder_len = 0,
+                };
+                std.mem.writeIntNative(usize, tiny.remainder_buf[0..@sizeOf(usize)], @ptrToInt(stringy.ptr));
+                std.mem.writeIntNative(usize, tiny.remainder_buf[@sizeOf(usize) .. @sizeOf(usize) * 2], stringy.len);
+                return tiny;
+            },
+        }
+    }
+
+    pub fn initLowerCase(stringy: string) StringOrTinyString {
+        switch (stringy.len) {
+            0 => {
+                return StringOrTinyString{ .is_tiny_string = 1, .remainder_len = 0 };
+            },
+            1...(@sizeOf(Buffer)) => {
+                @setRuntimeSafety(false);
+                var tiny = StringOrTinyString{
+                    .is_tiny_string = 1,
+                    .remainder_len = @truncate(u7, stringy.len),
+                };
+                _ = copyLowercase(stringy, &tiny.remainder_buf);
+                return tiny;
+            },
+            else => {
+                var tiny = StringOrTinyString{
+                    .is_tiny_string = 0,
+                    .remainder_len = 0,
+                };
+                std.mem.writeIntNative(usize, tiny.remainder_buf[0..@sizeOf(usize)], @ptrToInt(stringy.ptr));
+                std.mem.writeIntNative(usize, tiny.remainder_buf[@sizeOf(usize) .. @sizeOf(usize) * 2], stringy.len);
+                return tiny;
+            },
+        }
+    }
+};
+
+pub fn copyLowercase(in: string, out: []u8) string {
+    @setRuntimeSafety(false);
+    var in_slice = in;
+    var out_slice = out[0..in.len];
+
+    begin: while (out_slice.len > 0) {
+        @setRuntimeSafety(false);
+        for (in_slice) |c, i| {
+            @setRuntimeSafety(false);
+            switch (c) {
+                'A'...'Z' => {
+                    @setRuntimeSafety(false);
+                    @memcpy(out.ptr, in_slice.ptr, i);
+                    out_slice[i] = std.ascii.toLower(c);
+                    const end = i + 1;
+                    if (end >= out_slice.len) break :begin;
+                    in_slice = in_slice[end..];
+                    out_slice = out_slice[end..];
+                    continue :begin;
+                },
+                else => {},
+            }
+        }
+
+        @memcpy(out_slice.ptr, in_slice.ptr, in_slice.len);
+        break :begin;
+    }
+
+    return out[0..in.len];
+}
+
+test "StringOrTinyString" {
+    const correct: string = "helloooooooo";
+    const big = "wawaweewaverylargeihaveachairwawaweewaverylargeihaveachairwawaweewaverylargeihaveachairwawaweewaverylargeihaveachair";
+    var str = StringOrTinyString.init(correct);
+    try std.testing.expectEqualStrings(correct, str.slice());
+
+    str = StringOrTinyString.init(big);
+    try std.testing.expectEqualStrings(big, str.slice());
+    try std.testing.expect(@sizeOf(StringOrTinyString) == 32);
+}
+
+test "StringOrTinyString Lowercase" {
+    const correct: string = "HELLO!!!!!";
+    var str = StringOrTinyString.initLowerCase(correct);
+    try std.testing.expectEqualStrings("hello!!!!!", str.slice());
+}
+
 pub fn startsWith(self: string, str: string) bool {
     if (str.len > self.len) {
         return false;

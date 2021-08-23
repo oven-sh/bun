@@ -137,15 +137,32 @@
     {
       "type": "lldb",
       "request": "launch",
+      "name": "Mixed case resolve",
+      "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+      "args": [
+        "build",
+        "./index.js",
+        "--origin=http://localhost:9000/",
+        // "--use=./bun-framework-next",
+        "--platform=browser"
+      ],
+      "cwd": "${workspaceFolder}/examples/lotta-modules/",
+      "console": "internalConsole"
+    },
+
+    {
+      "type": "lldb",
+      "request": "launch",
       "name": "Demo Build .bun",
       "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
       "args": [
         "bun",
+        "./index.js",
         "--origin=http://localhost:9000/",
-        "--use=bun-framework-next",
+        // "--use=./bun-framework-next",
         "--platform=browser"
       ],
-      "cwd": "${workspaceFolder}/examples/hello-next",
+      "cwd": "${workspaceFolder}/examples/lotta-modules/",
       "console": "internalConsole"
     },
     {

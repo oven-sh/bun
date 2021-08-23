@@ -46,7 +46,7 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
         };
 
         block: Block,
-        overflow_ptrs: [10_000]*Block = undefined,
+        overflow_ptrs: [4096 * 3]*Block = undefined,
         overflow: []*Block = &([_]*Block{}),
         overflow_used: usize = 0,
         allocator: *Allocator,
@@ -3840,6 +3840,19 @@ pub const Scope = struct {
 
     strict_mode: StrictModeKind = StrictModeKind.sloppy_mode,
 
+    pub fn reset(this: *Scope) void {
+        this.children.clearRetainingCapacity();
+        this.generated.clearRetainingCapacity();
+        this.members.clearRetainingCapacity();
+        this.parent = null;
+        this.id = 0;
+        this.label_ref = null;
+        this.label_stmt_is_loop = false;
+        this.contains_direct_eval = false;
+        this.strict_mode = .sloppy_mode;
+        this.kind = .block;
+    }
+
     // Do not make this a packed struct
     // Two hours of debugging time lost to that.
     // It causes a crash due to undefined memory
@@ -3880,17 +3893,6 @@ pub const Scope = struct {
 
     pub fn kindStopsHoisting(s: *Scope) bool {
         return @enumToInt(s.kind) >= @enumToInt(Kind.entry);
-    }
-
-    pub fn initPtr(allocator: *std.mem.Allocator) !*Scope {
-        var scope = try allocator.create(Scope);
-        scope.* = Scope{
-            .members = @TypeOf(scope.members).init(allocator),
-            .children = @TypeOf(scope.children).init(allocator),
-            .generated = @TypeOf(scope.generated).init(allocator),
-            .parent = null,
-        };
-        return scope;
     }
 };
 

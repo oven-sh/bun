@@ -156,3 +156,38 @@ pub fn stat_absolute(path: [:0]const u8) StatError!Stat {
         .ctime = @as(i128, ctime.tv_sec) * std.time.ns_per_s + ctime.tv_nsec,
     };
 }
+
+pub const struct_fstore = extern struct {
+    fst_flags: c_uint,
+    fst_posmode: c_int,
+    fst_offset: off_t,
+    fst_length: off_t,
+    fst_bytesalloc: off_t,
+};
+pub const fstore_t = struct_fstore;
+
+pub const F_ALLOCATECONTIG = @as(c_int, 0x00000002);
+pub const F_ALLOCATEALL = @as(c_int, 0x00000004);
+pub const F_PEOFPOSMODE = @as(c_int, 3);
+pub const F_VOLPOSMODE = @as(c_int, 4);
+
+pub fn preallocate_file(fd: os.fd_t, offset: off_t, len: off_t) !void {
+    var fstore = zeroes(fstore_t);
+    fstore.fst_flags = F_ALLOCATECONTIG;
+    fstore.fst_posmode = F_PEOFPOSMODE;
+    fstore.fst_offset = 0;
+    fstore.fst_length = len + offset;
+
+    // Based on https://api.kde.org/frameworks/kcoreaddons/html/posix__fallocate__mac_8h_source.html
+    var rc = os.system.fcntl(fd, F_PREALLOCATE, &fstore);
+
+    switch (rc) {
+        0 => return,
+        else => {
+            fstore.fst_flags = F_ALLOCATEALL;
+            rc = os.system.fcntl(fd, F_PREALLOCATE, &fstore);
+        },
+    }
+
+    std.mem.doNotOptimizeAway(&fstore);
+}

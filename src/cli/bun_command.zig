@@ -172,8 +172,11 @@ pub const BunCommand = struct {
                     try log.print(Output.errorWriter());
                 } else {
                     var elapsed = @divTrunc(std.time.nanoTimestamp() - ctx.start_time, @as(i128, std.time.ns_per_ms));
-                    var bundle = NodeModuleBundle.init(node_modules, allocator);
-                    bundle.printSummary();
+                    const print_summary = !(ctx.args.no_summary orelse false);
+                    if (print_summary) {
+                        var bundle = NodeModuleBundle.init(node_modules, allocator);
+                        bundle.printSummary();
+                    }
                     const indent = comptime " ";
                     Output.prettyln(indent ++ "<d>{d:6}ms elapsed", .{@intCast(u32, elapsed)});
 

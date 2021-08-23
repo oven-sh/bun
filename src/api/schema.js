@@ -1071,6 +1071,10 @@ function decodeTransformOptions(bb) {
       result["router"] = decodeRouteConfig(bb);
       break;
 
+    case 23:
+      result["no_summary"] = !!bb.readByte();
+      break;
+
     default:
       throw new Error("Attempted to parse invalid message");
     }
@@ -1238,6 +1242,12 @@ bb.writeByte(encoded);
   if (value != null) {
     bb.writeByte(22);
     encodeRouteConfig(value, bb);
+  }
+
+  var value = message["no_summary"];
+  if (value != null) {
+    bb.writeByte(23);
+    bb.writeByte(value);
   }
   bb.writeByte(0);
 

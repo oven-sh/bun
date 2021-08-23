@@ -7,7 +7,7 @@ const options = @import("options.zig");
 const alloc = @import("alloc.zig");
 const rename = @import("renamer.zig");
 const runtime = @import("runtime.zig");
-
+const Lock = @import("./lock.zig").Lock;
 const Api = @import("./api/schema.zig").Api;
 const fs = @import("fs.zig");
 usingnamespace @import("global.zig");
@@ -3796,8 +3796,10 @@ const FileWriterInternal = struct {
     pub fn done(
         ctx: *FileWriterInternal,
     ) anyerror!void {
-        _ = try ctx.file.writeAll(buffer.toOwnedSliceLeaky());
-        buffer.reset();
+        defer buffer.reset();
+        const result = buffer.toOwnedSliceLeaky();
+
+        _ = try ctx.file.writeAll(result);
     }
 
     pub fn flush(
@@ -3953,4 +3955,70 @@ pub fn printCommonJS(
     try printer.writer.done();
 
     return @intCast(usize, std.math.max(printer.writer.written, 0));
+}
+
+pub const WriteResult = struct {
+    off: u32,
+    len: usize,
+    end_off: u32,
+};
+
+pub fn printCommonJSThreaded(
+    comptime Writer: type,
+    _writer: Writer,
+    tree: Ast,
+    symbols: js_ast.Symbol.Map,
+    source: *const logger.Source,
+    ascii_only: bool,
+    opts: Options,
+    comptime LinkerType: type,
+    linker: ?*LinkerType,
+    lock: *Lock,
+    comptime GetPosType: type,
+    getter: GetPosType,
+    comptime getPos: fn (ctx: GetPosType) anyerror!u64,
+) !WriteResult {
+    const PrinterType = NewPrinter(false, Writer, LinkerType, true, false);
+    var writer = _writer;
+    var printer = try PrinterType.init(
+        writer,
+        &tree,
+        source,
+        symbols,
+        opts,
+        linker,
+    );
+    for (tree.parts) |part| {
+        for (part.stmts) |stmt| {
+            try printer.printStmt(stmt);
+            if (printer.writer.getError()) {} else |err| {
+                return err;
+            }
+        }
+    }
+
+    // Add a couple extra newlines at the end
+    printer.writer.print(@TypeOf("\n\n"), "\n\n");
+
+    var result: WriteResult = .{ .off = 0, .len = 0, .end_off = 0 };
+    {
+        defer lock.unlock();
+        lock.lock();
+        result.off = @truncate(u32, try getPos(getter));
+        if (comptime isMac) {
+            // Don't bother preallocate the file if it's less than 1 KB. Preallocating is potentially two syscalls
+            if (printer.writer.written > 1024) {
+                try C.preallocate_file(
+                    getter.handle,
+                    @intCast(std.os.off_t, 0),
+                    @intCast(std.os.off_t, printer.writer.written),
+                );
+            }
+        }
+        try printer.writer.done();
+        result.end_off = @truncate(u32, try getPos(getter));
+    }
+
+    result.len = @intCast(usize, std.math.max(printer.writer.written, 0));
+    return result;
 }

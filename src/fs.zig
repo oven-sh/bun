@@ -13,8 +13,6 @@ const hash_map = @import("hash_map.zig");
 
 // pub const FilesystemImplementation = @import("fs_impl.zig");
 
-threadlocal var scratch_lookup_buffer: [256]u8 = undefined;
-
 pub const Preallocate = struct {
     pub const Counts = struct {
         pub const dir_entry: usize = 512;
@@ -184,12 +182,18 @@ pub const FileSystem = struct {
             // entry.name only lives for the duration of the iteration
 
             const name = if (entry.name.len >= strings.StringOrTinyString.Max)
+                strings.StringOrTinyString.init(try FileSystem.FilenameStore.instance.append(@TypeOf(entry.name), entry.name))
+            else
+                strings.StringOrTinyString.init(entry.name);
+
+            const name_lowercased = if (entry.name.len >= strings.StringOrTinyString.Max)
                 strings.StringOrTinyString.init(try FileSystem.FilenameStore.instance.appendLowerCase(@TypeOf(entry.name), entry.name))
             else
                 strings.StringOrTinyString.initLowerCase(entry.name);
 
             const result = Entry{
                 .base_ = name,
+                .base_lowercase_ = name_lowercased,
                 .dir = dir.dir,
                 .mutex = Mutex.init(),
                 // Call "stat" lazily for performance. The "@material-ui/icons" package
@@ -201,9 +205,18 @@ pub const FileSystem = struct {
                     .kind = _kind,
                 },
             };
-            const index = try EntryStore.instance.append(result);
+            const stored = try EntryStore.instance.appendGet(result);
 
-            try dir.data.put(EntryStore.instance.at(index).?.base(), index);
+            const stored_name = stored.value.base();
+
+            try dir.data.put(stored.value.base_lowercase(), stored.index);
+            if (comptime FeatureFlags.verbose_fs) {
+                if (_kind == .dir) {
+                    Output.prettyln("   + {s}/", .{stored_name});
+                } else {
+                    Output.prettyln("   + {s}", .{stored_name});
+                }
+            }
         }
 
         pub fn updateDir(i: *DirEntry, dir: string) void {
@@ -219,6 +232,10 @@ pub const FileSystem = struct {
         }
 
         pub fn init(dir: string, allocator: *std.mem.Allocator) DirEntry {
+            if (comptime FeatureFlags.verbose_fs) {
+                Output.prettyln("\n  {s}", .{dir});
+            }
+
             return DirEntry{ .dir = dir, .data = EntryMap.init(allocator) };
         }
 
@@ -240,21 +257,18 @@ pub const FileSystem = struct {
 
         pub fn get(entry: *const DirEntry, _query: string) ?Entry.Lookup {
             if (_query.len == 0) return null;
-
-            var end: usize = 0;
+            var scratch_lookup_buffer: [256]u8 = undefined;
             std.debug.assert(scratch_lookup_buffer.len >= _query.len);
-            for (_query) |c, i| {
-                scratch_lookup_buffer[i] = std.ascii.toLower(c);
-                end = i;
-            }
-            const query = scratch_lookup_buffer[0 .. end + 1];
+
+            const query = strings.copyLowercase(_query, &scratch_lookup_buffer);
             const result_index = entry.data.get(query) orelse return null;
             const result = EntryStore.instance.at(result_index) orelse return null;
-            if (!strings.eql(result.base(), query)) {
+            const basename = result.base();
+            if (!strings.eql(basename, _query)) {
                 return Entry.Lookup{ .entry = result, .diff_case = Entry.Lookup.DifferentCase{
                     .dir = entry.dir,
                     .query = _query,
-                    .actual = result.base(),
+                    .actual = basename,
                 } };
             }
 
@@ -271,12 +285,17 @@ pub const FileSystem = struct {
 
             const result_index = entry.data.getWithHash(&query, query_hashed) orelse return null;
             const result = EntryStore.instance.at(result_index) orelse return null;
-            if (!strings.eqlComptime(result.base(), query)) {
-                return Entry.Lookup{ .entry = result, .diff_case = Entry.Lookup.DifferentCase{
-                    .dir = entry.dir,
-                    .query = &query,
-                    .actual = result.base(),
-                } };
+            const basename = result.base();
+
+            if (!strings.eqlComptime(basename, comptime query[0..query_str.len])) {
+                return Entry.Lookup{
+                    .entry = result,
+                    .diff_case = Entry.Lookup.DifferentCase{
+                        .dir = entry.dir,
+                        .query = &query,
+                        .actual = basename,
+                    },
+                };
             }
 
             return Entry.Lookup{ .entry = result, .diff_case = null };
@@ -299,11 +318,19 @@ pub const FileSystem = struct {
         cache: Cache = Cache{},
         dir: string,
         base_: strings.StringOrTinyString,
+
+        // Necessary because the hash table uses it as a key
+        base_lowercase_: strings.StringOrTinyString,
+
         mutex: Mutex,
         need_stat: bool = true,
 
         pub inline fn base(this: *const Entry) string {
             return this.base_.slice();
+        }
+
+        pub inline fn base_lowercase(this: *const Entry) string {
+            return this.base_lowercase_.slice();
         }
 
         pub const Lookup = struct {
@@ -464,7 +491,7 @@ pub const FileSystem = struct {
         entries_mutex: Mutex = Mutex.init(),
         entries: *EntriesOption.Map,
         allocator: *std.mem.Allocator,
-        limiter: *Limiter,
+        // limiter: *Limiter,
         cwd: string,
         parent_fs: *FileSystem = undefined,
         file_limit: usize = 32,
@@ -533,9 +560,8 @@ pub const FileSystem = struct {
             return limit.cur;
         }
 
-        threadlocal var _entries_option_map: *EntriesOption.Map = undefined;
-        threadlocal var _entries_option_map_loaded: bool = false;
-        var __limiter: Limiter = undefined;
+        var _entries_option_map: *EntriesOption.Map = undefined;
+        var _entries_option_map_loaded: bool = false;
         pub fn init(
             allocator: *std.mem.Allocator,
             cwd: string,
@@ -545,7 +571,6 @@ pub const FileSystem = struct {
             if (!_entries_option_map_loaded) {
                 _entries_option_map = EntriesOption.Map.init(allocator);
                 _entries_option_map_loaded = true;
-                __limiter = Limiter.init(allocator, file_limit);
             }
 
             return RealFS{
@@ -554,7 +579,6 @@ pub const FileSystem = struct {
                 .cwd = cwd,
                 .file_limit = file_limit,
                 .file_quota = file_limit,
-                .limiter = &__limiter,
             };
         }
 
@@ -628,8 +652,8 @@ pub const FileSystem = struct {
         }
 
         pub fn modKey(fs: *RealFS, path: string) anyerror!ModKey {
-            fs.limiter.before();
-            defer fs.limiter.after();
+            // fs.limiter.before();
+            // defer fs.limiter.after();
             var file = try std.fs.openFileAbsolute(path, std.fs.File.OpenFlags{ .read = true });
             defer {
                 if (fs.needToCloseFiles()) {
@@ -690,8 +714,8 @@ pub const FileSystem = struct {
             _dir: string,
             handle: std.fs.Dir,
         ) !DirEntry {
-            fs.limiter.before();
-            defer fs.limiter.after();
+            // fs.limiter.before();
+            // defer fs.limiter.after();
 
             var iter: std.fs.Dir.Iterator = handle.iterate();
             var dir = DirEntry.init(_dir, fs.allocator);
@@ -710,9 +734,7 @@ pub const FileSystem = struct {
         }
 
         fn readDirectoryError(fs: *RealFS, dir: string, err: anyerror) !*EntriesOption {
-            if (FeatureFlags.enable_entry_cache) {
-                fs.entries_mutex.lock();
-                defer fs.entries_mutex.unlock();
+            if (comptime FeatureFlags.enable_entry_cache) {
                 var get_or_put_result = try fs.entries.getOrPut(dir);
                 var opt = try fs.entries.put(&get_or_put_result, EntriesOption{
                     .err = DirEntry.Err{ .original_err = err, .canonical_error = err },
@@ -732,11 +754,16 @@ pub const FileSystem = struct {
         pub fn readDirectory(fs: *RealFS, _dir: string, _handle: ?std.fs.Dir) !*EntriesOption {
             var dir = _dir;
             var cache_result: ?allocators.Result = null;
-
-            if (FeatureFlags.enable_entry_cache) {
+            if (comptime FeatureFlags.enable_entry_cache) {
                 fs.entries_mutex.lock();
-                defer fs.entries_mutex.unlock();
+            }
+            defer {
+                if (comptime FeatureFlags.enable_entry_cache) {
+                    fs.entries_mutex.unlock();
+                }
+            }
 
+            if (comptime FeatureFlags.enable_entry_cache) {
                 cache_result = try fs.entries.getOrPut(dir);
 
                 if (cache_result.?.hasCheckedIfExists()) {
@@ -767,14 +794,14 @@ pub const FileSystem = struct {
                 return fs.readDirectoryError(dir, err) catch unreachable;
             };
 
-            if (FeatureFlags.enable_entry_cache) {
-                fs.entries_mutex.lock();
-                defer fs.entries_mutex.unlock();
+            if (comptime FeatureFlags.enable_entry_cache) {
                 const result = EntriesOption{
                     .entries = entries,
                 };
 
-                return try fs.entries.put(&cache_result.?, result);
+                var out = try fs.entries.put(&cache_result.?, result);
+
+                return out;
             }
 
             temp_entries_option = EntriesOption{ .entries = entries };
@@ -865,8 +892,6 @@ pub const FileSystem = struct {
 
             const absolute_path_c: [:0]const u8 = outpath[0..entry_path.len :0];
 
-            fs.limiter.before();
-            defer fs.limiter.after();
             var stat = try C.lstat_absolute(absolute_path_c);
             const is_symlink = stat.kind == std.fs.File.Kind.SymLink;
             var _kind = stat.kind;
@@ -1018,45 +1043,6 @@ pub const Path = struct {
         name: string,
         is_parent_package: bool = false,
     };
-    // "/foo/bar/node_modules/react/index.js" => "index.js"
-    // "/foo/bar/node_modules/.pnpm/react@17.0.1/node_modules/react/index.js" => "index.js"
-    // "/css-stress-test/node_modules/next/dist/compiled/neo-async/async.js" => "dist/compiled/neo-async/async.js "
-    pub fn packageRelativePathString(this: *const Path, name: string) PackageRelative {
-        // TODO: we don't need to print this buffer, this is inefficient
-        var buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-        const search_path = std.fmt.bufPrint(&buffer, std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str ++ "{s}" ++ std.fs.path.sep_str, .{name}) catch return .{ .name = name, .path = this.text };
-        if (strings.lastIndexOf(this.canonicalNodeModuleText(), search_path)) |i| {
-            return .{ .path = this.canonicalNodeModuleText()[i + search_path.len ..], .name = name };
-        }
-
-        if (strings.lastIndexOf(this.text, search_path[0.."/node_modules/".len])) |i| {
-            const node_modules_relative = this.text[i + "/node_modules/".len ..];
-
-            if (strings.indexOfChar(node_modules_relative, std.fs.path.sep)) |j| {
-                return .{ .path = node_modules_relative[j + 1 ..], .name = node_modules_relative[0..j], .is_parent_package = true };
-            }
-        }
-
-        return .{ .path = this.text, .name = name };
-    }
-
-    pub fn nodeModulesRelativePathString(
-        this: *const Path,
-        name: string,
-    ) string {
-        // TODO: we don't need to print this buffer, this is inefficient
-        var buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-        const search_path = std.fmt.bufPrint(&buffer, std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str ++ "{s}" ++ std.fs.path.sep_str, .{name}) catch return this.text;
-        if (strings.lastIndexOf(this.canonicalNodeModuleText(), search_path)) |i| {
-            return this.canonicalNodeModuleText()[i + search_path.len - name.len - 1 ..];
-        }
-
-        return this.canonicalNodeModuleText();
-    }
-
-    pub inline fn canonicalNodeModuleText(this: *const Path) string {
-        return this.text;
-    }
 
     pub fn jsonStringify(self: *const @This(), options: anytype, writer: anytype) !void {
         return try std.json.stringify(self.text, options, writer);

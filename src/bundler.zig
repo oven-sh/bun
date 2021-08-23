@@ -18,7 +18,6 @@ const schema = @import("api/schema.zig");
 const Api = schema.Api;
 const _resolver = @import("./resolver/resolver.zig");
 const sync = @import("sync.zig");
-const ThreadPool = sync.ThreadPool;
 const ThreadSafeHashMap = @import("./thread_safe_hash_map.zig");
 const ImportRecord = @import("./import_record.zig").ImportRecord;
 const allocators = @import("./allocators.zig");
@@ -34,6 +33,7 @@ const Router = @import("./router.zig");
 const isPackagePath = _resolver.isPackagePath;
 const Css = @import("css_scanner.zig");
 const DotEnv = @import("./env_loader.zig");
+const Lock = @import("./lock.zig").Lock;
 pub const ServeResult = struct {
     file: options.OutputFile,
     mime_type: MimeType,
@@ -555,11 +555,21 @@ pub fn NewBundler(cache_files: bool) type {
                 const HashTable = std.StringHashMap(u32);
 
                 backing: HashTable,
+                mutex: Lock,
 
                 pub fn init(allocator: *std.mem.Allocator) PathMap {
                     return PathMap{
                         .backing = HashTable.init(allocator),
+                        .mutex = Lock.init(),
                     };
+                }
+
+                pub inline fn lock(this: *PathMap) void {
+                    this.mutex.lock();
+                }
+
+                pub inline fn unlock(this: *PathMap) void {
+                    this.mutex.unlock();
                 }
 
                 pub inline fn hashOf(str: string) u64 {
@@ -575,21 +585,111 @@ pub fn NewBundler(cache_files: bool) type {
                 }
             };
 
+            const BunQueue = sync.Channel(_resolver.Result, .Dynamic);
+
+            pub const ThreadPool = struct {
+                // Hardcode 512 as max number of threads for now.
+                workers: [512]Worker = undefined,
+                workers_used: u16 = 0,
+                cpu_count: u16 = 0,
+                wait_group: sync.WaitGroup = sync.WaitGroup.init(),
+
+                pub fn start(this: *ThreadPool, generator: *GenerateNodeModuleBundle) !void {
+                    this.cpu_count = @truncate(u16, @divFloor((try std.Thread.getCpuCount()) + 1, 2));
+
+                    while (this.workers_used < this.cpu_count) : (this.workers_used += 1) {
+                        this.workers[this.workers_used].wg = &this.wait_group;
+
+                        this.wait_group.add();
+                        try this.workers[this.workers_used].init(generator);
+                    }
+                }
+
+                pub fn wait(this: *ThreadPool) void {
+                    this.wait_group.wait();
+                }
+
+                pub const Task = struct {
+                    result: _resolver.Result,
+                    generator: *GenerateNodeModuleBundle,
+                };
+
+                pub const Worker = struct {
+                    thread_id: std.Thread.Id,
+                    thread: std.Thread,
+                    allocator: *std.mem.Allocator,
+                    wg: *sync.WaitGroup,
+                    generator: *GenerateNodeModuleBundle,
+                    data: *WorkerData = undefined,
+
+                    pub const WorkerData = struct {
+                        shared_buffer: MutableString = undefined,
+                        scan_pass_result: js_parser.ScanPassResult = undefined,
+                        templist: [100]_resolver.Result = undefined,
+                        templist_used: u8 = 0,
+
+                        pub fn deinit(this: *WorkerData, allocator: *std.mem.Allocator) void {
+                            this.shared_buffer.deinit();
+                            this.scan_pass_result.named_imports.deinit();
+                            this.scan_pass_result.import_records.deinit();
+                            allocator.destroy(this);
+                        }
+                    };
+
+                    pub fn init(worker: *Worker, generator: *GenerateNodeModuleBundle) !void {
+                        worker.generator = generator;
+                        worker.thread = try std.Thread.spawn(.{}, Worker.run, .{worker});
+                    }
+
+                    pub fn run(this: *Worker) void {
+                        defer this.wg.done();
+                        Output.Source.configureThread();
+                        this.thread_id = std.Thread.getCurrentId();
+                        defer Output.flush();
+
+                        this.loop() catch |err| {
+                            Output.prettyErrorln("<r><red>Error: {s}<r>", .{@errorName(err)});
+                        };
+                    }
+
+                    pub fn loop(this: *Worker) anyerror!void {
+                        // Delay initializing until we get the first thing.
+                        const first = (try this.generator.resolve_queue.tryReadItem()) orelse return;
+                        js_ast.Expr.Data.Store.create(this.generator.allocator);
+                        js_ast.Stmt.Data.Store.create(this.generator.allocator);
+                        this.data = this.generator.allocator.create(WorkerData) catch unreachable;
+                        this.data.* = WorkerData{};
+                        this.data.shared_buffer = try MutableString.init(this.generator.allocator, 0);
+                        this.data.scan_pass_result = js_parser.ScanPassResult.init(this.generator.allocator);
+                        defer this.data.deinit(this.generator.allocator);
+
+                        try this.generator.processFile(this, first);
+
+                        while (try this.generator.resolve_queue.tryReadItem()) |item| {
+                            try this.generator.processFile(this, item);
+                        }
+                    }
+                };
+            };
+            write_lock: Lock,
+
             module_list: std.ArrayList(Api.JavascriptBundledModule),
             package_list: std.ArrayList(Api.JavascriptBundledPackage),
             header_string_buffer: MutableString,
             // Just need to know if we've already enqueued this one
             resolved_paths: PathMap,
             package_list_map: std.AutoHashMap(u64, u32),
-            resolve_queue: std.fifo.LinearFifo(_resolver.Result, .Dynamic),
+            resolve_queue: *BunQueue,
             bundler: *ThisBundler,
             allocator: *std.mem.Allocator,
-            scan_pass_result: js_parser.ScanPassResult,
             tmpfile: std.fs.File,
             log: *logger.Log,
+            pool: *ThreadPool,
             tmpfile_byte_offset: u32 = 0,
             code_end_byte_offset: u32 = 0,
             has_jsx: bool = false,
+
+            list_lock: Lock = Lock.init(),
 
             pub const current_version: u32 = 1;
 
@@ -602,8 +702,9 @@ pub fn NewBundler(cache_files: bool) type {
                             this_module_resolved_path.value_ptr.* = module_data_.module_id;
                         }
                     }
-
-                    this.resolve_queue.writeItemAssumeCapacity(resolve);
+                    var result = resolve;
+                    result.path_pair.primary = Fs.Path.init(std.mem.span(try this.allocator.dupeZ(u8, resolve.path_pair.primary.text)));
+                    try this.resolve_queue.writeItem(result);
                 }
             }
 
@@ -671,21 +772,30 @@ pub fn NewBundler(cache_files: bool) type {
                 );
 
                 var tmpfile = try tmpdir.createFileZ(tmpname, .{ .read = isDebug, .exclusive = true });
-
-                var generator = GenerateNodeModuleBundle{
+                var generator = try allocator.create(GenerateNodeModuleBundle);
+                var queue = try allocator.create(BunQueue);
+                queue.* = BunQueue.init(allocator);
+                defer allocator.destroy(generator);
+                generator.* = GenerateNodeModuleBundle{
                     .module_list = std.ArrayList(Api.JavascriptBundledModule).init(allocator),
                     .package_list = std.ArrayList(Api.JavascriptBundledPackage).init(allocator),
-                    .scan_pass_result = js_parser.ScanPassResult.init(allocator),
                     .header_string_buffer = try MutableString.init(allocator, 0),
                     .allocator = allocator,
                     .resolved_paths = PathMap.init(allocator),
-                    .resolve_queue = std.fifo.LinearFifo(_resolver.Result, .Dynamic).init(allocator),
+                    .resolve_queue = queue,
                     .bundler = bundler,
                     .tmpfile = tmpfile,
                     .log = bundler.log,
                     .package_list_map = std.AutoHashMap(u64, u32).init(allocator),
+                    .pool = undefined,
+                    .write_lock = Lock.init(),
                 };
-                var this = &generator;
+                try generator.package_list_map.ensureTotalCapacity(128);
+                var pool = try allocator.create(ThreadPool);
+                pool.* = ThreadPool{};
+                generator.pool = pool;
+
+                var this = generator;
                 // Always inline the runtime into the bundle
                 try generator.appendBytes(&initial_header);
                 // If we try to be smart and rely on .written, it turns out incorrect
@@ -700,7 +810,6 @@ pub fn NewBundler(cache_files: bool) type {
                 if (bundler.log.level == .verbose) {
                     bundler.resolver.debug_logs = try DebugLogs.init(allocator);
                 }
-                temp_stmts_list = @TypeOf(temp_stmts_list).init(allocator);
                 const include_refresh_runtime = !this.bundler.options.production and this.bundler.options.jsx.supports_fast_refresh and bundler.options.platform.isWebLike();
 
                 const resolve_queue_estimate = bundler.options.entry_points.len +
@@ -712,7 +821,7 @@ pub fn NewBundler(cache_files: bool) type {
                     defer this.bundler.resetStore();
 
                     const entry_points = try router.getEntryPoints(allocator);
-                    try this.resolve_queue.ensureUnusedCapacity(entry_points.len + resolve_queue_estimate);
+                    try this.resolve_queue.buffer.ensureUnusedCapacity(entry_points.len + resolve_queue_estimate);
                     for (entry_points) |entry_point| {
                         const source_dir = bundler.fs.top_level_dir;
                         const resolved = try bundler.linker.resolver.resolve(source_dir, entry_point, .entry_point);
@@ -720,7 +829,7 @@ pub fn NewBundler(cache_files: bool) type {
                     }
                     this.bundler.resetStore();
                 } else {
-                    try this.resolve_queue.ensureUnusedCapacity(resolve_queue_estimate);
+                    try this.resolve_queue.buffer.ensureUnusedCapacity(resolve_queue_estimate);
                 }
 
                 for (bundler.options.entry_points) |entry_point| {
@@ -776,10 +885,8 @@ pub fn NewBundler(cache_files: bool) type {
                 }
 
                 this.bundler.resetStore();
-
-                while (this.resolve_queue.readItem()) |resolved| {
-                    try this.processFile(resolved);
-                }
+                try this.pool.start(this);
+                this.pool.wait();
 
                 if (this.log.errors > 0) {
                     // We stop here because if there are errors we don't know if the bundle is valid
@@ -980,18 +1087,19 @@ pub fn NewBundler(cache_files: bool) type {
             };
 
             fn processImportRecord(this: *GenerateNodeModuleBundle, import_record: ImportRecord) !void {}
-            threadlocal var package_key_buf: [512]u8 = undefined;
-            threadlocal var file_path_buf: [4096]u8 = undefined;
 
-            threadlocal var temp_stmts_list: std.ArrayList(js_ast.Stmt) = undefined;
-            fn processFile(this: *GenerateNodeModuleBundle, _resolve: _resolver.Result) !void {
+            pub fn processFile(this: *GenerateNodeModuleBundle, worker: *ThreadPool.Worker, _resolve: _resolver.Result) !void {
                 var resolve = _resolve;
                 if (resolve.is_external) return;
+
+                var shared_buffer = &worker.data.shared_buffer;
+                var scan_pass_result = &worker.data.scan_pass_result;
 
                 const is_from_node_modules = resolve.isLikelyNodeModule();
                 const loader = this.bundler.options.loaders.get(resolve.path_pair.primary.name.ext) orelse .file;
                 var bundler = this.bundler;
-                defer this.scan_pass_result.reset();
+                defer scan_pass_result.reset();
+                defer shared_buffer.reset();
                 defer this.bundler.resetStore();
                 var file_path = resolve.path_pair.primary;
                 var hasher = std.hash.Wyhash.init(0);
@@ -1006,12 +1114,12 @@ pub fn NewBundler(cache_files: bool) type {
                         .js,
                         .ts,
                         => {
-                            const entry = try bundler.resolver.caches.fs.readFile(
+                            const entry = try bundler.resolver.caches.fs.readFileShared(
                                 bundler.fs,
                                 file_path.text,
                                 resolve.dirname_fd,
-                                true,
                                 null,
+                                shared_buffer,
                             );
                             const source = logger.Source.initRecycledFile(Fs.File{ .path = file_path, .contents = entry.contents }, bundler.allocator) catch return null;
                             const source_dir = file_path.name.dirWithTrailingSlash();
@@ -1023,6 +1131,7 @@ pub fn NewBundler(cache_files: bool) type {
                             opts.transform_require_to_import = false;
                             opts.enable_bundling = true;
                             opts.warn_about_unbundled_modules = false;
+
                             var ast: js_ast.Ast = (try bundler.resolver.caches.js.parse(
                                 bundler.allocator,
                                 opts,
@@ -1030,78 +1139,88 @@ pub fn NewBundler(cache_files: bool) type {
                                 this.log,
                                 &source,
                             )) orelse return;
-
-                            for (ast.import_records) |*import_record, record_id| {
-
-                                // Don't resolve the runtime
-                                if (import_record.is_internal) {
-                                    continue;
+                            if (ast.import_records.len > 0) {
+                                this.resolved_paths.lock();
+                                defer {
+                                    this.resolved_paths.unlock();
                                 }
+                                {
+                                    for (ast.import_records) |*import_record, record_id| {
 
-                                if (bundler.linker.resolver.resolve(source_dir, import_record.path.text, import_record.kind)) |*_resolved_import| {
-                                    const resolved_import: *const _resolver.Result = _resolved_import;
-                                    if (resolved_import.is_external) {
-                                        continue;
-                                    }
+                                        // Don't resolve the runtime
+                                        if (import_record.is_internal) {
+                                            continue;
+                                        }
 
-                                    const absolute_path = resolved_import.path_pair.primary.text;
-                                    const get_or_put_result = try this.resolved_paths.getOrPut(absolute_path);
-
-                                    module_data = BundledModuleData.get(this, resolved_import) orelse continue;
-                                    import_record.module_id = module_data.module_id;
-                                    import_record.is_bundled = true;
-                                    import_record.path = Fs.Path.init(module_data.import_path);
-                                    get_or_put_result.value_ptr.* = import_record.module_id;
-
-                                    if (!get_or_put_result.found_existing) {
-                                        try this.resolve_queue.writeItem(_resolved_import.*);
-                                    }
-                                } else |err| {
-                                    if (comptime isDebug) {
-                                        Output.prettyErrorln("\n<r><red>{s}<r> on resolving \"{s}\" from \"{s}\"", .{
-                                            @errorName(err),
-                                            import_record.path.text,
-                                            file_path.text,
-                                        });
-                                    }
-
-                                    switch (err) {
-                                        error.ModuleNotFound => {
-                                            if (isPackagePath(import_record.path.text)) {
-                                                if (this.bundler.options.platform.isWebLike() and options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
-                                                    try this.log.addResolveError(
-                                                        &source,
-                                                        import_record.range,
-                                                        this.allocator,
-                                                        "Could not resolve Node.js builtin: \"{s}\".",
-                                                        .{import_record.path.text},
-                                                        import_record.kind,
-                                                    );
-                                                } else {
-                                                    try this.log.addResolveError(
-                                                        &source,
-                                                        import_record.range,
-                                                        this.allocator,
-                                                        "Could not resolve: \"{s}\". Maybe you need to \"npm install\" (or yarn/pnpm)?",
-                                                        .{import_record.path.text},
-                                                        import_record.kind,
-                                                    );
-                                                }
-                                            } else {
-                                                try this.log.addResolveError(
-                                                    &source,
-                                                    import_record.range,
-                                                    this.allocator,
-                                                    "Could not resolve: \"{s}\"",
-                                                    .{
-                                                        import_record.path.text,
-                                                    },
-                                                    import_record.kind,
-                                                );
+                                        if (bundler.linker.resolver.resolve(source_dir, import_record.path.text, import_record.kind)) |*_resolved_import| {
+                                            if (_resolved_import.is_external) {
+                                                continue;
                                             }
-                                        },
-                                        // assume other errors are already in the log
-                                        else => {},
+                                            _resolved_import.path_pair.primary = Fs.Path.init(std.mem.span(try this.allocator.dupeZ(u8, _resolved_import.path_pair.primary.text)));
+
+                                            const resolved_import: *const _resolver.Result = _resolved_import;
+
+                                            const absolute_path = resolved_import.path_pair.primary.text;
+
+                                            const get_or_put_result = try this.resolved_paths.getOrPut(absolute_path);
+
+                                            module_data = BundledModuleData.get(this, resolved_import) orelse continue;
+                                            import_record.module_id = module_data.module_id;
+                                            import_record.is_bundled = true;
+                                            import_record.path = Fs.Path.init(module_data.import_path);
+                                            get_or_put_result.value_ptr.* = import_record.module_id;
+
+                                            if (!get_or_put_result.found_existing) {
+                                                try this.resolve_queue.writeItem(_resolved_import.*);
+                                            }
+                                        } else |err| {
+                                            if (comptime isDebug) {
+                                                Output.prettyErrorln("\n<r><red>{s}<r> on resolving \"{s}\" from \"{s}\"", .{
+                                                    @errorName(err),
+                                                    import_record.path.text,
+                                                    file_path.text,
+                                                });
+                                            }
+
+                                            switch (err) {
+                                                error.ModuleNotFound => {
+                                                    if (isPackagePath(import_record.path.text)) {
+                                                        if (this.bundler.options.platform.isWebLike() and options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
+                                                            try this.log.addResolveError(
+                                                                &source,
+                                                                import_record.range,
+                                                                this.allocator,
+                                                                "Could not resolve Node.js builtin: \"{s}\".",
+                                                                .{import_record.path.text},
+                                                                import_record.kind,
+                                                            );
+                                                        } else {
+                                                            try this.log.addResolveError(
+                                                                &source,
+                                                                import_record.range,
+                                                                this.allocator,
+                                                                "Could not resolve: \"{s}\". Maybe you need to \"npm install\" (or yarn/pnpm)?",
+                                                                .{import_record.path.text},
+                                                                import_record.kind,
+                                                            );
+                                                        }
+                                                    } else {
+                                                        try this.log.addResolveError(
+                                                            &source,
+                                                            import_record.range,
+                                                            this.allocator,
+                                                            "Could not resolve: \"{s}\"",
+                                                            .{
+                                                                import_record.path.text,
+                                                            },
+                                                            import_record.kind,
+                                                        );
+                                                    }
+                                                },
+                                                // assume other errors are already in the log
+                                                else => {},
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -1211,43 +1330,55 @@ pub fn NewBundler(cache_files: bool) type {
 
                             // It should only have one part.
                             ast.parts = ast.parts[ast.parts.len - 1 ..];
-
-                            const code_offset = @truncate(u32, try this.tmpfile.getPos());
-                            const written = @truncate(
-                                u32,
-                                try js_printer.printCommonJS(
-                                    @TypeOf(writer),
-                                    writer,
-                                    ast,
-                                    js_ast.Symbol.Map.initList(symbols),
-                                    &source,
-                                    false,
-                                    js_printer.Options{
-                                        .to_module_ref = Ref.RuntimeRef,
-                                        .bundle_export_ref = ast.bundle_export_ref.?,
-                                        .source_path = file_path,
-                                        .externals = ast.externals,
-                                        .indent = 0,
-                                        .module_hash = module_id,
-                                        .runtime_imports = ast.runtime_imports,
-                                        .prepend_part_value = &prepend_part,
-                                        .prepend_part_key = if (needs_prepend_part) closure.body.stmts.ptr else null,
-                                    },
-                                    Linker,
-                                    &bundler.linker,
-                                ),
+                            var written: usize = undefined;
+                            var code_offset: u32 = 0;
+                            const write_result =
+                                try js_printer.printCommonJSThreaded(
+                                @TypeOf(writer),
+                                writer,
+                                ast,
+                                js_ast.Symbol.Map.initList(symbols),
+                                &source,
+                                false,
+                                js_printer.Options{
+                                    .to_module_ref = Ref.RuntimeRef,
+                                    .bundle_export_ref = ast.bundle_export_ref.?,
+                                    .source_path = file_path,
+                                    .externals = ast.externals,
+                                    .indent = 0,
+                                    .module_hash = module_id,
+                                    .runtime_imports = ast.runtime_imports,
+                                    .prepend_part_value = &prepend_part,
+                                    .prepend_part_key = if (needs_prepend_part) closure.body.stmts.ptr else null,
+                                },
+                                Linker,
+                                &bundler.linker,
+                                &this.write_lock,
+                                std.fs.File,
+                                this.tmpfile,
+                                std.fs.File.getPos,
                             );
-                            // Faster to _not_ do the syscall
-                            // But there's some off-by-one error somewhere and more reliable to just do the lseek
-                            this.tmpfile_byte_offset = @truncate(u32, try this.tmpfile.getPos());
-                            const code_length = this.tmpfile_byte_offset - code_offset;
-                            // std.debug.assert(code_length == written);
-                            var package_get_or_put_entry = try this.package_list_map.getOrPut(package.hash);
 
                             if (comptime isDebug) {
                                 Output.prettyln("{s}/{s} \n", .{ package.name, package_relative_path });
                                 Output.flush();
                             }
+
+                            code_offset = write_result.off;
+                            written = write_result.len;
+
+                            // Faster to _not_ do the syscall
+                            // But there's some off-by-one error somewhere and more reliable to just do the lseek
+                            this.tmpfile_byte_offset = write_result.end_off;
+                            const code_length = this.tmpfile_byte_offset - code_offset;
+                            // std.debug.assert(code_length == written);
+
+                            this.list_lock.lock();
+                            defer {
+                                this.list_lock.unlock();
+                            }
+
+                            var package_get_or_put_entry = try this.package_list_map.getOrPut(package.hash);
 
                             if (!package_get_or_put_entry.found_existing) {
                                 package_get_or_put_entry.value_ptr.* = @truncate(u32, this.package_list.items.len);
@@ -1287,12 +1418,12 @@ pub fn NewBundler(cache_files: bool) type {
                         .js,
                         .ts,
                         => {
-                            const entry = bundler.resolver.caches.fs.readFile(
+                            const entry = bundler.resolver.caches.fs.readFileShared(
                                 bundler.fs,
                                 file_path.text,
                                 resolve.dirname_fd,
-                                true,
                                 null,
+                                shared_buffer,
                             ) catch return;
 
                             const source = logger.Source.initRecycledFile(Fs.File{ .path = file_path, .contents = entry.contents }, bundler.allocator) catch return null;
@@ -1304,74 +1435,81 @@ pub fn NewBundler(cache_files: bool) type {
 
                             try bundler.resolver.caches.js.scan(
                                 bundler.allocator,
-                                &this.scan_pass_result,
+                                scan_pass_result,
                                 opts,
                                 bundler.options.define,
                                 this.log,
                                 &source,
                             );
 
-                            for (this.scan_pass_result.import_records.items) |*import_record, i| {
-                                if (import_record.is_internal) {
-                                    continue;
-                                }
-
-                                if (bundler.linker.resolver.resolve(source_dir, import_record.path.text, import_record.kind)) |*_resolved_import| {
-                                    const resolved_import: *const _resolver.Result = _resolved_import;
-                                    if (resolved_import.is_external) {
+                            {
+                                this.resolved_paths.lock();
+                                defer this.resolved_paths.unlock();
+                                for (scan_pass_result.import_records.items) |*import_record, i| {
+                                    if (import_record.is_internal) {
                                         continue;
                                     }
 
-                                    const get_or_put_result = try this.resolved_paths.getOrPut(resolved_import.path_pair.primary.text);
+                                    if (bundler.linker.resolver.resolve(source_dir, import_record.path.text, import_record.kind)) |*_resolved_import| {
+                                        if (_resolved_import.is_external) {
+                                            continue;
+                                        }
 
-                                    if (get_or_put_result.found_existing) {
-                                        continue;
-                                    }
+                                        const resolved_import: *const _resolver.Result = _resolved_import;
 
-                                    // Always enqueue unwalked import paths, but if it's not a node_module, we don't care about the hash
-                                    try this.resolve_queue.writeItem(_resolved_import.*);
+                                        const get_or_put_result = try this.resolved_paths.getOrPut(resolved_import.path_pair.primary.text);
 
-                                    if (BundledModuleData.get(this, resolved_import)) |module| {
-                                        get_or_put_result.value_ptr.* = module.module_id;
-                                    }
-                                } else |err| {
-                                    switch (err) {
-                                        error.ModuleNotFound => {
-                                            if (isPackagePath(import_record.path.text)) {
-                                                if (this.bundler.options.platform.isWebLike() and options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
-                                                    try this.log.addResolveError(
-                                                        &source,
-                                                        import_record.range,
-                                                        this.allocator,
-                                                        "Could not resolve Node.js builtin: \"{s}\".",
-                                                        .{import_record.path.text},
-                                                        import_record.kind,
-                                                    );
+                                        if (get_or_put_result.found_existing) {
+                                            continue;
+                                        }
+
+                                        _resolved_import.path_pair.primary = Fs.Path.init(std.mem.span(try this.allocator.dupeZ(u8, _resolved_import.path_pair.primary.text)));
+
+                                        // Always enqueue unwalked import paths, but if it's not a node_module, we don't care about the hash
+                                        try this.resolve_queue.writeItem(_resolved_import.*);
+
+                                        if (BundledModuleData.get(this, resolved_import)) |module| {
+                                            get_or_put_result.value_ptr.* = module.module_id;
+                                        }
+                                    } else |err| {
+                                        switch (err) {
+                                            error.ModuleNotFound => {
+                                                if (isPackagePath(import_record.path.text)) {
+                                                    if (this.bundler.options.platform.isWebLike() and options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
+                                                        try this.log.addResolveError(
+                                                            &source,
+                                                            import_record.range,
+                                                            this.allocator,
+                                                            "Could not resolve Node.js builtin: \"{s}\".",
+                                                            .{import_record.path.text},
+                                                            import_record.kind,
+                                                        );
+                                                    } else {
+                                                        try this.log.addResolveError(
+                                                            &source,
+                                                            import_record.range,
+                                                            this.allocator,
+                                                            "Could not resolve: \"{s}\". Maybe you need to \"npm install\" (or yarn/pnpm)?",
+                                                            .{import_record.path.text},
+                                                            import_record.kind,
+                                                        );
+                                                    }
                                                 } else {
                                                     try this.log.addResolveError(
                                                         &source,
                                                         import_record.range,
                                                         this.allocator,
-                                                        "Could not resolve: \"{s}\". Maybe you need to \"npm install\" (or yarn/pnpm)?",
-                                                        .{import_record.path.text},
+                                                        "Could not resolve: \"{s}\"",
+                                                        .{
+                                                            import_record.path.text,
+                                                        },
                                                         import_record.kind,
                                                     );
                                                 }
-                                            } else {
-                                                try this.log.addResolveError(
-                                                    &source,
-                                                    import_record.range,
-                                                    this.allocator,
-                                                    "Could not resolve: \"{s}\"",
-                                                    .{
-                                                        import_record.path.text,
-                                                    },
-                                                    import_record.kind,
-                                                );
-                                            }
-                                        },
-                                        // assume other errors are already in the log
-                                        else => {},
+                                            },
+                                            // assume other errors are already in the log
+                                            else => {},
+                                        }
                                     }
                                 }
                             }

@@ -177,7 +177,7 @@ const SymbolList = [][]Symbol;
 
 fn expectPrinted(t: *Tester, contents: string, expected: string, src: anytype) !void {
     if (alloc.needs_setup) {
-        try alloc.setup(std.heap.c_allocator);
+        try alloc.setup(default_allocator);
         var __source = Output.Source.init(std.io.getStdOut(), std.io.getStdErr());
 
         Output.Source.set(&__source);
@@ -225,7 +225,7 @@ fn expectPrinted(t: *Tester, contents: string, expected: string, src: anytype) !
 const PRINT_AST = false;
 
 test "expectPrint" {
-    var t_ = Tester.t(std.heap.c_allocator);
+    var t_ = Tester.t(default_allocator);
     var t = &t_;
     // try expectPrinted(t, @embedFile("../test/fixtures/function-scope-bug.jsx"), @embedFile("../test/fixtures/function-scope-bug.jsx"), @src());
     try expectPrinted(t, @embedFile("../test/fixtures/cannot-assign-to-import-bug.js"), @embedFile("../test/fixtures/cannot-assign-to-import-bug.js"), @src());

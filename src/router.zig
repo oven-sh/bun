@@ -117,7 +117,8 @@ pub fn loadRoutes(
     if (root_dir_info.getEntriesConst()) |entries| {
         var iter = entries.data.iterator();
         outer: while (iter.next()) |entry_ptr| {
-            const entry = Fs.FileSystem.DirEntry.EntryStore.instance.at(entry_ptr.value) orelse continue;
+            const entry_index = entry_ptr.value;
+            const entry = Fs.FileSystem.DirEntry.EntryStore.instance.at(entry_index) orelse continue;
             if (entry.base()[0] == '.') {
                 continue :outer;
             }
@@ -138,7 +139,7 @@ pub fn loadRoutes(
                             entry.base(),
                             Fs.PathName.init(entry.dir[this.config.dir.len..]).dirWithTrailingSlash(),
                             "",
-                            entry_ptr.value,
+                            entry_index,
                         );
 
                         route.parent = parent;
@@ -171,7 +172,7 @@ pub fn loadRoutes(
                                 // we extend the pointer length by one to get it's slash
                                 entry.dir.ptr[this.config.dir.len..entry.dir.len],
                                 extname,
-                                entry_ptr.value,
+                                entry_index,
                             );
                             route.parent = parent;
 

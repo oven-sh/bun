@@ -326,6 +326,7 @@ type uint32 = number;
     node_modules_bundle_path_server?: string;
     framework?: FrameworkConfig;
     router?: RouteConfig;
+    no_summary?: boolean;
   }
 
   export interface FileHandle {

@@ -9,8 +9,14 @@ pub usingnamespace @import("env.zig");
 pub const FeatureFlags = @import("feature_flags.zig");
 
 pub const Output = struct {
+    // These are threadlocal so we don't have stdout/stderr writing on top of each other
     threadlocal var source: Source = undefined;
     threadlocal var source_set: bool = false;
+
+    // These are not threadlocal so we avoid opening stdout/stderr for every thread
+    var stderr_stream: Source.StreamType = undefined;
+    var stdout_stream: Source.StreamType = undefined;
+    var stdout_stream_set = false;
     pub const Source = struct {
         pub const StreamType: type = brk: {
             if (isWasm) {
@@ -44,14 +50,26 @@ pub const Output = struct {
             };
         }
 
+        pub fn configureThread() void {
+            std.debug.assert(stdout_stream_set);
+            source = Source.init(stdout_stream, stderr_stream);
+        }
+
         pub fn set(_source: *Source) void {
             source = _source.*;
             source_set = true;
 
-            enable_ansi_colors = _source.error_stream.supportsAnsiEscapeCodes();
+            if (!stdout_stream_set) {
+                stdout_stream_set = true;
 
-            is_stdout_piped = !_source.stream.isTty();
-            is_stderr_piped = !_source.error_stream.isTty();
+                enable_ansi_colors = _source.error_stream.supportsAnsiEscapeCodes();
+
+                is_stdout_piped = !_source.stream.isTty();
+                is_stderr_piped = !_source.error_stream.isTty();
+
+                stdout_stream = _source.stream;
+                stderr_stream = _source.error_stream;
+            }
         }
     };
     pub var enable_ansi_colors = isNative;

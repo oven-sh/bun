@@ -36,7 +36,7 @@ smol JSXRuntime {
 struct JSX {
   string factory;
   JSXRuntime runtime;
-  string fragment;\
+  string fragment;
   bool development;
 
   // Probably react
@@ -229,6 +229,7 @@ message TransformOptions {
 
   FrameworkConfig framework = 21;
   RouteConfig router = 22;
+  bool no_summary = 23;
 }
 
 struct FileHandle {

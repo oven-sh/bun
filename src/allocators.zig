@@ -71,7 +71,7 @@ pub const IndexType = packed struct {
 };
 
 const HashKeyType = u64;
-const IndexMap = std.HashMapUnmanaged(HashKeyType, IndexType, struct {
+const IndexMapContext = struct {
     pub fn hash(ctx: @This(), key: HashKeyType) HashKeyType {
         return key;
     }
@@ -79,7 +79,11 @@ const IndexMap = std.HashMapUnmanaged(HashKeyType, IndexType, struct {
     pub fn eql(ctx: @This(), a: HashKeyType, b: HashKeyType) bool {
         return a == b;
     }
-}, 80);
+};
+
+pub const IndexMap = std.HashMapUnmanaged(HashKeyType, IndexType, IndexMapContext, 80);
+
+pub const IndexMapManaged = std.HashMap(HashKeyType, IndexType, IndexMapContext, 80);
 pub const Result = struct {
     hash: HashKeyType,
     index: IndexType,
@@ -173,6 +177,23 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
             }
 
             return result;
+        }
+        pub const Pair = struct { index: IndexType, value: *ValueType };
+        pub fn appendGet(self: *Self, value: ValueType) !Pair {
+            var result = IndexType{ .index = std.math.maxInt(u31), .is_overflow = backing_buf_used > max_index };
+            if (result.is_overflow) {
+                result.index = @intCast(u31, self.overflow_list.items.len);
+                try self.overflow_list.append(self.allocator, value);
+                return Pair{ .index = result, .value = &self.overflow_list.items[result.index] };
+            } else {
+                result.index = backing_buf_used;
+                backing_buf[result.index] = value;
+                backing_buf_used += 1;
+                if (backing_buf_used >= max_index) {
+                    self.overflow_list = try @TypeOf(self.overflow_list).initCapacity(self.allocator, count);
+                }
+                return Pair{ .index = result, .value = &backing_buf[result.index] };
+            }
         }
 
         pub fn update(self: *Self, result: *IndexType, value: ValueType) !*ValueType {
@@ -274,6 +295,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
                     .overflow_list = std.ArrayListUnmanaged(ValueType){},
                 };
                 mutex = Mutex.init();
+                loaded = true;
             }
 
             return &instance;
@@ -292,11 +314,17 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
         }
 
         pub fn append(self: *Self, comptime AppendType: type, _value: AppendType) ![]const u8 {
+            mutex.lock();
+            defer mutex.unlock();
+
             return try self.doAppend(AppendType, _value);
         }
 
         threadlocal var lowercase_append_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
         pub fn appendLowerCase(self: *Self, comptime AppendType: type, _value: AppendType) ![]const u8 {
+            mutex.lock();
+            defer mutex.unlock();
+
             for (_value) |c, i| {
                 lowercase_append_buf[i] = std.ascii.toLower(c);
             }
@@ -313,9 +341,6 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
             comptime AppendType: type,
             _value: AppendType,
         ) ![]const u8 {
-            mutex.lock();
-            defer mutex.unlock();
-
             const value_len: usize = brk: {
                 switch (comptime AppendType) {
                     []const u8, []u8 => {

@@ -1736,6 +1736,7 @@ pub const Server = struct {
         events: []watcher.WatchEvent,
         watchlist: watcher.Watchlist,
         comptime is_javascript_enabled: bool,
+        comptime is_emoji_enabled: bool,
     ) void {
         var fbs = std.io.fixedBufferStream(&filechange_buf);
         var writer = ByteApiWriter.init(&fbs);
@@ -1750,11 +1751,12 @@ pub const Server = struct {
         const kinds = slice.items(.kind);
         const hashes = slice.items(.hash);
         const parent_hashes = slice.items(.parent_hash);
-        const fds = slice.items(.fd);
         var header = fbs.getWritten();
         defer ctx.watcher.flushEvictions();
         defer Output.flush();
 
+        // It's important that this function does not do any memory allocations
+        // If this blocks, it can cause cascading bad things to happen
         for (events) |event| {
             const file_path = file_paths[event.index];
             const update_count = counts[event.index] + 1;
@@ -1801,7 +1803,12 @@ pub const Server = struct {
                         RequestContext.WebsocketHandler.broadcast(written_buf) catch |err| {
                             Output.prettyln("Error writing change notification: {s}<r>", .{@errorName(err)});
                         };
-                        Output.prettyln("<r><d>Detected edit: {s}<r>", .{ctx.bundler.fs.relativeTo(file_path)});
+
+                        if (comptime is_emoji_enabled) {
+                            Output.prettyln("<r>📜  <d>File change: {s}<r>", .{ctx.bundler.fs.relativeTo(file_path)});
+                        } else {
+                            Output.prettyln("<r>   <d>File change: {s}<r>", .{ctx.bundler.fs.relativeTo(file_path)});
+                        }
                     }
                 },
                 .directory => {
@@ -1809,11 +1816,14 @@ pub const Server = struct {
                     rfs.bustEntriesCache(file_path);
                     ctx.bundler.resolver.dir_cache.remove(file_path);
 
-                    if (event.op.delete or event.op.rename) {
+                    if (event.op.delete or event.op.rename)
                         ctx.watcher.removeAtIndex(event.index, hashes[event.index], parent_hashes, .directory);
-                    }
 
-                    Output.prettyln("<r><d>Folder change: {s}<r>", .{ctx.bundler.fs.relativeTo(file_path)});
+                    if (comptime is_emoji_enabled) {
+                        Output.prettyln("<r>📁  <d>Dir change: {s}<r>", .{ctx.bundler.fs.relativeTo(file_path)});
+                    } else {
+                        Output.prettyln("<r>    <d>Dir change: {s}<r>", .{ctx.bundler.fs.relativeTo(file_path)});
+                    }
                 },
             }
         }

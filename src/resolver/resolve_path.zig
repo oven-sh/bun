@@ -1,6 +1,7 @@
 const tester = @import("../test/tester.zig");
 
 const FeatureFlags = @import("../feature_flags.zig");
+const default_allocator = @import("../memory_allocator.zig").c_allocator;
 const std = @import("std");
 
 threadlocal var parser_join_input_buffer: [1024]u8 = undefined;
@@ -352,7 +353,7 @@ pub fn relativeAlloc(allocator: *std.mem.Allocator, from: []const u8, to: []cons
 }
 
 test "relative" {
-    var t = tester.Tester.t(std.heap.c_allocator);
+    var t = tester.Tester.t(default_allocator);
     defer t.report(@src());
 
     const strs = [_][]const u8{
@@ -364,14 +365,14 @@ test "relative" {
         "/bar/not-related",
         "/bar/file.txt",
     };
-    _ = t.expect("var/foo", try relativeAlloc(std.heap.c_allocator, "/", "/var/foo/"), @src());
-    _ = t.expect("index.js", try relativeAlloc(std.heap.c_allocator, "/app/public/", "/app/public/index.js"), @src());
-    _ = t.expect("..", try relativeAlloc(std.heap.c_allocator, "/app/public/index.js", "/app/public/"), @src());
-    _ = t.expect("../../src/bacon.ts", try relativeAlloc(std.heap.c_allocator, "/app/public/index.html", "/app/src/bacon.ts"), @src());
+    _ = t.expect("var/foo", try relativeAlloc(default_allocator, "/", "/var/foo/"), @src());
+    _ = t.expect("index.js", try relativeAlloc(default_allocator, "/app/public/", "/app/public/index.js"), @src());
+    _ = t.expect("..", try relativeAlloc(default_allocator, "/app/public/index.js", "/app/public/"), @src());
+    _ = t.expect("../../src/bacon.ts", try relativeAlloc(default_allocator, "/app/public/index.html", "/app/src/bacon.ts"), @src());
 }
 
 test "longestCommonPath" {
-    var t = tester.Tester.t(std.heap.c_allocator);
+    var t = tester.Tester.t(default_allocator);
     defer t.report(@src());
 
     const strs = [_][]const u8{
@@ -909,7 +910,7 @@ pub fn normalizeStringLooseBuf(str: []const u8, buf: []u8, comptime allow_above_
 }
 
 test "joinAbsStringPosix" {
-    var t = tester.Tester.t(std.heap.c_allocator);
+    var t = tester.Tester.t(default_allocator);
     defer t.report(@src());
     const string = []const u8;
     const cwd = "/Users/jarredsumner/Code/app/";
@@ -961,7 +962,7 @@ test "joinAbsStringPosix" {
 }
 
 test "joinAbsStringLoose" {
-    var t = tester.Tester.t(std.heap.c_allocator);
+    var t = tester.Tester.t(default_allocator);
     defer t.report(@src());
     const string = []const u8;
     const cwd = "/Users/jarredsumner/Code/app";
@@ -1048,39 +1049,39 @@ test "joinAbsStringLoose" {
 }
 
 test "normalizeStringPosix" {
-    var t = tester.Tester.t(std.heap.c_allocator);
+    var t = tester.Tester.t(default_allocator);
     defer t.report(@src());
 
     // Don't mess up strings that
-    _ = t.expect("foo/bar.txt", try normalizeStringAlloc(std.heap.c_allocator, "/foo/bar.txt", true, .posix), @src());
-    _ = t.expect("foo/bar.txt", try normalizeStringAlloc(std.heap.c_allocator, "/foo/bar.txt", false, .posix), @src());
-    _ = t.expect("foo/bar", try normalizeStringAlloc(std.heap.c_allocator, "/foo/bar", true, .posix), @src());
-    _ = t.expect("foo/bar", try normalizeStringAlloc(std.heap.c_allocator, "/foo/bar", false, .posix), @src());
-    _ = t.expect("foo/bar", try normalizeStringAlloc(std.heap.c_allocator, "/././foo/././././././bar/../bar/../bar", true, .posix), @src());
-    _ = t.expect("foo/bar", try normalizeStringAlloc(std.heap.c_allocator, "/foo/bar", false, .posix), @src());
-    _ = t.expect("foo/bar", try normalizeStringAlloc(std.heap.c_allocator, "/foo/bar//////", false, .posix), @src());
-    _ = t.expect("foo/bar", try normalizeStringAlloc(std.heap.c_allocator, "/////foo/bar//////", false, .posix), @src());
-    _ = t.expect("foo/bar", try normalizeStringAlloc(std.heap.c_allocator, "/////foo/bar", false, .posix), @src());
-    _ = t.expect("", try normalizeStringAlloc(std.heap.c_allocator, "/////", false, .posix), @src());
-    _ = t.expect("..", try normalizeStringAlloc(std.heap.c_allocator, "../boom/../", true, .posix), @src());
-    _ = t.expect("", try normalizeStringAlloc(std.heap.c_allocator, "./", true, .posix), @src());
+    _ = t.expect("foo/bar.txt", try normalizeStringAlloc(default_allocator, "/foo/bar.txt", true, .posix), @src());
+    _ = t.expect("foo/bar.txt", try normalizeStringAlloc(default_allocator, "/foo/bar.txt", false, .posix), @src());
+    _ = t.expect("foo/bar", try normalizeStringAlloc(default_allocator, "/foo/bar", true, .posix), @src());
+    _ = t.expect("foo/bar", try normalizeStringAlloc(default_allocator, "/foo/bar", false, .posix), @src());
+    _ = t.expect("foo/bar", try normalizeStringAlloc(default_allocator, "/././foo/././././././bar/../bar/../bar", true, .posix), @src());
+    _ = t.expect("foo/bar", try normalizeStringAlloc(default_allocator, "/foo/bar", false, .posix), @src());
+    _ = t.expect("foo/bar", try normalizeStringAlloc(default_allocator, "/foo/bar//////", false, .posix), @src());
+    _ = t.expect("foo/bar", try normalizeStringAlloc(default_allocator, "/////foo/bar//////", false, .posix), @src());
+    _ = t.expect("foo/bar", try normalizeStringAlloc(default_allocator, "/////foo/bar", false, .posix), @src());
+    _ = t.expect("", try normalizeStringAlloc(default_allocator, "/////", false, .posix), @src());
+    _ = t.expect("..", try normalizeStringAlloc(default_allocator, "../boom/../", true, .posix), @src());
+    _ = t.expect("", try normalizeStringAlloc(default_allocator, "./", true, .posix), @src());
 }
 
 test "normalizeStringWindows" {
-    var t = tester.Tester.t(std.heap.c_allocator);
+    var t = tester.Tester.t(default_allocator);
     defer t.report(@src());
 
     // Don't mess up strings that
-    _ = t.expect("foo\\bar.txt", try normalizeStringAlloc(std.heap.c_allocator, "\\foo\\bar.txt", true, .windows), @src());
-    _ = t.expect("foo\\bar.txt", try normalizeStringAlloc(std.heap.c_allocator, "\\foo\\bar.txt", false, .windows), @src());
-    _ = t.expect("foo\\bar", try normalizeStringAlloc(std.heap.c_allocator, "\\foo\\bar", true, .windows), @src());
-    _ = t.expect("foo\\bar", try normalizeStringAlloc(std.heap.c_allocator, "\\foo\\bar", false, .windows), @src());
-    _ = t.expect("foo\\bar", try normalizeStringAlloc(std.heap.c_allocator, "\\.\\.\\foo\\.\\.\\.\\.\\.\\.\\bar\\..\\bar\\..\\bar", true, .windows), @src());
-    _ = t.expect("foo\\bar", try normalizeStringAlloc(std.heap.c_allocator, "\\foo\\bar", false, .windows), @src());
-    _ = t.expect("foo\\bar", try normalizeStringAlloc(std.heap.c_allocator, "\\foo\\bar\\\\\\\\\\\\", false, .windows), @src());
-    _ = t.expect("foo\\bar", try normalizeStringAlloc(std.heap.c_allocator, "\\\\\\\\\\foo\\bar\\\\\\\\\\\\", false, .windows), @src());
-    _ = t.expect("foo\\bar", try normalizeStringAlloc(std.heap.c_allocator, "\\\\\\\\\\foo\\bar", false, .windows), @src());
-    _ = t.expect("", try normalizeStringAlloc(std.heap.c_allocator, "\\\\\\\\\\", false, .windows), @src());
-    _ = t.expect("..", try normalizeStringAlloc(std.heap.c_allocator, "..\\boom\\..\\", true, .windows), @src());
-    _ = t.expect("", try normalizeStringAlloc(std.heap.c_allocator, ".\\", true, .windows), @src());
+    _ = t.expect("foo\\bar.txt", try normalizeStringAlloc(default_allocator, "\\foo\\bar.txt", true, .windows), @src());
+    _ = t.expect("foo\\bar.txt", try normalizeStringAlloc(default_allocator, "\\foo\\bar.txt", false, .windows), @src());
+    _ = t.expect("foo\\bar", try normalizeStringAlloc(default_allocator, "\\foo\\bar", true, .windows), @src());
+    _ = t.expect("foo\\bar", try normalizeStringAlloc(default_allocator, "\\foo\\bar", false, .windows), @src());
+    _ = t.expect("foo\\bar", try normalizeStringAlloc(default_allocator, "\\.\\.\\foo\\.\\.\\.\\.\\.\\.\\bar\\..\\bar\\..\\bar", true, .windows), @src());
+    _ = t.expect("foo\\bar", try normalizeStringAlloc(default_allocator, "\\foo\\bar", false, .windows), @src());
+    _ = t.expect("foo\\bar", try normalizeStringAlloc(default_allocator, "\\foo\\bar\\\\\\\\\\\\", false, .windows), @src());
+    _ = t.expect("foo\\bar", try normalizeStringAlloc(default_allocator, "\\\\\\\\\\foo\\bar\\\\\\\\\\\\", false, .windows), @src());
+    _ = t.expect("foo\\bar", try normalizeStringAlloc(default_allocator, "\\\\\\\\\\foo\\bar", false, .windows), @src());
+    _ = t.expect("", try normalizeStringAlloc(default_allocator, "\\\\\\\\\\", false, .windows), @src());
+    _ = t.expect("..", try normalizeStringAlloc(default_allocator, "..\\boom\\..\\", true, .windows), @src());
+    _ = t.expect("", try normalizeStringAlloc(default_allocator, ".\\", true, .windows), @src());
 }

@@ -340,5 +340,5 @@ pub const TSConfigJSON = struct {
 };
 
 test "tsconfig.json" {
-    try alloc.setup(std.heap.c_allocator);
+    try alloc.setup(default_allocator);
 }

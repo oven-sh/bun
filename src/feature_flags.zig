@@ -34,6 +34,8 @@ pub const css_supports_fence = true;
 pub const enable_entry_cache = true;
 pub const enable_bytecode_caching = false;
 
+pub const verbose_fs = true;
+
 pub const watch_directories = true;
 
 // This feature flag exists so when you have defines inside package.json, you can use single quotes in nested strings.

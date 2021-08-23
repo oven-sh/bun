@@ -66,7 +66,7 @@ const ServerBundleGeneratorThread = struct {
         router: ?Router,
     ) void {
         if (FeatureFlags.parallel_bun) {
-            try alloc.setup(std.heap.c_allocator);
+            try alloc.setup(default_allocator);
             var stdout_ = std.io.getStdOut();
             var stderr_ = std.io.getStdErr();
             var output_source = Output.Source.init(stdout_, stderr_);
@@ -80,7 +80,7 @@ const ServerBundleGeneratorThread = struct {
             }
         }
 
-        _generate(logs, env_loader_, std.heap.c_allocator, transform_args, _filepath, server_conf, route_conf_, router) catch return;
+        _generate(logs, env_loader_, default_allocator, transform_args, _filepath, server_conf, route_conf_, router) catch return;
     }
 };
 

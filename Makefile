@@ -86,9 +86,12 @@ bun-link-lld-debug:
 bun-link-lld-release:
 	clang++ $(BUN_LLD_FLAGS) \
 		build/macos-x86_64/bun.o \
+		/usr/local/lib/mimalloc-1.7/libmimalloc.a \
 		-o build/macos-x86_64/bun \
 		-Wl,-dead_strip \
-		-flto 
+		-ftls-model=local-exec \
+		-flto \
+		-O3
 
 # We do this outside of build.zig for performance reasons
 # The C compilation stuff with build.zig is really slow and we don't need to run this as often as the rest

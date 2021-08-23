@@ -703,10 +703,10 @@ test "DotEnv Loader" {
         \\
     ;
     const source = logger.Source.initPathString(".env", VALID_ENV);
-    var map = Map.init(std.heap.c_allocator);
+    var map = Map.init(default_allocator);
     Parser.parse(
         &source,
-        std.heap.c_allocator,
+        default_allocator,
         &map,
         true,
     );
@@ -729,9 +729,9 @@ test "DotEnv Loader" {
 }
 
 test "DotEnv Process" {
-    var map = Map.init(std.heap.c_allocator);
-    var process = try std.process.getEnvMap(std.heap.c_allocator);
-    var loader = Loader.init(&map, std.heap.c_allocator);
+    var map = Map.init(default_allocator);
+    var process = try std.process.getEnvMap(default_allocator);
+    var loader = Loader.init(&map, default_allocator);
     loader.loadProcess();
 
     try expectString(loader.map.get("TMPDIR").?, process.get("TMPDIR").?);
@@ -744,8 +744,8 @@ test "DotEnv Process" {
 test "DotEnv Loader.copyForDefine" {
     const UserDefine = std.StringArrayHashMap(string);
 
-    var map = Map.init(std.heap.c_allocator);
-    var loader = Loader.init(&map, std.heap.c_allocator);
+    var map = Map.init(default_allocator);
+    var loader = Loader.init(&map, default_allocator);
     const framework_keys = [_]string{ "process.env.BACON", "process.env.HOSTNAME" };
     const framework_values = [_]string{ "true", "\"localhost\"" };
     const framework = Api.StringMap{
@@ -767,12 +767,12 @@ test "DotEnv Loader.copyForDefine" {
 
     loader.loadFromString(skip_user_overrides, false);
 
-    var user_defines = UserDefine.init(std.heap.c_allocator);
-    var buf = try loader.copyForDefine(UserDefine, &user_defines, framework, .disable, "", std.heap.c_allocator);
+    var user_defines = UserDefine.init(default_allocator);
+    var buf = try loader.copyForDefine(UserDefine, &user_defines, framework, .disable, "", default_allocator);
 
     try expect(user_defines.get("process.env.THIS_SHOULDNT_BE_IN_DEFINES_MAP") == null);
 
-    user_defines = UserDefine.init(std.heap.c_allocator);
+    user_defines = UserDefine.init(default_allocator);
 
     loader.loadFromString(user_overrides, true);
 
@@ -782,7 +782,7 @@ test "DotEnv Loader.copyForDefine" {
         framework,
         Api.DotEnvBehavior.load_all,
         "",
-        std.heap.c_allocator,
+        default_allocator,
     );
 
     try expect(user_defines.get("process.env.BACON") != null);
@@ -790,9 +790,9 @@ test "DotEnv Loader.copyForDefine" {
     try expectString(user_defines.get("process.env.HOSTNAME").?, "example.com");
     try expect(user_defines.get("process.env.THIS_SHOULDNT_BE_IN_DEFINES_MAP") != null);
 
-    user_defines = UserDefine.init(std.heap.c_allocator);
+    user_defines = UserDefine.init(default_allocator);
 
-    buf = try loader.copyForDefine(UserDefine, &user_defines, framework, .prefix, "HO", std.heap.c_allocator);
+    buf = try loader.copyForDefine(UserDefine, &user_defines, framework, .prefix, "HO", default_allocator);
 
     try expectString(user_defines.get("process.env.HOSTNAME").?, "example.com");
     try expect(user_defines.get("process.env.THIS_SHOULDNT_BE_IN_DEFINES_MAP") == null);

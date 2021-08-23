@@ -8,7 +8,7 @@ export fn init() void {
         return;
     }
 
-    alloc.setup(std.heap.c_allocator);
+    alloc.setup(default_allocator);
 }
 
 export fn setOptions(options_ptr: [*c]u8, options_len: c_int) void {}

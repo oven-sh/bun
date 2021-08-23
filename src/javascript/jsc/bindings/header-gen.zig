@@ -67,15 +67,15 @@ pub fn cTypeLabel(comptime Type: type) ?[]const u8 {
     };
 }
 
-var buffer = std.ArrayList(u8).init(std.heap.c_allocator);
+var buffer = std.ArrayList(u8).init(default_allocator);
 var writer = buffer.writer();
-var impl_buffer = std.ArrayList(u8).init(std.heap.c_allocator);
+var impl_buffer = std.ArrayList(u8).init(default_allocator);
 var impl_writer = impl_buffer.writer();
-var bufset = std.BufSet.init(std.heap.c_allocator);
-var type_names = TypeNameMap.init(std.heap.c_allocator);
-var opaque_types = std.BufSet.init(std.heap.c_allocator);
-var size_map = std.StringHashMap(u32).init(std.heap.c_allocator);
-var align_map = std.StringHashMap(u29).init(std.heap.c_allocator);
+var bufset = std.BufSet.init(default_allocator);
+var type_names = TypeNameMap.init(default_allocator);
+var opaque_types = std.BufSet.init(default_allocator);
+var size_map = std.StringHashMap(u32).init(default_allocator);
+var align_map = std.StringHashMap(u29).init(default_allocator);
 
 pub const C_Generator = struct {
     filebase: []const u8,
@@ -618,13 +618,13 @@ pub fn HeaderGen(comptime import: type, comptime fname: []const u8) type {
                 \\
             ) catch {};
 
-            var impl_second_buffer = std.ArrayList(u8).init(std.heap.c_allocator);
+            var impl_second_buffer = std.ArrayList(u8).init(default_allocator);
             var impl_second_writer = impl_second_buffer.writer();
 
-            var impl_third_buffer = std.ArrayList(u8).init(std.heap.c_allocator);
+            var impl_third_buffer = std.ArrayList(u8).init(default_allocator);
             var impl_third_writer = impl_third_buffer.writer();
 
-            var impl_fourth_buffer = std.ArrayList(u8).init(std.heap.c_allocator);
+            var impl_fourth_buffer = std.ArrayList(u8).init(default_allocator);
             var impl_fourth_writer = impl_fourth_buffer.writer();
 
             // inline for (import.all_static_externs) |static_extern, i| {
@@ -770,7 +770,7 @@ pub fn HeaderGen(comptime import: type, comptime fname: []const u8) type {
             var iter = type_names.iterator();
 
             const NamespaceMap = std.StringArrayHashMap(std.BufMap);
-            var namespaces = NamespaceMap.init(std.heap.c_allocator);
+            var namespaces = NamespaceMap.init(default_allocator);
 
             var size_iter = size_map.iterator();
             while (size_iter.next()) |size| {
@@ -808,7 +808,7 @@ pub fn HeaderGen(comptime import: type, comptime fname: []const u8) type {
                     }
 
                     if (!namespaces.contains(namespace)) {
-                        namespaces.put(namespace, std.BufMap.init(std.heap.c_allocator)) catch unreachable;
+                        namespaces.put(namespace, std.BufMap.init(default_allocator)) catch unreachable;
                     }
                     const class = key[namespace_start + 2 ..];
                     namespaces.getPtr(namespace).?.put(class, value) catch unreachable;

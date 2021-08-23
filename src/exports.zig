@@ -5,8 +5,8 @@ usingnamespace @import("global.zig");
 const Root = @import("main_wasm.zig").Root;
 
 pub extern fn init() void {
-    alloc.dynamic = std.heap.c_allocator;
-    alloc.static = std.heap.c_allocator;
+    alloc.dynamic = default_allocator;
+    alloc.static = default_allocator;
 }
 
 /// Convert a slice into known memory representation -- enables C ABI

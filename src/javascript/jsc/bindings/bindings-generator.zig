@@ -1,6 +1,5 @@
 const Bindings = @import("bindings.zig");
 const HeaderGen = @import("./header-gen.zig").HeaderGen;
-
 const std = @import("std");
 const builtin = std.builtin;
 const io = std.io;

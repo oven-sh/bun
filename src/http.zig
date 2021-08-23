@@ -721,12 +721,12 @@ pub const RequestContext = struct {
             // defer stderr.flush() catch {};
             Output.Source.set(&output_source);
 
-            js_ast.Stmt.Data.Store.create(std.heap.c_allocator);
-            js_ast.Expr.Data.Store.create(std.heap.c_allocator);
+            js_ast.Stmt.Data.Store.create(default_allocator);
+            js_ast.Expr.Data.Store.create(default_allocator);
 
             defer Output.flush();
             var vm = JavaScript.VirtualMachine.init(
-                std.heap.c_allocator,
+                default_allocator,
                 handler.args,
                 handler.existing_bundle,
                 handler.log,
@@ -1338,7 +1338,7 @@ pub const RequestContext = struct {
 
                     pub fn init(rctx: *RequestContext, _loader: Options.Loader) SocketPrinterInternal {
                         if (!has_loaded_buffer) {
-                            buffer = MutableString.init(std.heap.c_allocator, 0) catch unreachable;
+                            buffer = MutableString.init(default_allocator, 0) catch unreachable;
                             has_loaded_buffer = true;
                         }
 
@@ -1717,9 +1717,17 @@ pub const Server = struct {
         watchlist: watcher.Watchlist,
     ) void {
         if (ctx.javascript_enabled) {
-            _onFileUpdate(ctx, events, watchlist, true);
+            if (Output.isEmojiEnabled()) {
+                _onFileUpdate(ctx, events, watchlist, true, true);
+            } else {
+                _onFileUpdate(ctx, events, watchlist, true, false);
+            }
         } else {
-            _onFileUpdate(ctx, events, watchlist, false);
+            if (Output.isEmojiEnabled()) {
+                _onFileUpdate(ctx, events, watchlist, false, true);
+            } else {
+                _onFileUpdate(ctx, events, watchlist, false, false);
+            }
         }
     }
 

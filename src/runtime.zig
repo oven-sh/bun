@@ -10,19 +10,19 @@ pub const Runtime = struct {
     pub fn sourceContent() string {
         if (comptime isDebug) {
             var dirpath = std.fs.path.dirname(@src().file).?;
-            var env = std.process.getEnvMap(std.heap.c_allocator) catch unreachable;
+            var env = std.process.getEnvMap(default_allocator) catch unreachable;
 
             const dir = std.mem.replaceOwned(
                 u8,
-                std.heap.c_allocator,
+                default_allocator,
                 dirpath,
                 "jarred",
                 env.get("USER").?,
             ) catch unreachable;
-            var runtime_path = std.fs.path.join(std.heap.c_allocator, &[_]string{ dir, "runtime.out.js" }) catch unreachable;
+            var runtime_path = std.fs.path.join(default_allocator, &[_]string{ dir, "runtime.out.js" }) catch unreachable;
             const file = std.fs.openFileAbsolute(runtime_path, .{}) catch unreachable;
             defer file.close();
-            return file.readToEndAlloc(std.heap.c_allocator, (file.stat() catch unreachable).size) catch unreachable;
+            return file.readToEndAlloc(default_allocator, (file.stat() catch unreachable).size) catch unreachable;
         } else {
             return ProdSourceContent;
         }

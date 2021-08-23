@@ -273,7 +273,7 @@ fn expectPrintedJSON(_contents: string, expected: string) !void {
 }
 
 test "ParseJSON" {
-    try alloc.setup(std.heap.c_allocator);
+    try alloc.setup(default_allocator);
     try expectPrintedJSON("true", "true");
     try expectPrintedJSON("false", "false");
     try expectPrintedJSON("1", "1");

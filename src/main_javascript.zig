@@ -33,11 +33,11 @@ pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace) nore
 const constStrToU8 = allocators.constStrToU8;
 pub fn main() anyerror!void {
     // The memory allocator makes a massive difference.
-    // std.heap.raw_c_allocator and std.heap.c_allocator perform similarly.
+    // std.heap.raw_c_allocator and default_allocator perform similarly.
     // std.heap.GeneralPurposeAllocator makes this about 3x _slower_ than esbuild.
     // var root_alloc = std.heap.ArenaAllocator.init(std.heap.raw_c_allocator);
     // var root_alloc_ = &root_alloc.allocator;
-    try alloc.setup(std.heap.c_allocator);
+    try alloc.setup(default_allocator);
     var stdout = std.io.getStdOut();
     // var stdout = std.io.bufferedWriter(stdout_file.writer());
     var stderr = std.io.getStdErr();
@@ -49,7 +49,7 @@ pub fn main() anyerror!void {
 
     defer Output.flush();
     try Cli.start(
-        std.heap.c_allocator,
+        default_allocator,
         stdout,
         stderr,
     );
@@ -371,7 +371,7 @@ pub const Cli = struct {
             stderr: Stderr,
             args: Api.TransformOptions,
             pub fn spawn(this: @This()) !void {
-                try alloc.setup(std.heap.c_allocator);
+                try alloc.setup(default_allocator);
                 var stdout = std.io.getStdOut();
                 // var stdout = std.io.bufferedWriter(stdout_file.writer());
                 var stderr = std.io.getStdErr();

@@ -1416,7 +1416,7 @@ pub fn JSError(
 }
 
 pub fn getAllocator(ctx: js.JSContextRef) *std.mem.Allocator {
-    return std.heap.c_allocator;
+    return default_allocator;
 }
 
 pub const JSStringList = std.ArrayList(js.JSStringRef);

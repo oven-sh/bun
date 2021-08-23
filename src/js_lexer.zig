@@ -2748,7 +2748,7 @@ inline fn float64(num: anytype) f64 {
 }
 
 fn test_lexer(contents: []const u8) Lexer {
-    alloc.setup(std.heap.c_allocator) catch unreachable;
+    alloc.setup(default_allocator) catch unreachable;
     var log = alloc.dynamic.create(logger.Log) catch unreachable;
     log.* = logger.Log.init(alloc.dynamic);
     var _source = logger.Source.initPathString(

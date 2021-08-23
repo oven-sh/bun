@@ -1233,12 +1233,12 @@ test "URL - parse" {
 test "URL - joinAlloc" {
     var url = URL.parse("http://localhost:3000");
 
-    var absolute_url = try url.joinAlloc(std.heap.c_allocator, "/_next/", "src/components", "button", ".js");
+    var absolute_url = try url.joinAlloc(default_allocator, "/_next/", "src/components", "button", ".js");
     try expectString("http://localhost:3000/_next/src/components/button.js", absolute_url);
 
-    absolute_url = try url.joinAlloc(std.heap.c_allocator, "compiled-", "src/components", "button", ".js");
+    absolute_url = try url.joinAlloc(default_allocator, "compiled-", "src/components", "button", ".js");
     try expectString("http://localhost:3000/compiled-src/components/button.js", absolute_url);
 
-    absolute_url = try url.joinAlloc(std.heap.c_allocator, "compiled-", "", "button", ".js");
+    absolute_url = try url.joinAlloc(default_allocator, "compiled-", "", "button", ".js");
     try expectString("http://localhost:3000/compiled-button.js", absolute_url);
 }

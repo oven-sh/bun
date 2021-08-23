@@ -27,7 +27,7 @@ const hidden_globals = [_]d.ts.decl{
 const global = JavaScript.GlobalObject.GlobalClass.typescriptDeclaration();
 
 pub fn main() anyerror!void {
-    var allocator = std.heap.c_allocator;
+    var allocator = default_allocator;
     var argv = std.mem.span(std.os.argv);
     var dest = [_]string{ std.mem.span(argv[argv.len - 2]), std.mem.span(argv[argv.len - 1]) };
     var stdout = std.io.getStdOut();

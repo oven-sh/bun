@@ -1,4 +1,5 @@
 const std = @import("std");
+usingnamespace @import("./global.zig");
 
 const TagSize = u15;
 const AddressableSize = u49;
@@ -133,13 +134,13 @@ test "TaggedPointerUnion" {
     //     wrong: bool = true,
     // };
     const Union = TaggedPointerUnion(.{ IntPrimtiive, StringPrimitive, Object });
-    var str = try std.heap.c_allocator.create(StringPrimitive);
+    var str = try default_allocator.create(StringPrimitive);
     str.* = StringPrimitive{ .val = "hello!" };
     var un = Union.init(str);
     try std.testing.expect(un.is(StringPrimitive));
     try std.testing.expectEqualStrings(un.as(StringPrimitive).val, "hello!");
     try std.testing.expect(!un.is(IntPrimtiive));
-    const num = try std.heap.c_allocator.create(IntPrimtiive);
+    const num = try default_allocator.create(IntPrimtiive);
     num.val = 9999;
 
     var un2 = Union.init(num);
@@ -160,7 +161,7 @@ test "TaggedPointer" {
         what: []const u8,
     };
 
-    var hello_struct_ptr = try std.heap.c_allocator.create(Hello);
+    var hello_struct_ptr = try default_allocator.create(Hello);
     hello_struct_ptr.* = Hello{ .what = "hiiii" };
     var tagged = TaggedPointer.init(hello_struct_ptr, 0);
     try std.testing.expectEqual(tagged.get(Hello), hello_struct_ptr);
@@ -175,8 +176,8 @@ test "TaggedPointer" {
 
     var i: TagSize = 0;
     while (i < std.math.maxInt(TagSize) - 1) : (i += 1) {
-        hello_struct_ptr = try std.heap.c_allocator.create(Hello);
-        const what = try std.fmt.allocPrint(std.heap.c_allocator, "hiiii {d}", .{i});
+        hello_struct_ptr = try default_allocator.create(Hello);
+        const what = try std.fmt.allocPrint(default_allocator, "hiiii {d}", .{i});
         hello_struct_ptr.* = Hello{ .what = what };
         try std.testing.expectEqualStrings(TaggedPointer.from(TaggedPointer.init(hello_struct_ptr, i).to()).get(Hello).what, what);
         var this = TaggedPointer.from(TaggedPointer.init(hello_struct_ptr, i).to());

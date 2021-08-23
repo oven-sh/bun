@@ -150,7 +150,12 @@ pub const Result = struct {
     };
 };
 
-pub const DirEntryResolveQueueItem = struct { result: allocators.Result, unsafe_path: string };
+pub const DirEntryResolveQueueItem = struct {
+    result: allocators.Result,
+    unsafe_path: string,
+    safe_path: string = "",
+    fd: StoredFileDescriptorType = 0,
+};
 threadlocal var _dir_entry_paths_to_resolve: [256]DirEntryResolveQueueItem = undefined;
 threadlocal var _open_dirs: [256]std.fs.Dir = undefined;
 threadlocal var resolve_without_remapping_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
@@ -903,7 +908,7 @@ pub fn NewResolver(cache_files: bool) type {
             return res;
         }
 
-        pub fn _loadNodeModules(r: *ThisResolver, import_path: string, kind: ast.ImportKind, _dir_info: *DirInfo) ?MatchResult {
+        inline fn _loadNodeModules(r: *ThisResolver, import_path: string, kind: ast.ImportKind, _dir_info: *DirInfo) ?MatchResult {
             var dir_info = _dir_info;
             if (r.debug_logs) |*debug| {
                 debug.addNoteFmt("Searching for {s} in \"node_modules\" directories starting from \"{s}\"", .{ import_path, dir_info.abs_path }) catch {};
@@ -1067,30 +1072,40 @@ pub fn NewResolver(cache_files: bool) type {
             }
 
             var i: i32 = 1;
-            _dir_entry_paths_to_resolve[0] = (DirEntryResolveQueueItem{ .result = top_result, .unsafe_path = path });
-            var top = path;
+            _dir_entry_paths_to_resolve[0] = (DirEntryResolveQueueItem{ .result = top_result, .unsafe_path = path, .safe_path = "" });
+            var top = Dirname.dirname(path);
+
             var top_parent: allocators.Result = allocators.Result{
                 .index = allocators.NotFound,
                 .hash = 0,
                 .status = .not_found,
             };
             const root_path = if (isWindows) std.fs.path.diskDesignator(path) else "/";
+            var rfs: *Fs.FileSystem.RealFS = &r.fs.fs;
 
-            while (std.fs.path.dirname(top)) |_top| {
-                var result = try r.dir_cache.getOrPut(_top);
+            rfs.entries_mutex.lock();
+            defer rfs.entries_mutex.unlock();
+
+            while (!strings.eql(top, root_path)) : (top = Dirname.dirname(top)) {
+                var result = try r.dir_cache.getOrPut(top);
                 if (result.status != .unknown) {
                     top_parent = result;
                     break;
                 }
                 _dir_entry_paths_to_resolve[@intCast(usize, i)] = DirEntryResolveQueueItem{
-                    .unsafe_path = _top,
+                    .unsafe_path = top,
                     .result = result,
+                    .fd = 0,
                 };
+
+                if (rfs.entries.get(top)) |top_entry| {
+                    _dir_entry_paths_to_resolve[@intCast(usize, i)].safe_path = top_entry.entries.dir;
+                    _dir_entry_paths_to_resolve[@intCast(usize, i)].fd = top_entry.entries.fd;
+                }
                 i += 1;
-                top = _top;
             }
 
-            if (std.fs.path.dirname(top) == null and !strings.eql(top, root_path)) {
+            if (strings.eql(top, root_path)) {
                 var result = try r.dir_cache.getOrPut(root_path);
                 if (result.status != .unknown) {
                     top_parent = result;
@@ -1098,9 +1113,14 @@ pub fn NewResolver(cache_files: bool) type {
                     _dir_entry_paths_to_resolve[@intCast(usize, i)] = DirEntryResolveQueueItem{
                         .unsafe_path = root_path,
                         .result = result,
+                        .fd = 0,
                     };
+                    if (rfs.entries.get(top)) |top_entry| {
+                        _dir_entry_paths_to_resolve[@intCast(usize, i)].safe_path = top_entry.entries.dir;
+                        _dir_entry_paths_to_resolve[@intCast(usize, i)].fd = top_entry.entries.fd;
+                    }
+
                     i += 1;
-                    top = root_path;
                 }
             }
 
@@ -1119,11 +1139,6 @@ pub fn NewResolver(cache_files: bool) type {
                     }
                 }
             }
-
-            var rfs: *Fs.FileSystem.RealFS = &r.fs.fs;
-
-            rfs.entries_mutex.lock();
-            defer rfs.entries_mutex.unlock();
 
             // We want to walk in a straight line from the topmost directory to the desired directory
             // For each directory we visit, we get the entries, but not traverse into child directories
@@ -1147,22 +1162,24 @@ pub fn NewResolver(cache_files: bool) type {
                 queue_slice.len -= 1;
 
                 var _open_dir: anyerror!std.fs.Dir = undefined;
-                if (open_dir_count > 0) {
-                    _open_dir = _open_dirs[open_dir_count - 1].openDir(
-                        std.fs.path.basename(queue_top.unsafe_path),
-                        .{ .iterate = true, .no_follow = !follow_symlinks },
-                    );
-                } else {
-                    _open_dir = std.fs.openDirAbsolute(
-                        queue_top.unsafe_path,
-                        .{
-                            .iterate = true,
-                            .no_follow = !follow_symlinks,
-                        },
-                    );
+                if (queue_top.fd == 0) {
+                    if (open_dir_count > 0) {
+                        _open_dir = _open_dirs[open_dir_count - 1].openDir(
+                            std.fs.path.basename(queue_top.unsafe_path),
+                            .{ .iterate = true, .no_follow = !follow_symlinks },
+                        );
+                    } else {
+                        _open_dir = std.fs.openDirAbsolute(
+                            queue_top.unsafe_path,
+                            .{
+                                .iterate = true,
+                                .no_follow = !follow_symlinks,
+                            },
+                        );
+                    }
                 }
 
-                const open_dir = _open_dir catch |err| {
+                const open_dir = if (queue_top.fd != 0) std.fs.Dir{ .fd = queue_top.fd } else (_open_dir catch |err| {
                     switch (err) {
                         error.EACCESS => {},
 
@@ -1204,41 +1221,53 @@ pub fn NewResolver(cache_files: bool) type {
                     }
 
                     return null;
-                };
-                Fs.FileSystem.setMaxFd(open_dir.fd);
-                // these objects mostly just wrap the file descriptor, so it's fine to keep it.
-                _open_dirs[open_dir_count] = open_dir;
-                open_dir_count += 1;
+                });
 
-                // ensure trailing slash
-                if (_safe_path == null) {
-                    // Now that we've opened the topmost directory successfully, it's reasonable to store the slice.
-                    if (path[path.len - 1] != '/') {
-                        var parts = [_]string{ path, "/" };
-                        _safe_path = try r.fs.dirname_store.append(@TypeOf(parts), parts);
-                    } else {
-                        _safe_path = try r.fs.dirname_store.append(string, path);
-                    }
+                if (queue_top.fd == 0) {
+                    Fs.FileSystem.setMaxFd(open_dir.fd);
+                    // these objects mostly just wrap the file descriptor, so it's fine to keep it.
+                    _open_dirs[open_dir_count] = open_dir;
+                    open_dir_count += 1;
                 }
-                const safe_path = _safe_path.?;
 
-                var dir_path_i = std.mem.indexOf(u8, safe_path, queue_top.unsafe_path) orelse unreachable;
-                const dir_path = safe_path[dir_path_i .. dir_path_i + queue_top.unsafe_path.len];
+                const dir_path = if (queue_top.safe_path.len > 0) queue_top.safe_path else brk: {
 
-                var dir_iterator = open_dir.iterate();
+                    // ensure trailing slash
+                    if (_safe_path == null) {
+                        // Now that we've opened the topmost directory successfully, it's reasonable to store the slice.
+                        if (path[path.len - 1] != std.fs.path.sep) {
+                            var parts = [_]string{ path, std.fs.path.sep_str };
+                            _safe_path = try r.fs.dirname_store.append(@TypeOf(parts), parts);
+                        } else {
+                            _safe_path = try r.fs.dirname_store.append(string, path);
+                        }
+                    }
+
+                    const safe_path = _safe_path.?;
+
+                    var dir_path_i = std.mem.indexOf(u8, safe_path, queue_top.unsafe_path) orelse unreachable;
+                    var end = dir_path_i +
+                        queue_top.unsafe_path.len;
+
+                    // Directories must always end in a trailing slash or else various bugs can occur.
+                    // This covers "what happens when the trailing"
+                    end += @intCast(usize, @boolToInt(safe_path.len > end and end > 0 and safe_path[end - 1] != std.fs.path.sep and safe_path[end] == std.fs.path.sep));
+                    break :brk safe_path[dir_path_i..end];
+                };
 
                 var cached_dir_entry_result = rfs.entries.getOrPut(dir_path) catch unreachable;
 
                 var dir_entries_option: *Fs.FileSystem.RealFS.EntriesOption = undefined;
-                var has_dir_entry_result: bool = false;
+                var needs_iter: bool = true;
 
                 if (rfs.entries.atIndex(cached_dir_entry_result.index)) |cached_entry| {
-                    if (std.meta.activeTag(cached_entry.*) == .entries) {
+                    if (cached_entry.* == .entries) {
                         dir_entries_option = cached_entry;
+                        needs_iter = false;
                     }
                 }
 
-                if (!has_dir_entry_result) {
+                if (needs_iter) {
                     dir_entries_option = try rfs.entries.put(&cached_dir_entry_result, .{
                         .entries = Fs.FileSystem.DirEntry.init(dir_path, r.fs.allocator),
                     });
@@ -1247,13 +1276,10 @@ pub fn NewResolver(cache_files: bool) type {
                         Fs.FileSystem.setMaxFd(open_dir.fd);
                         dir_entries_option.entries.fd = open_dir.fd;
                     }
-
-                    has_dir_entry_result = true;
-                }
-
-                while (try dir_iterator.next()) |_value| {
-                    const value: std.fs.Dir.Entry = _value;
-                    dir_entries_option.entries.addEntry(value) catch unreachable;
+                    var dir_iterator = open_dir.iterate();
+                    while (try dir_iterator.next()) |_value| {
+                        dir_entries_option.entries.addEntry(_value) catch unreachable;
+                    }
                 }
 
                 const dir_info = try r.dirInfoUncached(
@@ -1779,7 +1805,7 @@ pub fn NewResolver(cache_files: bool) type {
                 }
             }
 
-            const dir_path = std.fs.path.dirname(path) orelse "/";
+            const dir_path = Dirname.dirname(path);
 
             const dir_entry: *Fs.FileSystem.RealFS.EntriesOption = rfs.readDirectory(
                 dir_path,
@@ -1942,6 +1968,10 @@ pub fn NewResolver(cache_files: bool) type {
 
             // A "node_modules" directory isn't allowed to directly contain another "node_modules" directory
             var base = std.fs.path.basename(path);
+
+            // base must
+            if (base.len > 1 and base[base.len - 1] == std.fs.path.sep) base = base[0 .. base.len - 1];
+
             // if (entries != null) {
             if (!strings.eqlComptime(base, "node_modules")) {
                 if (entries.getComptimeQuery("node_modules")) |entry| {

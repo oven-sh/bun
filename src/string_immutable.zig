@@ -124,7 +124,7 @@ pub fn copyLowercase(in: string, out: []u8) string {
             switch (c) {
                 'A'...'Z' => {
                     @setRuntimeSafety(false);
-                    @memcpy(out.ptr, in_slice.ptr, i);
+                    @memcpy(out_slice.ptr, in_slice.ptr, i);
                     out_slice[i] = std.ascii.toLower(c);
                     const end = i + 1;
                     if (end >= out_slice.len) break :begin;
@@ -141,6 +141,22 @@ pub fn copyLowercase(in: string, out: []u8) string {
     }
 
     return out[0..in.len];
+}
+
+test "copyLowercase" {
+    {
+        var in = "Hello, World!";
+        var out = std.mem.zeroes([in.len]u8);
+        var out_ = copyLowercase(in, &out);
+        try std.testing.expectEqualStrings(out_, "hello, world!");
+    }
+
+    {
+        var in = "_ListCache";
+        var out = std.mem.zeroes([in.len]u8);
+        var out_ = copyLowercase(in, &out);
+        try std.testing.expectEqualStrings(out_, "_listcache");
+    }
 }
 
 test "StringOrTinyString" {

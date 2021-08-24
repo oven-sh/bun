@@ -7,3 +7,6 @@
 [submodule "src/javascript/jsc/WebKit"]
 	path = src/javascript/jsc/WebKit
 	url = git@github.com:/Jarred-Sumner/WebKit
+[submodule "src/deps/mimalloc"]
+	path = src/deps/mimalloc
+	url = https://github.com/microsoft/mimalloc

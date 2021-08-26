@@ -960,52 +960,74 @@ pub const BundleOptions = struct {
             opts.resolve_mode = .lazy;
 
             var dir_to_use: string = opts.routes.static_dir;
-            const static_dir_set = opts.routes.static_dir_enabled;
+            const static_dir_set = !opts.routes.static_dir_enabled;
+            var disabled_static = false;
 
-            var _dirs = [_]string{dir_to_use};
-            opts.routes.static_dir = try fs.absAlloc(allocator, &_dirs);
-            opts.routes.static_dir_handle = std.fs.openDirAbsolute(opts.routes.static_dir, .{ .iterate = true }) catch |err| brk: {
-                var did_warn = false;
-                switch (err) {
-                    error.FileNotFound => {
-                        // Be nice.
-                        // Check "static" since sometimes people use that instead.
-                        // Don't switch to it, but just tell "hey try --public-dir=static" next time
-                        if (!static_dir_set) {
-                            _dirs[0] = "static";
-                            const check_static = try fs.absAlloc(allocator, &_dirs);
-                            defer allocator.free(check_static);
+            var chosen_dir = dir_to_use;
 
-                            std.fs.accessAbsolute(check_static, .{}) catch {
-                                Output.prettyErrorln("warn: \"{s}\" folder missing. If there are external assets used in your project, pass --public-dir=\"public-folder-name\"", .{_dirs[0]});
-                                did_warn = true;
-                            };
+            if (!static_dir_set) {
+                chosen_dir = choice: {
+                    if (fs.fs.readDirectory(fs.top_level_dir, null)) |dir_| {
+                        const dir: *const Fs.FileSystem.RealFS.EntriesOption = dir_;
+                        switch (dir.*) {
+                            .entries => {
+                                if (dir.entries.getComptimeQuery("public")) |q| {
+                                    if (q.entry.kind(&fs.fs) == .dir) {
+                                        break :choice "public";
+                                    }
+                                }
+
+                                if (dir.entries.getComptimeQuery("static")) |q| {
+                                    if (q.entry.kind(&fs.fs) == .dir) {
+                                        break :choice "static";
+                                    }
+                                }
+
+                                break :choice ".";
+                            },
+                            else => {
+                                break :choice "";
+                            },
                         }
+                    } else |err| {
+                        break :choice "";
+                    }
+                };
 
-                        if (!did_warn) {
-                            Output.prettyErrorln("warn: \"{s}\" folder missing. If you want to use \"static\" as the public folder, pass --public-dir=\"static\".", .{_dirs[0]});
-                        }
-                        opts.routes.static_dir_enabled = false;
-                    },
-                    error.AccessDenied => {
-                        Output.prettyErrorln(
-                            "error: access denied when trying to open dir: \"{s}\".\nPlease re-open Bun with access to this folder or pass a different folder via \"--public-dir\". Note: --public-dir is relative to --cwd (or the process' current working directory).\n\nThe public folder is where static assets such as images, fonts, and .html files go.",
-                            .{opts.routes.static_dir},
-                        );
-                        std.process.exit(1);
-                    },
-                    else => {
-                        Output.prettyErrorln(
-                            "error: \"{s}\" when accessing public folder: \"{s}\"",
-                            .{ @errorName(err), opts.routes.static_dir },
-                        );
-                        std.process.exit(1);
-                    },
+                if (chosen_dir.len == 0) {
+                    disabled_static = true;
+                    opts.routes.static_dir_enabled = false;
                 }
+            }
 
-                break :brk null;
-            };
+            if (!disabled_static) {
+                var _dirs = [_]string{chosen_dir};
+                opts.routes.static_dir = try fs.absAlloc(allocator, &_dirs);
+                opts.routes.static_dir_handle = std.fs.openDirAbsolute(opts.routes.static_dir, .{ .iterate = true }) catch |err| brk: {
+                    var did_warn = false;
+                    switch (err) {
+                        error.FileNotFound => {
+                            opts.routes.static_dir_enabled = false;
+                        },
+                        error.AccessDenied => {
+                            Output.prettyErrorln(
+                                "error: access denied when trying to open directory for static files: \"{s}\".\nPlease re-open Bun with access to this folder or pass a different folder via \"--public-dir\". Note: --public-dir is relative to --cwd (or the process' current working directory).\n\nThe public folder is where static assets such as images, fonts, and .html files go.",
+                                .{opts.routes.static_dir},
+                            );
+                            std.process.exit(1);
+                        },
+                        else => {
+                            Output.prettyErrorln(
+                                "error: \"{s}\" when accessing public folder: \"{s}\"",
+                                .{ @errorName(err), opts.routes.static_dir },
+                            );
+                            std.process.exit(1);
+                        },
+                    }
 
+                    break :brk null;
+                };
+            }
             // Windows has weird locking rules for file access.
             // so it's a bad idea to keep a file handle open for a long time on Windows.
             if (isWindows and opts.routes.static_dir_handle != null) {

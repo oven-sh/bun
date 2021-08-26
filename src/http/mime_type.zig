@@ -30,7 +30,8 @@ pub const css = MimeType.init("text/css", .css);
 pub const javascript = MimeType.init("text/javascript;charset=utf-8", .javascript);
 pub const ico = MimeType.init("image/vnd.microsoft.icon", .image);
 pub const html = MimeType.init("text/html;charset=utf-8", .html);
-pub const json = MimeType.init("application/json;charset=utf-8", .json);
+// we transpile json to javascript so that it is importable without import assertions.
+pub const json = MimeType.init(javascript.value, .json);
 
 fn init(comptime str: string, t: Category) MimeType {
     return MimeType{
@@ -42,7 +43,7 @@ fn init(comptime str: string, t: Category) MimeType {
 // TODO: improve this
 pub fn byLoader(loader: Loader, ext: string) MimeType {
     switch (loader) {
-        .tsx, .ts, .js, .jsx => {
+        .tsx, .ts, .js, .jsx, .json => {
             return javascript;
         },
         .css => {

@@ -394,8 +394,10 @@ pub const Arguments = struct {
             };
         }
 
-        if (entry_points.len == 0 and opts.framework == null and opts.node_modules_bundle_path == null) {
-            return error.MissingEntryPoint;
+        if (cmd == .BunCommand or !FeatureFlags.dev_only) {
+            if (entry_points.len == 0 and opts.framework == null and opts.node_modules_bundle_path == null) {
+                return error.MissingEntryPoint;
+            }
         }
 
         opts.output_dir = output_dir;
@@ -497,7 +499,7 @@ pub const Command = struct {
         log: *logger.Log,
         allocator: *std.mem.Allocator,
 
-        pub fn create(allocator: *std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) !Context {
+        pub fn create(allocator: *std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {
             return Command.Context{
                 .args = try Arguments.parse(allocator, command),
                 .log = log,

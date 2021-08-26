@@ -454,7 +454,6 @@ pub const RequestContext = struct {
 
     pub fn sendJSB(ctx: *RequestContext) !void {
         const node_modules_bundle = ctx.bundler.options.node_modules_bundle orelse unreachable;
-        defer ctx.done();
         ctx.appendHeader("ETag", node_modules_bundle.bundle.etag);
         ctx.appendHeader("Content-Type", "text/javascript");
         ctx.appendHeader("Cache-Control", "immutable, max-age=99999");
@@ -465,6 +464,8 @@ pub const RequestContext = struct {
                 return;
             }
         }
+
+        defer ctx.done();
 
         const content_length = node_modules_bundle.container.code_length.? - node_modules_bundle.codeStartOffset();
         try ctx.writeStatus(200);
@@ -1158,7 +1159,7 @@ pub const RequestContext = struct {
 
                                 switch (build_result.value) {
                                     .fail => {
-                                        Output.errorLn(
+                                        Output.prettyErrorln(
                                             "Error: <b>{s}<r><b>",
                                             .{
                                                 file_path,
@@ -1213,7 +1214,10 @@ pub const RequestContext = struct {
                                 }
                             },
                             else => {
-                                Output.prettyErrorln("<r>[Websocket]: Unknown cmd: <b>{d}<r>. This might be a version mismatch. Try updating your node_modules.jsb", .{@enumToInt(cmd.kind)});
+                                Output.prettyErrorln(
+                                    "<r>[Websocket]: Unknown cmd: <b>{d}<r>. This might be a version mismatch. Try updating your node_modules.bun",
+                                    .{@enumToInt(cmd.kind)},
+                                );
                             },
                         }
                     },
@@ -1398,10 +1402,10 @@ pub const RequestContext = struct {
                             }
                         }
 
+                        defer chunky.rctx.done();
                         try chunky.rctx.writeStatus(200);
                         try chunky.rctx.prepareToSendBody(buf.len, false);
                         try chunky.rctx.writeBodyBuf(buf);
-                        chunky.rctx.done();
                     }
 
                     pub fn flush(
@@ -1858,7 +1862,15 @@ pub const Server = struct {
         try listener.listen(1280);
         const addr = try listener.getLocalAddress();
 
-        Output.prettyln("<r>Started Bun at <b><cyan>http://{s}<r>", .{addr});
+        // This is technically imprecise.
+        // However, we want to optimize for easy to copy paste
+        // Nobody should get weird CORS errors when you go to the printed url.
+        if (std.mem.readIntNative(u32, &addr.ipv4.host.octets) == 0 or std.mem.readIntNative(u128, &addr.ipv6.host.octets) == 0) {
+            Output.prettyln("<r>Started Bun at <b><cyan>http://localhost:{d}<r>", .{addr.ipv4.port});
+        } else {
+            Output.prettyln("<r>Started Bun at <b><cyan>http://{s}<r>", .{addr});
+        }
+
         Output.flush();
         // var listener_handle = try std.os.kqueue();
         // var change_list = std.mem.zeroes([2]os.Kevent);
@@ -1884,8 +1896,13 @@ pub const Server = struct {
     threadlocal var req_buf: [32_000]u8 = undefined;
 
     pub const ConnectionFeatures = struct {
-        public_folder: bool = false,
+        public_folder: PublicFolderPriority = PublicFolderPriority.none,
         filesystem_router: bool = false,
+        pub const PublicFolderPriority = enum {
+            none,
+            first,
+            last,
+        };
     };
 
     pub fn handleConnection(server: *Server, conn: *tcp.Connection, comptime features: ConnectionFeatures) void {
@@ -2005,59 +2022,25 @@ pub const Server = struct {
             return;
         };
 
-        if (comptime features.public_folder and features.filesystem_router) {
-            if (!finished) {
-                if (req_ctx.matchPublicFolder()) |result| {
-                    finished = true;
-                    req_ctx.renderServeResult(result) catch |err| {
-                        Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
-                        did_print = true;
-                        return;
-                    };
-                }
-            }
-
-            if (!finished) {
-                req_ctx.bundler.router.?.match(server, RequestContext, &req_ctx) catch |err| {
-                    switch (err) {
-                        error.ModuleNotFound => {
-                            req_ctx.sendNotFound() catch {};
-                        },
-                        else => {
-                            Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
-                            did_print = true;
-                            return;
-                        },
+        if (!finished) {
+            switch (comptime features.public_folder) {
+                .first => {
+                    if (!finished) {
+                        if (req_ctx.matchPublicFolder()) |result| {
+                            finished = true;
+                            req_ctx.renderServeResult(result) catch |err| {
+                                Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
+                                did_print = true;
+                                return;
+                            };
+                        }
                     }
-                };
+                },
+                else => {},
             }
-        } else if (comptime features.public_folder) {
-            if (!finished) {
-                if (req_ctx.matchPublicFolder()) |result| {
-                    finished = true;
-                    req_ctx.renderServeResult(result) catch |err| {
-                        Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
-                        did_print = true;
-                        return;
-                    };
-                }
-            }
+        }
 
-            if (!finished) {
-                req_ctx.handleRequest() catch |err| {
-                    switch (err) {
-                        error.ModuleNotFound => {
-                            req_ctx.sendNotFound() catch {};
-                        },
-                        else => {
-                            Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
-                            did_print = true;
-                            return;
-                        },
-                    }
-                };
-            }
-        } else if (comptime features.filesystem_router) {
+        if (comptime features.filesystem_router) {
             if (!finished) {
                 req_ctx.bundler.router.?.match(server, RequestContext, &req_ctx) catch |err| {
                     switch (err) {
@@ -2086,6 +2069,19 @@ pub const Server = struct {
                         },
                     }
                 };
+            }
+        }
+
+        if (comptime features.public_folder == .last) {
+            if (!finished) {
+                if (req_ctx.matchPublicFolder()) |result| {
+                    finished = true;
+                    req_ctx.renderServeResult(result) catch |err| {
+                        Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
+                        did_print = true;
+                        return;
+                    };
+                }
             }
         }
     }
@@ -2137,21 +2133,42 @@ pub const Server = struct {
 
         try server.initWatcher();
 
+        const public_folder_is_top_level = server.bundler.options.routes.static_dir_enabled and strings.eql(
+            server.bundler.fs.top_level_dir,
+            server.bundler.options.routes.static_dir,
+        );
+
         if (server.bundler.router != null and server.bundler.options.routes.static_dir_enabled) {
-            try server.run(
-                ConnectionFeatures{ .public_folder = true, .filesystem_router = true },
-            );
+            if (public_folder_is_top_level) {
+                try server.run(
+                    ConnectionFeatures{ .public_folder = .last, .filesystem_router = true },
+                );
+            } else {
+                try server.run(
+                    ConnectionFeatures{ .public_folder = .first, .filesystem_router = true },
+                );
+            }
         } else if (server.bundler.router != null) {
             try server.run(
-                ConnectionFeatures{ .public_folder = false, .filesystem_router = true },
+                ConnectionFeatures{ .filesystem_router = true },
             );
         } else if (server.bundler.options.routes.static_dir_enabled) {
-            try server.run(
-                ConnectionFeatures{ .public_folder = true, .filesystem_router = false },
-            );
+            if (public_folder_is_top_level) {
+                try server.run(
+                    ConnectionFeatures{
+                        .public_folder = .first,
+                    },
+                );
+            } else {
+                try server.run(
+                    ConnectionFeatures{
+                        .public_folder = .last,
+                    },
+                );
+            }
         } else {
             try server.run(
-                ConnectionFeatures{ .public_folder = false, .filesystem_router = false },
+                ConnectionFeatures{ .filesystem_router = false },
             );
         }
     }

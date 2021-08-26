@@ -1,7 +1,7 @@
 const std = @import("std");
 pub usingnamespace @import("strings.zig");
 
-pub const default_allocator = @import("./memory_allocator.zig").c_allocator;
+pub const default_allocator: *std.mem.Allocator = if (isTest) std.heap.c_allocator else @import("./memory_allocator.zig").c_allocator;
 
 pub const C = @import("c.zig");
 pub usingnamespace @import("env.zig");

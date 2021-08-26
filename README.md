@@ -102,6 +102,41 @@ bun build ./routes --outdir=./out
 
 Unlike many other bundlers, `Bun` only bundles `node_modules`. This is great for development, where most people add/update packages much less frequently than app code (which is also great for caching in browsers). To make that distinction clear, the filename defaults to `node_modules.bun`. We recommend storing `node_modules.bun` in your git repository. Since it's a binary file, it shouldn't clutter your git history and it will make your entire frontend development team move faster if they don't have to re-bundle dependencies.
 
+# Building from source
+
+Estimated: 30-60 minutes :(
+
+You'll want to start downloading two things at once:
+
+```bash
+git clone https://github.com/jarred-sumner/zig && git checkout jarred/zig-sloppy-with-small-structs
+```
+
+```bash
+git submodule update --init --recursive --progress --depth=1
+```
+
+Next, compile Zig.
+
+On a Mac, that looks like this:
+
+```bash
+cmake . -DCMAKE_PREFIX_PATH=$(brew --prefix llvm) -DZIG_STATIC_LLVM=ON -DCMAKE_BUILD_TYPE=Release  && make -j 16
+```
+
+Note that `brew install zig` won't work. Bun uses a build of Zig with a couple patches.
+
+You'll want to make sure `zig` is in `$PATH`. The `zig` binary wil be in the same folder as the newly-cloned `zig` repo. If you use fish, you can run `fish_add_path (pwd)`.
+
+Now go back to the folder with `Bun`'s repository.
+
+Run:
+
+```
+zig build headers
+zig build
+```
+
 # Credits
 
 - While written in Zig instead of Go, Bun's JS transpiler & CSS lexer source code is based off of @evanw's esbuild project. @evanw did a fantastic job with esbuild.

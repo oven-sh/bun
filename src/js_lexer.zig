@@ -123,16 +123,6 @@ pub const Lexer = struct {
         return logger.usize2Loc(self.start);
     }
 
-    inline fn nextCodepointSlice(it: *LexerType) []const u8 {
-        @setRuntimeSafety(false);
-
-        const cp_len = strings.utf8ByteSequenceLength(it.source.contents[it.current]);
-        it.end = it.current;
-        it.current += cp_len;
-
-        return if (!(it.current > it.source.contents.len)) it.source.contents[it.current - cp_len .. it.current] else "";
-    }
-
     pub fn syntaxError(self: *LexerType) !void {
         @setCold(true);
 
@@ -185,19 +175,6 @@ pub const Lexer = struct {
 
     pub fn codePointEql(self: *LexerType, a: u8) bool {
         return @intCast(CodePoint, a) == self.code_point;
-    }
-
-    inline fn nextCodepoint(it: *LexerType) !CodePoint {
-        const slice = it.nextCodepointSlice();
-
-        return switch (slice.len) {
-            0 => -1,
-            1 => @as(CodePoint, slice[0]),
-            2 => @as(CodePoint, unicode.utf8Decode2(slice) catch unreachable),
-            3 => @as(CodePoint, unicode.utf8Decode3(slice) catch unreachable),
-            4 => @as(CodePoint, unicode.utf8Decode4(slice) catch unreachable),
-            else => unreachable,
-        };
     }
 
     /// Look ahead at the next n codepoints without advancing the iterator.
@@ -522,7 +499,7 @@ pub const Lexer = struct {
                 },
 
                 '\r' => {
-                    if (quote != '`') {
+                    if (comptime quote != '`') {
                         try lexer.addDefaultError("Unterminated string literal");
                     }
 
@@ -531,13 +508,13 @@ pub const Lexer = struct {
                 },
 
                 '\n' => {
-                    if (quote != '`') {
+                    if (comptime quote != '`') {
                         try lexer.addDefaultError("Unterminated string literal");
                     }
                 },
 
                 '$' => {
-                    if (quote == '`') {
+                    if (comptime quote == '`') {
                         try lexer.step();
                         if (lexer.code_point == '{') {
                             suffix_len = 2;
@@ -619,6 +596,29 @@ pub const Lexer = struct {
         // //     // Fast path
 
         // // }
+    }
+
+    inline fn nextCodepointSlice(it: *LexerType) []const u8 {
+        @setRuntimeSafety(false);
+
+        const cp_len = strings.utf8ByteSequenceLength(it.source.contents[it.current]);
+        it.end = it.current;
+        it.current += cp_len;
+
+        return if (!(it.current > it.source.contents.len)) it.source.contents[it.current - cp_len .. it.current] else "";
+    }
+
+    inline fn nextCodepoint(it: *LexerType) !CodePoint {
+        const slice = it.nextCodepointSlice();
+
+        return switch (slice.len) {
+            0 => -1,
+            1 => @as(CodePoint, slice[0]),
+            2 => @as(CodePoint, unicode.utf8Decode2(slice) catch unreachable),
+            3 => @as(CodePoint, unicode.utf8Decode3(slice) catch unreachable),
+            4 => @as(CodePoint, unicode.utf8Decode4(slice) catch unreachable),
+            else => unreachable,
+        };
     }
 
     fn step(lexer: *LexerType) !void {

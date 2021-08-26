@@ -1,8 +1,7 @@
 {
   "name": "bun-framework-next",
-  "version": "0.0.0-8",
+  "version": "0.0.0-9",
   "description": "",
-  "main": "package.json",
   "framework": {
     "static": "public",
     "assetPrefix": "_next/",

@@ -191,21 +191,22 @@ pub const FileSystem = struct {
             else
                 strings.StringOrTinyString.initLowerCase(entry.name);
 
-            const result = Entry{
-                .base_ = name,
-                .base_lowercase_ = name_lowercased,
-                .dir = dir.dir,
-                .mutex = Mutex.init(),
-                // Call "stat" lazily for performance. The "@material-ui/icons" package
-                // contains a directory with over 11,000 entries in it and running "stat"
-                // for each entry was a big performance issue for that package.
-                .need_stat = entry.kind == .SymLink,
-                .cache = Entry.Cache{
-                    .symlink = "",
-                    .kind = _kind,
+            const stored = try EntryStore.instance.appendGet(
+                Entry{
+                    .base_ = name,
+                    .base_lowercase_ = name_lowercased,
+                    .dir = dir.dir,
+                    .mutex = Mutex.init(),
+                    // Call "stat" lazily for performance. The "@material-ui/icons" package
+                    // contains a directory with over 11,000 entries in it and running "stat"
+                    // for each entry was a big performance issue for that package.
+                    .need_stat = entry.kind == .SymLink,
+                    .cache = Entry.Cache{
+                        .symlink = "",
+                        .kind = _kind,
+                    },
                 },
-            };
-            const stored = try EntryStore.instance.appendGet(result);
+            );
 
             const stored_name = stored.value.base();
 
@@ -317,6 +318,7 @@ pub const FileSystem = struct {
     pub const Entry = struct {
         cache: Cache = Cache{},
         dir: string,
+
         base_: strings.StringOrTinyString,
 
         // Necessary because the hash table uses it as a key

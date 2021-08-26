@@ -139,7 +139,7 @@ pub const Arguments = struct {
 
     pub const ParamType = clap.Param(clap.Help);
 
-    const params: [26]ParamType = brk: {
+    const params: [25]ParamType = brk: {
         @setEvalBranchQuota(9999);
         break :brk [_]ParamType{
             clap.parseParam("--use <STR>                       Choose a framework, e.g. \"--use next\". It checks first for a package named \"bun-framework-packagename\" and then \"packagename\".") catch unreachable,
@@ -157,7 +157,7 @@ pub const Arguments = struct {
             clap.parseParam("--no-summary                      Don't print a summary (when generating .bun") catch unreachable,
             clap.parseParam("--origin <STR>                    Rewrite import paths to start with --origin. Default: \"/\"") catch unreachable,
             clap.parseParam("--platform <STR>                  \"browser\" or \"node\". Defaults to \"browser\"") catch unreachable,
-            clap.parseParam("--production                      [not implemented] generate production code") catch unreachable,
+            // clap.parseParam("--production                      [not implemented] generate production code") catch unreachable,
             clap.parseParam("--static-dir <STR>                Top-level directory for .html files, fonts or anything external. Defaults to \"<cwd>/public\", to match create-react-app and Next.js") catch unreachable,
             clap.parseParam("--tsconfig-override <STR>         Load tsconfig from path instead of cwd/tsconfig.json") catch unreachable,
             clap.parseParam("-d, --define <STR>...             Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:development") catch unreachable,
@@ -208,7 +208,7 @@ pub const Arguments = struct {
                 .loaders = loader_tuple.values,
             },
 
-            .serve = cmd == .DevCommand,
+            .serve = cmd == .DevCommand or (FeatureFlags.dev_only and cmd == .AutoCommand),
             .main_fields = args.options("--main-fields"),
             .generate_node_module_bundle = cmd == .BunCommand,
             .inject = args.options("--inject"),
@@ -276,7 +276,7 @@ pub const Arguments = struct {
             else => {},
         }
 
-        const production = args.flag("--production");
+        const production = false; //args.flag("--production");
 
         var write = entry_points.len > 1 or output_dir != null;
         if (write and output_dir == null) {
@@ -309,7 +309,7 @@ pub const Arguments = struct {
         };
 
         switch (comptime cmd) {
-            .DevCommand, .BuildCommand => {
+            .AutoCommand, .DevCommand, .BuildCommand => {
                 if (args.option("--static-dir")) |public_dir| {
                     opts.router = Api.RouteConfig{ .extensions = &.{}, .dir = &.{}, .static_dir = public_dir };
                 }
@@ -426,20 +426,35 @@ const HelpCommand = struct {
         var cwd_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
         const cwd = std.os.getcwd(&cwd_buf) catch unreachable;
         const dirname = std.fs.path.basename(cwd);
-        const fmt =
-            \\> <r> <b><white>init<r>                           Setup Bun in \"{s}\"
-            \\> <r> <b><green>dev    <r><d>  ./a.ts ./b.jsx<r>        Start a Bun Dev Server
-            \\<d>*<r> <b><cyan>build  <r><d>  ./a.ts ./b.jsx<r>        Make JavaScript-like code runnable & bundle CSS
-            \\> <r> <b><magenta>bun    <r><d>  ./a.ts ./b.jsx<r>        Bundle dependencies of input files into a <r><magenta>.bun<r>
-            \\> <r> <green>run    <r><d>  ./a.ts        <r>        Run a JavaScript-like file with Bun.js
-            \\> <r> <b><blue>discord<r>                        Open Bun's Discord server
-            \\> <r> <b><d>help      <r>                     Print this help menu
-            \\
-        ;
+        if (FeatureFlags.dev_only) {
+            const fmt =
+                \\> <r> <b><green>dev    <r><d>  ./a.ts ./b.jsx<r>        Start a Bun Dev Server
+                \\> <r> <b><magenta>bun    <r><d>  ./a.ts ./b.jsx<r>        Bundle dependencies of input files into a <r><magenta>.bun<r>
+                \\> <r> <b><blue>discord<r>                        Open Bun's Discord server
+                \\> <r> <b><d>help      <r>                     Print this help menu
+                \\
+            ;
 
-        switch (reason) {
-            .explicit => Output.pretty("Bun: a fast bundler & transpiler for web software.\n\n" ++ fmt, .{dirname}),
-            .invalid_command => Output.prettyError("<r><red>Uh-oh<r> not sure what to do with that command.\n\n" ++ fmt, .{dirname}),
+            switch (reason) {
+                .explicit => Output.pretty("Bun: a fast bundler & transpiler for web software.\n\n" ++ fmt, .{}),
+                .invalid_command => Output.prettyError("<r><red>Uh-oh<r> not sure what to do with that command.\n\n" ++ fmt, .{}),
+            }
+        } else {
+            const fmt =
+                \\> <r> <b><white>init<r>                           Setup Bun in \"{s}\"
+                \\> <r> <b><green>dev    <r><d>  ./a.ts ./b.jsx<r>        Start a Bun Dev Server
+                \\<d>*<r> <b><cyan>build  <r><d>  ./a.ts ./b.jsx<r>        Make JavaScript-like code runnable & bundle CSS
+                \\> <r> <b><magenta>bun    <r><d>  ./a.ts ./b.jsx<r>        Bundle dependencies of input files into a <r><magenta>.bun<r>
+                \\> <r> <green>run    <r><d>  ./a.ts        <r>        Run a JavaScript-like file with Bun.js
+                \\> <r> <b><blue>discord<r>                        Open Bun's Discord server
+                \\> <r> <b><d>help      <r>                     Print this help menu
+                \\
+            ;
+
+            switch (reason) {
+                .explicit => Output.pretty("Bun: a fast bundler & transpiler for web software.\n\n" ++ fmt, .{dirname}),
+                .invalid_command => Output.prettyError("<r><red>Uh-oh<r> not sure what to do with that command.\n\n" ++ fmt, .{dirname}),
+            }
         }
 
         Output.flush();
@@ -506,18 +521,30 @@ pub const Command = struct {
         const first_arg_name = std.mem.span(next_arg);
         const RootCommandMatcher = strings.ExactSizeMatcher(8);
 
-        return switch (RootCommandMatcher.match(first_arg_name)) {
-            RootCommandMatcher.case("init") => .InitCommand,
-            RootCommandMatcher.case("bun") => .BunCommand,
-            RootCommandMatcher.case("discord") => .DiscordCommand,
+        if (comptime FeatureFlags.dev_only) {
+            return switch (RootCommandMatcher.match(first_arg_name)) {
+                RootCommandMatcher.case("init") => .InitCommand,
+                RootCommandMatcher.case("bun") => .BunCommand,
+                RootCommandMatcher.case("discord") => .DiscordCommand,
 
-            RootCommandMatcher.case("b"), RootCommandMatcher.case("build") => .BuildCommand,
-            RootCommandMatcher.case("r"), RootCommandMatcher.case("run") => .RunCommand,
-            RootCommandMatcher.case("d"), RootCommandMatcher.case("dev") => .DevCommand,
+                RootCommandMatcher.case("b"), RootCommandMatcher.case("build") => .BuildCommand,
+                RootCommandMatcher.case("r"), RootCommandMatcher.case("run") => .RunCommand,
+                RootCommandMatcher.case("d"), RootCommandMatcher.case("dev") => .DevCommand,
 
-            RootCommandMatcher.case("help") => .HelpCommand,
-            else => .AutoCommand,
-        };
+                RootCommandMatcher.case("help") => .HelpCommand,
+                else => .AutoCommand,
+            };
+        } else {
+            return switch (RootCommandMatcher.match(first_arg_name)) {
+                RootCommandMatcher.case("init") => .InitCommand,
+                RootCommandMatcher.case("bun") => .BunCommand,
+                RootCommandMatcher.case("discord") => .DiscordCommand,
+                RootCommandMatcher.case("d"), RootCommandMatcher.case("dev") => .DevCommand,
+
+                RootCommandMatcher.case("help") => .HelpCommand,
+                else => .AutoCommand,
+            };
+        }
     }
 
     pub fn start(allocator: *std.mem.Allocator, log: *logger.Log) !void {
@@ -551,7 +578,7 @@ pub const Command = struct {
                 try RunCommand.exec(ctx);
             },
             .AutoCommand => {
-                const ctx = Command.Context.create(allocator, log, .AutoCommand) catch |e| {
+                var ctx = Command.Context.create(allocator, log, .AutoCommand) catch |e| {
                     switch (e) {
                         error.MissingEntryPoint => {
                             HelpCommand.execWithReason(allocator, .explicit);
@@ -570,7 +597,11 @@ pub const Command = struct {
                     return;
                 }
 
-                try BuildCommand.exec(ctx);
+                if (FeatureFlags.dev_only) {
+                    try DevCommand.exec(ctx);
+                } else {
+                    try BuildCommand.exec(ctx);
+                }
             },
             else => unreachable,
         }

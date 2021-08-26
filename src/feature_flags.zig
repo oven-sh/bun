@@ -34,6 +34,8 @@ pub const css_supports_fence = true;
 pub const enable_entry_cache = true;
 pub const enable_bytecode_caching = false;
 
+pub const dev_only = true;
+
 pub const verbose_fs = false;
 
 pub const watch_directories = true;

@@ -363,7 +363,7 @@ pub const Platform = enum {
     };
 };
 
-pub const Loader = enum {
+pub const Loader = enum(u3) {
     jsx,
     js,
     ts,
@@ -396,6 +396,13 @@ pub const Loader = enum {
     }
     pub fn isTypeScript(loader: Loader) bool {
         return loader == .tsx or loader == .ts;
+    }
+
+    pub fn isJavaScriptLike(loader: Loader) bool {
+        return switch (loader) {
+            .jsx, .js, .ts, .tsx => true,
+            else => false,
+        };
     }
 
     pub fn forFileName(filename: string, obj: anytype) ?Loader {
@@ -966,7 +973,7 @@ pub const BundleOptions = struct {
                         // Don't switch to it, but just tell "hey try --public-dir=static" next time
                         if (!static_dir_set) {
                             _dirs[0] = "static";
-                            const check_static = try fs.joinAlloc(allocator, &_dirs);
+                            const check_static = try fs.absAlloc(allocator, &_dirs);
                             defer allocator.free(check_static);
 
                             std.fs.accessAbsolute(check_static, .{}) catch {

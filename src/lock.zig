@@ -41,7 +41,7 @@ pub const Mutex = struct {
 
         var acquire_state = LOCKED;
         var state = self.state.load(.Monotonic);
-        var spin: u8 = if (has_fast_swap) 100 else 10;
+        var spin: u8 = if (comptime has_fast_swap) 100 else 10;
 
         while (true) {
             // Try to lock the Mutex if its unlocked.
@@ -75,7 +75,7 @@ pub const Mutex = struct {
 
                 // Indicate that there will be a waiting thread by updating to CONTENDED.
                 // Acquire barrier as this swap could also possibly lock the Mutex.
-                if (has_fast_swap) {
+                if (comptime has_fast_swap) {
                     state = self.state.swap(CONTENDED, .Acquire);
                     if (state == UNLOCKED) return;
                     break :uncontended;
@@ -135,3 +135,8 @@ pub const Lock = struct {
         this.mutex.release();
     }
 };
+
+
+pub fn spinCycle() void {
+
+}

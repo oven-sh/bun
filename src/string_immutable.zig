@@ -13,6 +13,16 @@ pub inline fn contains(self: string, str: string) bool {
     return std.mem.indexOf(u8, self, str) != null;
 }
 
+pub inline fn containsAny(in: anytype, target: string) bool {
+    for (in) |str| if (contains(str, target)) return true;
+    return false;
+}
+
+pub inline fn indexAny(in: anytype, target: string) ?usize {
+    for (in) |str, i| if (indexOf(str, target) != null) return i;
+    return null;
+}
+
 pub inline fn indexOfChar(self: string, char: u8) ?usize {
     return std.mem.indexOfScalar(@TypeOf(char), self, char);
 }

@@ -76,7 +76,9 @@ BUN_LLD_FLAGS := $(OBJ_FILES) \
 		src/deps/picohttpparser.o \
 		$(CLANG_FLAGS) \
 		-fpie \
-	
+
+mimalloc:
+	cd src/deps/mimalloc; cmake .; make; 
 
 bun-link-lld-debug:
 	clang++ $(BUN_LLD_FLAGS) \

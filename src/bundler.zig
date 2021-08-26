@@ -34,149 +34,7 @@ const isPackagePath = _resolver.isPackagePath;
 const Css = @import("css_scanner.zig");
 const DotEnv = @import("./env_loader.zig");
 const Lock = @import("./lock.zig").Lock;
-pub const ServeResult = struct {
-    file: options.OutputFile,
-    mime_type: MimeType,
-};
-
-pub const ClientEntryPoint = struct {
-    code_buffer: [8096]u8 = undefined,
-    path_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined,
-    source: logger.Source = undefined,
-
-    pub fn isEntryPointPath(extname: string) bool {
-        return strings.startsWith("entry.", extname);
-    }
-
-    pub fn generateEntryPointPath(outbuffer: []u8, original_path: Fs.PathName) string {
-        var joined_base_and_dir_parts = [_]string{ original_path.dir, original_path.base };
-        var generated_path = Fs.FileSystem.instance.absBuf(&joined_base_and_dir_parts, outbuffer);
-
-        std.mem.copy(u8, outbuffer[generated_path.len..], ".entry");
-        generated_path = outbuffer[0 .. generated_path.len + ".entry".len];
-        std.mem.copy(u8, outbuffer[generated_path.len..], original_path.ext);
-        return outbuffer[0 .. generated_path.len + original_path.ext.len];
-    }
-
-    pub fn decodeEntryPointPath(outbuffer: []u8, original_path: Fs.PathName) string {
-        var joined_base_and_dir_parts = [_]string{ original_path.dir, original_path.base };
-        var generated_path = Fs.FileSystem.instance.absBuf(&joined_base_and_dir_parts, outbuffer);
-        var original_ext = original_path.ext;
-        if (strings.indexOf(original_path.ext, "entry")) |entry_i| {
-            original_ext = original_path.ext[entry_i + "entry".len ..];
-        }
-
-        std.mem.copy(u8, outbuffer[generated_path.len..], original_ext);
-
-        return outbuffer[0 .. generated_path.len + original_ext.len];
-    }
-
-    pub fn generate(entry: *ClientEntryPoint, comptime BundlerType: type, bundler: *BundlerType, original_path: Fs.PathName, client: string) !void {
-
-        // This is *extremely* naive.
-        // The basic idea here is this:
-        // --
-        // import * as EntryPoint from 'entry-point';
-        // import boot from 'framework';
-        // boot(EntryPoint);
-        // --
-        // We go through the steps of printing the code -- only to then parse/transpile it because
-        // we want it to go through the linker and the rest of the transpilation process
-
-        const dir_to_use: string = original_path.dirWithTrailingSlash();
-
-        const code = try std.fmt.bufPrint(
-            &entry.code_buffer,
-            \\var lastErrorHandler = globalThis.onerror;
-            \\var loaded = {{boot: false, entry: false, onError: null}};
-            \\if (!lastErrorHandler || !lastErrorHandler.__onceTag) {{
-            \\  globalThis.onerror = function (evt) {{
-            \\      if (this.onError && typeof this.onError == 'function') {{
-            \\          this.onError(evt, loaded);
-            \\      }}
-            \\      console.error(evt.error);
-            \\      debugger;
-            \\  }};
-            \\  globalThis.onerror.__onceTag = true;
-            \\  globalThis.onerror.loaded = loaded;
-            \\}}
-            \\
-            \\import boot from '{s}';
-            \\loaded.boot = true;
-            \\if ('setLoaded' in boot) boot.setLoaded(loaded);
-            \\import * as EntryPoint from '{s}{s}';
-            \\loaded.entry = true;
-            \\
-            \\if (!boot) {{
-            \\ const now = Date.now();
-            \\ debugger;
-            \\ const elapsed = Date.now() - now;
-            \\ if (elapsed < 1000) {{
-            \\   throw new Error('Expected framework to export default a function. Instead, framework exported:', Object.keys(boot));
-            \\ }}
-            \\}}
-            \\
-            \\boot(EntryPoint, loaded);
-        ,
-            .{
-                client,
-                dir_to_use,
-                original_path.filename,
-            },
-        );
-
-        entry.source = logger.Source.initPathString(generateEntryPointPath(&entry.path_buffer, original_path), code);
-        entry.source.path.namespace = "client-entry";
-    }
-};
-
-pub const ServerEntryPoint = struct {
-    code_buffer: [std.fs.MAX_PATH_BYTES * 2 + 500]u8 = undefined,
-    output_code_buffer: [std.fs.MAX_PATH_BYTES * 8 + 500]u8 = undefined,
-    source: logger.Source = undefined,
-
-    pub fn generate(
-        entry: *ServerEntryPoint,
-        comptime BundlerType: type,
-        bundler: *BundlerType,
-        original_path: Fs.PathName,
-        name: string,
-    ) !void {
-
-        // This is *extremely* naive.
-        // The basic idea here is this:
-        // --
-        // import * as EntryPoint from 'entry-point';
-        // import boot from 'framework';
-        // boot(EntryPoint);
-        // --
-        // We go through the steps of printing the code -- only to then parse/transpile it because
-        // we want it to go through the linker and the rest of the transpilation process
-
-        const dir_to_use: string = original_path.dirWithTrailingSlash();
-
-        const code = try std.fmt.bufPrint(
-            &entry.code_buffer,
-            \\//Auto-generated file
-            \\import * as start from '{s}{s}';
-            \\export * from '{s}{s}';
-        ,
-            .{
-                dir_to_use,
-                original_path.filename,
-                dir_to_use,
-                original_path.filename,
-            },
-        );
-
-        entry.source = logger.Source.initPathString(name, code);
-        entry.source.path.text = name;
-        entry.source.path.namespace = "server-entry";
-    }
-};
-
-pub const ResolveResults = std.AutoHashMap(u64, void);
-pub const ResolveQueue = std.fifo.LinearFifo(_resolver.Result, std.fifo.LinearFifoBufferType.Dynamic);
+const NewBunQueue = @import("./bun_queue.zig").NewBunQueue;
 
 // How it works end-to-end
 // 1. Resolve a file path from input using the resolver
@@ -184,7 +42,7 @@ pub const ResolveQueue = std.fifo.LinearFifo(_resolver.Result, std.fifo.LinearFi
 // 3. If the loader is .js, .jsx, .ts, .tsx, or .json, run it through our JavaScript Parser
 // IF serving via HTTP and it's parsed without errors:
 // 4. If parsed without errors, generate a strong ETag & write the output to a buffer that sends to the in the Printer.
-// 7. Else, write any errors to error page
+// 4. Else, write any errors to error page (which doesn't exist yet)
 // IF writing to disk AND it's parsed without errors:
 // 4. Write the output to a temporary file.
 //    Why? Two reasons.
@@ -210,7 +68,7 @@ pub const ResolveQueue = std.fifo.LinearFifo(_resolver.Result, std.fifo.LinearFi
 //          buffer (react-dom.development.js is 550 KB)
 //             ^ This is how it used to work!
 //          - If we delay printing, we need to keep the AST around. Which breaks all our
-//          recycling logic since that could be many many ASTs.
+//          memory-saving recycling logic since that could be many many ASTs.
 //  5. Once all files are written, determine the shortest common path
 //  6. Move all the temporary files to their intended destinations
 // IF writing to disk AND it's a file-like loader
@@ -219,51 +77,18 @@ pub const ResolveQueue = std.fifo.LinearFifo(_resolver.Result, std.fifo.LinearFi
 // 5. Resolve any imports of this file to that hash(file(absolute_path))
 // 6. Append to the files array with the new filename
 // 7. When parsing & resolving is over, just copy the file.
-//     - on macOS, ensure it does an APFS shallow clone so that doesn't use disk space
+//     - on macOS, ensure it does an APFS shallow clone so that doesn't use disk space (only possible if file doesn't already exist)
+//          fclonefile
 // IF serving via HTTP AND it's a file-like loader:
-// 4. Hash the metadata ${absolute_path}-${fstat.mtime}-${fstat.size}
-// 5. Use a deterministic prefix so we know what file to look for without copying it
-//    Example scenario:
-//      GET /logo-SIU3242.png
-//      404 Not Found because there is no file named "logo-SIu3242.png"
-//    Instead, we can do this:
-//      GET /public/SIU3242/logo.png
-//      Our server sees "/public/" and knows the next segment will be a token
-//      which lets it ignore that when resolving the absolute path on disk
-// 6. Compare the current hash with the expected hash
-// 7. IF does not match, do a 301 Temporary Redirect to the new file path
-//    This adds an extra network request for outdated files, but that should be uncommon.
-// 7. IF does match, serve it with that hash as a weak ETag
-// 8. This should also just work unprefixed, but that will be served Cache-Control: private, no-store
+// 4. Use os.sendfile so copying/reading the file happens in the kernel instead of in Bun.
+//      This unfortunately means content hashing for HTTP server is unsupported, but metadata etags work
+// For each imported file, GOTO 1.
 
 pub const ParseResult = struct {
     source: logger.Source,
     loader: options.Loader,
     ast: js_ast.Ast,
     input_fd: ?StoredFileDescriptorType = null,
-};
-
-pub const ScanResult = struct {
-    path: Fs.Path,
-    is_node_module: bool = false,
-    file_size: u32 = 0,
-    import_record_start: u32,
-    import_record_length: u32,
-
-    pub const Summary = struct {
-        import_records: std.ArrayList(ImportRecord),
-        scan_results: std.ArrayList(ScanResult),
-        pub fn list(summary: *const Summary) List {
-            return List{
-                .import_records = summary.import_records.items,
-                .scan_results = summary.scan_results.items,
-            };
-        }
-        pub const List = struct {
-            import_records: []ImportRecord,
-            scan_results: []ScanResult,
-        };
-    };
 };
 
 pub fn NewBundler(cache_files: bool) type {
@@ -551,62 +376,44 @@ pub fn NewBundler(cache_files: bool) type {
         }
 
         pub const GenerateNodeModuleBundle = struct {
-            pub const PathMap = struct {
-                const HashTable = std.StringHashMap(u32);
-
-                backing: HashTable,
-                mutex: Lock,
-
-                pub fn init(allocator: *std.mem.Allocator) PathMap {
-                    return PathMap{
-                        .backing = HashTable.init(allocator),
-                        .mutex = Lock.init(),
-                    };
-                }
-
-                pub inline fn lock(this: *PathMap) void {
-                    this.mutex.lock();
-                }
-
-                pub inline fn unlock(this: *PathMap) void {
-                    this.mutex.unlock();
-                }
-
-                pub inline fn hashOf(str: string) u64 {
-                    return std.hash.Wyhash.hash(0, str);
-                }
-
-                pub inline fn getOrPut(this: *PathMap, str: string) !HashTable.GetOrPutResult {
-                    return this.backing.getOrPut(str);
-                }
-
-                pub inline fn contains(this: *PathMap, str: string) bool {
-                    return this.backing.contains(str);
-                }
-            };
-
-            const BunQueue = sync.Channel(_resolver.Result, .Dynamic);
+            const BunQueue = NewBunQueue(_resolver.Result);
 
             pub const ThreadPool = struct {
                 // Hardcode 512 as max number of threads for now.
                 workers: [512]Worker = undefined,
-                workers_used: u16 = 0,
-                cpu_count: u16 = 0,
-                wait_group: sync.WaitGroup = sync.WaitGroup.init(),
-
+                workers_used: u32 = 0,
+                cpu_count: u32 = 0,
+                started_workers: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
+                stopped_workers: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
+                completed_count: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
                 pub fn start(this: *ThreadPool, generator: *GenerateNodeModuleBundle) !void {
-                    this.cpu_count = @truncate(u16, @divFloor((try std.Thread.getCpuCount()) + 1, 2));
+                    this.cpu_count = @truncate(u32, @divFloor((try std.Thread.getCpuCount()) + 1, 2));
 
                     while (this.workers_used < this.cpu_count) : (this.workers_used += 1) {
-                        this.workers[this.workers_used].wg = &this.wait_group;
-
-                        this.wait_group.add();
                         try this.workers[this.workers_used].init(generator);
                     }
                 }
 
-                pub fn wait(this: *ThreadPool) void {
-                    this.wait_group.wait();
+                pub fn wait(this: *ThreadPool, generator: *GenerateNodeModuleBundle) void {
+                    while (generator.queue.count.load(.SeqCst) != generator.pool.completed_count.load(.SeqCst)) {
+                        var j: usize = 0;
+                        while (j < 100) : (j += 1) {}
+                        std.atomic.spinLoopHint();
+                    }
+
+                    for (this.workers[0..this.workers_used]) |*worker| {
+                        @atomicStore(bool, &worker.quit, true, .Release);
+                    }
+
+                    while (this.stopped_workers.load(.Acquire) != this.workers_used) {
+                        var j: usize = 0;
+                        while (j < 100) : (j += 1) {}
+                        std.atomic.spinLoopHint();
+                    }
+
+                    for (this.workers[0..this.workers_used]) |*worker| {
+                        worker.thread.join();
+                    }
                 }
 
                 pub const Task = struct {
@@ -617,10 +424,13 @@ pub fn NewBundler(cache_files: bool) type {
                 pub const Worker = struct {
                     thread_id: std.Thread.Id,
                     thread: std.Thread,
+
                     allocator: *std.mem.Allocator,
-                    wg: *sync.WaitGroup,
                     generator: *GenerateNodeModuleBundle,
                     data: *WorkerData = undefined,
+                    quit: bool = false,
+
+                    has_notify_started: bool = false,
 
                     pub const WorkerData = struct {
                         shared_buffer: MutableString = undefined,
@@ -641,11 +451,26 @@ pub fn NewBundler(cache_files: bool) type {
                         worker.thread = try std.Thread.spawn(.{}, Worker.run, .{worker});
                     }
 
+                    pub fn notifyStarted(this: *Worker) void {
+                        if (!this.has_notify_started) {
+                            this.has_notify_started = true;
+                            _ = this.generator.pool.started_workers.fetchAdd(1, .Release);
+                            std.Thread.Futex.wake(&this.generator.pool.started_workers, std.math.maxInt(u32));
+                        }
+                    }
+
                     pub fn run(this: *Worker) void {
-                        defer this.wg.done();
                         Output.Source.configureThread();
                         this.thread_id = std.Thread.getCurrentId();
-                        defer Output.flush();
+                        if (isDebug) {
+                            Output.prettyln("Thread started.\n", .{});
+                        }
+                        defer {
+                            if (isDebug) {
+                                Output.prettyln("Thread stopped.\n", .{});
+                            }
+                            Output.flush();
+                        }
 
                         this.loop() catch |err| {
                             Output.prettyErrorln("<r><red>Error: {s}<r>", .{@errorName(err)});
@@ -653,20 +478,33 @@ pub fn NewBundler(cache_files: bool) type {
                     }
 
                     pub fn loop(this: *Worker) anyerror!void {
-                        // Delay initializing until we get the first thing.
-                        const first = (try this.generator.resolve_queue.tryReadItem()) orelse return;
+                        defer {
+                            _ = this.generator.pool.stopped_workers.fetchAdd(1, .Release);
+                            this.notifyStarted();
+
+                            std.Thread.Futex.wake(&this.generator.pool.stopped_workers, 1);
+                            // std.Thread.Futex.wake(&this.generator.queue.len, std.math.maxInt(u32));
+                        }
+
                         js_ast.Expr.Data.Store.create(this.generator.allocator);
                         js_ast.Stmt.Data.Store.create(this.generator.allocator);
                         this.data = this.generator.allocator.create(WorkerData) catch unreachable;
                         this.data.* = WorkerData{};
                         this.data.shared_buffer = try MutableString.init(this.generator.allocator, 0);
                         this.data.scan_pass_result = js_parser.ScanPassResult.init(this.generator.allocator);
+
                         defer this.data.deinit(this.generator.allocator);
 
-                        try this.generator.processFile(this, first);
+                        this.notifyStarted();
 
-                        while (try this.generator.resolve_queue.tryReadItem()) |item| {
-                            try this.generator.processFile(this, item);
+                        while (!@atomicLoad(bool, &this.quit, .Acquire)) {
+                            while (this.generator.queue.next()) |item| {
+                                defer {
+                                    _ = this.generator.pool.completed_count.fetchAdd(1, .Release);
+                                }
+
+                                try this.generator.processFile(this, item);
+                            }
                         }
                     }
                 };
@@ -677,9 +515,8 @@ pub fn NewBundler(cache_files: bool) type {
             package_list: std.ArrayList(Api.JavascriptBundledPackage),
             header_string_buffer: MutableString,
             // Just need to know if we've already enqueued this one
-            resolved_paths: PathMap,
             package_list_map: std.AutoHashMap(u64, u32),
-            resolve_queue: *BunQueue,
+            queue: *BunQueue,
             bundler: *ThisBundler,
             allocator: *std.mem.Allocator,
             tmpfile: std.fs.File,
@@ -689,47 +526,46 @@ pub fn NewBundler(cache_files: bool) type {
             code_end_byte_offset: u32 = 0,
             has_jsx: bool = false,
 
+            work_waiter: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
             list_lock: Lock = Lock.init(),
 
             pub const current_version: u32 = 1;
 
             pub fn enqueueItem(this: *GenerateNodeModuleBundle, resolve: _resolver.Result) !void {
-                var this_module_resolved_path = try this.resolved_paths.getOrPut(resolve.path_pair.primary.text);
+                const loader = this.bundler.options.loaders.get(resolve.path_pair.primary.name.ext) orelse .file;
+                if (!loader.isJavaScriptLike()) return;
 
-                if (!this_module_resolved_path.found_existing) {
-                    if (resolve.isLikelyNodeModule()) {
-                        if (BundledModuleData.get(this, &resolve)) |module_data_| {
-                            this_module_resolved_path.value_ptr.* = module_data_.module_id;
-                        }
-                    }
-                    var result = resolve;
-                    result.path_pair.primary = Fs.Path.init(std.mem.span(try this.allocator.dupeZ(u8, resolve.path_pair.primary.text)));
-                    try this.resolve_queue.writeItem(result);
-                }
+                var result = resolve;
+                result.path_pair.primary = Fs.Path.init(std.mem.span(try this.allocator.dupeZ(u8, resolve.path_pair.primary.text)));
+
+                try this.queue.upsert(result.hash(loader), result);
             }
 
             // The Bun Bundle Format
-            // Your entire node_modules folder in a single compact file designed for web browsers.
-            // A binary JavaScript bundle format prioritizing bundle time and serialization/deserialization time
+            // All the node_modules your app uses in a single compact file with metadata
+            // A binary JavaScript bundle format prioritizing generation time and deserialization time
             pub const magic_bytes = "#!/usr/bin/env bun\n\n";
-            // This makes it possible to do ./path-to-bundle on posix systems you can see the raw JS contents
+            // This makes it possible to do ./path-to-bundle on posix systems so you can see the raw JS contents
             // https://en.wikipedia.org/wiki/Magic_number_(programming)#In_files
             // Immediately after the magic bytes, the next character is a uint32 followed by a newline
             // 0x00000000\n
             // That uint32 denotes the byte offset in the file where the code for the bundle ends
             //     - If the value is 0, that means the file did not finish writing or there are no modules
-            //     - This imposes a maximum bundle size of around 4,294,967,295 bytes. If your JS is more than 4 GB, you're a
+            //     - This imposes a maximum bundle size of around 4,294,967,295 bytes. If your JS is more than 4 GB, it won't work.
             // The raw JavaScript is encoded as a UTF-8 string starting from the current position + 1 until the above byte offset.
             // This uint32 is useful for HTTP servers to separate:
             // - Which part of the bundle is the JS code?
             // - Which part is the metadata?
-            // Without needing to do a full pass through the file.
-            // The metadata is at the bottom of the file instead of the top because the metadata is generated after the entire bundle is written.
+            // Without needing to do a full pass through the file, or necessarily care about the metadata.
+            // The metadata is at the bottom of the file instead of the top because the metadata is written after all JS code in the bundle is written.
             // The rationale there is:
-            // 1. We cannot prepend to a file without a pass over the entire file
-            // 2. The metadata is variable-length and that format will change more often. Perhaps different bundlers will generate different metadata.
-            // If you have 32 MB of JavaScript dependencies, the only time it's acceptable to do a full pass is when sending it over HTTP via sendfile()
-            // So instead, we append to the file after printing each node_module
+            // 1. We cannot prepend to a file without rewriting the entire file
+            // 2. The metadata is variable-length and that format will change often.
+            // 3. We won't have all the metadata until after all JS is finished writing
+            // If you have 32 MB of JavaScript dependencies, you really want to avoid reading the code in memory.
+            //      - This lets you seek to the specific position in the file.
+            //      - HTTP servers should use sendfile() instead of copying the file to userspace memory.
+            // So instead, we append metadata to the file after printing each node_module
             // When there are no more modules to process, we generate the metadata
             // To find the metadata, you look at the byte offset: initial_header[magic_bytes.len..initial_header.len - 1]
             // Then, you add that number to initial_header.len
@@ -737,12 +573,13 @@ pub fn NewBundler(cache_files: bool) type {
                 var buf = std.mem.zeroes([magic_bytes.len + 5]u8);
                 std.mem.copy(u8, &buf, magic_bytes);
                 var remainder = buf[magic_bytes.len..];
-                // Write an invalid byte offset to be updated after the file ends
+                // Write an invalid byte offset to be updated after we finish generating the code
                 std.mem.writeIntNative(u32, remainder[0 .. remainder.len - 1], 0);
                 buf[buf.len - 1] = '\n';
                 break :brk buf;
             };
             const code_start_byte_offset: u32 = initial_header.len;
+            // The specifics of the metadata is not documented here. You can find it in src/api/schema.peechy.
 
             pub fn appendHeaderString(generator: *GenerateNodeModuleBundle, str: string) !Api.StringPointer {
                 var offset = generator.header_string_buffer.list.items.len;
@@ -773,16 +610,15 @@ pub fn NewBundler(cache_files: bool) type {
 
                 var tmpfile = try tmpdir.createFileZ(tmpname, .{ .read = isDebug, .exclusive = true });
                 var generator = try allocator.create(GenerateNodeModuleBundle);
-                var queue = try allocator.create(BunQueue);
-                queue.* = BunQueue.init(allocator);
+                var queue = try BunQueue.init(allocator);
                 defer allocator.destroy(generator);
                 generator.* = GenerateNodeModuleBundle{
                     .module_list = std.ArrayList(Api.JavascriptBundledModule).init(allocator),
                     .package_list = std.ArrayList(Api.JavascriptBundledPackage).init(allocator),
                     .header_string_buffer = try MutableString.init(allocator, 0),
                     .allocator = allocator,
-                    .resolved_paths = PathMap.init(allocator),
-                    .resolve_queue = queue,
+                    .queue = queue,
+                    // .resolve_queue = queue,
                     .bundler = bundler,
                     .tmpfile = tmpfile,
                     .log = bundler.log,
@@ -821,16 +657,13 @@ pub fn NewBundler(cache_files: bool) type {
                     defer this.bundler.resetStore();
 
                     const entry_points = try router.getEntryPoints(allocator);
-                    try this.resolve_queue.buffer.ensureUnusedCapacity(entry_points.len + resolve_queue_estimate);
                     for (entry_points) |entry_point| {
                         const source_dir = bundler.fs.top_level_dir;
                         const resolved = try bundler.linker.resolver.resolve(source_dir, entry_point, .entry_point);
                         try this.enqueueItem(resolved);
                     }
                     this.bundler.resetStore();
-                } else {
-                    try this.resolve_queue.buffer.ensureUnusedCapacity(resolve_queue_estimate);
-                }
+                } else {}
 
                 for (bundler.options.entry_points) |entry_point| {
                     defer this.bundler.resetStore();
@@ -885,8 +718,9 @@ pub fn NewBundler(cache_files: bool) type {
                 }
 
                 this.bundler.resetStore();
+
                 try this.pool.start(this);
-                this.pool.wait();
+                this.pool.wait(this);
 
                 if (this.log.errors > 0) {
                     // We stop here because if there are errors we don't know if the bundle is valid
@@ -1140,10 +974,6 @@ pub fn NewBundler(cache_files: bool) type {
                                 &source,
                             )) orelse return;
                             if (ast.import_records.len > 0) {
-                                this.resolved_paths.lock();
-                                defer {
-                                    this.resolved_paths.unlock();
-                                }
                                 {
                                     for (ast.import_records) |*import_record, record_id| {
 
@@ -1162,17 +992,14 @@ pub fn NewBundler(cache_files: bool) type {
 
                                             const absolute_path = resolved_import.path_pair.primary.text;
 
-                                            const get_or_put_result = try this.resolved_paths.getOrPut(absolute_path);
-
                                             module_data = BundledModuleData.get(this, resolved_import) orelse continue;
                                             import_record.module_id = module_data.module_id;
                                             import_record.is_bundled = true;
                                             import_record.path = Fs.Path.init(module_data.import_path);
-                                            get_or_put_result.value_ptr.* = import_record.module_id;
-
-                                            if (!get_or_put_result.found_existing) {
-                                                try this.resolve_queue.writeItem(_resolved_import.*);
-                                            }
+                                            try this.queue.upsert(
+                                                _resolved_import.hash(this.bundler.options.loaders.get(resolved_import.path_pair.primary.name.ext) orelse .file),
+                                                _resolved_import.*,
+                                            );
                                         } else |err| {
                                             if (comptime isDebug) {
                                                 Output.prettyErrorln("\n<r><red>{s}<r> on resolving \"{s}\" from \"{s}\"", .{
@@ -1364,6 +1191,8 @@ pub fn NewBundler(cache_files: bool) type {
                                 Output.flush();
                             }
 
+                            this.list_lock.lock();
+                            defer this.list_lock.unlock();
                             code_offset = write_result.off;
                             written = write_result.len;
 
@@ -1372,11 +1201,6 @@ pub fn NewBundler(cache_files: bool) type {
                             this.tmpfile_byte_offset = write_result.end_off;
                             const code_length = this.tmpfile_byte_offset - code_offset;
                             // std.debug.assert(code_length == written);
-
-                            this.list_lock.lock();
-                            defer {
-                                this.list_lock.unlock();
-                            }
 
                             var package_get_or_put_entry = try this.package_list_map.getOrPut(package.hash);
 
@@ -1443,8 +1267,6 @@ pub fn NewBundler(cache_files: bool) type {
                             );
 
                             {
-                                this.resolved_paths.lock();
-                                defer this.resolved_paths.unlock();
                                 for (scan_pass_result.import_records.items) |*import_record, i| {
                                     if (import_record.is_internal) {
                                         continue;
@@ -1455,22 +1277,13 @@ pub fn NewBundler(cache_files: bool) type {
                                             continue;
                                         }
 
-                                        const resolved_import: *const _resolver.Result = _resolved_import;
-
-                                        const get_or_put_result = try this.resolved_paths.getOrPut(resolved_import.path_pair.primary.text);
-
-                                        if (get_or_put_result.found_existing) {
-                                            continue;
-                                        }
-
                                         _resolved_import.path_pair.primary = Fs.Path.init(std.mem.span(try this.allocator.dupeZ(u8, _resolved_import.path_pair.primary.text)));
-
-                                        // Always enqueue unwalked import paths, but if it's not a node_module, we don't care about the hash
-                                        try this.resolve_queue.writeItem(_resolved_import.*);
-
-                                        if (BundledModuleData.get(this, resolved_import)) |module| {
-                                            get_or_put_result.value_ptr.* = module.module_id;
-                                        }
+                                        try this.queue.upsert(
+                                            _resolved_import.hash(
+                                                this.bundler.options.loaders.get(_resolved_import.path_pair.primary.name.ext) orelse .file,
+                                            ),
+                                            _resolved_import.*,
+                                        );
                                     } else |err| {
                                         switch (err) {
                                             error.ModuleNotFound => {
@@ -1801,74 +1614,6 @@ pub fn NewBundler(cache_files: bool) type {
             return output_file;
         }
 
-        pub fn scanWithResolveResult(
-            bundler: *ThisBundler,
-            resolve_result: _resolver.Result,
-            scan_pass_result: *js_parser.ScanPassResult,
-        ) !?ScanResult {
-            if (resolve_result.is_external) {
-                return null;
-            }
-            var import_records = &scan_pass_result.import_records;
-            var named_imports = &scan_pass_result.named_imports;
-            errdefer js_ast.Expr.Data.Store.reset();
-            errdefer js_ast.Stmt.Data.Store.reset();
-
-            // Step 1. Parse & scan
-            const loader = bundler.options.loaders.get(resolve_result.path_pair.primary.name.ext) orelse .file;
-            var file_path = resolve_result.path_pair.primary;
-            file_path.pretty = Linker.relative_paths_list.append(string, bundler.fs.relativeTo(file_path.text)) catch unreachable;
-
-            switch (loader) {
-                .jsx, .tsx, .js, .ts, .json => {
-                    const entry = bundler.resolver.caches.fs.readFile(
-                        bundler.fs,
-                        file_path.text,
-                        resolve_result.dirname_fd,
-                        !cache_files,
-                        null,
-                    ) catch return null;
-
-                    const source = logger.Source.initFile(Fs.File{ .path = file_path, .contents = entry.contents }, bundler.allocator) catch return null;
-                    const source_dir = file_path.name.dirWithTrailingSlash();
-
-                    var jsx = bundler.options.jsx;
-                    jsx.parse = loader.isJSX();
-                    var opts = js_parser.Parser.Options.init(jsx, loader);
-
-                    var result = ScanResult{
-                        .path = file_path,
-                        .file_size = @truncate(u32, source.contents.len),
-                        .is_node_module = resolve_result.isLikelyNodeModule(),
-                        .import_record_start = @truncate(u32, import_records.items.len),
-                        .import_record_length = 0,
-                    };
-
-                    try bundler.resolver.caches.js.scan(
-                        bundler.allocator,
-                        scan_pass_result,
-                        opts,
-                        bundler.options.define,
-                        bundler.log,
-                        &source,
-                    );
-                    result.import_record_length = @truncate(u32, import_records.items.len - result.import_record_start);
-                    for (import_records.items[result.import_record_start..import_records.items.len]) |*import_record, i| {
-                        if (bundler.linker.resolver.resolve(source_dir, import_record.path.text, import_record.kind)) |*resolved_import| {
-                            if (resolved_import.is_external) {
-                                continue;
-                            }
-                        } else |err| {}
-                    }
-                    return result;
-                },
-                // TODO:
-                else => {
-                    return null;
-                },
-            }
-        }
-
         pub fn print(
             bundler: *ThisBundler,
             result: ParseResult,
@@ -2144,90 +1889,6 @@ pub fn NewBundler(cache_files: bool) type {
             return entry;
         }
 
-        // pub fn scanDependencies(
-        //     allocator: *std.mem.Allocator,
-        //     log: *logger.Log,
-        //     _opts: Api.TransformOptions,
-        // ) !ScanResult.Summary {
-        //     var opts = _opts;
-        //     opts.resolve = .dev;
-        //     var bundler = try ThisBundler.init(allocator, log, opts, null);
-
-        //     bundler.configureLinker();
-
-        //     var entry_points = try allocator.alloc(_resolver.Result, bundler.options.entry_points.len);
-
-        //     if (log.level == .verbose) {
-        //         bundler.resolver.debug_logs = try DebugLogs.init(allocator);
-        //     }
-
-        //     var rfs: *Fs.FileSystem.RealFS = &bundler.fs.fs;
-
-        //     var entry_point_i: usize = 0;
-        //     for (bundler.options.entry_points) |_entry| {
-        //         var entry: string = bundler.normalizeEntryPointPath(_entry);
-
-        //         defer {
-        //             js_ast.Expr.Data.Store.reset();
-        //             js_ast.Stmt.Data.Store.reset();
-        //         }
-
-        //         const result = bundler.resolver.resolve(bundler.fs.top_level_dir, entry, .entry_point) catch |err| {
-        //             Output.printError("Error resolving \"{s}\": {s}\n", .{ entry, @errorName(err) });
-        //             continue;
-        //         };
-
-        //         const key = result.path_pair.primary.text;
-        //         if (bundler.resolve_results.contains(key)) {
-        //             continue;
-        //         }
-        //         try bundler.resolve_results.put(key, result);
-        //         entry_points[entry_point_i] = result;
-
-        //         if (isDebug) {
-        //             Output.print("Resolved {s} => {s}", .{ entry, result.path_pair.primary.text });
-        //         }
-
-        //         entry_point_i += 1;
-        //         bundler.resolve_queue.writeItem(result) catch unreachable;
-        //     }
-        //     var scan_results = std.ArrayList(ScanResult).init(allocator);
-        //     var scan_pass_result = js_parser.ScanPassResult.init(allocator);
-
-        //     switch (bundler.options.resolve_mode) {
-        //         .lazy, .dev, .bundle => {
-        //             while (bundler.resolve_queue.readItem()) |item| {
-        //                 js_ast.Expr.Data.Store.reset();
-        //                 js_ast.Stmt.Data.Store.reset();
-        //                 scan_pass_result.named_imports.clearRetainingCapacity();
-        //                 scan_results.append(bundler.scanWithResolveResult(item, &scan_pass_result) catch continue orelse continue) catch continue;
-        //             }
-        //         },
-        //         else => Global.panic("Unsupported resolve mode: {s}", .{@tagName(bundler.options.resolve_mode)}),
-        //     }
-
-        //     // if (log.level == .verbose) {
-        //     //     for (log.msgs.items) |msg| {
-        //     //         try msg.writeFormat(std.io.getStdOut().writer());
-        //     //     }
-        //     // }
-
-        //     if (FeatureFlags.tracing) {
-        //         Output.printError(
-        //             "\n---Tracing---\nResolve time:      {d}\nParsing time:      {d}\n---Tracing--\n\n",
-        //             .{
-        //                 bundler.resolver.elapsed,
-        //                 bundler.elapsed,
-        //             },
-        //         );
-        //     }
-
-        //     return ScanResult.Summary{
-        //         .scan_results = scan_results,
-        //         .import_records = scan_pass_result.import_records,
-        //     };
-        // }
-
         fn enqueueEntryPoints(bundler: *ThisBundler, entry_points: []_resolver.Result, comptime normalize_entry_point: bool) usize {
             var entry_point_i: usize = 0;
 
@@ -2277,7 +1938,7 @@ pub fn NewBundler(cache_files: bool) type {
 
             //  100.00 µs std.fifo.LinearFifo(resolver.Result,std.fifo.LinearFifoBufferType { .Dynamic = {}}).writeItemAssumeCapacity
             if (bundler.options.resolve_mode != .lazy) {
-                try bundler.resolve_queue.ensureUnusedCapacity(24);
+                try bundler.resolve_queue.ensureUnusedCapacity(3);
             }
 
             var entry_points = try allocator.alloc(_resolver.Result, bundler.options.entry_points.len);
@@ -2380,6 +2041,8 @@ pub fn NewBundler(cache_files: bool) type {
             return final_result;
         }
 
+        // pub fn processResolveQueueWithThreadPool(bundler)
+
         pub fn processResolveQueue(
             bundler: *ThisBundler,
             comptime import_path_format: options.BundleOptions.ImportPathFormat,
@@ -2387,9 +2050,12 @@ pub fn NewBundler(cache_files: bool) type {
             comptime Outstream: type,
             outstream: Outstream,
         ) !void {
+            // var count: u8 = 0;
             while (bundler.resolve_queue.readItem()) |item| {
                 js_ast.Expr.Data.Store.reset();
                 js_ast.Stmt.Data.Store.reset();
+
+                // defer count += 1;
 
                 if (comptime wrap_entry_point) {
                     const loader = bundler.options.loaders.get(item.path_pair.primary.name.ext) orelse .file;
@@ -2437,6 +2103,8 @@ pub fn NewBundler(cache_files: bool) type {
                     null,
                 ) catch continue orelse continue;
                 bundler.output_files.append(output_file) catch unreachable;
+
+                // if (count >= 3) return try bundler.processResolveQueueWithThreadPool(import_path_format, wrap_entry_point, Outstream, outstream);
             }
         }
     };
@@ -2721,3 +2389,153 @@ pub const Transformer = struct {
         );
     }
 };
+
+pub const ServeResult = struct {
+    file: options.OutputFile,
+    mime_type: MimeType,
+};
+
+pub const ClientEntryPoint = struct {
+    code_buffer: [8096]u8 = undefined,
+    path_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined,
+    source: logger.Source = undefined,
+
+    pub fn isEntryPointPath(extname: string) bool {
+        return strings.startsWith("entry.", extname);
+    }
+
+    pub fn generateEntryPointPath(outbuffer: []u8, original_path: Fs.PathName) string {
+        var joined_base_and_dir_parts = [_]string{ original_path.dir, original_path.base };
+        var generated_path = Fs.FileSystem.instance.absBuf(&joined_base_and_dir_parts, outbuffer);
+
+        std.mem.copy(u8, outbuffer[generated_path.len..], ".entry");
+        generated_path = outbuffer[0 .. generated_path.len + ".entry".len];
+        std.mem.copy(u8, outbuffer[generated_path.len..], original_path.ext);
+        return outbuffer[0 .. generated_path.len + original_path.ext.len];
+    }
+
+    pub fn decodeEntryPointPath(outbuffer: []u8, original_path: Fs.PathName) string {
+        var joined_base_and_dir_parts = [_]string{ original_path.dir, original_path.base };
+        var generated_path = Fs.FileSystem.instance.absBuf(&joined_base_and_dir_parts, outbuffer);
+        var original_ext = original_path.ext;
+        if (strings.indexOf(original_path.ext, "entry")) |entry_i| {
+            original_ext = original_path.ext[entry_i + "entry".len ..];
+        }
+
+        std.mem.copy(u8, outbuffer[generated_path.len..], original_ext);
+
+        return outbuffer[0 .. generated_path.len + original_ext.len];
+    }
+
+    pub fn generate(entry: *ClientEntryPoint, comptime BundlerType: type, bundler: *BundlerType, original_path: Fs.PathName, client: string) !void {
+
+        // This is *extremely* naive.
+        // The basic idea here is this:
+        // --
+        // import * as EntryPoint from 'entry-point';
+        // import boot from 'framework';
+        // boot(EntryPoint);
+        // --
+        // We go through the steps of printing the code -- only to then parse/transpile it because
+        // we want it to go through the linker and the rest of the transpilation process
+
+        const dir_to_use: string = original_path.dirWithTrailingSlash();
+
+        const code = try std.fmt.bufPrint(
+            &entry.code_buffer,
+            \\var lastErrorHandler = globalThis.onerror;
+            \\var loaded = {{boot: false, entry: false, onError: null}};
+            \\if (!lastErrorHandler || !lastErrorHandler.__onceTag) {{
+            \\  globalThis.onerror = function (evt) {{
+            \\      if (this.onError && typeof this.onError == 'function') {{
+            \\          this.onError(evt, loaded);
+            \\      }}
+            \\      console.error(evt.error);
+            \\      debugger;
+            \\  }};
+            \\  globalThis.onerror.__onceTag = true;
+            \\  globalThis.onerror.loaded = loaded;
+            \\}}
+            \\
+            \\import boot from '{s}';
+            \\loaded.boot = true;
+            \\if ('setLoaded' in boot) boot.setLoaded(loaded);
+            \\import * as EntryPoint from '{s}{s}';
+            \\loaded.entry = true;
+            \\
+            \\if (!boot) {{
+            \\ const now = Date.now();
+            \\ debugger;
+            \\ const elapsed = Date.now() - now;
+            \\ if (elapsed < 1000) {{
+            \\   throw new Error('Expected framework to export default a function. Instead, framework exported:', Object.keys(boot));
+            \\ }}
+            \\}}
+            \\
+            \\boot(EntryPoint, loaded);
+        ,
+            .{
+                client,
+                dir_to_use,
+                original_path.filename,
+            },
+        );
+
+        entry.source = logger.Source.initPathString(generateEntryPointPath(&entry.path_buffer, original_path), code);
+        entry.source.path.namespace = "client-entry";
+    }
+};
+
+pub const ServerEntryPoint = struct {
+    code_buffer: [std.fs.MAX_PATH_BYTES * 2 + 500]u8 = undefined,
+    output_code_buffer: [std.fs.MAX_PATH_BYTES * 8 + 500]u8 = undefined,
+    source: logger.Source = undefined,
+
+    pub fn generate(
+        entry: *ServerEntryPoint,
+        comptime BundlerType: type,
+        bundler: *BundlerType,
+        original_path: Fs.PathName,
+        name: string,
+    ) !void {
+
+        // This is *extremely* naive.
+        // The basic idea here is this:
+        // --
+        // import * as EntryPoint from 'entry-point';
+        // import boot from 'framework';
+        // boot(EntryPoint);
+        // --
+        // We go through the steps of printing the code -- only to then parse/transpile it because
+        // we want it to go through the linker and the rest of the transpilation process
+
+        const dir_to_use: string = original_path.dirWithTrailingSlash();
+
+        const code = try std.fmt.bufPrint(
+            &entry.code_buffer,
+            \\//Auto-generated file
+            \\import * as start from '{s}{s}';
+            \\export * from '{s}{s}';
+        ,
+            .{
+                dir_to_use,
+                original_path.filename,
+                dir_to_use,
+                original_path.filename,
+            },
+        );
+
+        entry.source = logger.Source.initPathString(name, code);
+        entry.source.path.text = name;
+        entry.source.path.namespace = "server-entry";
+    }
+};
+
+pub const ResolveResults = std.AutoHashMap(
+    u64,
+    void,
+);
+pub const ResolveQueue = std.fifo.LinearFifo(
+    _resolver.Result,
+    std.fifo.LinearFifoBufferType.Dynamic,
+);

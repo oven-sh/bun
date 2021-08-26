@@ -10,11 +10,9 @@ const TSConfigJSON = @import("./tsconfig_json.zig").TSConfigJSON;
 const PackageJSON = @import("./package_json.zig").PackageJSON;
 usingnamespace @import("./data_url.zig");
 pub const DirInfo = @import("./dir_info.zig");
-const Expr = @import("../js_ast.zig").Expr;
 const HTTPWatcher = @import("../http.zig").Watcher;
 const Wyhash = std.hash.Wyhash;
 
-const hash_map_v2 = @import("../hash_map_v2.zig");
 const Mutex = @import("../lock.zig").Lock;
 const StringBoolMap = std.StringHashMap(bool);
 
@@ -148,6 +146,23 @@ pub const Result = struct {
             });
         }
     };
+
+    pub fn hash(this: *const Result, loader: options.Loader) u32 {
+        const HashValue = packed struct {
+            loader: options.Loader,
+            len: u8,
+            path_hash: u21,
+        };
+
+        return @bitCast(
+            u32,
+            HashValue{
+                .loader = loader,
+                .len = @truncate(u8, this.path_pair.primary.text.len),
+                .path_hash = @truncate(u21, std.hash.Wyhash.hash(0, this.path_pair.primary.text)),
+            },
+        );
+    }
 };
 
 pub const DirEntryResolveQueueItem = struct {
@@ -430,7 +445,8 @@ pub fn NewResolver(cache_files: bool) type {
             // support passing a package.json or path to a package
             const pkg: *const PackageJSON = result.package_json orelse r.packageJSONForResolvedNodeModuleWithIgnoreMissingName(&result, true) orelse return error.MissingPackageJSON;
 
-            const json: Expr = (try r.caches.json.parseJSON(r.log, pkg.source, r.allocator)) orelse return error.JSONParseError;
+            const json = (try r.caches.json.parseJSON(r.log, pkg.source, r.allocator)) orelse return error.JSONParseError;
+
             pkg.loadFrameworkWithPreference(pair, json, r.allocator, load_defines, preference);
             const dir = pkg.source.path.name.dirWithTrailingSlash();
             var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
@@ -554,8 +570,8 @@ pub fn NewResolver(cache_files: bool) type {
                 return error.MissingResolveDir;
             }
 
-            r.mutex.lock();
-            defer r.mutex.unlock();
+            // r.mutex.lock();
+            // defer r.mutex.unlock();
             errdefer (r.flushDebugLogs(.fail) catch {});
             var result = (try r.resolveWithoutSymlinks(source_dir, import_path, kind)) orelse {
                 r.flushDebugLogs(.fail) catch {};
@@ -894,11 +910,31 @@ pub fn NewResolver(cache_files: bool) type {
             result: *const Result,
         ) ?*const PackageJSON {
             const absolute = result.path_pair.primary.text;
+            // /foo/node_modules/@babel/standalone/index.js
+            //     ^------------^
             var end = strings.lastIndexOf(absolute, node_module_root_string) orelse return null;
             end += node_module_root_string.len;
             end += strings.indexOfChar(absolute[end..], std.fs.path.sep) orelse return null;
+            end += 1;
+            // /foo/node_modules/@babel/standalone/index.js
+            //                   ^
+            if (absolute[end] == '@') {
+                end += strings.indexOfChar(absolute[end..], std.fs.path.sep) orelse return null;
+                end += 1;
+            }
+            // /foo/node_modules/@babel/standalone/index.js
+            //                                    ^
+            const slice = absolute[0..end];
 
-            const dir_info = (r.dirInfoCached(absolute[0 .. end + 1]) catch null) orelse return null;
+            // Try to avoid the hash table lookup whenever possible
+            // That can cause filesystem lookups in parent directories and it requires a lock
+            if (result.package_json) |pkg| {
+                if (strings.eql(slice, pkg.source.path.name.dirWithTrailingSlash())) {
+                    return pkg;
+                }
+            }
+
+            const dir_info = (r.dirInfoCached(slice) catch null) orelse return null;
             return dir_info.package_json;
         }
 
@@ -1066,6 +1102,9 @@ pub fn NewResolver(cache_files: bool) type {
         }
 
         inline fn dirInfoCachedMaybeLog(r: *ThisResolver, path: string, comptime enable_logging: bool, comptime follow_symlinks: bool) !?*DirInfo {
+            r.mutex.lock();
+            defer r.mutex.unlock();
+
             const top_result = try r.dir_cache.getOrPut(path);
             if (top_result.status != .unknown) {
                 return r.dir_cache.atIndex(top_result.index);

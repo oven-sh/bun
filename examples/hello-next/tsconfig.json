@@ -18,6 +18,6 @@
       "path": ["node_modules/path-browserify"]
     }
   },
-  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx"],
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", "pages/index.tsx"],
   "exclude": ["node_modules"]
 }

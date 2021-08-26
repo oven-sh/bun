@@ -1,7 +1,7 @@
 import "lodash/_DataView.js";
 import "lodash/_Hash.js";
 import "lodash/_LazyWrapper.js";
-import "lodash/_ListCache.js";
+import "lodash/_ListCache";
 import "lodash/_LodashWrapper.js";
 import "lodash/_Map.js";
 import "lodash/_MapCache.js";
@@ -631,8 +631,11 @@ import "lodash/xorWith.js";
 import "lodash/zip.js";
 import "lodash/zipObject.js";
 import "lodash/zipObjectDeep.js";
-import "lodash/zipWith.js";
+import "lodash/_setToString";
 import "lodash";
+import "lodash/lodash";
 
 import "underscore";
-import "three.js";
+import "three";
+
+// import "@babel/standalone/babel.js";

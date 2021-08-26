@@ -2108,6 +2108,15 @@ pub const Server = struct {
         }
     }
 
+    pub fn detectFastRefresh(this: *Server) void {
+        defer this.bundler.resetStore();
+
+        _ = this.bundler.resolver.resolve(this.bundler.fs.top_level_dir, "react-refresh/runtime", .internal) catch |err| {
+            this.bundler.options.jsx.supports_fast_refresh = false;
+            return;
+        };
+    }
+
     pub fn start(allocator: *std.mem.Allocator, options: Api.TransformOptions) !void {
         var log = logger.Log.init(allocator);
         var server = try allocator.create(Server);
@@ -2119,9 +2128,12 @@ pub const Server = struct {
             .transform_options = options,
             .timer = try std.time.Timer.start(),
         };
+
         server.bundler = try Bundler.init(allocator, &server.log, options, null, null);
         server.bundler.configureLinker();
         try server.bundler.configureRouter(true);
+
+        server.detectFastRefresh();
 
         try server.initWatcher();
 

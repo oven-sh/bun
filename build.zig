@@ -126,6 +126,7 @@ pub fn build(b: *std.build.Builder) void {
     javascript.setMainPkgPath(b.pathFromRoot("."));
     typings_exe.setMainPkgPath(b.pathFromRoot("."));
     exe.setMainPkgPath(b.pathFromRoot("."));
+
     // exe.want_lto = true;
     if (!target.getCpuArch().isWasm()) {
         b.default_step.dependOn(&exe.step);
@@ -189,6 +190,8 @@ pub fn build(b: *std.build.Builder) void {
         b.default_step.dependOn(&exe.step);
         var steps = [_]*std.build.LibExeObjStep{ exe, javascript, typings_exe, headers_exec };
 
+        // const single_threaded = b.option(bool, "single-threaded", "Build single-threaded") orelse false;
+
         for (steps) |step, i| {
             step.linkLibC();
             step.linkLibCpp();
@@ -200,6 +203,12 @@ pub fn build(b: *std.build.Builder) void {
             step.addObjectFile("src/deps/libJavaScriptCore.a");
             step.addObjectFile("src/deps/libWTF.a");
             step.addObjectFile("src/deps/libbmalloc.a");
+
+            step.addObjectFile("src/deps/mimalloc/libmimalloc.a");
+            step.addLibPath("src/deps/mimalloc");
+            step.addIncludeDir("src/deps/mimalloc");
+
+            // step.single_threaded = single_threaded;
 
             // We must link ICU statically
             step.addObjectFile("/usr/local/opt/icu4c/lib/libicudata.a");

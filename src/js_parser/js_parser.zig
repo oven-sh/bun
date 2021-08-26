@@ -2182,6 +2182,14 @@ pub const Parser = struct {
             if (p.options.transform_require_to_import) {
                 var args = p.allocator.alloc(Expr, 2) catch unreachable;
                 wrapper_expr = p.callRuntime(logger.Loc.Empty, "__commonJS", args);
+
+                // Disable HMR if we're wrapping it in CommonJS
+                // It's technically possible to support this.
+                // But we need to cut scope for the v0.
+                p.options.features.hot_module_reloading = false;
+                p.runtime_imports.__HMRModule = null;
+                p.runtime_imports.__FastRefreshModule = null;
+                p.runtime_imports.__HMRClient = null;
             }
         } else {
             exports_kind = .esm;

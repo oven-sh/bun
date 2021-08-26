@@ -4,6 +4,7 @@
   "main": "index.js",
   "license": "MIT",
   "dependencies": {
+    "@babel/standalone": "^7.15.3",
     "lodash": "^4.17.21",
     "three.js": "^0.77.1",
     "underscore": "^1.13.1"

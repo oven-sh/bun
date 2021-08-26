@@ -914,14 +914,19 @@ pub fn NewResolver(cache_files: bool) type {
             //     ^------------^
             var end = strings.lastIndexOf(absolute, node_module_root_string) orelse return null;
             end += node_module_root_string.len;
+
+            const is_scoped_package = absolute[end] == '@';
             end += strings.indexOfChar(absolute[end..], std.fs.path.sep) orelse return null;
-            end += 1;
+
             // /foo/node_modules/@babel/standalone/index.js
             //                   ^
-            if (absolute[end] == '@') {
-                end += strings.indexOfChar(absolute[end..], std.fs.path.sep) orelse return null;
+            if (is_scoped_package) {
                 end += 1;
+                end += strings.indexOfChar(absolute[end..], std.fs.path.sep) orelse return null;
             }
+
+            end += 1;
+
             // /foo/node_modules/@babel/standalone/index.js
             //                                    ^
             const slice = absolute[0..end];

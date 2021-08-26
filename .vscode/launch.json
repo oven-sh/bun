@@ -149,7 +149,15 @@
       "cwd": "${workspaceFolder}/examples/lotta-modules/",
       "console": "internalConsole"
     },
-
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Build .bun lotta-modules",
+      "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+      "args": ["bun", "./index.js", "--platform=browser"],
+      "cwd": "${workspaceFolder}/examples/lotta-modules/",
+      "console": "internalConsole"
+    },
     {
       "type": "lldb",
       "request": "launch",

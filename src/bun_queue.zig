@@ -1,6 +1,5 @@
 const std = @import("std");
 const Mutex = @import("./lock.zig").Mutex;
-const Channel = @import("./sync.zig").Channel;
 const WaitGroup = @import("./sync.zig").WaitGroup;
 usingnamespace @import("./global.zig");
 const Wyhash = std.hash.Wyhash;
@@ -145,8 +144,6 @@ pub fn NewBunQueue(comptime Value: type) type {
         const KeyType = u32;
         const BunQueue = @This();
         const Queue = NewBlockQueue(Value, 64, 48);
-        // pub const Fifo = NewFifo(Value);
-
         allocator: *std.mem.Allocator,
         queue: Queue,
         keys: Keys,
@@ -170,14 +167,12 @@ pub fn NewBunQueue(comptime Value: type) type {
 
         pub const Keys = struct {
             pub const OverflowList = std.ArrayList([*]KeyType);
-            // Half a page of memory
 
             blocks: [overflow_size][*]KeyType = undefined,
             offset: AtomicOffset,
             block_overflow: OverflowList,
             block_overflow_lock: bool = false,
             first_key_list: [block_size]KeyType = undefined,
-            mutex: Mutex = Mutex{},
             write_lock: bool = false,
             append_readers: u8 = 0,
             append_lock: bool = false,
@@ -195,7 +190,9 @@ pub fn NewBunQueue(comptime Value: type) type {
             }
         };
 
+        // Half a page of memory
         pub const block_size = 2048 / @sizeOf(KeyType);
+        // 32 is arbitrary
         pub const overflow_size = 32;
 
         // In one atomic load/store, get the length and offset of the keys
@@ -228,7 +225,6 @@ pub fn NewBunQueue(comptime Value: type) type {
         inline fn contains(this: *BunQueue, key: KeyType) bool {
             @fence(.Acquire);
             if (@atomicLoad(KeyType, &this.keys.pending_write, .SeqCst) == key) return true;
-            // this.keys.mutex.tryAcquire()
 
             var offset = this.getOffset();
             std.debug.assert(&this.keys.first_key_list == this.keys.blocks[0]);

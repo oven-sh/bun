@@ -50,3 +50,10 @@ txt.js
 node_modules_*
 *.jsb
 *.zip
+bun-zigld
+bun-singlehtreaded
+bun-nomimalloc
+bun-mimalloc
+examples/lotta-modules/bun-yday
+examples/lotta-modules/bun-old
+examples/lotta-modules/bun-nofscache

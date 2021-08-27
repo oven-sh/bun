@@ -1817,8 +1817,8 @@ pub const Lexer = struct {
                                         else => {},
                                     }
                                 }
-                                continue;
                             }
+                            continue;
                         },
                         '*' => {
                             try lexer.step();
@@ -1846,8 +1846,8 @@ pub const Lexer = struct {
                                         },
                                     }
                                 }
-                                continue;
                             }
+                            continue;
                         },
                         else => {
                             lexer.token = .t_slash;

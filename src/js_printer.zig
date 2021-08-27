@@ -183,8 +183,12 @@ const ImportVariant = enum {
             variant = variant.hasStar();
         }
 
-        if (record.contains_default_alias or s_import.default_name != null) {
-            variant = variant.hasDefault();
+        if (!record.contains_default_alias) {
+            if (s_import.default_name) |default_name| {
+                if (default_name.ref != null) {
+                    variant = variant.hasDefault();
+                }
+            }
         }
 
         if (s_import.items.len > 0) {

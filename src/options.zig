@@ -857,30 +857,40 @@ pub const BundleOptions = struct {
             else => {},
         }
 
-        if (!(transform.generate_node_module_bundle orelse false)) {
-            if (node_modules_bundle_existing) |node_mods| {
-                opts.node_modules_bundle = node_mods;
-                const pretty_path = fs.relativeTo(transform.node_modules_bundle_path.?);
-                opts.node_modules_bundle_url = try std.fmt.allocPrint(allocator, "{s}{s}", .{
-                    opts.origin,
-                    pretty_path,
-                });
-            } else if (transform.node_modules_bundle_path) |bundle_path| {
-                if (bundle_path.len > 0) {
-                    load_bundle: {
-                        const pretty_path = fs.relativeTo(bundle_path);
-                        var bundle_file = std.fs.openFileAbsolute(bundle_path, .{ .read = true, .write = true }) catch |err| {
-                            Output.disableBuffering();
-                            defer Output.enableBuffering();
-                            Output.prettyErrorln("<r>error opening <d>\"<r><b>{s}<r><d>\":<r> <b><red>{s}<r>", .{ pretty_path, @errorName(err) });
+        const is_generating_bundle = (transform.generate_node_module_bundle orelse false);
+        // if (!(transform.generate_node_module_bundle orelse false)) {
+        if (node_modules_bundle_existing) |node_mods| {
+            opts.node_modules_bundle = node_mods;
+            const pretty_path = fs.relativeTo(transform.node_modules_bundle_path.?);
+            opts.node_modules_bundle_url = try std.fmt.allocPrint(allocator, "{s}{s}", .{
+                opts.origin,
+                pretty_path,
+            });
+        } else if (transform.node_modules_bundle_path) |bundle_path| {
+            if (bundle_path.len > 0) {
+                load_bundle: {
+                    const pretty_path = fs.relativeTo(bundle_path);
+                    var bundle_file = std.fs.openFileAbsolute(bundle_path, .{ .read = true, .write = true }) catch |err| {
+                        if (is_generating_bundle) {
                             break :load_bundle;
-                        };
+                        }
+                        Output.disableBuffering();
+                        defer Output.enableBuffering();
+                        Output.prettyErrorln("<r>error opening <d>\"<r><b>{s}<r><d>\":<r> <b><red>{s}<r>", .{ pretty_path, @errorName(err) });
+                        break :load_bundle;
+                    };
 
-                        const time_start = std.time.nanoTimestamp();
-                        if (NodeModuleBundle.loadBundle(allocator, bundle_file)) |bundle| {
+                    defer {
+                        if (is_generating_bundle) bundle_file.close();
+                    }
+
+                    const time_start = std.time.nanoTimestamp();
+                    if (NodeModuleBundle.loadBundle(allocator, bundle_file)) |bundle| {
+                        if (!is_generating_bundle) {
                             var node_module_bundle = try allocator.create(NodeModuleBundle);
                             node_module_bundle.* = bundle;
                             opts.node_modules_bundle = node_module_bundle;
+
                             if (opts.origin.isAbsolute()) {
                                 opts.node_modules_bundle_url = try opts.origin.joinAlloc(allocator, "", "", node_module_bundle.bundle.import_from_name, "");
                                 opts.node_modules_bundle_pretty_path = opts.node_modules_bundle_url[opts.node_modules_bundle_url.len - node_module_bundle.bundle.import_from_name.len - 1 ..];
@@ -894,33 +904,36 @@ pub const BundleOptions = struct {
                                 " <b><d>\"{s}\"<r><d> - {d} modules, {d} packages<r>",
                                 .{
                                     pretty_path,
-                                    node_module_bundle.bundle.modules.len,
-                                    node_module_bundle.bundle.packages.len,
+                                    bundle.bundle.modules.len,
+                                    bundle.bundle.packages.len,
                                 },
                             );
                             Output.flush();
-                            if (transform.framework == null) {
-                                if (node_module_bundle.container.framework) |loaded_framework| {
-                                    opts.framework = Framework.fromLoadedFramework(loaded_framework, allocator);
-                                    opts.framework.?.client_env.allocator = allocator;
-                                    opts.framework.?.server_env.allocator = allocator;
+                        }
 
-                                    if (transform.define == null) {
-                                        if (opts.platform.isClient()) {
-                                            opts.env = opts.framework.?.client_env;
-                                        } else {
-                                            opts.env = opts.framework.?.server_env;
-                                        }
+                        if (transform.framework == null) {
+                            if (bundle.container.framework) |loaded_framework| {
+                                opts.framework = Framework.fromLoadedFramework(loaded_framework, allocator);
+                                opts.framework.?.client_env.allocator = allocator;
+                                opts.framework.?.server_env.allocator = allocator;
+
+                                if (transform.define == null) {
+                                    if (opts.platform.isClient()) {
+                                        opts.env = opts.framework.?.client_env;
+                                    } else {
+                                        opts.env = opts.framework.?.server_env;
                                     }
                                 }
                             }
+                        }
 
-                            if (transform.router == null) {
-                                if (node_module_bundle.container.routes) |routes| {
-                                    opts.routes = RouteConfig.fromLoadedRoutes(routes);
-                                }
+                        if (transform.router == null) {
+                            if (bundle.container.routes) |routes| {
+                                opts.routes = RouteConfig.fromLoadedRoutes(routes);
                             }
-                        } else |err| {
+                        }
+                    } else |err| {
+                        if (!is_generating_bundle) {
                             Output.disableBuffering();
                             Output.prettyErrorln(
                                 "<r>error reading <d>\"<r><b>{s}<r><d>\":<r> <b><red>{s}<r>, <b>deleting it<r> so you don't keep seeing this message.",
@@ -932,6 +945,7 @@ pub const BundleOptions = struct {
                 }
             }
         }
+        // }
 
         if (transform.framework) |_framework| {
             opts.framework = try Framework.fromApi(_framework);

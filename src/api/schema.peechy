@@ -26,6 +26,7 @@ smol Platform {
 smol CSSInJSBehavior {
   facade = 1;
   facade_onimportcss = 2;
+  auto_onimportcss = 3;
 }
 
 smol JSXRuntime {

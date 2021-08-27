@@ -158,7 +158,7 @@ pub const Arguments = struct {
             clap.parseParam("--origin <STR>                    Rewrite import paths to start with --origin. Default: \"/\"") catch unreachable,
             clap.parseParam("--platform <STR>                  \"browser\" or \"node\". Defaults to \"browser\"") catch unreachable,
             // clap.parseParam("--production                      [not implemented] generate production code") catch unreachable,
-            clap.parseParam("--static-dir <STR>                Top-level directory for .html files, fonts or anything external. Defaults to \"<cwd>/public\", to match create-react-app and Next.js") catch unreachable,
+            clap.parseParam("--public-dir <STR>                Top-level directory for .html files, fonts or anything external. Defaults to \"<cwd>/public\", to match create-react-app and Next.js") catch unreachable,
             clap.parseParam("--tsconfig-override <STR>         Load tsconfig from path instead of cwd/tsconfig.json") catch unreachable,
             clap.parseParam("-d, --define <STR>...             Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:development") catch unreachable,
             clap.parseParam("-e, --external <STR>...           Exclude module from transpilation (can use * wildcards). ex: -e react") catch unreachable,
@@ -310,7 +310,7 @@ pub const Arguments = struct {
 
         switch (comptime cmd) {
             .AutoCommand, .DevCommand, .BuildCommand => {
-                if (args.option("--static-dir")) |public_dir| {
+                if (args.option("--public-dir")) |public_dir| {
                     opts.router = Api.RouteConfig{ .extensions = &.{}, .dir = &.{}, .static_dir = public_dir };
                 }
             },

@@ -374,6 +374,9 @@ _none,
   /// facade_onimportcss
   facade_onimportcss,
 
+  /// auto_onimportcss
+  auto_onimportcss,
+
 _,
 
                 pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {

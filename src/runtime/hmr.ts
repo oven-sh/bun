@@ -11,6 +11,12 @@ if (typeof window !== "undefined") {
     return Math.round(duration * 1000) / 1000;
   }
 
+  enum CSSImportState {
+    Pending,
+    Loading,
+    Loaded,
+  }
+
   type HTMLStylableElement = HTMLLinkElement | HTMLStyleElement;
   type CSSHMRInsertionPoint = {
     id: number;
@@ -447,13 +453,133 @@ if (typeof window !== "undefined") {
       return HMRModule.dependencies.graph.indexOf(id);
     }
 
+    static cssQueue = [];
+    static cssState = CSSImportState.Pending;
+    static cssAutoFOUC = false;
+
+    static processPendingCSSImports() {
+      const pending = HMRClient.cssQueue.slice();
+      HMRClient.cssQueue.length = 0;
+      return Promise.all(pending).then(() => {
+        if (HMRClient.cssQueue.length > 0) {
+          const _pending = HMRClient.cssQueue.slice();
+          HMRClient.cssQueue.length = 0;
+          return Promise.all(_pending).then(HMRClient.processPendingCSSImports);
+        } else {
+          return true;
+        }
+      });
+    }
+
+    static importCSS(promise: Promise<unknown>) {
+      switch (HMRClient.cssState) {
+        case CSSImportState.Pending: {
+          this.cssState = CSSImportState.Loading;
+          // This means we can import without risk of FOUC
+          if (
+            document.documentElement.innerText === "" &&
+            !HMRClient.cssAutoFOUC
+          ) {
+            if (document.body) document.body.style.visibility = "hidden";
+            HMRClient.cssAutoFOUC = true;
+          }
+
+          promise.then(this.processPendingCSSImports).finally(() => {
+            if (HMRClient.cssAutoFOUC) {
+              // "delete" doesn't work here. Not sure why.
+              if (document.body) {
+                // Force layout
+                window.getComputedStyle(document.body);
+
+                document.body.style.visibility = "visible";
+              }
+              HMRClient.cssAutoFOUC = false;
+            }
+            this.cssState = CSSImportState.Loaded;
+          });
+          break;
+        }
+        case CSSImportState.Loaded: {
+          promise.then(
+            () => {},
+            () => {}
+          );
+          break;
+        }
+        case CSSImportState.Loading: {
+          this.cssQueue.push(promise);
+          break;
+        }
+      }
+    }
+
+    static onCSSImport(event) {
+      if (globalThis["Bun_disableCSSImports"]) {
+        document.removeEventListener("onimportcss", HMRClient.onCSSImport);
+        return;
+      }
+
+      const url = event.detail;
+
+      if (typeof url !== "string" || url.length === 0) {
+        console.warn("[CSS Importer] Received invalid CSS import", url);
+        return;
+      }
+
+      const thisURL = new URL(url, location.origin);
+
+      for (let i = 0; i < document.styleSheets.length; i++) {
+        const sheet = document.styleSheets[i];
+        if (!sheet.href) continue;
+
+        if (sheet.href === url) {
+          // Already imported
+          return;
+        }
+
+        try {
+          const _url1 = new URL(sheet.href, location.origin);
+
+          if (_url1.pathname === thisURL.pathname) {
+            // Already imported
+            return;
+          }
+        } catch (e) {}
+      }
+
+      const urlString = thisURL.toString();
+      HMRClient.importCSS(
+        new Promise((resolve, reject) => {
+          if (globalThis["Bun_disableCSSImports"]) {
+            document.removeEventListener("onimportcss", HMRClient.onCSSImport);
+            return;
+          }
+
+          var link = document.createElement("link");
+          link.rel = "stylesheet";
+          link.href = urlString;
+          link.onload = () => {
+            resolve();
+          };
+
+          link.onerror = (evt) => {
+            console.error(
+              `[CSS Importer] Error loading CSS file: ${urlString}\n`,
+              evt.toString()
+            );
+            reject();
+          };
+          document.head.appendChild(link);
+        }).then(() => Promise.resolve())
+      );
+    }
     static activate(verbose: boolean = false) {
       // Support browser-like envirnments where location and WebSocket exist
       // Maybe it'll work in Deno! Who knows.
       if (
         this.client ||
-        typeof location === "undefined" ||
-        typeof WebSocket === "undefined"
+        !("location" in globalThis) ||
+        !("WebSocket" in globalThis)
       ) {
         return;
       }
@@ -1173,6 +1299,12 @@ if (typeof window !== "undefined") {
   __HMRModule = HMRModule;
   __FastRefreshModule = FastRefreshModule;
   __HMRClient = HMRClient;
+
+  if (!globalThis["Bun_disableCSSImports"] && "document" in globalThis) {
+    document.addEventListener("onimportcss", HMRClient.onCSSImport, {
+      passive: true,
+    });
+  }
 }
 
 export { __HMRModule, __FastRefreshModule, __HMRClient };

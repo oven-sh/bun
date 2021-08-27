@@ -2874,44 +2874,60 @@ pub fn NewPrinter(
                 .s_import => |s| {
 
                     // TODO: check loader instead
-                    if (strings.eqlComptime(p.import_records[s.import_record_index].path.name.ext, ".css")) {
-                        switch (p.options.css_import_behavior) {
-                            .facade => {
+                    switch (p.import_records[s.import_record_index].print_mode) {
+                        .css => {
+                            switch (p.options.css_import_behavior) {
+                                .facade => {
 
-                                // This comment exists to let tooling authors know which files CSS originated from
-                                // To parse this, you just look for a line that starts with //@import url("
-                                p.print("//@import url(\"");
-                                // We do not URL escape here.
-                                p.print(p.import_records[s.import_record_index].path.text);
+                                    // This comment exists to let tooling authors know which files CSS originated from
+                                    // To parse this, you just look for a line that starts with //@import url("
+                                    p.print("//@import url(\"");
+                                    // We do not URL escape here.
+                                    p.print(p.import_records[s.import_record_index].path.text);
 
-                                // If they actually use the code, then we emit a facade that just echos whatever they write
-                                if (s.default_name) |name| {
-                                    p.print("\"); css-module-facade\nvar ");
-                                    p.printSymbol(name.ref.?);
-                                    p.print(" = new Proxy({}, {get(_,className,__){return className;}});\n");
-                                } else {
-                                    p.print("\"); css-import-facade\n");
-                                }
+                                    // If they actually use the code, then we emit a facade that just echos whatever they write
+                                    if (s.default_name) |name| {
+                                        p.print("\"); css-module-facade\nvar ");
+                                        p.printSymbol(name.ref.?);
+                                        p.print(" = new Proxy({}, {get(_,className,__){return className;}});\n");
+                                    } else {
+                                        p.print("\"); css-import-facade\n");
+                                    }
 
-                                return;
-                            },
+                                    return;
+                                },
 
-                            .facade_onimportcss => {
-                                p.print("globalThis.document?.dispatchEvent(new CustomEvent(\"onimportcss\", {detail: \"");
-                                p.print(p.import_records[s.import_record_index].path.text);
-                                p.print("\"}));\n");
+                                .auto_onimportcss, .facade_onimportcss => {
+                                    p.print("globalThis.document?.dispatchEvent(new CustomEvent(\"onimportcss\", {detail: \"");
+                                    p.print(p.import_records[s.import_record_index].path.text);
+                                    p.print("\"}));\n");
 
-                                // If they actually use the code, then we emit a facade that just echos whatever they write
-                                if (s.default_name) |name| {
-                                    p.print("var ");
-                                    p.printSymbol(name.ref.?);
-                                    p.print(" = new Proxy({}, {get(_,className,__){return className;}});\n");
-                                }
-                            },
-                            else => {},
-                        }
+                                    // If they actually use the code, then we emit a facade that just echos whatever they write
+                                    if (s.default_name) |name| {
+                                        p.print("var ");
+                                        p.printSymbol(name.ref.?);
+                                        p.print(" = new Proxy({}, {get(_,className,__){return className;}});\n");
+                                    }
+                                },
+                                else => {},
+                            }
+                            return;
+                        },
+                        .import_path => {
+                            if (s.default_name) |name| {
+                                const quotes = p.bestQuoteCharForString(p.import_records[s.import_record_index].path.text, true);
 
-                        return;
+                                p.print("var ");
+                                p.printSymbol(name.ref.?);
+                                p.print(" = ");
+                                p.print(quotes);
+                                p.printUTF8StringEscapedQuotes(p.import_records[s.import_record_index].path.text, quotes);
+                                p.print(quotes);
+                                p.printSemicolonAfterStatement();
+                            }
+                            return;
+                        },
+                        else => {},
                     }
 
                     const record = p.import_records[s.import_record_index];

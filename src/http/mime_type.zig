@@ -31,7 +31,8 @@ pub const javascript = MimeType.init("text/javascript;charset=utf-8", .javascrip
 pub const ico = MimeType.init("image/vnd.microsoft.icon", .image);
 pub const html = MimeType.init("text/html;charset=utf-8", .html);
 // we transpile json to javascript so that it is importable without import assertions.
-pub const json = MimeType.init(javascript.value, .json);
+pub const json = MimeType.init("application/json", .json);
+pub const transpiled_json = javascript;
 
 fn init(comptime str: string, t: Category) MimeType {
     return MimeType{

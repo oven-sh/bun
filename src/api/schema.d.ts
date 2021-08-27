@@ -68,13 +68,16 @@ type uint32 = number;
   }
   export enum CSSInJSBehavior {
     facade = 1,
-    facade_onimportcss = 2
+    facade_onimportcss = 2,
+    auto_onimportcss = 3
   }
   export const CSSInJSBehaviorKeys = {
     1: "facade",
     facade: "facade",
     2: "facade_onimportcss",
-    facade_onimportcss: "facade_onimportcss"
+    facade_onimportcss: "facade_onimportcss",
+    3: "auto_onimportcss",
+    auto_onimportcss: "auto_onimportcss"
   }
   export enum JSXRuntime {
     automatic = 1,

@@ -239,9 +239,13 @@ pub const RequestContext = struct {
             var absolute_path = resolve_path.joinAbs(this.bundler.options.routes.static_dir, .auto, relative_unrooted_path);
 
             if (stat.kind == .SymLink) {
-                absolute_path = std.fs.realpath(absolute_path, &Bundler.tmp_buildfile_buf) catch return null;
-                file.close();
                 file.* = std.fs.openFileAbsolute(absolute_path, .{ .read = true }) catch return null;
+
+                absolute_path = std.os.getFdPath(
+                    file.handle,
+                    &Bundler.tmp_buildfile_buf,
+                ) catch return null;
+
                 stat = file.stat() catch return null;
             }
 
@@ -265,9 +269,10 @@ pub const RequestContext = struct {
     pub fn printStatusLine(comptime code: HTTPStatusCode) []const u8 {
         const status_text = switch (code) {
             101 => "ACTIVATING WEBSOCKET",
-            200...299 => "OK",
-            300...399 => "=>",
-            400...499 => "DID YOU KNOW YOU CAN MAKE THIS SAY WHATEVER YOU WANT",
+            200...299 => "YAY",
+            304 => "NOT MODIFIED",
+            300...303, 305...399 => "REDIRECT",
+            400...499 => "bad request :'(",
             500...599 => "ERR",
             else => @compileError("Invalid code passed to printStatusLine"),
         };
@@ -377,7 +382,7 @@ pub const RequestContext = struct {
             .arena = arena,
             .bundler = bundler_,
             .log = undefined,
-            .url = URLPath.parse(req.path),
+            .url = try URLPath.parse(req.path),
             .conn = conn,
             .allocator = undefined,
             .method = Method.which(req.method) orelse return error.InvalidMethod,
@@ -700,6 +705,7 @@ pub const RequestContext = struct {
         pub var javascript_disabled = false;
         pub fn spawnThread(handler: HandlerThread) !void {
             var thread = try std.Thread.spawn(.{}, spawn, .{handler});
+            thread.setName("WebSocket") catch {};
             thread.detach();
         }
 
@@ -1936,10 +1942,19 @@ pub const Server = struct {
             server.watcher,
             server.timer,
         ) catch |err| {
-            Output.printErrorln("<r>[<red>{s}<r>] - <b>{s}<r>: {s}", .{ @errorName(err), req.method, req.path });
+            Output.prettyErrorln("<r>[<red>{s}<r>] - <b>{s}<r>: {s}", .{ @errorName(err), req.method, req.path });
             conn.client.deinit();
             return;
         };
+
+        if (req_ctx.url.needs_redirect) {
+            req_ctx.handleRedirect(req_ctx.url.path) catch |err| {
+                Output.prettyErrorln("<r>[<red>{s}<r>] - <b>{s}<r>: {s}", .{ @errorName(err), req.method, req.path });
+                conn.client.deinit();
+                return;
+            };
+            return;
+        }
 
         defer {
             if (!req_ctx.controlled) {
@@ -2054,6 +2069,7 @@ pub const Server = struct {
                         },
                     }
                 };
+                finished = true;
             }
         } else {
             if (!finished) {
@@ -2069,6 +2085,7 @@ pub const Server = struct {
                         },
                     }
                 };
+                finished = true;
             }
         }
 
@@ -2139,13 +2156,13 @@ pub const Server = struct {
         );
 
         if (server.bundler.router != null and server.bundler.options.routes.static_dir_enabled) {
-            if (public_folder_is_top_level) {
+            if (!public_folder_is_top_level) {
                 try server.run(
-                    ConnectionFeatures{ .public_folder = .last, .filesystem_router = true },
+                    ConnectionFeatures{ .public_folder = .first, .filesystem_router = true },
                 );
             } else {
                 try server.run(
-                    ConnectionFeatures{ .public_folder = .first, .filesystem_router = true },
+                    ConnectionFeatures{ .public_folder = .last, .filesystem_router = true },
                 );
             }
         } else if (server.bundler.router != null) {
@@ -2153,7 +2170,7 @@ pub const Server = struct {
                 ConnectionFeatures{ .filesystem_router = true },
             );
         } else if (server.bundler.options.routes.static_dir_enabled) {
-            if (public_folder_is_top_level) {
+            if (!public_folder_is_top_level) {
                 try server.run(
                     ConnectionFeatures{
                         .public_folder = .first,

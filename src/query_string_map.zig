@@ -638,6 +638,16 @@ pub const QueryStringMap = struct {
 
 pub const PercentEncoding = struct {
     pub fn decode(comptime Writer: type, writer: Writer, input: string) !u32 {
+        return @call(.{ .modifier = .always_inline }, decodeFaultTolerant, .{ Writer, writer, input, null, false });
+    }
+
+    pub fn decodeFaultTolerant(
+        comptime Writer: type,
+        writer: Writer,
+        input: string,
+        needs_redirect: ?*bool,
+        comptime fault_tolerant: bool,
+    ) !u32 {
         var i: usize = 0;
         var written: u32 = 0;
         // unlike JavaScript's decodeURIComponent, we are not handling invalid surrogate pairs
@@ -645,7 +655,28 @@ pub const PercentEncoding = struct {
         while (i < input.len) {
             switch (input[i]) {
                 '%' => {
-                    if (!(i + 3 <= input.len and strings.isASCIIHexDigit(input[i + 1]) and strings.isASCIIHexDigit(input[i + 2]))) return error.DecodingError;
+                    if (comptime fault_tolerant) {
+                        if (!(i + 3 <= input.len and strings.isASCIIHexDigit(input[i + 1]) and strings.isASCIIHexDigit(input[i + 2]))) {
+                            // i do not feel good about this
+                            // create-react-app's public/index.html uses %PUBLIC_URL% in various tags
+                            // This is an invalid %-encoded string, intended to be swapped out at build time by webpack-html-plugin
+                            // We don't process HTML, so rewriting this URL path won't happen
+                            // But we want to be a little more fault tolerant here than just throwing up an error for something that works in other tools
+                            // So we just skip over it and issue a redirect
+                            // We issue a redirect because various other tooling client-side may validate URLs
+                            // We can't expect other tools to be as fault tolerant
+                            if (i + "PUBLIC_URL%".len < input.len and strings.eqlComptime(input[i + 1 ..][0.."PUBLIC_URL%".len], "PUBLIC_URL%")) {
+                                i += "PUBLIC_URL%".len + 1;
+                                needs_redirect.?.* = true;
+                                continue;
+                            }
+                            return error.DecodingError;
+                        }
+                    } else {
+                        if (!(i + 3 <= input.len and strings.isASCIIHexDigit(input[i + 1]) and strings.isASCIIHexDigit(input[i + 2])))
+                            return error.DecodingError;
+                    }
+
                     try writer.writeByte((strings.toASCIIHexValue(input[i + 1]) << 4) | strings.toASCIIHexValue(input[i + 2]));
                     i += 3;
                     written += 1;

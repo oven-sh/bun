@@ -49,6 +49,8 @@ pub const ImportRecord = struct {
 
     source_index: Ref.Int = std.math.maxInt(Ref.Int),
 
+    print_mode: PrintMode = .normal,
+
     // True for the following cases:
     //
     //   try { require('x') } catch { handle }
@@ -94,4 +96,10 @@ pub const ImportRecord = struct {
     was_originally_bare_import: bool = false,
 
     kind: ImportKind,
+
+    pub const PrintMode = enum {
+        normal,
+        import_path,
+        css,
+    };
 };

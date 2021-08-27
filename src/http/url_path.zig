@@ -10,6 +10,7 @@ path: string = "",
 pathname: string = "",
 first_segment: string = "",
 query_string: string = "",
+needs_redirect: bool = false,
 const toMutable = allocators.constStrToU8;
 
 // TODO: use a real URL parser
@@ -30,8 +31,10 @@ pub fn pathWithoutAssetPrefix(this: *const URLPath, asset_prefix: string) string
 threadlocal var temp_path_buf: [1024]u8 = undefined;
 threadlocal var big_temp_path_buf: [16384]u8 = undefined;
 
-pub fn parse(possibly_encoded_pathname_: string) URLPath {
+pub fn parse(possibly_encoded_pathname_: string) !URLPath {
     var decoded_pathname = possibly_encoded_pathname_;
+    var needs_redirect = false;
+    var invalid_uri = false;
 
     if (strings.indexOfChar(decoded_pathname, '%') != null) {
         var possibly_encoded_pathname = switch (decoded_pathname.len) {
@@ -55,7 +58,8 @@ pub fn parse(possibly_encoded_pathname_: string) URLPath {
             ),
         );
         var writer = fbs.writer();
-        decoded_pathname = possibly_encoded_pathname[0 .. PercentEncoding.decode(@TypeOf(writer), writer, clone) catch unreachable];
+
+        decoded_pathname = possibly_encoded_pathname[0..try PercentEncoding.decodeFaultTolerant(@TypeOf(writer), writer, clone, &needs_redirect, true)];
     }
 
     var question_mark_i: i16 = -1;
@@ -119,5 +123,6 @@ pub fn parse(possibly_encoded_pathname_: string) URLPath {
         .first_segment = first_segment,
         .path = if (decoded_pathname.len == 1) "." else path,
         .query_string = if (question_mark_i > -1) decoded_pathname[@intCast(usize, question_mark_i)..@intCast(usize, decoded_pathname.len)] else "",
+        .needs_redirect = needs_redirect,
     };
 }

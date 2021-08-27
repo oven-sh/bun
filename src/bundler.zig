@@ -314,7 +314,7 @@ pub fn NewBundler(cache_files: bool) type {
             // for now:
             // - "." is not supported
             // - multiple pages directories is not supported
-            if (!this.options.routes.routes_enabled and this.options.entry_points.len == 1) {
+            if (!this.options.routes.routes_enabled and this.options.entry_points.len == 1 and !this.options.serve) {
 
                 // When inferring:
                 // - pages directory with a file extension is not supported. e.g. "pages.app/" won't work.
@@ -1804,7 +1804,7 @@ pub fn NewBundler(cache_files: bool) type {
             const resolved = if (comptime !client_entry_point_enabled) (try bundler.resolver.resolve(bundler.fs.top_level_dir, absolute_path, .stmt)) else brk: {
                 const absolute_pathname = Fs.PathName.init(absolute_path);
 
-                const loader_for_ext = bundler.options.loaders.get(absolute_pathname.ext) orelse .file;
+                const loader_for_ext = bundler.options.loader(absolute_pathname.ext);
 
                 // The expected pathname looks like:
                 // /pages/index.entry.tsx
@@ -1832,16 +1832,23 @@ pub fn NewBundler(cache_files: bool) type {
                 break :brk (try bundler.resolver.resolve(bundler.fs.top_level_dir, absolute_path, .stmt));
             };
 
-            const loader = bundler.options.loaders.get(resolved.path_pair.primary.name.ext) orelse .file;
+            const loader = bundler.options.loader(resolved.path_pair.primary.name.ext);
+            const mime_type_ext = bundler.options.out_extensions.get(resolved.path_pair.primary.name.ext) orelse resolved.path_pair.primary.name.ext;
 
             switch (loader) {
-                .js, .jsx, .ts, .tsx, .json, .css => {
+                .js, .jsx, .ts, .tsx, .css => {
                     return ServeResult{
                         .file = options.OutputFile.initPending(loader, resolved),
                         .mime_type = MimeType.byLoader(
                             loader,
-                            bundler.options.out_extensions.get(resolved.path_pair.primary.name.ext) orelse resolved.path_pair.primary.name.ext,
+                            mime_type_ext[1..],
                         ),
+                    };
+                },
+                .json => {
+                    return ServeResult{
+                        .file = options.OutputFile.initPending(loader, resolved),
+                        .mime_type = MimeType.transpiled_json,
                     };
                 },
                 else => {
@@ -1850,7 +1857,10 @@ pub fn NewBundler(cache_files: bool) type {
                     var stat = try file.stat();
                     return ServeResult{
                         .file = options.OutputFile.initFile(file, abs_path, stat.size),
-                        .mime_type = MimeType.byLoader(loader, abs_path),
+                        .mime_type = MimeType.byLoader(
+                            loader,
+                            mime_type_ext[1..],
+                        ),
                     };
                 },
             }
@@ -2440,46 +2450,92 @@ pub const ClientEntryPoint = struct {
         // we want it to go through the linker and the rest of the transpilation process
 
         const dir_to_use: string = original_path.dirWithTrailingSlash();
+        const disable_css_imports = bundler.options.framework.?.client_css_in_js != .auto_onimportcss;
 
-        const code = try std.fmt.bufPrint(
-            &entry.code_buffer,
-            \\var lastErrorHandler = globalThis.onerror;
-            \\var loaded = {{boot: false, entry: false, onError: null}};
-            \\if (!lastErrorHandler || !lastErrorHandler.__onceTag) {{
-            \\  globalThis.onerror = function (evt) {{
-            \\      if (this.onError && typeof this.onError == 'function') {{
-            \\          this.onError(evt, loaded);
-            \\      }}
-            \\      console.error(evt.error);
-            \\      debugger;
-            \\  }};
-            \\  globalThis.onerror.__onceTag = true;
-            \\  globalThis.onerror.loaded = loaded;
-            \\}}
-            \\
-            \\import boot from '{s}';
-            \\loaded.boot = true;
-            \\if ('setLoaded' in boot) boot.setLoaded(loaded);
-            \\import * as EntryPoint from '{s}{s}';
-            \\loaded.entry = true;
-            \\
-            \\if (!boot) {{
-            \\ const now = Date.now();
-            \\ debugger;
-            \\ const elapsed = Date.now() - now;
-            \\ if (elapsed < 1000) {{
-            \\   throw new Error('Expected framework to export default a function. Instead, framework exported:', Object.keys(boot));
-            \\ }}
-            \\}}
-            \\
-            \\boot(EntryPoint, loaded);
-        ,
-            .{
-                client,
-                dir_to_use,
-                original_path.filename,
-            },
-        );
+        var code: string = undefined;
+
+        if (disable_css_imports) {
+            code = try std.fmt.bufPrint(
+                &entry.code_buffer,
+                \\globalThis.Bun_disableCSSImports = true;
+                \\var lastErrorHandler = globalThis.onerror;
+                \\var loaded = {{boot: false, entry: false, onError: null}};
+                \\if (!lastErrorHandler || !lastErrorHandler.__onceTag) {{
+                \\  globalThis.onerror = function (evt) {{
+                \\      if (this.onError && typeof this.onError == 'function') {{
+                \\          this.onError(evt, loaded);
+                \\      }}
+                \\      console.error(evt.error);
+                \\      debugger;
+                \\  }};
+                \\  globalThis.onerror.__onceTag = true;
+                \\  globalThis.onerror.loaded = loaded;
+                \\}}
+                \\
+                \\import boot from '{s}';
+                \\loaded.boot = true;
+                \\if ('setLoaded' in boot) boot.setLoaded(loaded);
+                \\import * as EntryPoint from '{s}{s}';
+                \\loaded.entry = true;
+                \\
+                \\if (!boot) {{
+                \\ const now = Date.now();
+                \\ debugger;
+                \\ const elapsed = Date.now() - now;
+                \\ if (elapsed < 1000) {{
+                \\   throw new Error('Expected framework to export default a function. Instead, framework exported:', Object.keys(boot));
+                \\ }}
+                \\}}
+                \\
+                \\boot(EntryPoint, loaded);
+            ,
+                .{
+                    client,
+                    dir_to_use,
+                    original_path.filename,
+                },
+            );
+        } else {
+            code = try std.fmt.bufPrint(
+                &entry.code_buffer,
+                \\var lastErrorHandler = globalThis.onerror;
+                \\var loaded = {{boot: false, entry: false, onError: null}};
+                \\if (!lastErrorHandler || !lastErrorHandler.__onceTag) {{
+                \\  globalThis.onerror = function (evt) {{
+                \\      if (this.onError && typeof this.onError == 'function') {{
+                \\          this.onError(evt, loaded);
+                \\      }}
+                \\      console.error(evt.error);
+                \\      debugger;
+                \\  }};
+                \\  globalThis.onerror.__onceTag = true;
+                \\  globalThis.onerror.loaded = loaded;
+                \\}}
+                \\
+                \\import boot from '{s}';
+                \\loaded.boot = true;
+                \\if ('setLoaded' in boot) boot.setLoaded(loaded);
+                \\import * as EntryPoint from '{s}{s}';
+                \\loaded.entry = true;
+                \\
+                \\if (!boot) {{
+                \\ const now = Date.now();
+                \\ debugger;
+                \\ const elapsed = Date.now() - now;
+                \\ if (elapsed < 1000) {{
+                \\   throw new Error('Expected framework to export default a function. Instead, framework exported:', Object.keys(boot));
+                \\ }}
+                \\}}
+                \\
+                \\boot(EntryPoint, loaded);
+            ,
+                .{
+                    client,
+                    dir_to_use,
+                    original_path.filename,
+                },
+            );
+        }
 
         entry.source = logger.Source.initPathString(generateEntryPointPath(&entry.path_buffer, original_path), code);
         entry.source.path.namespace = "client-entry";

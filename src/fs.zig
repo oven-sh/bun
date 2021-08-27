@@ -476,19 +476,6 @@ pub const FileSystem = struct {
         return try allocator.dupe(u8, joined);
     }
 
-    threadlocal var realpath_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-    pub fn resolveAlloc(f: *@This(), allocator: *std.mem.Allocator, parts: anytype) !string {
-        const joined = f.abs(parts);
-
-        const realpath = f.resolvePath(joined);
-
-        return try allocator.dupe(u8, realpath);
-    }
-
-    pub fn resolvePath(f: *@This(), part: string) ![]u8 {
-        return try std.fs.realpath(part, (&realpath_buffer).ptr);
-    }
-
     pub const RealFS = struct {
         entries_mutex: Mutex = Mutex.init(),
         entries: *EntriesOption.Map,

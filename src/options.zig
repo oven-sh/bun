@@ -704,6 +704,7 @@ pub const BundleOptions = struct {
     timings: Timings = Timings{},
     node_modules_bundle: ?*NodeModuleBundle = null,
     production: bool = false,
+    serve: bool = false,
 
     append_package_version_in_query_string: bool = false,
 
@@ -730,7 +731,7 @@ pub const BundleOptions = struct {
                     return framework.client_css_in_js;
                 }
 
-                return .facade;
+                return .auto_onimportcss;
             },
             else => return .facade,
         }
@@ -740,7 +741,7 @@ pub const BundleOptions = struct {
         return !this.defines_loaded;
     }
 
-    pub fn loadDefines(this: *BundleOptions, allocator: *std.mem.Allocator, loader: ?*DotEnv.Loader, env: ?*const Env) !void {
+    pub fn loadDefines(this: *BundleOptions, allocator: *std.mem.Allocator, loader_: ?*DotEnv.Loader, env: ?*const Env) !void {
         if (this.defines_loaded) {
             return;
         }
@@ -750,10 +751,14 @@ pub const BundleOptions = struct {
             this.transform_options.define,
             this.transform_options.serve orelse false,
             this.platform,
-            loader,
+            loader_,
             env,
         );
         this.defines_loaded = true;
+    }
+
+    pub fn loader(this: *const BundleOptions, ext: string) Loader {
+        return this.loaders.get(ext) orelse .file;
     }
 
     pub fn asJavascriptBundleConfig(this: *const BundleOptions) Api.JavascriptBundleConfig {}
@@ -960,7 +965,7 @@ pub const BundleOptions = struct {
             opts.resolve_mode = .lazy;
 
             var dir_to_use: string = opts.routes.static_dir;
-            const static_dir_set = !opts.routes.static_dir_enabled;
+            const static_dir_set = !opts.routes.static_dir_enabled or dir_to_use.len > 0;
             var disabled_static = false;
 
             var chosen_dir = dir_to_use;
@@ -1027,6 +1032,7 @@ pub const BundleOptions = struct {
 
                     break :brk null;
                 };
+                opts.routes.static_dir_enabled = opts.routes.static_dir_handle != null;
             }
             // Windows has weird locking rules for file access.
             // so it's a bad idea to keep a file handle open for a long time on Windows.
@@ -1034,6 +1040,7 @@ pub const BundleOptions = struct {
                 opts.routes.static_dir_handle.?.close();
             }
             opts.hot_module_reloading = opts.platform.isWebLike();
+            opts.serve = true;
         }
 
         if (opts.origin.isAbsolute()) {
@@ -1424,7 +1431,7 @@ pub const Framework = struct {
     client_env: Env = Env{},
     server_env: Env = Env{},
 
-    client_css_in_js: Api.CssInJsBehavior = .facade,
+    client_css_in_js: Api.CssInJsBehavior = .auto_onimportcss,
 
     fn normalizedPath(allocator: *std.mem.Allocator, toplevel_path: string, path: string) !string {
         std.debug.assert(std.fs.path.isAbsolute(path));
@@ -1509,9 +1516,10 @@ pub const Framework = struct {
             .package = transform.package orelse "",
             .development = transform.development orelse true,
             .resolved = false,
-            .client_css_in_js = switch (transform.client_css_in_js orelse .facade) {
+            .client_css_in_js = switch (transform.client_css_in_js orelse .auto_onimportcss) {
                 .facade_onimportcss => .facade_onimportcss,
-                else => .facade,
+                .facade => .facade,
+                else => .auto_onimportcss,
             },
         };
     }

@@ -69,14 +69,18 @@ const PlatformKeys = {
 const CSSInJSBehavior = {
   "1": 1,
   "2": 2,
+  "3": 3,
   "facade": 1,
-  "facade_onimportcss": 2
+  "facade_onimportcss": 2,
+  "auto_onimportcss": 3
 };
 const CSSInJSBehaviorKeys = {
   "1": "facade",
   "2": "facade_onimportcss",
+  "3": "auto_onimportcss",
   "facade": "facade",
-  "facade_onimportcss": "facade_onimportcss"
+  "facade_onimportcss": "facade_onimportcss",
+  "auto_onimportcss": "auto_onimportcss"
 };
 const JSXRuntime = {
   "1": 1,

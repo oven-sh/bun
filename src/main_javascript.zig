@@ -144,7 +144,7 @@ pub const Cli = struct {
                 clap.parseParam("-e, --external <STR>...           Exclude module from transpilation (can use * wildcards). ex: -e react") catch unreachable,
                 clap.parseParam("-i, --inject <STR>...             Inject module at the top of every file") catch unreachable,
                 clap.parseParam("--cwd <STR>                       Absolute path to resolve entry points from. Defaults to cwd") catch unreachable,
-                clap.parseParam("--origin <STR>                Rewrite import paths to start with --origin. Useful for web browsers.") catch unreachable,
+                clap.parseParam("--origin <STR>                    Rewrite import paths to start with --origin. Useful for web browsers.") catch unreachable,
                 clap.parseParam("--serve                           Start a local dev server. This also sets resolve to \"lazy\".") catch unreachable,
                 clap.parseParam("--public-dir <STR>                Top-level directory for .html files, fonts, images, or anything external. Only relevant with --serve. Defaults to \"<cwd>/public\", to match create-react-app and Next.js") catch unreachable,
                 clap.parseParam("--jsx-factory <STR>               Changes the function called when compiling JSX elements using the classic JSX runtime") catch unreachable,

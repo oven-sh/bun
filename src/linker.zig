@@ -301,7 +301,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
                             }
 
                             linker.processImportRecord(
-                                linker.options.loaders.get(resolved_import.path_pair.primary.name.ext) orelse .file,
+                                linker.options.loader(resolved_import.path_pair.primary.name.ext),
 
                                 // Include trailing slash
                                 process_import_record_path,
@@ -568,10 +568,18 @@ pub fn NewLinker(comptime BundlerType: type) type {
                 import_path_format,
             );
 
-            if (loader == .css) {
-                if (linker.onImportCSS) |callback| {
-                    callback(resolve_result, import_record, source_dir);
-                }
+            switch (loader) {
+                .css => {
+                    if (linker.onImportCSS) |callback| {
+                        callback(resolve_result, import_record, source_dir);
+                    }
+                    // This saves us a less reliable string check
+                    import_record.print_mode = .css;
+                },
+                .file => {
+                    import_record.print_mode = .import_path;
+                },
+                else => {},
             }
         }
 

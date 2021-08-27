@@ -2944,10 +2944,10 @@ pub fn NewPrinter(
                         if (p.options.runtime_imports.__require) |require_ref| {
                             var module_name_buf: [256]u8 = undefined;
                             var fixed_buf_allocator = std.heap.FixedBufferAllocator.init(&module_name_buf);
-                            const module_name_segment = (fs.PathName.init(record.path.pretty).nonUniqueNameString(&fixed_buf_allocator.allocator) catch unreachable)[1..];
-                            p.print("import * as ");
+                            const module_name_segment = (fs.PathName.init(record.path.pretty).nonUniqueNameString(&fixed_buf_allocator.allocator) catch unreachable);
+                            p.print("import * as $$");
                             p.print(module_name_segment);
-                            p.print("_module from \"");
+                            p.print(" from \"");
                             p.print(record.path.text);
                             p.print("\";\n");
 
@@ -2956,9 +2956,9 @@ pub fn NewPrinter(
                                 p.printSymbol(s.namespace_ref);
                                 p.print(" = ");
                                 p.printSymbol(require_ref);
-                                p.print("(");
+                                p.print("($$");
                                 p.print(module_name_segment);
-                                p.print("_module);\n");
+                                p.print(");\n");
                             }
 
                             if (s.default_name) |default_name| {
@@ -2966,9 +2966,9 @@ pub fn NewPrinter(
                                 p.printSymbol(default_name.ref.?);
                                 p.print(" = ");
                                 p.printSymbol(require_ref);
-                                p.print("(");
+                                p.print("($$");
                                 p.print(module_name_segment);
-                                p.print("_module);\n");
+                                p.print(");\n");
                             }
 
                             return;

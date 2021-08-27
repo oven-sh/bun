@@ -309,9 +309,11 @@ pub const Arguments = struct {
         };
 
         switch (comptime cmd) {
-            .AutoCommand, .DevCommand, .BuildCommand => {
+            .AutoCommand, .DevCommand, .BuildCommand, .BunCommand => {
                 if (args.option("--public-dir")) |public_dir| {
-                    opts.router = Api.RouteConfig{ .extensions = &.{}, .dir = &.{}, .static_dir = public_dir };
+                    if (public_dir.len > 0) {
+                        opts.router = Api.RouteConfig{ .extensions = &.{}, .dir = &.{}, .static_dir = public_dir };
+                    }
                 }
             },
             else => {},

@@ -100,10 +100,11 @@ struct JavascriptBundle {
 message JavascriptBundleContainer {
   uint32 bundle_format_version = 1;
 
-  JavascriptBundle bundle = 2;
+  // These go first so if we change JavaScriptBundle we can still read these
+  LoadedRouteConfig routes = 3;
+  LoadedFramework framework = 2;
 
-  LoadedFramework framework = 3;
-  LoadedRouteConfig routes = 4;
+  JavascriptBundle bundle = 4;
 
   // Don't technically need to store this, but it may be helpful as a sanity check
   uint32 code_length = 5;

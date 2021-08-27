@@ -598,14 +598,14 @@ pub const JavascriptBundleContainer = struct {
 /// bundle_format_version
 bundle_format_version: ?u32 = null,
 
-/// bundle
-bundle: ?JavascriptBundle = null,
+/// routes
+routes: ?LoadedRouteConfig = null,
 
 /// framework
 framework: ?LoadedFramework = null,
 
-/// routes
-routes: ?LoadedRouteConfig = null,
+/// bundle
+bundle: ?JavascriptBundle = null,
 
 /// code_length
 code_length: ?u32 = null,
@@ -622,13 +622,13 @@ pub fn decode(reader: anytype) anyerror!JavascriptBundleContainer {
         this.bundle_format_version = try reader.readValue(u32); 
 },
       2 => {
-        this.bundle = try reader.readValue(JavascriptBundle); 
+        this.routes = try reader.readValue(LoadedRouteConfig); 
 },
       3 => {
         this.framework = try reader.readValue(LoadedFramework); 
 },
       4 => {
-        this.routes = try reader.readValue(LoadedRouteConfig); 
+        this.bundle = try reader.readValue(JavascriptBundle); 
 },
       5 => {
         this.code_length = try reader.readValue(u32); 
@@ -646,17 +646,17 @@ if (this.bundle_format_version) |bundle_format_version| {
   try writer.writeFieldID(1);
    try writer.writeInt(bundle_format_version);
 }
-if (this.bundle) |bundle| {
+if (this.routes) |routes| {
   try writer.writeFieldID(2);
-   try writer.writeValue(bundle);
+   try writer.writeValue(routes);
 }
 if (this.framework) |framework| {
   try writer.writeFieldID(3);
    try writer.writeValue(framework);
 }
-if (this.routes) |routes| {
+if (this.bundle) |bundle| {
   try writer.writeFieldID(4);
-   try writer.writeValue(routes);
+   try writer.writeValue(bundle);
 }
 if (this.code_length) |code_length| {
   try writer.writeFieldID(5);

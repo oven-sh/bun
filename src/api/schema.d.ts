@@ -235,9 +235,9 @@ type uint32 = number;
 
   export interface JavascriptBundleContainer {
     bundle_format_version?: uint32;
-    bundle?: JavascriptBundle;
-    framework?: LoadedFramework;
     routes?: LoadedRouteConfig;
+    framework?: LoadedFramework;
+    bundle?: JavascriptBundle;
     code_length?: uint32;
   }
 

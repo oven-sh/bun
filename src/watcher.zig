@@ -117,7 +117,8 @@ pub fn NewWatcher(comptime ContextType: type) type {
         pub fn start(this: *Watcher) !void {
             _ = try this.getQueue();
             std.debug.assert(this.watchloop_handle == null);
-            _ = try std.Thread.spawn(.{}, Watcher.watchLoop, .{this});
+            var thread = try std.Thread.spawn(.{}, Watcher.watchLoop, .{this});
+            thread.setName("File Watcher") catch {};
         }
 
         // This must only be called from the watcher thread

@@ -1714,7 +1714,7 @@ pub fn NewBundler(cache_files: bool) type {
                     opts.enable_bundling = false;
                     opts.transform_require_to_import = true;
                     opts.can_import_from_bundle = bundler.options.node_modules_bundle != null;
-                    opts.features.hot_module_reloading = bundler.options.hot_module_reloading and bundler.options.platform != .bun; // and client_entry_point_ == null;
+                    opts.features.hot_module_reloading = bundler.options.hot_module_reloading and bundler.options.platform != .bun and (opts.can_import_from_bundle or !path.isNodeModule()); // and client_entry_point_ == null;
                     opts.features.react_fast_refresh = opts.features.hot_module_reloading and jsx.parse and bundler.options.jsx.supports_fast_refresh;
                     opts.filepath_hash_for_hmr = file_hash orelse 0;
                     opts.warn_about_unbundled_modules = bundler.options.platform != .bun;

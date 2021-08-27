@@ -1973,7 +1973,8 @@ pub const Parser = struct {
                         decl_i += 1;
                     }
 
-                    const import_record_id = p.addImportRecord(.require, loc, p.options.jsx.import_source);
+                    // We do not mark this as .require becuase we are already wrapping it manually.
+                    const import_record_id = p.addImportRecord(.internal, loc, p.options.jsx.import_source);
                     // When everything is CommonJS
                     // We import JSX like this:
                     // var {jsxDev} = require("react/jsx-dev")
@@ -2810,7 +2811,7 @@ pub fn NewParser(
                         cjs_import_name,
                         base_identifier_name,
                     );
-                    std.mem.copy(u8, cjs_import_name[base_identifier_name.len - 1 ..], suffix);
+                    std.mem.copy(u8, cjs_import_name[base_identifier_name.len..], suffix);
 
                     const namespace_ref = p.declareSymbol(.hoisted, arg.loc, cjs_import_name) catch unreachable;
 

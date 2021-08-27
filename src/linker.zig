@@ -321,7 +321,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
                             // If it's a namespace import, assume it's safe.
                             // We can do this in the printer instead of creating a bunch of AST nodes here.
                             // But we need to at least tell the printer that this needs to happen.
-                            if (import_record.kind == .stmt and resolved_import.shouldAssumeCommonJS(import_record)) {
+                            if (result.ast.exports_kind != .cjs and (import_record.kind == .require or (import_record.kind == .stmt and resolved_import.shouldAssumeCommonJS(import_record)))) {
                                 import_record.wrap_with_to_module = true;
                                 result.ast.needs_runtime = true;
                             }

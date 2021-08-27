@@ -953,7 +953,7 @@ pub const PathName = struct {
     pub fn nonUniqueNameString(self: *const PathName, allocator: *std.mem.Allocator) !string {
         if (strings.eqlComptime(self.base, "index")) {
             if (self.dir.len > 0) {
-                return MutableString.ensureValidIdentifier(PathName.init(self.dir).dir, allocator);
+                return MutableString.ensureValidIdentifier(PathName.init(self.dir).base, allocator);
             }
         }
 
@@ -1058,6 +1058,10 @@ pub const Path = struct {
             (a.namespace == b.namespace and (a.text < b.text ||
             (a.text == b.text and (a.flags < b.flags ||
             (a.flags == b.flags)))));
+    }
+
+    pub fn isNodeModule(this: *const Path) bool {
+        return strings.lastIndexOf(this.name.dir, std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str) != null;
     }
 };
 

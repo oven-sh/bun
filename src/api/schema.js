@@ -373,16 +373,16 @@ function decodeJavascriptBundleContainer(bb) {
       result["bundle_format_version"] = bb.readUint32();
       break;
 
-    case 2:
-      result["bundle"] = decodeJavascriptBundle(bb);
+    case 3:
+      result["routes"] = decodeLoadedRouteConfig(bb);
       break;
 
-    case 3:
+    case 2:
       result["framework"] = decodeLoadedFramework(bb);
       break;
 
     case 4:
-      result["routes"] = decodeLoadedRouteConfig(bb);
+      result["bundle"] = decodeJavascriptBundle(bb);
       break;
 
     case 5:
@@ -403,22 +403,22 @@ function encodeJavascriptBundleContainer(message, bb) {
     bb.writeUint32(value);
   }
 
-  var value = message["bundle"];
+  var value = message["routes"];
   if (value != null) {
-    bb.writeByte(2);
-    encodeJavascriptBundle(value, bb);
+    bb.writeByte(3);
+    encodeLoadedRouteConfig(value, bb);
   }
 
   var value = message["framework"];
   if (value != null) {
-    bb.writeByte(3);
+    bb.writeByte(2);
     encodeLoadedFramework(value, bb);
   }
 
-  var value = message["routes"];
+  var value = message["bundle"];
   if (value != null) {
     bb.writeByte(4);
-    encodeLoadedRouteConfig(value, bb);
+    encodeJavascriptBundle(value, bb);
   }
 
   var value = message["code_length"];

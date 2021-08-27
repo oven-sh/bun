@@ -71,14 +71,3 @@ addEventListener("fetch", async (event: FetchEvent) => {
 export {};
 
 declare var Bun: any;
-
-function getNextData(request: Request, route) {
-  return {
-    NEXT_DATA: {
-      query: route.query,
-      props: {},
-      page: route.path,
-      buildId: buildId.toString(16),
-    },
-  };
-}

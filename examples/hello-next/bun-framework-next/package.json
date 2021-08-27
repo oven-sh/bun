@@ -1,6 +1,6 @@
 {
   "name": "bun-framework-next",
-  "version": "0.0.0-9",
+  "version": "0.0.0-11",
   "description": "",
   "framework": {
     "static": "public",
@@ -13,7 +13,8 @@
       "extensions": [
         ".js",
         ".ts",
-        ".tsx"
+        ".tsx",
+        ".jsx"
       ]
     },
     "css": "onimportcss",

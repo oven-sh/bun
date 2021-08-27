@@ -2,7 +2,6 @@ usingnamespace @import("../global.zig");
 const Api = @import("../api/schema.zig").Api;
 const std = @import("std");
 const options = @import("../options.zig");
-const log = @import("../logger.zig");
 const cache = @import("../cache.zig");
 const logger = @import("../logger.zig");
 const js_ast = @import("../js_ast.zig");

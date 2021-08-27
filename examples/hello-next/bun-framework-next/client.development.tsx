@@ -1,3 +1,7 @@
+globalThis.global = globalThis;
+globalThis.Bun_disableCSSImports = true;
+
+import * as React from "react";
 var onlyChildPolyfill = React.Children.only;
 React.Children.only = function (children) {
   if (children && typeof children === "object" && children.length == 1) {
@@ -7,7 +11,6 @@ React.Children.only = function (children) {
   return onlyChildPolyfill(children);
 };
 
-globalThis.global = globalThis;
 import * as ReactDOM from "react-dom";
 import App from "next/app";
 import mitt, { MittEmitter } from "next/dist/shared/lib/mitt";
@@ -43,7 +46,6 @@ import {
   createRouter,
   makePublicRouterInstance,
 } from "next/dist/client/router";
-import * as React from "react";
 export const emitter: MittEmitter<string> = mitt();
 
 declare global {

@@ -21,16 +21,56 @@ import * as NextDocument from "next/document";
 import * as ReactDOMServer from "react-dom/server.browser";
 import * as url from "url";
 import * as React from "react";
-
+import * as ReactIs from "react-is";
 const dev = process.env.NODE_ENV === "development";
 
 type ParsedUrlQuery = Record<string, string | string[]>;
 
 const isJSFile = (file: string) =>
   file.endsWith(".js") ||
+  file.endsWith(".jsx") ||
   file.endsWith(".mjs") ||
   file.endsWith(".ts") ||
   file.endsWith(".tsx");
+
+const notImplementedProxy = (base) =>
+  new Proxy(
+    {},
+    {
+      deleteProperty: function (target, prop) {
+        return undefined;
+      },
+      enumerate: function (oTarget, sKey) {
+        return [].entries();
+      },
+      ownKeys: function (oTarget, sKey) {
+        return [].values();
+      },
+      has: function (oTarget, sKey) {
+        return false;
+      },
+      defineProperty: function (oTarget, sKey, oDesc) {
+        return undefined;
+      },
+      getOwnPropertyDescriptor: function (oTarget, sKey) {
+        return undefined;
+      },
+      get(this, prop) {
+        throw new ReferenceError(
+          `${base} is not available for this environment.`
+        );
+      },
+      set(this, prop, value) {
+        throw new ReferenceError(
+          `${base} is not available for this environment.`
+        );
+      },
+    }
+  );
+
+globalThis.fetch = (url, options) => {
+  return Promise.reject(new Error(`fetch is not implemented yet. sorry!!`));
+};
 
 function getScripts(files: DocumentFiles) {
   const { context, props } = this;
@@ -396,6 +436,31 @@ export async function render({
 
   const headTags = (...args: any) => callMiddleware("headTags", args);
 
+  if (!ReactIs.isValidElementType(Component)) {
+    const exportNames = Object.keys(PageNamespace || {});
+
+    const reactComponents = exportNames.filter(ReactIs.isValidElementType);
+    if (reactComponents.length > 2) {
+      throw new Error(
+        `\"export default\" missing in ${
+          route.filePath
+        }.\nTry exporting one of ${reactComponents.join(", ")}\n`
+      );
+    } else if (reactComponents.length === 2) {
+      throw new Error(
+        `\"export default\" missing in ${route.filePath}.\n\nTry exporting <${reactComponents[0]} /> or <${reactComponents[1]} />\n`
+      );
+    } else if (reactComponents.length == 1) {
+      throw new Error(
+        `\"export default\" missing in ${route.filePath}. Try adding this to the bottom of the file:\n\n        export default ${reactComponents[0]};\n`
+      );
+    } else if (reactComponents.length == 0) {
+      throw new Error(
+        `\"export default\" missing in ${route.filePath}. Try exporting a React component.\n`
+      );
+    }
+  }
+
   const isFallback = !!query.__nextFallback;
   delete query.__nextFallback;
   delete query.__nextLocale;
@@ -503,6 +568,32 @@ export async function render({
     ctx,
   });
 
+  // This isn't correct.
+  // We don't call getServerSideProps on clients.
+  const getServerSideProps = PageNamespace.getServerSideProps;
+  if (typeof getServerSideProps === "function") {
+    const result = await getServerSideProps({
+      params: route.params,
+      query: route.query,
+      req: notImplementedProxy("req"),
+      res: notImplementedProxy("res"),
+      resolvedUrl: route.pathname,
+      preview: false,
+      previewData: null,
+      locale: null,
+      locales: [],
+      defaultLocale: null,
+    });
+
+    if (result) {
+      if ("props" in result) {
+        if (typeof result.props === "object") {
+          Object.assign(props, result.props);
+        }
+      }
+    }
+  }
+
   const renderToString = ReactDOMServer.renderToString;
   const ErrorDebug = null;
 
@@ -567,7 +658,6 @@ export async function render({
   const docComponentsRendered: DocumentProps["docComponentsRendered"] = {};
 
   const isPreview = false;
-  const getServerSideProps = PageNamespace.getServerSideProps;
 
   let html = renderDocument(Document, {
     docComponentsRendered,

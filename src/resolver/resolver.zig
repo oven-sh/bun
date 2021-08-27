@@ -412,15 +412,38 @@ pub fn NewResolver(cache_files: bool) type {
                 var prefixed_package_buf: [512]u8 = undefined;
                 // Prevent the extra lookup if the package is already prefixed, i.e. avoid "bun-framework-next-bun-framework-next"
                 if (strings.startsWith(package, bunFrameworkPackagePrefix) or package.len + bunFrameworkPackagePrefix.len >= prefixed_package_buf.len) {
-                    return try r._resolveFramework(package, pair, preference, load_defines);
+                    return r._resolveFramework(package, pair, preference, load_defines) catch |err| {
+                        switch (err) {
+                            error.ModuleNotFound => {
+                                Output.prettyErrorln("<r><red>ResolveError<r> can't find framework: <b>\"{s}\"<r>.\n\nMaybe it's not installed? Try running this:\n\n   <b>npm install -D {s}<r>\n   <b>bun bun --use {s}<r>", .{ package, package, package });
+                                Output.flush();
+                                std.os.exit(1);
+                            },
+                            else => {
+                                return err;
+                            },
+                        }
+                    };
                 }
 
                 prefixed_package_buf[0..bunFrameworkPackagePrefix.len].* = bunFrameworkPackagePrefix.*;
                 std.mem.copy(u8, prefixed_package_buf[bunFrameworkPackagePrefix.len..], package);
-                return r._resolveFramework(prefixed_package_buf[0 .. bunFrameworkPackagePrefix.len + package.len], pair, preference, load_defines) catch |err| {
+                const prefixed_name = prefixed_package_buf[0 .. bunFrameworkPackagePrefix.len + package.len];
+                return r._resolveFramework(prefixed_name, pair, preference, load_defines) catch |err| {
                     switch (err) {
                         error.ModuleNotFound => {
-                            return try r._resolveFramework(package, pair, preference, load_defines);
+                            return r._resolveFramework(package, pair, preference, load_defines) catch |err2| {
+                                switch (err2) {
+                                    error.ModuleNotFound => {
+                                        Output.prettyErrorln("<r><red>ResolveError<r> can't find framework: <b>\"{s}\"<r>.\n\nMaybe it's not installed? Try running this:\n\n   <b>npm install -D {s}\n   <b>bun bun --use {s}<r>", .{ package, prefixed_name, package });
+                                        Output.flush();
+                                        std.os.exit(1);
+                                    },
+                                    else => {
+                                        return err;
+                                    },
+                                }
+                            };
                         },
                         else => {
                             return err;
@@ -429,7 +452,19 @@ pub fn NewResolver(cache_files: bool) type {
                 };
             }
 
-            return try r._resolveFramework(package, pair, preference, load_defines);
+            return r._resolveFramework(package, pair, preference, load_defines) catch |err| {
+                switch (err) {
+                    error.ModuleNotFound => {
+                        Output.prettyError("<r><red>ResolveError<r> can't find local framework: <b>\"{s}\"<r>.", .{package});
+
+                        Output.flush();
+                        std.os.exit(1);
+                    },
+                    else => {
+                        return err;
+                    },
+                }
+            };
         }
 
         fn _resolveFramework(

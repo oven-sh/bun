@@ -272,7 +272,11 @@ pub const RequestContext = struct {
             200...299 => "YAY",
             304 => "NOT MODIFIED",
             300...303, 305...399 => "REDIRECT",
-            400...499 => "bad request :'(",
+            404 => "Not Found!",
+            403 => "Not Allowed!",
+            401 => "Login",
+            402 => "Pay Me",
+            400, 405...499 => "bad request :(",
             500...599 => "ERR",
             else => @compileError("Invalid code passed to printStatusLine"),
         };

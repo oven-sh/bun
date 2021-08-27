@@ -46,7 +46,18 @@ pub const Cli = struct {
         var panicker = MainPanicHandler.init(log);
         MainPanicHandler.Singleton = &panicker;
 
-        try Command.start(allocator, log);
+        Command.start(allocator, log) catch |err| {
+            switch (err) {
+                error.MissingEntryPoint => {
+                    Output.prettyErrorln("<r><red>MissingEntryPoint<r> what do you want to bundle?\n\n<d>Example:\n\n<r>  <b><cyan>bun bun --use next<r>\n\n  <b><cyan>bun bun ./src/index.ts ./src/file2.ts<r>\n", .{});
+                    Output.flush();
+                    std.os.exit(1);
+                },
+                else => {
+                    return err;
+                },
+            }
+        };
     }
 };
 

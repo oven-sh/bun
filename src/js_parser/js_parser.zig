@@ -1826,6 +1826,34 @@ pub const Parser = struct {
 
         var did_import_fast_refresh = false;
 
+        // Analyze cross-part dependencies for tree shaking and code splitting
+        var exports_kind = js_ast.ExportsKind.none;
+        const uses_exports_ref = p.symbols.items[p.exports_ref.inner_index].use_count_estimate > 0;
+        const uses_module_ref = p.symbols.items[p.module_ref.inner_index].use_count_estimate > 0;
+
+        var wrapper_expr: ?Expr = null;
+
+        if (p.es6_export_keyword.len > 0 or p.top_level_await_keyword.len > 0) {
+            exports_kind = .esm;
+        } else if (uses_exports_ref or uses_module_ref or p.has_top_level_return) {
+            exports_kind = .cjs;
+            if (p.options.transform_require_to_import) {
+                var args = p.allocator.alloc(Expr, 2) catch unreachable;
+                wrapper_expr = p.callRuntime(logger.Loc.Empty, "__commonJS", args);
+
+                // Disable HMR if we're wrapping it in CommonJS
+                // It's technically possible to support this.
+                // But we need to cut scope for the v0.
+                p.options.features.hot_module_reloading = false;
+                p.options.features.react_fast_refresh = false;
+                p.runtime_imports.__HMRModule = null;
+                p.runtime_imports.__FastRefreshModule = null;
+                p.runtime_imports.__HMRClient = null;
+            }
+        } else {
+            exports_kind = .esm;
+        }
+
         // Auto-import JSX
         if (p.options.jsx.parse) {
             const jsx_symbol: Symbol = p.symbols.items[p.jsx_runtime_ref.inner_index];
@@ -2168,40 +2196,13 @@ pub const Parser = struct {
             }) catch unreachable;
         }
 
-        // Analyze cross-part dependencies for tree shaking and code splitting
-        var exports_kind = js_ast.ExportsKind.none;
-        const uses_exports_ref = p.symbols.items[p.exports_ref.inner_index].use_count_estimate > 0;
-        const uses_module_ref = p.symbols.items[p.module_ref.inner_index].use_count_estimate > 0;
-        const uses_require_ref = p.symbols.items[p.require_ref.inner_index].use_count_estimate > 0;
-
-        var wrapper_expr: ?Expr = null;
-
-        if (p.es6_export_keyword.len > 0 or p.top_level_await_keyword.len > 0) {
-            exports_kind = .esm;
-        } else if (uses_exports_ref or uses_module_ref or p.has_top_level_return) {
-            exports_kind = .cjs;
-            if (p.options.transform_require_to_import) {
-                var args = p.allocator.alloc(Expr, 2) catch unreachable;
-                wrapper_expr = p.callRuntime(logger.Loc.Empty, "__commonJS", args);
-
-                // Disable HMR if we're wrapping it in CommonJS
-                // It's technically possible to support this.
-                // But we need to cut scope for the v0.
-                p.options.features.hot_module_reloading = false;
-                p.runtime_imports.__HMRModule = null;
-                p.runtime_imports.__FastRefreshModule = null;
-                p.runtime_imports.__HMRClient = null;
-            }
-        } else {
-            exports_kind = .esm;
-        }
-
         var runtime_imports_iter = p.runtime_imports.iter();
         const has_cjs_imports = p.cjs_import_stmts.items.len > 0 and p.options.transform_require_to_import;
         // - don't import runtime if we're bundling, it's already included
         // - when HMR is enabled, we always need to import the runtime for HMRClient and HMRModule.
         // - when HMR is not enabled, we only need any runtime imports if we're importing require()
         if (!p.options.enable_bundling and (p.has_called_runtime or p.options.features.hot_module_reloading or has_cjs_imports)) {
+            const before_start = before.items.len;
             while (runtime_imports_iter.next()) |entry| {
                 const imports = [_]u16{entry.key};
                 p.generateImportStmt(
@@ -2213,6 +2214,16 @@ pub const Parser = struct {
                     "import_",
                     true,
                 ) catch unreachable;
+            }
+            // If we import JSX, we might call require.
+            // We need to import require before importing JSX.
+            // But a runtime import may not be necessary until we import JSX.
+            // So we have to swap it after the fact, instead of just moving this above the JSX import.
+            if (before_start > 0) {
+                var j: usize = 0;
+                while (j < before_start) : (j += 1) {
+                    std.mem.swap(js_ast.Part, &before.items[j], &before.items[before.items.len - j - 1]);
+                }
             }
         }
 

@@ -176,7 +176,7 @@ const ImportVariant = enum {
         };
     }
 
-    pub fn determine(record: *const importRecord.ImportRecord, namespace: Symbol, s_import: *const S.Import) ImportVariant {
+    pub fn determine(record: *const importRecord.ImportRecord, namespace: *const Symbol, s_import: *const S.Import) ImportVariant {
         var variant = ImportVariant.path_only;
 
         if (record.contains_import_star) {

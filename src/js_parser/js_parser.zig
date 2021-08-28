@@ -2142,6 +2142,7 @@ pub const Parser = struct {
                     ) catch unreachable;
                     p.is_import_item.put(p.jsx_refresh_runtime_ref, true) catch unreachable;
                     import_records[import_record_i] = import_record_id;
+                    p.recordUsage(p.jsx_refresh_runtime_ref);
                 }
 
                 jsx_part_stmts[stmt_i] = p.s(S.Local{ .kind = .k_var, .decls = decls[0..decl_i] }, loc);

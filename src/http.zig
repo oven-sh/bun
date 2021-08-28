@@ -269,10 +269,13 @@ pub const RequestContext = struct {
     pub fn printStatusLine(comptime code: HTTPStatusCode) []const u8 {
         const status_text = switch (code) {
             101 => "ACTIVATING WEBSOCKET",
-            200...299 => "YAY",
+            200 => "YAY",
+            201 => "NEW",
+            204 => "VERY CONTENT",
+            206 => "MUCH CONTENT",
             304 => "NOT MODIFIED",
             300...303, 305...399 => "REDIRECT",
-            404 => "Not Found!",
+            404 => "Not Found",
             403 => "Not Allowed!",
             401 => "Login",
             402 => "Pay Me",

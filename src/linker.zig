@@ -195,6 +195,8 @@ pub fn NewLinker(comptime BundlerType: type) type {
             switch (result.loader) {
                 .jsx, .js, .ts, .tsx => {
                     for (result.ast.import_records) |*import_record, _record_index| {
+                        if (import_record.is_unused) continue;
+                        
                         const record_index = @truncate(u32, _record_index);
                         if (comptime !ignore_runtime) {
                             if (strings.eqlComptime(import_record.path.text, Runtime.Imports.Name)) {

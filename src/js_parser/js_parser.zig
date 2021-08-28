@@ -130,14 +130,14 @@ pub const ImportScanner = struct {
                     //
                     // const keep_unused_imports = !p.options.trim_unused_imports;
                     var did_remove_star_loc = false;
-                    const keep_unused_imports = true;
+                    const keep_unused_imports = false;
 
                     // TypeScript always trims unused imports. This is important for
                     // correctness since some imports might be fake (only in the type
                     // system and used for type-only imports).
                     if (!keep_unused_imports) {
                         var found_imports = false;
-                        var is_unused_in_typescript = false;
+                        var is_unused_in_typescript = true;
 
                         if (st.default_name) |default_name| {
                             found_imports = true;
@@ -185,7 +185,7 @@ pub const ImportScanner = struct {
 
                         // Remove items if they are unused
                         if (st.items.len > 0) {
-                            found_imports = false;
+                            found_imports = true;
                             var items_end: usize = 0;
                             var i: usize = 0;
                             while (i < st.items.len) : (i += 1) {
@@ -235,10 +235,10 @@ pub const ImportScanner = struct {
                         // e.g. `import 'fancy-stylesheet-thing/style.css';`
                         // This is a breaking change though. We can make it an option with some guardrail
                         // so maybe if it errors, it shows a suggestion "retry without trimming unused imports"
-                        if (found_imports and !p.options.preserve_unused_imports_ts) {
+                        if (p.options.ts and found_imports and is_unused_in_typescript and !p.options.preserve_unused_imports_ts) {
                             // Ignore import records with a pre-filled source index. These are
                             // for injected files and we definitely do not want to trim these.
-                            if (!Ref.isSourceIndexNull(record.source_index)) {
+                            if (!record.is_internal) {
                                 record.is_unused = true;
                                 continue;
                             }
@@ -285,13 +285,13 @@ pub const ImportScanner = struct {
                             // it's really stupid to import all 1,000 components from that design system
                             // when you just want <Button />
                             const namespace_ref = st.namespace_ref;
-                            const convert_star_to_clause = p.symbols.items[namespace_ref.inner_index].use_count_estimate == 0 and st.default_name == null;
+                            const convert_star_to_clause = !p.options.can_import_from_bundle and p.symbols.items[namespace_ref.inner_index].use_count_estimate == 0;
 
                             if (convert_star_to_clause and !keep_unused_imports) {
                                 st.star_name_loc = null;
                             }
 
-                            // "importItemsForNamespace" has property accesses off the namespace
+                            // "import_items_for_namespace" has property accesses off the namespace
                             if (p.import_items_for_namespace.get(namespace_ref)) |import_items| {
                                 var count = import_items.count();
                                 if (count > 0) {
@@ -300,7 +300,7 @@ pub const ImportScanner = struct {
                                     var iter = import_items.iterator();
                                     var i: usize = 0;
                                     while (iter.next()) |item| {
-                                        sorted[i] = item.key;
+                                        sorted[i] = item.key_ptr.*;
                                         i += 1;
                                     }
                                     strings.sortAsc(sorted);

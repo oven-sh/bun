@@ -978,7 +978,7 @@ pub fn NewBundler(cache_files: bool) type {
                                     for (ast.import_records) |*import_record, record_id| {
 
                                         // Don't resolve the runtime
-                                        if (import_record.is_internal) {
+                                        if (import_record.is_internal or import_record.is_unused) {
                                             continue;
                                         }
 
@@ -1268,7 +1268,7 @@ pub fn NewBundler(cache_files: bool) type {
 
                             {
                                 for (scan_pass_result.import_records.items) |*import_record, i| {
-                                    if (import_record.is_internal) {
+                                    if (import_record.is_internal or import_record.is_unused) {
                                         continue;
                                     }
 

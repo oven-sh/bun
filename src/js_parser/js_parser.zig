@@ -2487,6 +2487,8 @@ const ParserFeatures = struct {
 // Instead of creating a globally-scoped
 const FastRefresh = struct {};
 
+const ImportItemForNamespaceMap = std.StringArrayHashMap(LocRef);
+
 pub fn NewParser(
     comptime js_parser_features: ParserFeatures,
 ) type {
@@ -2606,7 +2608,7 @@ pub fn NewParser(
         es6_import_keyword: logger.Range = logger.Range.None,
         es6_export_keyword: logger.Range = logger.Range.None,
         enclosing_class_keyword: logger.Range = logger.Range.None,
-        import_items_for_namespace: Map(js_ast.Ref, StringHashMap(js_ast.LocRef)),
+        import_items_for_namespace: std.AutoHashMap(js_ast.Ref, ImportItemForNamespaceMap),
         is_import_item: RefBoolMap,
         named_imports: NamedImportsType,
         named_exports: js_ast.Ast.NamedExports,
@@ -3088,22 +3090,6 @@ pub fn NewParser(
             if (is_typescript_enabled) {
                 p.ts_use_counts.items[ref.inner_index] += 1;
             }
-        }
-
-        pub fn findSymbolHelper(self: *P, loc: logger.Loc, name: string) ?js_ast.Ref {
-            if (self.findSymbol(loc, name)) |sym| {
-                return sym.ref;
-            }
-
-            return null;
-        }
-
-        pub fn symbolForDefineHelper(self: *P, i: usize) ?js_ast.Ref {
-            if (self.injected_define_symbols.items.len > i) {
-                return self.injected_define_symbols.items[i];
-            }
-
-            return null;
         }
 
         pub fn logArrowArgErrors(p: *P, errors: *DeferredArrowArgErrors) void {
@@ -5832,7 +5818,8 @@ pub fn NewParser(
                     try p.lexer.expectOrInsertSemicolon();
 
                     if (stmt.star_name_loc) |star| {
-                        stmt.namespace_ref = try p.declareSymbol(.import, star, p.loadNameFromRef(stmt.namespace_ref));
+                        const name = p.loadNameFromRef(stmt.namespace_ref);
+                        stmt.namespace_ref = try p.declareSymbol(.import, star, name);
                     } else {
                         var path_name = fs.PathName.init(strings.append(p.allocator, "import_", path.text) catch unreachable);
                         const name = try path_name.nonUniqueNameString(p.allocator);
@@ -5841,7 +5828,7 @@ pub fn NewParser(
                         try scope.generated.append(stmt.namespace_ref);
                     }
 
-                    var item_refs = StringHashMap(LocRef).init(p.allocator);
+                    var item_refs = ImportItemForNamespaceMap.init(p.allocator);
 
                     // Link the default item to the namespace
                     if (stmt.default_name) |*name_loc| {
@@ -10583,17 +10570,16 @@ pub fn NewParser(
                         },
                         // function jsxDEV(type, config, maybeKey, source, self) {
                         .automatic => {
-                            // Assuming jsx development for now.
-                            // React.jsxDEV(type, arguments, key, isStaticChildren, source, self)
-                            // React.jsx(type, arguments, key)
-
+                            // Either:
+                            // jsxDEV(type, arguments, key, isStaticChildren, source, self)
+                            // jsx(type, arguments, key)
                             const args = p.allocator.alloc(Expr, if (p.options.jsx.development) @as(usize, 6) else @as(usize, 4)) catch unreachable;
                             args[0] = tag;
                             var props = List(G.Property).fromOwnedSlice(p.allocator, e_.properties);
                             // arguments needs to be like
                             // {
                             //    ...props,
-                            //    children: []
+                            //    children: [el1, el2]
                             // }
 
                             const is_static_jsx = e_.children.len == 0 or e_.children.len > 1 or e_.children[0].data != .e_array;
@@ -11859,17 +11845,15 @@ pub fn NewParser(
                 // This lets us replace them easily in the printer to rebind them to
                 // something else without paying the cost of a whole-tree traversal during
                 // module linking just to rewrite these EDot expressions.
-                if (p.import_items_for_namespace.get(id.ref)) |*import_items| {
-                    var item: LocRef = LocRef{ .loc = logger.Loc.Empty, .ref = null };
+                if (p.import_items_for_namespace.getPtr(id.ref)) |import_items| {
+                    const item: LocRef = import_items.get(name) orelse brk: {
+                        const _item = LocRef{ .loc = name_loc, .ref = p.newSymbol(.import, name) catch unreachable };
+                        p.module_scope.generated.append(_item.ref orelse unreachable) catch unreachable;
 
-                    if (!import_items.contains(name)) {
-                        item = LocRef{ .loc = name_loc, .ref = p.newSymbol(.import, name) catch unreachable };
-                        p.module_scope.generated.append(item.ref orelse unreachable) catch unreachable;
+                        import_items.put(name, _item) catch unreachable;
+                        p.is_import_item.put(_item.ref orelse unreachable, true) catch unreachable;
 
-                        import_items.put(name, item) catch unreachable;
-                        p.is_import_item.put(item.ref orelse unreachable, true) catch unreachable;
-
-                        var symbol = &p.symbols.items[item.ref.?.inner_index];
+                        var symbol = &p.symbols.items[_item.ref.?.inner_index];
                         // Mark this as generated in case it's missing. We don't want to
                         // generate errors for missing import items that are automatically
                         // generated.
@@ -11877,9 +11861,8 @@ pub fn NewParser(
 
                         // Make sure the printer prints this as a property access
                         symbol.namespace_alias = G.NamespaceAlias{ .namespace_ref = id.ref, .alias = name };
-                    } else {
-                        item = import_items.get(name) orelse unreachable;
-                    }
+                        break :brk _item;
+                    };
 
                     // Undo the usage count for the namespace itself. This is used later
                     // to detect whether the namespace symbol has ever been "captured"
@@ -11893,10 +11876,14 @@ pub fn NewParser(
 
                     // Track how many times we've referenced this symbol
                     p.recordUsage(item.ref.?);
-                    var ident = p.allocator.create(E.Identifier) catch unreachable;
-                    ident.ref = item.ref.?;
+                    var ident_expr = p.e(
+                        E.Identifier{
+                            .ref = item.ref.?,
+                        },
+                        target.loc,
+                    );
 
-                    return p.handleIdentifier(name_loc, ident, name, IdentifierOpts{
+                    return p.handleIdentifier(name_loc, ident_expr.data.e_identifier, name, IdentifierOpts{
                         .assign_target = assign_target,
                         .is_delete_target = is_delete_target,
                         // If this expression is used as the target of a call expression, make

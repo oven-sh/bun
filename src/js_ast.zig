@@ -726,12 +726,12 @@ pub const Symbol = struct {
         // "Ref" for more detail.
         symbols_for_source: [][]Symbol,
 
-        pub fn get(self: *Map, ref: Ref) ?Symbol {
+        pub fn get(self: *Map, ref: Ref) ?*Symbol {
             if (Ref.isSourceIndexNull(ref.source_index)) {
                 return null;
             }
 
-            return self.symbols_for_source[ref.source_index][ref.inner_index];
+            return &self.symbols_for_source[ref.source_index][ref.inner_index];
         }
 
         pub fn init(sourceCount: usize, allocator: *std.mem.Allocator) !Map {
@@ -744,7 +744,7 @@ pub const Symbol = struct {
         }
 
         pub fn follow(symbols: *Map, ref: Ref) Ref {
-            if (symbols.get(ref)) |*symbol| {
+            if (symbols.get(ref)) |symbol| {
                 const link = symbol.link orelse return ref;
                 if (!link.eql(ref)) {
                     symbol.link = ref;
@@ -757,23 +757,23 @@ pub const Symbol = struct {
         }
     };
 
-    pub fn isKindPrivate(kind: Symbol.Kind) bool {
+    pub inline fn isKindPrivate(kind: Symbol.Kind) bool {
         return @enumToInt(kind) >= @enumToInt(Symbol.Kind.private_field) and @enumToInt(kind) <= @enumToInt(Symbol.Kind.private_static_get_set_pair);
     }
 
-    pub fn isKindHoisted(kind: Symbol.Kind) bool {
+    pub inline fn isKindHoisted(kind: Symbol.Kind) bool {
         return @enumToInt(kind) == @enumToInt(Symbol.Kind.hoisted) or @enumToInt(kind) == @enumToInt(Symbol.Kind.hoisted_function);
     }
 
-    pub fn isHoisted(self: *Symbol) bool {
+    pub inline fn isHoisted(self: *const Symbol) bool {
         return Symbol.isKindHoisted(self.kind);
     }
 
-    pub fn isKindHoistedOrFunction(kind: Symbol.Kind) bool {
+    pub inline fn isKindHoistedOrFunction(kind: Symbol.Kind) bool {
         return isKindHoisted(kind) or kind == Symbol.Kind.generator_or_async_function;
     }
 
-    pub fn isKindFunction(kind: Symbol.Kind) bool {
+    pub inline fn isKindFunction(kind: Symbol.Kind) bool {
         return kind == Symbol.Kind.hoisted_function or kind == Symbol.Kind.generator_or_async_function;
     }
 

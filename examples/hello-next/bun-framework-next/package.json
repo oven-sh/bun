@@ -1,6 +1,6 @@
 {
   "name": "bun-framework-next",
-  "version": "0.0.0-12",
+  "version": "0.0.0-13",
   "description": "",
   "framework": {
     "static": "public",
@@ -74,6 +74,6 @@
   "license": "ISC",
   "dependencies": {
     "buffer": "^6.0.3",
-    "path": "^0.12.7"
+    "path-browserify": "^1.0.1"
   }
 }

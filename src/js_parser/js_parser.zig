@@ -130,7 +130,7 @@ pub const ImportScanner = struct {
                     //
                     // const keep_unused_imports = !p.options.trim_unused_imports;
                     var did_remove_star_loc = false;
-                    const keep_unused_imports = false;
+                    const keep_unused_imports = !p.options.ts;
 
                     // TypeScript always trims unused imports. This is important for
                     // correctness since some imports might be fake (only in the type
@@ -205,11 +205,7 @@ pub const ImportScanner = struct {
                                 }
                             }
 
-                            if (items_end < st.items.len - 1) {
-                                var list = List(js_ast.ClauseItem).fromOwnedSlice(p.allocator, st.items);
-                                list.shrinkAndFree(items_end);
-                                st.items = list.toOwnedSlice();
-                            }
+                            st.items = st.items[0..items_end];
                         }
 
                         // -- Original Comment --
@@ -285,7 +281,7 @@ pub const ImportScanner = struct {
                             // it's really stupid to import all 1,000 components from that design system
                             // when you just want <Button />
                             const namespace_ref = st.namespace_ref;
-                            const convert_star_to_clause = !p.options.can_import_from_bundle and p.symbols.items[namespace_ref.inner_index].use_count_estimate == 0;
+                            const convert_star_to_clause = !p.options.enable_bundling and !p.options.can_import_from_bundle and p.symbols.items[namespace_ref.inner_index].use_count_estimate == 0;
 
                             if (convert_star_to_clause and !keep_unused_imports) {
                                 st.star_name_loc = null;
@@ -1643,19 +1639,27 @@ const PropertyOpts = struct {
 };
 
 pub const ScanPassResult = struct {
+    pub const ParsePassSymbolUse = struct { ref: Ref, used: bool = false, import_record_index: u32 };
+    pub const NamespaceCounter = struct { count: u16, import_record_index: u32 };
+    pub const ParsePassSymbolUsageMap = std.StringArrayHashMap(ParsePassSymbolUse);
     import_records: List(ImportRecord),
     named_imports: js_ast.Ast.NamedImports,
+    used_symbols: ParsePassSymbolUsageMap,
+    import_records_to_keep: List(u32),
 
     pub fn init(allocator: *std.mem.Allocator) ScanPassResult {
         return .{
             .import_records = List(ImportRecord).init(allocator),
             .named_imports = js_ast.Ast.NamedImports.init(allocator),
+            .used_symbols = ParsePassSymbolUsageMap.init(allocator),
+            .import_records_to_keep = List(u32).init(allocator),
         };
     }
 
     pub fn reset(scan_pass: *ScanPassResult) void {
         scan_pass.named_imports.clearRetainingCapacity();
         scan_pass.import_records.shrinkRetainingCapacity(0);
+        scan_pass.used_symbols.clearRetainingCapacity();
     }
 };
 
@@ -1714,9 +1718,21 @@ pub const Parser = struct {
 
     fn _scanImports(self: *Parser, comptime ParserType: type, scan_pass: *ScanPassResult) !void {
         var p: ParserType = undefined;
+
         try ParserType.init(self.allocator, self.log, self.source, self.define, self.lexer, self.options, &p);
         p.import_records = &scan_pass.import_records;
         p.named_imports = &scan_pass.named_imports;
+
+        // The problem with our scan pass approach is type-only imports.
+        // We don't have accurate symbol counts.
+        // So we don't have a good way to distuingish between a type-only import and not.
+        switch (comptime ParserType) {
+            TSXImportScanner, TypeScriptImportScanner => {
+                p.parse_pass_symbol_uses = &scan_pass.used_symbols;
+            },
+            else => {},
+        }
+
         // Parse the file in the first pass, but do not bind symbols
         var opts = ParseStatementOptions{ .is_module_scope = true };
         debugl("<p.parseStmtsUpTo>");
@@ -1726,6 +1742,33 @@ pub const Parser = struct {
         // June 4: "Parsing took: 18028000"
         // June 4: "Rest of this took: 8003000"
         _ = try p.parseStmtsUpTo(js_lexer.T.t_end_of_file, &opts);
+
+        //
+        switch (comptime ParserType) {
+            TSXImportScanner, TypeScriptImportScanner => {
+                for (scan_pass.import_records.items) |*import_record| {
+                    // Mark everything as unused
+                    // Except:
+                    // - export * as ns from 'foo';
+                    // - export * from 'foo';
+                    // - import 'foo';
+                    // - import("foo")
+                    // - require("foo")
+                    import_record.is_unused = import_record.kind == .stmt and
+                        !import_record.was_originally_bare_import and
+                        !import_record.calls_run_time_re_export_fn;
+                }
+
+                var iter = scan_pass.used_symbols.iterator();
+                while (iter.next()) |entry| {
+                    const val = entry.value_ptr;
+                    if (val.used) {
+                        scan_pass.import_records.items[val.import_record_index].is_unused = false;
+                    }
+                }
+            },
+            else => {},
+        }
 
         // Symbol use counts are unavailable
         // So we say "did we parse any JSX?"
@@ -2500,7 +2543,7 @@ pub fn NewParser(
     const ImportRecordList = if (only_scan_imports_and_do_not_visit) *std.ArrayList(ImportRecord) else std.ArrayList(ImportRecord);
     const NamedImportsType = if (only_scan_imports_and_do_not_visit) *js_ast.Ast.NamedImports else js_ast.Ast.NamedImports;
     const NeedsJSXType = if (only_scan_imports_and_do_not_visit) bool else void;
-
+    const ParsePassSymbolUsageType = if (only_scan_imports_and_do_not_visit and is_typescript_enabled) *ScanPassResult.ParsePassSymbolUsageMap else void;
     // P is for Parser!
     // public only because of Binding.ToExpr
     return struct {
@@ -2552,6 +2595,8 @@ pub fn NewParser(
         symbol_uses: SymbolUseMap,
         declared_symbols: List(js_ast.DeclaredSymbol),
         runtime_imports: RuntimeImports = RuntimeImports{},
+
+        parse_pass_symbol_uses: ParsePassSymbolUsageType = undefined,
         // duplicate_case_checker: void,
         // non_bmp_identifiers: StringBoolMap,
         // legacy_octal_literals: void,
@@ -5186,6 +5231,12 @@ pub fn NewParser(
                                 // TODO: import assertions
                                 // path.assertions
                             );
+
+                            if (comptime ParsePassSymbolUsageType != void) {
+                                // In the scan pass, we need _some_ way of knowing *not* to mark as unused
+                                p.import_records.items[import_record_index].calls_run_time_re_export_fn = true;
+                            }
+
                             try p.lexer.expectOrInsertSemicolon();
                             return p.s(S.ExportStar{
                                 .namespace_ref = namespace_ref,
@@ -5207,6 +5258,12 @@ pub fn NewParser(
                                 var path_name = fs.PathName.init(strings.append(p.allocator, "import_", parsedPath.text) catch unreachable);
                                 const namespace_ref = p.storeNameInRef(path_name.nonUniqueNameString(p.allocator) catch unreachable) catch unreachable;
                                 try p.lexer.expectOrInsertSemicolon();
+
+                                if (comptime ParsePassSymbolUsageType != void) {
+                                    // In the scan pass, we need _some_ way of knowing *not* to mark as unused
+                                    p.import_records.items[import_record_index].calls_run_time_re_export_fn = true;
+                                }
+
                                 return p.s(S.ExportFrom{ .items = export_clause.clauses, .is_single_line = export_clause.is_single_line, .namespace_ref = namespace_ref, .import_record_index = import_record_index }, loc);
                             }
                             try p.lexer.expectOrInsertSemicolon();
@@ -5820,6 +5877,12 @@ pub fn NewParser(
                     if (stmt.star_name_loc) |star| {
                         const name = p.loadNameFromRef(stmt.namespace_ref);
                         stmt.namespace_ref = try p.declareSymbol(.import, star, name);
+                        if (comptime ParsePassSymbolUsageType != void) {
+                            p.parse_pass_symbol_uses.put(name, .{
+                                .ref = stmt.namespace_ref,
+                                .import_record_index = stmt.import_record_index,
+                            }) catch unreachable;
+                        }
                     } else {
                         var path_name = fs.PathName.init(strings.append(p.allocator, "import_", path.text) catch unreachable);
                         const name = try path_name.nonUniqueNameString(p.allocator);
@@ -5836,6 +5899,12 @@ pub fn NewParser(
                         const ref = try p.declareSymbol(.import, name_loc.loc, name);
                         try p.is_import_item.put(ref, true);
                         name_loc.ref = ref;
+                        if (comptime ParsePassSymbolUsageType != void) {
+                            p.parse_pass_symbol_uses.put(name, .{
+                                .ref = ref,
+                                .import_record_index = stmt.import_record_index,
+                            }) catch unreachable;
+                        }
                     }
 
                     if (stmt.items.len > 0) {
@@ -5847,11 +5916,19 @@ pub fn NewParser(
                             try p.is_import_item.put(ref, true);
                             item.name.ref = ref;
                             item_refs.putAssumeCapacity(item.alias, LocRef{ .loc = item.name.loc, .ref = ref });
+
+                            if (comptime ParsePassSymbolUsageType != void) {
+                                p.parse_pass_symbol_uses.put(name, .{
+                                    .ref = ref,
+                                    .import_record_index = stmt.import_record_index,
+                                }) catch unreachable;
+                            }
                         }
                     }
 
                     // Track the items for this namespace
                     try p.import_items_for_namespace.put(stmt.namespace_ref, item_refs);
+
                     return p.s(stmt, loc);
                 },
                 .t_break => {
@@ -7293,7 +7370,7 @@ pub fn NewParser(
                 };
 
                 const text = p.lexer.identifier;
-                if (text.len > 0 and !strings.eql(text, "arguments")) {
+                if (text.len > 0 and !strings.eqlComptime(text, "arguments")) {
                     _name.ref = try p.declareSymbol(.hoisted_function, _name.loc, text);
                 } else {
                     _name.ref = try p.newSymbol(.hoisted_function, text);
@@ -7425,6 +7502,12 @@ pub fn NewParser(
         }
 
         pub fn storeNameInRef(p: *P, name: string) !js_ast.Ref {
+            if (comptime ParsePassSymbolUsageType != void) {
+                if (p.parse_pass_symbol_uses.getPtr(name)) |res| {
+                    res.used = true;
+                }
+            }
+
             if (@ptrToInt(p.source.contents.ptr) <= @ptrToInt(name.ptr) and (@ptrToInt(name.ptr) + name.len) <= (@ptrToInt(p.source.contents.ptr) + p.source.contents.len)) {
                 const start = Ref.toInt(@ptrToInt(name.ptr) - @ptrToInt(p.source.contents.ptr));
                 const end = Ref.toInt(name.len);
@@ -9739,8 +9822,7 @@ pub fn NewParser(
 
         // esbuild's version of this function is much more complicated.
         // I'm not sure why defines is strictly relevant for this case
-        // and I imagine all the allocations cause some performance
-        // guessing it's concurrency-related
+        // do people do <API_URL>?
         pub fn jsxStringsToMemberExpression(p: *P, loc: logger.Loc, ref: Ref) Expr {
             p.recordUsage(ref);
             return p.e(E.Identifier{ .ref = ref }, loc);

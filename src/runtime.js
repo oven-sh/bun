@@ -7,7 +7,7 @@ var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 
 export var __markAsModule = (target) =>
-  __defProp(target, "__esModule", { value: true });
+  __defProp(target, "__esModule", { value: true, configurable: true });
 
 // lazy require to prevent loading one icon from a design system
 export var $$lzy = (target, module, props) => {
@@ -16,6 +16,7 @@ export var $$lzy = (target, module, props) => {
       __defProp(target, key, {
         get: () => module()[props[key]],
         enumerable: true,
+        configurable: true,
       });
   }
   return target;
@@ -28,8 +29,8 @@ export var __toModule = (module) => {
         module != null ? __create(__getProtoOf(module)) : {},
         "default",
         module && module.__esModule && "default" in module
-          ? { get: () => module.default, enumerable: true }
-          : { value: module, enumerable: true }
+          ? { get: () => module.default, enumerable: true, configurable: true }
+          : { value: module, enumerable: true, configurable: true }
       )
     ),
     module
@@ -64,6 +65,7 @@ export var __commonJS = (cb, name) => {
             return mod.exports;
           },
           enumerable: true,
+          configurable: true,
         });
         // If it's a namespace export without .default, pretend .default is the same as mod.exports
       } else if (
@@ -79,6 +81,7 @@ export var __commonJS = (cb, name) => {
             defaultValue = value;
           },
           enumerable: true,
+          configurable: true,
         });
       }
 
@@ -175,6 +178,7 @@ export var __reExport = (target, module, desc) => {
       if (!__hasOwnProp.call(target, key) && key !== "default")
         __defProp(target, key, {
           get: () => module[key],
+          configurable: true,
           enumerable:
             !(desc = __getOwnPropDesc(module, key)) || desc.enumerable,
         });

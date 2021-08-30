@@ -100,6 +100,28 @@ pub const Result = struct {
     file_fd: StoredFileDescriptorType = 0,
     import_kind: ast.ImportKind = undefined,
 
+    pub fn path(this: *Result) ?*Path {
+        if (!this.path_pair.primary.is_disabled)
+            return &this.path_pair.primary;
+
+        if (this.path_pair.secondary) |*second| {
+            if (!second.is_disabled) return second;
+        }
+
+        return null;
+    }
+
+    pub fn pathConst(this: *const Result) ?*const Path {
+        if (!this.path_pair.primary.is_disabled)
+            return &this.path_pair.primary;
+
+        if (this.path_pair.secondary) |*second| {
+            if (!second.is_disabled) return second;
+        }
+
+        return null;
+    }
+
     // remember: non-node_modules can have package.json
     // checking package.json may not be relevant
     pub fn isLikelyNodeModule(this: *const Result) bool {
@@ -147,21 +169,16 @@ pub const Result = struct {
         }
     };
 
-    pub fn hash(this: *const Result, loader: options.Loader) u32 {
-        const HashValue = packed struct {
-            loader: options.Loader,
-            len: u8,
-            path_hash: u21,
-        };
+    pub fn hash(this: *const Result, root_dir: string, loader: options.Loader) u32 {
+        const module = this.path_pair.primary.text;
+        const node_module_root = std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str;
+        if (strings.lastIndexOf(module, node_module_root)) |end_| {
+            var end: usize = end_ + node_module_root.len;
 
-        return @bitCast(
-            u32,
-            HashValue{
-                .loader = loader,
-                .len = @truncate(u8, this.path_pair.primary.text.len),
-                .path_hash = @truncate(u21, std.hash.Wyhash.hash(0, this.path_pair.primary.text)),
-            },
-        );
+            return @truncate(u32, std.hash.Wyhash.hash(0, module[end..]));
+        }
+
+        return @truncate(u32, std.hash.Wyhash.hash(0, this.path_pair.primary.text));
     }
 };
 
@@ -882,14 +899,15 @@ pub fn NewResolver(cache_files: bool) type {
                 const base_dir_info = ((r.dirInfoCached(dirname) catch null)) orelse continue;
                 const dir_info = base_dir_info.getEnclosingBrowserScope() orelse continue;
                 const pkg_json = dir_info.package_json orelse continue;
-                const rel_path = r.fs.relative(pkg_json.source.key_path.text, path.text);
+                const rel_path = r.fs.relative(pkg_json.source.path.name.dirWithTrailingSlash(), path.text);
                 result.module_type = pkg_json.module_type;
                 result.package_json = result.package_json orelse pkg_json;
                 if (r.checkBrowserMap(pkg_json, rel_path)) |remapped| {
                     if (remapped.len == 0) {
                         path.is_disabled = true;
                     } else if (r.resolveWithoutRemapping(dir_info, remapped, kind)) |remapped_result| {
-                        switch (iter.index) {
+                        // iter.index is the next one, not the prev
+                        switch (iter.index - 1) {
                             0 => {
                                 result.path_pair.primary = remapped_result.path_pair.primary;
                                 result.dirname_fd = remapped_result.dirname_fd;
@@ -944,7 +962,7 @@ pub fn NewResolver(cache_files: bool) type {
             r: *ThisResolver,
             result: *const Result,
         ) ?*const PackageJSON {
-            const absolute = result.path_pair.primary.text;
+            const absolute = (result.pathConst() orelse return null).text;
             // /foo/node_modules/@babel/standalone/index.js
             //     ^------------^
             var end = strings.lastIndexOf(absolute, node_module_root_string) orelse return null;
@@ -1361,7 +1379,12 @@ pub fn NewResolver(cache_files: bool) type {
                     }
                 }
 
-                const dir_info = try r.dirInfoUncached(
+                // We must initialize it as empty so that the result index is correct.
+                // This is important so that browser_scope has a valid index.
+                var dir_info_ptr = try r.dir_cache.put(&queue_top.result, DirInfo{});
+
+                try r.dirInfoUncached(
+                    dir_info_ptr,
                     dir_path,
                     dir_entries_option,
                     queue_top.result,
@@ -1370,8 +1393,6 @@ pub fn NewResolver(cache_files: bool) type {
                     top_parent.index,
                     open_dir.fd,
                 );
-
-                var dir_info_ptr = try r.dir_cache.put(&queue_top.result, dir_info);
 
                 if (queue_slice.len == 0) {
                     return dir_info_ptr;
@@ -1834,11 +1855,11 @@ pub fn NewResolver(cache_files: bool) type {
 
                                     return MatchResult{
                                         .path_pair = .{
-                                            .primary = auto_main_result.path_pair.primary,
-                                            .secondary = _result.path_pair.primary,
+                                            .primary = _result.path_pair.primary,
+                                            .secondary = auto_main_result.path_pair.primary,
                                         },
-                                        .diff_case = auto_main_result.diff_case,
-                                        .dirname_fd = auto_main_result.dirname_fd,
+                                        .diff_case = _result.diff_case,
+                                        .dirname_fd = _result.dirname_fd,
                                         .package_json = package_json,
                                     };
                                 } else {
@@ -2025,6 +2046,7 @@ pub fn NewResolver(cache_files: bool) type {
 
         fn dirInfoUncached(
             r: *ThisResolver,
+            info: *DirInfo,
             path: string,
             _entries: *Fs.FileSystem.RealFS.EntriesOption,
             _result: allocators.Result,
@@ -2032,13 +2054,13 @@ pub fn NewResolver(cache_files: bool) type {
             parent: ?*DirInfo,
             parent_index: allocators.IndexType,
             fd: FileDescriptorType,
-        ) anyerror!DirInfo {
+        ) anyerror!void {
             var result = _result;
 
             var rfs: *Fs.FileSystem.RealFS = &r.fs.fs;
             var entries = _entries.entries;
 
-            var info = DirInfo{
+            info.* = DirInfo{
                 .abs_path = path,
                 // .abs_real_path = path,
                 .parent = parent_index,
@@ -2054,7 +2076,6 @@ pub fn NewResolver(cache_files: bool) type {
             // if (entries != null) {
             if (!strings.eqlComptime(base, "node_modules")) {
                 if (entries.getComptimeQuery("node_modules")) |entry| {
-                    // the catch might be wrong!
                     info.has_node_modules = (entry.entry.kind(rfs)) == .dir;
                 }
             }
@@ -2157,8 +2178,6 @@ pub fn NewResolver(cache_files: bool) type {
             if (info.tsconfig_json == null and parent != null) {
                 info.tsconfig_json = parent.?.tsconfig_json;
             }
-
-            return info;
         }
     };
 }
@@ -2197,3 +2216,15 @@ const Dirname = struct {
         return path[0 .. end_index + 1];
     }
 };
+
+test "murmur" {
+    var str = try std.heap.c_allocator.alloc(u8, "swiper@6.8.2swiper.cjs.js".len);
+    var str2 = try std.heap.c_allocator.alloc(u8, "swiper@6.8.2swiper.cjs.js".len);
+    std.mem.copy(u8, str, "swiper@6.8.2swiper.cjs.js");
+    std.mem.copy(u8, str2, "swiper@6.8.2swiper.cjs.js");
+
+    try std.testing.expectEqual(
+        std.hash.murmur.Murmur3_32.hash(str),
+        std.hash.murmur.Murmur3_32.hash(str2),
+    );
+}

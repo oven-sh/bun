@@ -9,9 +9,11 @@ const alloc = @import("../alloc.zig");
 const fs = @import("../fs.zig");
 const resolver = @import("./resolver.zig");
 
-const MainFieldMap = std.StringHashMap(string);
-const BrowserMap = std.StringHashMap(string);
-threadlocal var hashed_buf: [2048]u8 = undefined;
+// Assume they're not going to have hundreds of main fields or browser map
+// so use an array-backed hash table instead of bucketed
+const MainFieldMap = std.StringArrayHashMap(string);
+const BrowserMap = std.StringArrayHashMap(string);
+threadlocal var hashy: [2048]u8 = undefined;
 
 pub const PackageJSON = struct {
     pub const LoadFramework = enum {
@@ -50,7 +52,7 @@ pub const PackageJSON = struct {
     main_fields: MainFieldMap,
     module_type: options.ModuleType,
     version: string = "",
-    hash: u32 = 0,
+    hash: u32 = 0xDEADBEEF,
 
     // Present if the "browser" field is present. This field is intended to be
     // used by bundlers and lets you redirect the paths of certain 3rd-party
@@ -78,6 +80,10 @@ pub const PackageJSON = struct {
     //   should match and the query "./ext" should ALSO match.
     //
     browser_map: BrowserMap,
+
+    pub inline fn isAppPackage(this: *const PackageJSON) bool {
+        return this.hash == 0xDEADBEEF;
+    }
 
     fn loadDefineDefaults(
         env: *options.Env,
@@ -400,6 +406,9 @@ pub const PackageJSON = struct {
         } orelse return null);
 
         var package_json = PackageJSON{
+            .name = "",
+            .version = "",
+            .hash = 0xDEADBEEF,
             .source = json_source,
             .module_type = .unknown,
             .browser_map = BrowserMap.init(r.allocator),
@@ -408,13 +417,17 @@ pub const PackageJSON = struct {
 
         if (json.asProperty("version")) |version_json| {
             if (version_json.expr.asString(r.allocator)) |version_str| {
-                package_json.version = r.allocator.dupe(u8, version_str) catch unreachable;
+                if (version_str.len > 0) {
+                    package_json.version = r.allocator.dupe(u8, version_str) catch unreachable;
+                }
             }
         }
 
         if (json.asProperty("name")) |version_json| {
             if (version_json.expr.asString(r.allocator)) |version_str| {
-                package_json.name = r.allocator.dupe(u8, version_str) catch unreachable;
+                if (version_str.len > 0) {
+                    package_json.name = r.allocator.dupe(u8, version_str) catch unreachable;
+                }
             }
         }
 
@@ -449,14 +462,14 @@ pub const PackageJSON = struct {
 
                 if ((expr.asString(r.allocator))) |str| {
                     if (str.len > 0) {
-                        package_json.main_fields.put(main, str) catch unreachable;
+                        package_json.main_fields.put(main, r.allocator.dupe(u8, str) catch unreachable) catch unreachable;
                     }
                 }
             }
         }
 
         // Read the "browser" property, but only when targeting the browser
-        if (r.opts.platform == .browser) {
+        if (r.opts.platform.supportsBrowserField()) {
             // We both want the ability to have the option of CJS vs. ESM and the
             // option of having node vs. browser. The way to do this is to use the
             // object literal form of the "browser" field like this:
@@ -514,13 +527,29 @@ pub const PackageJSON = struct {
         // TODO: exports map
 
         if (generate_hash) {
-            std.mem.set(u8, &hashed_buf, 0);
-            std.mem.copy(u8, &hashed_buf, package_json.name);
-            hashed_buf[package_json.name.len + 1] = '@';
-            std.mem.copy(u8, hashed_buf[package_json.name.len + 1 ..], package_json.version);
-            package_json.hash = @truncate(u32, std.hash.Wyhash.hash(0, hashed_buf[0 .. package_json.name.len + 1 + package_json.version.len]));
+            if (package_json.name.len > 0 and package_json.version.len > 0) {
+                std.mem.set(u8, &hashy, 0);
+                var used: usize = 0;
+                std.mem.copy(u8, &hashy, package_json.name);
+                used = package_json.name.len;
+
+                hashy[used] = '@';
+                used += 1;
+                std.mem.copy(u8, hashy[used..], package_json.version);
+                used += package_json.version.len;
+
+                package_json.hash = std.hash.Murmur3_32.hash(hashy[0..used]);
+            }
         }
 
         return package_json;
+    }
+
+    pub fn hashModule(this: *const PackageJSON, module: string) u32 {
+        var hasher = std.hash.Wyhash.init(0);
+        hasher.update(std.mem.asBytes(&this.hash));
+        hasher.update(module);
+
+        return @truncate(u32, hasher.final());
     }
 };

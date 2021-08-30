@@ -48,6 +48,10 @@ pub fn getAutoHashFn(comptime K: type, comptime Context: type) (fn (Context, K) 
 pub fn getAutoEqlFn(comptime K: type, comptime Context: type) (fn (Context, K, K) bool) {
     return struct {
         fn eql(ctx: Context, a: K, b: K) bool {
+            if (comptime @typeInfo(K) == .Struct and @hasDecl(K, "eql")) {
+                return a.eql(b);
+            }
+
             return meta.eql(a, b);
         }
     }.eql;
@@ -965,7 +969,7 @@ pub fn HashMapUnmanaged(
         /// fuse the basic blocks after the branch to the basic blocks
         /// from this function.  To encourage that, this function is
         /// marked as inline.
-        fn getIndex(self: Self, key: anytype, ctx: anytype) callconv(.Inline) ?usize {
+        inline fn getIndex(self: Self, key: anytype, ctx: anytype) ?usize {
             comptime verifyContext(@TypeOf(ctx), @TypeOf(key), K, Hash);
 
             if (self.size == 0) {

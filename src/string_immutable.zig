@@ -305,7 +305,7 @@ pub fn eqlComptime(self: string, comptime alt: anytype) bool {
                 second == std.mem.readIntNative(u16, self[4..6]);
         },
         5, 7 => {
-            const check = std.mem.readIntNative(u32, alt[0..4]);
+            const check = comptime std.mem.readIntNative(u32, alt[0..4]);
             if (self.len != alt.len or std.mem.readIntNative(u32, self[0..4]) != check) {
                 return false;
             }
@@ -316,7 +316,7 @@ pub fn eqlComptime(self: string, comptime alt: anytype) bool {
             return true;
         },
         8 => {
-            const check = std.mem.readIntNative(u64, alt[0..alt.len]);
+            const check = comptime std.mem.readIntNative(u64, alt[0..alt.len]);
             return self.len == alt.len and std.mem.readIntNative(u64, self[0..8]) == check;
         },
         9...11 => {
@@ -332,13 +332,13 @@ pub fn eqlComptime(self: string, comptime alt: anytype) bool {
             return true;
         },
         12 => {
-            const first = std.mem.readIntNative(u64, alt[0..8]);
-            const second = std.mem.readIntNative(u32, alt[8..12]);
+            const first = comptime std.mem.readIntNative(u64, alt[0..8]);
+            const second = comptime std.mem.readIntNative(u32, alt[8..12]);
             return (self.len == alt.len) and first == std.mem.readIntNative(u64, self[0..8]) and second == std.mem.readIntNative(u32, self[8..12]);
         },
         13...15 => {
-            const first = std.mem.readIntNative(u64, alt[0..8]);
-            const second = std.mem.readIntNative(u32, alt[8..12]);
+            const first = comptime std.mem.readIntNative(u64, alt[0..8]);
+            const second = comptime std.mem.readIntNative(u32, alt[8..12]);
 
             if (self.len != alt.len or first != std.mem.readIntNative(u64, self[0..8]) or second != std.mem.readIntNative(u32, self[8..12])) {
                 return false;
@@ -351,8 +351,8 @@ pub fn eqlComptime(self: string, comptime alt: anytype) bool {
             return true;
         },
         16 => {
-            const first = std.mem.readIntNative(u64, alt[0..8]);
-            const second = std.mem.readIntNative(u64, alt[8..15]);
+            const first = comptime std.mem.readIntNative(u64, alt[0..8]);
+            const second = comptime std.mem.readIntNative(u64, alt[8..15]);
             return (self.len == alt.len) and first == std.mem.readIntNative(u64, self[0..8]) and second == std.mem.readIntNative(u64, self[8..16]);
         },
         else => {

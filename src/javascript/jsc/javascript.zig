@@ -34,6 +34,7 @@ pub const GlobalClasses = [_]type{
     ResolveError.Class,
     Bun.Class,
 };
+const Blob = @import("../../blob.zig");
 
 pub const Bun = struct {
     threadlocal var css_imports_list_strings: [512]ZigString = undefined;
@@ -345,9 +346,11 @@ pub const VirtualMachine = struct {
     event_listeners: EventListenerMixin.Map,
     main: string = "",
     process: js.JSObjectRef = null,
-
+    blobs: *Blob.Group = undefined,
     flush_list: std.ArrayList(string),
     entry_point: ServerEntryPoint = undefined,
+
+    has_loaded: bool = false,
 
     pub var vm_loaded = false;
     pub var vm: *VirtualMachine = undefined;
@@ -387,6 +390,7 @@ pub const VirtualMachine = struct {
             .node_modules = bundler.options.node_modules_bundle,
             .log = log,
             .flush_list = std.ArrayList(string).init(allocator),
+            .blobs = try Blob.Group.init(allocator),
         };
 
         VirtualMachine.vm.bundler.configureLinker();
@@ -417,6 +421,11 @@ pub const VirtualMachine = struct {
 
     threadlocal var source_code_printer: js_printer.BufferPrinter = undefined;
     threadlocal var source_code_printer_loaded: bool = false;
+
+    pub fn preflush(this: *VirtualMachine) void {
+        // We flush on the next tick so that if there were any errors you can still see them
+        this.blobs.temporary.reset() catch {};
+    }
 
     pub fn flush(this: *VirtualMachine) void {
         for (this.flush_list.items) |item| {
@@ -650,6 +659,7 @@ pub const VirtualMachine = struct {
             .stmt,
         );
         ret.result = result;
+        const result_path = result.pathConst() orelse return error.ModuleNotFound;
 
         if (vm.node_modules != null and result.isLikelyNodeModule()) {
             const node_modules_bundle = vm.node_modules.?;
@@ -682,7 +692,7 @@ pub const VirtualMachine = struct {
 
                     const package_relative_path = vm.bundler.fs.relative(
                         package_json.source.path.name.dirWithTrailingSlash(),
-                        result.path_pair.primary.text,
+                        result_path.text,
                     );
 
                     if (node_modules_bundle.findModuleIDInPackage(package, package_relative_path) == null) break :node_module_checker;
@@ -693,7 +703,7 @@ pub const VirtualMachine = struct {
             }
         }
 
-        ret.path = result.path_pair.primary.text;
+        ret.path = result_path.text;
     }
 
     pub fn resolve(res: *ErrorableZigString, global: *JSGlobalObject, specifier: ZigString, source: ZigString) void {
@@ -751,6 +761,11 @@ pub const VirtualMachine = struct {
 
         return slice;
     }
+    pub fn promiseRejectionTracker(global: *JSGlobalObject, promise: *JSPromise, rejection: JSPromiseRejectionOperation) callconv(.C) JSValue {
+        VirtualMachine.vm.defaultErrorHandler(promise.result(global.vm()));
+        return JSValue.jsUndefined();
+    }
+
     const main_file_name: string = "bun:main";
     threadlocal var errors_stack: [256]*c_void = undefined;
     pub fn fetch(ret: *ErrorableResolvedSource, global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) void {
@@ -775,6 +790,13 @@ pub const VirtualMachine = struct {
         }
 
         ret.result.value = result;
+
+        if (vm.has_loaded) {
+            vm.blobs.temporary.put(specifier.slice(), .{ .ptr = result.source_code.ptr, .len = result.source_code.len }) catch {};
+        } else {
+            vm.blobs.persistent.put(specifier.slice(), .{ .ptr = result.source_code.ptr, .len = result.source_code.len }) catch {};
+        }
+
         ret.success = true;
     }
 
@@ -977,7 +999,7 @@ pub const VirtualMachine = struct {
                         "<r>      <d>at <r>{any} <d>(<r>{any}<d>)<r>\n",
                         allow_ansi_colors,
                     ),
-                    .{ frame.nameFormatter(allow_ansi_colors), frame.sourceURLFormatter(allow_ansi_colors) },
+                    .{ frame.nameFormatter(allow_ansi_colors), frame.sourceURLFormatter(&vm.bundler.options.origin, allow_ansi_colors) },
                 );
 
                 // if (!frame.position.isInvalid()) {

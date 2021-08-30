@@ -75,12 +75,23 @@ pub const ExternalModules = struct {
             .patterns = &([_]WildcardPattern{}),
         };
 
-        if (platform == .node) {
-            // TODO: fix this stupid copy
-            result.node_modules.hash_map.ensureCapacity(NodeBuiltinPatterns.len) catch unreachable;
-            for (NodeBuiltinPatterns) |pattern| {
-                result.node_modules.insert(pattern) catch unreachable;
-            }
+        switch (platform) {
+            .node => {
+                // TODO: fix this stupid copy
+                result.node_modules.hash_map.ensureCapacity(NodeBuiltinPatterns.len) catch unreachable;
+                for (NodeBuiltinPatterns) |pattern| {
+                    result.node_modules.insert(pattern) catch unreachable;
+                }
+            },
+            .bun => {
+
+                // TODO: fix this stupid copy
+                result.node_modules.hash_map.ensureCapacity(BunNodeBuiltinPatternsCompat.len) catch unreachable;
+                for (BunNodeBuiltinPatternsCompat) |pattern| {
+                    result.node_modules.insert(pattern) catch unreachable;
+                }
+            },
+            else => {},
         }
 
         if (externals.len == 0) {
@@ -156,6 +167,65 @@ pub const ExternalModules = struct {
         "path",
         "perf_hooks",
         "process",
+        "punycode",
+        "querystring",
+        "readline",
+        "repl",
+        "stream",
+        "string_decoder",
+        "sys",
+        "timers",
+        "tls",
+        "trace_events",
+        "tty",
+        "url",
+        "util",
+        "v8",
+        "vm",
+        "wasi",
+        "worker_threads",
+        "zlib",
+    };
+
+    pub const BunNodeBuiltinPatternsCompat = [_]string{
+        "_http_agent",
+        "_http_client",
+        "_http_common",
+        "_http_incoming",
+        "_http_outgoing",
+        "_http_server",
+        "_stream_duplex",
+        "_stream_passthrough",
+        "_stream_readable",
+        "_stream_transform",
+        "_stream_wrap",
+        "_stream_writable",
+        "_tls_common",
+        "_tls_wrap",
+        "assert",
+        "async_hooks",
+        // "buffer",
+        "child_process",
+        "cluster",
+        "console",
+        "constants",
+        "crypto",
+        "dgram",
+        "diagnostics_channel",
+        "dns",
+        "domain",
+        "events",
+        "fs",
+        "http",
+        "http2",
+        "https",
+        "inspector",
+        "module",
+        "net",
+        "os",
+        // "path",
+        "perf_hooks",
+        // "process",
         "punycode",
         "querystring",
         "readline",
@@ -260,6 +330,13 @@ pub const Platform = enum {
         };
     }
 
+    pub inline fn supportsBrowserField(this: Platform) bool {
+        return switch (this) {
+            .neutral, .browser, .bun => true,
+            else => false,
+        };
+    }
+
     const browser_define_value_true = "true";
     const browser_define_value_false = "false";
 
@@ -354,10 +431,12 @@ pub const Platform = enum {
         array.set(Platform.browser, &listc);
         array.set(Platform.bun, &listc);
 
+        // Original comment:
         // The neutral platform is for people that don't want esbuild to try to
         // pick good defaults for their platform. In that case, the list of main
         // fields is empty by default. You must explicitly configure it yourself.
-        array.set(Platform.neutral, &([_]string{}));
+
+        array.set(Platform.neutral, &listc);
 
         break :brk array;
     };
@@ -401,6 +480,13 @@ pub const Loader = enum(u3) {
     pub fn isJavaScriptLike(loader: Loader) bool {
         return switch (loader) {
             .jsx, .js, .ts, .tsx => true,
+            else => false,
+        };
+    }
+
+    pub fn isJavaScriptLikeOrJSON(loader: Loader) bool {
+        return switch (loader) {
+            .jsx, .js, .ts, .tsx, .json => true,
             else => false,
         };
     }
@@ -1191,7 +1277,7 @@ pub const OutputFile = struct {
     pub fn initPending(loader: Loader, pending: resolver.Result) OutputFile {
         return .{
             .loader = .file,
-            .input = pending.path_pair.primary,
+            .input = pending.pathConst().?.*,
             .size = 0,
             .value = .{ .pending = pending },
         };

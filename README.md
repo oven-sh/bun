@@ -102,6 +102,10 @@ bun build ./routes --outdir=./out
 
 Unlike many other bundlers, `Bun` only bundles `node_modules`. This is great for development, where most people add/update packages much less frequently than app code (which is also great for caching in browsers). To make that distinction clear, the filename defaults to `node_modules.bun`. We recommend storing `node_modules.bun` in your git repository. Since it's a binary file, it shouldn't clutter your git history and it will make your entire frontend development team move faster if they don't have to re-bundle dependencies.
 
+# Not implemented yet
+
+
+
 # Building from source
 
 Estimated: 30-60 minutes :(

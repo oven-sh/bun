@@ -3,8 +3,6 @@ const logger = @import("logger.zig");
 const root = @import("root");
 usingnamespace @import("global.zig");
 
-const USERLAND_PANIC_MESSAGE = "iNtErNaL sErVeR eRrOr";
-
 /// This function is used by the Zig language code generation and
 /// therefore must be kept in sync with the compiler implementation.
 pub fn default_panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace) noreturn {

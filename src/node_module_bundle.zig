@@ -122,7 +122,7 @@ pub const NodeModuleBundle = struct {
                 // Assert we have enough room to add another package
                 std.debug.assert(end < remaining_names.len);
                 entry.value_ptr.* = prev_package_ids_for_name.ptr[0..end];
-                entry.value_ptr.*[end] = package_id;
+                entry.value_ptr.*[end - 1] = package_id;
             } else {
                 prev_package_ids_for_name = remaining_names[0..1];
                 prev_package_ids_for_name[0] = package_id;

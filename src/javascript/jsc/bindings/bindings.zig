@@ -92,7 +92,7 @@ pub const ZigString = extern struct {
     pub fn fromStringPointer(ptr: StringPointer, buf: string, to: *ZigString) void {
         to.* = ZigString{
             .len = ptr.length,
-            .ptr = buf[ptr.offset..ptr.length].ptr,
+            .ptr = buf[ptr.offset..][0..ptr.length].ptr,
         };
     }
 

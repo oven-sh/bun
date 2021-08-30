@@ -465,8 +465,6 @@ pub fn NewBundler(cache_files: bool) type {
                     pub const WorkerData = struct {
                         shared_buffer: MutableString = undefined,
                         scan_pass_result: js_parser.ScanPassResult = undefined,
-                        templist: [100]_resolver.Result = undefined,
-                        templist_used: u8 = 0,
 
                         pub fn deinit(this: *WorkerData, allocator: *std.mem.Allocator) void {
                             this.shared_buffer.deinit();
@@ -544,6 +542,7 @@ pub fn NewBundler(cache_files: bool) type {
             module_list: std.ArrayList(Api.JavascriptBundledModule),
             package_list: std.ArrayList(Api.JavascriptBundledPackage),
             header_string_buffer: MutableString,
+
             // Just need to know if we've already enqueued this one
             package_list_map: std.AutoHashMap(u64, u32),
             queue: *BunQueue,
@@ -560,15 +559,23 @@ pub fn NewBundler(cache_files: bool) type {
             list_lock: Lock = Lock.init(),
 
             pub const current_version: u32 = 1;
+            const dist_index_js_string_pointer = Api.StringPointer{ .length = "dist/index.js".len };
+            const index_js_string_pointer = Api.StringPointer{ .length = "index.js".len, .offset = "dist/".len };
 
             pub fn enqueueItem(this: *GenerateNodeModuleBundle, resolve: _resolver.Result) !void {
-                const loader = this.bundler.options.loaders.get(resolve.path_pair.primary.name.ext) orelse .file;
-                if (!loader.isJavaScriptLike()) return;
-
                 var result = resolve;
-                result.path_pair.primary = Fs.Path.init(std.mem.span(try this.allocator.dupeZ(u8, resolve.path_pair.primary.text)));
+                var path = result.path() orelse return;
+                const loader = this.bundler.options.loaders.get(path.name.ext) orelse .file;
+                if (!loader.isJavaScriptLikeOrJSON()) return;
+                if (BundledModuleData.get(this, &result)) |mod| {
+                    path.* = Fs.Path.init(std.mem.span(try this.allocator.dupeZ(u8, path.text)));
 
-                try this.queue.upsert(result.hash(loader), result);
+                    try this.queue.upsert(mod.module_id, result);
+                } else {
+                    path.* = Fs.Path.init(std.mem.span(try this.allocator.dupeZ(u8, path.text)));
+
+                    try this.queue.upsert(result.hash(this.bundler.fs.top_level_dir, loader), result);
+                }
             }
 
             // The Bun Bundle Format
@@ -612,6 +619,14 @@ pub fn NewBundler(cache_files: bool) type {
             // The specifics of the metadata is not documented here. You can find it in src/api/schema.peechy.
 
             pub fn appendHeaderString(generator: *GenerateNodeModuleBundle, str: string) !Api.StringPointer {
+                // This is so common we might as well just reuse it
+                // Plus this is one machine word so it's a quick comparison
+                if (strings.eqlComptime(str, "index.js")) {
+                    return index_js_string_pointer;
+                } else if (strings.eqlComptime(str, "dist/index.js")) {
+                    return dist_index_js_string_pointer;
+                }
+
                 var offset = generator.header_string_buffer.list.items.len;
                 try generator.header_string_buffer.append(str);
                 return Api.StringPointer{
@@ -639,13 +654,19 @@ pub fn NewBundler(cache_files: bool) type {
                 );
 
                 var tmpfile = try tmpdir.createFileZ(tmpname, .{ .read = isDebug, .exclusive = true });
+
+                errdefer {
+                    tmpfile.close();
+                    tmpdir.deleteFile(std.mem.span(tmpname)) catch {};
+                }
+
                 var generator = try allocator.create(GenerateNodeModuleBundle);
                 var queue = try BunQueue.init(allocator);
                 defer allocator.destroy(generator);
                 generator.* = GenerateNodeModuleBundle{
                     .module_list = std.ArrayList(Api.JavascriptBundledModule).init(allocator),
                     .package_list = std.ArrayList(Api.JavascriptBundledPackage).init(allocator),
-                    .header_string_buffer = try MutableString.init(allocator, 0),
+                    .header_string_buffer = try MutableString.init(allocator, "dist/index.js".len),
                     .allocator = allocator,
                     .queue = queue,
                     // .resolve_queue = queue,
@@ -656,6 +677,9 @@ pub fn NewBundler(cache_files: bool) type {
                     .pool = undefined,
                     .write_lock = Lock.init(),
                 };
+                // dist/index.js appears more common than /index.js
+                // but this means we can store both "dist/index.js" and "index.js" in one.
+                try generator.header_string_buffer.append("dist/index.js");
                 try generator.package_list_map.ensureTotalCapacity(128);
                 var pool = try allocator.create(ThreadPool);
                 pool.* = ThreadPool{};
@@ -696,6 +720,7 @@ pub fn NewBundler(cache_files: bool) type {
                 } else {}
 
                 for (bundler.options.entry_points) |entry_point| {
+                    if (bundler.options.platform == .bun) continue;
                     defer this.bundler.resetStore();
 
                     const entry_point_path = bundler.normalizeEntryPointPath(entry_point);
@@ -750,9 +775,11 @@ pub fn NewBundler(cache_files: bool) type {
                 this.bundler.resetStore();
 
                 try this.pool.start(this);
-                this.pool.wait(this);
+                try this.pool.wait(this);
 
                 if (this.log.errors > 0) {
+                    tmpfile.close();
+                    tmpdir.deleteFile(std.mem.span(tmpname)) catch {};
                     // We stop here because if there are errors we don't know if the bundle is valid
                     // This manifests as a crash when sorting through the module list because we may have added files to the bundle which were never actually finished being added.
                     return null;
@@ -896,8 +923,38 @@ pub fn NewBundler(cache_files: bool) type {
                 return this.header_string_buffer.list.items[ptr.offset .. ptr.offset + ptr.length];
             }
 
-            // Since we trim the prefixes, we must also compare the package name
+            // Since we trim the prefixes, we must also compare the package name and version
             pub fn sortJavascriptModuleByPath(ctx: *GenerateNodeModuleBundle, a: Api.JavascriptBundledModule, b: Api.JavascriptBundledModule) bool {
+                if (comptime isDebug) {
+                    const a_pkg: Api.JavascriptBundledPackage = ctx.package_list.items[a.package_id];
+                    const b_pkg: Api.JavascriptBundledPackage = ctx.package_list.items[b.package_id];
+                    const a_name = ctx.metadataStringPointer(a_pkg.name);
+                    const b_name = ctx.metadataStringPointer(b_pkg.name);
+                    const a_version = ctx.metadataStringPointer(a_pkg.version);
+                    const b_version = ctx.metadataStringPointer(b_pkg.version);
+                    const a_path = ctx.metadataStringPointer(a.path);
+                    const b_path = ctx.metadataStringPointer(b.path);
+
+                    std.debug.assert(a_name.len > 0);
+                    std.debug.assert(b_name.len > 0);
+                    std.debug.assert(a_version.len > 0);
+                    std.debug.assert(b_version.len > 0);
+                    std.debug.assert(a_path.len > 0);
+                    std.debug.assert(b_path.len > 0);
+
+                    if (strings.eql(a_name, b_name)) {
+                        if (strings.eql(a_version, b_version)) {
+                            std.debug.assert(a_pkg.hash == b_pkg.hash); // hash collision
+                            std.debug.assert(a.package_id == b.package_id); // duplicate package
+                            std.debug.assert(!strings.eql(a_path, b_path)); // duplicate module
+                        } else {
+                            std.debug.assert(a_pkg.hash != b_pkg.hash); // incorrectly generated hash
+                        }
+                    } else {
+                        std.debug.assert(a_pkg.hash != b_pkg.hash); // incorrectly generated hash
+                    }
+                }
+
                 return switch (std.mem.order(
                     u8,
                     ctx.metadataStringPointer(
@@ -907,11 +964,23 @@ pub fn NewBundler(cache_files: bool) type {
                         ctx.package_list.items[b.package_id].name,
                     ),
                 )) {
-                    .eq => std.mem.order(
+                    .eq => switch (std.mem.order(
                         u8,
-                        ctx.metadataStringPointer(a.path),
-                        ctx.metadataStringPointer(b.path),
-                    ) == .lt,
+                        ctx.metadataStringPointer(
+                            ctx.package_list.items[a.package_id].version,
+                        ),
+                        ctx.metadataStringPointer(
+                            ctx.package_list.items[b.package_id].version,
+                        ),
+                    )) {
+                        .eq => std.mem.order(
+                            u8,
+                            ctx.metadataStringPointer(a.path),
+                            ctx.metadataStringPointer(b.path),
+                        ) == .lt,
+                        .lt => true,
+                        else => false,
+                    },
                     .lt => true,
                     else => false,
                 };
@@ -933,19 +1002,17 @@ pub fn NewBundler(cache_files: bool) type {
                 module_id: u32,
 
                 pub fn get(this: *GenerateNodeModuleBundle, resolve_result: *const _resolver.Result) ?BundledModuleData {
+                    var path = resolve_result.pathConst() orelse return null;
                     const package_json: *const PackageJSON = this.bundler.resolver.rootNodeModulePackageJSON(resolve_result) orelse return null;
                     const package_base_path = package_json.source.path.name.dirWithTrailingSlash();
-                    const import_path = resolve_result.path_pair.primary.text[package_base_path.len..];
-                    const package_path = resolve_result.path_pair.primary.text[package_base_path.len - package_json.name.len - 1 ..];
-                    var hasher = std.hash.Wyhash.init(0);
-                    hasher.update(import_path);
-                    hasher.update(std.mem.asBytes(&package_json.hash));
+                    const import_path = path.text[package_base_path.len..];
+                    const package_path = path.text[package_base_path.len - package_json.name.len - 1 ..];
 
                     return BundledModuleData{
                         .import_path = import_path,
                         .package_path = package_path,
                         .package = package_json,
-                        .module_id = @truncate(u32, hasher.final()),
+                        .module_id = package_json.hashModule(package_path),
                     };
                 }
             };
@@ -953,22 +1020,20 @@ pub fn NewBundler(cache_files: bool) type {
             fn processImportRecord(this: *GenerateNodeModuleBundle, import_record: ImportRecord) !void {}
 
             pub fn processFile(this: *GenerateNodeModuleBundle, worker: *ThreadPool.Worker, _resolve: _resolver.Result) !void {
-                var resolve = _resolve;
+                const resolve = _resolve;
                 if (resolve.is_external) return;
 
                 var shared_buffer = &worker.data.shared_buffer;
                 var scan_pass_result = &worker.data.scan_pass_result;
 
                 const is_from_node_modules = resolve.isLikelyNodeModule();
-                const loader = this.bundler.options.loaders.get(resolve.path_pair.primary.name.ext) orelse .file;
+                var file_path = (resolve.pathConst() orelse unreachable).*;
+
+                const loader = this.bundler.options.loader(file_path.name.ext);
                 var bundler = this.bundler;
                 defer scan_pass_result.reset();
                 defer shared_buffer.reset();
                 defer this.bundler.resetStore();
-                var file_path = resolve.path_pair.primary;
-                var hasher = std.hash.Wyhash.init(0);
-
-                var module_data: BundledModuleData = undefined;
 
                 // If we're in a node_module, build that almost normally
                 if (is_from_node_modules) {
@@ -978,6 +1043,9 @@ pub fn NewBundler(cache_files: bool) type {
                         .js,
                         .ts,
                         => {
+                            var written: usize = undefined;
+                            var code_offset: u32 = 0;
+
                             const entry = try bundler.resolver.caches.fs.readFileShared(
                                 bundler.fs,
                                 file_path.text,
@@ -985,26 +1053,58 @@ pub fn NewBundler(cache_files: bool) type {
                                 null,
                                 shared_buffer,
                             );
-                            const source = logger.Source.initRecycledFile(Fs.File{ .path = file_path, .contents = entry.contents }, bundler.allocator) catch return null;
-                            const source_dir = file_path.name.dirWithTrailingSlash();
 
-                            var jsx = bundler.options.jsx;
-                            jsx.parse = loader.isJSX();
+                            const module_data = BundledModuleData.get(this, &resolve) orelse return error.ResolveError;
+                            const module_id = module_data.module_id;
+                            const package = module_data.package;
+                            const package_relative_path = module_data.import_path;
+                            file_path.pretty = module_data.package_path;
 
-                            var opts = js_parser.Parser.Options.init(jsx, loader);
-                            opts.transform_require_to_import = false;
-                            opts.enable_bundling = true;
-                            opts.warn_about_unbundled_modules = false;
+                            // Handle empty files
+                            // We can't just ignore them. Sometimes code will try to import it. Often because of TypeScript types.
+                            // So we just say it's an empty object. Empty object mimicks what "browser": false does as well.
+                            // TODO: optimize this so that all the exports for these are done in one line instead of writing repeatedly
+                            if (entry.contents.len == 0 or (entry.contents.len < 33 and strings.trim(entry.contents, " \n\r").len == 0)) {
+                                this.write_lock.lock();
+                                defer this.write_lock.unlock();
+                                code_offset = @truncate(u32, try this.tmpfile.getPos());
+                                var writer = this.tmpfile.writer();
+                                var buffered = std.io.bufferedWriter(writer);
 
-                            var ast: js_ast.Ast = (try bundler.resolver.caches.js.parse(
-                                bundler.allocator,
-                                opts,
-                                bundler.options.define,
-                                this.log,
-                                &source,
-                            )) orelse return;
-                            if (ast.import_records.len > 0) {
-                                {
+                                var bufwriter = buffered.writer();
+                                try bufwriter.writeAll("// ");
+                                try bufwriter.writeAll(package_relative_path);
+                                try bufwriter.writeAll("\nexport var $");
+                                std.fmt.formatInt(module_id, 16, .lower, .{}, bufwriter) catch unreachable;
+                                try bufwriter.writeAll(" = () => ({});\n");
+                                try buffered.flush();
+                                this.tmpfile_byte_offset = @truncate(u32, try this.tmpfile.getPos());
+                            } else {
+                                const source = logger.Source.initRecycledFile(
+                                    Fs.File{
+                                        .path = file_path,
+                                        .contents = entry.contents,
+                                    },
+                                    bundler.allocator,
+                                ) catch return null;
+                                const source_dir = file_path.name.dirWithTrailingSlash();
+
+                                var jsx = bundler.options.jsx;
+                                jsx.parse = loader.isJSX();
+
+                                var opts = js_parser.Parser.Options.init(jsx, loader);
+                                opts.transform_require_to_import = false;
+                                opts.enable_bundling = true;
+                                opts.warn_about_unbundled_modules = false;
+
+                                var ast: js_ast.Ast = (try bundler.resolver.caches.js.parse(
+                                    bundler.allocator,
+                                    opts,
+                                    bundler.options.define,
+                                    this.log,
+                                    &source,
+                                )) orelse return;
+                                if (ast.import_records.len > 0) {
                                     for (ast.import_records) |*import_record, record_id| {
 
                                         // Don't resolve the runtime
@@ -1016,18 +1116,31 @@ pub fn NewBundler(cache_files: bool) type {
                                             if (_resolved_import.is_external) {
                                                 continue;
                                             }
-                                            _resolved_import.path_pair.primary = Fs.Path.init(std.mem.span(try this.allocator.dupeZ(u8, _resolved_import.path_pair.primary.text)));
+                                            var path = _resolved_import.path() orelse {
+                                                import_record.path.is_disabled = true;
+                                                import_record.is_bundled = true;
+                                                continue;
+                                            };
+
+                                            const loader_ = bundler.options.loader(path.name.ext);
+
+                                            if (!loader_.isJavaScriptLikeOrJSON()) {
+                                                import_record.path.is_disabled = true;
+                                                import_record.is_bundled = true;
+                                                continue;
+                                            }
 
                                             const resolved_import: *const _resolver.Result = _resolved_import;
 
-                                            const absolute_path = resolved_import.path_pair.primary.text;
-
-                                            module_data = BundledModuleData.get(this, resolved_import) orelse continue;
-                                            import_record.module_id = module_data.module_id;
+                                            const _module_data = BundledModuleData.get(this, resolved_import) orelse continue;
+                                            import_record.module_id = _module_data.module_id;
                                             import_record.is_bundled = true;
-                                            import_record.path = Fs.Path.init(module_data.import_path);
+                                            path.* = Fs.Path.init(this.allocator.dupeZ(u8, path.text) catch unreachable);
+
+                                            import_record.path = path.*;
+
                                             try this.queue.upsert(
-                                                _resolved_import.hash(this.bundler.options.loaders.get(resolved_import.path_pair.primary.name.ext) orelse .file),
+                                                _module_data.module_id,
                                                 _resolved_import.*,
                                             );
                                         } else |err| {
@@ -1080,157 +1193,161 @@ pub fn NewBundler(cache_files: bool) type {
                                         }
                                     }
                                 }
-                            }
 
-                            module_data = BundledModuleData.get(this, &_resolve) orelse return error.ResolveError;
-                            const module_id = module_data.module_id;
-                            const package = module_data.package;
-                            const package_relative_path = module_data.import_path;
+                                // const load_from_symbol_ref = ast.runtime_imports.$$r.?;
+                                // const reexport_ref = ast.runtime_imports.__reExport.?;
+                                const register_ref = ast.runtime_imports.register.?;
+                                const E = js_ast.E;
+                                const Expr = js_ast.Expr;
+                                const Stmt = js_ast.Stmt;
 
-                            // const load_from_symbol_ref = ast.runtime_imports.$$r.?;
-                            // const reexport_ref = ast.runtime_imports.__reExport.?;
-                            const register_ref = ast.runtime_imports.register.?;
-                            const E = js_ast.E;
-                            const Expr = js_ast.Expr;
-                            const Stmt = js_ast.Stmt;
-
-                            var prepend_part: js_ast.Part = undefined;
-                            var needs_prepend_part = false;
-                            if (ast.parts.len > 1) {
-                                for (ast.parts) |part| {
-                                    if (part.tag != .none and part.stmts.len > 0) {
-                                        prepend_part = part;
-                                        needs_prepend_part = true;
-                                        break;
+                                var prepend_part: js_ast.Part = undefined;
+                                var needs_prepend_part = false;
+                                if (ast.parts.len > 1) {
+                                    for (ast.parts) |part| {
+                                        if (part.tag != .none and part.stmts.len > 0) {
+                                            prepend_part = part;
+                                            needs_prepend_part = true;
+                                            break;
+                                        }
                                     }
                                 }
-                            }
 
-                            if (ast.parts.len == 0) {
-                                if (comptime isDebug) {
-                                    Output.prettyErrorln("Missing AST for file: {s}", .{file_path.text});
-                                    Output.flush();
+                                if (ast.parts.len == 0) {
+                                    if (comptime isDebug) {
+                                        Output.prettyErrorln("Missing AST for file: {s}", .{file_path.text});
+                                        Output.flush();
+                                    }
                                 }
+
+                                var part = &ast.parts[ast.parts.len - 1];
+                                var new_stmts: [1]Stmt = undefined;
+                                var register_args: [3]Expr = undefined;
+
+                                var package_json_string = E.String{ .utf8 = package.name };
+                                var module_path_string = E.String{ .utf8 = module_data.import_path };
+                                var target_identifier = E.Identifier{ .ref = register_ref };
+                                var cjs_args: [2]js_ast.G.Arg = undefined;
+                                var module_binding = js_ast.B.Identifier{ .ref = ast.module_ref.? };
+                                var exports_binding = js_ast.B.Identifier{ .ref = ast.exports_ref.? };
+
+                                // if (!ast.uses_module_ref) {
+                                //     var symbol = &ast.symbols[ast.module_ref.?.inner_index];
+                                //     symbol.original_name = "_$$";
+                                // }
+
+                                cjs_args[0] = js_ast.G.Arg{
+                                    .binding = js_ast.Binding{
+                                        .loc = logger.Loc.Empty,
+                                        .data = .{ .b_identifier = &module_binding },
+                                    },
+                                };
+                                cjs_args[1] = js_ast.G.Arg{
+                                    .binding = js_ast.Binding{
+                                        .loc = logger.Loc.Empty,
+                                        .data = .{ .b_identifier = &exports_binding },
+                                    },
+                                };
+
+                                var closure = E.Arrow{
+                                    .args = &cjs_args,
+                                    .body = .{
+                                        .loc = logger.Loc.Empty,
+                                        .stmts = part.stmts,
+                                    },
+                                };
+
+                                // $$m(12345, "react", "index.js", function(module, exports) {
+
+                                // })
+                                register_args[0] = Expr{ .loc = .{ .start = 0 }, .data = .{ .e_string = &package_json_string } };
+                                register_args[1] = Expr{ .loc = .{ .start = 0 }, .data = .{ .e_string = &module_path_string } };
+                                register_args[2] = Expr{ .loc = .{ .start = 0 }, .data = .{ .e_arrow = &closure } };
+
+                                var call_register = E.Call{
+                                    .target = Expr{
+                                        .data = .{ .e_identifier = &target_identifier },
+                                        .loc = logger.Loc{ .start = 0 },
+                                    },
+                                    .args = &register_args,
+                                };
+                                var register_expr = Expr{ .loc = call_register.target.loc, .data = .{ .e_call = &call_register } };
+                                var decls: [1]js_ast.G.Decl = undefined;
+                                var bundle_export_binding = js_ast.B.Identifier{ .ref = ast.bundle_export_ref.? };
+                                var binding = js_ast.Binding{
+                                    .loc = register_expr.loc,
+                                    .data = .{ .b_identifier = &bundle_export_binding },
+                                };
+                                decls[0] = js_ast.G.Decl{
+                                    .value = register_expr,
+                                    .binding = binding,
+                                };
+                                var export_var = js_ast.S.Local{
+                                    .decls = &decls,
+                                    .is_export = true,
+                                };
+                                new_stmts[0] = Stmt{ .loc = register_expr.loc, .data = .{ .s_local = &export_var } };
+                                part.stmts = &new_stmts;
+
+                                var writer = js_printer.NewFileWriter(this.tmpfile);
+                                var symbols: [][]js_ast.Symbol = &([_][]js_ast.Symbol{ast.symbols});
+
+                                // It should only have one part.
+                                ast.parts = ast.parts[ast.parts.len - 1 ..];
+
+                                const write_result =
+                                    try js_printer.printCommonJSThreaded(
+                                    @TypeOf(writer),
+                                    writer,
+                                    ast,
+                                    js_ast.Symbol.Map.initList(symbols),
+                                    &source,
+                                    false,
+                                    js_printer.Options{
+                                        .to_module_ref = Ref.RuntimeRef,
+                                        .bundle_export_ref = ast.bundle_export_ref.?,
+                                        .source_path = file_path,
+                                        .externals = ast.externals,
+                                        .indent = 0,
+                                        .module_hash = module_id,
+                                        .runtime_imports = ast.runtime_imports,
+                                        .prepend_part_value = &prepend_part,
+                                        .prepend_part_key = if (needs_prepend_part) closure.body.stmts.ptr else null,
+                                    },
+                                    Linker,
+                                    &bundler.linker,
+                                    &this.write_lock,
+                                    std.fs.File,
+                                    this.tmpfile,
+                                    std.fs.File.getPos,
+                                );
+
+                                code_offset = write_result.off;
+                                written = write_result.len;
+
+                                // Faster to _not_ do the syscall
+                                // But there's some off-by-one error somewhere and more reliable to just do the lseek
+                                this.tmpfile_byte_offset = write_result.end_off;
                             }
-
-                            var part = &ast.parts[ast.parts.len - 1];
-                            var new_stmts: [1]Stmt = undefined;
-                            var register_args: [3]Expr = undefined;
-
-                            var package_json_string = E.String{ .utf8 = package.name };
-                            var module_path_string = E.String{ .utf8 = module_data.import_path };
-                            var target_identifier = E.Identifier{ .ref = register_ref };
-                            var cjs_args: [2]js_ast.G.Arg = undefined;
-                            var module_binding = js_ast.B.Identifier{ .ref = ast.module_ref.? };
-                            var exports_binding = js_ast.B.Identifier{ .ref = ast.exports_ref.? };
-
-                            // if (!ast.uses_module_ref) {
-                            //     var symbol = &ast.symbols[ast.module_ref.?.inner_index];
-                            //     symbol.original_name = "_$$";
-                            // }
-
-                            cjs_args[0] = js_ast.G.Arg{
-                                .binding = js_ast.Binding{
-                                    .loc = logger.Loc.Empty,
-                                    .data = .{ .b_identifier = &module_binding },
-                                },
-                            };
-                            cjs_args[1] = js_ast.G.Arg{
-                                .binding = js_ast.Binding{
-                                    .loc = logger.Loc.Empty,
-                                    .data = .{ .b_identifier = &exports_binding },
-                                },
-                            };
-
-                            var closure = E.Arrow{
-                                .args = &cjs_args,
-                                .body = .{
-                                    .loc = logger.Loc.Empty,
-                                    .stmts = part.stmts,
-                                },
-                            };
-
-                            // $$m(12345, "react", "index.js", function(module, exports) {
-
-                            // })
-                            register_args[0] = Expr{ .loc = .{ .start = 0 }, .data = .{ .e_string = &package_json_string } };
-                            register_args[1] = Expr{ .loc = .{ .start = 0 }, .data = .{ .e_string = &module_path_string } };
-                            register_args[2] = Expr{ .loc = .{ .start = 0 }, .data = .{ .e_arrow = &closure } };
-
-                            var call_register = E.Call{
-                                .target = Expr{
-                                    .data = .{ .e_identifier = &target_identifier },
-                                    .loc = logger.Loc{ .start = 0 },
-                                },
-                                .args = &register_args,
-                            };
-                            var register_expr = Expr{ .loc = call_register.target.loc, .data = .{ .e_call = &call_register } };
-                            var decls: [1]js_ast.G.Decl = undefined;
-                            var bundle_export_binding = js_ast.B.Identifier{ .ref = ast.bundle_export_ref.? };
-                            var binding = js_ast.Binding{
-                                .loc = register_expr.loc,
-                                .data = .{ .b_identifier = &bundle_export_binding },
-                            };
-                            decls[0] = js_ast.G.Decl{
-                                .value = register_expr,
-                                .binding = binding,
-                            };
-                            var export_var = js_ast.S.Local{
-                                .decls = &decls,
-                                .is_export = true,
-                            };
-                            new_stmts[0] = Stmt{ .loc = register_expr.loc, .data = .{ .s_local = &export_var } };
-                            part.stmts = &new_stmts;
-
-                            var writer = js_printer.NewFileWriter(this.tmpfile);
-                            var symbols: [][]js_ast.Symbol = &([_][]js_ast.Symbol{ast.symbols});
-
-                            // It should only have one part.
-                            ast.parts = ast.parts[ast.parts.len - 1 ..];
-                            var written: usize = undefined;
-                            var code_offset: u32 = 0;
-                            const write_result =
-                                try js_printer.printCommonJSThreaded(
-                                @TypeOf(writer),
-                                writer,
-                                ast,
-                                js_ast.Symbol.Map.initList(symbols),
-                                &source,
-                                false,
-                                js_printer.Options{
-                                    .to_module_ref = Ref.RuntimeRef,
-                                    .bundle_export_ref = ast.bundle_export_ref.?,
-                                    .source_path = file_path,
-                                    .externals = ast.externals,
-                                    .indent = 0,
-                                    .module_hash = module_id,
-                                    .runtime_imports = ast.runtime_imports,
-                                    .prepend_part_value = &prepend_part,
-                                    .prepend_part_key = if (needs_prepend_part) closure.body.stmts.ptr else null,
-                                },
-                                Linker,
-                                &bundler.linker,
-                                &this.write_lock,
-                                std.fs.File,
-                                this.tmpfile,
-                                std.fs.File.getPos,
-                            );
 
                             if (comptime isDebug) {
-                                Output.prettyln("{s}/{s} \n", .{ package.name, package_relative_path });
+                                Output.prettyln("{s}@{s}/{s} - {d}:{d} \n", .{ package.name, package.version, package_relative_path, package.hash, module_id });
                                 Output.flush();
+                                std.debug.assert(package_relative_path.len > 0);
                             }
 
                             this.list_lock.lock();
                             defer this.list_lock.unlock();
-                            code_offset = write_result.off;
-                            written = write_result.len;
 
-                            // Faster to _not_ do the syscall
-                            // But there's some off-by-one error somewhere and more reliable to just do the lseek
-                            this.tmpfile_byte_offset = write_result.end_off;
                             const code_length = this.tmpfile_byte_offset - code_offset;
-                            // std.debug.assert(code_length == written);
+
+                            if (comptime isDebug) {
+                                std.debug.assert(code_length > 0);
+                                std.debug.assert(package.hash != 0);
+                                std.debug.assert(package.version.len > 0);
+                                std.debug.assert(package.name.len > 0);
+                                std.debug.assert(module_id > 0);
+                            }
 
                             var package_get_or_put_entry = try this.package_list_map.getOrPut(package.hash);
 
@@ -1279,6 +1396,7 @@ pub fn NewBundler(cache_files: bool) type {
                                 null,
                                 shared_buffer,
                             ) catch return;
+                            if (entry.contents.len == 0 or (entry.contents.len < 33 and strings.trim(entry.contents, " \n\r").len == 0)) return;
 
                             const source = logger.Source.initRecycledFile(Fs.File{ .path = file_path, .contents = entry.contents }, bundler.allocator) catch return null;
                             const source_dir = file_path.name.dirWithTrailingSlash();
@@ -1307,13 +1425,26 @@ pub fn NewBundler(cache_files: bool) type {
                                             continue;
                                         }
 
-                                        _resolved_import.path_pair.primary = Fs.Path.init(std.mem.span(try this.allocator.dupeZ(u8, _resolved_import.path_pair.primary.text)));
-                                        try this.queue.upsert(
-                                            _resolved_import.hash(
-                                                this.bundler.options.loaders.get(_resolved_import.path_pair.primary.name.ext) orelse .file,
-                                            ),
-                                            _resolved_import.*,
-                                        );
+                                        var path = _resolved_import.path() orelse continue;
+
+                                        const loader_ = this.bundler.options.loader(path.name.ext);
+                                        if (!loader_.isJavaScriptLikeOrJSON()) continue;
+                                        path.* = Fs.Path.init(std.mem.span(try this.allocator.dupeZ(u8, path.text)));
+
+                                        if (BundledModuleData.get(this, _resolved_import)) |mod| {
+                                            try this.queue.upsert(
+                                                mod.module_id,
+                                                _resolved_import.*,
+                                            );
+                                        } else {
+                                            try this.queue.upsert(
+                                                _resolved_import.hash(
+                                                    this.bundler.fs.top_level_dir,
+                                                    loader_,
+                                                ),
+                                                _resolved_import.*,
+                                            );
+                                        }
                                     } else |err| {
                                         switch (err) {
                                             error.ModuleNotFound => {
@@ -1393,7 +1524,12 @@ pub fn NewBundler(cache_files: bool) type {
 
             errdefer bundler.resetStore();
 
-            var file_path = resolve_result.path_pair.primary;
+            var file_path = (resolve_result.pathConst() orelse {
+                return BuildResolveResultPair{
+                    .written = 0,
+                    .input_fd = null,
+                };
+            }).*;
 
             if (strings.indexOf(file_path.text, bundler.fs.top_level_dir)) |i| {
                 file_path.pretty = file_path.text[i + bundler.fs.top_level_dir.len ..];
@@ -1401,12 +1537,7 @@ pub fn NewBundler(cache_files: bool) type {
                 file_path.pretty = allocator.dupe(u8, bundler.fs.relativeTo(file_path.text)) catch unreachable;
             }
 
-            var old_bundler_allocator = bundler.allocator;
-            bundler.allocator = allocator;
-            defer bundler.allocator = old_bundler_allocator;
-            var old_linker_allocator = bundler.linker.allocator;
-            defer bundler.linker.allocator = old_linker_allocator;
-            bundler.linker.allocator = allocator;
+            bundler.setAllocator(allocator);
 
             switch (loader) {
                 .css => {
@@ -1432,7 +1563,7 @@ pub fn NewBundler(cache_files: bool) type {
                         .written = brk: {
                             if (bundler.options.hot_module_reloading) {
                                 break :brk (try CSSBundlerHMR.bundle(
-                                    resolve_result.path_pair.primary.text,
+                                    file_path.text,
                                     bundler.fs,
                                     writer,
                                     watcher,
@@ -1445,7 +1576,7 @@ pub fn NewBundler(cache_files: bool) type {
                                 )).written;
                             } else {
                                 break :brk (try CSSBundler.bundle(
-                                    resolve_result.path_pair.primary.text,
+                                    file_path.text,
                                     bundler.fs,
                                     writer,
                                     watcher,
@@ -1462,6 +1593,8 @@ pub fn NewBundler(cache_files: bool) type {
                     };
                 },
                 else => {
+                    var old_allocator = bundler.allocator;
+                    bundler.setAllocator(allocator);
                     var result = bundler.parse(
                         allocator,
                         file_path,
@@ -1471,12 +1604,14 @@ pub fn NewBundler(cache_files: bool) type {
                         filepath_hash,
                         client_entry_point,
                     ) orelse {
+                        bundler.setAllocator(old_allocator);
                         bundler.resetStore();
                         return BuildResolveResultPair{
                             .written = 0,
                             .input_fd = null,
                         };
                     };
+                    bundler.setAllocator(old_allocator);
 
                     try bundler.linker.link(file_path, &result, import_path_format, false);
 
@@ -1505,9 +1640,10 @@ pub fn NewBundler(cache_files: bool) type {
                 return null;
             }
 
+            var file_path = (resolve_result.pathConst() orelse return null).*;
+
             // Step 1. Parse & scan
-            const loader = bundler.options.loaders.get(resolve_result.path_pair.primary.name.ext) orelse .file;
-            var file_path = resolve_result.path_pair.primary;
+            const loader = bundler.options.loader(file_path.name.ext);
 
             if (client_entry_point_) |client_entry_point| {
                 file_path = client_entry_point.source.path;
@@ -1796,15 +1932,11 @@ pub fn NewBundler(cache_files: bool) type {
             comptime client_entry_point_enabled: bool,
         ) !ServeResult {
             var extension = _extension;
-            var original_resolver_logger = bundler.resolver.log;
-            var original_bundler_logger = bundler.log;
+            var old_log = bundler.log;
+            var old_allocator = bundler.allocator;
 
-            defer bundler.log = original_bundler_logger;
-            defer bundler.resolver.log = original_resolver_logger;
-            bundler.log = log;
-            bundler.linker.allocator = allocator;
-
-            bundler.resolver.log = log;
+            bundler.setLog(log);
+            defer bundler.setLog(old_log);
 
             if (strings.eqlComptime(relative_path, "__runtime.js")) {
                 return ServeResult{
@@ -1862,8 +1994,10 @@ pub fn NewBundler(cache_files: bool) type {
                 break :brk (try bundler.resolver.resolve(bundler.fs.top_level_dir, absolute_path, .stmt));
             };
 
-            const loader = bundler.options.loader(resolved.path_pair.primary.name.ext);
-            const mime_type_ext = bundler.options.out_extensions.get(resolved.path_pair.primary.name.ext) orelse resolved.path_pair.primary.name.ext;
+            const path = (resolved.pathConst() orelse return error.ModuleNotFound);
+
+            const loader = bundler.options.loader(path.name.ext);
+            const mime_type_ext = bundler.options.out_extensions.get(path.name.ext) orelse path.name.ext;
 
             switch (loader) {
                 .js, .jsx, .ts, .tsx, .css => {
@@ -1882,7 +2016,7 @@ pub fn NewBundler(cache_files: bool) type {
                     };
                 },
                 else => {
-                    var abs_path = resolved.path_pair.primary.text;
+                    var abs_path = path.text;
                     const file = try std.fs.openFileAbsolute(abs_path, .{ .read = true });
                     var stat = try file.stat();
                     return ServeResult{
@@ -1941,9 +2075,16 @@ pub fn NewBundler(cache_files: bool) type {
                 }
 
                 const result = bundler.resolver.resolve(bundler.fs.top_level_dir, entry, .entry_point) catch |err| {
-                    Output.printError("Error resolving \"{s}\": {s}\n", .{ entry, @errorName(err) });
+                    Output.prettyError("Error resolving \"{s}\": {s}\n", .{ entry, @errorName(err) });
                     continue;
                 };
+
+                if (result.pathConst() == null) {
+                    Output.prettyError("\"{s}\" is disabled due to \"browser\" field in package.json.\n", .{
+                        entry,
+                    });
+                    continue;
+                }
 
                 if (bundler.linker.enqueueResolveResult(&result) catch unreachable) {
                     entry_points[entry_point_i] = result;
@@ -2098,12 +2239,13 @@ pub fn NewBundler(cache_files: bool) type {
                 // defer count += 1;
 
                 if (comptime wrap_entry_point) {
-                    const loader = bundler.options.loaders.get(item.path_pair.primary.name.ext) orelse .file;
+                    var path = item.pathConst() orelse unreachable;
+                    const loader = bundler.options.loader(path.name.ext);
 
                     if (item.import_kind == .entry_point and loader.supportsClientEntryPoint()) {
                         var client_entry_point = try bundler.allocator.create(ClientEntryPoint);
                         client_entry_point.* = ClientEntryPoint{};
-                        try client_entry_point.generate(ThisBundler, bundler, item.path_pair.primary.name, bundler.options.framework.?.client);
+                        try client_entry_point.generate(ThisBundler, bundler, path.name, bundler.options.framework.?.client);
                         try bundler.virtual_modules.append(client_entry_point);
 
                         const entry_point_output_file = bundler.buildWithResolveResultEager(
@@ -2602,6 +2744,9 @@ pub const ServerEntryPoint = struct {
             \\//Auto-generated file
             \\import * as start from '{s}{s}';
             \\export * from '{s}{s}';
+            \\if ('default' in start && typeof start.default == 'function') {{
+            \\  start.default();
+            \\}}
         ,
             .{
                 dir_to_use,

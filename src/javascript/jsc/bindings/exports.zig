@@ -4,6 +4,7 @@ const Fs = @import("../../../fs.zig");
 const CAPI = @import("../JavaScriptCore.zig");
 const JS = @import("../javascript.zig");
 const JSBase = @import("../base.zig");
+const ZigURL = @import("../../../query_string_map.zig").URL;
 const Handler = struct {
     pub export fn global_signal_handler_fn(sig: i32, info: *const std.os.siginfo_t, ctx_ptr: ?*const c_void) callconv(.C) void {
         var stdout = std.io.getStdOut();
@@ -347,8 +348,15 @@ pub const ZigStackFrame = extern struct {
         source_url: ZigString,
         position: ZigStackFramePosition,
         enable_color: bool,
+        origin: *const ZigURL,
 
         pub fn format(this: SourceURLFormatter, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            try writer.writeAll(this.origin.displayProtocol());
+            try writer.writeAll("://");
+            try writer.writeAll(this.origin.displayHostname());
+            try writer.writeAll(":");
+            try writer.writeAll(this.origin.port);
+            try writer.writeAll("/blob:");
             try writer.writeAll(this.source_url.slice());
             if (this.position.line > -1 and this.position.column_start > -1) {
                 try std.fmt.format(writer, ":{d}:{d}", .{ this.position.line + 1, this.position.column_start });
@@ -416,8 +424,8 @@ pub const ZigStackFrame = extern struct {
         return NameFormatter{ .function_name = this.function_name, .code_type = this.code_type, .enable_color = enable_color };
     }
 
-    pub fn sourceURLFormatter(this: *const ZigStackFrame, comptime enable_color: bool) SourceURLFormatter {
-        return SourceURLFormatter{ .source_url = this.source_url, .position = this.position, .enable_color = enable_color };
+    pub fn sourceURLFormatter(this: *const ZigStackFrame, origin: *const ZigURL, comptime enable_color: bool) SourceURLFormatter {
+        return SourceURLFormatter{ .source_url = this.source_url, .origin = origin, .position = this.position, .enable_color = enable_color };
     }
 };
 

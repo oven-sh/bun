@@ -18,8 +18,29 @@ pub const URL = struct {
     search: string = "",
     searchParams: ?QueryStringMap = null,
     username: string = "",
-
     port_was_automatically_set: bool = false,
+
+    pub fn displayProtocol(this: *const URL) string {
+        if (this.protocol.len > 0) {
+            return this.protocol;
+        }
+
+        if (this.getPort()) |port| {
+            if (port == 443) {
+                return "https";
+            }
+        }
+
+        return "http";
+    }
+
+    pub fn displayHostname(this: *const URL) string {
+        if (this.hostname.len > 0) {
+            return this.hostname;
+        }
+
+        return "localhost";
+    }
 
     pub fn hasHTTPLikeProtocol(this: *const URL) bool {
         return strings.eqlComptime(this.protocol, "http") or strings.eqlComptime(this.protocol, "https");

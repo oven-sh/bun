@@ -16,7 +16,7 @@ const hash_map = @import("hash_map.zig");
 pub const Preallocate = struct {
     pub const Counts = struct {
         pub const dir_entry: usize = 512;
-        pub const files: usize = 1024;
+        pub const files: usize = 4096;
     };
 };
 
@@ -810,7 +810,7 @@ pub const FileSystem = struct {
         ) !File {
             FileSystem.setMaxFd(file.handle);
 
-            if (FeatureFlags.disable_filesystem_cache) {
+            if (comptime FeatureFlags.disable_filesystem_cache) {
                 _ = std.os.fcntl(file.handle, std.os.F_NOCACHE, 1) catch 0;
             }
 
@@ -819,6 +819,18 @@ pub const FileSystem = struct {
                 fs.readFileError(path, err);
                 return err;
             });
+
+            // Skip the pread call for empty files
+            // Otherwise will get out of bounds errors
+            // plus it's an unnecessary syscall
+            if (size == 0) {
+                if (comptime use_shared_buffer) {
+                    shared_buffer.reset();
+                    return File{ .path = Path.init(path), .contents = shared_buffer.list.items };
+                } else {
+                    return File{ .path = Path.init(path), .contents = "" };
+                }
+            }
 
             var file_contents: []u8 = undefined;
 

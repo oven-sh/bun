@@ -387,14 +387,44 @@ pub fn NewBundler(cache_files: bool) type {
                 stopped_workers: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
                 completed_count: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
                 pub fn start(this: *ThreadPool, generator: *GenerateNodeModuleBundle) !void {
+                    generator.bundler.env.loadProcess();
+
                     this.cpu_count = @truncate(u32, @divFloor((try std.Thread.getCpuCount()) + 1, 2));
+
+                    if (generator.bundler.env.map.get("GOMAXPROCS")) |max_procs| {
+                        if (std.fmt.parseInt(u32, max_procs, 10)) |cpu_count| {
+                            this.cpu_count = std.math.min(this.cpu_count, cpu_count);
+                        } else |err| {}
+                    }
+
+                    if (this.cpu_count <= 1) return;
 
                     while (this.workers_used < this.cpu_count) : (this.workers_used += 1) {
                         try this.workers[this.workers_used].init(generator);
                     }
                 }
 
-                pub fn wait(this: *ThreadPool, generator: *GenerateNodeModuleBundle) void {
+                pub fn wait(this: *ThreadPool, generator: *GenerateNodeModuleBundle) !void {
+                    if (this.cpu_count <= 1) {
+                        var worker = generator.allocator.create(Worker) catch unreachable;
+                        worker.* = Worker{
+                            .generator = generator,
+                            .allocator = generator.allocator,
+                            .data = generator.allocator.create(Worker.WorkerData) catch unreachable,
+                            .thread_id = undefined,
+                            .thread = undefined,
+                        };
+                        worker.data.shared_buffer = try MutableString.init(generator.allocator, 0);
+                        worker.data.scan_pass_result = js_parser.ScanPassResult.init(generator.allocator);
+
+                        defer worker.data.deinit(generator.allocator);
+
+                        while (generator.queue.next()) |item| {
+                            try generator.processFile(worker, item);
+                        }
+                        return;
+                    }
+
                     while (generator.queue.count.load(.SeqCst) != generator.pool.completed_count.load(.SeqCst)) {
                         var j: usize = 0;
                         while (j < 100) : (j += 1) {}

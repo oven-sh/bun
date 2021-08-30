@@ -33,6 +33,7 @@ pub const html = MimeType.init("text/html;charset=utf-8", .html);
 // we transpile json to javascript so that it is importable without import assertions.
 pub const json = MimeType.init("application/json", .json);
 pub const transpiled_json = javascript;
+pub const text = MimeType.init("text/plain;charset=utf-8", .html);
 
 fn init(comptime str: string, t: Category) MimeType {
     return MimeType{

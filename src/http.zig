@@ -49,6 +49,7 @@ usingnamespace @import("./javascript/jsc/bindings/bindings.zig");
 usingnamespace @import("./javascript/jsc/bindings/exports.zig");
 const Router = @import("./router.zig");
 pub const Watcher = watcher.NewWatcher(*Server);
+const ZigURL = @import("./query_string_map.zig").URL;
 
 const HTTPStatusCode = u10;
 const URLPath = @import("./http/url_path.zig");
@@ -287,6 +288,8 @@ pub const RequestContext = struct {
         return std.fmt.comptimePrint("HTTP/1.1 {d} {s}\r\n", .{ code, status_text });
     }
 
+    threadlocal var content_length_header_buf: [64]u8 = undefined;
+
     pub fn prepareToSendBody(
         ctx: *RequestContext,
         length: usize,
@@ -302,8 +305,7 @@ pub const RequestContext = struct {
         if (chunked) {
             ctx.appendHeader("Transfer-Encoding", "Chunked");
         } else {
-            const length_str = try ctx.allocator.alloc(u8, 64);
-            ctx.appendHeader("Content-Length", length_str[0..std.fmt.formatIntBuf(length_str, length, 10, .upper, .{})]);
+            ctx.appendHeader("Content-Length", content_length_header_buf[0..std.fmt.formatIntBuf(&content_length_header_buf, length, 10, .upper, .{})]);
         }
 
         try ctx.flushHeaders();
@@ -695,7 +697,7 @@ pub const RequestContext = struct {
         conn: tcp.Connection,
         params: Router.Param.List,
 
-        pub var javascript_vm: *JavaScript.VirtualMachine = undefined;
+        pub var javascript_vm: ?*JavaScript.VirtualMachine = null;
 
         pub const HandlerThread = struct {
             args: Api.TransformOptions,
@@ -704,12 +706,14 @@ pub const RequestContext = struct {
             log: ?*logger.Log = null,
             watcher: *Watcher,
             env_loader: *DotEnv.Loader,
+            origin: ZigURL,
         };
 
         pub const Channel = sync.Channel(*JavaScriptHandler, .{ .Static = 100 });
         pub var channel: Channel = undefined;
         var has_loaded_channel = false;
         pub var javascript_disabled = false;
+
         pub fn spawnThread(handler: HandlerThread) !void {
             var thread = try std.Thread.spawn(.{}, spawn, .{handler});
             thread.setName("WebSocket") catch {};
@@ -756,10 +760,10 @@ pub const RequestContext = struct {
 
             std.debug.assert(JavaScript.VirtualMachine.vm_loaded);
             javascript_vm = vm;
-
+            vm.bundler.options.origin = handler.origin;
             const boot = vm.bundler.options.framework.?.server;
             std.debug.assert(boot.len > 0);
-            defer vm.deinit();
+            errdefer vm.deinit();
             vm.watcher = handler.watcher;
             {
                 defer vm.flush();
@@ -782,7 +786,6 @@ pub const RequestContext = struct {
 
                     if (channel.tryReadItem() catch null) |item| {
                         item.ctx.sendInternalError(error.JSFailedToStart) catch {};
-                        item.ctx.arena.deinit();
                     }
                     return;
                 };
@@ -794,7 +797,17 @@ pub const RequestContext = struct {
                         vm.bundler.normalizeEntryPointPath(boot),
                         .entry_point,
                     );
-                    entry_point = resolved_entry_point.path_pair.primary.text;
+                    entry_point = (resolved_entry_point.pathConst() orelse {
+                        Output.prettyErrorln(
+                            "<r>JavaScript VM failed to start due to disabled entry point: <r><b>\"{s}\"",
+                            .{resolved_entry_point.path_pair.primary.text},
+                        );
+
+                        if (channel.tryReadItem() catch null) |item| {
+                            item.ctx.sendInternalError(error.JSFailedToStart) catch {};
+                        }
+                        return;
+                    }).text;
                 }
 
                 var load_result = vm.loadEntryPoint(
@@ -835,7 +848,6 @@ pub const RequestContext = struct {
                     Output.prettyErrorln("<r><red>error<r>: Framework didn't run <b><cyan>addEventListener(\"fetch\", callback)<r>, which means it can't accept HTTP requests.\nShutting down JS.", .{});
                     if (channel.tryReadItem() catch null) |item| {
                         item.ctx.sendInternalError(error.JSFailedToStart) catch {};
-                        item.ctx.arena.deinit();
                     }
                     return;
                 }
@@ -851,7 +863,7 @@ pub const RequestContext = struct {
 
         pub fn runLoop(vm: *JavaScript.VirtualMachine) !void {
             var module_map = ZigGlobalObject.getModuleRegistryMap(vm.global);
-
+            JavaScript.VirtualMachine.vm.has_loaded = true;
             while (true) {
                 defer {
                     JavaScript.VirtualMachine.vm.flush();
@@ -860,8 +872,9 @@ pub const RequestContext = struct {
                     js_ast.Expr.Data.Store.reset();
                     JavaScript.Bun.flushCSSImports();
                 }
-                var handler: *JavaScriptHandler = try channel.readItem();
 
+                var handler: *JavaScriptHandler = try channel.readItem();
+                JavaScript.VirtualMachine.vm.preflush();
                 try JavaScript.EventListenerMixin.emitFetchEvent(vm, &handler.ctx);
             }
         }
@@ -900,6 +913,7 @@ pub const RequestContext = struct {
                             .log = &server.log,
                             .watcher = server.watcher,
                             .env_loader = server.bundler.env,
+                            .origin = server.bundler.options.origin,
                         },
                     );
                 } else {
@@ -911,6 +925,7 @@ pub const RequestContext = struct {
                             .log = &server.log,
                             .watcher = server.watcher,
                             .env_loader = server.bundler.env,
+                            .origin = server.bundler.options.origin,
                         },
                     );
                 }
@@ -1337,6 +1352,11 @@ pub const RequestContext = struct {
 
         switch (result.file.value) {
             .pending => |resolve_result| {
+                const path = resolve_result.pathConst() orelse {
+                    try ctx.sendNoContent();
+                    return;
+                };
+
                 const hash = Watcher.getHash(result.file.input.text);
                 var watcher_index = ctx.watcher.indexOf(hash);
                 var input_fd = if (watcher_index) |ind| ctx.watcher.watchlist.items(.fd)[ind] else null;
@@ -1447,7 +1467,8 @@ pub const RequestContext = struct {
                     if (ctx.bundler.options.framework) |*framework| {
                         if (framework.client.len > 0) {
                             client_entry_point = bundler.ClientEntryPoint{};
-                            try client_entry_point.generate(Bundler, ctx.bundler, resolve_result.path_pair.primary.name, framework.client);
+
+                            try client_entry_point.generate(Bundler, ctx.bundler, path.name, framework.client);
                             client_entry_point_ = &client_entry_point;
                         }
                     }
@@ -1610,6 +1631,26 @@ pub const RequestContext = struct {
         }
     }
 
+    fn handleBlobURL(ctx: *RequestContext, server: *Server) !void {
+        var id = ctx.url.path["blob:".len..];
+        // This lets us print
+        if (strings.indexOfChar(id, ':')) |colon| {
+            id = id[0..colon];
+        }
+
+        const blob = (JavaScriptHandler.javascript_vm orelse return try ctx.sendNotFound()).blobs.get(id) orelse return try ctx.sendNotFound();
+        if (blob.len == 0) {
+            try ctx.sendNoContent();
+            return;
+        }
+
+        defer ctx.done();
+        try ctx.writeStatus(200);
+        ctx.appendHeader("Content-Type", MimeType.text.value);
+        try ctx.prepareToSendBody(blob.len, false);
+        try ctx.writeBodyBuf(blob.ptr[0..blob.len]);
+    }
+
     pub fn handleReservedRoutes(ctx: *RequestContext, server: *Server) !bool {
         if (strings.eqlComptime(ctx.url.extname, "bun") and ctx.bundler.options.node_modules_bundle != null) {
             try ctx.sendJSB();
@@ -1618,6 +1659,11 @@ pub const RequestContext = struct {
 
         if (strings.eqlComptime(ctx.url.path, "_api.hmr")) {
             try ctx.handleWebsocket(server);
+            return true;
+        }
+
+        if (ctx.url.path.len > "blob:".len and strings.eqlComptime(ctx.url.path[0.."blob:".len], "blob:")) {
+            try ctx.handleBlobURL(server);
             return true;
         }
 
@@ -1874,6 +1920,11 @@ pub const Server = struct {
         ));
         try listener.listen(1280);
         const addr = try listener.getLocalAddress();
+        if (server.bundler.options.origin.getPort()) |_port| {
+            if (_port != addr.ipv4.port) {
+                server.bundler.options.origin.port = try std.fmt.allocPrint(server.allocator, "{d}", .{addr.ipv4.port});
+            }
+        }
 
         // This is technically imprecise.
         // However, we want to optimize for easy to copy paste

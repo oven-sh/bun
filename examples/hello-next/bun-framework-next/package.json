@@ -1,6 +1,6 @@
 {
   "name": "bun-framework-next",
-  "version": "0.0.0-13",
+  "version": "0.0.0-14",
   "description": "",
   "framework": {
     "static": "public",

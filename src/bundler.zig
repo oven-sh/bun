@@ -89,6 +89,7 @@ pub const ParseResult = struct {
     loader: options.Loader,
     ast: js_ast.Ast,
     input_fd: ?StoredFileDescriptorType = null,
+    empty: bool = false,
 };
 
 pub fn NewBundler(cache_files: bool) type {
@@ -242,9 +243,9 @@ pub fn NewBundler(cache_files: bool) type {
 
             if (this.options.framework) |framework| {
                 if (this.options.platform.isClient()) {
-                    try this.options.loadDefines(this.allocator, this.env, &framework.client_env);
+                    try this.options.loadDefines(this.allocator, this.env, &framework.client.env);
                 } else {
-                    try this.options.loadDefines(this.allocator, this.env, &framework.server_env);
+                    try this.options.loadDefines(this.allocator, this.env, &framework.server.env);
                 }
             } else {
                 try this.options.loadDefines(this.allocator, this.env, &this.options.env);
@@ -268,9 +269,9 @@ pub fn NewBundler(cache_files: bool) type {
 
                     if (this.options.areDefinesUnset()) {
                         if (this.options.platform.isClient()) {
-                            this.options.env = framework.client_env;
+                            this.options.env = framework.client.env;
                         } else {
-                            this.options.env = framework.server_env;
+                            this.options.env = framework.server.env;
                         }
                     }
 
@@ -289,11 +290,15 @@ pub fn NewBundler(cache_files: bool) type {
             if (this.options.framework != null) {
                 try this.configureFramework(true);
                 if (comptime client) {
-                    if (this.options.framework.?.client.len > 0) {
-                        return try this.resolver.resolve(this.fs.top_level_dir, this.options.framework.?.client, .stmt);
+                    if (this.options.framework.?.client.isEnabled()) {
+                        return try this.resolver.resolve(this.fs.top_level_dir, this.options.framework.?.client.path, .stmt);
+                    }
+
+                    if (this.options.framework.?.fallback.isEnabled()) {
+                        return try this.resolver.resolve(this.fs.top_level_dir, this.options.framework.?.fallback.path, .stmt);
                     }
                 } else {
-                    if (this.options.framework.?.server.len > 0) {
+                    if (this.options.framework.?.server.isEnabled()) {
                         return try this.resolver.resolve(this.fs.top_level_dir, this.options.framework.?.server, .stmt);
                     }
                 }
@@ -732,20 +737,38 @@ pub fn NewBundler(cache_files: bool) type {
                 if (framework_config) |conf| {
                     defer this.bundler.resetStore();
 
-                    if (conf.client) {
-                        if (bundler.configureFrameworkWithResolveResult(true)) |result_| {
-                            if (result_) |result| {
-                                try this.enqueueItem(result);
+                    try this.bundler.configureFramework(true);
+                    if (bundler.options.framework) |framework| {
+                        if (bundler.options.platform == .bun) {
+                            if (framework.server.isEnabled()) {
+                                const resolved = try bundler.linker.resolver.resolve(
+                                    bundler.fs.top_level_dir,
+                                    framework.server.path,
+                                    .entry_point,
+                                );
+                                try this.enqueueItem(resolved);
                             }
-                        } else |err| {}
-                    } else {
-                        if (bundler.configureFrameworkWithResolveResult(false)) |result_| {
-                            if (result_) |result| {
-                                try this.enqueueItem(result);
+                        } else {
+                            if (framework.client.isEnabled()) {
+                                const resolved = try bundler.linker.resolver.resolve(
+                                    bundler.fs.top_level_dir,
+                                    framework.client.path,
+                                    .entry_point,
+                                );
+                                try this.enqueueItem(resolved);
                             }
-                        } else |err| {}
+
+                            if (framework.fallback.isEnabled()) {
+                                const resolved = try bundler.linker.resolver.resolve(
+                                    bundler.fs.top_level_dir,
+                                    framework.fallback.path,
+                                    .entry_point,
+                                );
+                                try this.enqueueItem(resolved);
+                            }
+                        }
                     }
-                }
+                } else {}
 
                 // Normally, this is automatic
                 // However, since we only do the parsing pass, it may not get imported automatically.
@@ -1537,7 +1560,12 @@ pub fn NewBundler(cache_files: bool) type {
                 file_path.pretty = allocator.dupe(u8, bundler.fs.relativeTo(file_path.text)) catch unreachable;
             }
 
-            bundler.setAllocator(allocator);
+            var old_bundler_allocator = bundler.allocator;
+            bundler.allocator = allocator;
+            defer bundler.allocator = old_bundler_allocator;
+            var old_linker_allocator = bundler.linker.allocator;
+            defer bundler.linker.allocator = old_linker_allocator;
+            bundler.linker.allocator = allocator;
 
             switch (loader) {
                 .css => {
@@ -1593,8 +1621,6 @@ pub fn NewBundler(cache_files: bool) type {
                     };
                 },
                 else => {
-                    var old_allocator = bundler.allocator;
-                    bundler.setAllocator(allocator);
                     var result = bundler.parse(
                         allocator,
                         file_path,
@@ -1604,14 +1630,16 @@ pub fn NewBundler(cache_files: bool) type {
                         filepath_hash,
                         client_entry_point,
                     ) orelse {
-                        bundler.setAllocator(old_allocator);
                         bundler.resetStore();
                         return BuildResolveResultPair{
                             .written = 0,
                             .input_fd = null,
                         };
                     };
-                    bundler.setAllocator(old_allocator);
+
+                    if (result.empty) {
+                        return BuildResolveResultPair{ .written = 0, .input_fd = result.input_fd };
+                    }
 
                     try bundler.linker.link(file_path, &result, import_path_format, false);
 
@@ -1838,7 +1866,7 @@ pub fn NewBundler(cache_files: bool) type {
             dirname_fd: StoredFileDescriptorType,
             file_descriptor: ?StoredFileDescriptorType,
             file_hash: ?u32,
-            client_entry_point_: ?*ClientEntryPoint,
+            client_entry_point_: anytype,
         ) ?ParseResult {
             if (FeatureFlags.tracing) {
                 bundler.timer.start();
@@ -1854,19 +1882,25 @@ pub fn NewBundler(cache_files: bool) type {
 
             const source: logger.Source = brk: {
                 if (client_entry_point_) |client_entry_point| {
-                    break :brk client_entry_point.source;
-                } else {
-                    const entry = bundler.resolver.caches.fs.readFile(
-                        bundler.fs,
-                        path.text,
-                        dirname_fd,
-                        true,
-                        file_descriptor,
-                    ) catch return null;
-                    input_fd = entry.fd;
-                    break :brk logger.Source.initRecycledFile(Fs.File{ .path = path, .contents = entry.contents }, bundler.allocator) catch return null;
+                    if (@hasField(std.meta.Child(@TypeOf(client_entry_point)), "source")) {
+                        break :brk client_entry_point.source;
+                    }
                 }
+
+                const entry = bundler.resolver.caches.fs.readFile(
+                    bundler.fs,
+                    path.text,
+                    dirname_fd,
+                    true,
+                    file_descriptor,
+                ) catch return null;
+                input_fd = entry.fd;
+                break :brk logger.Source.initRecycledFile(Fs.File{ .path = path, .contents = entry.contents }, bundler.allocator) catch return null;
             };
+
+            if (source.contents.len == 0 or (source.contents.len < 33 and std.mem.trim(u8, source.contents, "\n\r ").len == 0)) {
+                return ParseResult{ .source = source, .input_fd = input_fd, .loader = loader, .empty = true, .ast = js_ast.Ast.empty };
+            }
 
             switch (loader) {
                 .js,
@@ -2140,7 +2174,7 @@ pub fn NewBundler(cache_files: bool) type {
 
                 if (load_from_routes) {
                     if (bundler.options.framework) |*framework| {
-                        if (framework.client.len > 0) {
+                        if (framework.client.isEnabled()) {
                             did_start = true;
                             try switch (bundler.options.import_path_format) {
                                 .relative => bundler.processResolveQueue(.relative, true, @TypeOf(outstream), outstream),
@@ -2171,7 +2205,7 @@ pub fn NewBundler(cache_files: bool) type {
 
                 if (load_from_routes) {
                     if (bundler.options.framework) |*framework| {
-                        if (framework.client.len > 0) {
+                        if (framework.client.isEnabled()) {
                             did_start = true;
                             try switch (bundler.options.import_path_format) {
                                 .relative => bundler.processResolveQueue(.relative, true, std.fs.Dir, output_dir),
@@ -2245,7 +2279,7 @@ pub fn NewBundler(cache_files: bool) type {
                     if (item.import_kind == .entry_point and loader.supportsClientEntryPoint()) {
                         var client_entry_point = try bundler.allocator.create(ClientEntryPoint);
                         client_entry_point.* = ClientEntryPoint{};
-                        try client_entry_point.generate(ThisBundler, bundler, path.name, bundler.options.framework.?.client);
+                        try client_entry_point.generate(ThisBundler, bundler, path.name, bundler.options.framework.?.client.path);
                         try bundler.virtual_modules.append(client_entry_point);
 
                         const entry_point_output_file = bundler.buildWithResolveResultEager(
@@ -2575,6 +2609,61 @@ pub const Transformer = struct {
 pub const ServeResult = struct {
     file: options.OutputFile,
     mime_type: MimeType,
+};
+
+pub const FallbackEntryPoint = struct {
+    code_buffer: [8096]u8 = undefined,
+    path_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined,
+    source: logger.Source = undefined,
+    built_code: string = "",
+
+    pub fn generate(
+        entry: *FallbackEntryPoint,
+        input_path: string,
+        comptime BundlerType: type,
+        bundler: *BundlerType,
+    ) !void {
+        // This is *extremely* naive.
+        // The basic idea here is this:
+        // --
+        // import * as EntryPoint from 'entry-point';
+        // import boot from 'framework';
+        // boot(EntryPoint);
+        // --
+        // We go through the steps of printing the code -- only to then parse/transpile it because
+        // we want it to go through the linker and the rest of the transpilation process
+
+        const dir_to_use: string = bundler.fs.top_level_dir;
+        const disable_css_imports = bundler.options.framework.?.client_css_in_js != .auto_onimportcss;
+
+        var code: string = undefined;
+
+        if (disable_css_imports) {
+            code = try std.fmt.bufPrint(
+                &entry.code_buffer,
+                \\globalThis.Bun_disableCSSImports = true;
+                \\import boot from '{s}';
+                \\boot(globalThis.__BUN_DATA__);
+            ,
+                .{
+                    input_path,
+                },
+            );
+        } else {
+            code = try std.fmt.bufPrint(
+                &entry.code_buffer,
+                \\import boot from '{s}';
+                \\boot(globalThis.__BUN_DATA__);
+            ,
+                .{
+                    input_path,
+                },
+            );
+        }
+
+        entry.source = logger.Source.initPathString(input_path, code);
+        entry.source.path.namespace = "fallback-entry";
+    }
 };
 
 pub const ClientEntryPoint = struct {

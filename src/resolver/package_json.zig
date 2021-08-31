@@ -153,7 +153,17 @@ pub const PackageJSON = struct {
         if (json.asProperty("client")) |client| {
             if (client.expr.asString(allocator)) |str| {
                 if (str.len > 0) {
-                    framework.client = str;
+                    framework.client.path = str;
+                    framework.client.kind = .client;
+                }
+            }
+        }
+
+        if (json.asProperty("fallback")) |client| {
+            if (client.expr.asString(allocator)) |str| {
+                if (str.len > 0) {
+                    framework.fallback.path = str;
+                    framework.fallback.kind = .fallback;
                 }
             }
         }
@@ -170,25 +180,41 @@ pub const PackageJSON = struct {
 
         if (comptime read_define) {
             if (json.asProperty("define")) |defines| {
+                var skip_fallback = false;
                 if (defines.expr.asProperty("client")) |client| {
                     if (client.expr.data == .e_object) {
                         const object = client.expr.data.e_object;
-                        framework.client_env = options.Env.init(
+                        framework.client.env = options.Env.init(
                             allocator,
                         );
 
-                        loadDefineExpression(&framework.client_env, object, allocator) catch {};
+                        loadDefineExpression(&framework.client.env, object, allocator) catch {};
+                        framework.fallback.env = framework.client.env;
+                        skip_fallback = true;
+                    }
+                }
+
+                if (!skip_fallback) {
+                    if (defines.expr.asProperty("fallback")) |client| {
+                        if (client.expr.data == .e_object) {
+                            const object = client.expr.data.e_object;
+                            framework.fallback.env = options.Env.init(
+                                allocator,
+                            );
+
+                            loadDefineExpression(&framework.fallback.env, object, allocator) catch {};
+                        }
                     }
                 }
 
                 if (defines.expr.asProperty("server")) |server| {
                     if (server.expr.data == .e_object) {
                         const object = server.expr.data.e_object;
-                        framework.server_env = options.Env.init(
+                        framework.server.env = options.Env.init(
                             allocator,
                         );
 
-                        loadDefineExpression(&framework.server_env, object, allocator) catch {};
+                        loadDefineExpression(&framework.server.env, object, allocator) catch {};
                     }
                 }
             }
@@ -197,12 +223,13 @@ pub const PackageJSON = struct {
         if (json.asProperty("server")) |server| {
             if (server.expr.asString(allocator)) |str| {
                 if (str.len > 0) {
-                    framework.server = str;
+                    framework.server.path = str;
+                    framework.server.kind = .server;
                 }
             }
         }
 
-        return framework.client.len > 0;
+        return framework.client.isEnabled() or framework.server.isEnabled() or framework.fallback.isEnabled();
     }
 
     pub fn loadFrameworkWithPreference(

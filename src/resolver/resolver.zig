@@ -502,17 +502,25 @@ pub fn NewResolver(cache_files: bool) type {
             pkg.loadFrameworkWithPreference(pair, json, r.allocator, load_defines, preference);
             const dir = pkg.source.path.name.dirWithTrailingSlash();
             var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-            if (pair.framework.client.len > 0) {
-                var parts = [_]string{ dir, pair.framework.client };
+
+            if (pair.framework.client.isEnabled()) {
+                var parts = [_]string{ dir, pair.framework.client.path };
                 const abs = r.fs.abs(&parts);
-                pair.framework.client = try r.allocator.dupe(u8, try std.os.realpath(abs, &buf));
+                pair.framework.client.path = try r.allocator.dupe(u8, try std.os.realpath(abs, &buf));
                 pair.framework.resolved = true;
             }
 
-            if (pair.framework.server.len > 0) {
-                var parts = [_]string{ dir, pair.framework.server };
+            if (pair.framework.server.isEnabled()) {
+                var parts = [_]string{ dir, pair.framework.server.path };
                 const abs = r.fs.abs(&parts);
-                pair.framework.server = try r.allocator.dupe(u8, try std.os.realpath(abs, &buf));
+                pair.framework.server.path = try r.allocator.dupe(u8, try std.os.realpath(abs, &buf));
+                pair.framework.resolved = true;
+            }
+
+            if (pair.framework.fallback.isEnabled()) {
+                var parts = [_]string{ dir, pair.framework.fallback.path };
+                const abs = r.fs.abs(&parts);
+                pair.framework.fallback.path = try r.allocator.dupe(u8, try std.os.realpath(abs, &buf));
                 pair.framework.resolved = true;
             }
 

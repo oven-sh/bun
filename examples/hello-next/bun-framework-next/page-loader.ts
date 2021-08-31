@@ -2,7 +2,7 @@ import NextPageLoader from "next/dist/client/page-loader";
 import getAssetPathFromRoute from "next/dist/shared/lib/router/utils/get-asset-path-from-route";
 // import createRouteLoader from "./route-loader";
 
-function insertStyleSheet(url: string) {
+export function insertStyleSheet(url: string) {
   if (document.querySelector(`link[href="${url}"]`)) {
     return Promise.resolve();
   }

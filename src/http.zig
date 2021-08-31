@@ -11,6 +11,7 @@ const bundler = @import("bundler.zig");
 const logger = @import("logger.zig");
 const Fs = @import("./fs.zig");
 const Options = @import("./options.zig");
+const Fallback = @import("./runtime.zig").Fallback;
 const Css = @import("css_scanner.zig");
 const NodeModuleBundle = @import("./node_module_bundle.zig").NodeModuleBundle;
 const resolve_path = @import("./resolver/resolve_path.zig");
@@ -160,6 +161,129 @@ pub const RequestContext = struct {
         }
 
         return null;
+    }
+
+    pub fn renderFallback(
+        this: *RequestContext,
+        allocator: *std.mem.Allocator,
+        bundler_: *Bundler,
+        step: Api.FallbackStep,
+        log: *logger.Log,
+        err: anyerror,
+        exceptions: []Api.JsException,
+        comptime fmt: string,
+        args: anytype,
+    ) !void {
+        var route_index: i32 = -1;
+        const routes: []const string = if (bundler_.router != null) brk: {
+            const router = &bundler_.router.?;
+            var list = try router.getEntryPointsWithBuffer(allocator, false);
+            break :brk list.entry_points;
+        } else &([_]string{});
+        var preload: string = "";
+
+        var params: Api.StringMap = std.mem.zeroes(Api.StringMap);
+        if (fallback_entry_point_created == false) {
+            defer fallback_entry_point_created = true;
+            defer bundler_.resetStore();
+
+            // You'd think: hey we're just importing a file
+            // Do we really need to run it through the transpiler and linking and printing?
+            // The answer, however, is yes.
+            // What if you're importing a fallback that's in node_modules?
+            try fallback_entry_point.generate(bundler_.options.framework.?.fallback.path, Bundler, bundler_);
+            if (bundler_.parse(
+                default_allocator,
+                fallback_entry_point.source.path,
+                .js,
+                0,
+                null,
+                null,
+                @as(?*bundler.FallbackEntryPoint, &fallback_entry_point),
+            )) |*result| {
+                try bundler_.linker.link(fallback_entry_point.source.path, result, .absolute_url, false);
+                var buffer_writer = try js_printer.BufferWriter.init(default_allocator);
+                var writer = js_printer.BufferPrinter.init(buffer_writer);
+                _ = try bundler_.print(
+                    result.*,
+                    @TypeOf(&writer),
+                    &writer,
+                    .esm,
+                );
+                var slice = writer.ctx.buffer.toOwnedSliceLeaky();
+
+                fallback_entry_point.built_code = try default_allocator.dupe(u8, slice);
+
+                writer.ctx.buffer.deinit();
+            }
+        }
+
+        if (this.matched_route) |match| {
+            if (match.params.len > 0) {
+                var all = try allocator.alloc(string, match.params.len * 2);
+                var keys = all[0..match.params.len];
+                var values = all[match.params.len..];
+                var slice = match.params.slice();
+
+                var _keys: []Router.TinyPtr = slice.items(.key);
+                var _values: []Router.TinyPtr = slice.items(.value);
+
+                for (_keys) |key, i| {
+                    keys[i] = key.str(match.name);
+                    values[i] = _values[i].str(match.pathnameWithoutLeadingSlash());
+                }
+
+                params.keys = keys;
+                params.values = values;
+            }
+
+            for (routes) |route, i| {
+                var comparator = route;
+                if (comparator[0] == '/') comparator = comparator[1..];
+
+                if (this.bundler.router.?.config.asset_prefix_path.len > 0) {
+                    comparator = comparator[this.bundler.router.?.config.asset_prefix_path.len..];
+                }
+
+                if (strings.endsWith(match.file_path, comparator)) {
+                    route_index = @truncate(i32, @intCast(i64, i));
+                    break;
+                }
+            }
+        }
+
+        var fallback_container = try allocator.create(Api.FallbackMessageContainer);
+        defer allocator.destroy(fallback_container);
+        fallback_container.* = Api.FallbackMessageContainer{
+            .message = try std.fmt.allocPrint(allocator, fmt, args),
+            .router = if (routes.len > 0) Api.Router{ .route = route_index, .params = params, .routes = routes } else null,
+            .reason = step,
+            .problems = Api.Problems{
+                .code = @truncate(u16, @errorToInt(err)),
+                .name = @errorName(err),
+                .exceptions = exceptions,
+                .build = try log.toAPI(allocator),
+            },
+        };
+
+        defer this.done();
+        try this.writeStatus(500);
+
+        this.appendHeader("Content-Type", MimeType.html.value);
+        var bb = std.ArrayList(u8).init(allocator);
+        defer bb.deinit();
+        var bb_writer = bb.writer();
+
+        try Fallback.render(
+            allocator,
+            fallback_container,
+            preload,
+            fallback_entry_point.built_code,
+            @TypeOf(bb_writer),
+            bb_writer,
+        );
+        try this.prepareToSendBody(bb.items.len, false);
+        try this.writeBodyBuf(bb.items);
     }
 
     fn matchPublicFolder(this: *RequestContext) ?bundler.ServeResult {
@@ -703,10 +827,134 @@ pub const RequestContext = struct {
             args: Api.TransformOptions,
             framework: Options.Framework,
             existing_bundle: ?*NodeModuleBundle,
-            log: ?*logger.Log = null,
+            log: *logger.Log = undefined,
             watcher: *Watcher,
             env_loader: *DotEnv.Loader,
             origin: ZigURL,
+            client_bundler: Bundler,
+
+            pub fn handleJSError(
+                this: *HandlerThread,
+                comptime step: Api.FallbackStep,
+                err: anyerror,
+            ) !void {
+                return try this.handleJSErrorFmt(
+                    step,
+                    err,
+
+                    "<r>JavaScript VM failed to start due to <red>{s}<r>.",
+                    .{
+                        @errorName(err),
+                    },
+                );
+            }
+
+            pub fn handleJSErrorFmt(this: *HandlerThread, comptime step: Api.FallbackStep, err: anyerror, comptime fmt: string, args: anytype) !void {
+                var arena = std.heap.ArenaAllocator.init(default_allocator);
+                var allocator = &arena.allocator;
+                defer arena.deinit();
+
+                defer this.log.msgs.clearRetainingCapacity();
+
+                if (this.log.msgs.items.len > 0) {
+                    for (this.log.msgs.items) |msg| {
+                        msg.writeFormat(Output.errorWriter()) catch continue;
+                    }
+                }
+
+                Output.prettyErrorln(fmt, args);
+                Output.flush();
+
+                while (channel.tryReadItem() catch null) |item| {
+                    item.ctx.renderFallback(
+                        allocator,
+                        &this.client_bundler,
+                        step,
+                        this.log,
+                        err,
+                        &[_]Api.JsException{},
+                        comptime Output.prettyFmt(fmt, false),
+                        args,
+                    ) catch {};
+                }
+            }
+
+            pub fn handleRuntimeJSError(this: *HandlerThread, js_value: JSValue, comptime step: Api.FallbackStep, comptime fmt: string, args: anytype) !void {
+                var arena = std.heap.ArenaAllocator.init(default_allocator);
+                var allocator = &arena.allocator;
+                defer arena.deinit();
+                defer this.log.msgs.clearRetainingCapacity();
+
+                var exception_list: std.ArrayList(Api.JsException) = std.ArrayList(Api.JsException).init(allocator);
+                defer exception_list.deinit();
+
+                if (!js_value.isUndefinedOrNull()) {
+                    javascript_vm.?.defaultErrorHandler(
+                        js_value,
+                        &exception_list,
+                    );
+                } else {
+                    if (this.log.msgs.items.len > 0) {
+                        for (this.log.msgs.items) |msg| {
+                            msg.writeFormat(Output.errorWriter()) catch continue;
+                        }
+                    }
+
+                    Output.flush();
+                }
+
+                while (channel.tryReadItem() catch null) |item| {
+                    item.ctx.renderFallback(
+                        allocator,
+                        &this.client_bundler,
+                        step,
+                        this.log,
+                        error.JSError,
+                        exception_list.items,
+                        comptime Output.prettyFmt(fmt, false),
+                        args,
+                    ) catch {};
+                }
+            }
+
+            pub fn handleFetchEventError(this: *HandlerThread, err: anyerror, js_value: JSValue, ctx: *RequestContext) !void {
+                var arena = std.heap.ArenaAllocator.init(default_allocator);
+                var allocator = &arena.allocator;
+                defer arena.deinit();
+
+                defer this.log.msgs.clearRetainingCapacity();
+
+                var exception_list: std.ArrayList(Api.JsException) = std.ArrayList(Api.JsException).init(allocator);
+                defer exception_list.deinit();
+                var did_log_messages = false;
+                if (!js_value.isUndefinedOrNull()) {
+                    var start_count = this.log.msgs.items.len;
+                    javascript_vm.?.defaultErrorHandler(
+                        js_value,
+                        &exception_list,
+                    );
+                    did_log_messages = start_count != this.log.msgs.items.len and exception_list.items.len == 0;
+                } else {
+                    if (this.log.msgs.items.len > 0) {
+                        for (this.log.msgs.items) |msg| {
+                            msg.writeFormat(Output.errorWriter()) catch continue;
+                        }
+                    }
+
+                    Output.flush();
+                }
+
+                ctx.renderFallback(
+                    allocator,
+                    &this.client_bundler,
+                    Api.FallbackStep.fetch_event_handler,
+                    this.log,
+                    if (did_log_messages) error.BuildTimeError else err,
+                    exception_list.items,
+                    "",
+                    .{},
+                ) catch {};
+            }
         };
 
         pub const Channel = sync.Channel(*JavaScriptHandler, .{ .Static = 100 });
@@ -714,15 +962,14 @@ pub const RequestContext = struct {
         var has_loaded_channel = false;
         pub var javascript_disabled = false;
 
-        pub fn spawnThread(handler: HandlerThread) !void {
+        pub fn spawnThread(handler: *HandlerThread) !void {
             var thread = try std.Thread.spawn(.{}, spawn, .{handler});
             thread.setName("WebSocket") catch {};
             thread.detach();
         }
 
-        pub fn spawn(handler: HandlerThread) void {
-            var _handler = handler;
-            _spawn(&_handler) catch {};
+        pub fn spawn(handler: *HandlerThread) void {
+            _spawn(handler) catch {};
         }
 
         pub fn _spawn(handler: *HandlerThread) !void {
@@ -750,62 +997,49 @@ pub const RequestContext = struct {
                 handler.log,
                 handler.env_loader,
             ) catch |err| {
-                Output.prettyErrorln(
-                    "JavaScript VM failed to start: <r><red>{s}<r>",
-                    .{@errorName(err)},
-                );
-                Output.flush();
+                handler.handleJSError(.create_vm, err) catch {};
                 return;
             };
-
+            vm.bundler.log = handler.log;
             std.debug.assert(JavaScript.VirtualMachine.vm_loaded);
             javascript_vm = vm;
             vm.bundler.options.origin = handler.origin;
-            const boot = vm.bundler.options.framework.?.server;
+            const boot = vm.bundler.options.framework.?.server.path;
             std.debug.assert(boot.len > 0);
             errdefer vm.deinit();
             vm.watcher = handler.watcher;
             {
                 defer vm.flush();
-                vm.bundler.configureRouter(false) catch {};
+                vm.bundler.configureRouter(false) catch |err| {
+                    handler.handleJSError(.configure_router, err) catch {};
+                    return;
+                };
                 vm.bundler.configureDefines() catch |err| {
-                    if (vm.log.msgs.items.len > 0) {
-                        for (vm.log.msgs.items) |msg| {
-                            msg.writeFormat(Output.errorWriter()) catch continue;
-                        }
-                    }
-
-                    Output.prettyErrorln(
-                        "<r>JavaScript VM failed to start due to <red>{s}<r>.",
-                        .{
-                            @errorName(err),
-                        },
-                    );
-
-                    Output.flush();
-
-                    if (channel.tryReadItem() catch null) |item| {
-                        item.ctx.sendInternalError(error.JSFailedToStart) catch {};
-                    }
+                    handler.handleJSError(.configure_defines, err) catch {};
                     return;
                 };
 
                 var entry_point = boot;
                 if (!std.fs.path.isAbsolute(entry_point)) {
-                    const resolved_entry_point = try vm.bundler.resolver.resolve(
+                    const resolved_entry_point = vm.bundler.resolver.resolve(
                         std.fs.path.dirname(boot) orelse vm.bundler.fs.top_level_dir,
                         vm.bundler.normalizeEntryPointPath(boot),
                         .entry_point,
-                    );
+                    ) catch |err| {
+                        try handler.handleJSError(
+                            .resolve_entry_point,
+                            err,
+                        );
+                        return;
+                    };
                     entry_point = (resolved_entry_point.pathConst() orelse {
-                        Output.prettyErrorln(
+                        handler.handleJSErrorFmt(
+                            .resolve_entry_point,
+                            error.EntryPointDisabled,
                             "<r>JavaScript VM failed to start due to disabled entry point: <r><b>\"{s}\"",
                             .{resolved_entry_point.path_pair.primary.text},
-                        );
+                        ) catch {};
 
-                        if (channel.tryReadItem() catch null) |item| {
-                            item.ctx.sendInternalError(error.JSFailedToStart) catch {};
-                        }
                         return;
                     }).text;
                 }
@@ -813,42 +1047,38 @@ pub const RequestContext = struct {
                 var load_result = vm.loadEntryPoint(
                     entry_point,
                 ) catch |err| {
-                    Output.prettyErrorln(
+                    handler.handleJSErrorFmt(
+                        .load_entry_point,
+                        err,
                         "<r>JavaScript VM failed to start.\n<red>{s}:<r> while loading <r><b>\"{s}\"",
                         .{ @errorName(err), entry_point },
-                    );
+                    ) catch {};
 
-                    if (channel.tryReadItem() catch null) |item| {
-                        item.ctx.sendInternalError(error.JSFailedToStart) catch {};
-                        item.ctx.arena.deinit();
-                    }
                     return;
                 };
 
                 switch (load_result.status(vm.global.vm())) {
                     JSPromise.Status.Fulfilled => {},
                     else => {
-                        Output.prettyErrorln(
-                            "JavaScript VM failed to start",
-                            .{},
-                        );
                         var result = load_result.result(vm.global.vm());
 
-                        vm.defaultErrorHandler(result);
-
-                        if (channel.tryReadItem() catch null) |item| {
-                            item.ctx.sendInternalError(error.JSFailedToStart) catch {};
-                            item.ctx.arena.deinit();
-                        }
+                        handler.handleRuntimeJSError(
+                            result,
+                            .eval_entry_point,
+                            "<r>JavaScript VM failed to start.\nwhile loading <r><b>\"{s}\"",
+                            .{entry_point},
+                        ) catch {};
                         return;
                     },
                 }
 
                 if (vm.event_listeners.count() == 0) {
-                    Output.prettyErrorln("<r><red>error<r>: Framework didn't run <b><cyan>addEventListener(\"fetch\", callback)<r>, which means it can't accept HTTP requests.\nShutting down JS.", .{});
-                    if (channel.tryReadItem() catch null) |item| {
-                        item.ctx.sendInternalError(error.JSFailedToStart) catch {};
-                    }
+                    handler.handleJSErrorFmt(
+                        .eval_entry_point,
+                        error.MissingFetchHandler,
+                        "<r><red>error<r>: Framework didn't run <b><cyan>addEventListener(\"fetch\", callback)<r>, which means it can't accept HTTP requests.\nShutting down JS.",
+                        .{},
+                    ) catch {};
                     return;
                 }
             }
@@ -858,10 +1088,10 @@ pub const RequestContext = struct {
             JavaScript.Bun.flushCSSImports();
             vm.flush();
 
-            try runLoop(vm);
+            try runLoop(vm, handler);
         }
 
-        pub fn runLoop(vm: *JavaScript.VirtualMachine) !void {
+        pub fn runLoop(vm: *JavaScript.VirtualMachine, thread: *HandlerThread) !void {
             var module_map = ZigGlobalObject.getModuleRegistryMap(vm.global);
             JavaScript.VirtualMachine.vm.has_loaded = true;
             while (true) {
@@ -875,7 +1105,13 @@ pub const RequestContext = struct {
 
                 var handler: *JavaScriptHandler = try channel.readItem();
                 JavaScript.VirtualMachine.vm.preflush();
-                try JavaScript.EventListenerMixin.emitFetchEvent(vm, &handler.ctx);
+                JavaScript.EventListenerMixin.emitFetchEvent(
+                    vm,
+                    &handler.ctx,
+                    HandlerThread,
+                    thread,
+                    HandlerThread.handleFetchEventError,
+                ) catch |err| {};
             }
         }
 
@@ -899,36 +1135,43 @@ pub const RequestContext = struct {
             std.mem.copy(u8, &clone.ctx.match_file_path_buf, filepath_buf[0..ctx.matched_route.?.file_path.len]);
 
             if (!has_loaded_channel) {
+                var handler_thread = try server.allocator.create(HandlerThread);
+
                 has_loaded_channel = true;
                 channel = Channel.init();
                 var transform_options = server.transform_options;
                 if (server.transform_options.node_modules_bundle_path_server) |bundle_path| {
                     transform_options.node_modules_bundle_path = bundle_path;
                     transform_options.node_modules_bundle_path_server = null;
-                    try JavaScriptHandler.spawnThread(
-                        HandlerThread{
-                            .args = transform_options,
-                            .framework = server.bundler.options.framework.?,
-                            .existing_bundle = null,
-                            .log = &server.log,
-                            .watcher = server.watcher,
-                            .env_loader = server.bundler.env,
-                            .origin = server.bundler.options.origin,
-                        },
-                    );
+                    handler_thread.* = HandlerThread{
+                        .args = transform_options,
+                        .framework = server.bundler.options.framework.?,
+                        .existing_bundle = null,
+                        .log = undefined,
+                        .watcher = server.watcher,
+                        .env_loader = server.bundler.env,
+                        .origin = server.bundler.options.origin,
+                        .client_bundler = server.bundler,
+                    };
                 } else {
-                    try JavaScriptHandler.spawnThread(
-                        HandlerThread{
-                            .args = server.transform_options,
-                            .framework = server.bundler.options.framework.?,
-                            .existing_bundle = server.bundler.options.node_modules_bundle,
-                            .log = &server.log,
-                            .watcher = server.watcher,
-                            .env_loader = server.bundler.env,
-                            .origin = server.bundler.options.origin,
-                        },
-                    );
+                    handler_thread.* = HandlerThread{
+                        .args = server.transform_options,
+                        .framework = server.bundler.options.framework.?,
+                        .existing_bundle = server.bundler.options.node_modules_bundle,
+                        .watcher = server.watcher,
+                        .env_loader = server.bundler.env,
+                        .log = undefined,
+                        .origin = server.bundler.options.origin,
+                        .client_bundler = server.bundler,
+                    };
                 }
+
+                handler_thread.log = try server.allocator.create(logger.Log);
+                handler_thread.log.* = logger.Log.init(server.allocator);
+
+                try server.bundler.clone(server.allocator, &handler_thread.client_bundler);
+
+                try JavaScriptHandler.spawnThread(handler_thread);
             }
 
             defer ctx.controlled = true;
@@ -1335,6 +1578,8 @@ pub const RequestContext = struct {
     }
 
     threadlocal var client_entry_point: bundler.ClientEntryPoint = undefined;
+    threadlocal var fallback_entry_point: bundler.FallbackEntryPoint = undefined;
+    threadlocal var fallback_entry_point_created: bool = false;
 
     pub fn renderServeResult(ctx: *RequestContext, result: bundler.ServeResult) !void {
         if (ctx.keep_alive) {
@@ -1465,10 +1710,10 @@ pub const RequestContext = struct {
                 var client_entry_point_: ?*bundler.ClientEntryPoint = null;
                 if (resolve_result.import_kind == .entry_point and loader.supportsClientEntryPoint()) {
                     if (ctx.bundler.options.framework) |*framework| {
-                        if (framework.client.len > 0) {
+                        if (framework.client.isEnabled()) {
                             client_entry_point = bundler.ClientEntryPoint{};
 
-                            try client_entry_point.generate(Bundler, ctx.bundler, path.name, framework.client);
+                            try client_entry_point.generate(Bundler, ctx.bundler, path.name, framework.client.path);
                             client_entry_point_ = &client_entry_point;
                         }
                     }
@@ -1633,7 +1878,7 @@ pub const RequestContext = struct {
 
     fn handleBlobURL(ctx: *RequestContext, server: *Server) !void {
         var id = ctx.url.path["blob:".len..];
-        // This lets us print
+        // This makes it Just Work if you pass a line/column number
         if (strings.indexOfChar(id, ':')) |colon| {
             id = id[0..colon];
         }
@@ -1651,19 +1896,46 @@ pub const RequestContext = struct {
         try ctx.writeBodyBuf(blob.ptr[0..blob.len]);
     }
 
+    fn handleBunURL(ctx: *RequestContext, server: *Server) !void {
+        const path = ctx.url.path["bun:".len..];
+
+        if (strings.eqlComptime(path, "_api.hmr")) {
+            try ctx.handleWebsocket(server);
+            return;
+        }
+
+        if (strings.eqlComptime(path, "fallback")) {
+            const resolved = try ctx.bundler.resolver.resolve(ctx.bundler.fs.top_level_dir, ctx.bundler.options.framework.?.fallback.path, .stmt);
+            const resolved_path = resolved.pathConst() orelse return try ctx.sendNotFound();
+            const mime_type_ext = ctx.bundler.options.out_extensions.get(resolved_path.name.ext) orelse resolved_path.name.ext;
+            const loader = ctx.bundler.options.loader(resolved_path.name.ext);
+            try ctx.renderServeResult(bundler.ServeResult{
+                .file = Options.OutputFile.initPending(loader, resolved),
+                .mime_type = MimeType.byLoader(
+                    loader,
+                    mime_type_ext[1..],
+                ),
+            });
+            return;
+        }
+
+        try ctx.sendNotFound();
+        return;
+    }
+
     pub fn handleReservedRoutes(ctx: *RequestContext, server: *Server) !bool {
         if (strings.eqlComptime(ctx.url.extname, "bun") and ctx.bundler.options.node_modules_bundle != null) {
             try ctx.sendJSB();
             return true;
         }
 
-        if (strings.eqlComptime(ctx.url.path, "_api.hmr")) {
-            try ctx.handleWebsocket(server);
+        if (ctx.url.path.len > "blob:".len and strings.eqlComptime(ctx.url.path[0.."blob:".len], "blob:")) {
+            try ctx.handleBlobURL(server);
             return true;
         }
 
-        if (ctx.url.path.len > "blob:".len and strings.eqlComptime(ctx.url.path[0.."blob:".len], "blob:")) {
-            try ctx.handleBlobURL(server);
+        if (ctx.url.path.len > "bun:".len and strings.eqlComptime(ctx.url.path[0.."bun:".len], "bun:")) {
+            try ctx.handleBunURL(server);
             return true;
         }
 

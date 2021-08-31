@@ -105,7 +105,7 @@ pub const BunCommand = struct {
         };
         var loaded_framework: ?Api.LoadedFramework = brk: {
             if (this_bundler.options.framework) |*conf| {
-                break :brk conf.toAPI(allocator, this_bundler.fs.top_level_dir, true);
+                break :brk try conf.toAPI(allocator, this_bundler.fs.top_level_dir);
             }
             break :brk null;
         };
@@ -114,7 +114,7 @@ pub const BunCommand = struct {
         var server_bundler_generator_thread: ?std.Thread = null;
         var generated_server = false;
         if (this_bundler.options.framework) |*framework| {
-            if (framework.toAPI(allocator, this_bundler.fs.top_level_dir, false)) |_server_conf| {
+            if (framework.toAPI(allocator, this_bundler.fs.top_level_dir) catch null) |_server_conf| {
                 if (FeatureFlags.parallel_bun) {
                     wait_group.add();
                     server_bundler_generator_thread = try std.Thread.spawn(

@@ -2,11 +2,110 @@ const options = @import("./options.zig");
 usingnamespace @import("ast/base.zig");
 usingnamespace @import("global.zig");
 const std = @import("std");
-pub const ProdSourceContent = @embedFile("./runtime.out.js");
 const resolve_path = @import("./resolver/resolve_path.zig");
 const Fs = @import("./fs.zig");
+const Schema = @import("./api/schema.zig");
+
+const Api = Schema.Api;
+
+pub const Fallback = struct {
+    pub const ProdSourceContent = @embedFile("./fallback.out.js");
+    pub const HTMLTemplate = @embedFile("./fallback.html");
+
+    const Base64FallbackMessage = struct {
+        msg: *const Api.FallbackMessageContainer,
+        allocator: *std.mem.Allocator,
+        pub fn format(this: Base64FallbackMessage, comptime fmt: []const u8, opts_: std.fmt.FormatOptions, writer: anytype) !void {
+            var bb = std.ArrayList(u8).init(this.allocator);
+            defer bb.deinit();
+            var bb_writer = bb.writer();
+            const Encoder = Schema.Writer(@TypeOf(bb_writer));
+            var encoder = Encoder.init(bb_writer);
+            this.msg.encode(&encoder) catch {};
+
+            Base64Encoder.encode(bb.items, @TypeOf(writer), writer) catch {};
+        }
+
+        pub const Base64Encoder = struct {
+            const alphabet_chars = std.base64.standard_alphabet_chars;
+
+            pub fn encode(source: []const u8, comptime Writer: type, writer: Writer) !void {
+                var acc: u12 = 0;
+                var acc_len: u4 = 0;
+                for (source) |v| {
+                    acc = (acc << 8) + v;
+                    acc_len += 8;
+                    while (acc_len >= 6) {
+                        acc_len -= 6;
+                        try writer.writeByte(alphabet_chars[@truncate(u6, (acc >> acc_len))]);
+                    }
+                }
+                if (acc_len > 0) {
+                    try writer.writeByte(alphabet_chars[@truncate(u6, (acc << 6 - acc_len))]);
+                }
+            }
+        };
+    };
+
+    pub inline fn scriptContent() string {
+        if (comptime isDebug) {
+            var dirpath = std.fs.path.dirname(@src().file).?;
+            var env = std.process.getEnvMap(default_allocator) catch unreachable;
+
+            const dir = std.mem.replaceOwned(
+                u8,
+                default_allocator,
+                dirpath,
+                "jarred",
+                env.get("USER").?,
+            ) catch unreachable;
+            var runtime_path = std.fs.path.join(default_allocator, &[_]string{ dir, "fallback.out.js" }) catch unreachable;
+            const file = std.fs.openFileAbsolute(runtime_path, .{}) catch unreachable;
+            defer file.close();
+            return file.readToEndAlloc(default_allocator, (file.stat() catch unreachable).size) catch unreachable;
+        } else {
+            return ProdSourceContent;
+        }
+    }
+    pub const version_hash = @embedFile("./fallback.version");
+    var version_hash_int: u32 = 0;
+    pub fn versionHash() u32 {
+        if (version_hash_int == 0) {
+            version_hash_int = @truncate(u32, std.fmt.parseInt(u64, version(), 16) catch unreachable);
+        }
+        return version_hash_int;
+    }
+
+    pub fn version() string {
+        return version_hash;
+    }
+
+    pub fn render(
+        allocator: *std.mem.Allocator,
+        msg: *const Api.FallbackMessageContainer,
+        preload: string,
+        entry_point: string,
+        comptime WriterType: type,
+        writer: WriterType,
+    ) !void {
+        const PrintArgs = struct {
+            blob: Base64FallbackMessage,
+            preload: string,
+            fallback: string,
+            entry_point: string,
+        };
+        try writer.print(HTMLTemplate, PrintArgs{
+            .blob = Base64FallbackMessage{ .msg = msg, .allocator = allocator },
+            .preload = preload,
+            .fallback = scriptContent(),
+            .entry_point = entry_point,
+        });
+    }
+};
 
 pub const Runtime = struct {
+    pub const ProdSourceContent = @embedFile("./runtime.out.js");
+
     pub fn sourceContent() string {
         if (comptime isDebug) {
             var dirpath = std.fs.path.dirname(@src().file).?;
@@ -36,15 +135,15 @@ pub const Runtime = struct {
         return version_hash_int;
     }
 
+    pub fn version() string {
+        return version_hash;
+    }
+
     const bytecodeCacheFilename = std.fmt.comptimePrint("__runtime.{s}", .{version_hash});
     var bytecodeCacheFetcher = Fs.BytecodeCacheFetcher{};
 
     pub fn byteCodeCacheFile(fs: *Fs.FileSystem.RealFS) ?StoredFileDescriptorType {
         return bytecodeCacheFetcher.fetch(bytecodeCacheFilename, fs);
-    }
-
-    pub fn version() string {
-        return version_hash;
     }
 
     pub const Features = struct {

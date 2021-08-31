@@ -761,8 +761,10 @@ pub const VirtualMachine = struct {
 
         return slice;
     }
+
+    // This double prints
     pub fn promiseRejectionTracker(global: *JSGlobalObject, promise: *JSPromise, rejection: JSPromiseRejectionOperation) callconv(.C) JSValue {
-        VirtualMachine.vm.defaultErrorHandler(promise.result(global.vm()));
+        // VirtualMachine.vm.defaultErrorHandler(promise.result(global.vm()), null);
         return JSValue.jsUndefined();
     }
 
@@ -854,30 +856,52 @@ pub const VirtualMachine = struct {
     // TODO:
     pub fn deinit(this: *VirtualMachine) void {}
 
-    pub fn printException(this: *VirtualMachine, exception: *Exception) void {
+    pub const ExceptionList = std.ArrayList(Api.JsException);
+
+    pub fn printException(this: *VirtualMachine, exception: *Exception, exception_list: ?*ExceptionList) void {
         if (Output.enable_ansi_colors) {
-            this.printErrorlikeObject(exception.value(), exception, true);
+            this.printErrorlikeObject(exception.value(), exception, exception_list, true);
         } else {
-            this.printErrorlikeObject(exception.value(), exception, false);
+            this.printErrorlikeObject(exception.value(), exception, exception_list, false);
         }
     }
 
-    pub fn defaultErrorHandler(this: *VirtualMachine, result: JSValue) void {
+    pub fn defaultErrorHandler(this: *VirtualMachine, result: JSValue, exception_list: ?*ExceptionList) void {
         if (result.isException(this.global.vm())) {
             var exception = @ptrCast(*Exception, result.asVoid());
 
-            this.printException(exception);
+            this.printException(exception, exception_list);
         } else if (Output.enable_ansi_colors) {
-            this.printErrorlikeObject(result, null, true);
+            this.printErrorlikeObject(result, null, exception_list, true);
         } else {
-            this.printErrorlikeObject(result, null, false);
+            this.printErrorlikeObject(result, null, exception_list, false);
         }
     }
 
     pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) !*JSInternalPromise {
         try this.entry_point.generate(@TypeOf(this.bundler), &this.bundler, Fs.PathName.init(entry_path), main_file_name);
         this.main = entry_path;
-        var promise = JSModuleLoader.loadAndEvaluateModule(this.global, ZigString.init(std.mem.span(main_file_name)));
+
+        var promise: *JSInternalPromise = undefined;
+        // We first import the node_modules bundle. This prevents any potential TDZ issues.
+        // The contents of the node_modules bundle are lazy, so hopefully this should be pretty quick.
+        if (this.node_modules != null) {
+            promise = JSModuleLoader.loadAndEvaluateModule(this.global, ZigString.init(std.mem.span(vm.bundler.linker.nodeModuleBundleImportPath())));
+
+            this.global.vm().drainMicrotasks();
+
+            while (promise.status(this.global.vm()) == JSPromise.Status.Pending) {
+                this.global.vm().drainMicrotasks();
+            }
+
+            if (promise.status(this.global.vm()) == JSPromise.Status.Rejected) {
+                return promise;
+            }
+
+            _ = promise.result(this.global.vm());
+        }
+
+        promise = JSModuleLoader.loadAndEvaluateModule(this.global, ZigString.init(std.mem.span(main_file_name)));
 
         this.global.vm().drainMicrotasks();
 
@@ -896,14 +920,14 @@ pub const VirtualMachine = struct {
     // In that case, this function becomes recursive.
     // In all other cases, we will convert it to a ZigException.
     const errors_property = ZigString.init("errors");
-    pub fn printErrorlikeObject(this: *VirtualMachine, value: JSValue, exception: ?*Exception, comptime allow_ansi_color: bool) void {
+    pub fn printErrorlikeObject(this: *VirtualMachine, value: JSValue, exception: ?*Exception, exception_list: ?*ExceptionList, comptime allow_ansi_color: bool) void {
         var was_internal = false;
 
         defer {
             if (was_internal) {
                 if (exception) |exception_| {
                     var holder = ZigException.Holder.init();
-                    var zig_exception = holder.zigException();
+                    var zig_exception: *ZigException = holder.zigException();
                     exception_.getStackTrace(&zig_exception.stack);
                     if (zig_exception.stack.frames_len > 0) {
                         var buffered_writer = std.io.bufferedWriter(Output.errorWriter());
@@ -917,12 +941,17 @@ pub const VirtualMachine = struct {
 
                         buffered_writer.flush() catch {};
                     }
+
+                    if (exception_list) |list| {
+                        zig_exception.addToErrorList(list) catch {};
+                    }
                 }
             }
         }
 
         if (value.isAggregateError(this.global)) {
             const AggregateErrorIterator = struct {
+                pub var current_exception_list: ?*ExceptionList = null;
                 pub fn iteratorWithColor(_vm: [*c]VM, globalObject: [*c]JSGlobalObject, nextValue: JSValue) callconv(.C) void {
                     iterator(_vm, globalObject, nextValue, true);
                 }
@@ -930,9 +959,11 @@ pub const VirtualMachine = struct {
                     iterator(_vm, globalObject, nextValue, false);
                 }
                 inline fn iterator(_vm: [*c]VM, globalObject: [*c]JSGlobalObject, nextValue: JSValue, comptime color: bool) void {
-                    VirtualMachine.vm.printErrorlikeObject(nextValue, null, color);
+                    VirtualMachine.vm.printErrorlikeObject(nextValue, null, current_exception_list, color);
                 }
             };
+            AggregateErrorIterator.current_exception_list = exception_list;
+            defer AggregateErrorIterator.current_exception_list = null;
             if (comptime allow_ansi_color) {
                 value.getErrorsProperty(this.global).forEach(this.global, AggregateErrorIterator.iteratorWithColor);
             } else {
@@ -943,34 +974,51 @@ pub const VirtualMachine = struct {
 
         if (js.JSValueIsObject(vm.global.ref(), value.asRef())) {
             if (js.JSObjectGetPrivate(value.asRef())) |priv| {
-                was_internal = this.printErrorFromMaybePrivateData(priv, allow_ansi_color);
+                was_internal = this.printErrorFromMaybePrivateData(priv, exception_list, allow_ansi_color);
                 return;
             }
         }
 
-        was_internal = this.printErrorFromMaybePrivateData(value.asRef(), allow_ansi_color);
+        was_internal = this.printErrorFromMaybePrivateData(value.asRef(), exception_list, allow_ansi_color);
     }
 
-    pub fn printErrorFromMaybePrivateData(this: *VirtualMachine, value: ?*c_void, comptime allow_ansi_color: bool) bool {
+    pub fn printErrorFromMaybePrivateData(this: *VirtualMachine, value: ?*c_void, exception_list: ?*ExceptionList, comptime allow_ansi_color: bool) bool {
         const private_data_ptr = JSPrivateDataPtr.from(value);
 
         switch (private_data_ptr.tag()) {
             .BuildError => {
                 defer Output.flush();
-                const build_error = private_data_ptr.as(BuildError);
-                var writer = Output.errorWriter();
-                build_error.msg.formatWriter(@TypeOf(writer), writer, allow_ansi_color) catch {};
+                var build_error = private_data_ptr.as(BuildError);
+                if (!build_error.logged) {
+                    var writer = Output.errorWriter();
+                    build_error.msg.formatWriter(@TypeOf(writer), writer, allow_ansi_color) catch {};
+                    build_error.logged = true;
+                }
+                if (exception_list != null) {
+                    this.log.addMsg(
+                        build_error.msg,
+                    ) catch {};
+                }
                 return true;
             },
             .ResolveError => {
                 defer Output.flush();
-                const resolve_error = private_data_ptr.as(ResolveError);
-                var writer = Output.errorWriter();
-                resolve_error.msg.formatWriter(@TypeOf(writer), writer, allow_ansi_color) catch {};
+                var resolve_error = private_data_ptr.as(ResolveError);
+                if (!resolve_error.logged) {
+                    var writer = Output.errorWriter();
+                    resolve_error.msg.formatWriter(@TypeOf(writer), writer, allow_ansi_color) catch {};
+                    resolve_error.logged = true;
+                }
+
+                if (exception_list != null) {
+                    this.log.addMsg(
+                        resolve_error.msg,
+                    ) catch {};
+                }
                 return true;
             },
             else => {
-                this.printErrorInstance(@intToEnum(JSValue, @intCast(i64, (@ptrToInt(value)))), allow_ansi_color) catch |err| {
+                this.printErrorInstance(@intToEnum(JSValue, @intCast(i64, (@ptrToInt(value)))), exception_list, allow_ansi_color) catch |err| {
                     if (comptime isDebug) {
                         // yo dawg
                         Output.printErrorln("Error while printing Error-like object: {s}", .{@errorName(err)});
@@ -1053,10 +1101,13 @@ pub const VirtualMachine = struct {
         }
     }
 
-    pub fn printErrorInstance(this: *VirtualMachine, error_instance: JSValue, comptime allow_ansi_color: bool) !void {
+    pub fn printErrorInstance(this: *VirtualMachine, error_instance: JSValue, exception_list: ?*ExceptionList, comptime allow_ansi_color: bool) !void {
         var exception_holder = ZigException.Holder.init();
         var exception = exception_holder.zigException();
         error_instance.toZigException(vm.global, exception);
+        if (exception_list) |list| {
+            try exception.addToErrorList(list);
+        }
 
         var stderr: std.fs.File = Output.errorStream();
         var buffered = std.io.bufferedWriter(stderr.writer());
@@ -1223,40 +1274,36 @@ pub const EventListenerMixin = struct {
         }
     };
 
-    pub fn emitFetchEventError(
-        request: *http.RequestContext,
-        comptime fmt: string,
-        args: anytype,
-    ) void {
-        Output.prettyErrorln(fmt, args);
-        request.sendInternalError(error.FetchEventError) catch {};
-    }
-
     pub fn emitFetchEvent(
         vm: *VirtualMachine,
         request_context: *http.RequestContext,
+        comptime CtxType: type,
+        ctx: *CtxType,
+        comptime onError: fn (ctx: *CtxType, err: anyerror, value: JSValue, request_ctx: *http.RequestContext) anyerror!void,
     ) !void {
-        var listeners = vm.event_listeners.get(EventType.fetch) orelse return emitFetchEventError(
-            request_context,
-            "Missing \"fetch\" handler. Did you run \"addEventListener(\"fetch\", (event) => {{}})\"?",
-            .{},
-        );
-        if (listeners.items.len == 0) return emitFetchEventError(
-            request_context,
-            "Missing \"fetch\" handler. Did you run \"addEventListener(\"fetch\", (event) => {{}})\"?",
-            .{},
-        );
+        var listeners = vm.event_listeners.get(EventType.fetch) orelse (return onError(ctx, error.NoListeners, JSValue.jsUndefined(), request_context) catch {});
+        if (listeners.items.len == 0) return onError(ctx, error.NoListeners, JSValue.jsUndefined(), request_context) catch {};
+        const FetchEventRejectionHandler = struct {
+            pub fn onRejection(_ctx: *c_void, err: anyerror, fetch_event: *FetchEvent, value: JSValue) void {
+                onError(
+                    @intToPtr(*CtxType, @ptrToInt(_ctx)),
+                    err,
+                    value,
+                    fetch_event.request_context,
+                ) catch {};
+            }
+        };
 
         // Rely on JS finalizer
         var fetch_event = try vm.allocator.create(FetchEvent);
         fetch_event.* = FetchEvent{
             .request_context = request_context,
             .request = Request{ .request_context = request_context },
+            .onPromiseRejectionCtx = @as(*c_void, ctx),
+            .onPromiseRejectionHandler = FetchEventRejectionHandler.onRejection,
         };
 
         var fetch_args: [1]js.JSObjectRef = undefined;
-        var exception: ?*Exception = null;
-        const failed_str = "Failed";
         for (listeners.items) |listener_ref| {
             var listener = @intToEnum(JSValue, @intCast(i64, @ptrToInt(listener_ref)));
 
@@ -1266,19 +1313,11 @@ pub const EventListenerMixin = struct {
             var promise = JSPromise.resolvedPromise(vm.global, result);
             vm.global.vm().drainMicrotasks();
 
+            if (fetch_event.rejected) return;
+
             if (promise.status(vm.global.vm()) == .Rejected) {
-                if (exception == null) {
-                    var res = promise.result(vm.global.vm());
-                    if (res.isException(vm.global.vm())) {
-                        exception = @ptrCast(*Exception, res.asVoid());
-                    } else {
-                        vm.defaultErrorHandler(res);
-                        if (!request_context.has_called_done) {
-                            request_context.sendInternalError(error.JavaScriptErrorNeedARealErrorPageSorryAboutThisSeeTheTerminal) catch {};
-                        }
-                        return;
-                    }
-                }
+                onError(ctx, error.JSError, promise.result(vm.global.vm()), request_context) catch {};
+                return;
             } else {
                 _ = promise.result(vm.global.vm());
             }
@@ -1290,21 +1329,9 @@ pub const EventListenerMixin = struct {
             }
         }
 
-        if (exception) |except| {
-            vm.printException(except);
-
-            if (!request_context.has_called_done) {
-                request_context.sendInternalError(error.JavaScriptErrorNeedARealErrorPageSorryAboutThisSeeTheTerminal) catch {};
-            }
-            return;
-        }
-
         if (!request_context.has_called_done) {
-            return emitFetchEventError(
-                request_context,
-                "\"fetch\" handler never called event.respondWith()",
-                .{},
-            );
+            onError(ctx, error.FetchHandlerRespondWithNeverCalled, JSValue.jsUndefined(), request_context) catch {};
+            return;
         }
     }
 
@@ -1368,6 +1395,7 @@ pub const ResolveError = struct {
     msg: logger.Msg,
     allocator: *std.mem.Allocator,
     referrer: ?Fs.Path = null,
+    logged: bool = false,
 
     pub fn fmt(allocator: *std.mem.Allocator, specifier: string, referrer: string, err: anyerror) !string {
         switch (err) {
@@ -1515,6 +1543,7 @@ pub const BuildError = struct {
     msg: logger.Msg,
     // resolve_result: Resolver.Result,
     allocator: *std.mem.Allocator,
+    logged: bool = false,
 
     pub const Class = NewClass(
         BuildError,

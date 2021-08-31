@@ -3656,6 +3656,8 @@ pub const Ast = struct {
         };
     }
 
+    pub const empty = Ast{ .parts = &[_]Part{}, .runtime_imports = undefined };
+
     pub fn toJSON(self: *const Ast, allocator: *std.mem.Allocator, stream: anytype) !void {
         const opts = std.json.StringifyOptions{ .whitespace = std.json.StringifyOptions.Whitespace{
             .separator = true,

@@ -20,6 +20,7 @@
     "css": "onimportcss",
     "development": {
       "client": "client.development.tsx",
+      "fallback": "fallback.development.tsx",
       "server": "server.development.tsx",
       "css": "onimportcss",
       "define": {
@@ -64,6 +65,7 @@
     "production": {
       "client": "client.production.tsx",
       "server": "server.production.tsx",
+      "fallback": "fallback.production.tsx",
       "css": "onimportcss"
     }
   },

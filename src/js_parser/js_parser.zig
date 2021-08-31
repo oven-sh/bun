@@ -10623,18 +10623,19 @@ pub fn NewParser(
                     switch (runtime) {
                         .classic => {
                             // Arguments to createElement()
-                            const args = p.allocator.alloc(Expr, 1 + children_count) catch unreachable;
+                            const args = p.allocator.alloc(Expr, 2 + children_count) catch unreachable;
                             var i: usize = 1;
+                            args[0] = tag;
                             if (e_.properties.len > 0) {
                                 if (e_.key) |key| {
                                     var props = List(G.Property).fromOwnedSlice(p.allocator, e_.properties);
                                     props.append(G.Property{ .key = Expr{ .loc = key.loc, .data = keyExprData }, .value = key }) catch unreachable;
-                                    args[0] = p.e(E.Object{ .properties = props.toOwnedSlice() }, expr.loc);
+                                    args[1] = p.e(E.Object{ .properties = props.toOwnedSlice() }, expr.loc);
                                 } else {
-                                    args[0] = p.e(E.Object{ .properties = e_.properties }, expr.loc);
+                                    args[1] = p.e(E.Object{ .properties = e_.properties }, expr.loc);
                                 }
                             } else {
-                                args[0] = p.e(E.Null{}, expr.loc);
+                                args[1] = p.e(E.Null{}, expr.loc);
                             }
 
                             for (e_.children[0..children_count]) |child| {

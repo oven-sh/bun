@@ -1009,6 +1009,10 @@ pub const FetchEvent = struct {
     request_context: *http.RequestContext,
     request: Request,
 
+    onPromiseRejectionCtx: *c_void = undefined,
+    onPromiseRejectionHandler: ?fn (ctx: *c_void, err: anyerror, fetch_event: *FetchEvent, value: JSValue) void = null,
+    rejected: bool = false,
+
     pub const Class = NewClass(
         FetchEvent,
         .{
@@ -1101,8 +1105,13 @@ pub const FetchEvent = struct {
         switch (status) {
             .Fulfilled => {},
             else => {
-                VirtualMachine.vm.defaultErrorHandler(resolved.result(VirtualMachine.vm.global.vm()));
-                this.request_context.sendInternalError(error.rejectedPromiseSeeConsole) catch {};
+                this.rejected = true;
+                this.onPromiseRejectionHandler.?(
+                    this.onPromiseRejectionCtx,
+                    error.PromiseRejection,
+                    this,
+                    resolved.result(VirtualMachine.vm.global.vm()),
+                );
                 return js.JSValueMakeUndefined(ctx);
             },
         }
@@ -1110,14 +1119,16 @@ pub const FetchEvent = struct {
         var arg = resolved.result(VirtualMachine.vm.global.vm()).asObjectRef();
 
         if (!js.JSValueIsObjectOfClass(ctx, arg, Response.Class.ref)) {
+            this.rejected = true;
             JSError(getAllocator(ctx), "event.respondWith() must be a Response or a Promise<Response>.", .{}, ctx, exception);
-            this.request_context.sendInternalError(error.respondWithWasEmpty) catch {};
+            this.onPromiseRejectionHandler.?(this.onPromiseRejectionCtx, error.RespondWithInvalidType, this, JSValue.fromRef(exception.*));
             return js.JSValueMakeUndefined(ctx);
         }
 
         var response: *Response = GetJSPrivateData(Response, arg) orelse {
+            this.rejected = true;
             JSError(getAllocator(ctx), "event.respondWith()'s Response object was invalid. This may be an internal error.", .{}, ctx, exception);
-            this.request_context.sendInternalError(error.respondWithWasInvalid) catch {};
+            this.onPromiseRejectionHandler.?(this.onPromiseRejectionCtx, error.RespondWithInvalidTypeInternal, this, JSValue.fromRef(exception.*));
             return js.JSValueMakeUndefined(ctx);
         };
 

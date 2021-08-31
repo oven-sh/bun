@@ -435,7 +435,7 @@ if (typeof window !== "undefined") {
 
       clientStartTime = performance.now();
 
-      const baseURL = new URL(location.origin + "/_api.hmr");
+      const baseURL = new URL(location.origin + "/bun:_api.hmr");
       baseURL.protocol = location.protocol === "https:" ? "wss" : "ws";
       this.socket = new WebSocket(baseURL.toString(), ["bun-hmr"]);
       this.socket.binaryType = "arraybuffer";

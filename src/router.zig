@@ -208,7 +208,7 @@ pub fn loadRoutes(
     }
 }
 
-const TinyPtr = packed struct {
+pub const TinyPtr = packed struct {
     offset: u16 = 0,
     len: u16 = 0,
 

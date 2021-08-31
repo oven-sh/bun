@@ -43,13 +43,12 @@ pub const Kind = enum(i8) {
         };
     }
 
-    pub inline fn toAPI(kind: Kind) Api.MessageKind {
+    pub inline fn toAPI(kind: Kind) Api.MessageLevel {
         return switch (kind) {
-            .err => err,
-            .warn => warn,
-            .note => note,
-            .debug => debug,
-            .verbose => verbose,
+            .err => .err,
+            .warn => .warn,
+            .note => .note,
+            else => .debug,
         };
     }
 };
@@ -91,6 +90,18 @@ pub const Location = struct {
     line_text: ?string = null,
     suggestion: ?string = null,
     offset: usize = 0,
+
+    pub fn toAPI(this: *const Location) Api.Location {
+        return Api.Location{
+            .file = this.file,
+            .namespace = this.namespace,
+            .line = this.line,
+            .column = this.column,
+            .line_text = this.line_text orelse "",
+            .suggestion = this.suggestion orelse "",
+            .offset = @truncate(u32, this.offset),
+        };
+    }
 
     // don't really know what's safe to deinit here!
     pub fn deinit(l: *Location, allocator: *std.mem.Allocator) void {}
@@ -149,6 +160,13 @@ pub const Data = struct {
         }
 
         allocator.free(text);
+    }
+
+    pub fn toAPI(this: *const Data) Api.MessageData {
+        return Api.MessageData{
+            .text = this.text,
+            .location = if (this.location != null) this.location.?.toAPI() else null,
+        };
     }
 
     pub fn writeFormat(
@@ -213,17 +231,26 @@ pub const Msg = struct {
         };
     };
 
-    pub fn toAPI(this: *const Msg, allocator: *std.mem.Allocator) Api.Message {
+    pub fn toAPI(this: *const Msg, allocator: *std.mem.Allocator) !Api.Message {
+        const notes_len = if (this.notes != null) this.notes.?.len else 0;
+        var _notes = try allocator.alloc(
+            Api.MessageData,
+            notes_len,
+        );
         var msg = Api.Message{
-            .kind = this.kind.toAPI(),
+            .level = this.kind.toAPI(),
             .data = this.data.toAPI(),
+            .notes = _notes,
+            .on = Api.MessageMeta{
+                .resolve = if (this.metadata == .resolve) this.metadata.resolve.specifier.slice(this.data.text) else "",
+                .build = this.metadata == .build,
+            },
         };
 
         if (this.notes) |notes| {
             if (notes.len > 0) {
-                msg.notes = try allocator.alloc(Api.MessageData, notes.len);
                 for (notes) |note, i| {
-                    msg.notes[i] = note.toAPI();
+                    _notes[i] = note.toAPI();
                 }
             }
         }
@@ -232,7 +259,7 @@ pub const Msg = struct {
     }
 
     pub fn toAPIFromList(comptime ListType: type, list: ListType, allocator: *std.mem.Allocator) ![]Api.Message {
-        var out_list = try allocator.alloc(Api.Msg, list.items.len);
+        var out_list = try allocator.alloc(Api.Message, list.items.len);
         for (list.items) |item, i| {
             out_list[i] = try item.toAPI(allocator);
         }
@@ -341,9 +368,16 @@ pub const Log = struct {
     level: Level = if (isDebug) Level.info else Level.warn,
 
     pub fn toAPI(this: *const Log, allocator: *std.mem.Allocator) !Api.Log {
+        var warnings: u32 = 0;
+        var errors: u32 = 0;
+        for (this.msgs.items) |msg, i| {
+            errors += @intCast(u32, @boolToInt(msg.kind == .err));
+            warnings += @intCast(u32, @boolToInt(msg.kind == .warn));
+        }
+
         return Api.Log{
-            .warnings = this.warnings,
-            .errors = this.errors,
+            .warnings = warnings,
+            .errors = errors,
             .msgs = try Msg.toAPIFromList(@TypeOf(this.msgs), this.msgs, allocator),
         };
     }
@@ -392,7 +426,12 @@ pub const Log = struct {
                 const msg = self.msgs.items[i];
                 if (msg.data.location) |location| {
                     if (location.line_text) |line_text| {
-                        other.msgs.items[j].data.location.?.line_text = try other.msgs.allocator.dupe(u8, line_text);
+                        other.msgs.items[j].data.location.?.line_text = try other.msgs.allocator.dupe(
+                            u8,
+                            // Naively truncate to 690 characters per line.
+                            // This doesn't catch where an error occurred for extremely long, minified lines.
+                            line_text[0..std.math.min(line_text.len, 690)],
+                        );
                     }
                 }
             }

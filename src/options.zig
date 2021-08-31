@@ -851,7 +851,7 @@ pub const BundleOptions = struct {
 
     pub fn isFrontendFrameworkEnabled(this: *const BundleOptions) bool {
         const framework: *const Framework = &(this.framework orelse return false);
-        return framework.resolved and framework.client.len > 0;
+        return framework.resolved and (framework.client.isEnabled() or framework.fallback.isEnabled());
     }
 
     pub const ImportPathFormat = enum {
@@ -999,15 +999,17 @@ pub const BundleOptions = struct {
 
                         if (transform.framework == null) {
                             if (bundle.container.framework) |loaded_framework| {
-                                opts.framework = Framework.fromLoadedFramework(loaded_framework, allocator);
-                                opts.framework.?.client_env.allocator = allocator;
-                                opts.framework.?.server_env.allocator = allocator;
+                                opts.framework = try Framework.fromLoadedFramework(loaded_framework, allocator);
 
                                 if (transform.define == null) {
                                     if (opts.platform.isClient()) {
-                                        opts.env = opts.framework.?.client_env;
+                                        if (opts.framework.?.client.kind != .disabled) {
+                                            opts.env = opts.framework.?.client.env;
+                                        } else if (opts.framework.?.fallback.kind != .disabled) {
+                                            opts.env = opts.framework.?.fallback.env;
+                                        }
                                     } else {
-                                        opts.env = opts.framework.?.server_env;
+                                        opts.env = opts.framework.?.server.env;
                                     }
                                 }
                             }
@@ -1034,17 +1036,7 @@ pub const BundleOptions = struct {
         // }
 
         if (transform.framework) |_framework| {
-            opts.framework = try Framework.fromApi(_framework);
-
-            if (_framework.client_env) |env| {
-                opts.framework.?.client_env.allocator = allocator;
-                try opts.framework.?.client_env.setFromAPI(env);
-            }
-
-            if (_framework.server_env) |env| {
-                opts.framework.?.server_env.allocator = allocator;
-                try opts.framework.?.server_env.setFromAPI(env);
-            }
+            opts.framework = try Framework.fromApi(_framework, allocator);
         }
 
         if (transform.router) |routes| {
@@ -1520,22 +1512,41 @@ pub const Env = struct {
     }
 };
 
-pub const Framework = struct {
-    client: string,
-    server: string,
-    package: string = "",
-    development: bool = true,
-    resolved: bool = false,
-    from_bundle: bool = false,
+pub const EntryPoint = struct {
+    path: string = "",
+    env: Env = Env{},
+    kind: Kind = Kind.disabled,
 
-    client_env: Env = Env{},
-    server_env: Env = Env{},
+    pub fn isEnabled(this: *const EntryPoint) bool {
+        return this.kind != .disabled and this.path.len > 0;
+    }
 
-    client_css_in_js: Api.CssInJsBehavior = .auto_onimportcss,
+    pub const Kind = enum {
+        client,
+        server,
+        fallback,
+        disabled,
 
-    fn normalizedPath(allocator: *std.mem.Allocator, toplevel_path: string, path: string) !string {
-        std.debug.assert(std.fs.path.isAbsolute(path));
-        var str = path;
+        pub fn toAPI(this: Kind) Api.FrameworkEntryPointType {
+            return switch (this) {
+                .client => .client,
+                .server => .server,
+                .fallback => .fallback,
+                else => unreachable,
+            };
+        }
+    };
+
+    pub fn toAPI(this: *const EntryPoint, allocator: *std.mem.Allocator, toplevel_path: string, kind: Kind) !?Api.FrameworkEntryPoint {
+        if (this.kind == .disabled)
+            return null;
+
+        return Api.FrameworkEntryPoint{ .kind = kind.toAPI(), .env = this.env.toAPI(), .path = try this.normalizedPath(allocator, toplevel_path) };
+    }
+
+    fn normalizedPath(this: *const EntryPoint, allocator: *std.mem.Allocator, toplevel_path: string) !string {
+        std.debug.assert(std.fs.path.isAbsolute(this.path));
+        var str = this.path;
         if (strings.indexOf(str, toplevel_path)) |top| {
             str = str[top + toplevel_path.len ..];
         }
@@ -1554,53 +1565,103 @@ pub const Framework = struct {
         }
     }
 
-    pub fn fromLoadedFramework(loaded: Api.LoadedFramework, allocator: *std.mem.Allocator) Framework {
-        const client = if (loaded.client) loaded.entry_point else "";
-        const server = if (!loaded.client) loaded.entry_point else "";
+    pub fn fromLoaded(
+        this: *EntryPoint,
+        framework_entry_point: Api.FrameworkEntryPoint,
+        allocator: *std.mem.Allocator,
+        kind: Kind,
+    ) !void {
+        this.path = framework_entry_point.path;
+        this.kind = kind;
+        this.env.setFromLoaded(framework_entry_point.env, allocator) catch {};
+    }
+
+    pub fn fromAPI(
+        this: *EntryPoint,
+        framework_entry_point: Api.FrameworkEntryPointMessage,
+        allocator: *std.mem.Allocator,
+        kind: Kind,
+    ) !void {
+        this.path = framework_entry_point.path orelse "";
+        this.kind = kind;
+
+        if (this.path.len == 0) {
+            this.kind = .disabled;
+            return;
+        }
+
+        if (framework_entry_point.env) |env| {
+            this.env.allocator = allocator;
+            try this.env.setFromAPI(env);
+        }
+    }
+};
+
+pub const Framework = struct {
+    client: EntryPoint = EntryPoint{},
+    server: EntryPoint = EntryPoint{},
+    fallback: EntryPoint = EntryPoint{},
+
+    package: string = "",
+    development: bool = true,
+    resolved: bool = false,
+    from_bundle: bool = false,
+
+    client_css_in_js: Api.CssInJsBehavior = .auto_onimportcss,
+
+    pub const fallback_html: string = @embedFile("./fallback.html");
+
+    pub fn platformEntryPoint(this: *const Framework, platform: Platform) ?*const EntryPoint {
+        const entry: *const EntryPoint = switch (platform) {
+            .neutral, .browser => &this.client,
+            .bun => &this.server,
+            .node => return null,
+        };
+
+        if (entry.kind == .disabled) return null;
+        return entry;
+    }
+
+    pub fn fromLoadedFramework(loaded: Api.LoadedFramework, allocator: *std.mem.Allocator) !Framework {
         var framework = Framework{
-            .client = client,
-            .server = server,
             .package = loaded.package,
             .development = loaded.development,
             .from_bundle = true,
             .client_css_in_js = loaded.client_css_in_js,
         };
 
-        if (loaded.client) {
-            framework.client_env.setFromLoaded(loaded.env, allocator) catch {};
-        } else {
-            framework.server_env.setFromLoaded(loaded.env, allocator) catch {};
+        if (loaded.entry_points.fallback) |fallback| {
+            try framework.fallback.fromLoaded(fallback, allocator, .fallback);
+        }
+
+        if (loaded.entry_points.client) |client| {
+            try framework.client.fromLoaded(client, allocator, .client);
+        }
+
+        if (loaded.entry_points.server) |server| {
+            try framework.server.fromLoaded(server, allocator, .server);
         }
 
         return framework;
     }
 
-    pub fn toAPI(this: *const Framework, allocator: *std.mem.Allocator, toplevel_path: string, comptime client: bool) ?Api.LoadedFramework {
-        if (comptime client) {
-            if (this.client.len > 0) {
-                return Api.LoadedFramework{
-                    .entry_point = normalizedPath(allocator, toplevel_path, this.client) catch unreachable,
-                    .package = this.package,
-                    .development = this.development,
-                    .client = true,
-                    .env = this.client_env.toAPI(),
-                    .client_css_in_js = this.client_css_in_js,
-                };
-            }
-        } else {
-            if (this.server.len > 0) {
-                return Api.LoadedFramework{
-                    .entry_point = normalizedPath(allocator, toplevel_path, this.server) catch unreachable,
-                    .package = this.package,
-                    .development = this.development,
-                    .client = false,
-                    .env = this.server_env.toAPI(),
-                    .client_css_in_js = this.client_css_in_js,
-                };
-            }
-        }
+    pub fn toAPI(
+        this: *const Framework,
+        allocator: *std.mem.Allocator,
+        toplevel_path: string,
+    ) !?Api.LoadedFramework {
+        if (this.client.kind == .disabled and this.server.kind == .disabled and this.fallback.kind == .disabled) return null;
 
-        return null;
+        return Api.LoadedFramework{
+            .package = this.package,
+            .development = this.development,
+            .entry_points = .{
+                .client = try this.client.toAPI(allocator, toplevel_path, .client),
+                .fallback = try this.fallback.toAPI(allocator, toplevel_path, .fallback),
+                .server = try this.server.toAPI(allocator, toplevel_path, .server),
+            },
+            .client_css_in_js = this.client_css_in_js,
+        };
     }
 
     pub fn needsResolveFromPackage(this: *const Framework) bool {
@@ -1609,10 +1670,28 @@ pub const Framework = struct {
 
     pub fn fromApi(
         transform: Api.FrameworkConfig,
+        allocator: *std.mem.Allocator,
     ) !Framework {
+        var client = EntryPoint{};
+        var server = EntryPoint{};
+        var fallback = EntryPoint{};
+
+        if (transform.client) |_client| {
+            try client.fromAPI(_client, allocator, .client);
+        }
+
+        if (transform.server) |_server| {
+            try server.fromAPI(_server, allocator, .server);
+        }
+
+        if (transform.fallback) |_fallback| {
+            try fallback.fromAPI(_fallback, allocator, .fallback);
+        }
+
         return Framework{
-            .client = transform.client orelse "",
-            .server = transform.server orelse "",
+            .client = client,
+            .server = server,
+            .fallback = fallback,
             .package = transform.package orelse "",
             .development = transform.development orelse true,
             .resolved = false,

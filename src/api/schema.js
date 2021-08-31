@@ -30,6 +30,490 @@ const LoaderKeys = {
   "file": "file",
   "json": "json"
 };
+const FrameworkEntryPointType = {
+  "1": 1,
+  "2": 2,
+  "3": 3,
+  "client": 1,
+  "server": 2,
+  "fallback": 3
+};
+const FrameworkEntryPointTypeKeys = {
+  "1": "client",
+  "2": "server",
+  "3": "fallback",
+  "client": "client",
+  "server": "server",
+  "fallback": "fallback"
+};
+const StackFrameScope = {
+  "1": 1,
+  "2": 2,
+  "3": 3,
+  "4": 4,
+  "5": 5,
+  "6": 6,
+  "Eval": 1,
+  "Module": 2,
+  "Function": 3,
+  "Global": 4,
+  "Wasm": 5,
+  "Constructor": 6
+};
+const StackFrameScopeKeys = {
+  "1": "Eval",
+  "2": "Module",
+  "3": "Function",
+  "4": "Global",
+  "5": "Wasm",
+  "6": "Constructor",
+  "Eval": "Eval",
+  "Module": "Module",
+  "Function": "Function",
+  "Global": "Global",
+  "Wasm": "Wasm",
+  "Constructor": "Constructor"
+};
+
+function decodeStackFrame(bb) {
+  var result = {};
+
+  result["function_name"] = bb.readString();
+  result["file"] = bb.readString();
+  result["position"] = decodeStackFramePosition(bb);
+  result["scope"] = StackFrameScope[bb.readByte()];
+  return result;
+}
+
+function encodeStackFrame(message, bb) {
+
+  var value = message["function_name"];
+  if (value != null) {
+    bb.writeString(value);
+  } else {
+    throw new Error("Missing required field \"function_name\"");
+  }
+
+  var value = message["file"];
+  if (value != null) {
+    bb.writeString(value);
+  } else {
+    throw new Error("Missing required field \"file\"");
+  }
+
+  var value = message["position"];
+  if (value != null) {
+    encodeStackFramePosition(value, bb);
+  } else {
+    throw new Error("Missing required field \"position\"");
+  }
+
+  var value = message["scope"];
+  if (value != null) {
+    var encoded = StackFrameScope[value];
+if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + " for enum \"StackFrameScope\"");
+bb.writeByte(encoded);
+  } else {
+    throw new Error("Missing required field \"scope\"");
+  }
+
+}
+
+function decodeStackFramePosition(bb) {
+  var result = {};
+
+  result["source_offset"] = bb.readInt32();
+  result["line"] = bb.readInt32();
+  result["line_start"] = bb.readInt32();
+  result["line_stop"] = bb.readInt32();
+  result["column_start"] = bb.readInt32();
+  result["column_stop"] = bb.readInt32();
+  result["expression_start"] = bb.readInt32();
+  result["expression_stop"] = bb.readInt32();
+  return result;
+}
+
+function encodeStackFramePosition(message, bb) {
+
+  var value = message["source_offset"];
+  if (value != null) {
+    bb.writeInt32(value);
+  } else {
+    throw new Error("Missing required field \"source_offset\"");
+  }
+
+  var value = message["line"];
+  if (value != null) {
+    bb.writeInt32(value);
+  } else {
+    throw new Error("Missing required field \"line\"");
+  }
+
+  var value = message["line_start"];
+  if (value != null) {
+    bb.writeInt32(value);
+  } else {
+    throw new Error("Missing required field \"line_start\"");
+  }
+
+  var value = message["line_stop"];
+  if (value != null) {
+    bb.writeInt32(value);
+  } else {
+    throw new Error("Missing required field \"line_stop\"");
+  }
+
+  var value = message["column_start"];
+  if (value != null) {
+    bb.writeInt32(value);
+  } else {
+    throw new Error("Missing required field \"column_start\"");
+  }
+
+  var value = message["column_stop"];
+  if (value != null) {
+    bb.writeInt32(value);
+  } else {
+    throw new Error("Missing required field \"column_stop\"");
+  }
+
+  var value = message["expression_start"];
+  if (value != null) {
+    bb.writeInt32(value);
+  } else {
+    throw new Error("Missing required field \"expression_start\"");
+  }
+
+  var value = message["expression_stop"];
+  if (value != null) {
+    bb.writeInt32(value);
+  } else {
+    throw new Error("Missing required field \"expression_stop\"");
+  }
+
+}
+
+function decodeSourceLine(bb) {
+  var result = {};
+
+  result["line"] = bb.readInt32();
+  result["text"] = bb.readString();
+  return result;
+}
+
+function encodeSourceLine(message, bb) {
+
+  var value = message["line"];
+  if (value != null) {
+    bb.writeInt32(value);
+  } else {
+    throw new Error("Missing required field \"line\"");
+  }
+
+  var value = message["text"];
+  if (value != null) {
+    bb.writeString(value);
+  } else {
+    throw new Error("Missing required field \"text\"");
+  }
+
+}
+
+function decodeStackTrace(bb) {
+  var result = {};
+
+  var length = bb.readVarUint();
+  var values = result["source_lines"] = Array(length);
+  for (var i = 0; i < length; i++) values[i] = decodeSourceLine(bb);
+  var length = bb.readVarUint();
+  var values = result["frames"] = Array(length);
+  for (var i = 0; i < length; i++) values[i] = decodeStackFrame(bb);
+  return result;
+}
+
+function encodeStackTrace(message, bb) {
+
+  var value = message["source_lines"];
+  if (value != null) {
+    var values = value, n = values.length;
+    bb.writeVarUint(n);
+    for (var i = 0; i < n; i++) {
+      value = values[i];
+      encodeSourceLine(value, bb);
+    }
+  } else {
+    throw new Error("Missing required field \"source_lines\"");
+  }
+
+  var value = message["frames"];
+  if (value != null) {
+    var values = value, n = values.length;
+    bb.writeVarUint(n);
+    for (var i = 0; i < n; i++) {
+      value = values[i];
+      encodeStackFrame(value, bb);
+    }
+  } else {
+    throw new Error("Missing required field \"frames\"");
+  }
+
+}
+
+function decodeJSException(bb) {
+  var result = {};
+
+  while (true) {
+    switch (bb.readByte()) {
+    case 0:
+      return result;
+
+    case 1:
+      result["name"] = bb.readString();
+      break;
+
+    case 2:
+      result["message"] = bb.readString();
+      break;
+
+    case 3:
+      result["runtime_type"] = bb.readUint16();
+      break;
+
+    case 4:
+      result["code"] = bb.readByte();
+      break;
+
+    case 5:
+      result["stack"] = decodeStackTrace(bb);
+      break;
+
+    default:
+      throw new Error("Attempted to parse invalid message");
+    }
+  }
+}
+
+function encodeJSException(message, bb) {
+
+  var value = message["name"];
+  if (value != null) {
+    bb.writeByte(1);
+    bb.writeString(value);
+  }
+
+  var value = message["message"];
+  if (value != null) {
+    bb.writeByte(2);
+    bb.writeString(value);
+  }
+
+  var value = message["runtime_type"];
+  if (value != null) {
+    bb.writeByte(3);
+    bb.writeUint16(value);
+  }
+
+  var value = message["code"];
+  if (value != null) {
+    bb.writeByte(4);
+    bb.writeByte(value);
+  }
+
+  var value = message["stack"];
+  if (value != null) {
+    bb.writeByte(5);
+    encodeStackTrace(value, bb);
+  }
+  bb.writeByte(0);
+
+}
+const FallbackStep = {
+  "1": 1,
+  "2": 2,
+  "3": 3,
+  "4": 4,
+  "5": 5,
+  "6": 6,
+  "7": 7,
+  "8": 8,
+  "ssr_disabled": 1,
+  "create_vm": 2,
+  "configure_router": 3,
+  "configure_defines": 4,
+  "resolve_entry_point": 5,
+  "load_entry_point": 6,
+  "eval_entry_point": 7,
+  "fetch_event_handler": 8
+};
+const FallbackStepKeys = {
+  "1": "ssr_disabled",
+  "2": "create_vm",
+  "3": "configure_router",
+  "4": "configure_defines",
+  "5": "resolve_entry_point",
+  "6": "load_entry_point",
+  "7": "eval_entry_point",
+  "8": "fetch_event_handler",
+  "ssr_disabled": "ssr_disabled",
+  "create_vm": "create_vm",
+  "configure_router": "configure_router",
+  "configure_defines": "configure_defines",
+  "resolve_entry_point": "resolve_entry_point",
+  "load_entry_point": "load_entry_point",
+  "eval_entry_point": "eval_entry_point",
+  "fetch_event_handler": "fetch_event_handler"
+};
+
+function decodeProblems(bb) {
+  var result = {};
+
+  result["code"] = bb.readUint16();
+  result["name"] = bb.readString();
+  var length = bb.readVarUint();
+  var values = result["exceptions"] = Array(length);
+  for (var i = 0; i < length; i++) values[i] = decodeJSException(bb);
+  result["build"] = decodeLog(bb);
+  return result;
+}
+
+function encodeProblems(message, bb) {
+
+  var value = message["code"];
+  if (value != null) {
+    bb.writeUint16(value);
+  } else {
+    throw new Error("Missing required field \"code\"");
+  }
+
+  var value = message["name"];
+  if (value != null) {
+    bb.writeString(value);
+  } else {
+    throw new Error("Missing required field \"name\"");
+  }
+
+  var value = message["exceptions"];
+  if (value != null) {
+    var values = value, n = values.length;
+    bb.writeVarUint(n);
+    for (var i = 0; i < n; i++) {
+      value = values[i];
+      encodeJSException(value, bb);
+    }
+  } else {
+    throw new Error("Missing required field \"exceptions\"");
+  }
+
+  var value = message["build"];
+  if (value != null) {
+    encodeLog(value, bb);
+  } else {
+    throw new Error("Missing required field \"build\"");
+  }
+
+}
+
+function decodeRouter(bb) {
+  var result = {};
+
+  var length = bb.readVarUint();
+  var values = result["routes"] = Array(length);
+  for (var i = 0; i < length; i++) values[i] = bb.readString();
+  result["route"] = bb.readInt32();
+  result["params"] = decodeStringMap(bb);
+  return result;
+}
+
+function encodeRouter(message, bb) {
+
+  var value = message["routes"];
+  if (value != null) {
+    var values = value, n = values.length;
+    bb.writeVarUint(n);
+    for (var i = 0; i < n; i++) {
+      value = values[i];
+      bb.writeString(value);
+    }
+  } else {
+    throw new Error("Missing required field \"routes\"");
+  }
+
+  var value = message["route"];
+  if (value != null) {
+    bb.writeInt32(value);
+  } else {
+    throw new Error("Missing required field \"route\"");
+  }
+
+  var value = message["params"];
+  if (value != null) {
+    encodeStringMap(value, bb);
+  } else {
+    throw new Error("Missing required field \"params\"");
+  }
+
+}
+
+function decodeFallbackMessageContainer(bb) {
+  var result = {};
+
+  while (true) {
+    switch (bb.readByte()) {
+    case 0:
+      return result;
+
+    case 1:
+      result["message"] = bb.readString();
+      break;
+
+    case 2:
+      result["router"] = decodeRouter(bb);
+      break;
+
+    case 3:
+      result["reason"] = FallbackStep[bb.readByte()];
+      break;
+
+    case 4:
+      result["problems"] = decodeProblems(bb);
+      break;
+
+    default:
+      throw new Error("Attempted to parse invalid message");
+    }
+  }
+}
+
+function encodeFallbackMessageContainer(message, bb) {
+
+  var value = message["message"];
+  if (value != null) {
+    bb.writeByte(1);
+    bb.writeString(value);
+  }
+
+  var value = message["router"];
+  if (value != null) {
+    bb.writeByte(2);
+    encodeRouter(value, bb);
+  }
+
+  var value = message["reason"];
+  if (value != null) {
+    bb.writeByte(3);
+    var encoded = FallbackStep[value];
+if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + " for enum \"FallbackStep\"");
+bb.writeByte(encoded);
+  }
+
+  var value = message["problems"];
+  if (value != null) {
+    bb.writeByte(4);
+    encodeProblems(value, bb);
+  }
+  bb.writeByte(0);
+
+}
 const ResolveMode = {
   "1": 1,
   "2": 2,
@@ -709,26 +1193,22 @@ function decodeFrameworkConfig(bb) {
       break;
 
     case 2:
-      result["client"] = bb.readString();
+      result["client"] = decodeFrameworkEntryPointMessage(bb);
       break;
 
     case 3:
-      result["server"] = bb.readString();
+      result["server"] = decodeFrameworkEntryPointMessage(bb);
       break;
 
     case 4:
-      result["development"] = !!bb.readByte();
+      result["fallback"] = decodeFrameworkEntryPointMessage(bb);
       break;
 
     case 5:
-      result["client_env"] = decodeEnvConfig(bb);
+      result["development"] = !!bb.readByte();
       break;
 
     case 6:
-      result["server_env"] = decodeEnvConfig(bb);
-      break;
-
-    case 7:
       result["client_css_in_js"] = CSSInJSBehavior[bb.readByte()];
       break;
 
@@ -749,36 +1229,30 @@ function encodeFrameworkConfig(message, bb) {
   var value = message["client"];
   if (value != null) {
     bb.writeByte(2);
-    bb.writeString(value);
+    encodeFrameworkEntryPointMessage(value, bb);
   }
 
   var value = message["server"];
   if (value != null) {
     bb.writeByte(3);
-    bb.writeString(value);
+    encodeFrameworkEntryPointMessage(value, bb);
+  }
+
+  var value = message["fallback"];
+  if (value != null) {
+    bb.writeByte(4);
+    encodeFrameworkEntryPointMessage(value, bb);
   }
 
   var value = message["development"];
   if (value != null) {
-    bb.writeByte(4);
-    bb.writeByte(value);
-  }
-
-  var value = message["client_env"];
-  if (value != null) {
     bb.writeByte(5);
-    encodeEnvConfig(value, bb);
-  }
-
-  var value = message["server_env"];
-  if (value != null) {
-    bb.writeByte(6);
-    encodeEnvConfig(value, bb);
+    bb.writeByte(value);
   }
 
   var value = message["client_css_in_js"];
   if (value != null) {
-    bb.writeByte(7);
+    bb.writeByte(6);
     var encoded = CSSInJSBehavior[value];
 if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + " for enum \"CSSInJSBehavior\"");
 bb.writeByte(encoded);
@@ -787,26 +1261,141 @@ bb.writeByte(encoded);
 
 }
 
+function decodeFrameworkEntryPoint(bb) {
+  var result = {};
+
+  result["kind"] = FrameworkEntryPointType[bb.readByte()];
+  result["path"] = bb.readString();
+  result["env"] = decodeLoadedEnvConfig(bb);
+  return result;
+}
+
+function encodeFrameworkEntryPoint(message, bb) {
+
+  var value = message["kind"];
+  if (value != null) {
+    var encoded = FrameworkEntryPointType[value];
+if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + " for enum \"FrameworkEntryPointType\"");
+bb.writeByte(encoded);
+  } else {
+    throw new Error("Missing required field \"kind\"");
+  }
+
+  var value = message["path"];
+  if (value != null) {
+    bb.writeString(value);
+  } else {
+    throw new Error("Missing required field \"path\"");
+  }
+
+  var value = message["env"];
+  if (value != null) {
+    encodeLoadedEnvConfig(value, bb);
+  } else {
+    throw new Error("Missing required field \"env\"");
+  }
+
+}
+
+function decodeFrameworkEntryPointMap(bb) {
+  var result = {};
+
+  while (true) {
+    switch (bb.readByte()) {
+    case 0:
+      return result;
+
+    case 1:
+      result["client"] = decodeFrameworkEntryPoint(bb);
+      break;
+
+    case 2:
+      result["server"] = decodeFrameworkEntryPoint(bb);
+      break;
+
+    case 3:
+      result["fallback"] = decodeFrameworkEntryPoint(bb);
+      break;
+
+    default:
+      throw new Error("Attempted to parse invalid message");
+    }
+  }
+}
+
+function encodeFrameworkEntryPointMap(message, bb) {
+
+  var value = message["client"];
+  if (value != null) {
+    bb.writeByte(1);
+    encodeFrameworkEntryPoint(value, bb);
+  }
+
+  var value = message["server"];
+  if (value != null) {
+    bb.writeByte(2);
+    encodeFrameworkEntryPoint(value, bb);
+  }
+
+  var value = message["fallback"];
+  if (value != null) {
+    bb.writeByte(3);
+    encodeFrameworkEntryPoint(value, bb);
+  }
+  bb.writeByte(0);
+
+}
+
+function decodeFrameworkEntryPointMessage(bb) {
+  var result = {};
+
+  while (true) {
+    switch (bb.readByte()) {
+    case 0:
+      return result;
+
+    case 1:
+      result["path"] = bb.readString();
+      break;
+
+    case 2:
+      result["env"] = decodeEnvConfig(bb);
+      break;
+
+    default:
+      throw new Error("Attempted to parse invalid message");
+    }
+  }
+}
+
+function encodeFrameworkEntryPointMessage(message, bb) {
+
+  var value = message["path"];
+  if (value != null) {
+    bb.writeByte(1);
+    bb.writeString(value);
+  }
+
+  var value = message["env"];
+  if (value != null) {
+    bb.writeByte(2);
+    encodeEnvConfig(value, bb);
+  }
+  bb.writeByte(0);
+
+}
+
 function decodeLoadedFramework(bb) {
   var result = {};
 
-  result["entry_point"] = bb.readString();
   result["package"] = bb.readString();
   result["development"] = !!bb.readByte();
-  result["client"] = !!bb.readByte();
-  result["env"] = decodeLoadedEnvConfig(bb);
+  result["entry_points"] = decodeFrameworkEntryPointMap(bb);
   result["client_css_in_js"] = CSSInJSBehavior[bb.readByte()];
   return result;
 }
 
 function encodeLoadedFramework(message, bb) {
-
-  var value = message["entry_point"];
-  if (value != null) {
-    bb.writeString(value);
-  } else {
-    throw new Error("Missing required field \"entry_point\"");
-  }
 
   var value = message["package"];
   if (value != null) {
@@ -822,18 +1411,11 @@ function encodeLoadedFramework(message, bb) {
     throw new Error("Missing required field \"development\"");
   }
 
-  var value = message["client"];
+  var value = message["entry_points"];
   if (value != null) {
-    bb.writeByte(value);
+    encodeFrameworkEntryPointMap(value, bb);
   } else {
-    throw new Error("Missing required field \"client\"");
-  }
-
-  var value = message["env"];
-  if (value != null) {
-    encodeLoadedEnvConfig(value, bb);
-  } else {
-    throw new Error("Missing required field \"env\"");
+    throw new Error("Missing required field \"entry_points\"");
   }
 
   var value = message["client_css_in_js"];
@@ -1449,7 +2031,7 @@ bb.writeVarUint(encoded);
   }
 
 }
-const MessageKind = {
+const MessageLevel = {
   "1": 1,
   "2": 2,
   "3": 3,
@@ -1459,7 +2041,7 @@ const MessageKind = {
   "note": 3,
   "debug": 4
 };
-const MessageKindKeys = {
+const MessageLevelKeys = {
   "1": "err",
   "2": "warn",
   "3": "note",
@@ -1575,26 +2157,66 @@ function encodeMessageData(message, bb) {
 
 }
 
+function decodeMessageMeta(bb) {
+  var result = {};
+
+  while (true) {
+    switch (bb.readByte()) {
+    case 0:
+      return result;
+
+    case 1:
+      result["resolve"] = bb.readString();
+      break;
+
+    case 2:
+      result["build"] = !!bb.readByte();
+      break;
+
+    default:
+      throw new Error("Attempted to parse invalid message");
+    }
+  }
+}
+
+function encodeMessageMeta(message, bb) {
+
+  var value = message["resolve"];
+  if (value != null) {
+    bb.writeByte(1);
+    bb.writeString(value);
+  }
+
+  var value = message["build"];
+  if (value != null) {
+    bb.writeByte(2);
+    bb.writeByte(value);
+  }
+  bb.writeByte(0);
+
+}
+
 function decodeMessage(bb) {
   var result = {};
 
-  result["kind"] = MessageKind[bb.readVarUint()];
+  result["level"] = MessageLevel[bb.readVarUint()];
   result["data"] = decodeMessageData(bb);
   var length = bb.readVarUint();
   var values = result["notes"] = Array(length);
   for (var i = 0; i < length; i++) values[i] = decodeMessageData(bb);
+  result["on"] = decodeMessageMeta(bb);
   return result;
 }
 
 function encodeMessage(message, bb) {
 
-  var value = message["kind"];
+  var value = message["level"];
   if (value != null) {
-    var encoded = MessageKind[value];
-if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + " for enum \"MessageKind\"");
+    var encoded = MessageLevel[value];
+if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + " for enum \"MessageLevel\"");
 bb.writeVarUint(encoded);
   } else {
-    throw new Error("Missing required field \"kind\"");
+    throw new Error("Missing required field \"level\"");
   }
 
   var value = message["data"];
@@ -1614,6 +2236,13 @@ bb.writeVarUint(encoded);
     }
   } else {
     throw new Error("Missing required field \"notes\"");
+  }
+
+  var value = message["on"];
+  if (value != null) {
+    encodeMessageMeta(value, bb);
+  } else {
+    throw new Error("Missing required field \"on\"");
   }
 
 }
@@ -2167,6 +2796,28 @@ bb.writeByte(encoded);
 
 export { Loader }
 export { LoaderKeys }
+export { FrameworkEntryPointType }
+export { FrameworkEntryPointTypeKeys }
+export { StackFrameScope }
+export { StackFrameScopeKeys }
+export { decodeStackFrame }
+export { encodeStackFrame }
+export { decodeStackFramePosition }
+export { encodeStackFramePosition }
+export { decodeSourceLine }
+export { encodeSourceLine }
+export { decodeStackTrace }
+export { encodeStackTrace }
+export { decodeJSException }
+export { encodeJSException }
+export { FallbackStep }
+export { FallbackStepKeys }
+export { decodeProblems }
+export { encodeProblems }
+export { decodeRouter }
+export { encodeRouter }
+export { decodeFallbackMessageContainer }
+export { encodeFallbackMessageContainer }
 export { ResolveMode }
 export { ResolveModeKeys }
 export { Platform }
@@ -2207,6 +2858,12 @@ export { decodeLoadedEnvConfig }
 export { encodeLoadedEnvConfig }
 export { decodeFrameworkConfig }
 export { encodeFrameworkConfig }
+export { decodeFrameworkEntryPoint }
+export { encodeFrameworkEntryPoint }
+export { decodeFrameworkEntryPointMap }
+export { encodeFrameworkEntryPointMap }
+export { decodeFrameworkEntryPointMessage }
+export { encodeFrameworkEntryPointMessage }
 export { decodeLoadedFramework }
 export { encodeLoadedFramework }
 export { decodeLoadedRouteConfig }
@@ -2225,12 +2882,14 @@ export { decodeOutputFile }
 export { encodeOutputFile }
 export { decodeTransformResponse }
 export { encodeTransformResponse }
-export { MessageKind }
-export { MessageKindKeys }
+export { MessageLevel }
+export { MessageLevelKeys }
 export { decodeLocation }
 export { encodeLocation }
 export { decodeMessageData }
 export { encodeMessageData }
+export { decodeMessageMeta }
+export { encodeMessageMeta }
 export { decodeMessage }
 export { encodeMessage }
 export { decodeLog }

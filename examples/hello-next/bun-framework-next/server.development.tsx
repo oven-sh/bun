@@ -1,4 +1,5 @@
-import React from "react";
+import * as React from "react";
+
 class URL {
   constructor(base, source) {
     this.pathname = source;
@@ -19,22 +20,24 @@ import { render } from "./renderDocument";
 
 let buildId = 0;
 
-var DocumentNamespacePromise;
-
-DocumentNamespacePromise = import(Bun.routesDir + "_document");
 var DocumentLoaded = false;
 var DocumentNamespace;
 
-addEventListener("fetch", async (event: FetchEvent) => {
-  if (!DocumentLoaded) {
+import(Bun.routesDir + "_document").then(
+  (doc) => {
+    DocumentNamespace = doc;
     DocumentLoaded = true;
-    try {
-      DocumentNamespace = await DocumentNamespacePromise;
-    } catch (exception) {
-      DocumentNamespace = null;
+  },
+  (err) => {
+    if (err instanceof ResolveError) {
+      DocumentLoaded = true;
+    } else {
+      console.error(err);
     }
   }
+);
 
+addEventListener("fetch", async (event: FetchEvent) => {
   var appRoute;
 
   try {

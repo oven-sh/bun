@@ -2333,7 +2333,7 @@ pub fn NewPrinter(
                     switch (s.value) {
                         .expr => |expr| {
                             if (rewrite_esm_to_cjs) {
-                                p.printSymbol(p.options.runtime_imports.__export.?);
+                                p.printModuleExportSymbol();
                                 p.print(".default = ");
                             }
 
@@ -2354,7 +2354,7 @@ pub fn NewPrinter(
                                             // p.printSymbol(name.ref.?);
                                             // p.print(" = ");
                                         } else {
-                                            p.printSymbol(p.options.runtime_imports.__export.?);
+                                            p.printModuleExportSymbol();
                                             p.print(".default = ");
                                         }
                                     }
@@ -2400,7 +2400,7 @@ pub fn NewPrinter(
                                             // p.printSymbol(name.ref.?);
                                             // p.print(" = ");
                                         } else {
-                                            p.printSymbol(p.options.runtime_imports.__export.?);
+                                            p.printModuleExportSymbol();
                                             p.print(".default = ");
                                         }
                                     }
@@ -2448,7 +2448,7 @@ pub fn NewPrinter(
                         } else {
                             p.printSymbol(p.options.runtime_imports.__reExport.?);
                             p.print("(");
-                            p.printSymbol(p.options.runtime_imports.__export.?);
+                            p.printModuleExportSymbol();
                             p.print(",");
 
                             p.printLoadFromBundle(s.import_record_index);
@@ -2506,7 +2506,7 @@ pub fn NewPrinter(
                             else => {
                                 p.print("Object.assign");
                                 p.print("(");
-                                p.printSymbol(p.options.runtime_imports.__export.?);
+                                p.printModuleExportSymbol();
                                 p.print(", {");
                                 const last = s.items.len - 1;
                                 for (s.items) |item, i| {
@@ -2583,7 +2583,7 @@ pub fn NewPrinter(
                             const item = s.items[0];
                             p.printSymbol(p.options.runtime_imports.lazy_export.?);
                             p.print("(");
-                            p.printSymbol(p.options.runtime_imports.__export.?);
+                            p.printModuleExportSymbol();
                             p.print(",");
                             // Avoid initializing an entire component library because you imported one icon
                             p.printLoadFromBundleWithoutCall(s.import_record_index);
@@ -2599,7 +2599,7 @@ pub fn NewPrinter(
                         } else {
                             p.printSymbol(p.options.runtime_imports.lazy_export.?);
                             p.print("(");
-                            p.printSymbol(p.options.runtime_imports.__export.?);
+                            p.printModuleExportSymbol();
                             p.print(",");
 
                             // Avoid initializing an entire component library because you imported one icon
@@ -3243,6 +3243,10 @@ pub fn NewPrinter(
             }
         }
 
+        pub fn printModuleExportSymbol(p: *Printer) void {
+            p.print("module.exports");
+        }
+
         pub fn printBundledImport(p: *Printer, record: importRecord.ImportRecord, s: *S.Import, stmt: Stmt) void {
             if (record.is_internal) {
                 return;
@@ -3617,7 +3621,7 @@ pub fn NewPrinter(
                 p.printIndent();
                 p.printSpaceBeforeIdentifier();
                 p.print("Object.defineProperties(");
-                p.printSymbol(p.options.runtime_imports.__export.?);
+                p.printModuleExportSymbol();
                 p.print(",{");
                 for (decls) |decl, i| {
                     p.print("'");

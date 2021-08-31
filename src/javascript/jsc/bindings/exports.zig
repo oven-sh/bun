@@ -5,6 +5,7 @@ const CAPI = @import("../JavaScriptCore.zig");
 const JS = @import("../javascript.zig");
 const JSBase = @import("../base.zig");
 const ZigURL = @import("../../../query_string_map.zig").URL;
+const Api = @import("../../../api/schema.zig").Api;
 const Handler = struct {
     pub export fn global_signal_handler_fn(sig: i32, info: *const std.os.siginfo_t, ctx_ptr: ?*const c_void) callconv(.C) void {
         var stdout = std.io.getStdOut();
@@ -169,40 +170,6 @@ pub const ZigErrorType = extern struct {
     }
 };
 
-pub const JSErrorCode = enum(u8) {
-    Error = 0,
-    EvalError = 1,
-    RangeError = 2,
-    ReferenceError = 3,
-    SyntaxError = 4,
-    TypeError = 5,
-    URIError = 6,
-    AggregateError = 7,
-
-    // StackOverflow & OutOfMemoryError is not an ErrorType in <JavaScriptCore/ErrorType.h> within JSC, so the number here is just totally made up
-    OutOfMemoryError = 8,
-    BundlerError = 252,
-    StackOverflow = 253,
-    UserErrorCode = 254,
-    _,
-};
-
-pub const JSRuntimeType = enum(u16) {
-    Nothing = 0x0,
-    Function = 0x1,
-    Undefined = 0x2,
-    Null = 0x4,
-    Boolean = 0x8,
-    AnyInt = 0x10,
-    Number = 0x20,
-    String = 0x40,
-    Object = 0x80,
-    Symbol = 0x100,
-    BigInt = 0x200,
-
-    _,
-};
-
 pub fn Errorable(comptime Type: type) type {
     return extern struct {
         result: Result,
@@ -249,6 +216,40 @@ pub const ResolvedSource = extern struct {
 
     // 0 means disabled
     bytecodecache_fd: u64,
+};
+
+pub const JSErrorCode = enum(u8) {
+    Error = 0,
+    EvalError = 1,
+    RangeError = 2,
+    ReferenceError = 3,
+    SyntaxError = 4,
+    TypeError = 5,
+    URIError = 6,
+    AggregateError = 7,
+
+    // StackOverflow & OutOfMemoryError is not an ErrorType in <JavaScriptCore/ErrorType.h> within JSC, so the number here is just totally made up
+    OutOfMemoryError = 8,
+    BundlerError = 252,
+    StackOverflow = 253,
+    UserErrorCode = 254,
+    _,
+};
+
+pub const JSRuntimeType = enum(u16) {
+    Nothing = 0x0,
+    Function = 0x1,
+    Undefined = 0x2,
+    Null = 0x4,
+    Boolean = 0x8,
+    AnyInt = 0x10,
+    Number = 0x20,
+    String = 0x40,
+    Object = 0x80,
+    Symbol = 0x100,
+    BigInt = 0x200,
+
+    _,
 };
 
 pub const ZigStackFrameCode = enum(u8) {
@@ -301,6 +302,49 @@ pub const ZigStackTrace = extern struct {
     frames_ptr: [*c]ZigStackFrame,
     frames_len: u8,
 
+    pub fn toAPI(this: *const ZigStackTrace, allocator: *std.mem.Allocator) !Api.StackTrace {
+        var stack_trace: Api.StackTrace = std.mem.zeroes(Api.StackTrace);
+        {
+            var source_lines_iter = this.sourceLineIterator();
+
+            var source_line_len: usize = 0;
+            var count: usize = 0;
+            while (source_lines_iter.next()) |source| {
+                count += 1;
+                source_line_len += source.text.len;
+            }
+
+            if (count > 0 and source_line_len > 0) {
+                var source_lines = try allocator.alloc(Api.SourceLine, count);
+                var source_line_buf = try allocator.alloc(u8, source_line_len);
+                source_lines_iter = this.sourceLineIterator();
+                var remain_buf = source_line_buf[0..];
+                var i: usize = 0;
+                while (source_lines_iter.next()) |source| {
+                    std.mem.copy(u8, remain_buf, source.text);
+                    const copied_line = remain_buf[0..source.text.len];
+                    remain_buf = remain_buf[source.text.len..];
+                    source_lines[i] = .{ .text = copied_line, .line = source.line };
+                    i += 1;
+                }
+                stack_trace.source_lines = source_lines;
+            }
+        }
+        {
+            var _frames = this.frames();
+            if (_frames.len > 0) {
+                var stack_frames = try allocator.alloc(Api.StackFrame, _frames.len);
+                stack_trace.frames = stack_frames;
+
+                for (_frames) |frame, i| {
+                    stack_frames[i] = try frame.toAPI(allocator);
+                }
+            }
+        }
+
+        return stack_trace;
+    }
+
     pub fn frames(this: *const ZigStackTrace) []const ZigStackFrame {
         return this.frames_ptr[0..this.frames_len];
     }
@@ -344,6 +388,34 @@ pub const ZigStackTrace = extern struct {
 };
 
 pub const ZigStackFrame = extern struct {
+    function_name: ZigString,
+    source_url: ZigString,
+    position: ZigStackFramePosition,
+    code_type: ZigStackFrameCode,
+
+    pub fn toAPI(this: *const ZigStackFrame, allocator: *std.mem.Allocator) !Api.StackFrame {
+        var frame: Api.StackFrame = std.mem.zeroes(Api.StackFrame);
+        if (this.function_name.len > 0) {
+            frame.function_name = try allocator.dupe(u8, this.function_name.slice());
+        }
+
+        if (this.source_url.len > 0) {
+            frame.file = try allocator.dupe(u8, this.source_url.slice());
+        }
+
+        frame.position.source_offset = this.position.source_offset;
+        frame.position.line = this.position.line;
+        frame.position.line_start = this.position.line_start;
+        frame.position.line_stop = this.position.line_stop;
+        frame.position.column_start = this.position.column_start;
+        frame.position.column_stop = this.position.column_stop;
+        frame.position.expression_start = this.position.expression_start;
+        frame.position.expression_stop = this.position.expression_stop;
+        frame.scope = @intToEnum(Api.StackFrameScope, @enumToInt(this.code_type));
+
+        return frame;
+    }
+
     pub const SourceURLFormatter = struct {
         source_url: ZigString,
         position: ZigStackFramePosition,
@@ -415,11 +487,6 @@ pub const ZigStackFrame = extern struct {
         .position = ZigStackFramePosition.Invalid,
     };
 
-    function_name: ZigString,
-    source_url: ZigString,
-    position: ZigStackFramePosition,
-    code_type: ZigStackFrameCode,
-
     pub fn nameFormatter(this: *const ZigStackFrame, comptime enable_color: bool) NameFormatter {
         return NameFormatter{ .function_name = this.function_name, .code_type = this.code_type, .enable_color = enable_color };
     }
@@ -455,10 +522,6 @@ pub const ZigStackFramePosition = extern struct {
 };
 
 pub const ZigException = extern struct {
-    pub const shim = Shimmer("Zig", "Exception", @This());
-    pub const name = "ZigException";
-    pub const namespace = shim.namespace;
-
     code: JSErrorCode,
     runtime_type: JSRuntimeType,
     name: ZigString,
@@ -466,6 +529,10 @@ pub const ZigException = extern struct {
     stack: ZigStackTrace,
 
     exception: ?*c_void,
+
+    pub const shim = Shimmer("Zig", "Exception", @This());
+    pub const name = "ZigException";
+    pub const namespace = shim.namespace;
 
     pub const Holder = extern struct {
         const frame_count = 24;
@@ -527,6 +594,36 @@ pub const ZigException = extern struct {
 
     pub fn fromException(exception: *Exception) ZigException {
         return shim.cppFn("fromException", .{exception});
+    }
+
+    pub fn addToErrorList(this: *ZigException, error_list: *std.ArrayList(Api.JsException)) !void {
+        const _name: string = @field(this, "name").slice();
+        const message: string = @field(this, "message").slice();
+
+        var is_empty = true;
+        var api_exception = Api.JsException{
+            .runtime_type = @enumToInt(this.runtime_type),
+            .code = @enumToInt(this.code),
+        };
+
+        if (_name.len > 0) {
+            api_exception.name = try error_list.allocator.dupe(u8, _name);
+            is_empty = false;
+        }
+
+        if (message.len > 0) {
+            api_exception.message = try error_list.allocator.dupe(u8, message);
+            is_empty = false;
+        }
+
+        if (this.stack.frames_len > 0) {
+            api_exception.stack = try this.stack.toAPI(error_list.allocator);
+            is_empty = false;
+        }
+
+        if (!is_empty) {
+            try error_list.append(api_exception);
+        }
     }
 
     pub const Extern = [_][]const u8{"fromException"};
@@ -656,7 +753,7 @@ pub const ZigConsoleClient = struct {
 
                 switch (@intToEnum(CellType, value.asCell().getType())) {
                     CellType.ErrorInstanceType => {
-                        JS.VirtualMachine.printErrorlikeObject(JS.VirtualMachine.vm, value, null, enable_ansi_colors);
+                        JS.VirtualMachine.printErrorlikeObject(JS.VirtualMachine.vm, value, null, null, enable_ansi_colors);
                         return;
                     },
 

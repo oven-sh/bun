@@ -7,3 +7,7 @@ export default function Title() {
     </h1>
   );
 }
+
+export enum TitleEnum {
+  wow = 1,
+}

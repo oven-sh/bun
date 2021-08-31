@@ -6,12 +6,33 @@ const Futex = std.Thread.Futex;
 pub const Mutex = struct {
     state: Atomic(u32) = Atomic(u32).init(UNLOCKED),
 
-    const UNLOCKED: u32 = 0;
-    const LOCKED: u32 = 1;
-    const CONTENDED: u32 = 2;
+    const UNLOCKED = 0;
+    const LOCKED = 0b01;
+    const CONTENDED = 0b11;
+    const is_x86 = std.Target.current.cpu.arch.isX86();
 
     pub fn tryAcquire(self: *Mutex) bool {
-        return self.state.compareAndSwap(
+        return self.acquireFast(true);
+    }
+
+    pub fn acquire(self: *Mutex) void {
+        if (!self.acquireFast(false)) {
+            self.acquireSlow();
+        }
+    }
+
+    inline fn acquireFast(self: *Mutex, comptime strong: bool) bool {
+        // On x86, "lock bts" uses less i-cache & can be faster than "lock cmpxchg" below.
+        if (comptime is_x86) {
+            return self.state.bitSet(@ctz(u32, LOCKED), .Acquire) == UNLOCKED;
+        }
+
+        const cas_fn = comptime switch (strong) {
+            true => "compareAndSwap",
+            else => "tryCompareAndSwap",
+        };
+
+        return @field(self.state, cas_fn)(
             UNLOCKED,
             LOCKED,
             .Acquire,
@@ -19,104 +40,66 @@ pub const Mutex = struct {
         ) == null;
     }
 
-    pub fn acquire(self: *Mutex) void {
-        if (self.state.tryCompareAndSwap(
-            UNLOCKED,
-            LOCKED,
-            .Acquire,
-            .Monotonic,
-        )) |updated| {
-            self.acquireSlow();
-        }
-    }
+    noinline fn acquireSlow(self: *Mutex) void {
+        // Spin a little bit on the Mutex state in the hopes that
+        // we can acquire it without having to call Futex.wait().
+        // Give up spinning if the Mutex is contended.
+        // This helps acquire() latency under micro-contention.
+        //
+        // Only spin on x86 as other platforms are assumed to
+        // prioritize power efficiency over strict performance.
+        var spin: u8 = comptime if (is_x86) 100 else 0;
+        while (spin > 0) : (spin -= 1) {
+            std.atomic.spinLoopHint();
 
-    fn acquireSlow(self: *Mutex) void {
-        @setCold(true);
-
-        // true if the cpu's atomic swap instruction should be preferred
-        const has_fast_swap = comptime blk: {
-            const arch = std.Target.current.cpu.arch;
-            break :blk arch.isX86() or arch.isRISCV();
-        };
-
-        var acquire_state = LOCKED;
-        var state = self.state.load(.Monotonic);
-        var spin: u8 = if (comptime has_fast_swap) 100 else 10;
-
-        while (true) {
-            // Try to lock the Mutex if its unlocked.
-            // acquire_state is changed to CONTENDED if this thread goes to sleep.
-            //
-            // We acquire with CONTENDED instead of LOCKED in that scenario
-            // to make sure that we wake another thread sleeping in release()
-            // which didn't see the transition to UNLOCKED since it was asleep.
-            //
-            // A CONTENDED acquire unfortunately results in one extra wake()
-            // if there were no other sleeping threads at the time of the acquire.
-            if (state == UNLOCKED) {
-                state = self.state.tryCompareAndSwap(
-                    state,
-                    acquire_state,
+            switch (self.state.load(.Monotonic)) {
+                UNLOCKED => _ = self.state.tryCompareAndSwap(
+                    UNLOCKED,
+                    LOCKED,
                     .Acquire,
                     .Monotonic,
-                ) orelse return;
-                continue;
+                ) orelse return,
+                LOCKED => continue,
+                CONTENDED => break,
+                else => unreachable, // invalid Mutex state
             }
+        }
 
-            if (state != CONTENDED) uncontended: {
-                // If there's no pending threads, try to spin on the Mutex a few times.
-                // This makes the throughput close to a spinlock when under micro-contention.
-                if (spin > 0) {
-                    spin -= 1;
-                    std.atomic.spinLoopHint();
-                    state = self.state.load(.Monotonic);
-                    continue;
-                }
-
-                // Indicate that there will be a waiting thread by updating to CONTENDED.
-                // Acquire barrier as this swap could also possibly lock the Mutex.
-                if (comptime has_fast_swap) {
-                    state = self.state.swap(CONTENDED, .Acquire);
-                    if (state == UNLOCKED) return;
-                    break :uncontended;
-                }
-
-                // For other platforms, mark the Mutex as CONTENDED if it's not already.
-                // This just indicates that there's waiting threads so no Acquire barrier needed.
-                if (self.state.tryCompareAndSwap(
-                    state,
-                    CONTENDED,
-                    .Monotonic,
-                    .Monotonic,
-                )) |updated| {
-                    state = updated;
-                    continue;
+        // Make sure the state is CONTENDED before sleeping with Futex so release() can wake us up.
+        // Transitioning to CONTENDED may also acquire the mutex in the process.
+        //
+        // If we sleep, we must acquire the Mutex with CONTENDED to ensure that other threads
+        // sleeping on the Futex having seen CONTENDED before are eventually woken up by release().
+        // This unfortunately ends up in an extra Futex.wake() for the last thread but that's ok.
+        while (true) : (Futex.wait(&self.state, CONTENDED, null) catch unreachable) {
+            // On x86, "xchg" can be faster than "lock cmpxchg" below.
+            if (comptime is_x86) {
+                switch (self.state.swap(CONTENDED, .Acquire)) {
+                    UNLOCKED => return,
+                    LOCKED, CONTENDED => continue,
+                    else => unreachable, // invalid Mutex state
                 }
             }
 
-            Futex.wait(&self.state, CONTENDED, null) catch unreachable;
-            state = self.state.load(.Monotonic);
-            acquire_state = CONTENDED;
+            var state = self.state.load(.Monotonic);
+            while (state != CONTENDED) {
+                state = switch (state) {
+                    UNLOCKED => self.state.tryCompareAndSwap(state, CONTENDED, .Acquire, .Monotonic) orelse return,
+                    LOCKED => self.state.tryCompareAndSwap(state, CONTENDED, .Monotonic, .Monotonic) orelse break,
+                    CONTENDED => unreachable, // checked above
+                    else => unreachable, // invalid Mutex state
+                };
+            }
         }
     }
 
     pub fn release(self: *Mutex) void {
-        const state = self.state.swap(UNLOCKED, .Release);
-
-        // Wake up a sleeping thread if it was previously CONTENDED.
-        // The woken up thread would acquire by updating the state to CONTENDED again.
-        // This is to make sure a future release() wouldn't miss waking up threads that
-        // don't see the reset to UNLOCKED above due to them being asleep.
-        if (state == CONTENDED) {
-            self.releaseSlow();
+        switch (self.state.swap(UNLOCKED, .Release)) {
+            UNLOCKED => unreachable, // released without being acquired
+            LOCKED => {},
+            CONTENDED => Futex.wake(&self.state, 1),
+            else => unreachable, // invalid Mutex state
         }
-    }
-
-    fn releaseSlow(self: *Mutex) void {
-        @setCold(true);
-
-        const num_waiters = 1;
-        Futex.wake(&self.state, num_waiters);
     }
 };
 
@@ -136,7 +119,4 @@ pub const Lock = struct {
     }
 };
 
-
-pub fn spinCycle() void {
-
-}
+pub fn spinCycle() void {}

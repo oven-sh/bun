@@ -61,15 +61,86 @@ declare global {
   }
 }
 
+function nextDataFromBunData() {
+  const {
+    router: { routes, route, params: paramsList },
+    problems,
+  } = globalThis.__BUN_DATA__;
+
+  const paramsMap = new Map();
+  for (let i = 0; i < paramsList.keys.length; i++) {
+    paramsMap.set(
+      decodeURIComponent(paramsList.keys[i]),
+      decodeURIComponent(paramsList.values[i])
+    );
+  }
+
+  const params = {};
+  var url = new URL(location.href);
+  Object.assign(params, Object.fromEntries(url.searchParams.entries()));
+  Object.assign(params, Object.fromEntries(paramsMap.entries()));
+
+  const pages = routes.reduce((acc, route) => {
+    var name = route.substring(route.indexOf("_next") + "_next/".length);
+
+    while (name.startsWith("/")) {
+      name = name.substring(1);
+    }
+
+    if (name.startsWith("pages")) {
+      name = name.substring("pages".length);
+    }
+
+    while (name.startsWith("/")) {
+      name = name.substring(1);
+    }
+
+    if (name.endsWith(".jsx")) {
+      name = name.substring(0, name.length - ".jsx".length);
+    }
+
+    if (name.endsWith(".tsx")) {
+      name = name.substring(0, name.length - ".tsx".length);
+    }
+
+    if (name.endsWith(".ts")) {
+      name = name.substring(0, name.length - ".ts".length);
+    }
+
+    if (name.endsWith(".js")) {
+      name = name.substring(0, name.length - ".js".length);
+    }
+
+    acc["/" + name] = [route];
+    return acc;
+  }, {});
+
+  return {
+    page: routes[route],
+    buildId: "1234",
+    assetPrefix: "",
+    isPreview: false,
+    locale: null,
+    locales: [],
+    isFallback: false,
+    err: null,
+    props: {},
+    query: params,
+    pages,
+  };
+}
+
 type RenderRouteInfo = PrivateRouteInfo & {
   App: AppComponent;
   scroll?: { x: number; y: number } | null;
 };
 type RenderErrorProps = Omit<RenderRouteInfo, "Component" | "styleSheets">;
 
-const data: typeof window["__NEXT_DATA__"] = JSON.parse(
-  document.getElementById("__NEXT_DATA__")!.textContent!
-);
+const nextDataTag = document.getElementById("__NEXT_DATA__");
+
+const data: typeof window["__NEXT_DATA__"] = nextDataTag
+  ? JSON.parse(document.getElementById("__NEXT_DATA__")!.textContent!)
+  : nextDataFromBunData();
 window.__NEXT_DATA__ = data;
 
 const {
@@ -102,7 +173,11 @@ if (hasBasePath(asPath)) {
   asPath = delBasePath(asPath);
 }
 
-const pageLoader: PageLoader = new PageLoader(buildId, prefix, data.pages);
+export const pageLoader: PageLoader = new PageLoader(
+  buildId,
+  prefix,
+  data.pages
+);
 
 const headManager: {
   mountedInstances: Set<unknown>;
@@ -116,7 +191,7 @@ export let router: Router;
 let CachedApp: AppComponent, onPerfEntry: (metric: any) => void;
 
 export default function boot(EntryPointNamespace, loader) {
-  _boot(EntryPointNamespace).then(() => {});
+  _boot(EntryPointNamespace).then(() => {}, false);
 }
 
 class Container extends React.Component<{
@@ -230,7 +305,7 @@ function AppContainer({
   );
 }
 
-async function _boot(EntryPointNamespace) {
+export async function _boot(EntryPointNamespace, isError) {
   NextRouteLoader.default.getClientBuildManifest = () => Promise.resolve({});
 
   const PageComponent = EntryPointNamespace.default;
@@ -287,14 +362,25 @@ async function _boot(EntryPointNamespace) {
 
   globalThis.next.router = router;
 
-  ReactDOM.hydrate(
-    <TopLevelRender
-      App={CachedApp}
-      Component={PageComponent}
-      props={{ pageProps: hydrateProps }}
-    />,
-    document.querySelector("#__next")
-  );
+  if (isError) {
+    ReactDOM.render(
+      <TopLevelRender
+        App={CachedApp}
+        Component={PageComponent}
+        props={{ pageProps: hydrateProps }}
+      />,
+      document.querySelector("#__next")
+    );
+  } else {
+    ReactDOM.hydrate(
+      <TopLevelRender
+        App={CachedApp}
+        Component={PageComponent}
+        props={{ pageProps: hydrateProps }}
+      />,
+      document.querySelector("#__next")
+    );
+  }
 }
 
 function TopLevelRender({ App, Component, props, scroll }) {

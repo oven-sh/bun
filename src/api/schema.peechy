@@ -10,6 +10,93 @@ smol Loader {
     json = 7;
 }
 
+smol FrameworkEntryPointType {
+  client = 1;
+  server = 2;
+  fallback = 3;
+}
+
+smol StackFrameScope {
+  Eval = 1;
+  Module = 2;
+  Function = 3;
+  Global = 4;
+  Wasm = 5;
+  Constructor = 6;
+}
+
+struct StackFrame {
+  string function_name;
+  string file;
+  StackFramePosition position;
+  StackFrameScope scope;
+}
+
+struct StackFramePosition {
+  int32 source_offset;
+  int32 line;
+  int32 line_start;
+  int32 line_stop;
+  int32 column_start;
+  int32 column_stop;
+  int32 expression_start;
+  int32 expression_stop;
+}
+
+struct SourceLine {
+  int32 line;
+  string text;
+}
+
+struct StackTrace {
+  SourceLine[] source_lines;
+  StackFrame[] frames;
+}
+
+
+message JSException {
+  string name = 1;
+  string message = 2;
+  
+  uint16 runtime_type = 3;
+  uint8 code = 4;
+
+  StackTrace stack = 5;
+}
+
+smol FallbackStep {
+  ssr_disabled = 1;
+  create_vm = 2;
+  configure_router = 3;
+  configure_defines = 4;
+  resolve_entry_point = 5;
+  load_entry_point = 6;
+  eval_entry_point = 7;
+  fetch_event_handler = 8;
+}
+
+struct Problems {
+  uint16 code;
+  string name;
+
+  JSException[] exceptions;
+  Log build;
+}
+
+struct Router {
+  string[] routes;
+  int32 route;
+  StringMap params;
+}
+
+message FallbackMessageContainer {
+  string message = 1;
+  Router router = 2;
+  FallbackStep reason = 3;
+  Problems problems = 4;
+}
+ 
+
 smol ResolveMode {
   disable = 1;
   lazy = 2;
@@ -161,22 +248,35 @@ struct LoadedEnvConfig {
 
 message FrameworkConfig {
   string package = 1;
-  string client = 2;
-  string server = 3;
-  bool development = 4;
-  EnvConfig client_env = 5;
-  EnvConfig server_env = 6;
+  FrameworkEntryPointMessage client = 2;
+  FrameworkEntryPointMessage server = 3;
+  FrameworkEntryPointMessage fallback = 4;
+  bool development = 5;
 
-  CSSInJSBehavior client_css_in_js = 7;
+  CSSInJSBehavior client_css_in_js = 6;
+}
+
+struct FrameworkEntryPoint {
+  FrameworkEntryPointType kind;
+  string path;
+  LoadedEnvConfig env;
+}
+
+message FrameworkEntryPointMap {
+  FrameworkEntryPoint client = 1;
+  FrameworkEntryPoint server = 2;
+  FrameworkEntryPoint fallback = 3;
+}
+
+message FrameworkEntryPointMessage {
+  string path = 1;
+  EnvConfig env = 2;
 }
 
 struct LoadedFramework {
-  string entry_point;
   string package;
   bool development;
-  bool client;
-  LoadedEnvConfig env;
-
+  FrameworkEntryPointMap entry_points;
   CSSInJSBehavior client_css_in_js;
 }
 
@@ -264,7 +364,7 @@ struct TransformResponse {
   Message[] errors;
 }
 
-enum MessageKind {
+enum MessageLevel {
   err = 1;
   warn  =2;
   note = 3;
@@ -286,10 +386,18 @@ message MessageData {
    Location location = 2;
 }
 
+
+
+message MessageMeta {
+  string resolve = 1;
+  bool build = 2;
+}
+
 struct Message {
-  MessageKind kind;
+  MessageLevel level;
   MessageData data;
   MessageData[] notes;
+  MessageMeta on;
 }
 
 struct Log {

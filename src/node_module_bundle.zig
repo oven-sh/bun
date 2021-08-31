@@ -297,6 +297,7 @@ pub const NodeModuleBundle = struct {
         var read_bytes = file_bytes[0..read_count];
         var reader = schema.Reader.init(read_bytes, allocator);
         var container = try Api.JavascriptBundleContainer.decode(&reader);
+        if (container.bundle == null) return error.InvalidBundle;
         var bundle = NodeModuleBundle{
             .allocator = allocator,
             .container = container,

@@ -117,6 +117,11 @@ pub fn build(b: *std.build.Builder) void {
     runtime_version_file.writer().print("{x}", .{runtime_hash}) catch unreachable;
     defer runtime_version_file.close();
 
+    const fallback_hash = std.hash.Wyhash.hash(0, @embedFile("./src/fallback.out.js"));
+    const fallback_version_file = std.fs.cwd().openFile("src/fallback.version", .{ .write = true }) catch unreachable;
+    fallback_version_file.writer().print("{x}", .{fallback_hash}) catch unreachable;
+    defer fallback_version_file.close();
+
     exe.setTarget(target);
     exe.setBuildMode(mode);
     b.install_path = output_dir;

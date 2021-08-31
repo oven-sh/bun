@@ -37,6 +37,69 @@ type uint32 = number;
     7: "json",
     json: "json"
   }
+  export enum FrameworkEntryPointType {
+    client = 1,
+    server = 2,
+    fallback = 3
+  }
+  export const FrameworkEntryPointTypeKeys = {
+    1: "client",
+    client: "client",
+    2: "server",
+    server: "server",
+    3: "fallback",
+    fallback: "fallback"
+  }
+  export enum StackFrameScope {
+    Eval = 1,
+    Module = 2,
+    Function = 3,
+    Global = 4,
+    Wasm = 5,
+    Constructor = 6
+  }
+  export const StackFrameScopeKeys = {
+    1: "Eval",
+    Eval: "Eval",
+    2: "Module",
+    Module: "Module",
+    3: "Function",
+    Function: "Function",
+    4: "Global",
+    Global: "Global",
+    5: "Wasm",
+    Wasm: "Wasm",
+    6: "Constructor",
+    Constructor: "Constructor"
+  }
+  export enum FallbackStep {
+    ssr_disabled = 1,
+    create_vm = 2,
+    configure_router = 3,
+    configure_defines = 4,
+    resolve_entry_point = 5,
+    load_entry_point = 6,
+    eval_entry_point = 7,
+    fetch_event_handler = 8
+  }
+  export const FallbackStepKeys = {
+    1: "ssr_disabled",
+    ssr_disabled: "ssr_disabled",
+    2: "create_vm",
+    create_vm: "create_vm",
+    3: "configure_router",
+    configure_router: "configure_router",
+    4: "configure_defines",
+    configure_defines: "configure_defines",
+    5: "resolve_entry_point",
+    resolve_entry_point: "resolve_entry_point",
+    6: "load_entry_point",
+    load_entry_point: "load_entry_point",
+    7: "eval_entry_point",
+    eval_entry_point: "eval_entry_point",
+    8: "fetch_event_handler",
+    fetch_event_handler: "fetch_event_handler"
+  }
   export enum ResolveMode {
     disable = 1,
     lazy = 2,
@@ -132,13 +195,13 @@ type uint32 = number;
     2: "fail",
     fail: "fail"
   }
-  export enum MessageKind {
+  export enum MessageLevel {
     err = 1,
     warn = 2,
     note = 3,
     debug = 4
   }
-  export const MessageKindKeys = {
+  export const MessageLevelKeys = {
     1: "err",
     err: "err",
     2: "warn",
@@ -193,6 +256,62 @@ type uint32 = number;
     2: "manifest",
     manifest: "manifest"
   }
+  export interface StackFrame {
+    function_name: string;
+    file: string;
+    position: StackFramePosition;
+    scope: StackFrameScope;
+  }
+
+  export interface StackFramePosition {
+    source_offset: int32;
+    line: int32;
+    line_start: int32;
+    line_stop: int32;
+    column_start: int32;
+    column_stop: int32;
+    expression_start: int32;
+    expression_stop: int32;
+  }
+
+  export interface SourceLine {
+    line: int32;
+    text: string;
+  }
+
+  export interface StackTrace {
+    source_lines: SourceLine[];
+    frames: StackFrame[];
+  }
+
+  export interface JSException {
+    name?: string;
+    message?: string;
+    runtime_type?: uint16;
+    code?: uint8;
+    stack?: StackTrace;
+  }
+
+  export interface Problems {
+    code: uint16;
+    name: string;
+    exceptions: JSException[];
+    build: Log;
+  }
+
+  export interface Router {
+    routes: string[];
+    route: int32;
+    params: StringMap;
+  }
+
+  export interface FallbackMessageContainer {
+    message?: string;
+    router?: Router;
+    reason?: FallbackStep;
+    problems?: Problems;
+  }
+
   export interface JSX {
     factory: string;
     runtime: JSXRuntime;
@@ -275,20 +394,34 @@ type uint32 = number;
 
   export interface FrameworkConfig {
     package?: string;
-    client?: string;
-    server?: string;
+    client?: FrameworkEntryPointMessage;
+    server?: FrameworkEntryPointMessage;
+    fallback?: FrameworkEntryPointMessage;
     development?: boolean;
-    client_env?: EnvConfig;
-    server_env?: EnvConfig;
     client_css_in_js?: CSSInJSBehavior;
   }
 
+  export interface FrameworkEntryPoint {
+    kind: FrameworkEntryPointType;
+    path: string;
+    env: LoadedEnvConfig;
+  }
+
+  export interface FrameworkEntryPointMap {
+    client?: FrameworkEntryPoint;
+    server?: FrameworkEntryPoint;
+    fallback?: FrameworkEntryPoint;
+  }
+
+  export interface FrameworkEntryPointMessage {
+    path?: string;
+    env?: EnvConfig;
+  }
+
   export interface LoadedFramework {
-    entry_point: string;
     package: string;
     development: boolean;
-    client: boolean;
-    env: LoadedEnvConfig;
+    entry_points: FrameworkEntryPointMap;
     client_css_in_js: CSSInJSBehavior;
   }
 
@@ -372,10 +505,16 @@ type uint32 = number;
     location?: Location;
   }
 
+  export interface MessageMeta {
+    resolve?: string;
+    build?: boolean;
+  }
+
   export interface Message {
-    kind: MessageKind;
+    level: MessageLevel;
     data: MessageData;
     notes: MessageData[];
+    on: MessageMeta;
   }
 
   export interface Log {
@@ -461,6 +600,22 @@ type uint32 = number;
     log: Log;
   }
 
+  export declare function  encodeStackFrame(message: StackFrame, bb: ByteBuffer): void;
+  export declare function decodeStackFrame(buffer: ByteBuffer): StackFrame;
+  export declare function  encodeStackFramePosition(message: StackFramePosition, bb: ByteBuffer): void;
+  export declare function decodeStackFramePosition(buffer: ByteBuffer): StackFramePosition;
+  export declare function  encodeSourceLine(message: SourceLine, bb: ByteBuffer): void;
+  export declare function decodeSourceLine(buffer: ByteBuffer): SourceLine;
+  export declare function  encodeStackTrace(message: StackTrace, bb: ByteBuffer): void;
+  export declare function decodeStackTrace(buffer: ByteBuffer): StackTrace;
+  export declare function  encodeJSException(message: JSException, bb: ByteBuffer): void;
+  export declare function decodeJSException(buffer: ByteBuffer): JSException;
+  export declare function  encodeProblems(message: Problems, bb: ByteBuffer): void;
+  export declare function decodeProblems(buffer: ByteBuffer): Problems;
+  export declare function  encodeRouter(message: Router, bb: ByteBuffer): void;
+  export declare function decodeRouter(buffer: ByteBuffer): Router;
+  export declare function  encodeFallbackMessageContainer(message: FallbackMessageContainer, bb: ByteBuffer): void;
+  export declare function decodeFallbackMessageContainer(buffer: ByteBuffer): FallbackMessageContainer;
   export declare function  encodeJSX(message: JSX, bb: ByteBuffer): void;
   export declare function decodeJSX(buffer: ByteBuffer): JSX;
   export declare function  encodeStringPointer(message: StringPointer, bb: ByteBuffer): void;
@@ -487,6 +642,12 @@ type uint32 = number;
   export declare function decodeLoadedEnvConfig(buffer: ByteBuffer): LoadedEnvConfig;
   export declare function  encodeFrameworkConfig(message: FrameworkConfig, bb: ByteBuffer): void;
   export declare function decodeFrameworkConfig(buffer: ByteBuffer): FrameworkConfig;
+  export declare function  encodeFrameworkEntryPoint(message: FrameworkEntryPoint, bb: ByteBuffer): void;
+  export declare function decodeFrameworkEntryPoint(buffer: ByteBuffer): FrameworkEntryPoint;
+  export declare function  encodeFrameworkEntryPointMap(message: FrameworkEntryPointMap, bb: ByteBuffer): void;
+  export declare function decodeFrameworkEntryPointMap(buffer: ByteBuffer): FrameworkEntryPointMap;
+  export declare function  encodeFrameworkEntryPointMessage(message: FrameworkEntryPointMessage, bb: ByteBuffer): void;
+  export declare function decodeFrameworkEntryPointMessage(buffer: ByteBuffer): FrameworkEntryPointMessage;
   export declare function  encodeLoadedFramework(message: LoadedFramework, bb: ByteBuffer): void;
   export declare function decodeLoadedFramework(buffer: ByteBuffer): LoadedFramework;
   export declare function  encodeLoadedRouteConfig(message: LoadedRouteConfig, bb: ByteBuffer): void;
@@ -507,6 +668,8 @@ type uint32 = number;
   export declare function decodeLocation(buffer: ByteBuffer): Location;
   export declare function  encodeMessageData(message: MessageData, bb: ByteBuffer): void;
   export declare function decodeMessageData(buffer: ByteBuffer): MessageData;
+  export declare function  encodeMessageMeta(message: MessageMeta, bb: ByteBuffer): void;
+  export declare function decodeMessageMeta(buffer: ByteBuffer): MessageMeta;
   export declare function  encodeMessage(message: Message, bb: ByteBuffer): void;
   export declare function decodeMessage(buffer: ByteBuffer): Message;
   export declare function  encodeLog(message: Log, bb: ByteBuffer): void;

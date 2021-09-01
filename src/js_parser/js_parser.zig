@@ -11139,21 +11139,45 @@ pub fn NewParser(
                         .has_chain_parent = (e_.optional_chain orelse js_ast.OptionalChain.start) == js_ast.OptionalChain.ccontinue,
                     });
                     e_.target = target;
+                    const index = p.visitExpr(e_.index);
+                    e_.index = index;
 
-                    if (e_.optional_chain == null and @as(Expr.Tag, e_.index.data) == .e_string) {
+                    if (e_.optional_chain == null and e_.index.data == .e_string and e_.index.data.e_string.isUTF8()) {
+                        const literal = e_.index.data.e_string.utf8;
                         if (p.maybeRewritePropertyAccess(
                             expr.loc,
                             in.assign_target,
                             is_delete_target,
                             e_.target,
-                            e_.index.data.e_string.string(p.allocator) catch unreachable,
+                            literal,
                             e_.index.loc,
                             is_call_target,
                         )) |val| {
                             return val;
                         }
-                    } else {
-                        e_.index = p.visitExpr(e_.index);
+
+                        // delete process.env["NODE_ENV"]
+                        // shouldn't be transformed into
+                        // delete undefined
+                        if (!is_delete_target and !is_call_target) {
+                            // We check for defines here as well
+                            // esbuild doesn't do this
+                            // In a lot of codebases, people will sometimes do:
+                            // process.env["NODE_ENV"]
+                            // Often not intentionally
+                            // So we want to be able to detect this and still Do The Right Thing
+                            if (p.define.dots.get(literal)) |parts| {
+                                for (parts) |define| {
+                                    if (p.isDotDefineMatch(expr, define.parts)) {
+                                        if (!define.data.isUndefined()) {
+                                            return p.valueForDefine(expr.loc, in.assign_target, is_delete_target, &define.data);
+                                        }
+
+                                        return p.e(E.Undefined{}, expr.loc);
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     // Create an error for assigning to an import namespace when bundling. Even
@@ -13140,6 +13164,8 @@ pub fn NewParser(
             };
         }
 
+        // This function is recursive
+        // But it shouldn't be that long
         pub fn isDotDefineMatch(p: *P, expr: Expr, parts: []const string) bool {
             switch (expr.data) {
                 .e_dot => |ex| {
@@ -13156,6 +13182,21 @@ pub fn NewParser(
                 },
                 .e_import_meta => {
                     return parts.len == 2 and strings.eqlComptime(parts[0], "import") and strings.eqlComptime(parts[1], "meta");
+                },
+                // Note: this behavior differs from esbuild
+                // esbuild does not try to match index accessors
+                // we do, but only if it's a UTF8 string
+                // the intent is to handle people using this form instead of E.Dot. So we really only want to do this if the accessor can also be an identifier
+                .e_index => |index| {
+                    if (parts.len > 1 and index.index.data == .e_string and index.index.data.e_string.isUTF8()) {
+                        if (index.optional_chain != null) {
+                            return false;
+                        }
+
+                        const last = parts.len - 1;
+                        const is_tail_match = strings.eql(parts[last], index.index.data.e_string.utf8);
+                        return is_tail_match and p.isDotDefineMatch(index.target, parts[0..last]);
+                    }
                 },
                 .e_identifier => |ex| {
 

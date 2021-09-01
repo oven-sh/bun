@@ -69,7 +69,8 @@ export var __commonJS = (cb, name) => {
         });
         // If it's a namespace export without .default, pretend .default is the same as mod.exports
       } else if (
-        typeof mod.exports === "object" &&
+        (typeof mod.exports === "object" ||
+          typeof mod.exports === "function") &&
         !("default" in mod.exports)
       ) {
         var defaultValue = mod.exports;
@@ -184,3 +185,9 @@ export var __reExport = (target, module, desc) => {
         });
   return target;
 };
+
+if (typeof globalThis.process === "undefined") {
+  globalThis.process = {
+    env: {},
+  };
+}

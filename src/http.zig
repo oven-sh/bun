@@ -1488,7 +1488,7 @@ pub const RequestContext = struct {
                                         );
                                     },
                                     .success => {
-                                        if (build_result.timestamp < cmd.timestamp) {
+                                        if (build_result.timestamp > cmd.timestamp) {
                                             Output.prettyln(
                                                 "<r><b><green>{d}ms<r> <d>built<r> <b>{s}<r><b> <r><d>({d}+ LOC)",
                                                 .{

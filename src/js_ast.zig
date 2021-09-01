@@ -1066,15 +1066,15 @@ pub const E = struct {
             }
         }
 
-        pub fn isUTF8(s: *const String) bool {
+        pub inline fn isUTF8(s: *const String) bool {
             return s.utf8.len > 0;
         }
 
-        pub fn isBlank(s: *const String) bool {
+        pub inline fn isBlank(s: *const String) bool {
             return std.math.max(s.utf8.len, s.value.len) == 0;
         }
 
-        pub fn isPresent(s: *const String) bool {
+        pub inline fn isPresent(s: *const String) bool {
             return std.math.max(s.utf8.len, s.value.len) > 0;
         }
 

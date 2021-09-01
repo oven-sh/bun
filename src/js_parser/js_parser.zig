@@ -288,7 +288,7 @@ pub const ImportScanner = struct {
                             }
 
                             // "import_items_for_namespace" has property accesses off the namespace
-                            if (p.import_items_for_namespace.get(namespace_ref)) |import_items| {
+                            if (p.import_items_for_namespace.getPtr(namespace_ref)) |import_items| {
                                 var count = import_items.count();
                                 if (count > 0) {
                                     // Sort keys for determinism
@@ -301,6 +301,7 @@ pub const ImportScanner = struct {
                                     }
                                     strings.sortAsc(sorted);
 
+                                    defer p.allocator.free(sorted);
                                     if (convert_star_to_clause) {
                                         // Create an import clause for these items. Named imports will be
                                         // automatically created later on since there is now a clause.
@@ -340,18 +341,20 @@ pub const ImportScanner = struct {
 
                                         for (sorted) |alias| {
                                             const name: LocRef = import_items.get(alias) orelse unreachable;
+                                            const name_ref = name.ref.?;
 
-                                            try p.named_imports.put(name.ref.?, js_ast.NamedImport{
+                                            try p.named_imports.put(name_ref, js_ast.NamedImport{
                                                 .alias = alias,
                                                 .alias_loc = name.loc,
                                                 .namespace_ref = st.namespace_ref,
                                                 .import_record_index = st.import_record_index,
                                             });
 
+                                            record.contains_default_alias = record.contains_default_alias or strings.eqlComptime(alias, "default");
+
                                             // Make sure the printer prints this as a property access
-                                            var symbol: Symbol = p.symbols.items[name.ref.?.inner_index];
+                                            var symbol: *Symbol = &p.symbols.items[name_ref.inner_index];
                                             symbol.namespace_alias = G.NamespaceAlias{ .namespace_ref = st.namespace_ref, .alias = alias };
-                                            p.symbols.items[name.ref.?.inner_index] = symbol;
                                         }
                                     }
                                 }
@@ -449,7 +452,7 @@ pub const ImportScanner = struct {
                     }
                 },
                 .s_export_default => |st| {
-                    try p.recordExport(st.default_name.loc, "default", st.default_name.ref.?);
+
                     // Rewrite this export to be:
                     // exports.default =
                     // But only if it's anonymous
@@ -473,6 +476,7 @@ pub const ImportScanner = struct {
                                             if (func.func.name) |name_ref| {
                                                 if (name_ref.ref != null) {
                                                     stmt = p.s(S.Function{ .func = func.func }, ex.loc);
+                                                    st.default_name.ref = name_ref.ref.?;
                                                     break :transform_export_default_when_its_anonymous;
                                                 }
                                             }
@@ -486,15 +490,21 @@ pub const ImportScanner = struct {
                                                         },
                                                         ex.loc,
                                                     );
+                                                    st.default_name.ref = name_ref.ref.?;
                                                     break :transform_export_default_when_its_anonymous;
                                                 }
                                             }
                                         },
                                         else => {},
                                     }
-                                    const exports_default_ident = p.e(E.Dot{ .target = p.e(E.Identifier{ .ref = p.hmr_module_ref }, stmt.loc), .name = "default", .name_loc = st.default_name.loc }, stmt.loc);
+                                    var decls = try p.allocator.alloc(G.Decl, 1);
+                                    decls[0] = G.Decl{ .binding = p.b(B.Identifier{ .ref = st.default_name.ref.? }, stmt.loc), .value = ex };
 
-                                    stmt = Expr.assignStmt(exports_default_ident, ex, p.allocator);
+                                    stmt = p.s(S.Local{
+                                        .decls = decls,
+                                        .kind = S.Local.Kind.k_var,
+                                        .is_export = false,
+                                    }, ex.loc);
                                 },
                                 .stmt => |class_or_func| {
                                     switch (class_or_func.data) {
@@ -502,35 +512,47 @@ pub const ImportScanner = struct {
                                             if (func.func.name) |name_ref| {
                                                 if (name_ref.ref != null) {
                                                     stmt = class_or_func;
+                                                    st.default_name.ref = name_ref.ref.?;
                                                     break :transform_export_default_when_its_anonymous;
                                                 }
                                             }
 
-                                            // convert this to an E.Function
-                                            const exports_default_ident = p.e(E.Dot{ .target = p.e(E.Identifier{ .ref = p.hmr_module_ref }, stmt.loc), .name = "default", .name_loc = st.default_name.loc }, stmt.loc);
+                                            var decls = try p.allocator.alloc(G.Decl, 1);
+                                            decls[0] = G.Decl{ .binding = p.b(B.Identifier{ .ref = st.default_name.ref.? }, stmt.loc), .value = p.e(E.Function{ .func = func.func }, stmt.loc) };
 
-                                            stmt = Expr.assignStmt(exports_default_ident, p.e(E.Function{ .func = func.func }, stmt.loc), p.allocator);
+                                            stmt = p.s(S.Local{
+                                                .decls = decls,
+                                                .kind = S.Local.Kind.k_var,
+                                                .is_export = true,
+                                            }, stmt.loc);
                                         },
                                         .s_class => |class| {
                                             if (class.class.class_name) |name_ref| {
                                                 if (name_ref.ref != null) {
                                                     stmt = class_or_func;
+                                                    st.default_name.ref = name_ref.ref.?;
                                                     break :transform_export_default_when_its_anonymous;
                                                 }
                                             }
 
-                                            const exports_default_ident = p.e(E.Dot{ .target = p.e(E.Identifier{ .ref = p.hmr_module_ref }, stmt.loc), .name = "default", .name_loc = st.default_name.loc }, stmt.loc);
-                                            stmt = Expr.assignStmt(exports_default_ident, p.e(
-                                                E.Class{
+                                            var decls = try p.allocator.alloc(G.Decl, 1);
+                                            decls[0] = G.Decl{
+                                                .binding = p.b(B.Identifier{ .ref = st.default_name.ref.? }, stmt.loc),
+                                                .value = p.e(E.Class{
                                                     .class_keyword = class.class.class_keyword,
                                                     .ts_decorators = class.class.ts_decorators,
                                                     .class_name = class.class.class_name,
                                                     .extends = class.class.extends,
                                                     .body_loc = class.class.body_loc,
                                                     .properties = class.class.properties,
-                                                },
-                                                stmt.loc,
-                                            ), p.allocator);
+                                                }, stmt.loc),
+                                            };
+
+                                            stmt = p.s(S.Local{
+                                                .decls = decls,
+                                                .kind = S.Local.Kind.k_var,
+                                                .is_export = false,
+                                            }, stmt.loc);
                                         },
                                         else => unreachable,
                                     }
@@ -538,6 +560,8 @@ pub const ImportScanner = struct {
                             }
                         }
                     }
+
+                    try p.recordExport(st.default_name.loc, "default", st.default_name.ref.?);
                 },
                 .s_export_clause => |st| {
                     for (st.items) |item| {
@@ -3536,7 +3560,7 @@ pub fn NewParser(
             try p.scopes_for_current_part.append(order.scope);
         }
 
-        pub fn pushScopeForParsePass(p: *P, kind: js_ast.Scope.Kind, loc: logger.Loc) !usize {
+        pub fn pushScopeForParsePass(p: *P, comptime kind: js_ast.Scope.Kind, loc: logger.Loc) !usize {
             debugl("<pushScopeForParsePass>");
             defer debugl("</pushScopeForParsePass>");
             var parent: *Scope = p.current_scope;
@@ -3558,17 +3582,19 @@ pub fn NewParser(
 
             p.current_scope = scope;
 
-            // Enforce that scope locations are strictly increasing to help catch bugs
-            // where the pushed scopes are mistmatched between the first and second passes
-            if (std.builtin.mode != std.builtin.Mode.ReleaseFast and p.scopes_in_order.items.len > 0) {
-                var last_i = p.scopes_in_order.items.len - 1;
-                while (p.scopes_in_order.items[last_i] == null and last_i > 0) {
-                    last_i -= 1;
-                }
+            if (comptime !isRelease) {
+                // Enforce that scope locations are strictly increasing to help catch bugs
+                // where the pushed scopes are mistmatched between the first and second passes
+                if (p.scopes_in_order.items.len > 0) {
+                    var last_i = p.scopes_in_order.items.len - 1;
+                    while (p.scopes_in_order.items[last_i] == null and last_i > 0) {
+                        last_i -= 1;
+                    }
 
-                if (p.scopes_in_order.items[last_i]) |prev_scope| {
-                    if (prev_scope.loc.start >= loc.start) {
-                        p.panic("Scope location {d} must be greater than {d}", .{ loc.start, prev_scope.loc.start });
+                    if (p.scopes_in_order.items[last_i]) |prev_scope| {
+                        if (prev_scope.loc.start >= loc.start) {
+                            p.panic("Scope location {d} must be greater than {d}", .{ loc.start, prev_scope.loc.start });
+                        }
                     }
                 }
             }
@@ -3576,7 +3602,7 @@ pub fn NewParser(
             // Copy down function arguments into the function body scope. That way we get
             // errors if a statement in the function body tries to re-declare any of the
             // arguments.
-            if (kind == js_ast.Scope.Kind.function_body) {
+            if (comptime kind == js_ast.Scope.Kind.function_body) {
                 assert(parent.kind == js_ast.Scope.Kind.function_args);
 
                 var iter = scope.parent.?.members.iterator();
@@ -10603,7 +10629,7 @@ pub fn NewParser(
                         }
                     }
 
-                    const runtime = if (e_.tag != null and p.options.jsx.runtime == .automatic and !e_.flags.is_key_before_rest) options.JSX.Runtime.automatic else options.JSX.Runtime.classic;
+                    const runtime = if (p.options.jsx.runtime == .automatic and !e_.flags.is_key_before_rest) options.JSX.Runtime.automatic else options.JSX.Runtime.classic;
                     var children_count = e_.children.len;
 
                     const is_childless_tag = FeatureFlags.react_specific_warnings and children_count > 0 and tag.data == .e_string and tag.data.e_string.isUTF8() and js_lexer.ChildlessJSXTags.has(tag.data.e_string.utf8);
@@ -10646,7 +10672,7 @@ pub fn NewParser(
                             // Call createElement()
                             return p.e(E.Call{
                                 .target = p.jsxStringsToMemberExpression(expr.loc, p.jsx_factory_ref),
-                                .args = args,
+                                .args = args[0..i],
                                 // Enable tree shaking
                                 .can_be_unwrapped_if_unused = !p.options.ignore_dce_annotations,
                             }, expr.loc);
@@ -10678,7 +10704,7 @@ pub fn NewParser(
                                         props.append(G.Property{
                                             .key = children_key,
                                             .value = p.e(E.Array{
-                                                .items = e_.children,
+                                                .items = e_.children[0..children_count],
                                                 .is_single_line = e_.children.len < 2,
                                             }, expr.loc),
                                         }) catch unreachable;
@@ -10698,7 +10724,7 @@ pub fn NewParser(
                                     props.append(G.Property{
                                         .key = children_key,
                                         .value = p.e(E.Array{
-                                            .items = e_.children,
+                                            .items = e_.children[0..children_count],
                                             .is_single_line = e_.children.len < 2,
                                         }, expr.loc),
                                     }) catch unreachable;
@@ -11928,52 +11954,52 @@ pub fn NewParser(
                 // This lets us replace them easily in the printer to rebind them to
                 // something else without paying the cost of a whole-tree traversal during
                 // module linking just to rewrite these EDot expressions.
-                if (p.import_items_for_namespace.getPtr(id.ref)) |import_items| {
-                    const item: LocRef = import_items.get(name) orelse brk: {
-                        const _item = LocRef{ .loc = name_loc, .ref = p.newSymbol(.import, name) catch unreachable };
-                        p.module_scope.generated.append(_item.ref orelse unreachable) catch unreachable;
+                // if (p.import_items_for_namespace.getPtr(id.ref)) |import_items| {
+                //     const item: LocRef = import_items.get(name) orelse brk: {
+                //         const _item = LocRef{ .loc = name_loc, .ref = p.newSymbol(.import, name) catch unreachable };
+                //         p.module_scope.generated.append(_item.ref orelse unreachable) catch unreachable;
 
-                        import_items.put(name, _item) catch unreachable;
-                        p.is_import_item.put(_item.ref orelse unreachable, true) catch unreachable;
+                //         import_items.put(name, _item) catch unreachable;
+                //         p.is_import_item.put(_item.ref orelse unreachable, true) catch unreachable;
 
-                        var symbol = &p.symbols.items[_item.ref.?.inner_index];
-                        // Mark this as generated in case it's missing. We don't want to
-                        // generate errors for missing import items that are automatically
-                        // generated.
-                        symbol.import_item_status = .generated;
+                //         var symbol: *js_ast.Symbol = &p.symbols.items[_item.ref.?.inner_index];
+                //         // Mark this as generated in case it's missing. We don't want to
+                //         // generate errors for missing import items that are automatically
+                //         // generated.
+                //         symbol.import_item_status = .generated;
 
-                        // Make sure the printer prints this as a property access
-                        symbol.namespace_alias = G.NamespaceAlias{ .namespace_ref = id.ref, .alias = name };
-                        break :brk _item;
-                    };
+                //         // Make sure the printer prints this as a property access
+                //         symbol.namespace_alias = G.NamespaceAlias{ .namespace_ref = id.ref, .alias = name };
+                //         break :brk _item;
+                //     };
 
-                    // Undo the usage count for the namespace itself. This is used later
-                    // to detect whether the namespace symbol has ever been "captured"
-                    // or whether it has just been used to read properties off of.
-                    //
-                    // The benefit of doing this is that if both this module and the
-                    // imported module end up in the same module group and the namespace
-                    // symbol has never been captured, then we don't need to generate
-                    // any code for the namespace at all.
-                    p.ignoreUsage(id.ref);
+                //     // Undo the usage count for the namespace itself. This is used later
+                //     // to detect whether the namespace symbol has ever been "captured"
+                //     // or whether it has just been used to read properties off of.
+                //     //
+                //     // The benefit of doing this is that if both this module and the
+                //     // imported module end up in the same module group and the namespace
+                //     // symbol has never been captured, then we don't need to generate
+                //     // any code for the namespace at all.
+                //     p.ignoreUsage(id.ref);
 
-                    // Track how many times we've referenced this symbol
-                    p.recordUsage(item.ref.?);
-                    var ident_expr = p.e(
-                        E.Identifier{
-                            .ref = item.ref.?,
-                        },
-                        target.loc,
-                    );
+                //     // Track how many times we've referenced this symbol
+                //     p.recordUsage(item.ref.?);
+                //     var ident_expr = p.e(
+                //         E.Identifier{
+                //             .ref = item.ref.?,
+                //         },
+                //         target.loc,
+                //     );
 
-                    return p.handleIdentifier(name_loc, ident_expr.data.e_identifier, name, IdentifierOpts{
-                        .assign_target = assign_target,
-                        .is_delete_target = is_delete_target,
-                        // If this expression is used as the target of a call expression, make
-                        // sure the value of "this" is preserved.
-                        .was_originally_identifier = false,
-                    });
-                }
+                //     return p.handleIdentifier(name_loc, ident_expr.data.e_identifier, name, IdentifierOpts{
+                //         .assign_target = assign_target,
+                //         .is_delete_target = is_delete_target,
+                //         // If this expression is used as the target of a call expression, make
+                //         // sure the value of "this" is preserved.
+                //         .was_originally_identifier = false,
+                //     });
+                // }
 
                 if (is_call_target and id.ref.eql(p.module_ref) and strings.eqlComptime(name, "require")) {
                     p.ignoreUsage(p.module_ref);
@@ -14005,7 +14031,7 @@ pub fn NewParser(
 
                 var args_list: []Expr = if (isDebug) &Prefill.HotModuleReloading.DebugEnabledArgs else &Prefill.HotModuleReloading.DebugDisabled;
 
-                const new_call_args_count: usize = if (is_react_fast_refresh_enabled) 3 else 2;
+                const new_call_args_count: usize = comptime if (is_react_fast_refresh_enabled) 3 else 2;
                 var call_args = try p.allocator.alloc(Expr, new_call_args_count + 1);
                 var new_call_args = call_args[0..new_call_args_count];
                 var hmr_module_ident = p.e(E.Identifier{ .ref = p.hmr_module_ref }, logger.Loc.Empty);
@@ -14043,7 +14069,7 @@ pub fn NewParser(
                 var first_decl = decls[0..2];
                 // We cannot rely on import.meta.url because if we import it within a blob: url, it will be nonsensical
                 // var __hmrModule = new HMRModule(123123124, "/index.js"), __exports = __hmrModule.exports;
-                const hmr_import_ref = if (is_react_fast_refresh_enabled) p.runtime_imports.__FastRefreshModule else p.runtime_imports.__HMRModule;
+                const hmr_import_ref = if (comptime is_react_fast_refresh_enabled) p.runtime_imports.__FastRefreshModule else p.runtime_imports.__HMRModule;
 
                 first_decl[0] = G.Decl{
                     .binding = p.b(B.Identifier{ .ref = p.hmr_module_ref }, logger.Loc.Empty),

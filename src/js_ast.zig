@@ -517,10 +517,7 @@ pub const Symbol = struct {
     // if it has a namespace alias.
     namespace_alias: ?G.NamespaceAlias = null,
 
-    // Used by the parser for single pass parsing. Symbols that have been merged
-    // form a linked-list where the last link is the symbol to use. This link is
-    // an invalid ref if it's the last link. If this isn't invalid, you need to
-    // FollowSymbols to get the real one.
+    // Used by the parser for single pass parsing.
     link: ?Ref = null,
 
     // An estimate of the number of uses of this symbol. This is used to detect
@@ -2381,7 +2378,7 @@ pub const Expr = struct {
                 };
             },
             E.String => {
-                if (isDebug) {
+                if (comptime isDebug) {
                     // Sanity check: assert string is not a null ptr
                     if (st.isUTF8()) {
                         std.debug.assert(st.utf8[0] > 0);

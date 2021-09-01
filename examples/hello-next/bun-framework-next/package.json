@@ -1,8 +1,9 @@
 {
   "name": "bun-framework-next",
-  "version": "0.0.0-14",
+  "version": "0.0.0-15",
   "description": "",
   "framework": {
+    "displayName": "Next.js",
     "static": "public",
     "assetPrefix": "_next/",
     "router": {

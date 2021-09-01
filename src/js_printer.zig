@@ -3427,6 +3427,12 @@ pub fn NewPrinter(
         }
         pub fn printLoadFromBundleWithoutCall(p: *Printer, import_record_index: u32) void {
             const record = p.import_records[import_record_index];
+            if (record.path.is_disabled) {
+                p.print("(() => ({}))");
+                return;
+            }
+
+            std.debug.assert(record.module_id != 0); // either module_id is forgotten or it should be disabled
             p.print("$");
             std.fmt.formatInt(record.module_id, 16, .lower, .{}, p) catch unreachable;
         }

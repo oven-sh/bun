@@ -24,8 +24,10 @@ pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace) nore
         panicky.default_panic(msg, error_return_trace);
     }
 }
-
+pub var start_time: i128 = 0;
 pub fn main() anyerror!void {
+    start_time = std.time.nanoTimestamp();
+
     // The memory allocator makes a massive difference.
     // std.heap.raw_c_allocator and default_allocator perform similarly.
     // std.heap.GeneralPurposeAllocator makes this about 3x _slower_ than esbuild.

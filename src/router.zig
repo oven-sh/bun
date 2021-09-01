@@ -417,7 +417,7 @@ pub const RouteMap = struct {
 
                     match_result = Match{
                         .path = head.path,
-                        .name = file_path,
+                        .name = Match.nameWithBasename(file_path, this.map.config.dir),
                         .params = this.params,
                         .hash = head.full_hash,
                         .query_string = this.url_path.query_string,
@@ -533,15 +533,15 @@ pub const RouteMap = struct {
                     if (child_hash == index_route_hash) {
                         const entry = Fs.FileSystem.DirEntry.EntryStore.instance.at(routes_slice.items(.entry_index)[i + route.children.offset]).?;
                         const parts = [_]string{ entry.dir, entry.base() };
-
+                        const file_path = Fs.FileSystem.instance.absBuf(&parts, file_path_buf);
                         return Match{
                             .params = params,
-                            .name = routes_slice.items(.name)[i],
+                            .name = Match.nameWithBasename(file_path, this.config.dir),
                             .path = routes_slice.items(.path)[i],
                             .pathname = url_path.pathname,
                             .basename = entry.base(),
                             .hash = child_hash,
-                            .file_path = Fs.FileSystem.instance.absBuf(&parts, file_path_buf),
+                            .file_path = file_path,
                             .query_string = url_path.query_string,
                             .client_framework_enabled = this.client_framework_enabled,
                         };
@@ -552,16 +552,17 @@ pub const RouteMap = struct {
             } else {
                 const entry = Fs.FileSystem.DirEntry.EntryStore.instance.at(route.entry_index).?;
                 const parts = [_]string{ entry.dir, entry.base() };
+                const file_path = Fs.FileSystem.instance.absBuf(&parts, file_path_buf);
                 return Match{
                     .params = params,
-                    .name = route.name,
+                    .name = Match.nameWithBasename(file_path, this.config.dir),
                     .path = route.path,
                     .redirect_path = if (redirect) path else null,
                     .hash = full_hash,
                     .basename = entry.base(),
                     .pathname = url_path.pathname,
                     .query_string = url_path.query_string,
-                    .file_path = Fs.FileSystem.instance.absBuf(&parts, file_path_buf),
+                    .file_path = file_path,
                     .client_framework_enabled = this.client_framework_enabled,
                 };
             }
@@ -604,10 +605,6 @@ pub const RouteMap = struct {
         if (ctx.matchDynamicRoute(0, 0)) |_dynamic_route| {
             // route name == the filesystem path relative to the pages dir excluding the file extension
             var dynamic_route = _dynamic_route;
-            dynamic_route.name = dynamic_route.name[this.config.dir.len..];
-            dynamic_route.name = dynamic_route.name[0 .. dynamic_route.name.len - std.fs.path.extension(dynamic_route.file_path).len];
-            std.debug.assert(dynamic_route.name.len > 0);
-            if (dynamic_route.name[0] == '/') dynamic_route.name = dynamic_route.name[1..];
             dynamic_route.client_framework_enabled = this.client_framework_enabled;
             return dynamic_route;
         }
@@ -744,6 +741,15 @@ pub const Match = struct {
     params: *Param.List,
     redirect_path: ?string = null,
     query_string: string = "",
+
+    pub fn nameWithBasename(file_path: string, dir: string) string {
+        var name = file_path;
+        if (strings.indexOf(name, dir)) |i| {
+            name = name[i + dir.len ..];
+        }
+
+        return name[0 .. name.len - std.fs.path.extension(name).len];
+    }
 
     pub fn pathnameWithoutLeadingSlash(this: *const Match) string {
         return std.mem.trimLeft(u8, this.pathname, "/");

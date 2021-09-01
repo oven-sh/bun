@@ -242,6 +242,14 @@ pub const PackageJSON = struct {
     ) void {
         const framework_object = json.asProperty("framework") orelse return;
 
+        if (framework_object.expr.asProperty("displayName")) |name| {
+            if (name.expr.asString(allocator)) |str| {
+                if (str.len > 0) {
+                    pair.framework.display_name = str;
+                }
+            }
+        }
+
         if (framework_object.expr.asProperty("static")) |static_prop| {
             if (static_prop.expr.asString(allocator)) |str| {
                 if (str.len > 0) {

@@ -399,6 +399,7 @@ type uint32 = number;
     fallback?: FrameworkEntryPointMessage;
     development?: boolean;
     client_css_in_js?: CSSInJSBehavior;
+    display_name?: string;
   }
 
   export interface FrameworkEntryPoint {
@@ -420,6 +421,7 @@ type uint32 = number;
 
   export interface LoadedFramework {
     package: string;
+    display_name: string;
     development: boolean;
     entry_points: FrameworkEntryPointMap;
     client_css_in_js: CSSInJSBehavior;

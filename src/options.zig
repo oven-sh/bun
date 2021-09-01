@@ -1602,6 +1602,7 @@ pub const Framework = struct {
     server: EntryPoint = EntryPoint{},
     fallback: EntryPoint = EntryPoint{},
 
+    display_name: string = "",
     package: string = "",
     development: bool = true,
     resolved: bool = false,
@@ -1628,6 +1629,7 @@ pub const Framework = struct {
             .development = loaded.development,
             .from_bundle = true,
             .client_css_in_js = loaded.client_css_in_js,
+            .display_name = loaded.display_name,
         };
 
         if (loaded.entry_points.fallback) |fallback| {
@@ -1655,6 +1657,7 @@ pub const Framework = struct {
         return Api.LoadedFramework{
             .package = this.package,
             .development = this.development,
+            .display_name = this.display_name,
             .entry_points = .{
                 .client = try this.client.toAPI(allocator, toplevel_path, .client),
                 .fallback = try this.fallback.toAPI(allocator, toplevel_path, .fallback),
@@ -1693,6 +1696,7 @@ pub const Framework = struct {
             .server = server,
             .fallback = fallback,
             .package = transform.package orelse "",
+            .display_name = transform.display_name orelse "",
             .development = transform.development orelse true,
             .resolved = false,
             .client_css_in_js = switch (transform.client_css_in_js orelse .auto_onimportcss) {

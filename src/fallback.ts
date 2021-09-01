@@ -6,10 +6,9 @@ import {
 } from "./api/schema";
 
 function getFallbackInfo(): FallbackMessageContainer {
-  var binary_string = window.atob(
-    document.querySelector("#__bunfallback").textContent.trim()
+  var binary_string = globalThis.atob(
+    document.getElementById("#__bunfallback").textContent.trim()
   );
-  document.querySelector("#__bunfallback").remove();
 
   var len = binary_string.length;
   var bytes = new Uint8Array(len);
@@ -21,4 +20,10 @@ function getFallbackInfo(): FallbackMessageContainer {
 }
 
 globalThis.__BUN_DATA__ = getFallbackInfo();
-document.getElementById("__bun_fallback_script")?.remove();
+// It's probably better to remove potentially large content from the DOM when not in use
+if ("requestIdleCallback" in globalThis) {
+  globalThis.requestIdleCallback(() => {
+    document.getElementById("__bunfallback")?.remove();
+    document.getElementById("__bun_fallback_script")?.remove();
+  });
+}

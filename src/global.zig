@@ -119,6 +119,17 @@ pub const Output = struct {
     pub fn printElapsed(elapsed: f64) void {
         Output.prettyError("<r><d>[<b>{d:>.2}ms<r><d>]<r>", .{elapsed});
     }
+
+    pub fn printStartEnd(start: i128, end: i128) void {
+        const elapsed = @divTrunc(end - start, @as(i128, std.time.ns_per_ms));
+        printElapsed(@intToFloat(f64, elapsed));
+    }
+
+    pub fn printTimer(timer: *std.time.Timer) void {
+        const elapsed = @divTrunc(timer.read(), @as(u64, std.time.ns_per_ms));
+        printElapsed(@intToFloat(f64, elapsed));
+    }
+
     pub fn printErrorable(comptime fmt: string, args: anytype) !void {
         if (comptime isWasm) {
             try source.stream.seekTo(0);

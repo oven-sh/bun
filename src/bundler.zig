@@ -1914,8 +1914,18 @@ pub fn NewBundler(cache_files: bool) type {
                     opts.enable_bundling = false;
                     opts.transform_require_to_import = true;
                     opts.can_import_from_bundle = bundler.options.node_modules_bundle != null;
-                    opts.features.hot_module_reloading = bundler.options.hot_module_reloading and bundler.options.platform != .bun and (opts.can_import_from_bundle or !path.isNodeModule()); // and client_entry_point_ == null;
-                    opts.features.react_fast_refresh = opts.features.hot_module_reloading and jsx.parse and bundler.options.jsx.supports_fast_refresh;
+
+                    // HMR is enabled when devserver is running
+                    // unless you've explicitly disabled it
+                    // or you're running in SSR
+                    // or the file is a node_module
+                    opts.features.hot_module_reloading = bundler.options.hot_module_reloading and
+                        bundler.options.platform != .bun and
+                        (!opts.can_import_from_bundle or
+                        (opts.can_import_from_bundle and !path.isNodeModule()));
+                    opts.features.react_fast_refresh = opts.features.hot_module_reloading and
+                        jsx.parse and
+                        bundler.options.jsx.supports_fast_refresh;
                     opts.filepath_hash_for_hmr = file_hash orelse 0;
                     opts.warn_about_unbundled_modules = bundler.options.platform != .bun;
                     const value = (bundler.resolver.caches.js.parse(allocator, opts, bundler.options.define, bundler.log, &source) catch null) orelse return null;
@@ -2639,26 +2649,38 @@ pub const FallbackEntryPoint = struct {
         var code: string = undefined;
 
         if (disable_css_imports) {
-            code = try std.fmt.bufPrint(
-                &entry.code_buffer,
+            const fmt =
                 \\globalThis.Bun_disableCSSImports = true;
                 \\import boot from '{s}';
                 \\boot(globalThis.__BUN_DATA__);
-            ,
-                .{
-                    input_path,
-                },
-            );
+            ;
+
+            const args = .{
+                input_path,
+            };
+
+            const count = std.fmt.count(fmt, args);
+            if (count < entry.code_buffer.len) {
+                code = try std.fmt.bufPrint(&entry.code_buffer, fmt, args);
+            } else {
+                code = try std.fmt.allocPrint(bundler.allocator, fmt, args);
+            }
         } else {
-            code = try std.fmt.bufPrint(
-                &entry.code_buffer,
+            const fmt =
                 \\import boot from '{s}';
                 \\boot(globalThis.__BUN_DATA__);
-            ,
-                .{
-                    input_path,
-                },
-            );
+            ;
+
+            const args = .{
+                input_path,
+            };
+
+            const count = std.fmt.count(fmt, args);
+            if (count < entry.code_buffer.len) {
+                code = try std.fmt.bufPrint(&entry.code_buffer, fmt, args);
+            } else {
+                code = try std.fmt.allocPrint(bundler.allocator, fmt, args);
+            }
         }
 
         entry.source = logger.Source.initPathString(input_path, code);

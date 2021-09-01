@@ -319,7 +319,7 @@ JSC::JSInternalPromise *GlobalObject::moduleLoaderFetch(JSGlobalObject *globalOb
   promise->resolve(globalObject, jsSourceCode);
   globalObject->vm().drainMicrotasks();
   return promise;
-}
+  }
 
 JSC::JSObject *GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObject *globalObject,
                                                                     JSModuleLoader *loader,

@@ -1132,7 +1132,21 @@ pub const FetchEvent = struct {
             return js.JSValueMakeUndefined(ctx);
         };
 
-        defer this.request_context.arena.deinit();
+        defer {
+            if (!VirtualMachine.vm.had_errors) {
+                Output.printElapsed(@intToFloat(f64, (this.request_context.timer.lap())) / std.time.ns_per_ms);
+
+                Output.prettyError(
+                    " <b>/{s}<r><d> - <b>{d}<r> <d>transpiled, <d><b>{d}<r> <d>imports<r>\n",
+                    .{
+                        this.request_context.matched_route.?.name,
+                        VirtualMachine.vm.transpiled_count,
+                        VirtualMachine.vm.resolved_count,
+                    },
+                );
+            }
+            this.request_context.arena.deinit();
+        }
 
         var needs_mime_type = true;
         var content_length: ?usize = null;

@@ -1212,6 +1212,10 @@ function decodeFrameworkConfig(bb) {
       result["client_css_in_js"] = CSSInJSBehavior[bb.readByte()];
       break;
 
+    case 7:
+      result["display_name"] = bb.readString();
+      break;
+
     default:
       throw new Error("Attempted to parse invalid message");
     }
@@ -1256,6 +1260,12 @@ function encodeFrameworkConfig(message, bb) {
     var encoded = CSSInJSBehavior[value];
 if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + " for enum \"CSSInJSBehavior\"");
 bb.writeByte(encoded);
+  }
+
+  var value = message["display_name"];
+  if (value != null) {
+    bb.writeByte(7);
+    bb.writeString(value);
   }
   bb.writeByte(0);
 
@@ -1389,6 +1399,7 @@ function decodeLoadedFramework(bb) {
   var result = {};
 
   result["package"] = bb.readString();
+  result["display_name"] = bb.readString();
   result["development"] = !!bb.readByte();
   result["entry_points"] = decodeFrameworkEntryPointMap(bb);
   result["client_css_in_js"] = CSSInJSBehavior[bb.readByte()];
@@ -1402,6 +1413,13 @@ function encodeLoadedFramework(message, bb) {
     bb.writeString(value);
   } else {
     throw new Error("Missing required field \"package\"");
+  }
+
+  var value = message["display_name"];
+  if (value != null) {
+    bb.writeString(value);
+  } else {
+    throw new Error("Missing required field \"display_name\"");
   }
 
   var value = message["development"];

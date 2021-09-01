@@ -47,6 +47,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
         runtime_import_record: ?ImportRecord = null,
         runtime_source_path: string,
         hashed_filenames: HashedFileNameMap,
+        import_counter: usize = 0,
 
         onImportCSS: ?OnImportCallback = null,
 
@@ -566,7 +567,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
             import_record: *ImportRecord,
             comptime import_path_format: Options.BundleOptions.ImportPathFormat,
         ) !void {
-
+            linker.import_counter += 1;
             // lazy means:
             // Run the resolver
             // Don't parse/print automatically.

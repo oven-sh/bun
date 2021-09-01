@@ -27,7 +27,7 @@ pub const bundle_node_modules = true;
 
 pub const tracing = true;
 
-pub const verbose_watcher = true;
+pub const verbose_watcher = false;
 
 pub const css_supports_fence = true;
 

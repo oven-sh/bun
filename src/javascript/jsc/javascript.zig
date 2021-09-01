@@ -352,6 +352,9 @@ pub const VirtualMachine = struct {
 
     has_loaded: bool = false,
 
+    transpiled_count: usize = 0,
+    resolved_count: usize = 0,
+    had_errors: bool = false,
     pub var vm_loaded = false;
     pub var vm: *VirtualMachine = undefined;
 
@@ -383,6 +386,7 @@ pub const VirtualMachine = struct {
         VirtualMachine.vm.* = VirtualMachine{
             .global = undefined,
             .allocator = allocator,
+            .entry_point = ServerEntryPoint{},
             .require_cache = RequireCacheType.init(allocator),
             .event_listeners = EventListenerMixin.Map.init(allocator),
             .bundler = bundler,
@@ -428,10 +432,13 @@ pub const VirtualMachine = struct {
     }
 
     pub fn flush(this: *VirtualMachine) void {
+        this.had_errors = false;
         for (this.flush_list.items) |item| {
             this.allocator.free(item);
         }
         this.flush_list.shrinkRetainingCapacity(0);
+        this.transpiled_count = 0;
+        this.resolved_count = 0;
     }
 
     inline fn _fetch(
@@ -477,6 +484,8 @@ pub const VirtualMachine = struct {
             // so it consistently handles bundled imports
             // we can't take the shortcut of just directly importing the file, sadly.
         } else if (strings.eqlComptime(_specifier, main_file_name)) {
+            defer vm.transpiled_count += 1;
+
             var bundler = &vm.bundler;
             var old = vm.bundler.log;
             vm.bundler.log = log;
@@ -551,6 +560,7 @@ pub const VirtualMachine = struct {
 
         switch (loader) {
             .js, .jsx, .ts, .tsx, .json => {
+                vm.transpiled_count += 1;
                 vm.bundler.resetStore();
                 const hash = http.Watcher.getHash(path.text);
 
@@ -584,6 +594,7 @@ pub const VirtualMachine = struct {
                     return error.ParseError;
                 };
 
+                const start_count = vm.bundler.linker.import_counter;
                 // We _must_ link because:
                 // - node_modules bundle won't be properly
                 try vm.bundler.linker.link(
@@ -592,6 +603,8 @@ pub const VirtualMachine = struct {
                     .absolute_path,
                     true,
                 );
+                vm.resolved_count += vm.bundler.linker.import_counter - start_count;
+                vm.bundler.linker.import_counter = 0;
 
                 if (!source_code_printer_loaded) {
                     var writer = try js_printer.BufferWriter.init(vm.allocator);
@@ -641,6 +654,7 @@ pub const VirtualMachine = struct {
     fn _resolve(ret: *ResolveFunctionResult, global: *JSGlobalObject, specifier: string, source: string) !void {
         std.debug.assert(VirtualMachine.vm_loaded);
         std.debug.assert(VirtualMachine.vm.global == global);
+
         if (vm.node_modules == null and strings.eqlComptime(specifier, Runtime.Runtime.Imports.Name)) {
             ret.path = Runtime.Runtime.Imports.Name;
             return;
@@ -658,8 +672,10 @@ pub const VirtualMachine = struct {
             specifier,
             .stmt,
         );
+
         ret.result = result;
         const result_path = result.pathConst() orelse return error.ModuleNotFound;
+        vm.resolved_count += 1;
 
         if (vm.node_modules != null and result.isLikelyNodeModule()) {
             const node_modules_bundle = vm.node_modules.?;
@@ -772,7 +788,8 @@ pub const VirtualMachine = struct {
     threadlocal var errors_stack: [256]*c_void = undefined;
     pub fn fetch(ret: *ErrorableResolvedSource, global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) void {
         var log = logger.Log.init(vm.bundler.allocator);
-        const result = _fetch(global, specifier.slice(), source.slice(), &log) catch |err| {
+        const spec = specifier.slice();
+        const result = _fetch(global, spec, source.slice(), &log) catch |err| {
             processFetchLog(specifier, source, &log, ret, err);
             return;
         };
@@ -793,10 +810,17 @@ pub const VirtualMachine = struct {
 
         ret.result.value = result;
 
+        const specifier_blob = brk: {
+            if (strings.startsWith(spec, VirtualMachine.vm.bundler.fs.top_level_dir)) {
+                break :brk spec[VirtualMachine.vm.bundler.fs.top_level_dir.len..];
+            }
+            break :brk spec;
+        };
+
         if (vm.has_loaded) {
-            vm.blobs.temporary.put(specifier.slice(), .{ .ptr = result.source_code.ptr, .len = result.source_code.len }) catch {};
+            vm.blobs.temporary.put(specifier_blob, .{ .ptr = result.source_code.ptr, .len = result.source_code.len }) catch {};
         } else {
-            vm.blobs.persistent.put(specifier.slice(), .{ .ptr = result.source_code.ptr, .len = result.source_code.len }) catch {};
+            vm.blobs.persistent.put(specifier_blob, .{ .ptr = result.source_code.ptr, .len = result.source_code.len }) catch {};
         }
 
         ret.success = true;
@@ -994,6 +1018,7 @@ pub const VirtualMachine = struct {
                     build_error.msg.formatWriter(@TypeOf(writer), writer, allow_ansi_color) catch {};
                     build_error.logged = true;
                 }
+                this.had_errors = this.had_errors or build_error.msg.kind == .err;
                 if (exception_list != null) {
                     this.log.addMsg(
                         build_error.msg,
@@ -1009,6 +1034,8 @@ pub const VirtualMachine = struct {
                     resolve_error.msg.formatWriter(@TypeOf(writer), writer, allow_ansi_color) catch {};
                     resolve_error.logged = true;
                 }
+
+                this.had_errors = this.had_errors or resolve_error.msg.kind == .err;
 
                 if (exception_list != null) {
                     this.log.addMsg(
@@ -1047,7 +1074,16 @@ pub const VirtualMachine = struct {
                         "<r>      <d>at <r>{any} <d>(<r>{any}<d>)<r>\n",
                         allow_ansi_colors,
                     ),
-                    .{ frame.nameFormatter(allow_ansi_colors), frame.sourceURLFormatter(&vm.bundler.options.origin, allow_ansi_colors) },
+                    .{
+                        frame.nameFormatter(
+                            allow_ansi_colors,
+                        ),
+                        frame.sourceURLFormatter(
+                            vm.bundler.fs.top_level_dir,
+                            &vm.bundler.options.origin,
+                            allow_ansi_colors,
+                        ),
+                    },
                 );
 
                 // if (!frame.position.isInvalid()) {
@@ -1108,6 +1144,8 @@ pub const VirtualMachine = struct {
         if (exception_list) |list| {
             try exception.addToErrorList(list);
         }
+
+        this.had_errors = true;
 
         var stderr: std.fs.File = Output.errorStream();
         var buffered = std.io.bufferedWriter(stderr.writer());

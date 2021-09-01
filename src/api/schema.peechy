@@ -254,6 +254,7 @@ message FrameworkConfig {
   bool development = 5;
 
   CSSInJSBehavior client_css_in_js = 6;
+  string display_name = 7;
 }
 
 struct FrameworkEntryPoint {
@@ -275,6 +276,7 @@ message FrameworkEntryPointMessage {
 
 struct LoadedFramework {
   string package;
+  string display_name;
   bool development;
   FrameworkEntryPointMap entry_points;
   CSSInJSBehavior client_css_in_js;

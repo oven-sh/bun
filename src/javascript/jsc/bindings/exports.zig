@@ -45,6 +45,9 @@ pub const ZigGlobalObject = extern struct {
             sigaction.handler = .{ .sigaction = Handler.global_signal_handler_fn };
 
             std.os.sigaction(std.os.SIGABRT, &sigaction, null);
+            if (comptime !isDebug) {
+                std.os.sigaction(std.os.SIGTRAP, &sigaction, null);
+            }
         }
 
         return shim.cppFn("create", .{ class_ref, count, console });
@@ -421,7 +424,7 @@ pub const ZigStackFrame = extern struct {
         position: ZigStackFramePosition,
         enable_color: bool,
         origin: *const ZigURL,
-
+        root_path: string = "",
         pub fn format(this: SourceURLFormatter, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
             try writer.writeAll(this.origin.displayProtocol());
             try writer.writeAll("://");
@@ -429,7 +432,13 @@ pub const ZigStackFrame = extern struct {
             try writer.writeAll(":");
             try writer.writeAll(this.origin.port);
             try writer.writeAll("/blob:");
-            try writer.writeAll(this.source_url.slice());
+
+            var source_slice = this.source_url.slice();
+            if (strings.startsWith(source_slice, this.root_path)) {
+                source_slice = source_slice[this.root_path.len..];
+            }
+
+            try writer.writeAll(source_slice);
             if (this.position.line > -1 and this.position.column_start > -1) {
                 try std.fmt.format(writer, ":{d}:{d}", .{ this.position.line + 1, this.position.column_start });
             } else if (this.position.line > -1) {
@@ -491,8 +500,8 @@ pub const ZigStackFrame = extern struct {
         return NameFormatter{ .function_name = this.function_name, .code_type = this.code_type, .enable_color = enable_color };
     }
 
-    pub fn sourceURLFormatter(this: *const ZigStackFrame, origin: *const ZigURL, comptime enable_color: bool) SourceURLFormatter {
-        return SourceURLFormatter{ .source_url = this.source_url, .origin = origin, .position = this.position, .enable_color = enable_color };
+    pub fn sourceURLFormatter(this: *const ZigStackFrame, root_path: string, origin: *const ZigURL, comptime enable_color: bool) SourceURLFormatter {
+        return SourceURLFormatter{ .source_url = this.source_url, .origin = origin, .root_path = root_path, .position = this.position, .enable_color = enable_color };
     }
 };
 

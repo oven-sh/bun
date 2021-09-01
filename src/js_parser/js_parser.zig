@@ -452,6 +452,8 @@ pub const ImportScanner = struct {
                     }
                 },
                 .s_export_default => |st| {
+                    // This is defer'd so that we still record export default for identifiers
+                    defer p.recordExport(st.default_name.loc, "default", st.default_name.ref.?) catch {};
 
                     // Rewrite this export to be:
                     // exports.default =
@@ -523,7 +525,7 @@ pub const ImportScanner = struct {
                                             stmt = p.s(S.Local{
                                                 .decls = decls,
                                                 .kind = S.Local.Kind.k_var,
-                                                .is_export = true,
+                                                .is_export = false,
                                             }, stmt.loc);
                                         },
                                         .s_class => |class| {
@@ -560,8 +562,6 @@ pub const ImportScanner = struct {
                             }
                         }
                     }
-
-                    try p.recordExport(st.default_name.loc, "default", st.default_name.ref.?);
                 },
                 .s_export_clause => |st| {
                     for (st.items) |item| {

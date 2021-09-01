@@ -268,7 +268,11 @@ pub const RequestContext = struct {
 
         defer this.done();
         try this.writeStatus(500);
-
+        const route_name = if (route_index > -1) this.matched_route.?.name else this.url.pathname;
+        Output.prettyErrorln("<r><red>500<r> - <b>{s}<r> rendering <b>/{s}<r>", .{
+            @errorName(err),
+            route_name,
+        });
         this.appendHeader("Content-Type", MimeType.html.value);
         var bb = std.ArrayList(u8).init(allocator);
         defer bb.deinit();
@@ -659,7 +663,7 @@ pub const RequestContext = struct {
                 return WatchBuildResult{
                     .value = .{ .fail = std.mem.zeroes(Api.WebsocketMessageBuildFailure) },
                     .id = id,
-                    .timestamp = WebsocketHandler.toTimestamp(this.timer.read()),
+                    .timestamp = WebsocketHandler.toTimestamp(Server.global_start_time.read()),
                 };
             };
 
@@ -698,7 +702,7 @@ pub const RequestContext = struct {
                         return WatchBuildResult{
                             .value = .{ .fail = std.mem.zeroes(Api.WebsocketMessageBuildFailure) },
                             .id = id,
-                            .timestamp = WebsocketHandler.toTimestamp(this.timer.read()),
+                            .timestamp = WebsocketHandler.toTimestamp(Server.global_start_time.read()),
                         };
                     };
 
@@ -715,7 +719,7 @@ pub const RequestContext = struct {
                         return WatchBuildResult{
                             .value = .{ .fail = std.mem.zeroes(Api.WebsocketMessageBuildFailure) },
                             .id = id,
-                            .timestamp = WebsocketHandler.toTimestamp(this.timer.read()),
+                            .timestamp = WebsocketHandler.toTimestamp(Server.global_start_time.read()),
                         };
                     };
 
@@ -733,7 +737,7 @@ pub const RequestContext = struct {
                         .id = id,
                         .bytes = this.printer.ctx.written,
                         .approximate_newline_count = parse_result.ast.approximate_newline_count,
-                        .timestamp = WebsocketHandler.toTimestamp(this.timer.read()),
+                        .timestamp = WebsocketHandler.toTimestamp(Server.global_start_time.read()),
                     };
                 },
                 .css => {
@@ -802,14 +806,14 @@ pub const RequestContext = struct {
                         .bytes = this.printer.ctx.written,
                         .approximate_newline_count = count.approximate_newline_count,
                         // .approximate_newline_count = parse_result.ast.approximate_newline_count,
-                        .timestamp = WebsocketHandler.toTimestamp(this.timer.read()),
+                        .timestamp = WebsocketHandler.toTimestamp(Server.global_start_time.read()),
                     };
                 },
                 else => {
                     return WatchBuildResult{
                         .value = .{ .fail = std.mem.zeroes(Api.WebsocketMessageBuildFailure) },
                         .id = id,
-                        .timestamp = WebsocketHandler.toTimestamp(this.timer.read()),
+                        .timestamp = WebsocketHandler.toTimestamp(Server.global_start_time.read()),
                     };
                 },
             }
@@ -976,6 +980,7 @@ pub const RequestContext = struct {
             defer {
                 javascript_disabled = true;
             }
+            var start_timer = std.time.Timer.start() catch unreachable;
 
             var stdout = std.io.getStdOut();
             // var stdout = std.io.bufferedWriter(stdout_file.writer());
@@ -1086,14 +1091,38 @@ pub const RequestContext = struct {
             js_ast.Stmt.Data.Store.reset();
             js_ast.Expr.Data.Store.reset();
             JavaScript.Bun.flushCSSImports();
+            const resolved_count = vm.resolved_count;
+            const transpiled_count = vm.transpiled_count;
             vm.flush();
 
-            try runLoop(vm, handler);
+            Output.printElapsed(@intToFloat(f64, (start_timer.read())) / std.time.ns_per_ms);
+
+            if (vm.bundler.options.framework.?.display_name.len > 0) {
+                Output.prettyError(
+                    " {s} ready<d>! (powered by Bun)\n<r>",
+                    .{
+                        vm.bundler.options.framework.?.display_name,
+                    },
+                );
+            } else {
+                Output.prettyError(
+                    " Bun.js started\n<r>",
+                    .{},
+                );
+            }
+
+            Output.flush();
+
+            try runLoop(
+                vm,
+                handler,
+            );
         }
 
         pub fn runLoop(vm: *JavaScript.VirtualMachine, thread: *HandlerThread) !void {
             var module_map = ZigGlobalObject.getModuleRegistryMap(vm.global);
             JavaScript.VirtualMachine.vm.has_loaded = true;
+
             while (true) {
                 defer {
                     JavaScript.VirtualMachine.vm.flush();
@@ -1101,10 +1130,12 @@ pub const RequestContext = struct {
                     js_ast.Stmt.Data.Store.reset();
                     js_ast.Expr.Data.Store.reset();
                     JavaScript.Bun.flushCSSImports();
+                    Output.flush();
                 }
 
                 var handler: *JavaScriptHandler = try channel.readItem();
                 JavaScript.VirtualMachine.vm.preflush();
+
                 JavaScript.EventListenerMixin.emitFetchEvent(
                     vm,
                     &handler.ctx,
@@ -1117,8 +1148,22 @@ pub const RequestContext = struct {
 
         var one: [1]*JavaScriptHandler = undefined;
         pub fn enqueue(ctx: *RequestContext, server: *Server, filepath_buf: []u8, params: *Router.Param.List) !void {
+            if (JavaScriptHandler.javascript_disabled) {
+                try ctx.renderFallback(
+                    ctx.allocator,
+                    ctx.bundler,
+                    Api.FallbackStep.ssr_disabled,
+                    &ctx.log,
+                    error.JSDisabled,
+                    &.{},
+                    "",
+                    .{},
+                );
+                return;
+            }
             var clone = try ctx.allocator.create(JavaScriptHandler);
             clone.ctx = ctx.*;
+
             clone.conn = ctx.conn.*;
             clone.ctx.conn = &clone.conn;
 
@@ -1129,10 +1174,15 @@ pub const RequestContext = struct {
             }
 
             clone.ctx.matched_route.?.params = &clone.params;
-
             clone.ctx.matched_route.?.file_path = filepath_buf[0..ctx.matched_route.?.file_path.len];
+
             // this copy may be unnecessary, i'm not 100% sure where when
             std.mem.copy(u8, &clone.ctx.match_file_path_buf, filepath_buf[0..ctx.matched_route.?.file_path.len]);
+
+            // Ensure the matched route name pointers to the filepath buffer instead of whatever it was before
+            if (strings.indexOf(clone.ctx.matched_route.?.file_path, ctx.matched_route.?.name)) |i| {
+                clone.ctx.matched_route.?.name = Router.Match.nameWithBasename(clone.ctx.matched_route.?.file_path, ctx.bundler.router.?.config.dir);
+            }
 
             if (!has_loaded_channel) {
                 var handler_thread = try server.allocator.create(HandlerThread);
@@ -1348,8 +1398,8 @@ pub const RequestContext = struct {
             ctx.appendHeader("Sec-WebSocket-Protocol", "bun-hmr");
             try ctx.writeStatus(101);
             try ctx.flushHeaders();
-            Output.prettyln("<r><green>101<r><d> Hot Module Reloading connected.", .{});
-            Output.flush();
+            // Output.prettyln("<r><green>101<r><d> Hot Module Reloading connected.<r>", .{});
+            // Output.flush();
 
             var cmd: Api.WebsocketCommand = undefined;
             var msg: Api.WebsocketMessage = .{
@@ -1387,7 +1437,7 @@ pub const RequestContext = struct {
             while (!handler.tombstone) {
                 defer Output.flush();
                 handler.conn.client.getError() catch |err| {
-                    Output.prettyErrorln("<r><red>ERR:<r> <b>{s}<r>", .{err});
+                    Output.prettyErrorln("<r><red>Websocket ERR:<r> <b>{s}<r>", .{err});
                     handler.tombstone = true;
                     is_socket_closed = true;
                 };
@@ -1395,20 +1445,20 @@ pub const RequestContext = struct {
                 var frame = handler.websocket.read() catch |err| {
                     switch (err) {
                         error.ConnectionClosed => {
-                            Output.prettyln("Websocket closed.", .{});
+                            // Output.prettyln("Websocket closed.", .{});
                             handler.tombstone = true;
                             is_socket_closed = true;
                             continue;
                         },
                         else => {
-                            Output.prettyErrorln("<r><red>ERR:<r> <b>{s}<r>", .{err});
+                            Output.prettyErrorln("<r><red>Websocket ERR:<r> <b>{s}<r>", .{err});
                         },
                     }
                     return;
                 };
                 switch (frame.header.opcode) {
                     .Close => {
-                        Output.prettyln("Websocket closed.", .{});
+                        // Output.prettyln("Websocket closed.", .{});
                         is_socket_closed = true;
                         return;
                     },
@@ -1438,14 +1488,16 @@ pub const RequestContext = struct {
                                         );
                                     },
                                     .success => {
-                                        Output.prettyln(
-                                            "<r><b><green>{d}ms<r> <d>built<r> <b>{s}<r><b> <r><d>({d}+ LOC)",
-                                            .{
-                                                build_result.timestamp - cmd.timestamp,
-                                                file_path,
-                                                build_result.approximate_newline_count,
-                                            },
-                                        );
+                                        if (build_result.timestamp < cmd.timestamp) {
+                                            Output.prettyln(
+                                                "<r><b><green>{d}ms<r> <d>built<r> <b>{s}<r><b> <r><d>({d}+ LOC)",
+                                                .{
+                                                    build_result.timestamp - cmd.timestamp,
+                                                    file_path,
+                                                    build_result.approximate_newline_count,
+                                                },
+                                            );
+                                        }
                                     },
                                 }
 
@@ -2197,14 +2249,16 @@ pub const Server = struct {
                 server.bundler.options.origin.port = try std.fmt.allocPrint(server.allocator, "{d}", .{addr.ipv4.port});
             }
         }
-
+        const start_time = @import("root").start_time;
+        const now = std.time.nanoTimestamp();
+        Output.printStartEnd(start_time, now);
         // This is technically imprecise.
         // However, we want to optimize for easy to copy paste
         // Nobody should get weird CORS errors when you go to the printed url.
         if (std.mem.readIntNative(u32, &addr.ipv4.host.octets) == 0 or std.mem.readIntNative(u128, &addr.ipv6.host.octets) == 0) {
-            Output.prettyln("<r>Started Bun at <b><cyan>http://localhost:{d}<r>", .{addr.ipv4.port});
+            Output.prettyError(" Bun!!<r>\n\n\n<d>  Link:<r> <b><cyan>http://localhost:{d}<r>\n\n\n", .{addr.ipv4.port});
         } else {
-            Output.prettyln("<r>Started Bun at <b><cyan>http://{s}<r>", .{addr});
+            Output.prettyError(" Bun!!<r>\n\n\n<d>  Link:<r> <b><cyan>http://{s}<r>\n\n\n", .{addr});
         }
 
         Output.flush();
@@ -2276,6 +2330,7 @@ pub const Server = struct {
             conn.client.deinit();
             return;
         };
+        req_ctx.timer.reset();
 
         if (req_ctx.url.needs_redirect) {
             req_ctx.handleRedirect(req_ctx.url.path) catch |err| {
@@ -2318,7 +2373,11 @@ pub const Server = struct {
                 if (log.msgs.items.len == 0) {
                     if (!did_print) {
                         switch (status) {
-                            101, 199...399 => {
+                            // For success codes, just don't print anything.
+                            // It's really noisy.
+                            200, 304, 101 => {},
+
+                            201...303, 305...399 => {
                                 Output.prettyln("<r><green>{d}<r><d> {s} <r>{s}<d> as {s}<r>", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
                             },
                             400...499 => {
@@ -2336,7 +2395,11 @@ pub const Server = struct {
 
                     if (!did_print) {
                         switch (status) {
-                            101, 199...399 => {
+                            // For success codes, just don't print anything.
+                            // It's really noisy.
+                            200, 304, 101 => {},
+
+                            201...303, 305...399 => {
                                 Output.prettyln("<r><green>{d}<r><d> <r>{s}<d> {s} as {s}<r>", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
                             },
                             400...499 => {
@@ -2460,6 +2523,7 @@ pub const Server = struct {
         };
     }
 
+    pub var global_start_time: std.time.Timer = undefined;
     pub fn start(allocator: *std.mem.Allocator, options: Api.TransformOptions) !void {
         var log = logger.Log.init(allocator);
         var server = try allocator.create(Server);
@@ -2471,7 +2535,7 @@ pub const Server = struct {
             .transform_options = options,
             .timer = try std.time.Timer.start(),
         };
-
+        global_start_time = server.timer;
         server.bundler = try Bundler.init(allocator, &server.log, options, null, null);
         server.bundler.configureLinker();
         try server.bundler.configureRouter(true);

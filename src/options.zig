@@ -85,11 +85,11 @@ pub const ExternalModules = struct {
             },
             .bun => {
 
-                // TODO: fix this stupid copy
-                result.node_modules.hash_map.ensureCapacity(BunNodeBuiltinPatternsCompat.len) catch unreachable;
-                for (BunNodeBuiltinPatternsCompat) |pattern| {
-                    result.node_modules.insert(pattern) catch unreachable;
-                }
+                // // TODO: fix this stupid copy
+                // result.node_modules.hash_map.ensureCapacity(BunNodeBuiltinPatternsCompat.len) catch unreachable;
+                // for (BunNodeBuiltinPatternsCompat) |pattern| {
+                //     result.node_modules.insert(pattern) catch unreachable;
+                // }
             },
             else => {},
         }
@@ -809,6 +809,7 @@ pub const BundleOptions = struct {
     defines_loaded: bool = false,
     env: Env = Env{},
     transform_options: Api.TransformOptions,
+    polyfill_node_globals: bool = true,
 
     pub inline fn cssImportBehavior(this: *const BundleOptions) Api.CssInJsBehavior {
         switch (this.platform) {
@@ -1142,6 +1143,8 @@ pub const BundleOptions = struct {
         if (opts.write and opts.output_dir.len > 0) {
             opts.output_dir_handle = try openOutputDir(opts.output_dir);
         }
+
+        opts.polyfill_node_globals = opts.platform != .node;
 
         return opts;
     }

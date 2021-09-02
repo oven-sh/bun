@@ -417,12 +417,7 @@ export async function render({
     (DocumentNamespace && DocumentNamespace.default) || NextDocument.default;
   //   Document.Html.prototype.getScripts = getScripts;
   // }
-  console.log(
-    "next",
-    typeof NextDocument.default,
-    "doc",
-    typeof NextDocument.default.renderDocument
-  );
+
   const callMiddleware = async (method: string, args: any[], props = false) => {
     let results: any = props ? {} : [];
 

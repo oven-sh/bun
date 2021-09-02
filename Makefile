@@ -1,8 +1,19 @@
 
-bun: bun-prod-native bun-prod-wasi bun-prod-wasm
+bun: vendor bun-prod-native bun-prod-wasi bun-prod-wasm
+
+vendor: api node-fallbacks runtime_js fallback_decoder mimalloc picohttp jsc
 
 api: 
 	peechy --schema src/api/schema.peechy --esm src/api/schema.js --ts src/api/schema.d.ts --zig src/api/schema.zig
+
+node-fallbacks: 
+	cd src/node-fallbacks; npm install; npm run --silent build
+
+fallback_decoder:
+	esbuild --target=esnext  --bundle src/fallback.ts --format=iife --platform=browser --minify > src/fallback.out.js
+
+runtime_js:
+	esbuild --target=esnext  --bundle src/runtime/index.ts --format=iife --platform=browser --global-name=BUN_RUNTIME --minify > src/runtime.out.js; cat src/runtime.footer.js >> src/runtime.out.js
 
 jsc: jsc-build jsc-bindings
 jsc-build: jsc-build-mac jsc-copy-headers

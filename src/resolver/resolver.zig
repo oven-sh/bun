@@ -13,6 +13,8 @@ pub const DirInfo = @import("./dir_info.zig");
 const HTTPWatcher = @import("../http.zig").Watcher;
 const Wyhash = std.hash.Wyhash;
 
+const NodeFallbackModules = @import("../node_fallbacks.zig");
+
 const Mutex = @import("../lock.zig").Lock;
 const StringBoolMap = std.StringHashMap(bool);
 
@@ -126,7 +128,7 @@ pub const Result = struct {
     // checking package.json may not be relevant
     pub fn isLikelyNodeModule(this: *const Result) bool {
         const path_ = this.pathConst() orelse return false;
-        return strings.indexOf(path_.text, "/node_modules/") != null;
+        return this.is_from_node_modules or strings.indexOf(path_.text, "/node_modules/") != null;
     }
 
     // Most NPM modules are CommonJS
@@ -639,7 +641,9 @@ pub fn NewResolver(cache_files: bool) type {
                 return error.ModuleNotFound;
             };
 
-            try r.finalizeResult(&result);
+            if (!strings.eqlComptime(result.path_pair.primary.namespace, "node"))
+                try r.finalizeResult(&result);
+
             r.flushDebugLogs(.success) catch {};
             result.import_kind = kind;
             return result;
@@ -747,7 +751,6 @@ pub fn NewResolver(cache_files: bool) type {
                                     .path_pair = res.path_pair,
                                     .diff_case = res.diff_case,
                                     .dirname_fd = dir_info.getFileDescriptor(),
-                                    .is_from_node_modules = res.is_node_module,
                                     .package_json = res.package_json,
                                 };
                             }
@@ -776,7 +779,6 @@ pub fn NewResolver(cache_files: bool) type {
                         .dirname_fd = entry.dirname_fd,
                         .path_pair = entry.path_pair,
                         .diff_case = entry.diff_case,
-                        .is_from_node_modules = entry.is_node_module,
                         .package_json = entry.package_json,
                     };
                 }
@@ -832,7 +834,6 @@ pub fn NewResolver(cache_files: bool) type {
                                     result = Result{
                                         .path_pair = _result.path_pair,
                                         .diff_case = _result.diff_case,
-                                        .is_from_node_modules = _result.is_node_module,
                                         .module_type = pkg.module_type,
                                         .dirname_fd = _result.dirname_fd,
                                         .package_json = pkg,
@@ -851,7 +852,6 @@ pub fn NewResolver(cache_files: bool) type {
                         result = Result{
                             .path_pair = res.path_pair,
                             .diff_case = res.diff_case,
-                            .is_from_node_modules = res.is_node_module,
                             .dirname_fd = res.dirname_fd,
                             .package_json = res.package_json,
                         };
@@ -862,6 +862,33 @@ pub fn NewResolver(cache_files: bool) type {
             }
 
             if (check_package) {
+                if (r.opts.polyfill_node_globals) {
+                    var import_path_without_node_prefix = import_path;
+                    const had_node_prefix = import_path_without_node_prefix.len > "node:".len and
+                        strings.eqlComptime(import_path_without_node_prefix[0.."node:".len], "node:");
+
+                    import_path_without_node_prefix = if (had_node_prefix)
+                        import_path_without_node_prefix["node:".len..]
+                    else
+                        import_path_without_node_prefix;
+
+                    if (NodeFallbackModules.Map.get(import_path_without_node_prefix)) |*fallback_module| {
+                        result.path_pair.primary = fallback_module.path;
+                        result.module_type = .cjs;
+                        result.package_json = @intToPtr(*PackageJSON, @ptrToInt(fallback_module.package_json));
+                        result.is_from_node_modules = true;
+                        return result;
+                    } else if (had_node_prefix) {
+                        result.path_pair.primary.namespace = "node";
+                        result.path_pair.primary.text = import_path_without_node_prefix;
+                        result.path_pair.primary.name = Fs.PathName.init(import_path_without_node_prefix);
+                        result.module_type = .cjs;
+                        result.path_pair.primary.is_disabled = true;
+                        result.is_from_node_modules = true;
+                        return result;
+                    }
+                }
+
                 // Check for external packages first
                 if (r.opts.external.node_modules.count() > 0) {
                     var query = import_path;
@@ -901,7 +928,6 @@ pub fn NewResolver(cache_files: bool) type {
                                         .path_pair = pair,
                                         .dirname_fd = node_module.dirname_fd,
                                         .diff_case = node_module.diff_case,
-                                        .is_from_node_modules = true,
                                         .package_json = package_json,
                                     };
                                 }
@@ -922,7 +948,6 @@ pub fn NewResolver(cache_files: bool) type {
                     result = Result{
                         .path_pair = res.path_pair,
                         .diff_case = res.diff_case,
-                        .is_from_node_modules = res.is_node_module,
                         .dirname_fd = res.dirname_fd,
                         .package_json = res.package_json,
                     };

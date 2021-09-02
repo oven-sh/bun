@@ -104,33 +104,30 @@ Unlike many other bundlers, `Bun` only bundles `node_modules`. This is great for
 
 # Not implemented yet
 
-
-
 # Building from source
 
 Estimated: 30-60 minutes :(
 
-You'll want to start downloading two things at once:
+Compile Zig:
 
 ```bash
-git clone https://github.com/jarred-sumner/zig && git checkout jarred/zig-sloppy-with-small-structs
-```
-
-```bash
-git submodule update --init --recursive --progress --depth=1
-```
-
-Next, compile Zig.
-
-On a Mac, that looks like this:
-
-```bash
-cmake . -DCMAKE_PREFIX_PATH=$(brew --prefix llvm) -DZIG_STATIC_LLVM=ON -DCMAKE_BUILD_TYPE=Release  && make -j 16
+git clone https://github.com/jarred-sumner/zig
+cd zig
+git checkout jarred/zig-sloppy-with-small-structs
+cmake . -DCMAKE_PREFIX_PATH=$(brew --prefix llvm) -DZIG_STATIC_LLVM=ON -DCMAKE_BUILD_TYPE=Release && make -j 16
 ```
 
 Note that `brew install zig` won't work. Bun uses a build of Zig with a couple patches.
 
 You'll want to make sure `zig` is in `$PATH`. The `zig` binary wil be in the same folder as the newly-cloned `zig` repo. If you use fish, you can run `fish_add_path (pwd)`.
+
+In `bun`:
+
+```bash
+git submodule update --init --recursive --progress --depth=1
+```
+
+You
 
 Now go back to the folder with `Bun`'s repository.
 

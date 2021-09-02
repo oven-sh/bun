@@ -76,8 +76,6 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "buffer": "^6.0.3",
-    "path-browserify": "^1.0.1",
     "react-is": "^17.0.2"
   }
 }

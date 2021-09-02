@@ -280,7 +280,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
 
                                                     const package_relative_path = linker.fs.relative(
                                                         package_base_dir,
-                                                        path.pretty,
+                                                        if (!strings.eqlComptime(path.namespace, "node")) path.pretty else path.text,
                                                     );
 
                                                     const found_module = node_modules_bundle.findModuleInPackage(package, package_relative_path) orelse {

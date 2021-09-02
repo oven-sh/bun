@@ -14,6 +14,20 @@ const Mutex = @import("./lock.zig").Lock;
 const import_record = @import("./import_record.zig");
 const ImportRecord = import_record.ImportRecord;
 
+pub const FsCacheEntry = struct {
+    contents: string,
+    fd: StoredFileDescriptorType = 0,
+    // Null means its not usable
+    mod_key: ?fs.FileSystem.Implementation.ModKey = null,
+
+    pub fn deinit(entry: *FsCacheEntry, allocator: *std.mem.Allocator) void {
+        if (entry.contents.len > 0) {
+            allocator.free(entry.contents);
+            entry.contents = "";
+        }
+    }
+};
+
 pub fn NewCache(comptime cache_files: bool) type {
     return struct {
         pub const Set = struct {
@@ -37,23 +51,11 @@ pub fn NewCache(comptime cache_files: bool) type {
             }
         };
         pub const Fs = struct {
+            const Entry = FsCacheEntry;
+
             mutex: Mutex,
             entries: std.StringHashMap(Entry),
             shared_buffer: MutableString,
-
-            pub const Entry = struct {
-                contents: string,
-                fd: StoredFileDescriptorType = 0,
-                // Null means its not usable
-                mod_key: ?fs.FileSystem.Implementation.ModKey = null,
-
-                pub fn deinit(entry: *Entry, allocator: *std.mem.Allocator) void {
-                    if (entry.contents.len > 0) {
-                        allocator.free(entry.contents);
-                        entry.contents = "";
-                    }
-                }
-            };
 
             pub fn deinit(c: *Fs) void {
                 var iter = c.entries.iterator();

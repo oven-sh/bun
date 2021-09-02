@@ -57,3 +57,6 @@ bun-mimalloc
 examples/lotta-modules/bun-yday
 examples/lotta-modules/bun-old
 examples/lotta-modules/bun-nofscache
+
+src/node-fallbacks/out/*
+src/node-fallbacks/node_modules

@@ -35,6 +35,8 @@ const Css = @import("css_scanner.zig");
 const DotEnv = @import("./env_loader.zig");
 const Lock = @import("./lock.zig").Lock;
 const NewBunQueue = @import("./bun_queue.zig").NewBunQueue;
+const NodeFallbackModules = @import("./node_fallbacks.zig");
+const CacheEntry = @import("./cache.zig").FsCacheEntry;
 
 // How it works end-to-end
 // 1. Resolve a file path from input using the resolver
@@ -96,7 +98,6 @@ pub fn NewBundler(cache_files: bool) type {
     return struct {
         pub const Linker = if (cache_files) linker.Linker else linker.ServeLinker;
         pub const Resolver = if (cache_files) _resolver.Resolver else _resolver.ResolverUncached;
-
         const ThisBundler = @This();
 
         options: options.BundleOptions,
@@ -1025,7 +1026,18 @@ pub fn NewBundler(cache_files: bool) type {
 
                 pub fn get(this: *GenerateNodeModuleBundle, resolve_result: *const _resolver.Result) ?BundledModuleData {
                     const path = resolve_result.pathConst() orelse return null;
+                    if (strings.eqlComptime(path.namespace, "node")) {
+                        const _import_path = path.text["/bun-vfs/node_modules/".len..][resolve_result.package_json.?.name.len + 1 ..];
+                        return BundledModuleData{
+                            .import_path = _import_path,
+                            .package_path = path.text["/bun-vfs/node_modules/".len..],
+                            .package = resolve_result.package_json.?,
+                            .module_id = resolve_result.package_json.?.hashModule(_import_path),
+                        };
+                    }
+
                     var base_path = path.text;
+
                     const package_json: *const PackageJSON = this.bundler.resolver.rootNodeModulePackageJSON(
                         resolve_result,
                         &base_path,
@@ -1072,15 +1084,40 @@ pub fn NewBundler(cache_files: bool) type {
                             var written: usize = undefined;
                             var code_offset: u32 = 0;
 
-                            const entry = try bundler.resolver.caches.fs.readFileShared(
-                                bundler.fs,
-                                file_path.text,
-                                resolve.dirname_fd,
-                                if (resolve.file_fd != 0) resolve.file_fd else null,
-                                shared_buffer,
-                            );
+                            const entry: CacheEntry = brk: {
+                                if (!strings.eqlComptime(file_path.namespace, "node"))
+                                    break :brk try bundler.resolver.caches.fs.readFileShared(
+                                        bundler.fs,
+                                        file_path.text,
+                                        resolve.dirname_fd,
+                                        if (resolve.file_fd != 0) resolve.file_fd else null,
+                                        shared_buffer,
+                                    );
 
-                            const module_data = BundledModuleData.get(this, &resolve) orelse return error.ResolveError;
+                                var module_name = file_path.text["/bun-vfs/node_modules/".len..];
+                                module_name = module_name[0..strings.indexOfChar(module_name, '/').?];
+
+                                if (NodeFallbackModules.Map.get(module_name)) |mod| {
+                                    break :brk CacheEntry{ .contents = mod.code.* };
+                                }
+
+                                break :brk CacheEntry{
+                                    .contents = "",
+                                };
+                            };
+
+                            const module_data = BundledModuleData.get(this, &resolve) orelse {
+                                const source = logger.Source.initPathString(file_path.text, entry.contents);
+                                this.log.addResolveError(
+                                    &source,
+                                    logger.Range.None,
+                                    this.allocator,
+                                    "Bug while resolving: \"{s}\"",
+                                    .{file_path.text},
+                                    resolve.import_kind,
+                                ) catch {};
+                                return error.ResolveError;
+                            };
                             const module_id = module_data.module_id;
                             const package = module_data.package;
                             const package_relative_path = module_data.import_path;

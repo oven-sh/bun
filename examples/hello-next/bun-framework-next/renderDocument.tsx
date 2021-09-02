@@ -16,12 +16,15 @@ import {
   NextComponentType,
   RenderPage,
   RenderPageResult,
+  HtmlContext,
 } from "next/dist/shared/lib/utils";
 import * as NextDocument from "next/document";
 import * as ReactDOMServer from "react-dom/server.browser";
 import * as url from "url";
 import * as React from "react";
 import * as ReactIs from "react-is";
+import { BODY_RENDER_TARGET } from "next/constants";
+
 const dev = process.env.NODE_ENV === "development";
 
 type ParsedUrlQuery = Record<string, string | string[]>;
@@ -199,56 +202,59 @@ function renderDocument(
     autoExport?: boolean;
   }
 ): string {
+  const htmlProps = {
+    __NEXT_DATA__: {
+      props, // The result of getInitialProps
+      page: pathname, // The rendered page
+      query, // querystring parsed / passed by the user
+      buildId, // buildId is used to facilitate caching of page bundles, we send it to the client so that pageloader knows where to load bundles
+      assetPrefix: assetPrefix === "" ? undefined : assetPrefix, // send assetPrefix to the client side when configured, otherwise don't sent in the resulting HTML
+      runtimeConfig, // runtimeConfig if provided, otherwise don't sent in the resulting HTML
+      nextExport, // If this is a page exported by `next export`
+      autoExport, // If this is an auto exported page
+      isFallback,
+      dynamicIds:
+        dynamicImportsIds.length === 0 ? undefined : dynamicImportsIds,
+      err: err || undefined, // err: err ? serializeError(dev, err) : undefined, // Error if one happened, otherwise don't sent in the resulting HTML
+      gsp, // whether the page is getStaticProps
+      gssp, // whether the page is getServerSideProps
+      customServer, // whether the user is using a custom server
+      gip, // whether the page has getInitialProps
+      appGip, // whether the _app has getInitialProps
+      locale,
+      locales,
+      defaultLocale,
+      domainLocales,
+      isPreview,
+
+      pages: buildManifest.pages,
+    },
+    buildManifest,
+    docComponentsRendered,
+    dangerousAsPath,
+    canonicalBase,
+    ampPath,
+    inAmpMode,
+    isDevelopment: !!dev,
+    hybridAmp,
+    dynamicImports,
+    assetPrefix,
+    headTags,
+    unstable_runtimeJS,
+    unstable_JsPreload,
+    devOnlyCacheBusterQueryString,
+    scriptLoader,
+    locale,
+    disableOptimizedLoading,
+    ...docProps,
+  };
   return (
     "<!DOCTYPE html>" +
     ReactDOMServer.renderToStaticMarkup(
       <AmpStateContext.Provider value={ampState}>
-        {Document.renderDocument(Document, {
-          __NEXT_DATA__: {
-            props, // The result of getInitialProps
-            page: pathname, // The rendered page
-            query, // querystring parsed / passed by the user
-            buildId, // buildId is used to facilitate caching of page bundles, we send it to the client so that pageloader knows where to load bundles
-            assetPrefix: assetPrefix === "" ? undefined : assetPrefix, // send assetPrefix to the client side when configured, otherwise don't sent in the resulting HTML
-            runtimeConfig, // runtimeConfig if provided, otherwise don't sent in the resulting HTML
-            nextExport, // If this is a page exported by `next export`
-            autoExport, // If this is an auto exported page
-            isFallback,
-            dynamicIds:
-              dynamicImportsIds.length === 0 ? undefined : dynamicImportsIds,
-            err: err || undefined, // err: err ? serializeError(dev, err) : undefined, // Error if one happened, otherwise don't sent in the resulting HTML
-            gsp, // whether the page is getStaticProps
-            gssp, // whether the page is getServerSideProps
-            customServer, // whether the user is using a custom server
-            gip, // whether the page has getInitialProps
-            appGip, // whether the _app has getInitialProps
-            locale,
-            locales,
-            defaultLocale,
-            domainLocales,
-            isPreview,
-
-            pages: buildManifest.pages,
-          },
-          buildManifest,
-          docComponentsRendered,
-          dangerousAsPath,
-          canonicalBase,
-          ampPath,
-          inAmpMode,
-          isDevelopment: !!dev,
-          hybridAmp,
-          dynamicImports,
-          assetPrefix,
-          headTags,
-          unstable_runtimeJS,
-          unstable_JsPreload,
-          devOnlyCacheBusterQueryString,
-          scriptLoader,
-          locale,
-          disableOptimizedLoading,
-          ...docProps,
-        })}
+        <HtmlContext.Provider value={htmlProps}>
+          <Document {...htmlProps} {...docProps}></Document>
+        </HtmlContext.Provider>
       </AmpStateContext.Provider>
     )
   );
@@ -411,7 +417,12 @@ export async function render({
     (DocumentNamespace && DocumentNamespace.default) || NextDocument.default;
   //   Document.Html.prototype.getScripts = getScripts;
   // }
-
+  console.log(
+    "next",
+    typeof NextDocument.default,
+    "doc",
+    typeof NextDocument.default.renderDocument
+  );
   const callMiddleware = async (method: string, args: any[], props = false) => {
     let results: any = props ? {} : [];
 
@@ -701,8 +712,16 @@ export async function render({
     isPreview: isPreview === true ? true : undefined,
     autoExport: isAutoExport === true ? true : undefined,
     nextExport: nextExport === true ? true : undefined,
-  })
-    .replaceAll("/_next/http://", "http://")
-    .replaceAll("/_next/https://", "https://");
-  return new Response(html);
+  });
+  const bodyRenderIdx = html.indexOf(BODY_RENDER_TARGET);
+  html =
+    html.substring(0, bodyRenderIdx) +
+    (false ? "<!-- __NEXT_DATA__ -->" : "") +
+    docProps.html +
+    html.substring(bodyRenderIdx + BODY_RENDER_TARGET.length);
+  return new Response(
+    html
+      .replaceAll("/_next/http://", "http://")
+      .replaceAll("/_next/https://", "https://")
+  );
 }

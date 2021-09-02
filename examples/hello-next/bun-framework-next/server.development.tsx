@@ -1,4 +1,6 @@
 import * as React from "react";
+import { Buffer } from "buffer";
+globalThis.Buffer = Buffer;
 
 class URL {
   constructor(base, source) {

@@ -221,11 +221,11 @@ pub const Scanner = struct {
             scanner.step();
         }
 
-        scanner.log.addRangeWarning(
-            scanner.source,
-            scanner.range(),
-            "Comments in CSS use \"/* ... */\" instead of \"//\"",
-        ) catch {};
+        // scanner.log.addRangeWarning(
+        //     scanner.source,
+        //     scanner.range(),
+        //     "Comments in CSS use \"/* ... */\" instead of \"//\"",
+        // ) catch {};
     }
 
     pub fn consumeURL(scanner: *Scanner) Chunk.TextContent {
@@ -451,7 +451,100 @@ pub const Scanner = struct {
                         const start = scanner.end;
 
                         scanner.step();
-                        if (scanner.codepoint != 'i') continue :toplevel;
+                        switch (scanner.codepoint) {
+                            'i' => {},
+                            't' => {
+                                scanner.step();
+                                if (scanner.codepoint != 'a') continue :toplevel;
+                                scanner.step();
+                                if (scanner.codepoint != 'i') continue :toplevel;
+                                scanner.step();
+                                if (scanner.codepoint != 'l') continue :toplevel;
+                                scanner.step();
+                                if (scanner.codepoint != 'w') continue :toplevel;
+                                scanner.step();
+                                if (scanner.codepoint != 'i') continue :toplevel;
+                                scanner.step();
+                                if (scanner.codepoint != 'n') continue :toplevel;
+                                scanner.step();
+                                if (scanner.codepoint != 'd') continue :toplevel;
+                                scanner.step();
+                                if (scanner.codepoint != ' ') continue :toplevel;
+                                scanner.step();
+
+                                const word_start = scanner.end;
+
+                                while (switch (scanner.codepoint) {
+                                    'a'...'z', 'A'...'Z' => true,
+                                    else => false,
+                                }) {
+                                    scanner.step();
+                                }
+
+                                var word = scanner.source.contents[word_start..scanner.end];
+
+                                while (switch (scanner.codepoint) {
+                                    ' ', '\n', '\r' => true,
+                                    else => false,
+                                }) {
+                                    scanner.step();
+                                }
+
+                                if (scanner.codepoint != ';') continue :toplevel;
+
+                                switch (word[0]) {
+                                    'b' => {
+                                        if (strings.eqlComptime(word, "base")) {
+                                            scanner.log.addWarningFmt(
+                                                scanner.source,
+                                                logger.Loc{ .start = @intCast(i32, start) },
+                                                scanner.allocator,
+                                                "Tailwind not supported yet, try @import \"tailwindcss/dist/base.css\";",
+                                                .{},
+                                            ) catch {};
+                                        }
+                                    },
+                                    'c' => {
+                                        if (strings.eqlComptime(word, "components")) {
+                                            scanner.log.addWarningFmt(
+                                                scanner.source,
+                                                logger.Loc{ .start = @intCast(i32, start) },
+                                                scanner.allocator,
+                                                "Tailwind not supported yet, try @import \"tailwindcss/dist/components.css\";",
+                                                .{},
+                                            ) catch {};
+                                        }
+                                    },
+                                    'u' => {
+                                        if (strings.eqlComptime(word, "utilities")) {
+                                            scanner.log.addWarningFmt(
+                                                scanner.source,
+                                                logger.Loc{ .start = @intCast(i32, start) },
+                                                scanner.allocator,
+                                                "Tailwind not supported yet, try @import \"tailwindcss/dist/utilities.css\";",
+                                                .{},
+                                            ) catch {};
+                                        }
+                                    },
+                                    's' => {
+                                        if (strings.eqlComptime(word, "screens")) {
+                                            scanner.log.addWarningFmt(
+                                                scanner.source,
+                                                logger.Loc{ .start = @intCast(i32, start) },
+                                                scanner.allocator,
+                                                "Tailwind not supported yet, try @import \"tailwindcss/dist/screens.css\";",
+                                                .{},
+                                            ) catch {};
+                                        }
+                                    },
+                                    else => continue :toplevel,
+                                }
+
+                                continue :toplevel;
+                            },
+
+                            else => continue :toplevel,
+                        }
                         scanner.step();
                         if (scanner.codepoint != 'm') continue :toplevel;
                         scanner.step();
@@ -787,17 +880,20 @@ pub fn NewWriter(
         source: *const logger.Source,
         written: usize = 0,
         buildCtx: BuildContextType = undefined,
+        log: *logger.Log,
 
         pub fn init(
             source: *const logger.Source,
             ctx: WriterType,
             linker: LinkerType,
+            log: *logger.Log,
         ) Writer {
             return Writer{
                 .ctx = ctx,
                 .linker = linker,
                 .source = source,
                 .written = 0,
+                .log = log,
             };
         }
 
@@ -898,14 +994,29 @@ pub fn NewWriter(
             switch (chunk.content) {
                 .t_url => |url| {},
                 .t_import => |import| {
-                    const resolved = try writer.linker.resolveCSS(
+                    const resolved = writer.linker.resolveCSS(
                         writer.source.path,
                         import.text.utf8,
                         chunk.range,
                         import_record.ImportKind.at,
                         Options.BundleOptions.ImportPathFormat.absolute_path,
                         true,
-                    );
+                    ) catch |err| {
+                        switch (err) {
+                            error.ModuleNotFound, error.FileNotFound => {
+                                writer.log.addResolveError(
+                                    writer.source,
+                                    chunk.range,
+                                    writer.buildCtx.allocator,
+                                    "Not Found - \"{s}\"",
+                                    .{import.text.utf8},
+                                    import_record.ImportKind.at,
+                                ) catch {};
+                            },
+                            else => {},
+                        }
+                        return err;
+                    };
 
                     // TODO: just check is_external instead
                     if (strings.startsWith(import.text.utf8, "https://") or strings.startsWith(import.text.utf8, "http://")) {
@@ -1064,6 +1175,7 @@ pub fn NewBundler(
                 undefined,
                 &this,
                 linker,
+                log,
             );
             css.buildCtx = &this;
 
@@ -1082,7 +1194,6 @@ pub fn NewBundler(
             // But, we receive a file change event for a file within the bundle
             // So the inner ID is used to say "does this bundle need to be reloaded?"
             // The outer ID is used to say "go ahead and reload this"
-
             if (hot_module_reloading and FeatureFlags.css_supports_fence and this.bundle_queue.items.len > 0) {
                 try this.writeAll("\n@supports (hmr-bid:");
                 const int_buf_size = std.fmt.formatIntBuf(&int_buf_print, hash, 10, .upper, .{});

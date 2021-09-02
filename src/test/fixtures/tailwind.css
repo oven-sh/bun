@@ -1,0 +1,20 @@
+.such-css {
+}
+
+#VERY_STYLE {
+}
+
+@tailwind base;
+
+@tailwind notARealIdentifier;
+
+@tailwind utilities;
+
+@tailwind utilieis;
+
+@tailwind components;
+
+.Wowiiee {
+}
+
+@tailwind screens;

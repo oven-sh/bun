@@ -14,3 +14,4 @@ export var __require = BUN_RUNTIME.__require;
 export var __name = BUN_RUNTIME.__name;
 export var __export = BUN_RUNTIME.__export;
 export var __reExport = BUN_RUNTIME.__reExport;
+export var __cJS2eSM = BUN_RUNTIME.__cJS2eSM;

@@ -65,6 +65,17 @@ pub fn isSliceInBuffer(slice: anytype, buffer: anytype) bool {
     return (@ptrToInt(buffer) <= @ptrToInt(slice.ptr) and (@ptrToInt(slice.ptr) + slice.len) <= (@ptrToInt(buffer) + buffer.len));
 }
 
+pub fn sliceRange(slice: []const u8, buffer: []const u8) ?[2]u32 {
+    return if (@ptrToInt(buffer.ptr) <= @ptrToInt(slice.ptr) and
+        (@ptrToInt(slice.ptr) + slice.len) <= (@ptrToInt(buffer.ptr) + buffer.len))
+        [2]u32{
+            @truncate(u32, @ptrToInt(slice.ptr) - @ptrToInt(buffer.ptr)),
+            @truncate(u32, slice.len),
+        }
+    else
+        null;
+}
+
 pub const IndexType = packed struct {
     index: u31,
     is_overflow: bool = false,
@@ -306,7 +317,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
         }
 
         pub fn exists(self: *Self, value: ValueType) bool {
-            return isSliceInBuffer(value, slice_buf);
+            return isSliceInBuffer(value, &backing_buf);
         }
 
         pub fn editableSlice(slice: []const u8) []u8 {

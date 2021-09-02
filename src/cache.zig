@@ -73,7 +73,7 @@ pub fn NewCache(comptime cache_files: bool) type {
             ) !Entry {
                 var rfs = _fs.fs;
 
-                if (cache_files) {
+                if (comptime cache_files) {
                     {
                         c.mutex.lock();
                         defer c.mutex.unlock();
@@ -138,7 +138,7 @@ pub fn NewCache(comptime cache_files: bool) type {
                     .fd = if (FeatureFlags.store_file_descriptors) file_handle.handle else 0,
                 };
 
-                if (cache_files) {
+                if (comptime cache_files) {
                     c.mutex.lock();
                     defer c.mutex.unlock();
                     var res = c.entries.getOrPut(path) catch unreachable;
@@ -163,7 +163,7 @@ pub fn NewCache(comptime cache_files: bool) type {
             ) !Entry {
                 var rfs = _fs.fs;
 
-                if (cache_files) {
+                if (comptime cache_files) {
                     {
                         c.mutex.lock();
                         defer c.mutex.unlock();
@@ -228,7 +228,7 @@ pub fn NewCache(comptime cache_files: bool) type {
                     .fd = if (FeatureFlags.store_file_descriptors) file_handle.handle else 0,
                 };
 
-                if (cache_files) {
+                if (comptime cache_files) {
                     c.mutex.lock();
                     defer c.mutex.unlock();
                     var res = c.entries.getOrPut(path) catch unreachable;

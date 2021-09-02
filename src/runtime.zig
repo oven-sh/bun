@@ -161,7 +161,7 @@ pub const Runtime = struct {
     pub const Imports = struct {
         __name: ?Ref = null,
         __toModule: ?Ref = null,
-        __commonJS: ?Ref = null,
+        __cJS2eSM: ?Ref = null,
         __require: ?Ref = null,
         __export: ?Ref = null,
         __reExport: ?Ref = null,
@@ -177,7 +177,7 @@ pub const Runtime = struct {
             "__name",
             "__toModule",
             "__require",
-            "__commonJS",
+            "__cJS2eSM",
             "__export",
             "__reExport",
             "__load",

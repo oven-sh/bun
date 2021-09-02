@@ -570,15 +570,14 @@ pub fn NewBundler(cache_files: bool) type {
             pub fn enqueueItem(this: *GenerateNodeModuleBundle, resolve: _resolver.Result) !void {
                 var result = resolve;
                 var path = result.path() orelse return;
+
                 const loader = this.bundler.options.loaders.get(path.name.ext) orelse .file;
                 if (!loader.isJavaScriptLikeOrJSON()) return;
-                if (BundledModuleData.get(this, &result)) |mod| {
-                    path.* = Fs.Path.init(std.mem.span(try this.allocator.dupeZ(u8, path.text)));
+                path.* = try path.dupeAlloc(this.allocator);
 
+                if (BundledModuleData.get(this, &result)) |mod| {
                     try this.queue.upsert(mod.module_id, result);
                 } else {
-                    path.* = Fs.Path.init(std.mem.span(try this.allocator.dupeZ(u8, path.text)));
-
                     try this.queue.upsert(result.hash(this.bundler.fs.top_level_dir, loader), result);
                 }
             }
@@ -1025,11 +1024,15 @@ pub fn NewBundler(cache_files: bool) type {
                 module_id: u32,
 
                 pub fn get(this: *GenerateNodeModuleBundle, resolve_result: *const _resolver.Result) ?BundledModuleData {
-                    var path = resolve_result.pathConst() orelse return null;
-                    const package_json: *const PackageJSON = this.bundler.resolver.rootNodeModulePackageJSON(resolve_result) orelse return null;
-                    const package_base_path = package_json.source.path.name.dirWithTrailingSlash();
-                    const import_path = path.text[package_base_path.len..];
-                    const package_path = path.text[package_base_path.len - package_json.name.len - 1 ..];
+                    const path = resolve_result.pathConst() orelse return null;
+                    var base_path = path.text;
+                    const package_json: *const PackageJSON = this.bundler.resolver.rootNodeModulePackageJSON(
+                        resolve_result,
+                        &base_path,
+                    ) orelse return null;
+                    const package_base_path = package_json.source.path.sourceDir();
+                    const import_path = base_path[package_base_path.len..];
+                    const package_path = base_path[package_base_path.len - package_json.name.len - 1 ..];
 
                     return BundledModuleData{
                         .import_path = import_path,
@@ -1051,7 +1054,7 @@ pub fn NewBundler(cache_files: bool) type {
 
                 const is_from_node_modules = resolve.isLikelyNodeModule();
                 var file_path = (resolve.pathConst() orelse unreachable).*;
-
+                const source_dir = file_path.sourceDir();
                 const loader = this.bundler.options.loader(file_path.name.ext);
                 var bundler = this.bundler;
                 defer scan_pass_result.reset();
@@ -1073,7 +1076,7 @@ pub fn NewBundler(cache_files: bool) type {
                                 bundler.fs,
                                 file_path.text,
                                 resolve.dirname_fd,
-                                null,
+                                if (resolve.file_fd != 0) resolve.file_fd else null,
                                 shared_buffer,
                             );
 
@@ -1110,7 +1113,6 @@ pub fn NewBundler(cache_files: bool) type {
                                     },
                                     bundler.allocator,
                                 ) catch return null;
-                                const source_dir = file_path.name.dirWithTrailingSlash();
 
                                 var jsx = bundler.options.jsx;
                                 jsx.parse = loader.isJSX();
@@ -1153,12 +1155,21 @@ pub fn NewBundler(cache_files: bool) type {
                                                 continue;
                                             }
 
+                                            // if (_resolved_import.package_json == null) |pkg_json| {
+                                            //     _resolved_import.package_json = if (pkg_json.hash == resolve.package_json.?.hash)
+                                            //         resolve.package_json
+                                            //     else
+                                            //         _resolved_import.package_json;
+                                            // }
+
                                             const resolved_import: *const _resolver.Result = _resolved_import;
 
-                                            const _module_data = BundledModuleData.get(this, resolved_import) orelse continue;
+                                            const _module_data = BundledModuleData.get(this, resolved_import) orelse unreachable;
                                             import_record.module_id = _module_data.module_id;
+                                            std.debug.assert(import_record.module_id != 0);
                                             import_record.is_bundled = true;
-                                            path.* = Fs.Path.init(this.allocator.dupeZ(u8, path.text) catch unreachable);
+
+                                            path.* = try path.dupeAlloc(this.allocator);
 
                                             import_record.path = path.*;
 
@@ -1416,13 +1427,12 @@ pub fn NewBundler(cache_files: bool) type {
                                 bundler.fs,
                                 file_path.text,
                                 resolve.dirname_fd,
-                                null,
+                                if (resolve.file_fd != 0) resolve.file_fd else null,
                                 shared_buffer,
                             ) catch return;
                             if (entry.contents.len == 0 or (entry.contents.len < 33 and strings.trim(entry.contents, " \n\r").len == 0)) return;
 
                             const source = logger.Source.initRecycledFile(Fs.File{ .path = file_path, .contents = entry.contents }, bundler.allocator) catch return null;
-                            const source_dir = file_path.name.dirWithTrailingSlash();
 
                             var jsx = bundler.options.jsx;
                             jsx.parse = loader.isJSX();
@@ -1452,9 +1462,10 @@ pub fn NewBundler(cache_files: bool) type {
 
                                         const loader_ = this.bundler.options.loader(path.name.ext);
                                         if (!loader_.isJavaScriptLikeOrJSON()) continue;
-                                        path.* = Fs.Path.init(std.mem.span(try this.allocator.dupeZ(u8, path.text)));
+                                        path.* = try path.dupeAlloc(this.allocator);
 
                                         if (BundledModuleData.get(this, _resolved_import)) |mod| {
+                                            std.debug.assert(mod.module_id != 0);
                                             try this.queue.upsert(
                                                 mod.module_id,
                                                 _resolved_import.*,
@@ -1556,7 +1567,7 @@ pub fn NewBundler(cache_files: bool) type {
 
             if (strings.indexOf(file_path.text, bundler.fs.top_level_dir)) |i| {
                 file_path.pretty = file_path.text[i + bundler.fs.top_level_dir.len ..];
-            } else {
+            } else if (!file_path.is_symlink) {
                 file_path.pretty = allocator.dupe(u8, bundler.fs.relativeTo(file_path.text)) catch unreachable;
             }
 
@@ -1765,6 +1776,7 @@ pub fn NewBundler(cache_files: bool) type {
                         &source,
                         file,
                         &bundler.linker,
+                        bundler.log,
                     );
                     try css_writer.run(bundler.log, bundler.allocator);
                     output_file.size = css_writer.written;

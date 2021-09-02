@@ -518,7 +518,7 @@ pub const VirtualMachine = struct {
                 file_path,
                 &parse_result,
                 .absolute_path,
-                true,
+                false,
             );
 
             if (!source_code_printer_loaded) {
@@ -601,7 +601,7 @@ pub const VirtualMachine = struct {
                     path,
                     &parse_result,
                     .absolute_path,
-                    true,
+                    false,
                 );
                 vm.resolved_count += vm.bundler.linker.import_counter - start_count;
                 vm.bundler.linker.import_counter = 0;

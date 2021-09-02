@@ -531,6 +531,8 @@ pub const RequestContext = struct {
     }
 
     pub fn sendNotFound(req: *RequestContext) !void {
+        std.debug.assert(!req.has_called_done);
+
         defer req.done();
         try req.writeStatus(404);
         try req.flushHeaders();
@@ -1126,7 +1128,9 @@ pub const RequestContext = struct {
             while (true) {
                 defer {
                     JavaScript.VirtualMachine.vm.flush();
-                    std.debug.assert(ZigGlobalObject.resetModuleRegistryMap(vm.global, module_map));
+                    std.debug.assert(
+                        ZigGlobalObject.resetModuleRegistryMap(vm.global, module_map),
+                    );
                     js_ast.Stmt.Data.Store.reset();
                     js_ast.Expr.Data.Store.reset();
                     JavaScript.Bun.flushCSSImports();
@@ -2458,7 +2462,6 @@ pub const Server = struct {
                         else => {
                             Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
                             did_print = true;
-                            return;
                         },
                     }
                 };
@@ -2474,7 +2477,6 @@ pub const Server = struct {
                         else => {
                             Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
                             did_print = true;
-                            return;
                         },
                     }
                 };
@@ -2489,7 +2491,6 @@ pub const Server = struct {
                     req_ctx.renderServeResult(result) catch |err| {
                         Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
                         did_print = true;
-                        return;
                     };
                 }
             }

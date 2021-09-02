@@ -1906,7 +1906,7 @@ pub const Parser = struct {
             exports_kind = .cjs;
             if (p.options.transform_require_to_import) {
                 var args = p.allocator.alloc(Expr, 2) catch unreachable;
-                wrapper_expr = p.callRuntime(logger.Loc.Empty, "__commonJS", args);
+                wrapper_expr = p.callRuntime(logger.Loc.Empty, "__cJS2eSM", args);
 
                 // Disable HMR if we're wrapping it in CommonJS
                 // It's technically possible to support this.

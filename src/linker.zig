@@ -187,10 +187,12 @@ pub fn NewLinker(comptime BundlerType: type) type {
             comptime ignore_runtime: bool,
         ) !void {
             var needs_runtime = result.ast.uses_exports_ref or result.ast.uses_module_ref or result.ast.runtime_imports.hasAny();
-            const source_dir = file_path.name.dir;
+            const source_dir = if (file_path.is_symlink and file_path.pretty.len > 0 and import_path_format == .absolute_url and linker.options.platform != .bun)
+                Fs.PathName.init(file_path.pretty).dirWithTrailingSlash()
+            else
+                file_path.sourceDir();
             var externals = std.ArrayList(u32).init(linker.allocator);
             var needs_bundle = false;
-            const process_import_record_path = file_path.text[0..std.math.min(source_dir.len + 1, file_path.text.len)];
             var first_bundled_index: ?u32 = null;
 
             // Step 1. Resolve imports & requires
@@ -244,7 +246,9 @@ pub fn NewLinker(comptime BundlerType: type) type {
                                             break :bundled;
                                         };
                                         if (package_json_) |package_json| {
-                                            if (strings.contains(package_json.source.path.name.dirWithTrailingSlash(), "node_modules")) {
+                                            const package_base_dir = package_json.source.path.sourceDir();
+                                            const node_module_root = std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str;
+                                            if (strings.lastIndexOf(package_base_dir, node_module_root)) |last_node_modules| {
                                                 if (node_modules_bundle.getPackageIDByName(package_json.name)) |possible_pkg_ids| {
                                                     const pkg_id: u32 = brk: {
                                                         for (possible_pkg_ids) |pkg_id| {
@@ -275,8 +279,8 @@ pub fn NewLinker(comptime BundlerType: type) type {
                                                     }
 
                                                     const package_relative_path = linker.fs.relative(
-                                                        package_json.source.path.name.dirWithTrailingSlash(),
-                                                        path.text,
+                                                        package_base_dir,
+                                                        path.pretty,
                                                     );
 
                                                     const found_module = node_modules_bundle.findModuleInPackage(package, package_relative_path) orelse {
@@ -319,7 +323,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
                                 loader,
 
                                 // Include trailing slash
-                                process_import_record_path,
+                                source_dir,
                                 resolved_import,
                                 import_record,
                                 import_path_format,
@@ -574,10 +578,11 @@ pub fn NewLinker(comptime BundlerType: type) type {
             if (linker.options.resolve_mode != .lazy) {
                 _ = try linker.enqueueResolveResult(resolve_result);
             }
+            const path = resolve_result.pathConst() orelse unreachable;
 
             import_record.path = try linker.generateImportPath(
                 source_dir,
-                resolve_result.pathConst().?.text,
+                if (path.is_symlink and import_path_format == .absolute_url and linker.options.platform != .bun) path.pretty else path.text,
                 if (resolve_result.package_json) |package_json| package_json.version else "",
                 BundlerType.isCacheEnabled and loader == .file,
                 import_path_format,

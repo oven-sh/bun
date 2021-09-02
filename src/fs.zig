@@ -356,6 +356,7 @@ pub const FileSystem = struct {
 
         pub const Cache = struct {
             symlink: string = "",
+            fd: StoredFileDescriptorType = 0,
             kind: Kind = Kind.file,
         };
 
@@ -905,6 +906,8 @@ pub const FileSystem = struct {
                 defer {
                     if (fs.needToCloseFiles()) {
                         file.close();
+                    } else {
+                        cache.fd = file.handle;
                     }
                 }
                 const _stat = try file.stat();
@@ -922,7 +925,7 @@ pub const FileSystem = struct {
                 cache.kind = .file;
             }
             if (symlink.len > 0) {
-                cache.symlink = try fs.allocator.dupe(u8, symlink);
+                cache.symlink = try FilenameStore.instance.append([]const u8, symlink);
             }
 
             return cache;
@@ -972,7 +975,7 @@ pub const PathName = struct {
         return MutableString.ensureValidIdentifier(self.base, allocator);
     }
 
-    pub fn dirWithTrailingSlash(this: *const PathName) string {
+    pub inline fn dirWithTrailingSlash(this: *const PathName) string {
         // The three strings basically always point to the same underlying ptr
         // so if dir does not have a trailing slash, but is spaced one apart from the basename
         // we can assume there is a trailing slash there
@@ -1034,16 +1037,98 @@ threadlocal var join_buf: [1024]u8 = undefined;
 pub const Path = struct {
     pretty: string,
     text: string,
-    non_symlink: string = "",
     namespace: string = "unspecified",
     name: PathName,
     is_disabled: bool = false,
+    is_symlink: bool = false,
 
     pub const PackageRelative = struct {
         path: string,
         name: string,
         is_parent_package: bool = false,
     };
+
+    pub inline fn sourceDir(this: *const Path) string {
+        return this.name.dirWithTrailingSlash();
+    }
+
+    pub inline fn prettyDir(this: *const Path) string {
+        return this.name.dirWithTrailingSlash();
+    }
+
+    // This duplicates but only when strictly necessary
+    // This will skip allocating if it's already in FilenameStore or DirnameStore
+    pub fn dupeAlloc(this: *const Path, allocator: *std.mem.Allocator) !Fs.Path {
+        if (this.text.ptr == this.pretty.ptr and this.text.len == this.text.len) {
+            if (FileSystem.FilenameStore.instance.exists(this.text) or FileSystem.DirnameStore.instance.exists(this.text)) {
+                return this.*;
+            }
+
+            var new_path = Fs.Path.init(try FileSystem.FilenameStore.instance.append([]const u8, this.text));
+            new_path.pretty = this.text;
+            new_path.namespace = this.namespace;
+            new_path.is_symlink = this.is_symlink;
+            return new_path;
+        } else if (this.pretty.len == 0) {
+            if (FileSystem.FilenameStore.instance.exists(this.text) or FileSystem.DirnameStore.instance.exists(this.text)) {
+                return this.*;
+            }
+
+            var new_path = Fs.Path.init(try FileSystem.FilenameStore.instance.append([]const u8, this.text));
+            new_path.pretty = "";
+            new_path.namespace = this.namespace;
+            new_path.is_symlink = this.is_symlink;
+            return new_path;
+        } else if (allocators.sliceRange(this.pretty, this.text)) |start_end| {
+            if (FileSystem.FilenameStore.instance.exists(this.text) or FileSystem.DirnameStore.instance.exists(this.text)) {
+                return this.*;
+            }
+            var new_path = Fs.Path.init(try FileSystem.FilenameStore.instance.append([]const u8, this.text));
+            new_path.pretty = this.text[start_end[0]..start_end[1]];
+            new_path.namespace = this.namespace;
+            new_path.is_symlink = this.is_symlink;
+            return new_path;
+        } else {
+            if ((FileSystem.FilenameStore.instance.exists(this.text) or
+                FileSystem.DirnameStore.instance.exists(this.text)) and
+                (FileSystem.FilenameStore.instance.exists(this.pretty) or
+                FileSystem.DirnameStore.instance.exists(this.pretty)))
+            {
+                return this.*;
+            }
+
+            if (strings.indexOf(this.text, this.pretty)) |offset| {
+                var text = try FileSystem.FilenameStore.instance.append([]const u8, this.text);
+                var new_path = Fs.Path.init(text);
+                new_path.pretty = text[offset..][0..this.pretty.len];
+                new_path.namespace = this.namespace;
+                new_path.is_symlink = this.is_symlink;
+                return new_path;
+            } else {
+                var buf = try allocator.alloc(u8, this.text.len + this.pretty.len + 2);
+                std.mem.copy(u8, buf, this.text);
+                buf.ptr[this.text.len] = 0;
+                var new_pretty = buf[this.text.len + 1 ..];
+                std.mem.copy(u8, buf[this.text.len + 1 ..], this.pretty);
+                var new_path = Fs.Path.init(buf[0..this.text.len]);
+                buf.ptr[buf.len - 1] = 0;
+                new_path.pretty = new_pretty;
+                new_path.namespace = this.namespace;
+                new_path.is_symlink = this.is_symlink;
+                return new_path;
+            }
+        }
+    }
+
+    pub const empty = Fs.Path.init("");
+
+    pub fn setRealpath(this: *Path, to: string) void {
+        const old_path = this.text;
+        this.text = to;
+        this.name = PathName.init(to);
+        this.pretty = old_path;
+        this.is_symlink = true;
+    }
 
     pub fn jsonStringify(self: *const @This(), options: anytype, writer: anytype) !void {
         return try std.json.stringify(self.text, options, writer);
@@ -1054,15 +1139,30 @@ pub const Path = struct {
     }
 
     pub fn init(text: string) Path {
-        return Path{ .pretty = text, .text = text, .namespace = "file", .name = PathName.init(text) };
+        return Path{
+            .pretty = text,
+            .text = text,
+            .namespace = "file",
+            .name = PathName.init(text),
+        };
     }
 
     pub fn initWithPretty(text: string, pretty: string) Path {
-        return Path{ .pretty = pretty, .text = text, .namespace = "file", .name = PathName.init(text) };
+        return Path{
+            .pretty = pretty,
+            .text = text,
+            .namespace = "file",
+            .name = PathName.init(text),
+        };
     }
 
     pub fn initWithNamespace(text: string, namespace: string) Path {
-        return Path{ .pretty = text, .text = text, .namespace = namespace, .name = PathName.init(text) };
+        return Path{
+            .pretty = text,
+            .text = text,
+            .namespace = namespace,
+            .name = PathName.init(text),
+        };
     }
 
     pub fn isBefore(a: *Path, b: Path) bool {

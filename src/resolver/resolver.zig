@@ -125,8 +125,8 @@ pub const Result = struct {
     // remember: non-node_modules can have package.json
     // checking package.json may not be relevant
     pub fn isLikelyNodeModule(this: *const Result) bool {
-        const dir = this.path_pair.primary.name.dirWithTrailingSlash();
-        return strings.indexOf(dir, "/node_modules/") != null;
+        const path_ = this.pathConst() orelse return false;
+        return strings.indexOf(path_.text, "/node_modules/") != null;
     }
 
     // Most NPM modules are CommonJS
@@ -500,27 +500,28 @@ pub fn NewResolver(cache_files: bool) type {
             const json = (try r.caches.json.parseJSON(r.log, pkg.source, r.allocator)) orelse return error.JSONParseError;
 
             pkg.loadFrameworkWithPreference(pair, json, r.allocator, load_defines, preference);
-            const dir = pkg.source.path.name.dirWithTrailingSlash();
+            const dir = pkg.source.path.sourceDir();
+
             var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 
             if (pair.framework.client.isEnabled()) {
                 var parts = [_]string{ dir, pair.framework.client.path };
                 const abs = r.fs.abs(&parts);
-                pair.framework.client.path = try r.allocator.dupe(u8, try std.os.realpath(abs, &buf));
+                pair.framework.client.path = try r.allocator.dupe(u8, abs);
                 pair.framework.resolved = true;
             }
 
             if (pair.framework.server.isEnabled()) {
                 var parts = [_]string{ dir, pair.framework.server.path };
                 const abs = r.fs.abs(&parts);
-                pair.framework.server.path = try r.allocator.dupe(u8, try std.os.realpath(abs, &buf));
+                pair.framework.server.path = try r.allocator.dupe(u8, abs);
                 pair.framework.resolved = true;
             }
 
             if (pair.framework.fallback.isEnabled()) {
                 var parts = [_]string{ dir, pair.framework.fallback.path };
                 const abs = r.fs.abs(&parts);
-                pair.framework.fallback.path = try r.allocator.dupe(u8, try std.os.realpath(abs, &buf));
+                pair.framework.fallback.path = try r.allocator.dupe(u8, abs);
                 pair.framework.resolved = true;
             }
 
@@ -647,50 +648,80 @@ pub fn NewResolver(cache_files: bool) type {
         pub fn finalizeResult(r: *ThisResolver, result: *Result) !void {
             if (result.is_external) return;
 
+            var iter = result.path_pair.iter();
+            while (iter.next()) |path| {
+                var dir: *DirInfo = (r.readDirInfo(path.name.dir) catch continue) orelse continue;
+                result.package_json = result.package_json orelse dir.package_json;
+
+                if (dir.getEntries()) |entries| {
+                    if (entries.get(path.name.filename)) |query| {
+                        const symlink_path = query.entry.symlink(&r.fs.fs);
+                        if (symlink_path.len > 0) {
+                            path.setRealpath(symlink_path);
+                            if (result.file_fd == 0) result.file_fd = query.entry.cache.fd;
+
+                            if (r.debug_logs) |*debug| {
+                                debug.addNoteFmt("Resolved symlink \"{s}\" to \"{s}\"", .{ path.text, symlink_path }) catch {};
+                            }
+                        } else if (dir.abs_real_path.len > 0) {
+                            var parts = [_]string{ dir.abs_real_path, query.entry.base() };
+                            var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+
+                            var out = r.fs.absBuf(&parts, &buf);
+
+                            if (query.entry.cache.fd == 0) {
+                                buf[out.len] = 0;
+                                const span = buf[0..out.len :0];
+                                var file = try std.fs.openFileAbsoluteZ(span, .{ .read = true });
+
+                                if (comptime !FeatureFlags.store_file_descriptors) {
+                                    out = try std.os.getFdPath(query.entry.cache.fd, &buf);
+                                    file.close();
+                                } else {
+                                    query.entry.cache.fd = file.handle;
+                                    Fs.FileSystem.setMaxFd(file.handle);
+                                }
+                            }
+
+                            defer {
+                                if (r.fs.fs.needToCloseFiles()) {
+                                    if (query.entry.cache.fd != 0) {
+                                        var file = std.fs.File{ .handle = query.entry.cache.fd };
+                                        file.close();
+                                        query.entry.cache.fd = 0;
+                                    }
+                                }
+                            }
+
+                            if (comptime FeatureFlags.store_file_descriptors) {
+                                out = try std.os.getFdPath(query.entry.cache.fd, &buf);
+                            }
+
+                            const symlink = try Fs.FileSystem.FilenameStore.instance.append(@TypeOf(out), out);
+                            if (r.debug_logs) |*debug| {
+                                debug.addNoteFmt("Resolved symlink \"{s}\" to \"{s}\"", .{ symlink, path.text }) catch {};
+                            }
+                            query.entry.cache.symlink = symlink;
+                            if (result.file_fd == 0) result.file_fd = query.entry.cache.fd;
+
+                            path.setRealpath(symlink);
+                        }
+                    }
+                }
+            }
+
             if (result.package_json) |package_json| {
                 result.module_type = switch (package_json.module_type) {
                     .esm, .cjs => package_json.module_type,
                     .unknown => result.module_type,
                 };
             }
-
-            var iter = result.path_pair.iter();
-            while (iter.next()) |path| {
-                var dir: *DirInfo = (r.readDirInfo(path.name.dir) catch continue) orelse continue;
-                if (dir.getEntries()) |entries| {
-                    if (entries.get(path.name.filename)) |query| {
-                        const symlink_path = query.entry.symlink(&r.fs.fs);
-                        if (symlink_path.len > 0) {
-                            path.non_symlink = path.text;
-                            // Is this entry itself a symlink?
-                            path.text = symlink_path;
-                            path.name = Fs.PathName.init(path.text);
-
-                            if (r.debug_logs) |*debug| {
-                                debug.addNoteFmt("Resolved symlink \"{s}\" to \"{s}\"", .{ path.non_symlink, path.text }) catch {};
-                            }
-                        } else if (dir.abs_real_path.len > 0) {
-                            path.non_symlink = path.text;
-                            var parts = [_]string{ dir.abs_real_path, query.entry.base() };
-                            var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-                            var out = r.fs.absBuf(&parts, &buf);
-                            const symlink = try Fs.FileSystem.FilenameStore.instance.append(@TypeOf(out), out);
-                            if (r.debug_logs) |*debug| {
-                                debug.addNoteFmt("Resolved symlink \"{s}\" to \"{s}\"", .{ symlink, path.text }) catch {};
-                            }
-                            query.entry.cache.symlink = symlink;
-
-                            path.name = Fs.PathName.init(path.text);
-                        }
-                    }
-                }
-            }
         }
 
         pub fn resolveWithoutSymlinks(r: *ThisResolver, source_dir: string, import_path: string, kind: ast.ImportKind) !?Result {
             // This implements the module resolution algorithm from node.js, which is
             // described here: https://nodejs.org/api/modules.html#modules_all_together
-            var result: Result = Result{ .path_pair = PathPair{ .primary = Path.init("") } };
+            var result: Result = Result{ .path_pair = PathPair{ .primary = Path.empty } };
 
             // Return early if this is already an absolute path. In addition to asking
             // the file system whether this is an absolute path, we also explicitly check
@@ -969,11 +1000,21 @@ pub fn NewResolver(cache_files: bool) type {
         pub fn rootNodeModulePackageJSON(
             r: *ThisResolver,
             result: *const Result,
+            base_path: *string,
         ) ?*const PackageJSON {
-            const absolute = (result.pathConst() orelse return null).text;
+            const path = (result.pathConst() orelse return null);
+            var absolute = path.text;
             // /foo/node_modules/@babel/standalone/index.js
             //     ^------------^
-            var end = strings.lastIndexOf(absolute, node_module_root_string) orelse return null;
+            var end = strings.lastIndexOf(absolute, node_module_root_string) orelse brk: {
+                // try non-symlinked version
+                if (path.pretty.len != absolute.len) {
+                    absolute = path.pretty;
+                    break :brk strings.lastIndexOf(absolute, node_module_root_string);
+                }
+
+                break :brk null;
+            } orelse return null;
             end += node_module_root_string.len;
 
             const is_scoped_package = absolute[end] == '@';
@@ -996,11 +1037,13 @@ pub fn NewResolver(cache_files: bool) type {
             // That can cause filesystem lookups in parent directories and it requires a lock
             if (result.package_json) |pkg| {
                 if (strings.eql(slice, pkg.source.path.name.dirWithTrailingSlash())) {
+                    base_path.* = absolute;
                     return pkg;
                 }
             }
 
             const dir_info = (r.dirInfoCached(slice) catch null) orelse return null;
+            base_path.* = absolute;
             return dir_info.package_json;
         }
 

@@ -42,7 +42,7 @@ export var __commonJS = (cb, name) => {
   var has_run = false;
 
   return {
-    [`[load] ${name}`]() {
+    [`require(${name})`]() {
       if (has_run) {
         return mod.exports;
       }
@@ -53,9 +53,11 @@ export var __commonJS = (cb, name) => {
 
       cb(mod, mod.exports);
 
+      const kind = typeof mod.exports;
+
       // If it's a default-only export, don't crash if they call .default on the module
       if (
-        typeof mod.exports === "object" &&
+        kind === "object" &&
         "default" in mod.exports &&
         Object.keys(mod.exports).len === 1
       ) {
@@ -69,8 +71,21 @@ export var __commonJS = (cb, name) => {
         });
         // If it's a namespace export without .default, pretend .default is the same as mod.exports
       } else if (
-        (typeof mod.exports === "object" ||
-          typeof mod.exports === "function") &&
+        kind === "object" &&
+        "default" in mod.exports &&
+        Object.keys(mod.exports).len === 1
+      ) {
+        mod.exports = mod.exports.default;
+        Object.defineProperty(mod.exports, "default", {
+          get() {
+            return mod.exports;
+          },
+          enumerable: true,
+          configurable: true,
+        });
+        // If it's a namespace export without .default, pretend .default is the same as mod.exports
+      } else if (
+        (kind === "function" || kind === "object") &&
         !("default" in mod.exports)
       ) {
         var defaultValue = mod.exports;
@@ -88,7 +103,11 @@ export var __commonJS = (cb, name) => {
 
       return mod.exports;
     },
-  }[`[load] ${name}`];
+  }[`require(${name})`];
+};
+
+export var __cJS2eSM = (cb, name) => {
+  return __commonJS(cb, name)();
 };
 
 var require_cache = new WeakMap();

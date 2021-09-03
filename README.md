@@ -101,13 +101,25 @@ Unlike many other bundlers, `Bun` only bundles `node_modules`. This is great for
 
 # Things that don't work yet
 
+Bun is a project with incredibly large scope, and it's early days.
+
 | Feature                                                                                                                | In                    |
 | ---------------------------------------------------------------------------------------------------------------------- | --------------------- |
+| Source Maps (JavaScript)                                                                                               | JavaScript Transpiler |
+| Source Maps (CSS)                                                                                                      | CSS Processor         |
 | [Private Class Fields](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Classes/Private_class_fields) | JavaScript Transpiler |
 | [Import Assertions](https://github.com/tc39/proposal-import-assertions)                                                | JavaScript Transpiler |
-| [`extends` in `tsconfig.json`](https://www.typescriptlang.org/tsconfig#extends)                                        | TypeScript Transpiler |
+| [`extends`](https://www.typescriptlang.org/tsconfig#extends) in tsconfig.json                                          | TypeScript Transpiler |
+| [jsx](https://www.typescriptlang.org/tsconfig)\* in tsconfig.json                                                      | TypeScript Transpiler |
+| [TypeScript Decorators](https://www.typescriptlang.org/docs/handbook/decorators.html)                                  | TypeScript Transpiler |
+| `@jsxPragma` comments                                                                                                  | JavaScript Transpiler |
 | Un-quoted `.env` string values                                                                                         | .env loader           |
-| Sharing `.bun` files (must not write absolute paths)                                                                   | JavaScript Bundler    |
+| Sharing `.bun` files                                                                                                   | JavaScript Bundler    |
+| [fetch](https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API) (in SSR)                                           | Bun.js                |
+| [setTimeout](https://developer.mozilla.org/en-US/docs/Web/API/setTimeout) (in SSR)                                     | Bun.js                |
+| `bun run` command                                                                                                      | Bun.js                |
+
+All of these are planned to work eventually, maybe with the exception of `setTimeout` inside of SSR.
 
 # Building from source
 

@@ -203,7 +203,7 @@ pub fn startsWith(self: string, str: string) bool {
 }
 
 pub inline fn endsWith(self: string, str: string) bool {
-    return @call(.{ .modifier = .always_inline }, std.mem.endsWith, .{ u8, self, str });
+    return str.len == 0 or @call(.{ .modifier = .always_inline }, std.mem.endsWith, .{ u8, self, str });
 }
 
 pub fn endsWithAny(self: string, str: string) bool {

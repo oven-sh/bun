@@ -3645,7 +3645,7 @@ pub fn NewParser(
                     }
 
                     // p.markSyntaxFeature(Destructing)
-                    var items = List(js_ast.ArrayBinding).init(p.allocator);
+                    var items = List(js_ast.ArrayBinding).initCapacity(p.allocator, ex.items.len) catch unreachable;
                     var is_spread = true;
                     for (ex.items) |_, i| {
                         var item = ex.items[i];
@@ -3656,18 +3656,18 @@ pub fn NewParser(
                         }
                         const res = p.convertExprToBindingAndInitializer(&item, invalid_loc, is_spread);
 
-                        items.append(js_ast.ArrayBinding{
+                        items.appendAssumeCapacity(js_ast.ArrayBinding{
                             // It's valid for it to be missing
                             // An example:
                             //      Promise.all(promises).then(([, len]) => true);
                             //                                   ^ Binding is missing there
                             .binding = res.binding orelse p.b(B.Missing{}, item.loc),
                             .default_value = res.override_expr,
-                        }) catch unreachable;
+                        });
                     }
 
                     return p.b(B.Array{
-                        .items = items.toOwnedSlice(),
+                        .items = items.items,
                         .has_spread = ex.comma_after_spread != null,
                         .is_single_line = ex.is_single_line,
                     }, expr.loc);
@@ -3682,7 +3682,7 @@ pub fn NewParser(
                     }
                     // p.markSyntaxFeature(compat.Destructuring, p.source.RangeOfOperatorAfter(expr.Loc, "{"))
 
-                    var properties = List(B.Property).init(p.allocator);
+                    var properties = List(B.Property).initCapacity(p.allocator, ex.properties.len) catch unreachable;
                     for (ex.properties) |item| {
                         if (item.flags.is_method or item.kind == .get or item.kind == .set) {
                             invalid_loc.append(item.key.?.loc) catch unreachable;
@@ -3691,21 +3691,20 @@ pub fn NewParser(
                         var value = &(item.value orelse unreachable);
                         const tup = p.convertExprToBindingAndInitializer(value, invalid_loc, false);
                         const initializer = tup.expr orelse item.initializer;
-
-                        properties.append(B.Property{
+                        const is_spread = item.kind == .spread or item.flags.is_spread;
+                        properties.appendAssumeCapacity(B.Property{
                             .flags = Flags.Property{
-                                .is_spread = item.kind == .spread or item.flags.is_spread,
+                                .is_spread = is_spread,
                                 .is_computed = item.flags.is_computed,
                             },
-
-                            .key = item.key orelse p.panic("Internal error: Expected {s} to have a key.", .{item}),
+                            .key = (if (is_spread) item.value orelse item.key else item.key) orelse p.panic("Internal error: Expected {s} to have a key.", .{item}),
                             .value = tup.binding orelse p.panic("Internal error: Expected {s} to have a binding.", .{tup}),
                             .default_value = initializer,
-                        }) catch unreachable;
+                        });
                     }
 
                     return p.b(B.Object{
-                        .properties = properties.toOwnedSlice(),
+                        .properties = properties.items,
                         .is_single_line = ex.is_single_line,
                     }, expr.loc);
                 },

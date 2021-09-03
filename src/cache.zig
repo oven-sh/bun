@@ -179,7 +179,19 @@ pub fn NewCache(comptime cache_files: bool) type {
 
                 if (_file_handle == null) {
                     if (FeatureFlags.store_file_descriptors and dirname_fd > 0) {
-                        file_handle = try std.fs.Dir.openFile(std.fs.Dir{ .fd = dirname_fd }, std.fs.path.basename(path), .{ .read = true });
+                        file_handle = std.fs.Dir.openFile(std.fs.Dir{ .fd = dirname_fd }, std.fs.path.basename(path), .{ .read = true }) catch |err| brk: {
+                            switch (err) {
+                                error.FileNotFound => {
+                                    const handle = try std.fs.openFileAbsolute(path, .{ .read = true });
+                                    Output.prettyErrorln(
+                                        "<r><d>Internal error: directory mismatch for directory \"{s}\", fd {d}<r>. You don't need to do anything, but this indicates a bug.",
+                                        .{ path, dirname_fd },
+                                    );
+                                    break :brk handle;
+                                },
+                                else => return err,
+                            }
+                        };
                     } else {
                         file_handle = try std.fs.openFileAbsolute(path, .{ .read = true });
                     }

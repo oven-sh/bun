@@ -105,6 +105,7 @@ Unlike many other bundlers, `Bun` only bundles `node_modules`. This is great for
 | ---------------------------------------------------------------------------------------------------------------------- | --------------------- |
 | [Private Class Fields](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Classes/Private_class_fields) | JavaScript Transpiler |
 | [Import Assertions](https://github.com/tc39/proposal-import-assertions)                                                | JavaScript Transpiler |
+| [`extends` in `tsconfig.json`](https://www.typescriptlang.org/tsconfig#extends)                                        | TypeScript Transpiler |
 | Un-quoted `.env` string values                                                                                         | .env loader           |
 | Sharing `.bun` files (must not write absolute paths)                                                                   | JavaScript Bundler    |
 

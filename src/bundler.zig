@@ -422,8 +422,12 @@ pub fn NewBundler(cache_files: bool) type {
                         };
                         worker.data.shared_buffer = try MutableString.init(generator.allocator, 0);
                         worker.data.scan_pass_result = js_parser.ScanPassResult.init(generator.allocator);
+                        worker.data.log = generator.log.*;
 
-                        defer worker.data.deinit(generator.allocator);
+                        defer {
+                            generator.log.* = worker.data.log;
+                            worker.data.deinit(generator.allocator);
+                        }
 
                         while (generator.queue.next()) |item| {
                             try generator.processFile(worker, item);
@@ -435,6 +439,10 @@ pub fn NewBundler(cache_files: bool) type {
                         var j: usize = 0;
                         while (j < 100) : (j += 1) {}
                         std.atomic.spinLoopHint();
+                    }
+
+                    for (this.workers[0..this.workers_used]) |*worker| {
+                        worker.data.log.appendTo(generator.log) catch {};
                     }
 
                     for (this.workers[0..this.workers_used]) |*worker| {
@@ -471,6 +479,7 @@ pub fn NewBundler(cache_files: bool) type {
                     pub const WorkerData = struct {
                         shared_buffer: MutableString = undefined,
                         scan_pass_result: js_parser.ScanPassResult = undefined,
+                        log: logger.Log,
 
                         pub fn deinit(this: *WorkerData, allocator: *std.mem.Allocator) void {
                             this.shared_buffer.deinit();
@@ -523,11 +532,15 @@ pub fn NewBundler(cache_files: bool) type {
                         js_ast.Expr.Data.Store.create(this.generator.allocator);
                         js_ast.Stmt.Data.Store.create(this.generator.allocator);
                         this.data = this.generator.allocator.create(WorkerData) catch unreachable;
-                        this.data.* = WorkerData{};
+                        this.data.* = WorkerData{
+                            .log = logger.Log.init(this.generator.allocator),
+                        };
                         this.data.shared_buffer = try MutableString.init(this.generator.allocator, 0);
                         this.data.scan_pass_result = js_parser.ScanPassResult.init(this.generator.allocator);
 
-                        defer this.data.deinit(this.generator.allocator);
+                        defer {
+                            this.data.deinit(this.generator.allocator);
+                        }
 
                         this.notifyStarted();
 
@@ -1072,6 +1085,7 @@ pub fn NewBundler(cache_files: bool) type {
                 defer scan_pass_result.reset();
                 defer shared_buffer.reset();
                 defer this.bundler.resetStore();
+                var log = &worker.data.log;
 
                 // If we're in a node_module, build that almost normally
                 if (is_from_node_modules) {
@@ -1108,7 +1122,7 @@ pub fn NewBundler(cache_files: bool) type {
 
                             const module_data = BundledModuleData.get(this, &resolve) orelse {
                                 const source = logger.Source.initPathString(file_path.text, entry.contents);
-                                this.log.addResolveError(
+                                log.addResolveError(
                                     &source,
                                     logger.Range.None,
                                     this.allocator,
@@ -1163,7 +1177,7 @@ pub fn NewBundler(cache_files: bool) type {
                                     bundler.allocator,
                                     opts,
                                     bundler.options.define,
-                                    this.log,
+                                    log,
                                     &source,
                                 )) orelse return;
                                 if (ast.import_records.len > 0) {
@@ -1227,7 +1241,7 @@ pub fn NewBundler(cache_files: bool) type {
                                                 error.ModuleNotFound => {
                                                     if (isPackagePath(import_record.path.text)) {
                                                         if (this.bundler.options.platform.isWebLike() and options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
-                                                            try this.log.addResolveError(
+                                                            try log.addResolveErrorWithTextDupe(
                                                                 &source,
                                                                 import_record.range,
                                                                 this.allocator,
@@ -1236,7 +1250,7 @@ pub fn NewBundler(cache_files: bool) type {
                                                                 import_record.kind,
                                                             );
                                                         } else {
-                                                            try this.log.addResolveError(
+                                                            try log.addResolveErrorWithTextDupe(
                                                                 &source,
                                                                 import_record.range,
                                                                 this.allocator,
@@ -1246,7 +1260,7 @@ pub fn NewBundler(cache_files: bool) type {
                                                             );
                                                         }
                                                     } else {
-                                                        try this.log.addResolveError(
+                                                        try log.addResolveErrorWithTextDupe(
                                                             &source,
                                                             import_record.range,
                                                             this.allocator,
@@ -1480,7 +1494,7 @@ pub fn NewBundler(cache_files: bool) type {
                                 scan_pass_result,
                                 opts,
                                 bundler.options.define,
-                                this.log,
+                                log,
                                 &source,
                             );
 
@@ -1521,7 +1535,7 @@ pub fn NewBundler(cache_files: bool) type {
                                             error.ModuleNotFound => {
                                                 if (isPackagePath(import_record.path.text)) {
                                                     if (this.bundler.options.platform.isWebLike() and options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
-                                                        try this.log.addResolveError(
+                                                        try log.addResolveErrorWithTextDupe(
                                                             &source,
                                                             import_record.range,
                                                             this.allocator,
@@ -1530,7 +1544,7 @@ pub fn NewBundler(cache_files: bool) type {
                                                             import_record.kind,
                                                         );
                                                     } else {
-                                                        try this.log.addResolveError(
+                                                        try log.addResolveErrorWithTextDupe(
                                                             &source,
                                                             import_record.range,
                                                             this.allocator,
@@ -1540,7 +1554,7 @@ pub fn NewBundler(cache_files: bool) type {
                                                         );
                                                     }
                                                 } else {
-                                                    try this.log.addResolveError(
+                                                    try log.addResolveErrorWithTextDupe(
                                                         &source,
                                                         import_record.range,
                                                         this.allocator,

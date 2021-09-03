@@ -101,15 +101,12 @@ Unlike many other bundlers, `Bun` only bundles `node_modules`. This is great for
 
 # Things that don't work yet
 
-| Feature                                              | In                    |
-| ---------------------------------------------------- | --------------------- |
-| [Private Class Fields](#1)                            | JavaScript Transpiler |
-| [Import Assertions](#2)                               | JavaScript Transpiler |
-| Un-quoted `.env` string values                       | .env loader           |
-| Sharing `.bun` files (must not write absolute paths) | JavaScript Bundler    |
-
-[1]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Classes/Private_class_fields
-[2]: https://github.com/tc39/proposal-import-assertions
+| Feature                                                                                                                | In                    |
+| ---------------------------------------------------------------------------------------------------------------------- | --------------------- |
+| [Private Class Fields](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Classes/Private_class_fields) | JavaScript Transpiler |
+| [Import Assertions](https://github.com/tc39/proposal-import-assertions)                                                | JavaScript Transpiler |
+| Un-quoted `.env` string values                                                                                         | .env loader           |
+| Sharing `.bun` files (must not write absolute paths)                                                                   | JavaScript Bundler    |
 
 # Building from source
 

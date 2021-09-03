@@ -103,8 +103,8 @@ Unlike many other bundlers, `Bun` only bundles `node_modules`. This is great for
 
 | Feature                                              | In                    |
 | ---------------------------------------------------- | --------------------- |
-| [Private Class Fields](1)                            | JavaScript Transpiler |
-| [Import Assertions](2)                               | JavaScript Transpiler |
+| [Private Class Fields](#1)                            | JavaScript Transpiler |
+| [Import Assertions](#2)                               | JavaScript Transpiler |
 | Un-quoted `.env` string values                       | .env loader           |
 | Sharing `.bun` files (must not write absolute paths) | JavaScript Bundler    |
 

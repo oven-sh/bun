@@ -214,6 +214,7 @@ pub const TSConfigJSON = struct {
                                             }
                                         }
                                         if (count > 0) {
+                                            
                                             result.paths.put(
                                                 key,
                                                 values[0..count],

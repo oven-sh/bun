@@ -295,6 +295,7 @@ pub const LoadResult = struct {
     path: string,
     diff_case: ?Fs.FileSystem.Entry.Lookup.DifferentCase,
     dirname_fd: StoredFileDescriptorType = 0,
+    file_fd: StoredFileDescriptorType = 0,
 };
 
 // This is a global so even if multiple resolvers are created, the mutex will still work
@@ -747,11 +748,14 @@ pub fn NewResolver(cache_files: bool) type {
                     if (dir_info.tsconfig_json) |tsconfig| {
                         if (tsconfig.paths.count() > 0) {
                             if (r.matchTSConfigPaths(tsconfig, import_path, kind)) |res| {
+
+                                // We don't set the directory fd here because it might remap an entirely different directory
                                 return Result{
                                     .path_pair = res.path_pair,
                                     .diff_case = res.diff_case,
-                                    .dirname_fd = dir_info.getFileDescriptor(),
                                     .package_json = res.package_json,
+                                    .dirname_fd = res.dirname_fd,
+                                    .file_fd = res.file_fd,
                                 };
                             }
                         }
@@ -780,6 +784,7 @@ pub fn NewResolver(cache_files: bool) type {
                         .path_pair = entry.path_pair,
                         .diff_case = entry.diff_case,
                         .package_json = entry.package_json,
+                        .file_fd = entry.file_fd,
                     };
                 }
 
@@ -1490,7 +1495,14 @@ pub fn NewResolver(cache_files: bool) type {
 
         // This closely follows the behavior of "tryLoadModuleUsingPaths()" in the
         // official TypeScript compiler
-        pub fn matchTSConfigPaths(r: *ThisResolver, tsconfig: *TSConfigJSON, path: string, kind: ast.ImportKind) ?MatchResult {
+        pub fn matchTSConfigPaths(r: *ThisResolver, tsconfig: *TSConfigJSON, path_: string, kind: ast.ImportKind) ?MatchResult {
+            // Rewrite absolute import paths to be project-relative
+            // This is so that whe nimporting URLs from the web, we can still match them.
+            var path = path_;
+            if (strings.startsWith(path_, r.fs.top_level_dir)) {
+                path = path[r.fs.top_level_dir.len..];
+            }
+
             if (r.debug_logs) |*debug| {
                 debug.addNoteFmt("Matching \"{s}\" against \"paths\" in \"{s}\"", .{ path, tsconfig.abs_path }) catch unreachable;
             }
@@ -1528,8 +1540,6 @@ pub fn NewResolver(cache_files: bool) type {
                                 return res;
                             }
                         }
-
-                        return null;
                     }
                 }
             }
@@ -1549,16 +1559,20 @@ pub fn NewResolver(cache_files: bool) type {
                 const key = entry.key_ptr.*;
                 const original_paths = entry.value_ptr.*;
 
-                if (strings.indexOfChar(key, '*')) |star_index| {
-                    const prefix = key[0..star_index];
-                    const suffix = key[star_index..key.len];
+                if (strings.indexOfChar(key, '*')) |star| {
+                    const prefix = key[0 .. star - 1];
+                    const suffix = key[star + 1 ..];
 
                     // Find the match with the longest prefix. If two matches have the same
                     // prefix length, pick the one with the longest suffix. This second edge
                     // case isn't handled by the TypeScript compiler, but we handle it
-                    // because we want the output to always be deterministic and Go map
-                    // iteration order is deliberately non-deterministic.
-                    if (strings.startsWith(path, prefix) and strings.endsWith(path, suffix) and (prefix.len > longest_match_prefix_length or (prefix.len == longest_match_prefix_length and suffix.len > longest_match_suffix_length))) {
+                    // because we want the output to always be deterministic
+                    if (strings.startsWith(path, prefix) and
+                        strings.endsWith(path, suffix) and
+                        (prefix.len > longest_match_prefix_length or
+                        (prefix.len == longest_match_prefix_length and
+                        suffix.len > longest_match_suffix_length)))
+                    {
                         longest_match_prefix_length = @intCast(i32, prefix.len);
                         longest_match_suffix_length = @intCast(i32, suffix.len);
                         longest_match = TSConfigMatch{ .prefix = prefix, .suffix = suffix, .original_paths = original_paths };
@@ -1586,26 +1600,21 @@ pub fn NewResolver(cache_files: bool) type {
                     var total_length: usize = 0;
                     const star = std.mem.indexOfScalar(u8, original_path, '*') orelse unreachable;
                     total_length = star;
-                    std.mem.copy(u8, &TemporaryBuffer.TSConfigMatchPathBuf, original_path[0..total_length]);
-                    start = total_length;
-                    total_length += matched_text.len;
-                    std.mem.copy(u8, TemporaryBuffer.TSConfigMatchPathBuf[start..total_length], matched_text);
-                    start = total_length;
-
-                    total_length += original_path.len - star + 1; // this might be an off by one.
-                    std.mem.copy(u8, TemporaryBuffer.TSConfigMatchPathBuf[start..TemporaryBuffer.TSConfigMatchPathBuf.len], original_path[star..original_path.len]);
-                    const region = TemporaryBuffer.TSConfigMatchPathBuf[0..total_length];
+                    const parts = [_]string{ original_path[0..total_length], matched_text, longest_match.suffix };
+                    const region = r.fs.joinBuf(&parts, &TemporaryBuffer.TSConfigMatchPathBuf);
 
                     // Load the original path relative to the "baseUrl" from tsconfig.json
                     var absolute_original_path: string = region;
 
-                    var did_allocate = false;
                     if (!std.fs.path.isAbsolute(region)) {
-                        var paths = [_]string{ abs_base_url, original_path };
+                        var paths = [_]string{ abs_base_url, region };
                         absolute_original_path = r.fs.absAlloc(r.allocator, &paths) catch unreachable;
-                        did_allocate = true;
                     } else {
                         absolute_original_path = std.mem.dupe(r.allocator, u8, region) catch unreachable;
+                    }
+
+                    defer {
+                        r.allocator.free(absolute_original_path);
                     }
 
                     if (r.loadAsFileOrDirectory(absolute_original_path, kind)) |res| {
@@ -1844,6 +1853,7 @@ pub fn NewResolver(cache_files: bool) type {
                                         .diff_case = file.diff_case,
                                         .dirname_fd = file.dirname_fd,
                                         .package_json = package_json,
+                                        .file_fd = file.file_fd,
                                     };
                                 }
                             }
@@ -1855,6 +1865,7 @@ pub fn NewResolver(cache_files: bool) type {
                     .path_pair = .{ .primary = Path.init(file.path) },
                     .diff_case = file.diff_case,
                     .dirname_fd = file.dirname_fd,
+                    .file_fd = file.file_fd,
                 };
             }
 
@@ -1937,6 +1948,7 @@ pub fn NewResolver(cache_files: bool) type {
                                         .diff_case = _result.diff_case,
                                         .dirname_fd = _result.dirname_fd,
                                         .package_json = package_json,
+                                        .file_fd = auto_main_result.file_fd,
                                     };
                                 } else {
                                     if (r.debug_logs) |*debug| {
@@ -2027,6 +2039,7 @@ pub fn NewResolver(cache_files: bool) type {
                         .path = abs_path,
                         .diff_case = query.diff_case,
                         .dirname_fd = entries.fd,
+                        .file_fd = query.entry.cache.fd,
                     };
                 }
             }
@@ -2053,6 +2066,7 @@ pub fn NewResolver(cache_files: bool) type {
                             .path = r.fs.dirname_store.append(@TypeOf(buffer), buffer) catch unreachable,
                             .diff_case = query.diff_case,
                             .dirname_fd = entries.fd,
+                            .file_fd = query.entry.cache.fd,
                         };
                     }
                 }
@@ -2095,6 +2109,7 @@ pub fn NewResolver(cache_files: bool) type {
                                     .path = r.fs.dirname_store.append(@TypeOf(buffer), buffer) catch unreachable,
                                     .diff_case = query.diff_case,
                                     .dirname_fd = entries.fd,
+                                    .file_fd = query.entry.cache.fd,
                                 };
                             }
                         }

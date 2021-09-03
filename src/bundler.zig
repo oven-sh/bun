@@ -1942,7 +1942,10 @@ pub fn NewBundler(cache_files: bool) type {
                     dirname_fd,
                     true,
                     file_descriptor,
-                ) catch return null;
+                ) catch |err| {
+                    bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{s} reading \"{s}\"", .{ @errorName(err), path.text }) catch {};
+                    return null;
+                };
                 input_fd = entry.fd;
                 break :brk logger.Source.initRecycledFile(Fs.File{ .path = path, .contents = entry.contents }, bundler.allocator) catch return null;
             };
@@ -1977,7 +1980,13 @@ pub fn NewBundler(cache_files: bool) type {
                         bundler.options.jsx.supports_fast_refresh;
                     opts.filepath_hash_for_hmr = file_hash orelse 0;
                     opts.warn_about_unbundled_modules = bundler.options.platform != .bun;
-                    const value = (bundler.resolver.caches.js.parse(allocator, opts, bundler.options.define, bundler.log, &source) catch null) orelse return null;
+                    const value = (bundler.resolver.caches.js.parse(
+                        allocator,
+                        opts,
+                        bundler.options.define,
+                        bundler.log,
+                        &source,
+                    ) catch null) orelse return null;
                     return ParseResult{
                         .ast = value,
                         .source = source,

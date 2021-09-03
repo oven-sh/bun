@@ -83,10 +83,20 @@
     {
       "type": "lldb",
       "request": "launch",
+      "name": "Release Serve",
+      "program": "${workspaceFolder}/build/macos-x86_64/bun",
+      // "args": ["--serve", "--origin=http://localhost:3000"],
+      "args": ["dev", "--origin=http://localhost:3000"],
+      "cwd": "${workspaceFolder}/examples/hello-next",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
       "name": "Demo Serve",
       "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
       // "args": ["--serve", "--origin=http://localhost:3000"],
-      "args": ["dev", "--origin=http://localhost:3006"],
+      "args": ["dev", "--origin=http://localhost:3000"],
       "cwd": "${workspaceFolder}/examples/hello-next",
       "console": "internalConsole"
     },
@@ -119,21 +129,44 @@
       "cwd": "${workspaceFolder}/examples/css-stress-test",
       "console": "internalConsole"
     },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Fixture serve",
+      "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+      "args": [],
+      "cwd": "${workspaceFolder}/src/test/fixtures",
+      "console": "internalConsole"
+    },
 
     {
       "type": "lldb",
       "request": "launch",
       "name": "Demo .bun",
       "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
-      "args": [
-        "./src/index.tsx",
-        "--resolve=lazy",
-        "--origin=http://localhost:9000/"
-      ],
-      "cwd": "${workspaceFolder}/examples/simple-react",
+      "args": ["bun", "--use=./bun-framework-next"],
+      "cwd": "${workspaceFolder}/examples/hello-next",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "PNPM .bun",
+      "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+      "args": ["bun", "./pages/index.tsx"],
+      "cwd": "/Users/jarred/Build/pnpm-bun/packages/app",
       "console": "internalConsole"
     },
 
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "PNPM serve",
+      "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+      "args": [],
+      "cwd": "/Users/jarred/Build/pnpm-bun/packages/app",
+      "console": "internalConsole"
+    },
     {
       "type": "lldb",
       "request": "launch",
@@ -155,6 +188,110 @@
       "name": "Build .bun lotta-modules",
       "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
       "args": ["bun", "./index.js", "--platform=browser"],
+      "cwd": "${workspaceFolder}/examples/lotta-modules/",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Dev CRA",
+      "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+      "args": ["dev", "./index.js", "--platform=browser"],
+      "cwd": "${workspaceFolder}/examples/hello-create-react-app/",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Fragment",
+      "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+      "args": [],
+      "cwd": "${workspaceFolder}/src/test/fixtures",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Context Bun Bug",
+      "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+      "args": ["bun", "./code.js"],
+      "cwd": "/Users/jarred/Build/context/www",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Context Bun",
+      "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+      "args": ["bun", "--use=next"],
+      "cwd": "/Users/jarred/Build/context/www",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Fixtures Dev",
+      "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+      "args": ["dev"],
+      "cwd": "${workspaceFolder}/src/test/fixtures",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Fixtures Rel",
+      "program": "${workspaceFolder}/build/macos-x86_64/bun",
+      "args": ["dev"],
+      "cwd": "${workspaceFolder}/src/test/fixtures",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Context Dev",
+      "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+      "args": [],
+      "cwd": "/Users/jarred/Build/context/www",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Context Rel",
+      "program": "${workspaceFolder}/build/macos-x86_64/bun",
+      "args": [],
+      "cwd": "/Users/jarred/Build/context/www",
+      "console": "internalConsole"
+    },
+
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug Dev",
+      "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+      "args": ["dev"],
+      "cwd": "${workspaceFolder}/examples/hello-next/bun-framework-next",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Type-only import",
+      "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+      "args": [
+        "bun",
+        "./src/test/fixtures/type-only-import.ts",
+        "--external=react"
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Dev lotta-modules",
+      "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+      "args": ["dev", "./index.js", "--platform=browser"],
       "cwd": "${workspaceFolder}/examples/lotta-modules/",
       "console": "internalConsole"
     },

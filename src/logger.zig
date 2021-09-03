@@ -454,6 +454,39 @@ pub const Log = struct {
         });
     }
 
+    inline fn _addResolveError(log: *Log, source: *const Source, r: Range, allocator: *std.mem.Allocator, comptime fmt: string, args: anytype, import_kind: ImportKind, comptime dupe_text: bool) !void {
+        const text = try std.fmt.allocPrint(allocator, fmt, args);
+        // TODO: fix this. this is stupid, it should be returned in allocPrint.
+        const specifier = BabyString.in(text, args.@"0");
+        log.errors += 1;
+
+        const data = if (comptime dupe_text) brk: {
+            var _data = rangeData(
+                source,
+                r,
+                text,
+            );
+            if (_data.location != null) {
+                if (_data.location.?.line_text) |line| {
+                    _data.location.?.line_text = allocator.dupe(u8, line) catch unreachable;
+                }
+            }
+            break :brk _data;
+        } else rangeData(
+            source,
+            r,
+            text,
+        );
+
+        const msg = Msg{
+            .kind = .err,
+            .data = data,
+            .metadata = .{ .resolve = Msg.Metadata.Resolve{ .specifier = specifier, .import_kind = import_kind } },
+        };
+
+        try log.addMsg(msg);
+    }
+
     pub fn addResolveError(
         log: *Log,
         source: *const Source,
@@ -463,21 +496,19 @@ pub const Log = struct {
         args: anytype,
         import_kind: ImportKind,
     ) !void {
-        const text = try std.fmt.allocPrint(allocator, fmt, args);
-        // TODO: fix this. this is stupid, it should be returned in allocPrint.
-        const specifier = BabyString.in(text, args.@"0");
-        log.errors += 1;
-        try log.addMsg(
-            Msg{
-                .kind = .err,
-                .data = rangeData(
-                    source,
-                    r,
-                    text,
-                ),
-                .metadata = .{ .resolve = Msg.Metadata.Resolve{ .specifier = specifier, .import_kind = import_kind } },
-            },
-        );
+        return try _addResolveError(log, source, r, allocator, fmt, args, import_kind, false);
+    }
+
+    pub fn addResolveErrorWithTextDupe(
+        log: *Log,
+        source: *const Source,
+        r: Range,
+        allocator: *std.mem.Allocator,
+        comptime fmt: string,
+        args: anytype,
+        import_kind: ImportKind,
+    ) !void {
+        return try _addResolveError(log, source, r, allocator, fmt, args, import_kind, true);
     }
 
     pub fn addRangeError(log: *Log, source: ?*const Source, r: Range, text: string) !void {

@@ -3698,7 +3698,7 @@ pub fn NewParser(
                                 .is_computed = item.flags.is_computed,
                             },
                             .key = (if (is_spread) item.value orelse item.key else item.key) orelse p.panic("Internal error: Expected {s} to have a key.", .{item}),
-                            .value = tup.binding orelse p.panic("Internal error: Expected {s} to have a binding.", .{tup}),
+                            .value = tup.binding orelse p.b(B.Missing{}, expr.loc),
                             .default_value = initializer,
                         });
                     }
@@ -8498,9 +8498,11 @@ pub fn NewParser(
                     }
                 }
 
-                // Stop now if this token is forbidden to follow a TypeScript "as" cast
-                if (p.forbid_suffix_after_as_loc.start > -1 and p.lexer.loc().start == p.forbid_suffix_after_as_loc.start) {
-                    return left;
+                if (comptime is_typescript_enabled) {
+                    // Stop now if this token is forbidden to follow a TypeScript "as" cast
+                    if (p.forbid_suffix_after_as_loc.start > -1 and p.lexer.loc().start == p.forbid_suffix_after_as_loc.start) {
+                        return left;
+                    }
                 }
 
                 // Reset the optional chain flag by default. That way we won't accidentally

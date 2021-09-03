@@ -60,3 +60,6 @@ examples/lotta-modules/bun-nofscache
 
 src/node-fallbacks/out/*
 src/node-fallbacks/node_modules
+sign.json
+release/
+*.dmg

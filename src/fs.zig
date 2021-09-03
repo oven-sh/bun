@@ -15,8 +15,8 @@ const hash_map = @import("hash_map.zig");
 
 pub const Preallocate = struct {
     pub const Counts = struct {
-        pub const dir_entry: usize = 512;
-        pub const files: usize = 4096;
+        pub const dir_entry: usize = 4096;
+        pub const files: usize = 8096;
     };
 };
 
@@ -665,7 +665,7 @@ pub const FileSystem = struct {
             // This custom map implementation:
             // - Preallocates a fixed amount of directory name space
             // - Doesn't store directory names which don't exist.
-            pub const Map = allocators.BSSMap(EntriesOption, Preallocate.Counts.dir_entry, false, 128);
+            pub const Map = allocators.BSSMap(EntriesOption, Preallocate.Counts.dir_entry, false, 128, true);
         };
 
         // Limit the number of files open simultaneously to avoid ulimit issues

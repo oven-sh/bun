@@ -4,7 +4,7 @@ bun: vendor bun-prod-native bun-prod-wasi bun-prod-wasm
 vendor: api node-fallbacks runtime_js fallback_decoder mimalloc picohttp jsc
 
 api: 
-	peechy --schema src/api/schema.peechy --esm src/api/schema.js --ts src/api/schema.d.ts --zig src/api/schema.zig
+	npm install peechy; npm run peechy --schema src/api/schema.peechy --esm src/api/schema.js --ts src/api/schema.d.ts --zig src/api/schema.zig
 
 node-fallbacks: 
 	cd src/node-fallbacks; npm install; npm run --silent build
@@ -85,6 +85,7 @@ BUN_LLD_FLAGS := $(OBJ_FILES) \
 		${MACOS_ICU_FLAGS} \
 		${JSC_FILES} \
 		src/deps/picohttpparser.o \
+		src/deps/mimalloc/libmimalloc.a \
 		$(CLANG_FLAGS) \
 		-fpie \
 
@@ -99,7 +100,6 @@ bun-link-lld-debug:
 bun-link-lld-release:
 	clang++ $(BUN_LLD_FLAGS) \
 		build/macos-x86_64/bun.o \
-		/usr/local/lib/mimalloc-1.7/libmimalloc.a \
 		-o build/macos-x86_64/bun \
 		-Wl,-dead_strip \
 		-ftls-model=local-exec \
@@ -116,7 +116,6 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 sizegen:
 	clang++ src/javascript/jsc/headergen/sizegen.cpp -o /tmp/sizegen $(CLANG_FLAGS)
 	/tmp/sizegen > src/javascript/jsc/bindings/sizes.zig
-
 
 picohttp:
 	 clang -O3 -g -c src/deps/picohttpparser.c -Isrc/deps -o src/deps/picohttpparser.o; cd ../../	

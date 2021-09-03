@@ -2,15 +2,12 @@
 
 Bun is a new:
 
-- JavaScript/TypeScript/JSX transpiler (`bun ./file.tsx`)
-- JavaScript bundler (run `bun bun ./file1.ts ./file2.jsx` and it will flatten node_module imports into one `.bun`)
-- Development server with 60fps Hot Module Reloading (& WIP support for React Fast Refresh) (run `bun dev`)
-- CSS bundler `bun ./file.css` (it flattens `@import` into one file)
+- JavaScript/TypeScript/JSX transpiler
+- JavaScript & CSS bundler
+- Development server with 60fps Hot Module Reloading (& WIP support for React Fast Refresh)
 - JavaScript Runtime Environment (powered by JavaScriptCore, what WebKit/Safari uses)
 
-All in one simple tool.
-
-Most of Bun is written in [Zig](https://), a fast low-level programming language with manual memory management.
+All in one easy-to-use tool.
 
 ## Install:
 
@@ -33,7 +30,7 @@ open http://localhost:3000; bun dev --origin "http://localhost:3000"
 
 Here are some features of Next.js that **aren't supported** yet:
 
-- `getStaticProps`,`getServerSideProps`, `getInitialProps`, `getStaticPaths`. These functions will not be called.
+- `getStaticPaths`. These functions will not be called.
 - locales, zones, `assetPrefix` (workaround: change `--origin \"http://localhsot:3000/assetPrefixInhere\"`)
 - `next/image` - `<Image />` component
 
@@ -125,17 +122,9 @@ In `bun`:
 
 ```bash
 git submodule update --init --recursive --progress --depth=1
-```
-
-You
-
-Now go back to the folder with `Bun`'s repository.
-
-Run:
-
-```
+make vendor
 zig build headers
-zig build
+zig build -Drelease-fast
 ```
 
 # Credits
@@ -160,9 +149,34 @@ You can find the patched version of WebKit used by Bun here: https://github.com/
 
 This compiles JavaScriptCore, compiles Bun's `.cpp` bindings for JavaScriptCore (which are the object files using JavaScriptCore) and outputs a new `bun` binary with your changes.
 
-To successfully run `zig build`, you will need to install a fork of Zig you can find here: https://github.com/jarred-sumner/zig/tree/jarred/zig-sloppy.
+To successfully run `zig build`, you will need to install a patched version of Zig available here: https://github.com/jarred-sumner/zig/tree/jarred/zig-sloppy.
 
-Bun also statically links:
+Bun also statically links these libraries:
 
 - `libicu`, which can be found here: https://github.com/unicode-org/icu/blob/main/icu4c/LICENSE
 - [`picohttp`](https://github.com/h2o/picohttpparser), which is dual-licensed under the Perl License or the MIT License
+- [`mimalloc`](https://github.com/microsoft/mimalloc), which is MIT licensed
+
+For compatibiltiy reasons, these NPM packages are embedded into Bun's binary and injected if imported.
+
+- [`assert`](https://npmjs.com/package/assert) (MIT license)
+- [`browserify-zlib`](https://npmjs.com/package/browserify-zlib) (MIT license)
+- [`buffer`](https://npmjs.com/package/buffer) (MIT license)
+- [`constants-browserify`](https://npmjs.com/package/constants-browserify) (MIT license)
+- [`crypto-browserify`](https://npmjs.com/package/crypto-browserify) (MIT license)
+- [`domain-browser`](https://npmjs.com/package/domain-browser) (MIT license)
+- [`events`](https://npmjs.com/package/events) (MIT license)
+- [`https-browserify`](https://npmjs.com/package/https-browserify) (MIT license)
+- [`os-browserify`](https://npmjs.com/package/os-browserify) (MIT license)
+- [`path-browserify`](https://npmjs.com/package/path-browserify) (MIT license)
+- [`process`](https://npmjs.com/package/process) (MIT license)
+- [`punycode`](https://npmjs.com/package/punycode) (MIT license)
+- [`querystring-es3`](https://npmjs.com/package/querystring-es3) (MIT license)
+- [`stream-browserify`](https://npmjs.com/package/stream-browserify) (MIT license)
+- [`stream-http`](https://npmjs.com/package/stream-http) (MIT license)
+- [`string_decoder`](https://npmjs.com/package/string_decoder) (MIT license)
+- [`timers-browserify`](https://npmjs.com/package/timers-browserify) (MIT license)
+- [`tty-browserify`](https://npmjs.com/package/tty-browserify) (MIT license)
+- [`url`](https://npmjs.com/package/url) (MIT license)
+- [`util`](https://npmjs.com/package/util) (MIT license)
+- [`vm-browserify`](https://npmjs.com/package/vm-browserify) (MIT license)

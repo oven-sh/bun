@@ -134,6 +134,7 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
     const max_index = count - 1;
     var list_type: type = undefined;
     var list_count = count;
+    const overflow_init_count = std.math.max(count / 8, 32);
     return struct {
         pub var backing_buf: [count]ValueType = undefined;
         pub var backing_buf_used: u16 = 0;
@@ -183,7 +184,7 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
                 backing_buf[result.index] = value;
                 backing_buf_used += 1;
                 if (backing_buf_used >= max_index) {
-                    self.overflow_list = try @TypeOf(self.overflow_list).initCapacity(self.allocator, count);
+                    self.overflow_list = try @TypeOf(self.overflow_list).initCapacity(self.allocator, overflow_init_count);
                 }
             }
 
@@ -201,7 +202,7 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
                 backing_buf[result.index] = value;
                 backing_buf_used += 1;
                 if (backing_buf_used >= max_index) {
-                    self.overflow_list = try @TypeOf(self.overflow_list).initCapacity(self.allocator, count);
+                    self.overflow_list = try @TypeOf(self.overflow_list).initCapacity(self.allocator, overflow_init_count);
                 }
                 return Pair{ .index = result, .value = &backing_buf[result.index] };
             }
@@ -216,7 +217,7 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
                     result.index.index = backing_buf_used;
                     backing_buf_used += 1;
                     if (backing_buf_used >= max_index) {
-                        self.overflow_list = try @TypeOf(self.overflow_list).initCapacity(self.allocator, count);
+                        self.overflow_list = try @TypeOf(self.overflow_list).initCapacity(self.allocator, overflow_init_count);
                     }
                 }
             }
@@ -282,6 +283,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
     const count = _count * 2;
     const max_index = count - 1;
     const ValueType = []const u8;
+    const overflow_init_count = std.math.max(count / 8, 32);
 
     return struct {
         pub var slice_buf: [count][]const u8 = undefined;
@@ -417,7 +419,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
                 result.index = slice_buf_used;
                 slice_buf_used += 1;
                 if (slice_buf_used >= max_index) {
-                    self.overflow_list = try @TypeOf(self.overflow_list).initCapacity(self.allocator, count);
+                    self.overflow_list = try @TypeOf(self.overflow_list).initCapacity(self.allocator, overflow_init_count);
                 }
             }
 
@@ -466,8 +468,9 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
     };
 }
 
-pub fn BSSMap(comptime ValueType: type, comptime count: anytype, store_keys: bool, estimated_key_length: usize) type {
+pub fn BSSMap(comptime ValueType: type, comptime count: anytype, store_keys: bool, estimated_key_length: usize, remove_trailing_slashes: bool) type {
     const max_index = count - 1;
+    const overflow_init_count = std.math.max(count / 8, 32);
     const BSSMapType = struct {
         pub var backing_buf: [count]ValueType = undefined;
         pub var backing_buf_used: u16 = 0;
@@ -494,7 +497,8 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, store_keys: boo
             return backing_buf_used >= @as(u16, count);
         }
 
-        pub fn getOrPut(self: *Self, key: []const u8) !Result {
+        pub fn getOrPut(self: *Self, denormalized_key: []const u8) !Result {
+            const key = if (comptime remove_trailing_slashes) std.mem.trimRight(u8, denormalized_key, "/") else denormalized_key;
             const _key = Wyhash.hash(Seed, key);
             var index = try self.index.getOrPut(self.allocator, _key);
 
@@ -518,7 +522,8 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, store_keys: boo
             };
         }
 
-        pub fn get(self: *const Self, key: []const u8) ?*ValueType {
+        pub fn get(self: *const Self, denormalized_key: []const u8) ?*ValueType {
+            const key = if (comptime remove_trailing_slashes) std.mem.trimRight(u8, denormalized_key, "/") else denormalized_key;
             const _key = Wyhash.hash(Seed, key);
             const index = self.index.get(_key) orelse return null;
             return self.atIndex(index);
@@ -547,7 +552,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, store_keys: boo
                     result.index.index = backing_buf_used;
                     backing_buf_used += 1;
                     if (backing_buf_used >= max_index) {
-                        self.overflow_list = try @TypeOf(self.overflow_list).initCapacity(self.allocator, count);
+                        self.overflow_list = try @TypeOf(self.overflow_list).initCapacity(self.allocator, overflow_init_count);
                     }
                 }
             }
@@ -570,7 +575,9 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, store_keys: boo
             }
         }
 
-        pub fn remove(self: *Self, key: []const u8) void {
+        pub fn remove(self: *Self, denormalized_key: []const u8) void {
+            const key = if (comptime remove_trailing_slashes) std.mem.trimRight(u8, denormalized_key, "/") else denormalized_key;
+
             const _key = Wyhash.hash(Seed, key);
             _ = self.index.remove(_key);
             // const index = self.index.get(_key) orelse return;

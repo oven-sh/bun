@@ -3,6 +3,14 @@ bun: vendor bun-prod-native bun-prod-wasi bun-prod-wasm
 
 vendor: api node-fallbacks runtime_js fallback_decoder mimalloc picohttp jsc
 
+build-obj: 
+	zig build obj -Drelease-fast
+
+sign-macos-x64: 
+	gon sign.macos-x64.json
+
+release-macos-x64: build-obj bun-link-lld-release sign-macos-x64
+
 api: 
 	npm install peechy; npm run peechy --schema src/api/schema.peechy --esm src/api/schema.js --ts src/api/schema.d.ts --zig src/api/schema.zig
 

@@ -368,7 +368,7 @@ pub const FileSystem = struct {
         pub fn kind(entry: *Entry, fs: *Implementation) Kind {
             if (entry.need_stat) {
                 entry.need_stat = false;
-                entry.cache = fs.kind(entry.dir, entry.base()) catch unreachable;
+                entry.cache = fs.kind(entry.dir, entry.base(), entry.cache.fd) catch unreachable;
             }
             return entry.cache.kind;
         }
@@ -376,7 +376,7 @@ pub const FileSystem = struct {
         pub fn symlink(entry: *Entry, fs: *Implementation) string {
             if (entry.need_stat) {
                 entry.need_stat = false;
-                entry.cache = fs.kind(entry.dir, entry.base()) catch unreachable;
+                entry.cache = fs.kind(entry.dir, entry.base(), entry.cache.fd) catch unreachable;
             }
             return entry.cache.symlink;
         }
@@ -396,6 +396,10 @@ pub const FileSystem = struct {
     // }
     pub fn normalize(f: *@This(), str: string) string {
         return @call(.{ .modifier = .always_inline }, path_handler.normalizeString, .{ str, true, .auto });
+    }
+
+    pub fn normalizeBuf(f: *@This(), buf: []u8, str: string) string {
+        return @call(.{ .modifier = .always_inline }, path_handler.normalizeStringBuf, .{ str, buf, false, .auto, false });
     }
 
     pub fn join(f: *@This(), parts: anytype) string {
@@ -883,7 +887,7 @@ pub const FileSystem = struct {
             return try fs.readFileWithHandle(path, _size, file);
         }
 
-        pub fn kind(fs: *RealFS, _dir: string, base: string) !Entry.Cache {
+        pub fn kind(fs: *RealFS, _dir: string, base: string, existing_fd: StoredFileDescriptorType) !Entry.Cache {
             var dir = _dir;
             var combo = [2]string{ dir, base };
             var outpath: [std.fs.MAX_PATH_BYTES]u8 = undefined;
@@ -900,13 +904,13 @@ pub const FileSystem = struct {
             var cache = Entry.Cache{ .kind = Entry.Kind.file, .symlink = "" };
             var symlink: []const u8 = "";
             if (is_symlink) {
-                var file = try std.fs.openFileAbsoluteZ(absolute_path_c, .{ .read = true });
+                var file = if (existing_fd != 0) std.fs.File{ .handle = existing_fd } else try std.fs.openFileAbsoluteZ(absolute_path_c, .{ .read = true });
                 setMaxFd(file.handle);
 
                 defer {
-                    if (fs.needToCloseFiles()) {
+                    if (fs.needToCloseFiles() and existing_fd == 0) {
                         file.close();
-                    } else {
+                    } else if (comptime FeatureFlags.store_file_descriptors) {
                         cache.fd = file.handle;
                     }
                 }
@@ -1047,6 +1051,10 @@ pub const Path = struct {
         name: string,
         is_parent_package: bool = false,
     };
+
+    pub inline fn textZ(this: *const Path) [:0]const u8 {
+        return @as([:0]const u8, this.text.ptr[0..this.text.len :0]);
+    }
 
     pub inline fn sourceDir(this: *const Path) string {
         return this.name.dirWithTrailingSlash();

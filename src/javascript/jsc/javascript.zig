@@ -350,6 +350,7 @@ pub const VirtualMachine = struct {
     flush_list: std.ArrayList(string),
     entry_point: ServerEntryPoint = undefined,
 
+    arena: *std.heap.ArenaAllocator = undefined,
     has_loaded: bool = false,
 
     transpiled_count: usize = 0,
@@ -415,6 +416,14 @@ pub const VirtualMachine = struct {
         );
         VirtualMachine.vm_loaded = true;
 
+        if (!source_code_printer_loaded) {
+            var writer = try js_printer.BufferWriter.init(allocator);
+            source_code_printer = js_printer.BufferPrinter.init(writer);
+            source_code_printer.ctx.append_null_byte = false;
+
+            source_code_printer_loaded = true;
+        }
+
         return VirtualMachine.vm;
     }
 
@@ -460,6 +469,7 @@ pub const VirtualMachine = struct {
             const code = try vm.node_modules.?.readCodeAsStringSlow(vm.allocator);
 
             return ResolvedSource{
+                .allocator = null,
                 .source_code = ZigString.init(code),
                 .specifier = ZigString.init(vm.bundler.linker.nodeModuleBundleImportPath()),
                 .source_url = ZigString.init(vm.bundler.options.node_modules_bundle_pretty_path),
@@ -471,6 +481,7 @@ pub const VirtualMachine = struct {
             };
         } else if (strings.eqlComptime(_specifier, Runtime.Runtime.Imports.Name)) {
             return ResolvedSource{
+                .allocator = null,
                 .source_code = ZigString.init(Runtime.Runtime.sourceContent()),
                 .specifier = ZigString.init(Runtime.Runtime.Imports.Name),
                 .source_url = ZigString.init(Runtime.Runtime.Imports.Name),
@@ -521,14 +532,6 @@ pub const VirtualMachine = struct {
                 false,
             );
 
-            if (!source_code_printer_loaded) {
-                var writer = try js_printer.BufferWriter.init(vm.allocator);
-                source_code_printer = js_printer.BufferPrinter.init(writer);
-                source_code_printer.ctx.append_null_byte = false;
-
-                source_code_printer_loaded = true;
-            }
-
             source_code_printer.ctx.reset();
 
             var written = try vm.bundler.print(
@@ -543,6 +546,7 @@ pub const VirtualMachine = struct {
             }
 
             return ResolvedSource{
+                .allocator = null,
                 .source_code = ZigString.init(vm.allocator.dupe(u8, source_code_printer.ctx.written) catch unreachable),
                 .specifier = ZigString.init(std.mem.span(main_file_name)),
                 .source_url = ZigString.init(std.mem.span(main_file_name)),
@@ -564,6 +568,8 @@ pub const VirtualMachine = struct {
                 vm.bundler.resetStore();
                 const hash = http.Watcher.getHash(path.text);
 
+                var allocator = if (vm.has_loaded) &vm.arena.allocator else vm.allocator;
+
                 var fd: ?StoredFileDescriptorType = null;
 
                 if (vm.watcher) |watcher| {
@@ -583,7 +589,7 @@ pub const VirtualMachine = struct {
                 }
 
                 var parse_result = vm.bundler.parse(
-                    vm.bundler.allocator,
+                    allocator,
                     path,
                     loader,
                     0,
@@ -606,14 +612,6 @@ pub const VirtualMachine = struct {
                 vm.resolved_count += vm.bundler.linker.import_counter - start_count;
                 vm.bundler.linker.import_counter = 0;
 
-                if (!source_code_printer_loaded) {
-                    var writer = try js_printer.BufferWriter.init(vm.allocator);
-                    source_code_printer = js_printer.BufferPrinter.init(writer);
-                    source_code_printer.ctx.append_null_byte = false;
-
-                    source_code_printer_loaded = true;
-                }
-
                 source_code_printer.ctx.reset();
 
                 var written = try vm.bundler.print(
@@ -628,6 +626,7 @@ pub const VirtualMachine = struct {
                 }
 
                 return ResolvedSource{
+                    .allocator = if (vm.has_loaded) vm.allocator else null,
                     .source_code = ZigString.init(vm.allocator.dupe(u8, source_code_printer.ctx.written) catch unreachable),
                     .specifier = ZigString.init(specifier),
                     .source_url = ZigString.init(path.text),
@@ -637,6 +636,7 @@ pub const VirtualMachine = struct {
             },
             else => {
                 return ResolvedSource{
+                    .allocator = vm.allocator,
                     .source_code = ZigString.init(try strings.quotedAlloc(VirtualMachine.vm.allocator, path.pretty)),
                     .specifier = ZigString.init(path.text),
                     .source_url = ZigString.init(path.text),
@@ -1334,6 +1334,7 @@ pub const EventListenerMixin = struct {
 
         // Rely on JS finalizer
         var fetch_event = try vm.allocator.create(FetchEvent);
+
         fetch_event.* = FetchEvent{
             .request_context = request_context,
             .request = Request{ .request_context = request_context },

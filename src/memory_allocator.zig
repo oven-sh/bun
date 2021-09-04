@@ -115,6 +115,7 @@ const CAllocator = struct {
                 return mem.alignAllocLen(full_len, new_len, len_align);
             }
         }
+        
         return error.OutOfMemory;
     }
 };

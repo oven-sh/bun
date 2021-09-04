@@ -34,7 +34,11 @@ class SourceProvider final : public JSC::SourceProvider {
 
     public:
   static Ref<SourceProvider> create(ResolvedSource resolvedSource);
-  ~SourceProvider() { commitCachedBytecode(); }
+  ~SourceProvider() {
+    freeSourceCode();
+
+    commitCachedBytecode();
+  }
 
   unsigned hash() const { return m_hash; };
   StringView source() const { return StringView(m_source.get()); }
@@ -52,23 +56,25 @@ class SourceProvider final : public JSC::SourceProvider {
   void readOrGenerateByteCodeCache(JSC::VM &vm, const JSC::SourceCode &sourceCode);
   ResolvedSource m_resolvedSource;
   int readCache(JSC::VM &vm, const JSC::SourceCode &sourceCode);
+  void freeSourceCode();
 
     private:
-  SourceProvider(ResolvedSource resolvedSource, const SourceOrigin &sourceOrigin,
-                 WTF::String &&sourceURL, const TextPosition &startPosition,
-                 JSC::SourceProviderSourceType sourceType)
-    : Base(sourceOrigin, WTFMove(sourceURL), startPosition, sourceType),
-      m_source(
-        *WTF::String(resolvedSource.source_code.ptr, resolvedSource.source_code.len).impl()) {
+  SourceProvider(ResolvedSource resolvedSource, WTF::StringImpl *sourceImpl,
+                 const SourceOrigin &sourceOrigin, WTF::String &&sourceURL,
+                 const TextPosition &startPosition, JSC::SourceProviderSourceType sourceType)
+    : Base(sourceOrigin, WTFMove(sourceURL), startPosition, sourceType), m_source(*sourceImpl) {
 
     m_resolvedSource = resolvedSource;
+
     m_hash = resolvedSource.hash;
     getHash();
   }
+
   unsigned m_hash;
   unsigned getHash();
   RefPtr<JSC::CachedBytecode> m_cachedBytecode;
   Ref<WTF::StringImpl> m_source;
+  bool did_free_source_code = false;
   // JSC::SourceCodeKey key;
 };
 

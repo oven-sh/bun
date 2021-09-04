@@ -23,11 +23,34 @@ using String = WTF::String;
 using SourceProviderSourceType = JSC::SourceProviderSourceType;
 
 Ref<SourceProvider> SourceProvider::create(ResolvedSource resolvedSource) {
-  return adoptRef(*new SourceProvider(
-    resolvedSource,
-    JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(toString(resolvedSource.source_url))),
-    toStringNotConst(resolvedSource.source_url), TextPosition(),
-    JSC::SourceProviderSourceType::Module));
+  void *allocator = resolvedSource.allocator;
+
+  WTF::StringImpl *stringImpl = nullptr;
+  if (allocator) {
+    Ref<WTF::ExternalStringImpl> stringImpl_ = WTF::ExternalStringImpl::create(
+      resolvedSource.source_code.ptr, resolvedSource.source_code.len,
+      [allocator](WTF::ExternalStringImpl *str, void *ptr, unsigned int len) {
+        ZigString__free((const unsigned char *)ptr, len, allocator);
+      });
+    return adoptRef(*new SourceProvider(
+      resolvedSource, reinterpret_cast<WTF::StringImpl *>(stringImpl_.ptr()),
+      JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(toString(resolvedSource.source_url))),
+      toStringNotConst(resolvedSource.source_url), TextPosition(),
+      JSC::SourceProviderSourceType::Module));
+
+  } else {
+    Ref<WTF::ExternalStringImpl> stringImpl_ = WTF::ExternalStringImpl::create(
+      resolvedSource.source_code.ptr, resolvedSource.source_code.len,
+      [=](WTF::ExternalStringImpl *str, void *ptr, unsigned int len) {
+        // ZigString__free((const unsigned char *)ptr, len,
+        // allocator);
+      });
+    return adoptRef(*new SourceProvider(
+      resolvedSource, reinterpret_cast<WTF::StringImpl *>(stringImpl_.ptr()),
+      JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(toString(resolvedSource.source_url))),
+      toStringNotConst(resolvedSource.source_url), TextPosition(),
+      JSC::SourceProviderSourceType::Module));
+  }
 }
 
 unsigned SourceProvider::getHash() {
@@ -35,6 +58,20 @@ unsigned SourceProvider::getHash() {
 
   m_hash = WTF::StringHash::hash(m_source.get());
   return m_hash;
+}
+
+void SourceProvider::freeSourceCode() {
+  if (did_free_source_code) { return; }
+  did_free_source_code = true;
+  if (m_resolvedSource.allocator != 0) { // // WTF::ExternalStringImpl::destroy(m_source.ptr());
+    this->m_source = WTF::StringImpl::empty()->isolatedCopy();
+    this->m_hash = 0;
+    m_resolvedSource.allocator = 0;
+  }
+  // if (m_resolvedSource.allocator != 0) {
+  //   ZigString__free(m_resolvedSource.source_code.ptr, m_resolvedSource.source_code.len,
+  //                   m_resolvedSource.allocator);
+  // }
 }
 
 void SourceProvider::updateCache(const UnlinkedFunctionExecutable *executable, const SourceCode &,
@@ -122,15 +159,14 @@ int SourceProvider::readCache(JSC::VM &vm, const JSC::SourceCode &sourceCode) {
   if (fileTotalSize == 0) return 0;
 
   Ref<JSC::CachedBytecode> cachedBytecode = JSC::CachedBytecode::create(WTFMove(mappedFile));
-  auto key = JSC::sourceCodeKeyForSerializedModule(vm, sourceCode);
-  if (isCachedBytecodeStillValid(vm, cachedBytecode.copyRef(), key,
-                                 JSC::SourceCodeType::ModuleType)) {
-    m_cachedBytecode = WTFMove(cachedBytecode);
-    return 1;
-  } else {
-    FileSystem::truncateFile(fd, 0);
-    return 0;
-  }
+  // auto key = JSC::sourceCodeKeyForSerializedModule(vm, sourceCode);
+  // if (isCachedBytecodeStillValid(vm, cachedBytecode.copyRef(), key,
+  //                                JSC::SourceCodeType::ModuleType)) {
+  m_cachedBytecode = WTFMove(cachedBytecode);
+  return 1;
+  // } else {
+  //   FileSystem::truncateFile(fd, 0);
+  //   return 0;
+  // }
 }
-
 }; // namespace Zig

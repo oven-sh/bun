@@ -68,7 +68,7 @@ pub fn NewCache(comptime cache_files: bool) type {
             pub fn readFileShared(
                 c: *Fs,
                 _fs: *fs.FileSystem,
-                path: string,
+                path: [:0]const u8,
                 dirname_fd: StoredFileDescriptorType,
                 _file_handle: ?StoredFileDescriptorType,
                 shared: *MutableString,
@@ -88,11 +88,7 @@ pub fn NewCache(comptime cache_files: bool) type {
                 var file_handle: std.fs.File = if (_file_handle) |__file| std.fs.File{ .handle = __file } else undefined;
 
                 if (_file_handle == null) {
-                    if (FeatureFlags.store_file_descriptors and dirname_fd > 0) {
-                        file_handle = try std.fs.Dir.openFile(std.fs.Dir{ .fd = dirname_fd }, std.fs.path.basename(path), .{ .read = true });
-                    } else {
-                        file_handle = try std.fs.openFileAbsolute(path, .{ .read = true });
-                    }
+                    file_handle = try std.fs.openFileAbsoluteZ(path, .{ .read = true });
                 }
 
                 defer {

@@ -31,7 +31,7 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
             used: usize = 0,
             allocator: *std.mem.Allocator,
 
-            pub fn isFull(block: *const Block) bool {
+            pub inline fn isFull(block: *const Block) bool {
                 return block.used >= block.items.len;
             }
 

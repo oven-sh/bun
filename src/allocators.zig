@@ -685,6 +685,10 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, store_keys: boo
                 slice = try self.map.allocator.dupe(u8, key);
             }
 
+            if (comptime remove_trailing_slashes) {
+                slice = constStrToU8(std.mem.trimRight(u8, slice, "/"));
+            }
+
             if (!result.index.is_overflow) {
                 key_list_slices[result.index.index] = slice;
             } else {
@@ -945,6 +949,6 @@ pub fn TBSSMap(comptime ValueType: type, comptime count: anytype, store_keys: bo
     };
 }
 
-pub fn constStrToU8(s: []const u8) []u8 {
+pub inline fn constStrToU8(s: []const u8) []u8 {
     return @intToPtr([*]u8, @ptrToInt(s.ptr))[0..s.len];
 }

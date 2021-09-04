@@ -23,14 +23,15 @@ npm install -g bun-cli
 In your project folder root (where `package.json` is):
 
 ```bash
-npm install bun-framework-next path buffer
+npm install bun-framework-next
 bun bun --use next
-open http://localhost:3000; bun dev --origin "http://localhost:3000"
+open http://localhost:3000; bun
 ```
 
 Here are some features of Next.js that **aren't supported** yet:
 
-- `getStaticPaths`. These functions will not be called.
+- `getStaticPaths`
+- `fetch` inside of `getStaticProps` or `getServerSideProps`
 - locales, zones, `assetPrefix` (workaround: change `--origin \"http://localhsot:3000/assetPrefixInhere\"`)
 - `next/image` - `<Image />` component
 

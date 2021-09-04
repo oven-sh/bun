@@ -6,8 +6,8 @@ import {
 } from "./api/schema";
 
 function getFallbackInfo(): FallbackMessageContainer {
-  var binary_string = globalThis.atob(
-    document.getElementById("#__bunfallback").textContent.trim()
+  const binary_string = globalThis.atob(
+    document.getElementById("__bunfallback").textContent.trim()
   );
 
   var len = binary_string.length;

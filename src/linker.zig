@@ -166,7 +166,11 @@ pub fn NewLinker(comptime BundlerType: type) type {
         }
 
         pub inline fn nodeModuleBundleImportPath(this: *const ThisLinker) string {
-            return if (this.options.node_modules_bundle_url.len > 0) this.options.node_modules_bundle_url else this.options.node_modules_bundle.?.bundle.import_from_name;
+            return if (this.options.platform != .bun and
+                this.options.node_modules_bundle_url.len > 0)
+                this.options.node_modules_bundle_url
+            else
+                this.options.node_modules_bundle.?.bundle.import_from_name;
         }
 
         // pub const Scratch = struct {

@@ -275,16 +275,24 @@ pub inline fn eqlInsensitive(self: string, other: anytype) bool {
 }
 
 pub fn eqlComptime(self: string, comptime alt: anytype) bool {
+    return eqlComptimeCheckLen(self, alt, true);
+}
+
+pub fn eqlComptimeIgnoreLen(self: string, comptime alt: anytype) bool {
+    return eqlComptimeCheckLen(self, alt, false);
+}
+
+inline fn eqlComptimeCheckLen(self: string, comptime alt: anytype, comptime check_len: bool) bool {
     switch (comptime alt.len) {
         0 => {
             @compileError("Invalid size passed to eqlComptime");
         },
         2 => {
             const check = comptime std.mem.readIntNative(u16, alt[0..alt.len]);
-            return self.len == alt.len and std.mem.readIntNative(u16, self[0..2]) == check;
+            return ((comptime !check_len) or self.len == alt.len) and std.mem.readIntNative(u16, self[0..2]) == check;
         },
         1, 3 => {
-            if (alt.len != self.len) {
+            if ((comptime check_len) and alt.len != self.len) {
                 return false;
             }
 
@@ -295,7 +303,7 @@ pub fn eqlComptime(self: string, comptime alt: anytype) bool {
         },
         4 => {
             const check = comptime std.mem.readIntNative(u32, alt[0..alt.len]);
-            return self.len == alt.len and std.mem.readIntNative(u32, self[0..4]) == check;
+            return ((comptime !check_len) or self.len == alt.len) and std.mem.readIntNative(u32, self[0..4]) == check;
         },
         6 => {
             const first = std.mem.readIntNative(u32, alt[0..4]);
@@ -306,7 +314,7 @@ pub fn eqlComptime(self: string, comptime alt: anytype) bool {
         },
         5, 7 => {
             const check = comptime std.mem.readIntNative(u32, alt[0..4]);
-            if (self.len != alt.len or std.mem.readIntNative(u32, self[0..4]) != check) {
+            if (((comptime check_len) and self.len != alt.len) or std.mem.readIntNative(u32, self[0..4]) != check) {
                 return false;
             }
             const remainder = self[4..];
@@ -317,12 +325,12 @@ pub fn eqlComptime(self: string, comptime alt: anytype) bool {
         },
         8 => {
             const check = comptime std.mem.readIntNative(u64, alt[0..alt.len]);
-            return self.len == alt.len and std.mem.readIntNative(u64, self[0..8]) == check;
+            return ((comptime !check_len) or self.len == alt.len) and std.mem.readIntNative(u64, self[0..8]) == check;
         },
         9...11 => {
             const first = std.mem.readIntNative(u64, alt[0..8]);
 
-            if (self.len != alt.len or first != std.mem.readIntNative(u64, self[0..8])) {
+            if (((comptime check_len) and self.len != alt.len) or first != std.mem.readIntNative(u64, self[0..8])) {
                 return false;
             }
 
@@ -334,13 +342,13 @@ pub fn eqlComptime(self: string, comptime alt: anytype) bool {
         12 => {
             const first = comptime std.mem.readIntNative(u64, alt[0..8]);
             const second = comptime std.mem.readIntNative(u32, alt[8..12]);
-            return (self.len == alt.len) and first == std.mem.readIntNative(u64, self[0..8]) and second == std.mem.readIntNative(u32, self[8..12]);
+            return ((comptime !check_len) or self.len == alt.len) and first == std.mem.readIntNative(u64, self[0..8]) and second == std.mem.readIntNative(u32, self[8..12]);
         },
         13...15 => {
             const first = comptime std.mem.readIntNative(u64, alt[0..8]);
             const second = comptime std.mem.readIntNative(u32, alt[8..12]);
 
-            if (self.len != alt.len or first != std.mem.readIntNative(u64, self[0..8]) or second != std.mem.readIntNative(u32, self[8..12])) {
+            if (((comptime !check_len) or self.len != alt.len) or first != std.mem.readIntNative(u64, self[0..8]) or second != std.mem.readIntNative(u32, self[8..12])) {
                 return false;
             }
 
@@ -353,7 +361,7 @@ pub fn eqlComptime(self: string, comptime alt: anytype) bool {
         16 => {
             const first = comptime std.mem.readIntNative(u64, alt[0..8]);
             const second = comptime std.mem.readIntNative(u64, alt[8..15]);
-            return (self.len == alt.len) and first == std.mem.readIntNative(u64, self[0..8]) and second == std.mem.readIntNative(u64, self[8..16]);
+            return ((comptime !check_len) or self.len == alt.len) and first == std.mem.readIntNative(u64, self[0..8]) and second == std.mem.readIntNative(u64, self[8..16]);
         },
         else => {
             @compileError(alt ++ " is too long.");
@@ -363,6 +371,20 @@ pub fn eqlComptime(self: string, comptime alt: anytype) bool {
 
 pub inline fn append(allocator: *std.mem.Allocator, self: string, other: string) !string {
     return std.fmt.allocPrint(allocator, "{s}{s}", .{ self, other });
+}
+
+pub inline fn joinBuf(out: []u8, parts: anytype, comptime parts_len: usize) []u8 {
+    var remain = out;
+    var count: usize = 0;
+    comptime var i: usize = 0;
+    inline while (i < parts_len) : (i += 1) {
+        const part = parts[i];
+        std.mem.copy(u8, remain, part);
+        remain = remain[part.len..];
+        count += part.len;
+    }
+
+    return out[0..count];
 }
 
 pub fn index(self: string, str: string) i32 {

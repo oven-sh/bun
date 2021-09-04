@@ -217,9 +217,18 @@ pub const ResolvedSource = extern struct {
     source_url: ZigString,
     hash: u32,
 
+    allocator: ?*c_void,
+
     // 0 means disabled
     bytecodecache_fd: u64,
 };
+
+export fn ZigString__free(ptr: [*]const u8, len: usize, allocator_: ?*c_void) void {
+    var allocator: *std.mem.Allocator = @ptrCast(*std.mem.Allocator, @alignCast(@alignOf(*std.mem.Allocator), allocator_ orelse return));
+
+    var str = ptr[0..len];
+    allocator.free(str);
+}
 
 pub const JSErrorCode = enum(u8) {
     Error = 0,

@@ -39,7 +39,7 @@ pub const TSConfigJSON = struct {
 
     preserve_imports_not_used_as_values: bool = false,
 
-    pub fn hasBaseURL(tsconfig: *TSConfigJSON) bool {
+    pub fn hasBaseURL(tsconfig: *const TSConfigJSON) bool {
         return tsconfig.base_url.len > 0;
     }
 
@@ -214,7 +214,6 @@ pub const TSConfigJSON = struct {
                                             }
                                         }
                                         if (count > 0) {
-                                            
                                             result.paths.put(
                                                 key,
                                                 values[0..count],

@@ -1,3 +1,5 @@
+#pragma once
+
 typedef uint16_t ZigErrorCode;
 
 typedef struct ZigString {
@@ -21,6 +23,7 @@ typedef struct ResolvedSource {
   ZigString source_code;
   ZigString source_url;
   uint32_t hash;
+  void *allocator;
   uint64_t bytecodecache_fd;
 } ResolvedSource;
 typedef union ErrorableResolvedSourceResult {
@@ -93,4 +96,5 @@ const JSErrorCode JSErrorCodeUserErrorCode = 254;
 #ifdef __cplusplus
 extern "C" ZigErrorCode Zig_ErrorCodeParserError;
 
+extern "C" void ZigString__free(const unsigned char *ptr, size_t len, void *allocator);
 #endif

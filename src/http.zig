@@ -17,6 +17,7 @@ const NodeModuleBundle = @import("./node_module_bundle.zig").NodeModuleBundle;
 const resolve_path = @import("./resolver/resolve_path.zig");
 const OutputFile = Options.OutputFile;
 const DotEnv = @import("./env_loader.zig");
+const mimalloc = @import("./allocators/mimalloc.zig");
 pub fn constStrToU8(s: string) []u8 {
     return @intToPtr([*]u8, @ptrToInt(s.ptr))[0..s.len];
 }
@@ -109,7 +110,7 @@ pub const RequestContext = struct {
     url: URLPath,
     conn: *tcp.Connection,
     allocator: *std.mem.Allocator,
-    arena: std.heap.ArenaAllocator,
+    arena: *std.heap.ArenaAllocator,
     log: logger.Log,
     bundler: *Bundler,
     keep_alive: bool = true,
@@ -508,7 +509,7 @@ pub const RequestContext = struct {
 
     pub fn init(
         req: Request,
-        arena: std.heap.ArenaAllocator,
+        arena: *std.heap.ArenaAllocator,
         conn: *tcp.Connection,
         bundler_: *Bundler,
         watcher_: *Watcher,
@@ -521,7 +522,7 @@ pub const RequestContext = struct {
             .log = undefined,
             .url = try URLPath.parse(req.path),
             .conn = conn,
-            .allocator = undefined,
+            .allocator = &arena.allocator,
             .method = Method.which(req.method) orelse return error.InvalidMethod,
             .watcher = watcher_,
             .timer = timer,
@@ -993,12 +994,12 @@ pub const RequestContext = struct {
             // defer stderr.flush() catch {};
             Output.Source.set(&output_source);
 
-            js_ast.Stmt.Data.Store.create(default_allocator);
-            js_ast.Expr.Data.Store.create(default_allocator);
+            js_ast.Stmt.Data.Store.create(std.heap.c_allocator);
+            js_ast.Expr.Data.Store.create(std.heap.c_allocator);
 
             defer Output.flush();
             var vm = JavaScript.VirtualMachine.init(
-                default_allocator,
+                std.heap.c_allocator,
                 handler.args,
                 handler.existing_bundle,
                 handler.log,
@@ -1121,11 +1122,14 @@ pub const RequestContext = struct {
             );
         }
 
+        var __arena: std.heap.ArenaAllocator = undefined;
         pub fn runLoop(vm: *JavaScript.VirtualMachine, thread: *HandlerThread) !void {
             var module_map = ZigGlobalObject.getModuleRegistryMap(vm.global);
-            JavaScript.VirtualMachine.vm.has_loaded = true;
 
             while (true) {
+                __arena = std.heap.ArenaAllocator.init(vm.allocator);
+                JavaScript.VirtualMachine.vm.arena = &__arena;
+                JavaScript.VirtualMachine.vm.has_loaded = true;
                 defer {
                     JavaScript.VirtualMachine.vm.flush();
                     std.debug.assert(
@@ -1135,9 +1139,13 @@ pub const RequestContext = struct {
                     js_ast.Expr.Data.Store.reset();
                     JavaScript.Bun.flushCSSImports();
                     Output.flush();
+                    JavaScript.VirtualMachine.vm.arena.deinit();
+                    JavaScript.VirtualMachine.vm.has_loaded = false;
+                    mimalloc.mi_collect(false);
                 }
 
                 var handler: *JavaScriptHandler = try channel.readItem();
+
                 JavaScript.VirtualMachine.vm.preflush();
 
                 JavaScript.EventListenerMixin.emitFetchEvent(
@@ -1985,12 +1993,12 @@ pub const RequestContext = struct {
             return true;
         }
 
-        if (ctx.url.path.len > "blob:".len and strings.eqlComptime(ctx.url.path[0.."blob:".len], "blob:")) {
+        if (ctx.url.path.len > "blob:".len and strings.eqlComptimeIgnoreLen(ctx.url.path[0.."blob:".len], "blob:")) {
             try ctx.handleBlobURL(server);
             return true;
         }
 
-        if (ctx.url.path.len > "bun:".len and strings.eqlComptime(ctx.url.path[0.."bun:".len], "bun:")) {
+        if (ctx.url.path.len > "bun:".len and strings.eqlComptimeIgnoreLen(ctx.url.path[0.."bun:".len], "bun:")) {
             try ctx.handleBunURL(server);
             return true;
         }
@@ -2001,21 +2009,45 @@ pub const RequestContext = struct {
     pub fn handleGet(ctx: *RequestContext) !void {
         const result = brk: {
             if (ctx.bundler.options.isFrontendFrameworkEnabled()) {
-                break :brk try ctx.bundler.buildFile(
-                    &ctx.log,
-                    ctx.allocator,
-                    ctx.url.pathWithoutAssetPrefix(ctx.bundler.options.routes.asset_prefix_path),
-                    ctx.url.extname,
-                    true,
-                );
+                if (serve_as_package_path) {
+                    break :brk try ctx.bundler.buildFile(
+                        &ctx.log,
+                        ctx.allocator,
+                        ctx.url.pathWithoutAssetPrefix(ctx.bundler.options.routes.asset_prefix_path),
+                        ctx.url.extname,
+                        true,
+                        true,
+                    );
+                } else {
+                    break :brk try ctx.bundler.buildFile(
+                        &ctx.log,
+                        ctx.allocator,
+                        ctx.url.pathWithoutAssetPrefix(ctx.bundler.options.routes.asset_prefix_path),
+                        ctx.url.extname,
+                        true,
+                        false,
+                    );
+                }
             } else {
-                break :brk try ctx.bundler.buildFile(
-                    &ctx.log,
-                    ctx.allocator,
-                    ctx.url.pathWithoutAssetPrefix(ctx.bundler.options.routes.asset_prefix_path),
-                    ctx.url.extname,
-                    false,
-                );
+                if (serve_as_package_path) {
+                    break :brk try ctx.bundler.buildFile(
+                        &ctx.log,
+                        ctx.allocator,
+                        ctx.url.pathWithoutAssetPrefix(ctx.bundler.options.routes.asset_prefix_path),
+                        ctx.url.extname,
+                        false,
+                        true,
+                    );
+                } else {
+                    break :brk try ctx.bundler.buildFile(
+                        &ctx.log,
+                        ctx.allocator,
+                        ctx.url.pathWithoutAssetPrefix(ctx.bundler.options.routes.asset_prefix_path),
+                        ctx.url.extname,
+                        false,
+                        true,
+                    );
+                }
             }
         };
 
@@ -2033,6 +2065,7 @@ pub const RequestContext = struct {
         }
     }
 };
+var serve_as_package_path = false;
 
 // // u32 == File ID from Watcher
 // pub const WatcherBuildChannel = sync.Channel(u32, .Dynamic);
@@ -2072,6 +2105,7 @@ pub const RequestContext = struct {
 //      - Resolver time
 //      - Parsing time
 //      - IO read time
+
 pub const Server = struct {
     log: logger.Log,
     allocator: *std.mem.Allocator,
@@ -2079,7 +2113,6 @@ pub const Server = struct {
     watcher: *Watcher,
     timer: std.time.Timer = undefined,
     transform_options: Api.TransformOptions,
-
     javascript_enabled: bool = false,
 
     pub fn adjustUlimit() !void {
@@ -2266,13 +2299,24 @@ pub const Server = struct {
         }
 
         Output.flush();
-        // var listener_handle = try std.os.kqueue();
-        // var change_list = std.mem.zeroes([2]os.Kevent);
 
-        // change_list[0].ident = @intCast(usize, listener.socket.fd);
-        // change_list[1].ident = @intCast(usize, listener.socket.fd);
+        var did_init = false;
+        while (!did_init) {
+            defer Output.flush();
+            var conn = listener.accept(.{ .close_on_exec = true }) catch |err| {
+                continue;
+            };
 
-        // var eventlist: [128]os.Kevent = undefined;
+            // We want to bind to the network socket as quickly as possible so that opening the URL works
+            // We use a secondary loop so that we avoid the extra branch in a hot code path
+            server.detectFastRefresh();
+            server.detectTSConfig();
+            try server.initWatcher();
+            did_init = true;
+
+            server.handleConnection(&conn, comptime features);
+        }
+
         while (true) {
             defer Output.flush();
             var conn = listener.accept(.{ .close_on_exec = true }) catch |err| {
@@ -2281,10 +2325,6 @@ pub const Server = struct {
 
             server.handleConnection(&conn, comptime features);
         }
-    }
-
-    pub fn sendError(server: *Server, request: *Request, conn: *tcp.Connection, code: HTTPStatusCode, msg: string) !void {
-        try server.writeStatus(code, connection);
     }
 
     threadlocal var req_buf: [32_000]u8 = undefined;
@@ -2319,7 +2359,8 @@ pub const Server = struct {
             return;
         };
 
-        var request_arena = std.heap.ArenaAllocator.init(server.allocator);
+        var request_arena = server.allocator.create(std.heap.ArenaAllocator) catch unreachable;
+        request_arena.* = std.heap.ArenaAllocator.init(server.allocator);
         var req_ctx: RequestContext = undefined;
 
         req_ctx = RequestContext.init(
@@ -2351,7 +2392,6 @@ pub const Server = struct {
             }
         }
 
-        req_ctx.allocator = &req_ctx.arena.allocator;
         req_ctx.log = logger.Log.init(server.allocator);
         var log = &req_ctx.log;
 
@@ -2524,6 +2564,14 @@ pub const Server = struct {
         };
     }
 
+    pub fn detectTSConfig(this: *Server) void {
+        defer this.bundler.resetStore();
+
+        const dir_info = (this.bundler.resolver.readDirInfo(this.bundler.fs.top_level_dir) catch return) orelse return;
+        const tsconfig = dir_info.tsconfig_json orelse return;
+        serve_as_package_path = tsconfig.base_url_for_paths.len > 0 or tsconfig.base_url.len > 0;
+    }
+
     pub var global_start_time: std.time.Timer = undefined;
     pub fn start(allocator: *std.mem.Allocator, options: Api.TransformOptions) !void {
         var log = logger.Log.init(allocator);
@@ -2540,10 +2588,6 @@ pub const Server = struct {
         server.bundler = try Bundler.init(allocator, &server.log, options, null, null);
         server.bundler.configureLinker();
         try server.bundler.configureRouter(true);
-
-        server.detectFastRefresh();
-
-        try server.initWatcher();
 
         const public_folder_is_top_level = server.bundler.options.routes.static_dir_enabled and strings.eql(
             server.bundler.fs.top_level_dir,

@@ -2,35 +2,61 @@
 #include "helpers.h"
 
 #include "ZigConsoleClient.h"
+#include <JavaScriptCore/AggregateError.h>
+#include <JavaScriptCore/BytecodeIndex.h>
 #include <JavaScriptCore/CallFrameInlines.h>
 #include <JavaScriptCore/CatchScope.h>
 #include <JavaScriptCore/ClassInfo.h>
+#include <JavaScriptCore/CodeBlock.h>
+#include <JavaScriptCore/CodeCache.h>
 #include <JavaScriptCore/Completion.h>
 #include <JavaScriptCore/Error.h>
+#include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/Exception.h>
+#include <JavaScriptCore/ExceptionScope.h>
+#include <JavaScriptCore/FunctionConstructor.h>
 #include <JavaScriptCore/HashMapImpl.h>
 #include <JavaScriptCore/HashMapImplInlines.h>
+#include <JavaScriptCore/Heap.h>
 #include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/InitializeThreading.h>
+#include <JavaScriptCore/IteratorOperations.h>
+#include <JavaScriptCore/JSArray.h>
+#include <JavaScriptCore/JSCInlines.h>
+#include <JavaScriptCore/JSCallbackObject.h>
 #include <JavaScriptCore/JSCast.h>
+#include <JavaScriptCore/JSClassRef.h>
 #include <JavaScriptCore/JSContextInternal.h>
 #include <JavaScriptCore/JSInternalPromise.h>
+#include <JavaScriptCore/JSLock.h>
 #include <JavaScriptCore/JSMap.h>
 #include <JavaScriptCore/JSModuleLoader.h>
+#include <JavaScriptCore/JSModuleRecord.h>
 #include <JavaScriptCore/JSNativeStdFunction.h>
+#include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/JSPromise.h>
+#include <JavaScriptCore/JSSet.h>
 #include <JavaScriptCore/JSSourceCode.h>
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/JSValueInternal.h>
 #include <JavaScriptCore/JSVirtualMachineInternal.h>
 #include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/OptionsList.h>
+#include <JavaScriptCore/ParserError.h>
+#include <JavaScriptCore/ScriptExecutable.h>
 #include <JavaScriptCore/SourceOrigin.h>
+#include <JavaScriptCore/StackFrame.h>
+#include <JavaScriptCore/StackVisitor.h>
 #include <JavaScriptCore/VM.h>
+#include <JavaScriptCore/VMEntryScope.h>
 #include <JavaScriptCore/WasmFaultSignalHandler.h>
-#include <wtf/URL.h>
-
-#include <JavaScriptCore/JSLock.h>
 #include <wtf/StdLibExtras.h>
+#include <wtf/URL.h>
+#include <wtf/text/ExternalStringImpl.h>
+#include <wtf/text/StringCommon.h>
+#include <wtf/text/StringImpl.h>
+#include <wtf/text/StringView.h>
+#include <wtf/text/WTFString.h>
 
 #include <cstdlib>
 #include <exception>
@@ -60,8 +86,13 @@ extern "C" JSC__JSGlobalObject *Zig__GlobalObject__create(JSClassRef *globalObje
   WTF::initializeMainThread();
   JSC::initialize();
 
-  JSC::VM &vm = JSC::VM::create(JSC::LargeHeap).leakRef();
+  // JSC::Options::useCodeCache() = false;
+  JSC::Options::useSourceProviderCache() = true;
+  JSC::Options::useUnlinkedCodeBlockJettisoning() = false;
+  JSC::Options::useTopLevelAwait() = true;
 
+  JSC::VM &vm = JSC::VM::create(JSC::LargeHeap).leakRef();
+  vm.heap.acquireAccess();
 #if ENABLE(WEBASSEMBLY)
   JSC::Wasm::enableFastMemory();
 #endif
@@ -244,39 +275,80 @@ extern "C" bool Zig__GlobalObject__resetModuleRegistryMap(JSC__JSGlobalObject *g
                                                           void *map_ptr) {
   if (map_ptr == nullptr) return false;
   JSC::JSMap *map = reinterpret_cast<JSC::JSMap *>(map_ptr);
-
+  JSC::VM &vm = globalObject->vm();
   if (JSC::JSObject *obj =
         JSC::jsDynamicCast<JSC::JSObject *>(globalObject->vm(), globalObject->moduleLoader())) {
     auto identifier = JSC::Identifier::fromString(globalObject->vm(), "registry");
 
     if (JSC::JSMap *oldMap = JSC::jsDynamicCast<JSC::JSMap *>(
           globalObject->vm(), obj->getDirect(globalObject->vm(), identifier))) {
-      // Help the GC by releasing the old map.
       oldMap->clear(globalObject);
-      // forEachInIterable(
-      //   globalObject, oldMap, [&](VM &vm, JSGlobalObject *globalObject, JSValue nextValue) {
-      //     auto scope = DECLARE_THROW_SCOPE(vm);
-      //     JSC::JSValue key = nextObject->getIndex(globalObject, static_cast<unsigned>(0));
-      //     RETURN_IF_EXCEPTION(scope, void());
+      // vm.finalizeSynchronousJSExecution();
 
-      //     if (!map->has(globalObject, key)) {
+      obj->putDirect(globalObject->vm(), identifier,
+                     map->clone(globalObject, globalObject->vm(), globalObject->mapStructure()));
 
-      //       JSC::JSValue value = nextObject->getIndex(globalObject, static_cast<unsigned>(1));
-      //       RETURN_IF_EXCEPTION(scope, void());
+      vm.codeCache()->write(vm);
+      vm.shrinkFootprintWhenIdle();
+      // vm.deleteAllLinkedCode(JSC::DeleteAllCodeEffort::DeleteAllCodeIfNotCollecting);
+      // JSC::Heap::PreventCollectionScope(vm.heap);
 
+      // vm.heap.completeAllJITPlans();
+
+      // vm.forEachScriptExecutableSpace([&](auto &spaceAndSet) {
+      //   JSC::HeapIterationScope heapIterationScope(vm.heap);
+      //   auto &set = spaceAndSet.set;
+      //   set.forEachLiveCell([&](JSC::HeapCell *cell, JSC::HeapCell::Kind) {
+      //     if (JSC::ModuleProgramExecutable *executable =
+      //           JSC::jsDynamicCast<JSC::ModuleProgramExecutable *>(cell)) {
+      //       executable->clearCode(set);
       //     }
-      //     scope.release();
       //   });
-    };
+      // });
+    }
+    // globalObject->vm().heap.deleteAllUnlinkedCodeBlocks(
+    //   JSC::DeleteAllCodeEffort::PreventCollectionAndDeleteAllCode);
+    // vm.whenIdle([globalObject, oldMap, map]() {
+    //   auto recordIdentifier = JSC::Identifier::fromString(globalObject->vm(), "module");
 
-    return obj->putDirect(
-      globalObject->vm(), identifier,
-      map->clone(globalObject, globalObject->vm(), globalObject->mapStructure()));
+    //   JSC::JSModuleRecord *record;
+    //   JSC::JSValue key;
+    //   JSC::JSValue value;
+    //   JSC::JSObject *mod;
+    //   JSC::JSObject *nextObject;
+    //   JSC::forEachInIterable(
+    //     globalObject, oldMap,
+    //     [&](JSC::VM &vm, JSC::JSGlobalObject *globalObject, JSC::JSValue nextValue) {
+    //       nextObject = JSC::jsDynamicCast<JSC::JSObject *>(vm, nextValue);
+    //       key = nextObject->getIndex(globalObject, static_cast<unsigned>(0));
+
+    //       if (!map->has(globalObject, key)) {
+    //         value = nextObject->getIndex(globalObject, static_cast<unsigned>(1));
+    //         mod = JSC::jsDynamicCast<JSC::JSObject *>(vm, value);
+    //         if (mod) {
+    //           record = JSC::jsDynamicCast<JSC::JSModuleRecord *>(
+    //             vm, mod->getDirect(vm, recordIdentifier));
+    //           if (record) {
+    //             auto code = &record->sourceCode();
+    //             if (code) {
+
+    //               Zig::SourceProvider *provider =
+    //                 reinterpret_cast<Zig::SourceProvider *>(code->provider());
+    //               // code->~SourceCode();
+    //               if (provider) { provider->freeSourceCode(); }
+    //             }
+    //           }
+    //         }
+    //       }
+    //     });
+
+    //   oldMap->clear(globalObject);
+    //   }
+    // }
+    // map
   }
-
-  return false;
+  return true;
 }
-
 JSC::JSInternalPromise *GlobalObject::moduleLoaderFetch(JSGlobalObject *globalObject,
                                                         JSModuleLoader *loader, JSValue key,
                                                         JSValue value1, JSValue value2) {
@@ -319,7 +391,7 @@ JSC::JSInternalPromise *GlobalObject::moduleLoaderFetch(JSGlobalObject *globalOb
   promise->resolve(globalObject, jsSourceCode);
   globalObject->vm().drainMicrotasks();
   return promise;
-  }
+}
 
 JSC::JSObject *GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObject *globalObject,
                                                                     JSModuleLoader *loader,

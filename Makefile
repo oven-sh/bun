@@ -60,8 +60,7 @@ INCLUDE_DIRS := -Isrc/JavaScript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/P
 		-Isrc/JavaScript/jsc/bindings/ \
 		-Isrc/javascript/jsc/WebKit/Source/bmalloc 
 
-CLANG_FLAGS = 
-		$(INCLUDE_DIRS) \
+CLANG_FLAGS := $(INCLUDE_DIRS) \
 		-std=gnu++1z \
 		-stdlib=libc++ \
 		-DSTATICALLY_LINKED_WITH_JavaScriptCore=1 \
@@ -78,6 +77,7 @@ CLANG_FLAGS =
 		-march=native 
 
 jsc-bindings-mac: $(OBJ_FILES)
+
 
 MACOS_ICU_FILES := /usr/local/opt/icu4c/lib/libicudata.a \
 	/usr/local/opt/icu4c/lib/libicui18n.a \

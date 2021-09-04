@@ -1102,7 +1102,7 @@ pub fn NewBundler(cache_files: bool) type {
                                 if (!strings.eqlComptime(file_path.namespace, "node"))
                                     break :brk try bundler.resolver.caches.fs.readFileShared(
                                         bundler.fs,
-                                        file_path.text,
+                                        file_path.textZ(),
                                         resolve.dirname_fd,
                                         if (resolve.file_fd != 0) resolve.file_fd else null,
                                         shared_buffer,
@@ -1476,7 +1476,7 @@ pub fn NewBundler(cache_files: bool) type {
                         => {
                             const entry = bundler.resolver.caches.fs.readFileShared(
                                 bundler.fs,
-                                file_path.text,
+                                file_path.textZ(),
                                 resolve.dirname_fd,
                                 if (resolve.file_fd != 0) resolve.file_fd else null,
                                 shared_buffer,
@@ -2046,6 +2046,7 @@ pub fn NewBundler(cache_files: bool) type {
             relative_path: string,
             _extension: string,
             comptime client_entry_point_enabled: bool,
+            comptime serve_as_package_path: bool,
         ) !ServeResult {
             var extension = _extension;
             var old_log = bundler.log;
@@ -2061,13 +2062,15 @@ pub fn NewBundler(cache_files: bool) type {
                 };
             }
 
-            // We make some things faster in theory by using absolute paths instead of relative paths
-            var absolute_path = resolve_path.joinAbsStringBuf(
-                bundler.fs.top_level_dir,
-                &tmp_buildfile_buf,
-                &([_][]const u8{relative_path}),
-                .auto,
-            );
+            var absolute_path = if (comptime serve_as_package_path)
+                relative_path
+            else
+                resolve_path.joinAbsStringBuf(
+                    bundler.fs.top_level_dir,
+                    &tmp_buildfile_buf,
+                    &([_][]const u8{relative_path}),
+                    .auto,
+                );
 
             defer {
                 js_ast.Expr.Data.Store.reset();

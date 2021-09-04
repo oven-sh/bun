@@ -40,7 +40,8 @@ pub const TemporaryBuffer = struct {
     pub threadlocal var ExtensionPathBuf: [512]u8 = undefined;
     pub threadlocal var TSConfigMatchStarBuf: [512]u8 = undefined;
     pub threadlocal var TSConfigMatchPathBuf: [512]u8 = undefined;
-    pub threadlocal var TSConfigMatchFullBuf: [512]u8 = undefined;
+    pub threadlocal var TSConfigMatchFullBuf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+    pub threadlocal var TSConfigMatchFullBuf2: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 };
 
 pub const PathPair = struct {
@@ -195,6 +196,7 @@ threadlocal var _open_dirs: [256]std.fs.Dir = undefined;
 threadlocal var resolve_without_remapping_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 threadlocal var index_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 threadlocal var dir_info_uncached_filename_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+threadlocal var dir_info_uncached_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 threadlocal var tsconfig_base_url_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 threadlocal var relative_abs_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 threadlocal var load_as_file_or_directory_via_tsconfig_base_path: [std.fs.MAX_PATH_BYTES]u8 = undefined;
@@ -1240,16 +1242,22 @@ pub fn NewResolver(cache_files: bool) type {
             return r.dir_cache.get(path);
         }
 
-        inline fn dirInfoCachedMaybeLog(r: *ThisResolver, path: string, comptime enable_logging: bool, comptime follow_symlinks: bool) !?*DirInfo {
+        inline fn dirInfoCachedMaybeLog(r: *ThisResolver, __path: string, comptime enable_logging: bool, comptime follow_symlinks: bool) !?*DirInfo {
             r.mutex.lock();
             defer r.mutex.unlock();
+            var _path = __path;
+            if (strings.eqlComptime(_path, "./") or strings.eqlComptime(_path, "."))
+                _path = r.fs.top_level_dir;
 
-            const top_result = try r.dir_cache.getOrPut(path);
+            const top_result = try r.dir_cache.getOrPut(_path);
             if (top_result.status != .unknown) {
                 return r.dir_cache.atIndex(top_result.index);
             }
 
             var i: i32 = 1;
+            std.mem.copy(u8, &dir_info_uncached_path_buf, _path);
+            var path = dir_info_uncached_path_buf[0.._path.len];
+
             _dir_entry_paths_to_resolve[0] = (DirEntryResolveQueueItem{ .result = top_result, .unsafe_path = path, .safe_path = "" });
             var top = Dirname.dirname(path);
 
@@ -1258,7 +1266,12 @@ pub fn NewResolver(cache_files: bool) type {
                 .hash = 0,
                 .status = .not_found,
             };
-            const root_path = if (isWindows) std.fs.path.diskDesignator(path) else "/";
+            const root_path = if (comptime isWindows)
+                std.fs.path.diskDesignator(path)
+            else
+                // we cannot just use "/"
+                // we will write to the buffer past the ptr len so it must be a non-const buffer
+                path[0..1];
             var rfs: *Fs.FileSystem.RealFS = &r.fs.fs;
 
             rfs.entries_mutex.lock();
@@ -1321,16 +1334,15 @@ pub fn NewResolver(cache_files: bool) type {
             // We want to walk in a straight line from the topmost directory to the desired directory
             // For each directory we visit, we get the entries, but not traverse into child directories
             // (unless those child directores are in the queue)
-            // Going top-down rather than bottom-up should have best performance because we can use
-            // the file handle from the parent directory to open the child directory
-            // It's important that we walk in precisely a straight line
-            // For example
+            // We go top-down instead of bottom-up to increase odds of reusing previously open file handles
             // "/home/jarred/Code/node_modules/react/cjs/react.development.js"
             //       ^
             // If we start there, we will traverse all of /home/jarred, including e.g. /home/jarred/Downloads
             // which is completely irrelevant.
 
-            // After much experimentation, fts_open is not the fastest way. fts actually just uses readdir!!
+            // After much experimentation...
+            // - fts_open is not the fastest way to read directories. fts actually just uses readdir!!
+            // - remember
             var _safe_path: ?string = null;
 
             // Start at the top.
@@ -1341,20 +1353,21 @@ pub fn NewResolver(cache_files: bool) type {
 
                 var _open_dir: anyerror!std.fs.Dir = undefined;
                 if (queue_top.fd == 0) {
-                    if (open_dir_count > 0) {
-                        _open_dir = _open_dirs[open_dir_count - 1].openDir(
-                            std.fs.path.basename(queue_top.unsafe_path),
-                            .{ .iterate = true, .no_follow = !follow_symlinks },
-                        );
-                    } else {
-                        _open_dir = std.fs.openDirAbsolute(
-                            queue_top.unsafe_path,
-                            .{
-                                .iterate = true,
-                                .no_follow = !follow_symlinks,
-                            },
-                        );
-                    }
+
+                    // This saves us N copies of .toPosixPath
+                    // which was likely the perf gain from resolving directories relative to the parent directory, anyway.
+                    const prev_char = path.ptr[queue_top.unsafe_path.len];
+                    path.ptr[queue_top.unsafe_path.len] = 0;
+                    defer path.ptr[queue_top.unsafe_path.len] = prev_char;
+                    var sentinel = path.ptr[0..queue_top.unsafe_path.len :0];
+                    _open_dir = std.fs.openDirAbsoluteZ(
+                        sentinel,
+                        .{
+                            .iterate = true,
+                            .no_follow = !follow_symlinks,
+                        },
+                    );
+                    // }
                 }
 
                 const open_dir = if (queue_top.fd != 0) std.fs.Dir{ .fd = queue_top.fd } else (_open_dir catch |err| {
@@ -1495,14 +1508,7 @@ pub fn NewResolver(cache_files: bool) type {
 
         // This closely follows the behavior of "tryLoadModuleUsingPaths()" in the
         // official TypeScript compiler
-        pub fn matchTSConfigPaths(r: *ThisResolver, tsconfig: *TSConfigJSON, path_: string, kind: ast.ImportKind) ?MatchResult {
-            // Rewrite absolute import paths to be project-relative
-            // This is so that whe nimporting URLs from the web, we can still match them.
-            var path = path_;
-            if (strings.startsWith(path_, r.fs.top_level_dir)) {
-                path = path[r.fs.top_level_dir.len..];
-            }
-
+        pub fn matchTSConfigPaths(r: *ThisResolver, tsconfig: *TSConfigJSON, path: string, kind: ast.ImportKind) ?MatchResult {
             if (r.debug_logs) |*debug| {
                 debug.addNoteFmt("Matching \"{s}\" against \"paths\" in \"{s}\"", .{ path, tsconfig.abs_path }) catch unreachable;
             }
@@ -1569,9 +1575,8 @@ pub fn NewResolver(cache_files: bool) type {
                     // because we want the output to always be deterministic
                     if (strings.startsWith(path, prefix) and
                         strings.endsWith(path, suffix) and
-                        (prefix.len > longest_match_prefix_length or
-                        (prefix.len == longest_match_prefix_length and
-                        suffix.len > longest_match_suffix_length)))
+                        (prefix.len >= longest_match_prefix_length and
+                        suffix.len > longest_match_suffix_length))
                     {
                         longest_match_prefix_length = @intCast(i32, prefix.len);
                         longest_match_suffix_length = @intCast(i32, suffix.len);
@@ -1591,31 +1596,20 @@ pub fn NewResolver(cache_files: bool) type {
                     // Swap out the "*" in the original path for whatever the "*" matched
                     const matched_text = path[longest_match.prefix.len .. path.len - longest_match.suffix.len];
 
-                    std.mem.copy(
-                        u8,
-                        &TemporaryBuffer.TSConfigMatchPathBuf,
-                        original_path,
+                    const total_length = std.mem.indexOfScalar(u8, original_path, '*') orelse unreachable;
+                    var prefix_parts = [_]string{ abs_base_url, original_path[0..total_length] };
+
+                    // 1. Normalize the base path
+                    // so that "/Users/foo/project/", "../components/*" => "/Users/foo/components/""
+                    var prefix = r.fs.absBuf(&prefix_parts, &TemporaryBuffer.TSConfigMatchFullBuf2);
+
+                    // 2. Join the new base path with the matched result
+                    // so that "/Users/foo/components/", "/foo/bar" => /Users/foo/components/foo/bar
+                    var parts = [_]string{ prefix, std.mem.trimLeft(u8, matched_text, "/"), std.mem.trimLeft(u8, longest_match.suffix, "/") };
+                    var absolute_original_path = r.fs.absBuf(
+                        &parts,
+                        &TemporaryBuffer.TSConfigMatchFullBuf,
                     );
-                    var start: usize = 0;
-                    var total_length: usize = 0;
-                    const star = std.mem.indexOfScalar(u8, original_path, '*') orelse unreachable;
-                    total_length = star;
-                    const parts = [_]string{ original_path[0..total_length], matched_text, longest_match.suffix };
-                    const region = r.fs.joinBuf(&parts, &TemporaryBuffer.TSConfigMatchPathBuf);
-
-                    // Load the original path relative to the "baseUrl" from tsconfig.json
-                    var absolute_original_path: string = region;
-
-                    if (!std.fs.path.isAbsolute(region)) {
-                        var paths = [_]string{ abs_base_url, region };
-                        absolute_original_path = r.fs.absAlloc(r.allocator, &paths) catch unreachable;
-                    } else {
-                        absolute_original_path = std.mem.dupe(r.allocator, u8, region) catch unreachable;
-                    }
-
-                    defer {
-                        r.allocator.free(absolute_original_path);
-                    }
 
                     if (r.loadAsFileOrDirectory(absolute_original_path, kind)) |res| {
                         return res;
@@ -1881,7 +1875,10 @@ pub fn NewResolver(cache_files: bool) type {
                 }
             }
 
-            const dir_info = (r.dirInfoCached(path) catch null) orelse return null;
+            const dir_info = (r.dirInfoCached(path) catch |err| {
+                if (comptime isDebug) Output.prettyErrorln("err: {s} reading {s}", .{ @errorName(err), path });
+                return null;
+            }) orelse return null;
             var package_json: ?*PackageJSON = null;
 
             // Try using the main field(s) from "package.json"
@@ -2181,6 +2178,7 @@ pub fn NewResolver(cache_files: bool) type {
                 if (!r.opts.preserve_symlinks) {
                     if (parent.?.getEntries()) |parent_entries| {
                         if (parent_entries.get(base)) |lookup| {
+                            if (entries.fd != 0 and lookup.entry.cache.fd == 0) lookup.entry.cache.fd = entries.fd;
                             const entry = lookup.entry;
 
                             var symlink = entry.symlink(rfs);

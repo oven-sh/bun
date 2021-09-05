@@ -36,7 +36,11 @@ jsc-copy-headers:
 	find src/JavaScript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/Headers/JavaScriptCore/ -name "*.h" -exec cp {} src/JavaScript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/PrivateHeaders/JavaScriptCore \;
 
 jsc-build-mac-compile:
-	cd src/javascript/jsc/WebKit && ICU_INCLUDE_DIRS="/usr/local/opt/icu4c/include" ./Tools/Scripts/build-jsc --jsc-only --cmakeargs="-DENABLE_STATIC_JSC=ON -DCMAKE_BUILD_TYPE=relwithdebinfo" && echo "Ignore the \"has no symbols\" errors"
+	cd src/javascript/jsc/WebKit && ICU_INCLUDE_DIRS="/usr/local/opt/icu4c/include" ./Tools/Scripts/build-jsc --jsc-only --cmakeargs="-DENABLE_STATIC_JSC=ON -DCMAKE_BUILD_TYPE=relwithdebinfo -DCMAKE_OSX_ARCHITECTURES=arm64;x86_64" && echo "Ignore the \"has no symbols\" errors"
+
+jsc-build-linux-compile:
+	cd src/javascript/jsc/WebKit && ./Tools/Scripts/build-jsc --jsc-only --cmakeargs="-DENABLE_STATIC_JSC=ON -DCMAKE_BUILD_TYPE=relwithdebinfo
+
 
 jsc-build-mac: jsc-build-mac-compile jsc-build-mac-copy
 
@@ -103,7 +107,10 @@ mimalloc:
 bun-link-lld-debug:
 	clang++ $(BUN_LLD_FLAGS) \
 		build/debug/macos-x86_64/bun.o \
-		-o build/debug/macos-x86_64/bun		
+		-Wl,-dead_strip \
+		-ftls-model=local-exec \
+		-flto \
+		-o build/debug/macos-x86_64/bun
 
 bun-link-lld-release:
 	clang++ $(BUN_LLD_FLAGS) \

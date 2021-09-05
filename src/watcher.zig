@@ -258,43 +258,48 @@ pub fn NewWatcher(comptime ContextType: type) type {
             parent_hash: HashType,
             comptime copy_file_path: bool,
         ) !void {
-            // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html
-            var event = std.mem.zeroes(KEvent);
-
-            event.flags = os.EV_ADD | os.EV_CLEAR | os.EV_ENABLE;
-            // we want to know about the vnode
-            event.filter = std.os.EVFILT_VNODE;
-
-            // monitor:
-            // - Write
-            // - Rename
-
-            // we should monitor:
-            // - Delete
-            event.fflags = std.os.NOTE_WRITE | std.os.NOTE_RENAME | std.os.NOTE_DELETE;
-
-            // id
-            event.ident = @intCast(usize, fd);
-
             const index = this.eventlist_used;
-            this.eventlist_used += 1;
             const watchlist_id = this.watchlist.len;
-            // Store the hash for fast filtering later
-            event.udata = @intCast(usize, watchlist_id);
-            this.eventlist[index] = event;
 
-            // This took a lot of work to figure out the right permutation
-            // Basically:
-            // - We register the event here.
-            // our while(true) loop above receives notification of changes to any of the events created here.
-            _ = std.os.system.kevent(
-                try this.getQueue(),
-                this.eventlist[index .. index + 1].ptr,
-                1,
-                this.eventlist[index .. index + 1].ptr,
-                0,
-                null,
-            );
+            if (isMac) {
+
+                // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html
+                var event = std.mem.zeroes(KEvent);
+
+                event.flags = os.EV_ADD | os.EV_CLEAR | os.EV_ENABLE;
+                // we want to know about the vnode
+                event.filter = std.os.EVFILT_VNODE;
+
+                // monitor:
+                // - Write
+                // - Rename
+
+                // we should monitor:
+                // - Delete
+                event.fflags = std.os.NOTE_WRITE | std.os.NOTE_RENAME | std.os.NOTE_DELETE;
+
+                // id
+                event.ident = @intCast(usize, fd);
+
+                this.eventlist_used += 1;
+
+                // Store the hash for fast filtering later
+                event.udata = @intCast(usize, watchlist_id);
+                this.eventlist[index] = event;
+
+                // This took a lot of work to figure out the right permutation
+                // Basically:
+                // - We register the event here.
+                // our while(true) loop above receives notification of changes to any of the events created here.
+                _ = std.os.system.kevent(
+                    try this.getQueue(),
+                    this.eventlist[index .. index + 1].ptr,
+                    1,
+                    this.eventlist[index .. index + 1].ptr,
+                    0,
+                    null,
+                );
+            }
 
             this.watchlist.appendAssumeCapacity(.{
                 .file_path = if (copy_file_path) try this.allocator.dupe(u8, file_path) else file_path,
@@ -323,6 +328,8 @@ pub fn NewWatcher(comptime ContextType: type) type {
             };
 
             const parent_hash = Watcher.getHash(Fs.PathName.init(file_path).dirWithTrailingSlash());
+            const index = this.eventlist_used;
+            const watchlist_id = this.watchlist.len;
 
             // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html
             var event = std.mem.zeroes(KEvent);
@@ -334,17 +341,13 @@ pub fn NewWatcher(comptime ContextType: type) type {
             // monitor:
             // - Write
             // - Rename
-
-            // we should monitor:
             // - Delete
             event.fflags = std.os.NOTE_WRITE | std.os.NOTE_RENAME | std.os.NOTE_DELETE;
 
             // id
             event.ident = @intCast(usize, fd);
 
-            const index = this.eventlist_used;
             this.eventlist_used += 1;
-            const watchlist_id = this.watchlist.len;
             // Store the hash for fast filtering later
             event.udata = @intCast(usize, watchlist_id);
             this.eventlist[index] = event;

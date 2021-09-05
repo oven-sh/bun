@@ -23,9 +23,9 @@ npm install -g bun-cli
 In your project folder root (where `package.json` is):
 
 ```bash
-npm install bun-framework-next
+npm install -D bun-framework-next
 bun bun --use next
-open http://localhost:3000; bun
+bun
 ```
 
 Here are some features of Next.js that **aren't supported** yet:
@@ -69,34 +69,9 @@ Here are examples of routing source code file paths:
 | src/index.tsx             | /src/index.tsx             |
 | pages/index.js            | /pages/index.js            |
 
-## Using Bun without `bun dev`
-
-`bun dev` is the recommended way to use Bun. Today, Bun is primarily intended to speed up your frontend development iteration cycle. `bun` does not implement a JavaScript minifier yet, and does not implement all the optimizations other tools do for shrinking bundle size. That means you probably should look to other tools for bundling in production. To make this split smoother, Bun strives for ecosystem compatibility (e.g. by integrating with Next.js)
-
-```
-bun bun ./entry-point-1.js ./entry-point-2.jsx
-bun build ./entry-point-1.js ./entry-point-2.jsx --origin https://localhost:3000 --outdir=./out
-```
-
-You can also pass Bun a folder, and it will assume all JavaScript-like files are entry-points. This lets you use Bun's native filesystem router without a framework.
-
-For a `routes` directory with these files:
-
-- `routes/index.js`
-- `routes/hello/bar.js`
-- `routes/hello/baz.jsx`
-- `routes/wut/wat.jsx`
-
-This would be the corresponding command:
-
-```bash
-bun bun ./routes
-bun build ./routes --outdir=./out
-```
-
 # The Bun Bundling Format
 
-`bun bun` generates a `node_modules.bun` and (optionally) a `node_modules.server.bun`. This is a new binary file format that makes it very efficient to serialize/deserialize `node_modules`. With a 2.4 GHz 8-Core Intel Core i9, metadata for
+`bun bun` generates a `node_modules.bun` and (optionally) a `node_modules.server.bun`. This is a new binary file format that makes it very efficient to serialize/deserialize `node_modules`.
 
 Unlike many other bundlers, `Bun` only bundles `node_modules`. This is great for development, where most people add/update packages much less frequently than app code (which is also great for caching in browsers). To make that distinction clear, the filename defaults to `node_modules.bun`. We recommend storing `node_modules.bun` in your git repository. Since it's a binary file, it shouldn't clutter your git history and it will make your entire frontend development team move faster if they don't have to re-bundle dependencies.
 
@@ -114,7 +89,6 @@ Bun is a project with incredibly large scope, and it's early days.
 | [jsx](https://www.typescriptlang.org/tsconfig)\* in tsconfig.json                                                      | TypeScript Transpiler |
 | [TypeScript Decorators](https://www.typescriptlang.org/docs/handbook/decorators.html)                                  | TypeScript Transpiler |
 | `@jsxPragma` comments                                                                                                  | JavaScript Transpiler |
-| Un-quoted `.env` string values                                                                                         | .env loader           |
 | Sharing `.bun` files                                                                                                   | JavaScript Bundler    |
 | [fetch](https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API) (in SSR)                                           | Bun.js                |
 | [setTimeout](https://developer.mozilla.org/en-US/docs/Web/API/setTimeout) (in SSR)                                     | Bun.js                |

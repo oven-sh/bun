@@ -6,7 +6,6 @@ zig-cache
 *.a
 profile.json
 
-/package.json
 node_modules
 .swcrc
 yarn.lock
@@ -63,3 +62,4 @@ src/node-fallbacks/node_modules
 sign.json
 release/
 *.dmg
+sign.*.json

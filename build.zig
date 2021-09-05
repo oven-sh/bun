@@ -215,16 +215,20 @@ pub fn build(b: *std.build.Builder) void {
 
             // step.single_threaded = single_threaded;
 
-            // We must link ICU statically
-            step.addObjectFile("/usr/local/opt/icu4c/lib/libicudata.a");
-            step.addObjectFile("/usr/local/opt/icu4c/lib/libicui18n.a");
-            step.addObjectFile("/usr/local/opt/icu4c/lib/libicuuc.a");
-
             if (target.getOsTag() == .macos) {
+                const homebrew_prefix = comptime if (std.Target.current.cpu.arch == .aarch64)
+                    "/opt/homebrew/"
+                else
+                    "/usr/local/";
+
+                // We must link ICU statically
+                step.addObjectFile(homebrew_prefix ++ "opt/icu4c/lib/libicudata.a");
+                step.addObjectFile(homebrew_prefix ++ "opt/icu4c/lib/libicui18n.a");
+                step.addObjectFile(homebrew_prefix ++ "opt/icu4c/lib/libicuuc.a");
                 // icucore is a weird macOS only library
                 step.linkSystemLibrary("icucore");
-                step.addLibPath("/usr/local/opt/icu4c/lib");
-                step.addIncludeDir("/usr/local/opt/icu4c/include");
+                step.addLibPath(homebrew_prefix ++ "opt/icu4c/lib");
+                step.addIncludeDir(homebrew_prefix ++ "opt/icu4c/include");
             }
 
             for (bindings_files.items) |binding| {

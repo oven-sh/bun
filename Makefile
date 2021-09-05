@@ -12,7 +12,7 @@ sign-macos-x64:
 release-macos-x64: build-obj bun-link-lld-release sign-macos-x64
 
 api: 
-	npm install peechy; npm run peechy --schema src/api/schema.peechy --esm src/api/schema.js --ts src/api/schema.d.ts --zig src/api/schema.zig
+	npm install; ./node_modules/.bin/peechy --schema src/api/schema.peechy --esm src/api/schema.js --ts src/api/schema.d.ts --zig src/api/schema.zig
 
 node-fallbacks: 
 	cd src/node-fallbacks; npm install; npm run --silent build

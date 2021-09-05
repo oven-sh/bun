@@ -36,7 +36,7 @@ jsc-copy-headers:
 	find src/JavaScript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/Headers/JavaScriptCore/ -name "*.h" -exec cp {} src/JavaScript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/PrivateHeaders/JavaScriptCore \;
 
 jsc-build-mac-compile:
-	cd src/javascript/jsc/WebKit && ICU_INCLUDE_DIRS="$(brew --prefix)opt/icu4c/include" ./Tools/Scripts/build-jsc --jsc-only --cmakeargs="-DENABLE_STATIC_JSC=ON -DCMAKE_BUILD_TYPE=relwithdebinfo && echo "Ignore the \"has no symbols\" errors"
+	cd src/javascript/jsc/WebKit && ICU_INCLUDE_DIRS="$(HOMEBREW_PREFIX)opt/icu4c/include" ./Tools/Scripts/build-jsc --jsc-only --cmakeargs="-DENABLE_STATIC_JSC=ON -DCMAKE_BUILD_TYPE=relwithdebinfo"
 
 jsc-build-linux-compile:
 	cd src/javascript/jsc/WebKit && ./Tools/Scripts/build-jsc --jsc-only --cmakeargs="-DENABLE_STATIC_JSC=ON -DCMAKE_BUILD_TYPE=relwithdebinfo
@@ -52,6 +52,8 @@ jsc-build-mac-copy:
 JSC_FILES := src/deps/libJavaScriptCore.a \
 	src/deps/libWTF.a \
 	src/deps/libbmalloc.a 
+
+HOMEBREW_PREFIX := $(shell brew --prefix)/
 
 SRC_DIR := src/javascript/jsc/bindings
 OBJ_DIR := src/javascript/jsc/bindings-obj
@@ -82,11 +84,11 @@ CLANG_FLAGS := $(INCLUDE_DIRS) \
 jsc-bindings-mac: $(OBJ_FILES)
 
 
-MACOS_ICU_FILES := $(brew --prefix)opt/icu4c/lib/libicudata.a \
-	$(brew --prefix)opt/icu4c/lib/libicui18n.a \
-	$(brew --prefix)opt/icu4c/lib/libicuuc.a 
+MACOS_ICU_FILES := $(HOMEBREW_PREFIX)opt/icu4c/lib/libicudata.a \
+	$(HOMEBREW_PREFIX)opt/icu4c/lib/libicui18n.a \
+	$(HOMEBREW_PREFIX)opt/icu4c/lib/libicuuc.a 
 
-MACOS_ICU_INCLUDE := $(brew --prefix)opt/icu4c/include
+MACOS_ICU_INCLUDE := $(HOMEBREW_PREFIX)opt/icu4c/include
 
 MACOS_ICU_FLAGS := -l icucore \
 	$(MACOS_ICU_FILES) \

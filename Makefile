@@ -128,7 +128,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 		-O1
 
 sizegen:
-	clang++ src/javascript/jsc/headergen/sizegen.cpp -o /tmp/sizegen $(CLANG_FLAGS)
+	clang++ src/javascript/jsc/headergen/sizegen.cpp -o /tmp/sizegen $(CLANG_FLAGS) -O1
 	/tmp/sizegen > src/javascript/jsc/bindings/sizes.zig
 
 picohttp:

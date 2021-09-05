@@ -650,6 +650,8 @@ pub fn HeaderGen(comptime import: type, comptime fname: []const u8) type {
             // }
 
             var to_get_sizes: usize = 0;
+
+            const exclude_from_cpp = comptime [_][]const u8{ "ZigString", "ZigException" };
             inline for (all_decls) |_decls| {
                 if (comptime _decls.is_pub) {
                     switch (_decls.data) {
@@ -676,10 +678,12 @@ pub fn HeaderGen(comptime import: type, comptime fname: []const u8) type {
                                     defer gen.deinit();
 
                                     if (@hasDecl(Type, "Extern")) {
-                                        if (to_get_sizes > 0) {
-                                            impl_second_writer.writeAll(", ") catch unreachable;
-                                            impl_third_writer.writeAll(", ") catch unreachable;
-                                            impl_fourth_writer.writeAll(", ") catch unreachable;
+                                        if (comptime !(std.mem.eql(u8, Type.name, exclude_from_cpp[0]) or std.mem.eql(u8, Type.name, exclude_from_cpp[1]))) {
+                                            if (to_get_sizes > 0) {
+                                                impl_second_writer.writeAll(", ") catch unreachable;
+                                                impl_third_writer.writeAll(", ") catch unreachable;
+                                                impl_fourth_writer.writeAll(", ") catch unreachable;
+                                            }
                                         }
 
                                         const formatted_name = comptime brk: {
@@ -688,10 +692,12 @@ pub fn HeaderGen(comptime import: type, comptime fname: []const u8) type {
                                             break :brk original;
                                         };
 
-                                        impl_third_writer.print("sizeof({s})", .{comptime Type.name}) catch unreachable;
-                                        impl_fourth_writer.print("alignof({s})", .{comptime Type.name}) catch unreachable;
-                                        impl_second_writer.print("\"{s}\"", .{formatted_name}) catch unreachable;
-                                        to_get_sizes += 1;
+                                        if (comptime !(std.mem.eql(u8, Type.name, exclude_from_cpp[0]) or std.mem.eql(u8, Type.name, exclude_from_cpp[1]))) {
+                                            impl_third_writer.print("sizeof({s})", .{comptime Type.name}) catch unreachable;
+                                            impl_fourth_writer.print("alignof({s})", .{comptime Type.name}) catch unreachable;
+                                            impl_second_writer.print("\"{s}\"", .{formatted_name}) catch unreachable;
+                                            to_get_sizes += 1;
+                                        }
                                         const ExternList = comptime brk: {
                                             const Sorder = struct {
                                                 pub fn lessThan(context: @This(), lhs: []const u8, rhs: []const u8) bool {

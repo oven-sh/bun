@@ -701,6 +701,10 @@ test "DotEnv Loader" {
         \\
         \\NESTED_VALUES_RESPECT_ESCAPING='\$API_KEY'
         \\
+        \\EMPTY_SINGLE_QUOTED_VALUE_IS_EMPTY_STRING_CHARS=''
+        \\
+        \\EMPTY_DOUBLE_QUOTED_VALUE_IS_EMPTY_STRING_CHARS=""
+        \\
     ;
     const source = logger.Source.initPathString(".env", VALID_ENV);
     var map = Map.init(default_allocator);
@@ -726,6 +730,8 @@ test "DotEnv Loader" {
     try expect(map.get("NO_VALUE_IS_EMPTY_STRING").?.len == 0);
     try expectString(map.get("IGNORING_DOESNT_BREAK_OTHER_LINES").?, "'yes'");
     try expectString(map.get("LEADING_SPACE_IN_UNQUOTED_VALUE_IS_TRIMMED").?, "yes");
+    try expectString(map.get("EMPTY_SINGLE_QUOTED_VALUE_IS_EMPTY_STRING_CHARS").?, "''");
+    try expectString(map.get("EMPTY_DOUBLE_QUOTED_VALUE_IS_EMPTY_STRING_CHARS").?, "\"\"");
 }
 
 test "DotEnv Process" {

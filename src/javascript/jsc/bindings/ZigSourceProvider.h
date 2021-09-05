@@ -7,7 +7,7 @@ namespace JSC {
 class Structure;
 class Identifier;
 class SourceCodeKey;
-
+class SourceProvider;
 } // namespace JSC
 
 #include "ZigConsoleClient.h"

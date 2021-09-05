@@ -82,14 +82,16 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 
 extern "C" JSC__JSGlobalObject *Zig__GlobalObject__create(JSClassRef *globalObjectClass, int count,
                                                           void *console_client) {
+  JSC::Options::useSourceProviderCache() = true;
+  JSC::Options::useUnlinkedCodeBlockJettisoning() = false;
+  JSC::Options::useTopLevelAwait() = true;
+  JSC::Options::exposeInternalModuleLoader() = true;
+
   std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
   WTF::initializeMainThread();
   JSC::initialize();
 
   // JSC::Options::useCodeCache() = false;
-  JSC::Options::useSourceProviderCache() = true;
-  JSC::Options::useUnlinkedCodeBlockJettisoning() = false;
-  JSC::Options::useTopLevelAwait() = true;
 
   JSC::VM &vm = JSC::VM::create(JSC::LargeHeap).leakRef();
   vm.heap.acquireAccess();
@@ -288,8 +290,6 @@ extern "C" bool Zig__GlobalObject__resetModuleRegistryMap(JSC__JSGlobalObject *g
       obj->putDirect(globalObject->vm(), identifier,
                      map->clone(globalObject, globalObject->vm(), globalObject->mapStructure()));
 
-      vm.codeCache()->write(vm);
-      vm.shrinkFootprintWhenIdle();
       // vm.deleteAllLinkedCode(JSC::DeleteAllCodeEffort::DeleteAllCodeIfNotCollecting);
       // JSC::Heap::PreventCollectionScope(vm.heap);
 

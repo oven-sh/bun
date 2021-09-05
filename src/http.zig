@@ -1823,6 +1823,30 @@ pub const RequestContext = struct {
                         }
                     }
                 }
+
+                if (written.empty) {
+                    switch (loader) {
+                        .css => try ctx.sendNoContent(),
+                        .js, .jsx, .ts, .tsx, .json => {
+                            const buf = "export default {};";
+                            const strong_etag = comptime std.hash.Wyhash.hash(1, buf);
+                            const etag_content_slice = std.fmt.bufPrintIntToSlice(strong_etag_buffer[0..49], strong_etag, 16, .upper, .{});
+                            ctx.appendHeader("ETag", etag_content_slice);
+
+                            if (ctx.header("If-None-Match")) |etag_header| {
+                                if (std.mem.eql(u8, etag_content_slice, etag_header.value)) {
+                                    try ctx.sendNotModified();
+                                    return;
+                                }
+                            }
+                            defer ctx.done();
+                            try ctx.writeStatus(200);
+                            try ctx.prepareToSendBody(buf.len, false);
+                            try ctx.writeBodyBuf(buf);
+                        },
+                        else => unreachable,
+                    }
+                }
             },
             .noop => {
                 try ctx.sendNotFound();
@@ -2045,7 +2069,7 @@ pub const RequestContext = struct {
                         ctx.url.pathWithoutAssetPrefix(ctx.bundler.options.routes.asset_prefix_path),
                         ctx.url.extname,
                         false,
-                        true,
+                        false,
                     );
                 }
             }

@@ -1,5 +1,6 @@
 #include "ZigSourceProvider.h"
 #include "helpers.h"
+#include "root.h"
 #include <JavaScriptCore/BytecodeCacheError.h>
 #include <JavaScriptCore/CodeCache.h>
 
@@ -39,12 +40,8 @@ Ref<SourceProvider> SourceProvider::create(ResolvedSource resolvedSource) {
       JSC::SourceProviderSourceType::Module));
 
   } else {
-    Ref<WTF::ExternalStringImpl> stringImpl_ = WTF::ExternalStringImpl::create(
-      resolvedSource.source_code.ptr, resolvedSource.source_code.len,
-      [=](WTF::ExternalStringImpl *str, void *ptr, unsigned int len) {
-        // ZigString__free((const unsigned char *)ptr, len,
-        // allocator);
-      });
+    Ref<WTF::ExternalStringImpl> stringImpl_ = WTF::ExternalStringImpl::createStatic(
+      resolvedSource.source_code.ptr, resolvedSource.source_code.len);
     return adoptRef(*new SourceProvider(
       resolvedSource, reinterpret_cast<WTF::StringImpl *>(stringImpl_.ptr()),
       JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(toString(resolvedSource.source_url))),

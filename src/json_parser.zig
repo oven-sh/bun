@@ -211,9 +211,32 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
 
 const JSONParser = JSONLikeParser(js_lexer.JSONOptions{});
 const TSConfigParser = JSONLikeParser(js_lexer.JSONOptions{ .allow_comments = true, .allow_trailing_commas = true });
+var empty_string = E.String{ .utf8 = "" };
+var empty_object = E.Object{};
+var empty_array = E.Array{ .items = &[_]ExprNodeIndex{} };
+var empty_string_data = Expr.Data{ .e_string = &empty_string };
+var empty_object_data = Expr.Data{ .e_object = &empty_object };
+var empty_array_data = Expr.Data{ .e_array = &empty_array };
 
 pub fn ParseJSON(source: *const logger.Source, log: *logger.Log, allocator: *std.mem.Allocator) !Expr {
     var parser = try JSONParser.init(allocator, source, log);
+    switch (source.contents.len) {
+        // This is to be consisntent with how disabled JS files are handled
+        0 => {
+            return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_object_data };
+        },
+        // This is a fast pass I guess
+        2 => {
+            if (strings.eqlComptime(source.contents[0..1], "\"\"") or strings.eqlComptime(source.contents[0..1], "''")) {
+                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_string_data };
+            } else if (strings.eqlComptime(source.contents[0..1], "{}")) {
+                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_object_data };
+            } else if (strings.eqlComptime(source.contents[0..1], "[]")) {
+                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_array_data };
+            }
+        },
+        else => {},
+    }
 
     return parser.parseExpr();
 }

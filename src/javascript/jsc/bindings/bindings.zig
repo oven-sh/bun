@@ -1555,6 +1555,21 @@ pub const VM = extern struct {
         return cppFn("deleteAllCode", .{ vm, global_object });
     }
 
+    pub fn whenIdle(
+        vm: *VM,
+        callback: fn (...) callconv(.C) void,
+    ) void {
+        return cppFn("whenIdle", .{ vm, callback });
+    }
+
+    pub fn shrinkFootprint(
+        vm: *VM,
+    ) void {
+        return cppFn("shrinkFootprint", .{
+            vm,
+        });
+    }
+
     pub fn setExecutionForbidden(vm: *VM, forbidden: bool) void {
         cppFn("setExecutionForbidden", .{ vm, forbidden });
     }
@@ -1597,7 +1612,7 @@ pub const VM = extern struct {
         });
     }
 
-    pub const Extern = [_][]const u8{ "deleteAllCode", "apiLock", "create", "deinit", "setExecutionForbidden", "executionForbidden", "isEntered", "throwError", "drainMicrotasks" };
+    pub const Extern = [_][]const u8{ "deleteAllCode", "apiLock", "create", "deinit", "setExecutionForbidden", "executionForbidden", "isEntered", "throwError", "drainMicrotasks", "whenIdle", "shrinkFootprint" };
 };
 
 pub const ThrowScope = extern struct {

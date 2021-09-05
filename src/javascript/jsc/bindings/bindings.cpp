@@ -1434,6 +1434,9 @@ const WTF__StringImpl *JSC__PropertyName__uid(JSC__PropertyName *arg0) { return 
 
 #pragma mark - JSC::VM
 
+void JSC__VM__shrinkFootprint(JSC__VM *arg0) { arg0->shrinkFootprintWhenIdle(); };
+void JSC__VM__whenIdle(JSC__VM *arg0, void (*ArgFn1)()) { arg0->whenIdle(ArgFn1); };
+
 JSC__JSLock *JSC__VM__apiLock(JSC__VM *arg0) { return makeRefPtr((*arg0).apiLock()).leakRef(); }
 JSC__VM *JSC__VM__create(unsigned char HeapType0) {
   JSC::VM *vm =

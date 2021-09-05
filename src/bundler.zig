@@ -422,10 +422,9 @@ pub fn NewBundler(cache_files: bool) type {
                         };
                         worker.data.shared_buffer = try MutableString.init(generator.allocator, 0);
                         worker.data.scan_pass_result = js_parser.ScanPassResult.init(generator.allocator);
-                        worker.data.log = generator.log.*;
+                        worker.data.log = generator.log;
 
                         defer {
-                            generator.log.* = worker.data.log;
                             worker.data.deinit(generator.allocator);
                         }
 
@@ -439,10 +438,6 @@ pub fn NewBundler(cache_files: bool) type {
                         var j: usize = 0;
                         while (j < 100) : (j += 1) {}
                         std.atomic.spinLoopHint();
-                    }
-
-                    for (this.workers[0..this.workers_used]) |*worker| {
-                        worker.data.log.appendTo(generator.log) catch {};
                     }
 
                     for (this.workers[0..this.workers_used]) |*worker| {
@@ -479,7 +474,7 @@ pub fn NewBundler(cache_files: bool) type {
                     pub const WorkerData = struct {
                         shared_buffer: MutableString = undefined,
                         scan_pass_result: js_parser.ScanPassResult = undefined,
-                        log: logger.Log,
+                        log: *logger.Log,
 
                         pub fn deinit(this: *WorkerData, allocator: *std.mem.Allocator) void {
                             this.shared_buffer.deinit();
@@ -533,12 +528,19 @@ pub fn NewBundler(cache_files: bool) type {
                         js_ast.Stmt.Data.Store.create(this.generator.allocator);
                         this.data = this.generator.allocator.create(WorkerData) catch unreachable;
                         this.data.* = WorkerData{
-                            .log = logger.Log.init(this.generator.allocator),
+                            .log = this.generator.allocator.create(logger.Log) catch unreachable,
                         };
+                        this.data.log.* = logger.Log.init(this.generator.allocator);
                         this.data.shared_buffer = try MutableString.init(this.generator.allocator, 0);
                         this.data.scan_pass_result = js_parser.ScanPassResult.init(this.generator.allocator);
 
                         defer {
+                            {
+                                this.generator.log_lock.lock();
+                                this.data.log.appendTo(this.generator.log) catch {};
+                                this.generator.log_lock.unlock();
+                            }
+
                             this.data.deinit(this.generator.allocator);
                         }
 
@@ -557,7 +559,7 @@ pub fn NewBundler(cache_files: bool) type {
                 };
             };
             write_lock: Lock,
-
+            log_lock: Lock = Lock.init(),
             module_list: std.ArrayList(Api.JavascriptBundledModule),
             package_list: std.ArrayList(Api.JavascriptBundledPackage),
             header_string_buffer: MutableString,
@@ -1085,7 +1087,7 @@ pub fn NewBundler(cache_files: bool) type {
                 defer scan_pass_result.reset();
                 defer shared_buffer.reset();
                 defer this.bundler.resetStore();
-                var log = &worker.data.log;
+                var log = worker.data.log;
 
                 // If we're in a node_module, build that almost normally
                 if (is_from_node_modules) {
@@ -1585,6 +1587,7 @@ pub fn NewBundler(cache_files: bool) type {
         pub const BuildResolveResultPair = struct {
             written: usize,
             input_fd: ?StoredFileDescriptorType,
+            empty: bool = false,
         };
         pub fn buildWithResolveResult(
             bundler: *ThisBundler,
@@ -1700,7 +1703,7 @@ pub fn NewBundler(cache_files: bool) type {
                     };
 
                     if (result.empty) {
-                        return BuildResolveResultPair{ .written = 0, .input_fd = result.input_fd };
+                        return BuildResolveResultPair{ .written = 0, .input_fd = result.input_fd, .empty = true };
                     }
 
                     try bundler.linker.link(file_path, &result, import_path_format, false);

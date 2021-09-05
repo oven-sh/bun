@@ -82,11 +82,11 @@ CLANG_FLAGS := $(INCLUDE_DIRS) \
 jsc-bindings-mac: $(OBJ_FILES)
 
 
-MACOS_ICU_FILES := /usr/local/opt/icu4c/lib/libicudata.a \
-	/usr/local/opt/icu4c/lib/libicui18n.a \
-	/usr/local/opt/icu4c/lib/libicuuc.a 
+MACOS_ICU_FILES := $(brew --prefix)opt/icu4c/lib/libicudata.a \
+	$(brew --prefix)opt/icu4c/lib/libicui18n.a \
+	$(brew --prefix)opt/icu4c/lib/libicuuc.a 
 
-MACOS_ICU_INCLUDE := /usr/local/opt/icu4c/include
+MACOS_ICU_INCLUDE := $(brew --prefix)opt/icu4c/include
 
 MACOS_ICU_FLAGS := -l icucore \
 	$(MACOS_ICU_FILES) \

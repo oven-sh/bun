@@ -93,7 +93,13 @@ extern "C" JSC__JSGlobalObject *Zig__GlobalObject__create(JSClassRef *globalObje
 
   // JSC::Options::useCodeCache() = false;
 
-  JSC::VM &vm = JSC::VM::create(JSC::LargeHeap).leakRef();
+#ifdef WTF_CPU_ARM64
+  auto heapSize = JSC::SmallHeap;
+#else
+  auto heapSize = JSC::LargeHeap;
+#endif
+
+  JSC::VM &vm = JSC::VM::create(heapSize).leakRef();
   vm.heap.acquireAccess();
 #if ENABLE(WEBASSEMBLY)
   JSC::Wasm::enableFastMemory();

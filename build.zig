@@ -250,6 +250,7 @@ pub fn build(b: *std.build.Builder) void {
         obj_step.dependOn(&obj.step);
         obj.setOutputDir(output_dir);
         obj.setBuildMode(mode);
+        obj.setTarget(target);
     } else {
         b.default_step.dependOn(&exe.step);
     }

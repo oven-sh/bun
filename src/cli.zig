@@ -252,7 +252,7 @@ pub const Arguments = struct {
                 ))) {
                     entry_points = entry_points[1..];
                 }
-            },
+        },
             .DevCommand => {
                 if (entry_points.len > 0 and (strings.eqlComptime(
                     entry_points[0],

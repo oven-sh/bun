@@ -14,9 +14,7 @@
     "isolatedModules": true,
     "jsx": "preserve",
     "baseUrl": ".",
-    "paths": {
-      "path": ["node_modules/path-browserify"]
-    }
+    "paths": {}
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx"],
   "exclude": ["node_modules"]

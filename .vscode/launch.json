@@ -153,7 +153,7 @@
       "request": "launch",
       "name": "PNPM .bun",
       "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
-      "args": ["bun", "./pages/index.tsx"],
+      "args": ["bun", "./pages/index.js"],
       "cwd": "/Users/jarred/Build/pnpm-bun/packages/app",
       "console": "internalConsole"
     },
@@ -196,7 +196,7 @@
       "request": "launch",
       "name": "Dev CRA",
       "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
-      "args": ["dev", "./index.js", "--platform=browser"],
+      "args": ["dev", "--platform=browser"],
       "cwd": "${workspaceFolder}/examples/hello-create-react-app/",
       "console": "internalConsole"
     },

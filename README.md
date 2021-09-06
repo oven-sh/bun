@@ -7,7 +7,9 @@ Bun is a new:
 - Development server with 60fps Hot Module Reloading (& WIP support for React Fast Refresh)
 - JavaScript Runtime Environment (powered by JavaScriptCore, what WebKit/Safari uses)
 
-All in one easy-to-use tool.
+All in one fast &amp; easy-to-use tool. Instead of 1,000 node_modules for development, you only need Bun.
+
+Bun is experimental software. Join [Bun's Discord](https://bun.sh/discord) for help and have a look at [things that don't work yet](#things-that-dont-work-yet). Most notably, this early version of Bun is not for building 
 
 ## Install:
 
@@ -63,11 +65,15 @@ From there, Bun relies on the filesystem for mapping dev server paths to source 
 
 Here are examples of routing source code file paths:
 
-| File Path                 | Dev Server URL             |
-| ------------------------- | -------------------------- |
-| src/components/Button.tsx | /src/components/Button.tsx |
-| src/index.tsx             | /src/index.tsx             |
-| pages/index.js            | /pages/index.js            |
+| File Path (relative to cwd) | Dev Server URL             |
+| --------------------------- | -------------------------- |
+| src/components/Button.tsx   | /src/components/Button.tsx |
+| src/index.tsx               | /src/index.tsx             |
+| pages/index.js              | /pages/index.js            |
+
+You can override the public directory by passing `--public-dir="path-to-folder"`.
+
+If no directory is specified and `./public/` doesn't exist, Bun will try `./static/`. If `./static/` does not exist, but won't serve from a public directory. If you pass `--public-dir=./` Bun will serve from the current directory, but it will check the current directory last instead of first.
 
 # The Bun Bundling Format
 

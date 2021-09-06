@@ -513,9 +513,11 @@ if (typeof window !== "undefined") {
       }
     }
 
+    static allImportedStyles = new Set();
     static onCSSImport(event) {
+      HMRClient.allImportedStyles.add(event.detail);
+
       if (globalThis["Bun_disableCSSImports"]) {
-        document.removeEventListener("onimportcss", HMRClient.onCSSImport);
         return;
       }
 
@@ -551,7 +553,6 @@ if (typeof window !== "undefined") {
       HMRClient.importCSS(
         new Promise((resolve, reject) => {
           if (globalThis["Bun_disableCSSImports"]) {
-            document.removeEventListener("onimportcss", HMRClient.onCSSImport);
             return;
           }
 
@@ -587,7 +588,8 @@ if (typeof window !== "undefined") {
       this.client = new HMRClient();
       this.client.verbose = verbose;
       this.client.start();
-      globalThis["BUN_HMR"] = this.client;
+      globalThis["__BUN_HMR"] = this.client;
+      globalThis["__BUN"] = this;
     }
 
     handleBuildFailure(buffer: ByteBuffer, timestamp: number) {
@@ -1300,7 +1302,7 @@ if (typeof window !== "undefined") {
   __FastRefreshModule = FastRefreshModule;
   __HMRClient = HMRClient;
 
-  if (!globalThis["Bun_disableCSSImports"] && "document" in globalThis) {
+  if ("document" in globalThis) {
     document.addEventListener("onimportcss", HMRClient.onCSSImport, {
       passive: true,
     });

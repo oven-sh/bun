@@ -150,7 +150,7 @@ pub const Arguments = struct {
 
     pub const ParamType = clap.Param(clap.Help);
 
-    const params: [25]ParamType = brk: {
+    const params: [23]ParamType = brk: {
         @setEvalBranchQuota(9999);
         break :brk [_]ParamType{
             clap.parseParam("--use <STR>                       Choose a framework, e.g. \"--use next\". It checks first for a package named \"bun-framework-packagename\" and then \"packagename\".") catch unreachable,
@@ -171,13 +171,13 @@ pub const Arguments = struct {
             // clap.parseParam("--production                      [not implemented] generate production code") catch unreachable,
             clap.parseParam("--public-dir <STR>                Top-level directory for .html files, fonts or anything external. Defaults to \"<cwd>/public\", to match create-react-app and Next.js") catch unreachable,
             clap.parseParam("--tsconfig-override <STR>         Load tsconfig from path instead of cwd/tsconfig.json") catch unreachable,
-            clap.parseParam("-d, --define <STR>...             Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:development") catch unreachable,
+            clap.parseParam("-d, --define <STR>...             Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:\"development\". Values are parsed as JSON.") catch unreachable,
             clap.parseParam("-e, --external <STR>...           Exclude module from transpilation (can use * wildcards). ex: -e react") catch unreachable,
             clap.parseParam("-h, --help                        Display this help and exit.              ") catch unreachable,
             clap.parseParam("-i, --inject <STR>...             Inject module at the top of every file") catch unreachable,
-            clap.parseParam("-l, --loader <STR>...             Parse files with .ext:loader, e.g. --loader .js:jsx. Valid loaders: jsx, js, json, tsx (not implemented yet), ts (not implemented yet), css (not implemented yet)") catch unreachable,
-            clap.parseParam("-o, --outdir <STR>                Save output to directory (default: \"out\" if none provided and multiple entry points passed)") catch unreachable,
-            clap.parseParam("-r, --resolve <STR>               Determine import/require behavior. \"disable\" ignores. \"dev\" bundles node_modules and builds everything else as independent entry points") catch unreachable,
+            clap.parseParam("-l, --loader <STR>...             Parse files with .ext:loader, e.g. --loader .js:jsx. Valid loaders: jsx, js, json, tsx, ts, css") catch unreachable,
+            // clap.parseParam("-o, --outdir <STR>                Save output to directory (default: \"out\" if none provided and multiple entry points passed)") catch unreachable,
+            // clap.parseParam("-r, --resolve <STR>               Determine import/require behavior. \"disable\" ignores. \"dev\" bundles node_modules and builds everything else as independent entry points") catch unreachable,
             // clap.parseParam("-r, --resolve <STR>               Determine import/require behavior. \"disable\" ignores. \"dev\" bundles node_modules and builds everything else as independent entry points") catch unreachable,
 
             clap.parseParam("<POS>...                          ") catch unreachable,
@@ -235,7 +235,8 @@ pub const Arguments = struct {
             std.os.exit(0);
         }
 
-        var output_dir = args.option("--outdir");
+        // var output_dir = args.option("--outdir");
+        var output_dir: ?string = null;
 
         var define_keys = defines_tuple.keys;
         var define_values = defines_tuple.values;
@@ -337,28 +338,28 @@ pub const Arguments = struct {
 
         switch (comptime cmd) {
             .BuildCommand => {
-                if (args.option("--resolve")) |_resolve| {
-                    switch (ResolveMatcher.match(_resolve)) {
-                        ResolveMatcher.case("disable") => {
-                            opts.resolve = Api.ResolveMode.disable;
-                        },
-                        ResolveMatcher.case("bundle") => {
-                            opts.resolve = Api.ResolveMode.bundle;
-                        },
-                        ResolveMatcher.case("dev") => {
-                            opts.resolve = Api.ResolveMode.dev;
-                        },
-                        ResolveMatcher.case("lazy") => {
-                            opts.resolve = Api.ResolveMode.lazy;
-                        },
-                        else => {
-                            diag.name.long = "--resolve";
-                            diag.arg = _resolve;
-                            try diag.report(Output.errorWriter(), error.InvalidResolveOption);
-                            std.process.exit(1);
-                        },
-                    }
-                }
+                // if (args.option("--resolve")) |_resolve| {
+                //     switch (ResolveMatcher.match(_resolve)) {
+                //         ResolveMatcher.case("disable") => {
+                //             opts.resolve = Api.ResolveMode.disable;
+                //         },
+                //         ResolveMatcher.case("bundle") => {
+                //             opts.resolve = Api.ResolveMode.bundle;
+                //         },
+                //         ResolveMatcher.case("dev") => {
+                //             opts.resolve = Api.ResolveMode.dev;
+                //         },
+                //         ResolveMatcher.case("lazy") => {
+                //             opts.resolve = Api.ResolveMode.lazy;
+                //         },
+                //         else => {
+                //             diag.name.long = "--resolve";
+                //             diag.arg = _resolve;
+                //             try diag.report(Output.errorWriter(), error.InvalidResolveOption);
+                //             std.process.exit(1);
+                //         },
+                //     }
+                // }
             },
             else => {},
         }

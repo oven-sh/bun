@@ -1832,7 +1832,8 @@ pub fn NewBundler(cache_files: bool) type {
                         &bundler.linker,
                         bundler.log,
                     );
-                    try css_writer.run(bundler.log, bundler.allocator);
+                    var did_warn = false;
+                    try css_writer.run(bundler.log, bundler.allocator, &did_warn);
                     output_file.size = css_writer.written;
                     var file_op = options.OutputFile.FileOperation.fromFile(file.handle, file_path.pretty);
 

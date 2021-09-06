@@ -9,7 +9,11 @@ build-obj:
 sign-macos-x64: 
 	gon sign.macos-x64.json
 
+sign-macos-aarch64: 
+	gon sign.macos-aarch64.json
+
 release-macos-x64: build-obj bun-link-lld-release sign-macos-x64
+release-macos-aarch64: build-obj bun-link-lld-release sign-macos-aarch64
 
 api: 
 	npm install; ./node_modules/.bin/peechy --schema src/api/schema.peechy --esm src/api/schema.js --ts src/api/schema.d.ts --zig src/api/schema.zig
@@ -117,6 +121,15 @@ bun-link-lld-release:
 	clang++ $(BUN_LLD_FLAGS) \
 		build/macos-x86_64/bun.o \
 		-o build/macos-x86_64/bun \
+		-Wl,-dead_strip \
+		-ftls-model=local-exec \
+		-flto \
+		-O3
+
+bun-link-lld-release-aarch64:
+	clang++ $(BUN_LLD_FLAGS) \
+		build/macos-aarch64/bun.o \
+		-o build/macos-aarch64/bun \
 		-Wl,-dead_strip \
 		-ftls-model=local-exec \
 		-flto \

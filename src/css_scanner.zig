@@ -114,6 +114,8 @@ pub const Scanner = struct {
     codepoint: CodePoint = -1,
     approximate_newline_count: usize = 0,
 
+    did_warn_tailwind: bool = false,
+
     pub fn init(log: *logger.Log, allocator: *std.mem.Allocator, source: *const logger.Source) Scanner {
         return Scanner{ .log = log, .source = source, .allocator = allocator };
     }
@@ -316,6 +318,18 @@ pub const Scanner = struct {
         return text;
     }
 
+    pub fn warnTailwind(scanner: *Scanner, start: usize) void {
+        if (scanner.did_warn_tailwind) return;
+        scanner.did_warn_tailwind = true;
+        scanner.log.addWarningFmt(
+            scanner.source,
+            logger.usize2Loc(start),
+            scanner.allocator,
+            "To use Tailwind with Bun, use the Tailwind CLI and import the processed .css file.\nLearn more: https://tailwindcss.com/docs/installation#watching-for-changes",
+            .{},
+        ) catch {};
+    }
+
     pub fn next(
         scanner: *Scanner,
         comptime import_behavior: ImportBehavior,
@@ -495,46 +509,22 @@ pub const Scanner = struct {
                                 switch (word[0]) {
                                     'b' => {
                                         if (strings.eqlComptime(word, "base")) {
-                                            scanner.log.addWarningFmt(
-                                                scanner.source,
-                                                logger.Loc{ .start = @intCast(i32, start) },
-                                                scanner.allocator,
-                                                "Tailwind not supported yet, try @import \"tailwindcss/dist/base.css\";",
-                                                .{},
-                                            ) catch {};
+                                            scanner.warnTailwind(start);
                                         }
                                     },
                                     'c' => {
                                         if (strings.eqlComptime(word, "components")) {
-                                            scanner.log.addWarningFmt(
-                                                scanner.source,
-                                                logger.Loc{ .start = @intCast(i32, start) },
-                                                scanner.allocator,
-                                                "Tailwind not supported yet, try @import \"tailwindcss/dist/components.css\";",
-                                                .{},
-                                            ) catch {};
+                                            scanner.warnTailwind(start);
                                         }
                                     },
                                     'u' => {
                                         if (strings.eqlComptime(word, "utilities")) {
-                                            scanner.log.addWarningFmt(
-                                                scanner.source,
-                                                logger.Loc{ .start = @intCast(i32, start) },
-                                                scanner.allocator,
-                                                "Tailwind not supported yet, try @import \"tailwindcss/dist/utilities.css\";",
-                                                .{},
-                                            ) catch {};
+                                            scanner.warnTailwind(start);
                                         }
                                     },
                                     's' => {
                                         if (strings.eqlComptime(word, "screens")) {
-                                            scanner.log.addWarningFmt(
-                                                scanner.source,
-                                                logger.Loc{ .start = @intCast(i32, start) },
-                                                scanner.allocator,
-                                                "Tailwind not supported yet, try @import \"tailwindcss/dist/screens.css\";",
-                                                .{},
-                                            ) catch {};
+                                            scanner.warnTailwind(start);
                                         }
                                     },
                                     else => continue :toplevel,
@@ -897,7 +887,12 @@ pub fn NewWriter(
             };
         }
 
-        pub fn scan(writer: *Writer, log: *logger.Log, allocator: *std.mem.Allocator) !void {
+        pub fn scan(
+            writer: *Writer,
+            log: *logger.Log,
+            allocator: *std.mem.Allocator,
+            did_warn_tailwind: *bool,
+        ) !void {
             var scanner = Scanner.init(
                 log,
 
@@ -905,10 +900,17 @@ pub fn NewWriter(
                 writer.source,
             );
 
+            scanner.did_warn_tailwind = did_warn_tailwind.*;
             try scanner.next(.scan, @TypeOf(writer), writer, scanChunk);
+            did_warn_tailwind.* = scanner.did_warn_tailwind;
         }
 
-        pub fn append(writer: *Writer, log: *logger.Log, allocator: *std.mem.Allocator) !usize {
+        pub fn append(
+            writer: *Writer,
+            log: *logger.Log,
+            allocator: *std.mem.Allocator,
+            did_warn_tailwind: *bool,
+        ) !usize {
             var scanner = Scanner.init(
                 log,
 
@@ -916,19 +918,30 @@ pub fn NewWriter(
                 writer.source,
             );
 
+            scanner.did_warn_tailwind = did_warn_tailwind.*;
+
             try scanner.next(.omit, @TypeOf(writer), writer, writeBundledChunk);
+            did_warn_tailwind.* = scanner.did_warn_tailwind;
+
             return scanner.approximate_newline_count;
         }
 
-        pub fn run(writer: *Writer, log: *logger.Log, allocator: *std.mem.Allocator) !void {
+        pub fn run(
+            writer: *Writer,
+            log: *logger.Log,
+            allocator: *std.mem.Allocator,
+            did_warn_tailwind: *bool,
+        ) !void {
             var scanner = Scanner.init(
                 log,
 
                 allocator,
                 writer.source,
             );
+            scanner.did_warn_tailwind = did_warn_tailwind.*;
 
             try scanner.next(.keep, @TypeOf(writer), writer, commitChunk);
+            did_warn_tailwind.* = scanner.did_warn_tailwind;
         }
 
         fn writeString(writer: *Writer, str: string, quote: Chunk.TextContent.Quote) !void {
@@ -1180,13 +1193,14 @@ pub fn NewBundler(
             css.buildCtx = &this;
 
             try this.addCSSImport(absolute_path);
+            var did_warn_tailwind: bool = false;
 
             while (this.import_queue.readItem()) |item| {
                 const watcher_id = this.watcher.indexOf(item) orelse unreachable;
                 const watch_item = this.watcher.watchlist.get(watcher_id);
                 const source = try this.getSource(watch_item.file_path, watch_item.fd);
                 css.source = &source;
-                try css.scan(log, allocator);
+                try css.scan(log, allocator, &did_warn_tailwind);
             }
 
             // This exists to identify the entry point
@@ -1222,7 +1236,7 @@ pub fn NewBundler(
                 try this.writeAll("/* ");
                 try this.writeAll(file_path);
                 try this.writeAll("*/\n");
-                lines_of_code += try css.append(log, allocator);
+                lines_of_code += try css.append(log, allocator, &did_warn_tailwind);
             }
 
             try this.writer.done();

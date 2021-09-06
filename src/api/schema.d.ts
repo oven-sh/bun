@@ -310,6 +310,7 @@ type uint32 = number;
     router?: Router;
     reason?: FallbackStep;
     problems?: Problems;
+    cwd?: string;
   }
 
   export interface JSX {

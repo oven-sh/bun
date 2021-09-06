@@ -686,6 +686,9 @@ reason: ?FallbackStep = null,
 /// problems
 problems: ?Problems = null,
 
+/// cwd
+cwd: ?[]const u8 = null,
+
 
 pub fn decode(reader: anytype) anyerror!FallbackMessageContainer {
   var this = std.mem.zeroes(FallbackMessageContainer);
@@ -705,6 +708,9 @@ pub fn decode(reader: anytype) anyerror!FallbackMessageContainer {
 },
       4 => {
         this.problems = try reader.readValue(Problems); 
+},
+      5 => {
+        this.cwd = try reader.readValue([]const u8); 
 },
       else => {
       return error.InvalidMessage;
@@ -730,6 +736,10 @@ if (this.reason) |reason| {
 if (this.problems) |problems| {
   try writer.writeFieldID(4);
    try writer.writeValue(problems);
+}
+if (this.cwd) |cwd| {
+  try writer.writeFieldID(5);
+   try writer.writeValue(cwd);
 }
 try writer.endMessage();
 }

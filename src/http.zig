@@ -259,6 +259,7 @@ pub const RequestContext = struct {
             .message = try std.fmt.allocPrint(allocator, fmt, args),
             .router = if (routes.len > 0) Api.Router{ .route = route_index, .params = params, .routes = routes } else null,
             .reason = step,
+            .cwd = this.bundler.fs.top_level_dir,
             .problems = Api.Problems{
                 .code = @truncate(u16, @errorToInt(err)),
                 .name = @errorName(err),

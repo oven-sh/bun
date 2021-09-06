@@ -478,6 +478,10 @@ function decodeFallbackMessageContainer(bb) {
       result["problems"] = decodeProblems(bb);
       break;
 
+    case 5:
+      result["cwd"] = bb.readString();
+      break;
+
     default:
       throw new Error("Attempted to parse invalid message");
     }
@@ -510,6 +514,12 @@ bb.writeByte(encoded);
   if (value != null) {
     bb.writeByte(4);
     encodeProblems(value, bb);
+  }
+
+  var value = message["cwd"];
+  if (value != null) {
+    bb.writeByte(5);
+    bb.writeString(value);
   }
   bb.writeByte(0);
 

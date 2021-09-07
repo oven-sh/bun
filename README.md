@@ -94,7 +94,7 @@ Bun is a project with incredibly large scope, and it's early days.
 | Feature                                                                                                                | In             |
 | ---------------------------------------------------------------------------------------------------------------------- | -------------- |
 | Symlinks                                                                                                               | Resolver       |
-| Stateful Fast Refresh                                                                                                  | JSX Transpiler |
+| [Finish Fast Refresh](https://github.com/Jarred-Sumner/bun/issues/18)                                                  | JSX Transpiler |
 | Source Maps                                                                                                            | JavaScript     |
 | Source Maps                                                                                                            | CSS            |
 | [Private Class Fields](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Classes/Private_class_fields) | JS Transpiler  |
@@ -109,9 +109,9 @@ Bun is a project with incredibly large scope, and it's early days.
 | [setTimeout](https://developer.mozilla.org/en-US/docs/Web/API/setTimeout)                                              | Bun.js         |
 | `bun run` command                                                                                                      | Bun.js         |
 
-<sup>JS Transpiler == JavaScript Transpiler</sup>
-<sup>TS Transpiler == TypeScript Transpiler</sup>
-<sup>Bun.js == Bun's JavaScriptCore integration that executes JavaScript. Similar to how Node.js & Deno embed V8.</sup>
+<sup>JS Transpiler == JavaScript Transpiler</sup><br/>
+<sup>TS Transpiler == TypeScript Transpiler</sup><br/>
+<sup>Bun.js == Bun's JavaScriptCore integration that executes JavaScript. Similar to how Node.js & Deno embed V8.</sup><br/>
 
 ### Limitations & intended usage
 
@@ -202,11 +202,30 @@ This is useful for preventing flash of unstyled content.
 
 Bun bundles `.css` files imported via `@import` into a single file. It doesn't autoprefix or minify CSS today. Multiple `.css` files imported in one JavaScript file will _not_ be bundled into one file. You'll have to import those from a `.css` file.
 
+This input:
+
+```css
+@import url("./hi.css");
+@import url("./hello.css");
+@import url("./yo.css");
+```
+
+Becomes:
+
+```css
+/* hi.css */
+/* ...contents of hi.css */
+/* hello.css */
+/* ...contents of hello.css */
+/* yo.css */
+/* ...contents of yo.css */
+```
+
 #### CSS runtime
 
 To support hot CSS reloading, Bun inserts `@supports` annotations into CSS that tag which files a stylesheet is composed of. Browsers ignore this, so it doesn't impact styles.
 
-By default, Bun's runtime code automatically listens to `onimportcss` and will insert the `event.detail` into a `<link rel="stylesheet" href={${event.detail}}>` if there is no existing `link` tag with that stylesheet.
+By default, Bun's runtime code automatically listens to `onimportcss` and will insert the `event.detail` into a `<link rel="stylesheet" href={${event.detail}}>` if there is no existing `link` tag with that stylesheet. That's how Bun's equivalent of `style-loader` works.
 
 ### Frameworks
 

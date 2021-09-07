@@ -9,7 +9,7 @@ Bun is a new:
 
 All in one fast &amp; easy-to-use tool. Instead of 1,000 node_modules for development, you only need Bun.
 
-Bun is experimental software. Join [Bun's Discord](https://bun.sh/discord) for help and have a look at [things that don't work yet](#things-that-dont-work-yet).
+**Bun is experimental software**. Join [Bun's Discord](https://bun.sh/discord) for help and have a look at [things that don't work yet](#things-that-dont-work-yet).
 
 ## Install:
 
@@ -18,7 +18,7 @@ Bun is experimental software. Join [Bun's Discord](https://bun.sh/discord) for h
 npm install -g bun-cli
 ```
 
-# Getting started
+### Getting started
 
 ## Using Bun with Next.js
 
@@ -75,32 +75,45 @@ You can override the public directory by passing `--public-dir="path-to-folder"`
 
 If no directory is specified and `./public/` doesn't exist, Bun will try `./static/`. If `./static/` does not exist, but won't serve from a public directory. If you pass `--public-dir=./` Bun will serve from the current directory, but it will check the current directory last instead of first.
 
-# The Bun Bundling Format
+## Using Tailwind with Bun
 
-`bun bun` generates a `node_modules.bun` and (optionally) a `node_modules.server.bun`. This is a new binary file format that makes it very efficient to serialize/deserialize `node_modules`.
+[Tailwind](https://tailwindcss.com/) is a popular CSS utility framework. Currently, the easiest way to use Tailwind with Bun is through Tailwind's CLI. That means running both `bun` and `tailwind`, and importing the file `tailwind`'s CLI outputs.
 
-Unlike many other bundlers, `Bun` only bundles `node_modules`. This is great for development, where most people add/update packages much less frequently than app code (which is also great for caching in browsers). To make that distinction clear, the filename defaults to `node_modules.bun`. We recommend storing `node_modules.bun` in your git repository. Since it's a binary file, it shouldn't clutter your git history and it will make your entire frontend development team move faster if they don't have to re-bundle dependencies.
+Tailwind's docs talk more about [Tailwind's CLI usage](https://tailwindcss.com/docs/installation#watching-for-changes), but the gist is you'll want to run this:
 
-# Things that don't work yet
+```bash
+npx tailwindcss -i ./src/tailwind.css -o ./dist/tailwind.css --watch
+```
+
+From there, make sure to import the `dist/tailwind.css` file (or what you chose as the output).
+
+## Things that don't work yet
 
 Bun is a project with incredibly large scope, and it's early days.
 
-| Feature                                                                                                                | In                    |
-| ---------------------------------------------------------------------------------------------------------------------- | --------------------- |
-| Source Maps (JavaScript)                                                                                               | JavaScript Transpiler |
-| Source Maps (CSS)                                                                                                      | CSS Processor         |
-| [Private Class Fields](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Classes/Private_class_fields) | JavaScript Transpiler |
-| [Import Assertions](https://github.com/tc39/proposal-import-assertions)                                                | JavaScript Transpiler |
-| [`extends`](https://www.typescriptlang.org/tsconfig#extends) in tsconfig.json                                          | TypeScript Transpiler |
-| [jsx](https://www.typescriptlang.org/tsconfig)\* in tsconfig.json                                                      | TypeScript Transpiler |
-| [TypeScript Decorators](https://www.typescriptlang.org/docs/handbook/decorators.html)                                  | TypeScript Transpiler |
-| `@jsxPragma` comments                                                                                                  | JavaScript Transpiler |
-| Sharing `.bun` files                                                                                                   | JavaScript Bundler    |
-| [fetch](https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API) (in SSR)                                           | Bun.js                |
-| [setTimeout](https://developer.mozilla.org/en-US/docs/Web/API/setTimeout) (in SSR)                                     | Bun.js                |
-| `bun run` command                                                                                                      | Bun.js                |
+| Feature                                                                                                                | In             |
+| ---------------------------------------------------------------------------------------------------------------------- | -------------- |
+| Symlinks                                                                                                               | Resolver       |
+| Stateful Fast Refresh                                                                                                  | JSX Transpiler |
+| Source Maps                                                                                                            | JavaScript     |
+| Source Maps                                                                                                            | CSS            |
+| [Private Class Fields](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Classes/Private_class_fields) | JS Transpiler  |
+| [Import Assertions](https://github.com/tc39/proposal-import-assertions)                                                | JS Transpiler  |
+| [`extends`](https://www.typescriptlang.org/tsconfig#extends) in tsconfig.json                                          | TS Transpiler  |
+| [jsx](https://www.typescriptlang.org/tsconfig)\* in tsconfig.json                                                      | TS Transpiler  |
+| [TypeScript Decorators](https://www.typescriptlang.org/docs/handbook/decorators.html)                                  | TS Transpiler  |
+| `@jsxPragma` comments                                                                                                  | JS Transpiler  |
+| JSX source file name                                                                                                   | JS Transpiler  |
+| Sharing `.bun` files                                                                                                   | Bun            |
+| [fetch](https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API)                                                    | Bun.js         |
+| [setTimeout](https://developer.mozilla.org/en-US/docs/Web/API/setTimeout)                                              | Bun.js         |
+| `bun run` command                                                                                                      | Bun.js         |
 
-## Limitations & intended usage
+<sup>JS Transpiler == JavaScript Transpiler</sup>
+<sup>TS Transpiler == TypeScript Transpiler</sup>
+<sup>Bun.js == Bun's JavaScriptCore integration that executes JavaScript. Similar to how Node.js & Deno embed V8.</sup>
+
+### Limitations & intended usage
 
 Bun is great for building websites &amp; webapps. For libraries, consider using Rollup or esbuild instead. Bun currently doesn't minify code and Bun's dead code elimination doesn't look beyond the current file.
 
@@ -113,35 +126,241 @@ Ideally, most projects can use Bun with their existing tooling while making few 
 
 # Configuration
 
-# Building from source
+### Loaders
 
-Estimated: 30-60 minutes :(
+A loader determines how to map imports &amp; file extensions to transforms and output.
 
-Compile Zig:
+Currently, Bun implements the following loaders:
 
-```bash
-git clone https://github.com/jarred-sumner/zig
-cd zig
-git checkout jarred/zig-sloppy-with-small-structs
-cmake . -DCMAKE_PREFIX_PATH=$(brew --prefix llvm) -DZIG_STATIC_LLVM=ON -DCMAKE_BUILD_TYPE=Release && make -j 16
+| Input | Loader                        | Output |
+| ----- | ----------------------------- | ------ |
+| .js   | JSX + JavaScript              | .js    |
+| .jsx  | JSX + JavaScript              | .js    |
+| .ts   | TypeScript + JavaScript       | .js    |
+| .tsx  | TypeScript + JSX + JavaScript | .js    |
+| .mjs  | JavaScript                    | .js    |
+| .css  | CSS                           | .css   |
+| .env  | Env                           | N/A    |
+| .\*   | file                          | string |
+
+Everything else is treated as `file`. `file` replaces the import with a URL (or a path).
+
+You can configure which loaders map to which extensions by passing `--loaders` to `bun`. For example:
+
+```
+bun --loader=.js:js
 ```
 
-Note that `brew install zig` won't work. Bun uses a build of Zig with a couple patches.
+This will disable JSX transforms for `.js` files.
 
-You'll want to make sure `zig` is in `$PATH`. The `zig` binary wil be in the same folder as the newly-cloned `zig` repo. If you use fish, you can run `fish_add_path (pwd)`.
+#### CSS in JS
 
-In `bun`:
+When importing CSS in JavaScript-like loaders, CSS is treated special.
 
-```bash
-git submodule update --init --recursive --progress --depth=1
-make vendor
-zig build headers
-zig build -Drelease-fast
+By default, Bun will transform a statement like this:
+
+```js
+import "../styles/global.css";
 ```
+
+##### When `platform` is `browser`:
+
+```js
+globalThis.document?.dispatchEvent(
+  new CustomEvent("onimportcss", {
+    detail: "http://localhost:3000/styles/globals.css",
+  })
+);
+```
+
+An event handler for turning that into a `<link>` is automatically registered when HMR is enabled. That event handler can be turned off either in a framework's `package.json` or by setting `globalThis["Bun_disableCSSImports"] = true;` in client-side code. Additionally, you can get a list of every .css file imported this way via `globalThis["__BUN"].allImportedStyles`.
+
+##### When `platform` is `bun`:
+
+```js
+//@import url("http://localhost:3000/styles/globals.css");
+```
+
+Additionally, Bun exposes an API for SSR/SSG that returns a flat list of URLs to css files imported. That function is `Bun.getImportedStyles()`.
+
+```ts
+addEventListener("fetch", async (event: FetchEvent) => {
+  var route = Bun.match(event);
+  const App = await import("pages/_app");
+
+  // This returns all .css files that were imported in the line above.
+  // It's recursive, so any file that imports a CSS file will be included.
+  const appStylesheets = Bun.getImportedStyles();
+
+  // ...rest of code
+});
+```
+
+This is useful for preventing flash of unstyled content.
+
+### CSS Loader
+
+Bun bundles `.css` files imported via `@import` into a single file. It doesn't autoprefix or minify CSS today. Multiple `.css` files imported in one JavaScript file will _not_ be bundled into one file. You'll have to import those from a `.css` file.
+
+#### CSS runtime
+
+To support hot CSS reloading, Bun inserts `@supports` annotations into CSS that tag which files a stylesheet is composed of. Browsers ignore this, so it doesn't impact styles.
+
+By default, Bun's runtime code automatically listens to `onimportcss` and will insert the `event.detail` into a `<link rel="stylesheet" href={${event.detail}}>` if there is no existing `link` tag with that stylesheet.
+
+### Frameworks
+
+Frameworks preconfigure Bun to enable developers to use Bun with their existing tooling.
+
+Frameworks are configured via the `framework` object in the `package.json` of the framework (not in the application's `package.json`):
+
+Here is an example:
+
+```json
+{
+  "name": "bun-framework-next",
+  "version": "0.0.0-18",
+  "description": "",
+  "framework": {
+    "displayName": "Next.js",
+    "static": "public",
+    "assetPrefix": "_next/",
+    "router": {
+      "dir": ["pages", "src/pages"],
+      "extensions": [".js", ".ts", ".tsx", ".jsx"]
+    },
+    "css": "onimportcss",
+    "development": {
+      "client": "client.development.tsx",
+      "fallback": "fallback.development.tsx",
+      "server": "server.development.tsx",
+      "css": "onimportcss",
+      "define": {
+        "client": {
+          ".env": "NEXT_PUBLIC_",
+          "defaults": {
+            "process.env.__NEXT_TRAILING_SLASH": "false",
+            "process.env.NODE_ENV": "\"development\"",
+            "process.env.__NEXT_ROUTER_BASEPATH": "''",
+            "process.env.__NEXT_SCROLL_RESTORATION": "false",
+            "process.env.__NEXT_I18N_SUPPORT": "false",
+            "process.env.__NEXT_HAS_REWRITES": "false",
+            "process.env.__NEXT_ANALYTICS_ID": "null",
+            "process.env.__NEXT_OPTIMIZE_CSS": "false",
+            "process.env.__NEXT_CROSS_ORIGIN": "''",
+            "process.env.__NEXT_STRICT_MODE": "false",
+            "process.env.__NEXT_IMAGE_OPTS": "null"
+          }
+        },
+        "server": {
+          ".env": "NEXT_",
+          "defaults": {
+            "process.env.__NEXT_TRAILING_SLASH": "false",
+            "process.env.__NEXT_OPTIMIZE_FONTS": "false",
+            "process.env.NODE_ENV": "\"development\"",
+            "process.env.__NEXT_OPTIMIZE_IMAGES": "false",
+            "process.env.__NEXT_OPTIMIZE_CSS": "false",
+            "process.env.__NEXT_ROUTER_BASEPATH": "''",
+            "process.env.__NEXT_SCROLL_RESTORATION": "false",
+            "process.env.__NEXT_I18N_SUPPORT": "false",
+            "process.env.__NEXT_HAS_REWRITES": "false",
+            "process.env.__NEXT_ANALYTICS_ID": "null",
+            "process.env.__NEXT_CROSS_ORIGIN": "''",
+            "process.env.__NEXT_STRICT_MODE": "false",
+            "process.env.__NEXT_IMAGE_OPTS": "null",
+            "global": "globalThis",
+            "window": "undefined"
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+Here are type definitions:
+
+```ts
+type Framework = Environment & {
+  // This changes what's printed in the console on load
+  displayName?: string;
+
+  // This allows a prefix to be added (and ignored) to requests.
+  // Useful for integrating an existing framework that expects internal routes to have a prefix
+  // e.g. "_next"
+  assetPrefix?: string;
+
+  development?: Environment;
+  production?: Environment;
+
+  // The directory used for serving unmodified assets like fonts and images
+  // Defaults to "public" if exists, else "static", else disabled.
+  static?: string;
+
+  // "onimportcss" disables the automatic "onimportcss" feature
+  // If the framework does routing, you may want to handle CSS manually
+  // "facade" removes CSS imports from JavaScript files,
+  //    and replaces an imported object with a proxy that mimics CSS module support without doing any class renaming.
+  css?: "onimportcss" | "facade";
+
+  // Bun's filesystem router
+  router?: Router;
+};
+
+type Define = {
+  // By passing ".env", Bun will automatically load .env.local, .env.development, and .env if exists in the project root
+  //    (in addition to the processes' environment variables)
+  // When "*", all environment variables will be automatically injected into the JavaScript loader
+  // When a string like "NEXT_PUBLIC_", only environment variables starting with that prefix will be injected
+
+  ".env": string | "*";
+
+  // These environment variables will be injected into the JavaScript loader
+  // These are the equivalent of Webpack's resolve.alias and esbuild's --define.
+  // Values are parsed as JSON, so they must be valid JSON. The only exception is '' is a valid string, to simplify writing stringified JSON in JSON.
+  // If not set, `process.env.NODE_ENV` will be transformed into "development".
+  defaults: Record<string, string>;
+};
+
+type Environment = {
+  // This is a wrapper for the client-side entry point for a route.
+  // This allows frameworks to run initialization code on pages.
+  client: string;
+  // This is a wrapper for the server-side entry point for a route.
+  // This allows frameworks to run initialization code on pages.
+  server: string;
+  // This runs when "server" code fails to load due to an exception.
+  fallback: string;
+
+  // This is how environment variables and .env is configured.
+  define?: Define;
+};
+
+// Bun's filesystem router
+// Currently, Bun supports pages by either an absolute match or a parameter match.
+// pages/index.tsx will be executed on navigation to "/" and "/index"
+// pages/posts/[id].tsx will be executed on navigation to "/posts/123"
+// Routes & parameters are automatically passed to `fallback` and `server`.
+type Router = {
+  // This determines the folder to look for pages
+  dir: string[];
+
+  // These are the allowed file extensions for pages.
+  extensions?: string[];
+};
+```
+
+To use a framework, you pass `bun bun --use package-name`.
+
+Your framework's package.json `name` should start with `bun-framework-`. This is so that people can type something like `bun bun --use next` and it will check `bun-framework-next` first. This is similar to how Babel plugins tend to start with `babel-plugin-`.
+
+For developing frameworks, you can also do `bun bun --use ./relative-path-to-framework`.
+
+If you're interested in adding a framework integration, please reach out. There's a lot here and it's not entirely documented yet.
 
 # Credits
 
-- While written in Zig instead of Go, Bun's JS transpiler & CSS lexer source code is based off of @evanw's esbuild project. @evanw did a fantastic job with esbuild.
+- While written in Zig instead of Go, Bun's JS transpiler, CSS lexer, and node module resolver source code is based off of @evanw's esbuild project. @evanw did a fantastic job with esbuild.
 
 # License
 
@@ -192,3 +411,30 @@ For compatibiltiy reasons, these NPM packages are embedded into Bun's binary and
 - [`url`](https://npmjs.com/package/url) (MIT license)
 - [`util`](https://npmjs.com/package/util) (MIT license)
 - [`vm-browserify`](https://npmjs.com/package/vm-browserify) (MIT license)
+
+# Developing Bun
+
+Estimated: 30-90 minutes :(
+
+Compile Zig:
+
+```bash
+git clone https://github.com/jarred-sumner/zig
+cd zig
+git checkout jarred/zig-sloppy-with-small-structs
+cmake . -DCMAKE_PREFIX_PATH=$(brew --prefix llvm) -DZIG_STATIC_LLVM=ON -DCMAKE_BUILD_TYPE=Release && make -j 16
+```
+
+Note that `brew install zig` won't work. Bun uses a build of Zig with a couple patches.
+
+You'll want to make sure `zig` is in `$PATH`. The `zig` binary wil be in the same folder as the newly-cloned `zig` repo. If you use fish, you can run `fish_add_path (pwd)`.
+
+In `bun`:
+
+```bash
+git submodule update --init --recursive --progress --depth=1
+make vendor
+zig build headers
+make jsc-bindings-mac
+zig build -Drelease-fast
+```

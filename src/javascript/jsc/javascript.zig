@@ -324,6 +324,7 @@ pub const Bun = struct {
     );
 };
 
+const bun_file_import_path = "/node_modules.server.bun";
 pub const LazyClasses = [_]type{};
 
 pub const Module = struct {
@@ -459,7 +460,7 @@ pub const VirtualMachine = struct {
         std.debug.assert(VirtualMachine.vm_loaded);
         std.debug.assert(VirtualMachine.vm.global == global);
 
-        if (vm.node_modules != null and strings.eql(vm.bundler.linker.nodeModuleBundleImportPath(), _specifier)) {
+        if (vm.node_modules != null and strings.eqlComptime(_specifier, bun_file_import_path)) {
             // We kind of need an abstraction around this.
             // Basically we should subclass JSC::SourceCode with:
             // - hash
@@ -471,11 +472,11 @@ pub const VirtualMachine = struct {
             return ResolvedSource{
                 .allocator = null,
                 .source_code = ZigString.init(code),
-                .specifier = ZigString.init(vm.bundler.linker.nodeModuleBundleImportPath()),
-                .source_url = ZigString.init(vm.bundler.options.node_modules_bundle_pretty_path),
+                .specifier = ZigString.init(bun_file_import_path),
+                .source_url = ZigString.init(bun_file_import_path[1..]),
                 .hash = 0, // TODO
                 .bytecodecache_fd = std.math.lossyCast(u64, vm.node_modules.?.fetchByteCodeCache(
-                    vm.bundler.options.node_modules_bundle_pretty_path,
+                    bun_file_import_path[1..],
                     &vm.bundler.fs.fs,
                 ) orelse 0),
             };
@@ -658,8 +659,8 @@ pub const VirtualMachine = struct {
         if (vm.node_modules == null and strings.eqlComptime(specifier, Runtime.Runtime.Imports.Name)) {
             ret.path = Runtime.Runtime.Imports.Name;
             return;
-        } else if (vm.node_modules != null and strings.eql(specifier, vm.bundler.linker.nodeModuleBundleImportPath())) {
-            ret.path = vm.bundler.linker.nodeModuleBundleImportPath();
+        } else if (vm.node_modules != null and strings.eql(specifier, bun_file_import_path)) {
+            ret.path = bun_file_import_path;
             return;
         } else if (strings.eqlComptime(specifier, main_file_name)) {
             ret.result = null;
@@ -713,7 +714,7 @@ pub const VirtualMachine = struct {
 
                     if (node_modules_bundle.findModuleIDInPackage(package, package_relative_path) == null) break :node_module_checker;
 
-                    ret.path = vm.bundler.linker.nodeModuleBundleImportPath();
+                    ret.path = bun_file_import_path;
                     return;
                 }
             }
@@ -910,7 +911,7 @@ pub const VirtualMachine = struct {
         // We first import the node_modules bundle. This prevents any potential TDZ issues.
         // The contents of the node_modules bundle are lazy, so hopefully this should be pretty quick.
         if (this.node_modules != null) {
-            promise = JSModuleLoader.loadAndEvaluateModule(this.global, ZigString.init(std.mem.span(vm.bundler.linker.nodeModuleBundleImportPath())));
+            promise = JSModuleLoader.loadAndEvaluateModule(this.global, ZigString.init(std.mem.span(bun_file_import_path)));
 
             this.global.vm().drainMicrotasks();
 
@@ -1208,33 +1209,43 @@ pub const VirtualMachine = struct {
                 writer.writeByteNTimes(' ', pad) catch unreachable;
                 const top = exception.stack.frames()[0];
                 var remainder = std.mem.trim(u8, source.text, "\n");
-                const prefix = remainder[0..@intCast(usize, top.position.column_start)];
-                const underline = remainder[@intCast(usize, top.position.column_start)..@intCast(usize, top.position.column_stop)];
-                const suffix = remainder[@intCast(usize, top.position.column_stop)..];
+                if (@intCast(usize, top.position.column_stop) > remainder.len) {
+                    writer.print(
+                        comptime Output.prettyFmt(
+                            "<r><d>{d} |<r> {s}\n",
+                            allow_ansi_color,
+                        ),
+                        .{ source.line, remainder },
+                    ) catch unreachable;
+                } else {
+                    const prefix = remainder[0..@intCast(usize, top.position.column_start)];
+                    const underline = remainder[@intCast(usize, top.position.column_start)..@intCast(usize, top.position.column_stop)];
+                    const suffix = remainder[@intCast(usize, top.position.column_stop)..];
 
-                writer.print(
-                    comptime Output.prettyFmt(
-                        "<r><d>{d} |<r> {s}<red>{s}<r>{s}<r>\n<r>",
+                    writer.print(
+                        comptime Output.prettyFmt(
+                            "<r><d>{d} |<r> {s}<red>{s}<r>{s}<r>\n<r>",
+                            allow_ansi_color,
+                        ),
+                        .{
+                            source.line,
+                            prefix,
+                            underline,
+                            suffix,
+                        },
+                    ) catch unreachable;
+                    var first_non_whitespace = @intCast(u32, top.position.column_start);
+                    while (first_non_whitespace < source.text.len and source.text[first_non_whitespace] == ' ') {
+                        first_non_whitespace += 1;
+                    }
+                    const indent = @intCast(usize, pad) + " | ".len + first_non_whitespace + 1;
+
+                    writer.writeByteNTimes(' ', indent) catch unreachable;
+                    writer.print(comptime Output.prettyFmt(
+                        "<red><b>^<r>\n",
                         allow_ansi_color,
-                    ),
-                    .{
-                        source.line,
-                        prefix,
-                        underline,
-                        suffix,
-                    },
-                ) catch unreachable;
-                var first_non_whitespace = @intCast(u32, top.position.column_start);
-                while (first_non_whitespace < source.text.len and source.text[first_non_whitespace] == ' ') {
-                    first_non_whitespace += 1;
+                    ), .{}) catch unreachable;
                 }
-                const indent = @intCast(usize, pad) + " | ".len + first_non_whitespace + 1;
-
-                writer.writeByteNTimes(' ', indent) catch unreachable;
-                writer.print(comptime Output.prettyFmt(
-                    "<red><b>^<r>\n",
-                    allow_ansi_color,
-                ), .{}) catch unreachable;
 
                 if (name.len > 0 and message.len > 0) {
                     writer.print(comptime Output.prettyFmt(" <r><red><b>{s}<r><d>:<r> <b>{s}<r>\n", allow_ansi_color), .{

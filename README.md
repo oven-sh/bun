@@ -9,7 +9,7 @@ Bun is a new:
 
 All in one fast &amp; easy-to-use tool. Instead of 1,000 node_modules for development, you only need Bun.
 
-Bun is experimental software. Join [Bun's Discord](https://bun.sh/discord) for help and have a look at [things that don't work yet](#things-that-dont-work-yet). Most notably, this early version of Bun is not for building 
+Bun is experimental software. Join [Bun's Discord](https://bun.sh/discord) for help and have a look at [things that don't work yet](#things-that-dont-work-yet).
 
 ## Install:
 
@@ -100,7 +100,18 @@ Bun is a project with incredibly large scope, and it's early days.
 | [setTimeout](https://developer.mozilla.org/en-US/docs/Web/API/setTimeout) (in SSR)                                     | Bun.js                |
 | `bun run` command                                                                                                      | Bun.js                |
 
-All of these are planned to work eventually, maybe with the exception of `setTimeout` inside of SSR.
+## Limitations & intended usage
+
+Bun is great for building websites &amp; webapps. For libraries, consider using Rollup or esbuild instead. Bun currently doesn't minify code and Bun's dead code elimination doesn't look beyond the current file.
+
+Bun is focused on:
+
+- Development, not production
+- Compatibility with existing frameworks & tooling
+
+Ideally, most projects can use Bun with their existing tooling while making few changes to their codebase. That means using Bun in development, and continuing to use Webpack, esbuild, or another bundler in production. Using two bundlers might sound strange at first, but after all the production-only AST transforms, minification, and special development/production-only imported files...it's not far from the status quo.
+
+# Configuration
 
 # Building from source
 

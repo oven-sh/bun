@@ -901,14 +901,17 @@ pub fn NewBundler(cache_files: bool) type {
 
                 const basename = std.fs.path.basename(std.mem.span(destination));
                 const extname = std.fs.path.extension(basename);
-                javascript_bundle.import_from_name = try std.fmt.allocPrint(
-                    this.allocator,
-                    "/{s}.{x}.bun",
-                    .{
-                        basename[0 .. basename.len - extname.len],
-                        etag_u64,
-                    },
-                );
+                javascript_bundle.import_from_name = if (bundler.options.platform == .bun)
+                    "/node_modules.server.bun"
+                else
+                    try std.fmt.allocPrint(
+                        this.allocator,
+                        "/{s}.{x}.bun",
+                        .{
+                            basename[0 .. basename.len - extname.len],
+                            etag_u64,
+                        },
+                    );
 
                 javascript_bundle_container.bundle_format_version = current_version;
                 javascript_bundle_container.bundle = javascript_bundle;
@@ -2820,36 +2823,9 @@ pub const ClientEntryPoint = struct {
             code = try std.fmt.bufPrint(
                 &entry.code_buffer,
                 \\globalThis.Bun_disableCSSImports = true;
-                \\var lastErrorHandler = globalThis.onerror;
-                \\var loaded = {{boot: false, entry: false, onError: null}};
-                \\if (!lastErrorHandler || !lastErrorHandler.__onceTag) {{
-                \\  globalThis.onerror = function (evt) {{
-                \\      if (this.onError && typeof this.onError == 'function') {{
-                \\          this.onError(evt, loaded);
-                \\      }}
-                \\      console.error(evt.error);
-                \\      debugger;
-                \\  }};
-                \\  globalThis.onerror.__onceTag = true;
-                \\  globalThis.onerror.loaded = loaded;
-                \\}}
-                \\
                 \\import boot from '{s}';
-                \\loaded.boot = true;
-                \\if ('setLoaded' in boot) boot.setLoaded(loaded);
                 \\import * as EntryPoint from '{s}{s}';
-                \\loaded.entry = true;
-                \\
-                \\if (!boot) {{
-                \\ const now = Date.now();
-                \\ debugger;
-                \\ const elapsed = Date.now() - now;
-                \\ if (elapsed < 1000) {{
-                \\   throw new Error('Expected framework to export default a function. Instead, framework exported:', Object.keys(boot));
-                \\ }}
-                \\}}
-                \\
-                \\boot(EntryPoint, loaded);
+                \\boot(EntryPoint);
             ,
                 .{
                     client,
@@ -2860,36 +2836,10 @@ pub const ClientEntryPoint = struct {
         } else {
             code = try std.fmt.bufPrint(
                 &entry.code_buffer,
-                \\var lastErrorHandler = globalThis.onerror;
-                \\var loaded = {{boot: false, entry: false, onError: null}};
-                \\if (!lastErrorHandler || !lastErrorHandler.__onceTag) {{
-                \\  globalThis.onerror = function (evt) {{
-                \\      if (this.onError && typeof this.onError == 'function') {{
-                \\          this.onError(evt, loaded);
-                \\      }}
-                \\      console.error(evt.error);
-                \\      debugger;
-                \\  }};
-                \\  globalThis.onerror.__onceTag = true;
-                \\  globalThis.onerror.loaded = loaded;
-                \\}}
-                \\
                 \\import boot from '{s}';
-                \\loaded.boot = true;
                 \\if ('setLoaded' in boot) boot.setLoaded(loaded);
                 \\import * as EntryPoint from '{s}{s}';
-                \\loaded.entry = true;
-                \\
-                \\if (!boot) {{
-                \\ const now = Date.now();
-                \\ debugger;
-                \\ const elapsed = Date.now() - now;
-                \\ if (elapsed < 1000) {{
-                \\   throw new Error('Expected framework to export default a function. Instead, framework exported:', Object.keys(boot));
-                \\ }}
-                \\}}
-                \\
-                \\boot(EntryPoint, loaded);
+                \\boot(EntryPoint);
             ,
                 .{
                     client,

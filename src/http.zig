@@ -12,6 +12,7 @@ const logger = @import("logger.zig");
 const Fs = @import("./fs.zig");
 const Options = @import("./options.zig");
 const Fallback = @import("./runtime.zig").Fallback;
+const ErrorCSS = @import("./runtime.zig").ErrorCSS;
 const Css = @import("css_scanner.zig");
 const NodeModuleBundle = @import("./node_module_bundle.zig").NodeModuleBundle;
 const resolve_path = @import("./resolver/resolve_path.zig");
@@ -639,6 +640,7 @@ pub const RequestContext = struct {
             value: Value,
             id: u32,
             timestamp: u32,
+            log: logger.Log,
             bytes: []const u8 = "",
             approximate_newline_count: usize = 0,
             pub const Value = union(Tag) {
@@ -650,7 +652,7 @@ pub const RequestContext = struct {
                 fail,
             };
         };
-        pub fn build(this: *WatchBuilder, id: u32, from_timestamp: u32) !WatchBuildResult {
+        pub fn build(this: *WatchBuilder, id: u32, from_timestamp: u32, allocator: *std.mem.Allocator) !WatchBuildResult {
             if (this.count == 0) {
                 var writer = try js_printer.BufferWriter.init(this.allocator);
                 this.printer = js_printer.BufferPrinter.init(writer);
@@ -658,8 +660,8 @@ pub const RequestContext = struct {
             }
 
             defer this.count += 1;
-            var log = logger.Log.init(this.allocator);
-            errdefer log.deinit();
+
+            var log = logger.Log.init(allocator);
 
             const index = std.mem.indexOfScalar(u32, this.watcher.watchlist.items(.hash), id) orelse {
 
@@ -667,6 +669,7 @@ pub const RequestContext = struct {
                 return WatchBuildResult{
                     .value = .{ .fail = std.mem.zeroes(Api.WebsocketMessageBuildFailure) },
                     .id = id,
+                    .log = log,
                     .timestamp = WebsocketHandler.toTimestamp(Server.global_start_time.read()),
                 };
             };
@@ -674,7 +677,6 @@ pub const RequestContext = struct {
             const file_path_str = this.watcher.watchlist.items(.file_path)[index];
             const fd = this.watcher.watchlist.items(.fd)[index];
             const loader = this.watcher.watchlist.items(.loader)[index];
-
             const path = Fs.Path.init(file_path_str);
             var old_log = this.bundler.log;
             this.bundler.setLog(&log);
@@ -695,7 +697,7 @@ pub const RequestContext = struct {
                     this.bundler.resetStore();
 
                     var parse_result = this.bundler.parse(
-                        this.bundler.allocator,
+                        allocator,
                         path,
                         loader,
                         0,
@@ -704,26 +706,64 @@ pub const RequestContext = struct {
                         null,
                     ) orelse {
                         return WatchBuildResult{
-                            .value = .{ .fail = std.mem.zeroes(Api.WebsocketMessageBuildFailure) },
+                            .value = .{
+                                .fail = .{
+                                    .id = id,
+                                    .from_timestamp = from_timestamp,
+                                    .loader = loader.toAPI(),
+                                    .module_path = this.bundler.fs.relativeTo(file_path_str),
+                                    .log = try log.toAPI(allocator),
+                                },
+                            },
                             .id = id,
+                            .log = log,
                             .timestamp = WebsocketHandler.toTimestamp(Server.global_start_time.read()),
                         };
                     };
 
                     this.printer.ctx.reset();
+                    {
+                        var old_allocator = this.bundler.linker.allocator;
+                        this.bundler.linker.allocator = allocator;
+                        defer this.bundler.linker.allocator = old_allocator;
+                        this.bundler.linker.link(
+                            Fs.Path.init(file_path_str),
+                            &parse_result,
+                            .absolute_url,
+                            false,
+                        ) catch |err| {
+                            return WatchBuildResult{
+                                .value = .{
+                                    .fail = .{
+                                        .id = id,
+                                        .from_timestamp = from_timestamp,
+                                        .loader = loader.toAPI(),
+                                        .module_path = this.bundler.fs.relativeTo(file_path_str),
+                                        .log = try log.toAPI(allocator),
+                                    },
+                                },
 
-                    try this.bundler.linker.link(
-                        Fs.Path.init(file_path_str),
-                        &parse_result,
-                        .absolute_url,
-                        false,
-                    );
+                                .id = id,
+                                .timestamp = WebsocketHandler.toTimestamp(Server.global_start_time.read()),
+                                .log = log,
+                            };
+                        };
+                    }
 
                     var written = this.bundler.print(parse_result, @TypeOf(&this.printer), &this.printer, .esm) catch |err| {
                         return WatchBuildResult{
-                            .value = .{ .fail = std.mem.zeroes(Api.WebsocketMessageBuildFailure) },
+                            .value = .{
+                                .fail = .{
+                                    .id = id,
+                                    .from_timestamp = from_timestamp,
+                                    .loader = loader.toAPI(),
+                                    .module_path = this.bundler.fs.relativeTo(file_path_str),
+                                    .log = try log.toAPI(allocator),
+                                },
+                            },
                             .id = id,
                             .timestamp = WebsocketHandler.toTimestamp(Server.global_start_time.read()),
+                            .log = log,
                         };
                     };
 
@@ -735,13 +775,13 @@ pub const RequestContext = struct {
                                 .loader = parse_result.loader.toAPI(),
                                 .module_path = this.bundler.fs.relativeTo(file_path_str),
                                 .blob_length = @truncate(u32, written),
-                                // .log = std.mem.zeroes(Api.Log),
                             },
                         },
                         .id = id,
                         .bytes = this.printer.ctx.written,
                         .approximate_newline_count = parse_result.ast.approximate_newline_count,
                         .timestamp = WebsocketHandler.toTimestamp(Server.global_start_time.read()),
+                        .log = log,
                     };
                 },
                 .css => {
@@ -767,7 +807,7 @@ pub const RequestContext = struct {
 
                     const count = brk: {
                         if (this.bundler.options.hot_module_reloading) {
-                            break :brk try CSSBundlerHMR.bundle(
+                            break :brk CSSBundlerHMR.bundle(
                                 file_path_str,
                                 this.bundler.fs,
                                 &this.printer,
@@ -780,7 +820,7 @@ pub const RequestContext = struct {
                                 &this.bundler.linker,
                             );
                         } else {
-                            break :brk try CSSBundler.bundle(
+                            break :brk CSSBundler.bundle(
                                 file_path_str,
                                 this.bundler.fs,
                                 &this.printer,
@@ -793,6 +833,21 @@ pub const RequestContext = struct {
                                 &this.bundler.linker,
                             );
                         }
+                    } catch {
+                        return WatchBuildResult{
+                            .value = .{
+                                .fail = .{
+                                    .id = id,
+                                    .from_timestamp = from_timestamp,
+                                    .loader = loader.toAPI(),
+                                    .module_path = this.bundler.fs.relativeTo(file_path_str),
+                                    .log = try log.toAPI(allocator),
+                                },
+                            },
+                            .id = id,
+                            .timestamp = WebsocketHandler.toTimestamp(Server.global_start_time.read()),
+                            .log = log,
+                        };
                     };
 
                     return WatchBuildResult{
@@ -811,6 +866,7 @@ pub const RequestContext = struct {
                         .approximate_newline_count = count.approximate_newline_count,
                         // .approximate_newline_count = parse_result.ast.approximate_newline_count,
                         .timestamp = WebsocketHandler.toTimestamp(Server.global_start_time.read()),
+                        .log = log,
                     };
                 },
                 else => {
@@ -818,6 +874,7 @@ pub const RequestContext = struct {
                         .value = .{ .fail = std.mem.zeroes(Api.WebsocketMessageBuildFailure) },
                         .id = id,
                         .timestamp = WebsocketHandler.toTimestamp(Server.global_start_time.read()),
+                        .log = log,
                     };
                 },
             }
@@ -1420,31 +1477,34 @@ pub const RequestContext = struct {
                 .kind = .welcome,
             };
             var cmd_reader: ApiReader = undefined;
-            var byte_buf: [32]u8 = undefined;
-            var fbs = std.io.fixedBufferStream(&byte_buf);
-            var writer = ByteApiWriter.init(&fbs);
+            {
+                var byte_buf: [32 + std.fs.MAX_PATH_BYTES]u8 = undefined;
+                var fbs = std.io.fixedBufferStream(&byte_buf);
+                var writer = ByteApiWriter.init(&fbs);
 
-            try msg.encode(&writer);
-            var reloader = Api.Reloader.disable;
-            if (ctx.bundler.options.hot_module_reloading) {
-                reloader = Api.Reloader.live;
-                if (ctx.bundler.options.jsx.supports_fast_refresh) {
-                    if (ctx.bundler.options.node_modules_bundle) |bundle| {
-                        if (bundle.hasFastRefresh()) {
-                            reloader = Api.Reloader.fast_refresh;
+                try msg.encode(&writer);
+                var reloader = Api.Reloader.disable;
+                if (ctx.bundler.options.hot_module_reloading) {
+                    reloader = Api.Reloader.live;
+                    if (ctx.bundler.options.jsx.supports_fast_refresh) {
+                        if (ctx.bundler.options.node_modules_bundle) |bundle| {
+                            if (bundle.hasFastRefresh()) {
+                                reloader = Api.Reloader.fast_refresh;
+                            }
                         }
                     }
                 }
-            }
-            const welcome_message = Api.WebsocketMessageWelcome{
-                .epoch = WebsocketHandler.toTimestamp(handler.ctx.timer.start_time),
-                .javascript_reloader = reloader,
-            };
-            try welcome_message.encode(&writer);
-            if ((try handler.websocket.writeBinary(fbs.getWritten())) == 0) {
-                handler.tombstone = true;
-                is_socket_closed = true;
-                Output.prettyErrorln("<r><red>ERR:<r> <b>Websocket failed to write.<r>", .{});
+                const welcome_message = Api.WebsocketMessageWelcome{
+                    .epoch = WebsocketHandler.toTimestamp(handler.ctx.timer.start_time),
+                    .javascript_reloader = reloader,
+                    .cwd = handler.ctx.bundler.fs.top_level_dir,
+                };
+                try welcome_message.encode(&writer);
+                if ((try handler.websocket.writeBinary(fbs.getWritten())) == 0) {
+                    handler.tombstone = true;
+                    is_socket_closed = true;
+                    Output.prettyErrorln("<r><red>ERR:<r> <b>Websocket failed to write.<r>", .{});
+                }
             }
 
             while (!handler.tombstone) {
@@ -1485,7 +1545,11 @@ pub const RequestContext = struct {
                         switch (cmd.kind) {
                             .build => {
                                 var request = try Api.WebsocketCommandBuild.decode(&cmd_reader);
-                                var build_result = try handler.builder.build(request.id, cmd.timestamp);
+
+                                var arena = std.heap.ArenaAllocator.init(default_allocator);
+                                defer arena.deinit();
+
+                                var build_result = try handler.builder.build(request.id, cmd.timestamp, &arena.allocator);
                                 const file_path = switch (build_result.value) {
                                     .fail => |fail| fail.module_path,
                                     .success => |fail| fail.module_path,
@@ -1993,6 +2057,26 @@ pub const RequestContext = struct {
             return;
         }
 
+        if (strings.eqlComptime(path, "erro.css")) {
+            const buffer = ErrorCSS.sourceContent();
+            ctx.appendHeader("Content-Type", MimeType.css.value);
+            if (FeatureFlags.strong_etags_for_built_files) {
+                const did_send = ctx.writeETag(buffer) catch false;
+                if (did_send) return;
+            }
+
+            if (buffer.len == 0) {
+                return try ctx.sendNoContent();
+            }
+            const send_body = ctx.method == .GET;
+            defer ctx.done();
+            try ctx.writeStatus(200);
+            try ctx.prepareToSendBody(buffer.len, false);
+            if (!send_body) return;
+            _ = try ctx.writeSocket(buffer, SOCKET_FLAGS);
+            return;
+        }
+
         if (strings.eqlComptime(path, "fallback")) {
             const resolved = try ctx.bundler.resolver.resolve(ctx.bundler.fs.top_level_dir, ctx.bundler.options.framework.?.fallback.path, .stmt);
             const resolved_path = resolved.pathConst() orelse return try ctx.sendNotFound();
@@ -2012,6 +2096,77 @@ pub const RequestContext = struct {
         return;
     }
 
+    // https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Sec-Fetch-Dest
+    pub fn isScriptOrStyleRequest(ctx: *RequestContext) bool {
+        const header_ = ctx.header("Sec-Fetch-Dest") orelse return false;
+        return strings.eqlComptime(header_.value, "script") or
+            strings.eqlComptime(header_.value, "style");
+    }
+
+    fn handleSrcURL(ctx: *RequestContext, server: *Server) !void {
+        var input_path = ctx.url.path["src:".len..];
+        while (std.mem.indexOfScalar(u8, input_path, ':')) |i| {
+            input_path = input_path[0..i];
+        }
+        if (input_path.len == 0) return ctx.sendNotFound();
+
+        const pathname = Fs.PathName.init(input_path);
+        const result = try ctx.buildFile(input_path, pathname.ext);
+
+        switch (result.file.value) {
+            .pending => |resolve_result| {
+                const path = resolve_result.pathConst() orelse return try ctx.sendNotFound();
+
+                var needs_close = false;
+                const fd = if (resolve_result.file_fd != 0)
+                    resolve_result.file_fd
+                else brk: {
+                    var file = std.fs.openFileAbsoluteZ(path.textZ(), .{ .read = true }) catch |err| {
+                        Output.prettyErrorln("Failed to open {s} due to error {s}", .{ path.text, @errorName(err) });
+                        return try ctx.sendInternalError(err);
+                    };
+                    needs_close = true;
+                    break :brk file.handle;
+                };
+                defer {
+                    if (needs_close) {
+                        std.os.close(fd);
+                    }
+                }
+
+                const content_length = brk: {
+                    var file = std.fs.File{ .handle = fd };
+                    var stat = file.stat() catch |err| {
+                        Output.prettyErrorln("Failed to read {s} due to error {s}", .{ path.text, @errorName(err) });
+                        return try ctx.sendInternalError(err);
+                    };
+                    break :brk stat.size;
+                };
+
+                if (content_length == 0) {
+                    return try ctx.sendNoContent();
+                }
+
+                ctx.appendHeader("Content-Type", "text/plain");
+                defer ctx.done();
+
+                try ctx.writeStatus(200);
+                try ctx.prepareToSendBody(content_length, false);
+
+                _ = try std.os.sendfile(
+                    ctx.conn.client.socket.fd,
+                    fd,
+                    0,
+                    content_length,
+                    &[_]std.os.iovec_const{},
+                    &[_]std.os.iovec_const{},
+                    0,
+                );
+            },
+            else => return try ctx.sendNotFound(),
+        }
+    }
+
     pub fn handleReservedRoutes(ctx: *RequestContext, server: *Server) !bool {
         if (strings.eqlComptime(ctx.url.extname, "bun") and ctx.bundler.options.node_modules_bundle != null) {
             try ctx.sendJSB();
@@ -2023,59 +2178,66 @@ pub const RequestContext = struct {
             return true;
         }
 
-        if (ctx.url.path.len > "bun:".len and strings.eqlComptimeIgnoreLen(ctx.url.path[0.."bun:".len], "bun:")) {
+        const isMaybePrefix = ctx.url.path.len > "bun:".len;
+        if (isMaybePrefix and strings.eqlComptimeIgnoreLen(ctx.url.path[0.."bun:".len], "bun:")) {
             try ctx.handleBunURL(server);
+            return true;
+        } else if (isMaybePrefix and strings.eqlComptimeIgnoreLen(ctx.url.path[0.."src:".len], "src:")) {
+            try ctx.handleSrcURL(server);
             return true;
         }
 
         return false;
     }
 
-    pub fn handleGet(ctx: *RequestContext) !void {
-        const result = brk: {
-            if (ctx.bundler.options.isFrontendFrameworkEnabled()) {
-                if (serve_as_package_path) {
-                    break :brk try ctx.bundler.buildFile(
-                        &ctx.log,
-                        ctx.allocator,
-                        ctx.url.pathWithoutAssetPrefix(ctx.bundler.options.routes.asset_prefix_path),
-                        ctx.url.extname,
-                        true,
-                        true,
-                    );
-                } else {
-                    break :brk try ctx.bundler.buildFile(
-                        &ctx.log,
-                        ctx.allocator,
-                        ctx.url.pathWithoutAssetPrefix(ctx.bundler.options.routes.asset_prefix_path),
-                        ctx.url.extname,
-                        true,
-                        false,
-                    );
-                }
+    pub inline fn buildFile(ctx: *RequestContext, path_name: string, extname: string) !bundler.ServeResult {
+        if (ctx.bundler.options.isFrontendFrameworkEnabled()) {
+            if (serve_as_package_path) {
+                return try ctx.bundler.buildFile(
+                    &ctx.log,
+                    ctx.allocator,
+                    path_name,
+                    extname,
+                    true,
+                    true,
+                );
             } else {
-                if (serve_as_package_path) {
-                    break :brk try ctx.bundler.buildFile(
-                        &ctx.log,
-                        ctx.allocator,
-                        ctx.url.pathWithoutAssetPrefix(ctx.bundler.options.routes.asset_prefix_path),
-                        ctx.url.extname,
-                        false,
-                        true,
-                    );
-                } else {
-                    break :brk try ctx.bundler.buildFile(
-                        &ctx.log,
-                        ctx.allocator,
-                        ctx.url.pathWithoutAssetPrefix(ctx.bundler.options.routes.asset_prefix_path),
-                        ctx.url.extname,
-                        false,
-                        false,
-                    );
-                }
+                return try ctx.bundler.buildFile(
+                    &ctx.log,
+                    ctx.allocator,
+                    path_name,
+                    extname,
+                    true,
+                    false,
+                );
             }
-        };
-
+        } else {
+            if (serve_as_package_path) {
+                return try ctx.bundler.buildFile(
+                    &ctx.log,
+                    ctx.allocator,
+                    path_name,
+                    extname,
+                    false,
+                    true,
+                );
+            } else {
+                return try ctx.bundler.buildFile(
+                    &ctx.log,
+                    ctx.allocator,
+                    path_name,
+                    extname,
+                    false,
+                    false,
+                );
+            }
+        }
+    }
+    pub fn handleGet(ctx: *RequestContext) !void {
+        const result = try ctx.buildFile(
+            ctx.url.pathWithoutAssetPrefix(ctx.bundler.options.routes.asset_prefix_path),
+            ctx.url.extname,
+        );
         try @call(.{ .modifier = .always_inline }, RequestContext.renderServeResult, .{ ctx, result });
     }
 
@@ -2583,7 +2745,9 @@ pub const Server = struct {
     pub fn detectFastRefresh(this: *Server) void {
         defer this.bundler.resetStore();
 
-        _ = this.bundler.resolver.resolve(this.bundler.fs.top_level_dir, "react-refresh/runtime", .internal) catch |err| {
+        // 1. Try react refresh
+        _ = this.bundler.resolver.resolve(this.bundler.fs.top_level_dir, this.bundler.options.jsx.refresh_runtime, .internal) catch |err| {
+            // 2. Try react refresh from import source perspective
             this.bundler.options.jsx.supports_fast_refresh = false;
             return;
         };

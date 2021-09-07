@@ -373,6 +373,8 @@ if (typeof window !== "undefined") {
       css: new CSSLoader(),
     };
 
+    sessionId: number;
+
     start() {
       if (runOnce) {
         __hmrlog.warn(
@@ -448,6 +450,7 @@ if (typeof window !== "undefined") {
     // key: module id
     // value: server-timestamp
     builds = new Map<number, number>();
+    cwd: string;
 
     indexOfModuleId(id: number): number {
       return HMRModule.dependencies.graph.indexOf(id);
@@ -586,6 +589,25 @@ if (typeof window !== "undefined") {
       }
 
       this.client = new HMRClient();
+      // if (
+      //   "sessionStorage" in globalThis &&
+      //   globalThis.sessionStorage.getItem("bun-hmr-session-id")
+      // ) {
+      //   this.client.sessionId = parseInt(
+      //     globalThis.sessionStorage.getItem("bun-hmr-session-id"),
+      //     16
+      //   );
+      // } else {
+      //   this.client.sessionId = Math.floor(Math.random() * 65534);
+      //   if ("sessionStorage" in globalThis) {
+      //     try {
+      //       globalThis.sessionStorage.setItem(
+      //         "bun-hmr-session-id",
+      //         this.client.sessionId.toString(16)
+      //       );
+      //     } catch (exception) {}
+      //   }
+      // }
       this.client.verbose = verbose;
       this.client.start();
       globalThis["__BUN_HMR"] = this.client;
@@ -596,20 +618,29 @@ if (typeof window !== "undefined") {
       const build = API.decodeWebsocketMessageBuildFailure(buffer);
       const id = build.id;
 
-      const index = this.indexOfModuleId(id);
-      // Ignore build failures of modules that are not loaded
-      if (index === -1) {
-        return;
-      }
+      // const index = this.indexOfModuleId(id);
+      // // Ignore build failures of modules that are not loaded
+      // if (index === -1) {
+      //   this.maybeReportBuildFailure(build);
+      //   return;
+      // }
 
-      // Build failed for a module we didn't request?
-      const minTimestamp = this.builds.get(index);
-      if (!minTimestamp) {
-        return;
-      }
-      const fail = API.decodeWebsocketMessageBuildFailure(buffer);
-      // TODO: finish this.
-      __hmrlog.error("Build failed", fail.module_path);
+      // // Build failed for a module we didn't request?
+      // const minTimestamp = this.builds.get(index);
+      // if (!minTimestamp) {
+      //   return;
+      // }
+      // const fail = API.decodeWebsocketMessageBuildFailure(buffer);
+
+      this.reportBuildFailure(build);
+    }
+
+    maybeReportBuildFailure(failure: API.WebsocketMessageBuildFailure) {
+      globalThis.renderBuildFailure(failure, this.cwd);
+    }
+    reportBuildFailure(failure: API.WebsocketMessageBuildFailure) {
+      __hmrlog.error("Build failed", failure.module_path);
+      globalThis.renderBuildFailure(failure, this.cwd);
     }
 
     verbose = false;
@@ -849,6 +880,7 @@ if (typeof window !== "undefined") {
           const welcome = API.decodeWebsocketMessageWelcome(buffer);
           this.epoch = welcome.epoch;
           this.javascriptReloader = welcome.javascriptReloader;
+          this.cwd = welcome.cwd;
           if (!this.epoch) {
             __hmrlog.warn("Internal HMR error");
           }
@@ -1306,6 +1338,8 @@ if (typeof window !== "undefined") {
     document.addEventListener("onimportcss", HMRClient.onCSSImport, {
       passive: true,
     });
+
+    window.addEventListener("error", HMRClient.onError, { passive: true });
   }
 }
 

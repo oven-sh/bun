@@ -166,8 +166,9 @@ pub fn NewLinker(comptime BundlerType: type) type {
         }
 
         pub inline fn nodeModuleBundleImportPath(this: *const ThisLinker) string {
-            return if (this.options.platform != .bun and
-                this.options.node_modules_bundle_url.len > 0)
+            if (this.options.platform == .bun) return "/node_modules.server.bun";
+
+            return if (this.options.node_modules_bundle_url.len > 0)
                 this.options.node_modules_bundle_url
             else
                 this.options.node_modules_bundle.?.bundle.import_from_name;
@@ -198,6 +199,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
             var externals = std.ArrayList(u32).init(linker.allocator);
             var needs_bundle = false;
             var first_bundled_index: ?u32 = null;
+            var had_resolve_errors = false;
 
             // Step 1. Resolve imports & requires
             switch (result.loader) {
@@ -349,18 +351,21 @@ pub fn NewLinker(comptime BundlerType: type) type {
                                 result.ast.needs_runtime = true;
                             }
                         } else |err| {
+                            had_resolve_errors = true;
+
                             switch (err) {
                                 error.ModuleNotFound => {
-                                    if (Resolver.isPackagePath(import_record.path.text)) {
+                                    if (import_record.path.text.len > 0 and Resolver.isPackagePath(import_record.path.text)) {
                                         if (linker.options.platform.isWebLike() and Options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
                                             try linker.log.addResolveError(
                                                 &result.source,
                                                 import_record.range,
                                                 linker.allocator,
-                                                "Could not resolve: \"{s}\". Try setting --platform=\"node\"",
+                                                "Could not resolve: \"{s}\". Try setting --platform=\"node\" (after bun build exists)",
                                                 .{import_record.path.text},
                                                 import_record.kind,
                                             );
+                                            continue;
                                         } else {
                                             try linker.log.addResolveError(
                                                 &result.source,
@@ -370,6 +375,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
                                                 .{import_record.path.text},
                                                 import_record.kind,
                                             );
+                                            continue;
                                         }
                                     } else {
                                         try linker.log.addResolveError(
@@ -386,6 +392,17 @@ pub fn NewLinker(comptime BundlerType: type) type {
                                     }
                                 },
                                 else => {
+                                    try linker.log.addResolveError(
+                                        &result.source,
+                                        import_record.range,
+                                        linker.allocator,
+                                        "{s} resolving \"{s}\"",
+                                        .{
+                                            @errorName(err),
+                                            import_record.path.text,
+                                        },
+                                        import_record.kind,
+                                    );
                                     continue;
                                 },
                             }
@@ -394,6 +411,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
                 },
                 else => {},
             }
+            if (had_resolve_errors) return error.LinkError;
             result.ast.externals = externals.toOwnedSlice();
 
             if (result.ast.needs_runtime and result.ast.runtime_import_record_id == null) {

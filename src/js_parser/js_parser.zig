@@ -1442,14 +1442,6 @@ fn notimpl() noreturn {
     Global.panic("Not implemented yet!!", .{});
 }
 
-fn lexerpanic() noreturn {
-    Global.panic("LexerPanic", .{});
-}
-
-fn fail() noreturn {
-    Global.panic("Something went wrong :cry;", .{});
-}
-
 const ExprBindingTuple = struct { expr: ?ExprNodeIndex = null, binding: ?Binding = null, override_expr: ?ExprNodeIndex = null };
 
 const TempRef = struct {
@@ -5486,7 +5478,7 @@ pub fn NewParser(
                         if (p.lexer.token == .t_default) {
                             if (foundDefault) {
                                 try p.log.addRangeError(p.source, p.lexer.range(), "Multiple default clauses are not allowed");
-                                fail();
+                                return error.SyntaxError;
                             }
 
                             foundDefault = true;
@@ -5673,7 +5665,7 @@ pub fn NewParser(
                     if (p.lexer.isContextualKeyword("of") or isForAwait) {
                         if (bad_let_range) |r| {
                             try p.log.addRangeError(p.source, r, "\"let\" must be wrapped in parentheses to be used as an expression here");
-                            fail();
+                            return error.SyntaxError;
                         }
 
                         if (isForAwait and !p.lexer.isContextualKeyword("of")) {
@@ -5989,7 +5981,7 @@ pub fn NewParser(
                         try p.log.addError(p.source, logger.Loc{
                             .start = loc.start + 5,
                         }, "Unexpected newline after \"throw\"");
-                        fail();
+                        return error.SyntaxError;
                     }
                     const expr = try p.parseExpr(.lowest);
                     try p.lexer.expectOrInsertSemicolon();
@@ -6656,7 +6648,7 @@ pub fn NewParser(
                             // Commas after spread elements are not allowed
                             if (has_spread and p.lexer.token == .t_comma) {
                                 p.log.addRangeError(p.source, p.lexer.range(), "Unexpected \",\" after rest pattern") catch unreachable;
-                                fail();
+                                return error.SyntaxError;
                             }
                         }
 
@@ -6703,7 +6695,7 @@ pub fn NewParser(
                         // Commas after spread elements are not allowed
                         if (property.flags.is_spread and p.lexer.token == .t_comma) {
                             p.log.addRangeError(p.source, p.lexer.range(), "Unexpected \",\" after rest pattern") catch unreachable;
-                            fail();
+                            return error.SyntaxError;
                         }
 
                         if (p.lexer.token != .t_comma) {
@@ -7450,7 +7442,7 @@ pub fn NewParser(
             // Newlines are not allowed before "=>"
             if (p.lexer.has_newline_before) {
                 try p.log.addRangeError(p.source, p.lexer.range(), "Unexpected newline before \"=>\"");
-                fail();
+                return error.SyntaxError;
             }
 
             try p.lexer.expect(T.t_equals_greater_than);

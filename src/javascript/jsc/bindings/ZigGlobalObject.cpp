@@ -84,7 +84,7 @@ extern "C" JSC__JSGlobalObject *Zig__GlobalObject__create(JSClassRef *globalObje
                                                           void *console_client) {
   JSC::Options::useSourceProviderCache() = true;
   JSC::Options::useUnlinkedCodeBlockJettisoning() = false;
-  JSC::Options::useTopLevelAwait() = true;
+  // JSC::Options::useTopLevelAwait() = true;
   JSC::Options::exposeInternalModuleLoader() = true;
 
   std::set_terminate([]() { Zig__GlobalObject__onCrash(); });

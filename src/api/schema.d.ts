@@ -534,6 +534,7 @@ type uint32 = number;
   export interface WebsocketMessageWelcome {
     epoch: uint32;
     javascriptReloader: Reloader;
+    cwd: string;
   }
 
   export interface WebsocketMessageFileChangeNotification {

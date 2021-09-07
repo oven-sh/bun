@@ -8,6 +8,33 @@ const Schema = @import("./api/schema.zig");
 
 const Api = Schema.Api;
 
+const ErrorCSSPath = "../examples/hello-next/bun-framework-next/bun-error.css";
+
+pub const ErrorCSS = struct {
+    pub const ProdSourceContent = @embedFile(ErrorCSSPath);
+
+    pub fn sourceContent() string {
+        if (comptime isDebug) {
+            var dirpath = std.fs.path.dirname(@src().file).?;
+            var env = std.process.getEnvMap(default_allocator) catch unreachable;
+
+            const dir = std.mem.replaceOwned(
+                u8,
+                default_allocator,
+                dirpath,
+                "jarred",
+                env.get("USER").?,
+            ) catch unreachable;
+            var runtime_path = std.fs.path.join(default_allocator, &[_]string{ dir, ErrorCSSPath }) catch unreachable;
+            const file = std.fs.openFileAbsolute(runtime_path, .{}) catch unreachable;
+            defer file.close();
+            return file.readToEndAlloc(default_allocator, (file.stat() catch unreachable).size) catch unreachable;
+        } else {
+            return ProdSourceContent;
+        }
+    }
+};
+
 pub const Fallback = struct {
     pub const ProdSourceContent = @embedFile("./fallback.out.js");
     pub const HTMLTemplate = @embedFile("./fallback.html");

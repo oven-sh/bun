@@ -363,6 +363,23 @@ inline fn eqlComptimeCheckLen(self: string, comptime alt: anytype, comptime chec
             const second = comptime std.mem.readIntNative(u64, alt[8..15]);
             return ((comptime !check_len) or self.len == alt.len) and first == std.mem.readIntNative(u64, self[0..8]) and second == std.mem.readIntNative(u64, self[8..16]);
         },
+        23 => {
+            const first = comptime std.mem.readIntNative(u64, alt[0..8]);
+            const second = comptime std.mem.readIntNative(u64, alt[8..15]);
+            return ((comptime !check_len) or self.len == alt.len) and
+                first == std.mem.readIntNative(u64, self[0..8]) and
+                second == std.mem.readIntNative(u64, self[8..16]) and
+                eqlComptimeIgnoreLen(self[16..23], comptime alt[16..23]);
+        },
+        24 => {
+            const first = comptime std.mem.readIntNative(u64, alt[0..8]);
+            const second = comptime std.mem.readIntNative(u64, alt[8..16]);
+            const third = comptime std.mem.readIntNative(u64, alt[16..24]);
+            return ((comptime !check_len) or self.len == alt.len) and
+                first == std.mem.readIntNative(u64, self[0..8]) and
+                second == std.mem.readIntNative(u64, self[8..16]) and
+                third == std.mem.readIntNative(u64, self[16..24]);
+        },
         else => {
             @compileError(alt ++ " is too long.");
         },

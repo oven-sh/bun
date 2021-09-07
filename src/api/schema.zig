@@ -2410,18 +2410,23 @@ epoch: u32 = 0,
 /// javascriptReloader
 javascript_reloader: Reloader,
 
+/// cwd
+cwd: []const u8,
+
 
 pub fn decode(reader: anytype) anyerror!WebsocketMessageWelcome {
   var this = std.mem.zeroes(WebsocketMessageWelcome);
 
   this.epoch = try reader.readValue(u32); 
   this.javascript_reloader = try reader.readValue(Reloader); 
+  this.cwd = try reader.readValue([]const u8); 
    return this;
 }
 
 pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
    try writer.writeInt(this.epoch);
    try writer.writeEnum(this.javascript_reloader);
+   try writer.writeValue(this.cwd);
 }
 
 };

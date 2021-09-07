@@ -2405,6 +2405,7 @@ function decodeWebsocketMessageWelcome(bb) {
 
   result["epoch"] = bb.readUint32();
   result["javascriptReloader"] = Reloader[bb.readByte()];
+  result["cwd"] = bb.readString();
   return result;
 }
 
@@ -2424,6 +2425,13 @@ if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value)
 bb.writeByte(encoded);
   } else {
     throw new Error("Missing required field \"javascriptReloader\"");
+  }
+
+  var value = message["cwd"];
+  if (value != null) {
+    bb.writeString(value);
+  } else {
+    throw new Error("Missing required field \"cwd\"");
   }
 
 }

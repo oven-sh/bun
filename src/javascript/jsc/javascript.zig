@@ -299,7 +299,6 @@ pub const Bun = struct {
             },
         },
         .{
-            .Route = Router.Instance.GetClass(void){},
             .main = .{
                 .get = getMain,
                 .ts = d.ts{ .name = "main", .@"return" = "string" },

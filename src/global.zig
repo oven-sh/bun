@@ -7,6 +7,7 @@ pub const C = @import("c.zig");
 pub usingnamespace @import("env.zig");
 
 pub const FeatureFlags = @import("feature_flags.zig");
+const root = @import("root");
 
 pub const Output = struct {
     // These are threadlocal so we don't have stdout/stderr writing on top of each other
@@ -134,7 +135,6 @@ pub const Output = struct {
         if (comptime isWasm) {
             try source.stream.seekTo(0);
             try source.stream.writer().print(fmt, args);
-            const root = @import("root");
             root.console_log(root.Uint8Array.fromSlice(source.out_buffer[0..source.stream.pos]));
         } else {
             std.fmt.format(source.stream.writer(), fmt, args) catch unreachable;
@@ -168,7 +168,7 @@ pub const Output = struct {
         if (comptime isWasm) {
             source.stream.seekTo(0) catch return;
             source.stream.writer().print(fmt, args) catch return;
-            const root = @import("root");
+            
             root.console_log(root.Uint8Array.fromSlice(source.out_buffer[0..source.stream.pos]));
         } else {
             if (enable_buffering) {
@@ -376,7 +376,6 @@ pub const Output = struct {
         if (comptime isWasm) {
             source.error_stream.seekTo(0) catch return;
             source.error_stream.writer().print(fmt, args) catch unreachable;
-            const root = @import("root");
             root.console_error(root.Uint8Array.fromSlice(source.err_buffer[0..source.error_stream.pos]));
         } else {
             std.fmt.format(source.error_stream.writer(), fmt, args) catch unreachable;

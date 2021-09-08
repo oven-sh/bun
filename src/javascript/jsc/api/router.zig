@@ -168,7 +168,7 @@ pub const Instance = NewClass(
         },
     },
     .{
-        .@"pathname" = .{
+        .pathname = .{
             .get = getPathname,
             .ro = true,
             .ts = d.ts{
@@ -204,8 +204,8 @@ pub const Instance = NewClass(
                 .@"return" = "\"exact\" | \"dynamic\" | \"catch-all\" | \"optional-catch-all\"",
             },
         },
-        .@"name" = .{
-            .@"get" = getRoute,
+        .name = .{
+            .get = getRoute,
             .ro = true,
             .ts = d.ts{
                 .@"return" = "string",
@@ -219,7 +219,7 @@ pub const Instance = NewClass(
             },
         },
         .query = .{
-            .@"get" = getQuery,
+            .get = getQuery,
             .ro = true,
             .ts = d.ts{
                 .@"return" = "Record<string, string | string[]>",
@@ -236,7 +236,7 @@ pub const Instance = NewClass(
             },
         },
         .params = .{
-            .@"get" = getParams,
+            .get = getParams,
             .ro = true,
             .ts = d.ts{
                 .@"return" = "Record<string, string | string[]>",

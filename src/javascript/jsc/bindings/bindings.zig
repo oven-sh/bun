@@ -257,22 +257,22 @@ pub fn NewGlobalObject(comptime Type: type) type {
         const importNotImpl = "Import not implemented";
         const resolveNotImpl = "resolve not implemented";
         const moduleNotImpl = "Module fetch not implemented";
-        pub fn import(global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) ErrorableZigString {
+        pub fn import(global: *JSGlobalObject, specifier: *ZigString, source: *ZigString) callconv(.C) ErrorableZigString {
             if (comptime @hasDecl(Type, "import")) {
-                return @call(.{ .modifier = .always_inline }, Type.import, .{ global, specifier, source });
+                return @call(.{ .modifier = .always_inline }, Type.import, .{ global, specifier.*, source.* });
             }
             return ErrorableZigString.err(error.ImportFailed, ZigString.init(importNotImpl).toErrorInstance(global).asVoid());
         }
-        pub fn resolve(res: *ErrorableZigString, global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) void {
+        pub fn resolve(res: *ErrorableZigString, global: *JSGlobalObject, specifier: *ZigString, source: *ZigString) callconv(.C) void {
             if (comptime @hasDecl(Type, "resolve")) {
-                @call(.{ .modifier = .always_inline }, Type.resolve, .{ res, global, specifier, source });
+                @call(.{ .modifier = .always_inline }, Type.resolve, .{ res, global, specifier.*, source.* });
                 return;
             }
             res.* = ErrorableZigString.err(error.ResolveFailed, ZigString.init(resolveNotImpl).toErrorInstance(global).asVoid());
         }
-        pub fn fetch(ret: *ErrorableResolvedSource, global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) void {
+        pub fn fetch(ret: *ErrorableResolvedSource, global: *JSGlobalObject, specifier: *ZigString, source: *ZigString) callconv(.C) void {
             if (comptime @hasDecl(Type, "fetch")) {
-                @call(.{ .modifier = .always_inline }, Type.fetch, .{ ret, global, specifier, source });
+                @call(.{ .modifier = .always_inline }, Type.fetch, .{ ret, global, specifier.*, source.* });
                 return;
             }
             ret.* = ErrorableResolvedSource.err(error.FetchFailed, ZigString.init(moduleNotImpl).toErrorInstance(global).asVoid());

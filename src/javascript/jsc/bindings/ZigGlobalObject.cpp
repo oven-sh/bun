@@ -221,9 +221,11 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject *globalObject,
                                                   JSValue referrer, JSValue origin) {
   ErrorableZigString res;
   res.success = false;
-  Zig__GlobalObject__resolve(&res, globalObject, toZigString(key, globalObject),
-                             referrer.isString() ? toZigString(referrer, globalObject)
-                                                 : ZigStringEmpty);
+  ZigString keyZ = toZigString(key, globalObject);
+  ZigString referrerZ = referrer.isString() ? toZigString(referrer, globalObject) : ZigStringEmpty;
+  Zig__GlobalObject__resolve(&res, globalObject, &keyZ,
+                              &referrerZ
+                                                 );
 
   if (res.success) {
     return toIdentifier(res.result.value, globalObject);
@@ -247,10 +249,12 @@ JSC::JSInternalPromise *GlobalObject::moduleLoaderImportModule(JSGlobalObject *g
 
   auto sourceURL = sourceOrigin.url();
   ErrorableZigString resolved;
+  auto moduleNameZ = toZigString(moduleNameValue, globalObject);
+  auto sourceOriginZ = sourceURL.isEmpty() ? ZigStringCwd
+                                                 : toZigString(sourceURL.fileSystemPath());
   resolved.success = false;
-  Zig__GlobalObject__resolve(&resolved, globalObject, toZigString(moduleNameValue, globalObject),
-                             sourceURL.isEmpty() ? ZigStringCwd
-                                                 : toZigString(sourceURL.fileSystemPath()));
+  Zig__GlobalObject__resolve(&resolved, globalObject, &moduleNameZ, &sourceOriginZ
+                             );
   if (!resolved.success) {
     throwException(scope, resolved.result.err, globalObject);
     return promise->rejectWithCaughtException(globalObject, scope);
@@ -372,13 +376,14 @@ JSC::JSInternalPromise *GlobalObject::moduleLoaderFetch(JSGlobalObject *globalOb
   auto moduleKey = key.toWTFString(globalObject);
   RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
   auto moduleKeyZig = toZigString(moduleKey);
+  auto source = Zig::toZigString(value1, globalObject);
   ErrorableResolvedSource res;
   res.success = false;
   res.result.err.code = 0;
   res.result.err.ptr = nullptr;
 
-  Zig__GlobalObject__fetch(&res, globalObject, moduleKeyZig,
-                           Zig::toZigString(value1, globalObject));
+  Zig__GlobalObject__fetch(&res, globalObject, &moduleKeyZig,
+                          &source );
 
   if (!res.success) {
     throwException(scope, res.result.err, globalObject);

@@ -724,17 +724,51 @@ pub fn NewClass(
         var function_name_refs: [function_names.len]js.JSStringRef = undefined;
         var class_name_str = name[0.. :0].ptr;
 
-        const class_name_literal = std.unicode.utf8ToUtf16LeStringLiteral(name);
-        var static_functions: [function_name_refs.len + 1]js.JSStaticFunction = undefined;
-        var instance_functions: [function_names.len]js.JSObjectRef = undefined;
+        var static_functions = brk: {
+            var funcs: [function_name_refs.len + 1]js.JSStaticFunction = undefined;
+            std.mem.set(js.JSStaticFunction, &funcs, js.JSStaticFunction{
+                .name = @intToPtr([*c]const u8, 0),
+                .callAsFunction = null,
+                .attributes = js.JSPropertyAttributes.kJSPropertyAttributeNone,
+            },);
+            break :brk funcs;
+        };
+        var instance_functions = std.mem.zeroes([function_names.len]js.JSObjectRef);
         const property_names = std.meta.fieldNames(@TypeOf(properties));
-        var property_name_refs: [property_names.len]js.JSStringRef = undefined;
+        var property_name_refs = std.mem.zeroes([property_names.len]js.JSStringRef);
         const property_name_literals = property_names;
-        var static_properties: [property_names.len]js.JSStaticValue = undefined;
+        var static_properties = brk: {
+         var props: [property_names.len]js.JSStaticValue = undefined;
+             std.mem.set(js.JSStaticValue, &props, js.JSStaticValue{
+                .name = @intToPtr([*c]const u8, 0),
+                .getProperty = null,
+                .setProperty = null,
+                .attributes = js.JSPropertyAttributes.kJSPropertyAttributeNone,
+            },);
+            break :brk props;
+        };
 
         pub var ref: js.JSClassRef = null;
         pub var loaded = false;
-        pub var definition: js.JSClassDefinition = undefined;
+        pub var definition:  js.JSClassDefinition =.{
+                .version = 0,
+                .attributes = js.JSClassAttributes.kJSClassAttributeNone,
+                .className = name[0..:0].ptr,
+                .parentClass = null,
+                .staticValues = null,
+                .staticFunctions = null,
+                .initialize = null,
+                .finalize = null,
+                .hasProperty = null,
+                .getProperty = null,
+                .setProperty = null,
+                .deleteProperty = null,
+                .getPropertyNames = null,
+                .callAsFunction = null,
+                .callAsConstructor = null,
+                .hasInstance = null,
+                .convertToType = null,
+        };
         const ConstructorWrapper = struct {
             pub fn rfn(
                 ctx: js.JSContextRef,
@@ -1274,7 +1308,25 @@ pub fn NewClass(
         }
 
         pub fn define() js.JSClassDefinition {
-            var def = js.kJSClassDefinitionEmpty;
+            var def = js.JSClassDefinition{
+                .version = 0,
+                .attributes = js.JSClassAttributes.kJSClassAttributeNone,
+                .className = class_name_str,
+                .parentClass = null,
+                .staticValues = null,
+                .staticFunctions = null,
+                .initialize = null,
+                .finalize = null,
+                .hasProperty = null,
+                .getProperty = null,
+                .setProperty = null,
+                .deleteProperty = null,
+                .getPropertyNames = null,
+                .callAsFunction = null,
+                .callAsConstructor = null,
+                .hasInstance = null,
+                .convertToType = null,
+        };
 
             if (static_functions.len > 0) {
                 std.mem.set(js.JSStaticFunction, &static_functions, std.mem.zeroes(js.JSStaticFunction));

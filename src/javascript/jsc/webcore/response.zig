@@ -1145,7 +1145,6 @@ pub const FetchEvent = struct {
                     },
                 );
             }
-            this.request_context.arena.deinit();
         }
 
         var needs_mime_type = true;

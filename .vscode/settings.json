@@ -9,6 +9,9 @@
   "search.followSymlinks": false,
   "search.useIgnoreFiles": true,
   "zig.buildOnSave": false,
+  "[zig]": {
+    "editor.defaultFormatter": "tiehuis.zig"
+  },
   "C_Cpp.files.exclude": {
     "**/.vscode": true,
     "src/javascript/jsc/WebKit/JSTests": true,

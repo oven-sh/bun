@@ -1232,16 +1232,21 @@ pub const RequestContext = struct {
                 return;
             }
             var clone = try ctx.allocator.create(JavaScriptHandler);
-            clone.ctx = ctx.*;
+            clone.* = JavaScriptHandler{
+                .ctx = ctx.*,
+                .conn = ctx.conn.*,
+                .params = if (params.len > 0) 
+                        try params.clone(ctx.allocator)
+            else 
+                 Router.Param.List{}
+            ,
+            };
 
-            clone.conn = ctx.conn.*;
+
             clone.ctx.conn = &clone.conn;
 
-            if (params.len > 0) {
-                clone.params = try params.clone(ctx.allocator);
-            } else {
-                clone.params = Router.Param.List{};
-            }
+
+            
 
             clone.ctx.matched_route.?.params = &clone.params;
             clone.ctx.matched_route.?.file_path = filepath_buf[0..ctx.matched_route.?.file_path.len];
@@ -1253,6 +1258,7 @@ pub const RequestContext = struct {
             if (strings.indexOf(clone.ctx.matched_route.?.file_path, ctx.matched_route.?.name)) |i| {
                 clone.ctx.matched_route.?.name = Router.Match.nameWithBasename(clone.ctx.matched_route.?.file_path, ctx.bundler.router.?.config.dir);
             }
+
 
             if (!has_loaded_channel) {
                 var handler_thread = try server.allocator.create(HandlerThread);
@@ -1271,7 +1277,7 @@ pub const RequestContext = struct {
                         .watcher = server.watcher,
                         .env_loader = server.bundler.env,
                         .origin = server.bundler.options.origin,
-                        .client_bundler = server.bundler,
+                        .client_bundler = undefined,
                     };
                 } else {
                     handler_thread.* = HandlerThread{
@@ -1282,10 +1288,10 @@ pub const RequestContext = struct {
                         .env_loader = server.bundler.env,
                         .log = undefined,
                         .origin = server.bundler.options.origin,
-                        .client_bundler = server.bundler,
+                        .client_bundler = undefined,
                     };
                 }
-
+try server.bundler.clone(server.allocator, &handler_thread.client_bundler);
                 handler_thread.log = try server.allocator.create(logger.Log);
                 handler_thread.log.* = logger.Log.init(server.allocator);
 
@@ -2296,7 +2302,7 @@ var serve_as_package_path = false;
 pub const Server = struct {
     log: logger.Log,
     allocator: *std.mem.Allocator,
-    bundler: Bundler,
+    bundler: *Bundler,
     watcher: *Watcher,
     timer: std.time.Timer = undefined,
     transform_options: Api.TransformOptions,
@@ -2554,7 +2560,7 @@ pub const Server = struct {
             req,
             request_arena,
             conn,
-            &server.bundler,
+            server.bundler,
             server.watcher,
             server.timer,
         ) catch |err| {
@@ -2774,7 +2780,8 @@ pub const Server = struct {
             .timer = try std.time.Timer.start(),
         };
         global_start_time = server.timer;
-        server.bundler = try Bundler.init(allocator, &server.log, options, null, null);
+        server.bundler = try allocator.create(Bundler);
+         server.bundler.* = try Bundler.init(allocator, &server.log, options, null, null);
         server.bundler.configureLinker();
         try server.bundler.configureRouter(true);
 

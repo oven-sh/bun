@@ -1330,6 +1330,9 @@ pub const EventListenerMixin = struct {
         ctx: *CtxType,
         comptime onError: fn (ctx: *CtxType, err: anyerror, value: JSValue, request_ctx: *http.RequestContext) anyerror!void,
     ) !void {
+        defer {
+            if (request_context.has_called_done) request_context.arena.deinit();
+        }
         var listeners = vm.event_listeners.get(EventType.fetch) orelse (return onError(ctx, error.NoListeners, JSValue.jsUndefined(), request_context) catch {});
         if (listeners.items.len == 0) return onError(ctx, error.NoListeners, JSValue.jsUndefined(), request_context) catch {};
         const FetchEventRejectionHandler = struct {
@@ -1345,6 +1348,7 @@ pub const EventListenerMixin = struct {
 
         // Rely on JS finalizer
         var fetch_event = try vm.allocator.create(FetchEvent);
+
 
         fetch_event.* = FetchEvent{
             .request_context = request_context,
@@ -1366,7 +1370,7 @@ pub const EventListenerMixin = struct {
             if (fetch_event.rejected) return;
 
             if (promise.status(vm.global.vm()) == .Rejected) {
-                onError(ctx, error.JSError, promise.result(vm.global.vm()), request_context) catch {};
+                onError(ctx, error.JSError, promise.result(vm.global.vm()), fetch_event.request_context) catch {};
                 return;
             } else {
                 _ = promise.result(vm.global.vm());
@@ -1374,13 +1378,13 @@ pub const EventListenerMixin = struct {
 
             vm.global.vm().drainMicrotasks();
 
-            if (request_context.has_called_done) {
+            if (fetch_event.request_context.has_called_done) {
                 break;
             }
         }
 
-        if (!request_context.has_called_done) {
-            onError(ctx, error.FetchHandlerRespondWithNeverCalled, JSValue.jsUndefined(), request_context) catch {};
+        if (!fetch_event.request_context.has_called_done) {
+            onError(ctx, error.FetchHandlerRespondWithNeverCalled, JSValue.jsUndefined(), fetch_event.request_context) catch {};
             return;
         }
     }

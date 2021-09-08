@@ -1,0 +1,81 @@
+{
+  "name": "bun-framework-next",
+  "version": "0.0.0-18",
+  "description": "",
+  "framework": {
+    "displayName": "Next.js",
+    "static": "public",
+    "assetPrefix": "_next/",
+    "router": {
+      "dir": [
+        "pages",
+        "src/pages"
+      ],
+      "extensions": [
+        ".js",
+        ".ts",
+        ".tsx",
+        ".jsx"
+      ]
+    },
+    "css": "onimportcss",
+    "development": {
+      "client": "client.development.tsx",
+      "fallback": "fallback.development.tsx",
+      "server": "server.development.tsx",
+      "css": "onimportcss",
+      "define": {
+        "client": {
+          ".env": "NEXT_PUBLIC_",
+          "defaults": {
+            "process.env.__NEXT_TRAILING_SLASH": "false",
+            "process.env.NODE_ENV": "\"development\"",
+            "process.env.__NEXT_ROUTER_BASEPATH": "''",
+            "process.env.__NEXT_SCROLL_RESTORATION": "false",
+            "process.env.__NEXT_I18N_SUPPORT": "false",
+            "process.env.__NEXT_HAS_REWRITES": "false",
+            "process.env.__NEXT_ANALYTICS_ID": "null",
+            "process.env.__NEXT_OPTIMIZE_CSS": "false",
+            "process.env.__NEXT_CROSS_ORIGIN": "''",
+            "process.env.__NEXT_STRICT_MODE": "false",
+            "process.env.__NEXT_IMAGE_OPTS": "null"
+          }
+        },
+        "server": {
+          ".env": "NEXT_",
+          "defaults": {
+            "process.env.__NEXT_TRAILING_SLASH": "false",
+            "process.env.__NEXT_OPTIMIZE_FONTS": "false",
+            "process.env.NODE_ENV": "\"development\"",
+            "process.env.__NEXT_OPTIMIZE_IMAGES": "false",
+            "process.env.__NEXT_OPTIMIZE_CSS": "false",
+            "process.env.__NEXT_ROUTER_BASEPATH": "''",
+            "process.env.__NEXT_SCROLL_RESTORATION": "false",
+            "process.env.__NEXT_I18N_SUPPORT": "false",
+            "process.env.__NEXT_HAS_REWRITES": "false",
+            "process.env.__NEXT_ANALYTICS_ID": "null",
+            "process.env.__NEXT_CROSS_ORIGIN": "''",
+            "process.env.__NEXT_STRICT_MODE": "false",
+            "process.env.__NEXT_IMAGE_OPTS": "null",
+            "global": "globalThis",
+            "window": "undefined"
+          }
+        }
+      }
+    },
+    "production": {
+      "client": "client.production.tsx",
+      "server": "server.production.tsx",
+      "fallback": "fallback.production.tsx",
+      "css": "onimportcss"
+    }
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "react-is": "^17.0.2"
+  }
+}

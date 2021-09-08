@@ -3,10 +3,10 @@ import Image from "next/image";
 import styles from "../styles/Home.module.css";
 import Link from "next/link";
 import { useRouter } from "next/router";
-import Title from "../components/Title";
+import Title, { TitleEnum } from "../components/Title";
 import React from "react";
 
-export default function Home() {
+export default function Home({}) {
   const router = useRouter();
 
   return (
@@ -17,11 +17,9 @@ export default function Home() {
         <link rel="icon" href="/favicon.ico" />
       </Head>
 
-      <Title />
-
       <main className={styles.main}>
         <h1 className={styles.title}>
-          asdasdasd to <a href="https://nextjs.org">Next.js!</a>
+          Welcome to <a href="https://nextjs.org">Next.js!</a>
         </h1>
 
         <p className={styles.description}>
@@ -37,14 +35,13 @@ export default function Home() {
             </div>
           </Link>
 
-          <button
+          <a
             onClick={() => router.push("/foo/bar/third")}
             className={styles.card}
-            style={{ backgroundColor: "white" }}
           >
             <h2>Third Page &rarr;</h2>
             <p>button, router.push()</p>
-          </button>
+          </a>
 
           <a
             href="https://github.com/vercel/next.js/tree/master/examples"

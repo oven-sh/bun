@@ -6,9 +6,10 @@
   "dependencies": {
     "next": "^11.1.0",
     "parcel": "2.0.0-rc.0",
-    "path": "^0.12.7",
+    "path-browserify": "^1.0.1",
     "react": "^17.0.2",
     "react-dom": "^17.0.2",
+    "react-is": "^17.0.2",
     "whatwg-url": "^9.1.0"
   },
   "devDependencies": {

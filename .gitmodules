@@ -4,9 +4,12 @@
 [submodule "src/deps/picohttpparser"]
 	path = src/deps/picohttpparser
 	url = https://github.com/h2o/picohttpparser/
+	ignore = dirty
 [submodule "src/javascript/jsc/WebKit"]
 	path = src/javascript/jsc/WebKit
 	url = git@github.com:/Jarred-Sumner/WebKit
+	ignore = dirty
 [submodule "src/deps/mimalloc"]
 	path = src/deps/mimalloc
 	url = https://github.com/microsoft/mimalloc
+	ignore = dirty

@@ -29,11 +29,12 @@ runtime_js:
 
 jsc: jsc-build jsc-bindings
 jsc-build: jsc-build-mac jsc-copy-headers
-jsc-bindings:
-	jsc-bindings-headers
-	jsc-bindings-mac
+jsc-bindings: jsc-bindings-headers jsc-bindings-mac
+	
+	
 
 jsc-bindings-headers:
+	mkdir -p src/JavaScript/jsc/bindings-obj/
 	zig build headers
 
 jsc-copy-headers:

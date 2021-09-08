@@ -1,0 +1,288 @@
+:host {
+  --bun-error-color: #e33737;
+  --bun-error-monospace: ui-monospace, Menlo, Monaco, "Cascadia Mono",
+    "Segoe UI Mono", "Roboto Mono", "Oxygen Mono", "Ubuntu Monospace",
+    "Source Code Pro", "Fira Mono", "Droid Sans Mono", "Courier New", monospace;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+#BunErrorOverlay-container {
+  box-shadow: 0px 16px 24px rgba(0, 0, 0, 0.06), 0px 2px 6px rgba(0, 0, 0, 0.1),
+    0px 0px 1px rgba(0, 0, 0, 0.04);
+  backdrop-filter: blur(42px);
+  backface-visibility: visible;
+  border: inset 1px solid rgba(0, 0, 0, 0.2);
+  border-radius: 17px;
+  background-color: rgba(255, 255, 255, 0.92);
+  width: 480px;
+
+  position: fixed;
+  top: 120px;
+  right: 48px;
+  z-index: 999999;
+
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica,
+    Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+}
+
+#BunErrorOverlay-container a {
+  color: inherit;
+}
+
+.BunError-Summary-ErrorIcon {
+  content: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACIAAAAgCAYAAAB3j6rJAAAACXBIWXMAABYlAAAWJQFJUiTwAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAJiSURBVHgBzZdLUttAEIa7RwpVeKUD4Ip8hFSB7V3kG8AJgBPgG+CcAG4QcwPfIFpiigU5gRWcqmy1AVwVaTo9Y+yyiEeakc3jX7j0GEmfe7r/6QH4IELYUJNuN/LyPMwRU2g04lYcp1BDtUEYIPSJvvNhtHI5QcTB3vX1FThKQE0xxI8XEEohEQ2n+/sROKoWyP3BwYn6qHGA553DW4CgEFUfin6328fwmiDTbldBhFXjiHNlEkUBWMoJRCUoSNm3HB6Kx0fbsW4gnpQDQLT/l4hntlGxBlHR4NJ0mndW4D08WCWuNYgv5YXhVsJmNASi0bqbnNj9P2pKtwGiyxXxcM2tJNvd/bI3Hp82b26OJOK3dc9nc+PbHMRUrhyJgqV7QowMr4iqTK4SpNK8VvRXSnNiVphcKYhO0BLzIkvAZ5WaXCmID6AeDGFLYpO7NJWzEUSbF9EAHKTagYohgcnkjCDavKoVgqNMJrcWpKZ5AQlh46LBp6enCysQ36LuFy8tnBFZ2Tkn+cnLcv6vQ1PlypViC6I+PsiEUB3ZomMLLZ+Mm+Nxzwgy7XQmsMVKKVWe95q3t7E6LEyNi3ktRZSWrTWl8rxl5JcgVeZlUJI1Gq3FWsM+cQpuCn91Ov0CiEd0Bo7RkERXq2tNPps5R4UBzlU5axAdDQDrbmr5EsSvhQs7OxG4S5ucTtb7dntYxzeeNWLzi3MhWpwnxy4d3IpSX/0yxGeor0OGmPcqWHu/FixypNY2cZvSINxZ/YT3VTIHmc0u1Qm8k9R+WYO07u7SDLHH+1bnzfNGYjPkhfJIbdr/AfAS02LsKGiuAAAAAElFTkSuQmCC");
+  width: 20px;
+  height: 19px;
+
+  margin-right: 6px;
+  display: block;
+}
+
+.BunError-Summary-CloseIcon {
+  content: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACYAAAAmCAYAAACoPemuAAAACXBIWXMAABYlAAAWJQFJUiTwAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAKKSURBVHgBxZjpTsMwEISnaTmLKLf4AX94/7fiFlRcJaUKl6exK8e1k7XTY6QVUbDjj/V4bdNBe2Uquio2nPdfKn6RqA7StKuir2JHxXZNO4LlKkb65zeWBLavYxdpelMxhABQCkaQI6QDuRrqCEoCdqjiFItXoeIagex1Gzqfo8zUMsSxByo+Vfz4fokaqH0sVx09xhxcCOwY5RSuQgbuHVZ58YGx0RlWK8LtoYT74wsXjEXyHM3eW4Y4JgFZ76ZV2xancAPrE+3T44MNRiCp2bnd5MK29A0rfyFsP7VRz3pxLOxoF8ctFZeYz7wRPfOgn/mHX6B5Rui1zP7gDmQaWc8TlEXytwGKKpy+dRoYMG41Um+52fHBuVBG0jH6ZpAtyMVV20MYLgRFq+xBpm1TFrjtbAo7dfUAI1SzxMr9ocF8UFIPUx2TsQxx4pTQ9G7migVAVYBiwagQnK0kKBsotdITblDz7eRDgAH7QZrop9CBj/67gbywVmTAxGdxVKEeGtoQKgkusz4QoxDUbK+zZOCibkzGW/yYtMawTNx73tPkJ/CXEj7zMEjPSY7zRWYNJtUwAGVWX2i1sgi/QabcgJn7X4p8JSEEJ139467TqS/oxAvup34+QrhOmR1ijHLV89uS2xY9+WjPN7N3hbRiu0hNj1U2BKfzGesVs/XCBzc7r0j32iLEbE1Xs2/aHtHivzQtxEzNTia+VUIoGnaA1Yl3iEptDC1fblGcb2nRbSNC3cGZpbq6MtGdCJf6f7Qm0c+38BwiJANKbzexeoJegT7FZOIA5SbdFjDXUJO6RrFTRChe82Jv7PQPbcFyMJZ0aOMd3qx47SMoyw5B6VnjF2aECyjXMFEl6B+GYop4atKAigAAAABJRU5ErkJggg==");
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.BunError-Summary-CloseIcon:hover {
+  transform: scale(1.2);
+
+  background-color: rgb(255, 255, 255);
+}
+
+.BunError-Summary {
+  display: grid;
+  grid-template-columns: min-content auto min-content;
+  grid-template-rows: 46px;
+  align-items: center;
+  padding: 0 18px;
+  border-bottom: 1px solid rgb(220, 220, 220);
+}
+
+.BunError-footer {
+  display: grid;
+  padding: 12px 18px;
+  justify-content: flex-end;
+  border-top: 1px solid rgb(220, 220, 220);
+  align-items: center;
+}
+
+.BunError-Summary-Title {
+  font-weight: 500;
+  letter-spacing: 0.36px;
+}
+
+.BunError-ErrorTag,
+.BunError-error-code {
+  color: rgb(165, 165, 165);
+  font-weight: 500;
+  font-size: 12pt;
+}
+
+.BunError-ErrorTag {
+  font-size: 14px;
+  text-transform: uppercase;
+  font-weight: 300;
+}
+
+.BunError-error-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5ch;
+}
+
+.BunError-error-message {
+  color: var(--bun-error-color);
+  font-size: 16pt;
+  font-weight: bold;
+}
+
+.BunError-list {
+  margin-top: 14px;
+  gap: 14px;
+}
+
+.BunError-error-subtitle,
+.BunError-error-header,
+.BunError-error-message {
+  padding-left: 18px;
+  padding-right: 18px;
+}
+
+.BunError-error-subtitle {
+  font-size: 500;
+}
+
+.BunError-NativeStackTrace {
+  margin-top: 0;
+}
+
+.BunError-NativeStackTrace-filename {
+  padding: 8px 18px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  font-weight: 500;
+  letter-spacing: 0.36px;
+  margin-bottom: 8px;
+  display: block;
+}
+
+.BunError-NativeStackTrace-filename:hover {
+  text-decoration: underline;
+}
+
+.BunError-SourceLines-lines {
+}
+
+.BunError-SourceLines {
+  display: grid;
+  grid-template-columns: min-content auto;
+  grid-template-rows: repeat(16px, 6);
+  column-gap: 13px;
+  font-size: 14px;
+  padding-left: 24px;
+  align-items: center;
+  position: relative;
+  overflow-x: auto;
+}
+
+.BunError-SourceLine-text {
+  white-space: pre;
+  display: block;
+
+  font-family: var(--bun-error-monospace);
+}
+
+.BunError-SourceLine-number {
+  font-variant: tabular-nums;
+  text-align: right;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.BunError-SourceLine-number--empty {
+  color: rgb(165, 165, 165);
+}
+
+.BunError-SourceLine-number,
+.BunError-SourceLine-text {
+  height: 18px;
+}
+
+.BunError-SourceLines-highlighter--0,
+.BunError-SourceLines-highlighter--1,
+.BunError-SourceLines-highlighter--2,
+.BunError-SourceLines-highlighter--3,
+.BunError-SourceLines-highlighter--4,
+.BunError-SourceLines-highlighter--5 {
+  position: absolute;
+}
+
+.BunError-SourceLine-text--highlight {
+  color: #e33737;
+}
+
+#BunError-poweredBy {
+  height: 16px;
+
+  content: url("data:image/webp;base64,UklGRhwFAABXRUJQVlA4TBAFAAAv3MAHEBeioG0jx3f8MY+fGAgkbdz7Zz4Ekjbu/TMftpEkOaFfC5vgSJ4sHswjm7TZk7R34AJUQAFAQwYAQAUkQAZUAFTUz5XDIaPd77AAN2DlBrAAG/Ai8CFwcKICP6L+BzgTEBEBp6xqWyZJejDAWERMQEwHEuEip1yEmPDc/w1qRs7/OqL/EyBbtu22bQ4ViCHTKM0gUUNmIjMmZfu6s7nz3v//KwIgRfe3iP5PAP9bdVNLfR/hfdqK3bxLjDgr9Q4JGpfk7xHxPPu8KRdApEaiIpdSr8iU9id7Cn+vE6WbWqRuTORqm7pujCV+LKW8jyymEZHGALqpRer76LU4NXya9fhb5XgQZ2ks02uxtgBmtXSrBEAr1jO04mxfiazx06Lp71TgQXzbzoPYWSMoxV4pGLEWaMXz/xuHIyPevACm4r6BEXcaNBZeGPGt1NvmKij9pFL47cE48TgLaksRlF6SgnhtsKbrV/w0rVdO2yhdg+lKg+naB9OvK/+Ko+2KrNfeTfuV0/pp2q5rj3/G9OtK22C7ou3Laj6EXEvfHMYnOvM4D8R+Lf434PQ9/din0Vrt6wYsundZj+7QABzNPoeumpMa4Gj2JQ7mqlq3735vqjUCWmxzoq9D9C/217cCWbOtVPXsNvXOt7pD0NxVLV2xAklbflW9A6BF/YFD/clVawBi1XYX3+WbrHdRa4SiE8uWaDJcXbo4GhmrzhM41BWo+jtw6DtAsQJRfQegmSFqjcCpaeC9ALFaI5A0AVnvCWL1G2uEeOsJSXUnJFpjuI1xyWZsUVfok56wa6ZPesChEXZLc4VFN8ga6Zt1FAF23emL70DQGgGW7yJAbL4DQbedOdGvceRjyE2vbRD0hpfOg6h/wKw7vDyyJxwa4PZmmDV2hb74Zph0ZtHM8P6mMMw6Q5EmAA4pwzhOxrDpNw9oVijKWCtQzVCddwsUC6DWYfvi1jpsurLrMcrfnKOkOyySBkKi9UjOnkUcVd9QvzqtzFaCBprH6HPlSfVhjd3+J6VnNNoCmih8weaRVigaPhVg0XiYobgvOgPNm8dPKk93PUavb/KDDUhEExzSFiPJ/e7GcgwWLXDqOlg0A6G5FzdInocV4Pb9YYuPXhpGa4RZy6h+8x4VnYGZSIdE87GkPnJbj6WG7qU7LFoGWTeAYtYAi7WYu6THIHk/OjQNkm+g6dolv/HoVq30W9pqosleymsXay/vPVnXuL60RqDoayaeWukPtQA0detC831MxFPzo1A1RaZTbyBp3eeYbF+Z5pia7gNNlNEae/EtMHsOp+MNIFbHNQ6imrqsho7f/FjjI+bquEaA4rDmb87q8IfhZEdEP8ZyimkfHkXcq/qzMIy5qe2aGBdb7BY9GcfStTQBFM8RMXftFRmmpv7Ewxo+heYWs9oSH5dEGQa6mPXhCEHjdzkbZOGjBjAvkafzMk88XCaGcebhtCwzH2eeLss88XCeJ2CZeBhnYFrmic+a6M8AdaeaNj2OAeRenPy1HQeNi/U3jwIf/sszorAfTjqSf6u8rgBgWnrwcVBaOELuKhA0ruzVW7d/RGsMGJedKklKF5+rDuLSwad4ki4fA8G1jRdAUtkKZQn/Xb8pURYOgbhgEb5BfMYsIlwdwBmfMYtwdYBpwSLCxwCgzpiFCw0AScEsfB4BxHLw3x1vs1WIgXWaagBQOs1NAu94kadaAUCS5hsFe7wwCZx6sVF4/wI=");
+}
+
+#BunError-SourceLine-text-highlightExpression {
+  font-weight: bold;
+  text-decoration-style: wavy;
+}
+
+.BunError-JSException--TypeError #BunError-SourceLine-text-highlightExpression {
+  border: 1px solid rgba(0, 0, 0, 0.2);
+}
+.BunError-Indented {
+  display: inline-block;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.BunError-divet {
+  vertical-align: bottom;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.BunError-error-typename {
+  font-family: var(--bun-error-monospace);
+  color: #e39437;
+  font-weight: bold;
+}
+
+.BunError-error-muted {
+  font-weight: normal;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.BunError-error-muted,
+.BunError-StackFrame--muted {
+  color: rgb(165, 165, 165);
+}
+
+.BunError-NativeStackTrace .BunError-error-typename {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.BunError-StackFrame-link {
+}
+
+.BunError-StackFrame-link-content {
+  display: flex;
+  gap: 0.25ch;
+  white-space: nowrap;
+}
+
+.BunError-StackFrame {
+  display: table-row;
+}
+
+.BunError-StackFrame-identifier {
+  padding-right: 18px;
+  font-size: 0.8em;
+  font-family: var(--bun-error-monospace);
+  letter-spacing: 0.49px;
+}
+
+.BunError-error-message--mono {
+  font-family: var(--bun-error-monospace);
+}
+.BunError-StackFrame-identifier,
+.BunError-StackFrame-link {
+  display: table-cell;
+  font-weight: 500;
+}
+
+.BunError-BuildError {
+  padding-bottom: 18px;
+}
+
+.BunError-StackFrame-link-content {
+  font-size: 0.8em;
+}
+
+.BunError-StackFrames {
+  display: table;
+  table-layout: auto;
+  padding: 13px 10px;
+  margin: 8px auto;
+  border-radius: 4px;
+
+  background-color: rgb(244, 244, 244);
+}

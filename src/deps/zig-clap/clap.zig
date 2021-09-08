@@ -64,7 +64,7 @@ pub fn Param(comptime Id: type) type {
 /// This is the reverse of 'help' but for at single parameter only.
 pub fn parseParam(line: []const u8) !Param(Help) {
     var found_comma = false;
-    var it = mem.tokenize(line, " \t");
+    var it = mem.tokenize(u8, line, " \t");
     var param_str = it.next() orelse return error.NoParamFound;
 
     const short_name = if (!mem.startsWith(u8, param_str, "--") and

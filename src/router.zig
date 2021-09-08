@@ -572,7 +572,7 @@ pub const RouteMap = struct {
         var segments: []string = segments_buf[0..];
         var hashes: []u32 = segments_hash[0..];
         var segment_i: usize = 0;
-        var splitter = std.mem.tokenize(path, "/");
+        var splitter = std.mem.tokenize(u8, path, "/");
         while (splitter.next()) |part| {
             if (part.len == 0 or (part.len == 1 and part[0] == '.')) continue;
             segments[segment_i] = part;

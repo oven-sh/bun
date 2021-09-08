@@ -48,11 +48,11 @@ pub fn lstat_absolute(path: [:0]const u8) StatError!Stat {
 
     var st = zeroes(libc_stat);
     switch (errno(lstat64(path.ptr, &st))) {
-        0 => {},
-        EINVAL => unreachable,
-        EBADF => unreachable, // Always a race condition.
-        ENOMEM => return error.SystemResources,
-        EACCES => return error.AccessDenied,
+        .SUCCESS => {},
+        // .EINVAL => unreachable,
+        .BADF => unreachable, // Always a race condition.
+        .NOMEM => return error.SystemResources,
+        .ACCES => return error.AccessDenied,
         else => |err| return os.unexpectedErrno(err),
     }
 
@@ -116,10 +116,10 @@ pub fn stat_absolute(path: [:0]const u8) StatError!Stat {
     var st = zeroes(libc_stat);
     switch (errno(stat(path.ptr, &st))) {
         0 => {},
-        EINVAL => unreachable,
-        EBADF => unreachable, // Always a race condition.
-        ENOMEM => return error.SystemResources,
-        EACCES => return error.AccessDenied,
+        // .EINVAL => unreachable,
+        .EBADF => unreachable, // Always a race condition.
+        .ENOMEM => return error.SystemResources,
+        .EACCES => return error.AccessDenied,
         else => |err| return os.unexpectedErrno(err),
     }
 
@@ -179,13 +179,13 @@ pub fn preallocate_file(fd: os.fd_t, offset: off_t, len: off_t) !void {
     fstore.fst_length = len + offset;
 
     // Based on https://api.kde.org/frameworks/kcoreaddons/html/posix__fallocate__mac_8h_source.html
-    var rc = os.system.fcntl(fd, F_PREALLOCATE, &fstore);
+    var rc = os.system.fcntl(fd, os.F_PREALLOCATE, &fstore);
 
     switch (rc) {
         0 => return,
         else => {
             fstore.fst_flags = F_ALLOCATEALL;
-            rc = os.system.fcntl(fd, F_PREALLOCATE, &fstore);
+            rc = os.system.fcntl(fd, os.F_PREALLOCATE, &fstore);
         },
     }
 

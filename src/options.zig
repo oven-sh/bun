@@ -567,7 +567,7 @@ pub const JSX = struct {
         // ...unless new is "React.createElement" and original is ["React", "createElement"]
         // saves an allocation for the majority case
         pub fn memberListToComponentsIfDifferent(allocator: *std.mem.Allocator, original: []const string, new: string) ![]const string {
-            var splitter = std.mem.split(new, ".");
+            var splitter = std.mem.split(u8, new, ".");
 
             var needs_alloc = false;
             var count: usize = 0;
@@ -591,7 +591,7 @@ pub const JSX = struct {
 
             var out = try allocator.alloc(string, count + 1);
 
-            splitter = std.mem.split(new, ".");
+            splitter = std.mem.split(u8, new, ".");
             var i: usize = 0;
             while (splitter.next()) |str| {
                 out[i] = str;
@@ -1347,7 +1347,7 @@ pub const OutputFile = struct {
 
         if (comptime std.Target.current.isDarwin()) {
             const rc = os.system.fcopyfile(fd_in, fd_out, null, os.system.COPYFILE_DATA);
-            if (os.errno(rc) == 0) {
+            if (rc == 0) {
                 return;
             }
         }

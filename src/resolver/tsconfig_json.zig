@@ -273,7 +273,7 @@ pub const TSConfigJSON = struct {
         }
         const parts_count = std.mem.count(u8, text, ".");
         const parts = allocator.alloc(string, parts_count) catch unreachable;
-        var iter = std.mem.tokenize(text, ".");
+        var iter = std.mem.tokenize(u8, text, ".");
         var i: usize = 0;
         while (iter.next()) |part| {
             if (!js_lexer.isIdentifier(part)) {

@@ -1235,18 +1235,13 @@ pub const RequestContext = struct {
             clone.* = JavaScriptHandler{
                 .ctx = ctx.*,
                 .conn = ctx.conn.*,
-                .params = if (params.len > 0) 
-                        try params.clone(ctx.allocator)
-            else 
-                 Router.Param.List{}
-            ,
+                .params = if (params.len > 0)
+                    try params.clone(ctx.allocator)
+                else
+                    Router.Param.List{},
             };
 
-
             clone.ctx.conn = &clone.conn;
-
-
-            
 
             clone.ctx.matched_route.?.params = &clone.params;
             clone.ctx.matched_route.?.file_path = filepath_buf[0..ctx.matched_route.?.file_path.len];
@@ -1258,7 +1253,6 @@ pub const RequestContext = struct {
             if (strings.indexOf(clone.ctx.matched_route.?.file_path, ctx.matched_route.?.name)) |i| {
                 clone.ctx.matched_route.?.name = Router.Match.nameWithBasename(clone.ctx.matched_route.?.file_path, ctx.bundler.router.?.config.dir);
             }
-
 
             if (!has_loaded_channel) {
                 var handler_thread = try server.allocator.create(HandlerThread);
@@ -1291,7 +1285,7 @@ pub const RequestContext = struct {
                         .client_bundler = undefined,
                     };
                 }
-try server.bundler.clone(server.allocator, &handler_thread.client_bundler);
+                try server.bundler.clone(server.allocator, &handler_thread.client_bundler);
                 handler_thread.log = try server.allocator.create(logger.Log);
                 handler_thread.log.* = logger.Log.init(server.allocator);
 
@@ -1652,7 +1646,7 @@ try server.bundler.clone(server.allocator, &handler_thread.client_bundler);
             // Some proxies/load balancers will mess with the connection header
             // and browsers also send multiple values here
             const connection_header = request.header("Connection") orelse return error.BadRequest;
-            var it = std.mem.split(connection_header.value, ",");
+            var it = std.mem.split(u8, connection_header.value, ",");
             while (it.next()) |part| {
                 const conn = std.mem.trim(u8, part, " ");
                 if (std.ascii.eqlIgnoreCase(conn, "upgrade")) {
@@ -2781,7 +2775,7 @@ pub const Server = struct {
         };
         global_start_time = server.timer;
         server.bundler = try allocator.create(Bundler);
-         server.bundler.* = try Bundler.init(allocator, &server.log, options, null, null);
+        server.bundler.* = try Bundler.init(allocator, &server.log, options, null, null);
         server.bundler.configureLinker();
         try server.bundler.configureRouter(true);
 

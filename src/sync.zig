@@ -535,7 +535,7 @@ pub const RwLock = if (std.builtin.os.tag != .windows and std.builtin.link_libc)
             };
 
             const rc = std.c.pthread_rwlock_destroy(&self.rwlock);
-            std.debug.assert(rc == 0 or rc == safe_rc);
+            std.debug.assert(rc == .SUCCESS or rc == safe_rc);
 
             self.* = undefined;
         }
@@ -546,12 +546,12 @@ pub const RwLock = if (std.builtin.os.tag != .windows and std.builtin.link_libc)
 
         pub fn lock(self: *RwLock) void {
             const rc = pthread_rwlock_wrlock(&self.rwlock);
-            std.debug.assert(rc == 0);
+            std.debug.assert(rc == .SUCCESS);
         }
 
         pub fn unlock(self: *RwLock) void {
             const rc = pthread_rwlock_unlock(&self.rwlock);
-            std.debug.assert(rc == 0);
+            std.debug.assert(rc == .SUCCESS);
         }
 
         pub fn tryLockShared(self: *RwLock) bool {
@@ -560,12 +560,12 @@ pub const RwLock = if (std.builtin.os.tag != .windows and std.builtin.link_libc)
 
         pub fn lockShared(self: *RwLock) void {
             const rc = pthread_rwlock_rdlock(&self.rwlock);
-            std.debug.assert(rc == 0);
+            std.debug.assert(rc == .SUCCESS);
         }
 
         pub fn unlockShared(self: *RwLock) void {
             const rc = pthread_rwlock_unlock(&self.rwlock);
-            std.debug.assert(rc == 0);
+            std.debug.assert(rc == .SUCCESS);
         }
 
         const PTHREAD_RWLOCK_INITIALIZER = pthread_rwlock_t{};
@@ -639,12 +639,12 @@ pub const RwLock = if (std.builtin.os.tag != .windows and std.builtin.link_libc)
             else => @compileError("pthread_rwlock_t not implemented for this platform"),
         };
 
-        extern "c" fn pthread_rwlock_destroy(p: *pthread_rwlock_t) callconv(.C) c_int;
-        extern "c" fn pthread_rwlock_rdlock(p: *pthread_rwlock_t) callconv(.C) c_int;
-        extern "c" fn pthread_rwlock_wrlock(p: *pthread_rwlock_t) callconv(.C) c_int;
-        extern "c" fn pthread_rwlock_tryrdlock(p: *pthread_rwlock_t) callconv(.C) c_int;
-        extern "c" fn pthread_rwlock_trywrlock(p: *pthread_rwlock_t) callconv(.C) c_int;
-        extern "c" fn pthread_rwlock_unlock(p: *pthread_rwlock_t) callconv(.C) c_int;
+        extern "c" fn pthread_rwlock_destroy(p: *pthread_rwlock_t) callconv(.C) std.os.E;
+        extern "c" fn pthread_rwlock_rdlock(p: *pthread_rwlock_t) callconv(.C) std.os.E;
+        extern "c" fn pthread_rwlock_wrlock(p: *pthread_rwlock_t) callconv(.C) std.os.E;
+        extern "c" fn pthread_rwlock_tryrdlock(p: *pthread_rwlock_t) callconv(.C) std.os.E;
+        extern "c" fn pthread_rwlock_trywrlock(p: *pthread_rwlock_t) callconv(.C) std.os.E;
+        extern "c" fn pthread_rwlock_unlock(p: *pthread_rwlock_t) callconv(.C) std.os.E;
     }
 else
     struct {
@@ -880,7 +880,7 @@ else if (std.builtin.link_libc)
             };
 
             const rc = std.c.pthread_mutex_destroy(&self.mutex);
-            std.debug.assert(rc == 0 or rc == safe_rc);
+            std.debug.assert(rc == .SUCCESS or rc == safe_rc);
 
             self.* = undefined;
         }
@@ -891,12 +891,12 @@ else if (std.builtin.link_libc)
 
         pub fn lock(self: *Mutex) void {
             const rc = std.c.pthread_mutex_lock(&self.mutex);
-            std.debug.assert(rc == 0);
+            std.debug.assert(rc == .SUCCESS);
         }
 
         pub fn unlock(self: *Mutex) void {
             const rc = std.c.pthread_mutex_unlock(&self.mutex);
-            std.debug.assert(rc == 0);
+            std.debug.assert(rc == .SUCCESS);
         }
 
         extern "c" fn pthread_mutex_trylock(m: *std.c.pthread_mutex_t) callconv(.C) c_int;
@@ -1076,24 +1076,24 @@ else if (std.builtin.link_libc)
             };
 
             const rc = std.c.pthread_cond_destroy(&self.cond);
-            std.debug.assert(rc == 0 or rc == safe_rc);
+            std.debug.assert(rc == .SUCCESS or rc == safe_rc);
 
             self.* = undefined;
         }
 
         pub fn wait(self: *Condvar, mutex: *Mutex) void {
             const rc = std.c.pthread_cond_wait(&self.cond, &mutex.mutex);
-            std.debug.assert(rc == 0);
+            std.debug.assert(rc == .SUCCESS);
         }
 
         pub fn signal(self: *Condvar) void {
             const rc = std.c.pthread_cond_signal(&self.cond);
-            std.debug.assert(rc == 0);
+            std.debug.assert(rc == .SUCCESS);
         }
 
         pub fn broadcast(self: *Condvar) void {
             const rc = std.c.pthread_cond_broadcast(&self.cond);
-            std.debug.assert(rc == 0);
+            std.debug.assert(rc == .SUCCESS);
         }
     }
 else

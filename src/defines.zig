@@ -63,7 +63,7 @@ pub const DefineData = struct {
         try user_defines.ensureUnusedCapacity(@truncate(u32, defines.count()));
         var iter = defines.iterator();
         while (iter.next()) |entry| {
-            var splitter = std.mem.split(entry.key_ptr.*, ".");
+            var splitter = std.mem.split(u8, entry.key_ptr.*, ".");
             while (splitter.next()) |part| {
                 if (!js_lexer.isIdentifier(part)) {
                     if (strings.eql(part, entry.key_ptr)) {
@@ -281,7 +281,7 @@ pub const Define = struct {
                     const remainder = user_define_key[0..last_dot];
                     const count = std.mem.count(u8, remainder, ".") + 1;
                     var parts = try allocator.alloc(string, count + 1);
-                    var splitter = std.mem.split(remainder, ".");
+                    var splitter = std.mem.split(u8, remainder, ".");
                     var i: usize = 0;
                     while (splitter.next()) |split| : (i += 1) {
                         parts[i] = split;

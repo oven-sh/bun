@@ -124,8 +124,8 @@ pub const StringOrTinyString = struct {
 
 pub fn copyLowercase(in: string, out: []u8) string {
     @setRuntimeSafety(false);
-    var in_slice = in;
-    var out_slice = out[0..in.len];
+    var in_slice: string = in;
+    var out_slice: []u8 = out[0..in.len];
 
     begin: while (out_slice.len > 0) {
         @setRuntimeSafety(false);

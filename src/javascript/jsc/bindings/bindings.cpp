@@ -1765,4 +1765,15 @@ void WTF__URL__setQuery(WTF__URL *arg0, bWTF__StringView arg1) {
 void WTF__URL__setUser(WTF__URL *arg0, bWTF__StringView arg1) {
   arg0->setUser(*Wrap<WTF::StringView, bWTF__StringView>::unwrap(&arg1));
 };
+
+JSC__JSValue JSC__JSPromise__rejectedPromiseValue(JSC__JSGlobalObject *arg0,
+                                                  JSC__JSValue JSValue1) {
+  return JSC::JSValue::encode(
+    JSC::JSPromise::rejectedPromise(arg0, JSC::JSValue::decode(JSValue1)));
+}
+JSC__JSValue JSC__JSPromise__resolvedPromiseValue(JSC__JSGlobalObject *arg0,
+                                                  JSC__JSValue JSValue1) {
+  return JSC::JSValue::encode(
+    JSC::JSPromise::resolvedPromise(arg0, JSC::JSValue::decode(JSValue1)));
+}
 }

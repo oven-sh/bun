@@ -165,7 +165,7 @@ void GlobalObject::setConsole(void *console) {
 // and any other objects available globally.
 void GlobalObject::installAPIGlobals(JSClassRef *globals, int count) {
   WTF::Vector<GlobalPropertyInfo> extraStaticGlobals;
-  extraStaticGlobals.reserveCapacity((size_t)count + 1);
+  extraStaticGlobals.reserveCapacity((size_t)count + 2);
 
   // This is not nearly a complete implementation. It's just enough to make some npm packages that
   // were compiled with Webpack to run without crashing in this environment.
@@ -223,9 +223,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject *globalObject,
   res.success = false;
   ZigString keyZ = toZigString(key, globalObject);
   ZigString referrerZ = referrer.isString() ? toZigString(referrer, globalObject) : ZigStringEmpty;
-  Zig__GlobalObject__resolve(&res, globalObject, &keyZ,
-                              &referrerZ
-                                                 );
+  Zig__GlobalObject__resolve(&res, globalObject, &keyZ, &referrerZ);
 
   if (res.success) {
     return toIdentifier(res.result.value, globalObject);
@@ -250,11 +248,9 @@ JSC::JSInternalPromise *GlobalObject::moduleLoaderImportModule(JSGlobalObject *g
   auto sourceURL = sourceOrigin.url();
   ErrorableZigString resolved;
   auto moduleNameZ = toZigString(moduleNameValue, globalObject);
-  auto sourceOriginZ = sourceURL.isEmpty() ? ZigStringCwd
-                                                 : toZigString(sourceURL.fileSystemPath());
+  auto sourceOriginZ = sourceURL.isEmpty() ? ZigStringCwd : toZigString(sourceURL.fileSystemPath());
   resolved.success = false;
-  Zig__GlobalObject__resolve(&resolved, globalObject, &moduleNameZ, &sourceOriginZ
-                             );
+  Zig__GlobalObject__resolve(&resolved, globalObject, &moduleNameZ, &sourceOriginZ);
   if (!resolved.success) {
     throwException(scope, resolved.result.err, globalObject);
     return promise->rejectWithCaughtException(globalObject, scope);
@@ -382,8 +378,7 @@ JSC::JSInternalPromise *GlobalObject::moduleLoaderFetch(JSGlobalObject *globalOb
   res.result.err.code = 0;
   res.result.err.ptr = nullptr;
 
-  Zig__GlobalObject__fetch(&res, globalObject, &moduleKeyZig,
-                          &source );
+  Zig__GlobalObject__fetch(&res, globalObject, &moduleKeyZig, &source);
 
   if (!res.success) {
     throwException(scope, res.result.err, globalObject);

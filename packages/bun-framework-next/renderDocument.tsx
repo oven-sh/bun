@@ -598,6 +598,27 @@ export async function render({
         }
       }
     }
+  } else if (typeof getStaticProps === "function") {
+    const result = await getStaticProps({
+      params: route.params,
+      query: route.query,
+      req: notImplementedProxy("req"),
+      res: notImplementedProxy("res"),
+      resolvedUrl: route.pathname,
+      preview: false,
+      previewData: null,
+      locale: null,
+      locales: [],
+      defaultLocale: null,
+    });
+
+    if (result) {
+      if ("props" in result) {
+        if (typeof result.props === "object") {
+          Object.assign(props, result.props);
+        }
+      }
+    }
   }
 
   const renderToString = ReactDOMServer.renderToString;

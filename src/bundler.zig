@@ -1114,7 +1114,15 @@ pub fn NewBundler(cache_files: bool) type {
                                     );
 
                                 var module_name = file_path.text["/bun-vfs/node_modules/".len..];
-                                module_name = module_name[0..strings.indexOfChar(module_name, '/').?];
+
+                                if (module_name[0] == '@') {
+                                    var end = strings.indexOfChar(module_name, '/').? + 1;
+                                    end += strings.indexOfChar(module_name[end..], '/').?;
+
+                                    module_name = module_name[0..end];
+                                } else {
+                                    module_name = module_name[0..strings.indexOfChar(module_name, '/').?];
+                                }
 
                                 if (NodeFallbackModules.Map.get(module_name)) |mod| {
                                     break :brk CacheEntry{ .contents = mod.code.* };

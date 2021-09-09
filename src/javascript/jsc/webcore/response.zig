@@ -4,19 +4,34 @@ const Api = @import("../../../api/schema.zig").Api;
 const http = @import("../../../http.zig");
 usingnamespace @import("../javascript.zig");
 usingnamespace @import("../bindings/bindings.zig");
-
+const ZigURL = @import("../../../query_string_map.zig").URL;
+const HTTPClient = @import("../../../http_client.zig");
+const picohttp = @import("picohttp");
 pub const Response = struct {
     pub const Class = NewClass(
         Response,
         .{ .name = "Response" },
         .{
             .@"constructor" = constructor,
+            .@"text" = .{
+                .rfn = getText,
+                .ts = d.ts{},
+            },
+            .@"json" = .{
+                .rfn = getJson,
+                .ts = d.ts{},
+            },
+            .@"arrayBuffer" = .{
+                .rfn = getArrayBuffer,
+                .ts = d.ts{},
+            },
         },
         .{
             // .@"url" = .{
             //     .@"get" = getURL,
             //     .ro = true,
             // },
+
             .@"ok" = .{
                 .@"get" = getOK,
                 .ro = true,
@@ -30,6 +45,7 @@ pub const Response = struct {
 
     allocator: *std.mem.Allocator,
     body: Body,
+    status_text: string = "",
 
     pub const Props = struct {};
 
@@ -41,7 +57,174 @@ pub const Response = struct {
         exception: js.ExceptionRef,
     ) js.JSValueRef {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/ok
-        return js.JSValueMakeBoolean(ctx, this.body.init.status_code >= 200 and this.body.init.status_code <= 299);
+        return js.JSValueMakeBoolean(ctx, this.body.init.status_code == 304 or (this.body.init.status_code >= 200 and this.body.init.status_code <= 299));
+    }
+
+    pub fn getText(
+        this: *Response,
+        ctx: js.JSContextRef,
+        function: js.JSObjectRef,
+        thisObject: js.JSObjectRef,
+        arguments: []const js.JSValueRef,
+        exception: js.ExceptionRef,
+    ) js.JSValueRef {
+        // https://developer.mozilla.org/en-US/docs/Web/API/Response/text
+        defer this.body.value = .Empty;
+        return JSPromise.resolvedPromiseValue(
+            VirtualMachine.vm.global,
+            (brk: {
+                switch (this.body.value) {
+                    .Unconsumed => {
+                        if (this.body.ptr) |_ptr| {
+                            break :brk ZigString.init(_ptr[0..this.body.len]).toValue(VirtualMachine.vm.global);
+                        }
+
+                        break :brk ZigString.init("").toValue(VirtualMachine.vm.global);
+                    },
+                    .Empty => {
+                        break :brk ZigString.init("").toValue(VirtualMachine.vm.global);
+                    },
+                    .String => |str| {
+                        break :brk ZigString.init(str).toValue(VirtualMachine.vm.global);
+                    },
+                    .ArrayBuffer => |buffer| {
+                        break :brk ZigString.init(buffer.ptr[buffer.offset..buffer.byte_len]).toValue(VirtualMachine.vm.global);
+                    },
+                }
+            }),
+        ).asRef();
+    }
+
+    var temp_error_buffer: [4096]u8 = undefined;
+    var error_arg_list: [1]js.JSObjectRef = undefined;
+    pub fn getJson(
+        this: *Response,
+        ctx: js.JSContextRef,
+        function: js.JSObjectRef,
+        thisObject: js.JSObjectRef,
+        arguments: []const js.JSValueRef,
+        exception: js.ExceptionRef,
+    ) js.JSValueRef {
+        defer this.body.value = .Empty;
+        var zig_string = ZigString.init("");
+
+        var js_string = (js.JSValueCreateJSONString(
+            ctx,
+            brk: {
+                switch (this.body.value) {
+                    .Unconsumed => {
+                        if (this.body.ptr) |_ptr| {
+                            zig_string = ZigString.init(_ptr[0..this.body.len]);
+                            break :brk zig_string.toJSStringRef();
+                        }
+
+                        break :brk zig_string.toJSStringRef();
+                    },
+                    .Empty => {
+                        break :brk zig_string.toJSStringRef();
+                    },
+                    .String => |str| {
+                        zig_string = ZigString.init(str);
+                        break :brk zig_string.toJSStringRef();
+                    },
+                    .ArrayBuffer => |buffer| {
+                        zig_string = ZigString.init(buffer.ptr[buffer.offset..buffer.byte_len]);
+                        break :brk zig_string.toJSStringRef();
+                    },
+                }
+            },
+            0,
+            exception,
+        ) orelse {
+            var out = std.fmt.bufPrint(&temp_error_buffer, "Invalid JSON\n\n \"{s}\"", .{zig_string.slice()[0..std.math.min(zig_string.len, 4000)]}) catch unreachable;
+            error_arg_list[0] = ZigString.init(out).toValueGC(VirtualMachine.vm.global).asRef();
+            return JSPromise.rejectedPromiseValue(
+                VirtualMachine.vm.global,
+                JSValue.fromRef(
+                    js.JSObjectMakeError(
+                        ctx,
+                        1,
+                        &error_arg_list,
+                        exception,
+                    ),
+                ),
+            ).asRef();
+        });
+        defer js.JSStringRelease(js_string);
+
+        return JSPromise.resolvedPromiseValue(
+            VirtualMachine.vm.global,
+            JSValue.fromRef(
+                js.JSValueMakeString(
+                    ctx,
+                    js_string,
+                ),
+            ),
+        ).asRef();
+    }
+    pub fn getArrayBuffer(
+        this: *Response,
+        ctx: js.JSContextRef,
+        function: js.JSObjectRef,
+        thisObject: js.JSObjectRef,
+        arguments: []const js.JSValueRef,
+        exception: js.ExceptionRef,
+    ) js.JSValueRef {
+        defer this.body.value = .Empty;
+        return JSPromise.resolvedPromiseValue(
+            VirtualMachine.vm.global,
+            JSValue.fromRef(
+                (brk: {
+                    switch (this.body.value) {
+                        .Unconsumed => {
+                            if (this.body.ptr) |_ptr| {
+                                break :brk js.JSObjectMakeTypedArrayWithBytesNoCopy(
+                                    ctx,
+                                    js.JSTypedArrayType.kJSTypedArrayTypeUint8Array,
+                                    _ptr,
+                                    this.body.len,
+                                    null,
+                                    null,
+                                    exception,
+                                );
+                            }
+
+                            break :brk js.JSObjectMakeTypedArray(
+                                ctx,
+                                js.JSTypedArrayType.kJSTypedArrayTypeUint8Array,
+                                0,
+                                exception,
+                            );
+                        },
+                        .Empty => {
+                            break :brk js.JSObjectMakeTypedArray(ctx, js.JSTypedArrayType.kJSTypedArrayTypeUint8Array, 0, exception);
+                        },
+                        .String => |str| {
+                            break :brk js.JSObjectMakeTypedArrayWithBytesNoCopy(
+                                ctx,
+                                js.JSTypedArrayType.kJSTypedArrayTypeUint8Array,
+                                @intToPtr([*]u8, @ptrToInt(str.ptr)),
+                                str.len,
+                                null,
+                                null,
+                                exception,
+                            );
+                        },
+                        .ArrayBuffer => |buffer| {
+                            break :brk js.JSObjectMakeTypedArrayWithBytesNoCopy(
+                                ctx,
+                                buffer.typed_array_type,
+                                buffer.ptr,
+                                buffer.byte_len,
+                                null,
+                                null,
+                                exception,
+                            );
+                        },
+                    }
+                }),
+            ),
+        ).asRef();
     }
 
     pub fn getStatus(
@@ -87,7 +270,7 @@ pub const Response = struct {
 
                 return http.MimeType.html.value;
             },
-            .ArrayBuffer => {
+            .Unconsumed, .ArrayBuffer => {
                 return "application/octet-stream";
             },
         }
@@ -131,6 +314,151 @@ pub const Response = struct {
             ctx,
             response,
         );
+    }
+};
+
+pub const Fetch = struct {
+    const headers_string = "headers";
+    const method_string = "method";
+
+    var fetch_body_string: MutableString = undefined;
+    var fetch_body_string_loaded = false;
+
+    pub const Class = NewClass(
+        void,
+        .{ .name = "fetch" },
+        .{
+            .@"call" = .{
+                .rfn = Fetch.call,
+                .ts = d.ts{},
+            },
+        },
+        .{},
+    );
+
+    pub fn call(
+        this: void,
+        ctx: js.JSContextRef,
+        function: js.JSObjectRef,
+        thisObject: js.JSObjectRef,
+        arguments: []const js.JSValueRef,
+        exception: js.ExceptionRef,
+    ) js.JSObjectRef {
+        if (arguments.len == 0 or arguments.len > 2) return js.JSValueMakeNull(ctx);
+        var http_client = HTTPClient.init(getAllocator(ctx), .GET, ZigURL{}, .{}, "");
+        var headers: ?Headers = null;
+        var body: string = "";
+
+        if (!js.JSValueIsString(ctx, arguments[0])) {
+            return js.JSValueMakeNull(ctx);
+        }
+
+        var url_zig_str = ZigString.init("");
+        JSValue.fromRef(arguments[0]).toZigString(
+            &url_zig_str,
+            VirtualMachine.vm.global,
+        );
+        var url_str = url_zig_str.slice();
+        if (url_str.len == 0) return js.JSValueMakeNull(ctx);
+        http_client.url = ZigURL.parse(url_str);
+
+        if (arguments.len == 2 and js.JSValueIsObject(ctx, arguments[1])) {
+            var array = js.JSObjectCopyPropertyNames(ctx, arguments[1]);
+            defer js.JSPropertyNameArrayRelease(array);
+            const count = js.JSPropertyNameArrayGetCount(array);
+            var i: usize = 0;
+            while (i < count) : (i += 1) {
+                var property_name_ref = js.JSPropertyNameArrayGetNameAtIndex(array, i);
+                switch (js.JSStringGetLength(property_name_ref)) {
+                    "headers".len => {
+                        if (js.JSStringIsEqualToUTF8CString(property_name_ref, "headers")) {
+                            if (js.JSObjectGetProperty(ctx, arguments[1], property_name_ref, null)) |value| {
+                                if (GetJSPrivateData(Headers, value)) |headers_ptr| {
+                                    headers = headers_ptr.*;
+                                } else if (Headers.JS.headersInit(ctx, value) catch null) |headers_| {
+                                    headers = headers_;
+                                }
+                            }
+                        }
+                    },
+                    "body".len => {
+                        if (js.JSStringIsEqualToUTF8CString(property_name_ref, "body")) {
+                            if (js.JSObjectGetProperty(ctx, arguments[1], property_name_ref, null)) |value| {
+                                var body_ = Body.extractBody(ctx, value, false, null, exception);
+                                if (exception != null) return js.JSValueMakeNull(ctx);
+                                switch (body_.value) {
+                                    .ArrayBuffer => |arraybuffer| {
+                                        body = arraybuffer.ptr[0..arraybuffer.byte_len];
+                                    },
+                                    .String => |str| {
+                                        body = str;
+                                    },
+                                    else => {},
+                                }
+                            }
+                        }
+                    },
+                    "method".len => {
+                        if (js.JSStringIsEqualToUTF8CString(property_name_ref, "method")) {
+                            if (js.JSObjectGetProperty(ctx, arguments[1], property_name_ref, null)) |value| {
+                                var string_ref = js.JSValueToStringCopy(ctx, value, exception);
+
+                                if (exception != null) return js.JSValueMakeNull(ctx);
+                                defer js.JSStringRelease(string_ref);
+                                var method_name_buf: [16]u8 = undefined;
+                                var method_name = method_name_buf[0..js.JSStringGetUTF8CString(string_ref, &method_name_buf, method_name_buf.len)];
+                                http_client.method = http.Method.which(method_name) orelse http_client.method;
+                            }
+                        }
+                    },
+                    else => {},
+                }
+            }
+        }
+
+        if (headers) |head| {
+            http_client.header_entries = head.entries;
+            http_client.header_buf = head.buf.items;
+        }
+
+        if (fetch_body_string_loaded) {
+            fetch_body_string.reset();
+        } else {
+            fetch_body_string = MutableString.init(VirtualMachine.vm.allocator, 0) catch unreachable;
+            fetch_body_string_loaded = true;
+        }
+
+        var http_response = http_client.send(body, &fetch_body_string) catch |err| {
+            const fetch_error = std.fmt.allocPrint(getAllocator(ctx), "Fetch error: {s}", .{@errorName(err)}) catch unreachable;
+            return JSPromise.rejectedPromiseValue(VirtualMachine.vm.global, ZigString.init(fetch_error).toErrorInstance(VirtualMachine.vm.global)).asRef();
+        };
+
+        var response_headers = Headers.fromPicoHeaders(getAllocator(ctx), http_response.headers) catch unreachable;
+        response_headers.guard = .immutable;
+        var response = getAllocator(ctx).create(Response) catch unreachable;
+        var allocator = getAllocator(ctx);
+        var duped = allocator.dupeZ(u8, fetch_body_string.list.items) catch unreachable;
+        response.* = Response{
+            .allocator = allocator,
+            .status_text = allocator.dupe(u8, http_response.status) catch unreachable,
+            .body = .{
+                .init = .{
+                    .headers = response_headers,
+                    .status_code = @truncate(u16, http_response.status_code),
+                },
+                .value = .{
+                    .Unconsumed = 0,
+                },
+                .ptr = duped.ptr,
+                .len = duped.len,
+                .ptr_allocator = allocator,
+            },
+        };
+
+        return JSPromise.resolvedPromiseValue(
+            VirtualMachine.vm.global,
+            JSValue.fromRef(Response.Class.make(ctx, response)),
+        ).asRef();
     }
 };
 
@@ -272,6 +600,77 @@ pub const Headers = struct {
             return js.JSValueMakeNull(ctx);
         }
 
+        pub fn headersInit(ctx: js.JSContextRef, header_prop: js.JSObjectRef) !?Headers {
+            const header_keys = js.JSObjectCopyPropertyNames(ctx, header_prop);
+            defer js.JSPropertyNameArrayRelease(header_keys);
+            const total_header_count = js.JSPropertyNameArrayGetCount(header_keys);
+            if (total_header_count == 0) return null;
+
+            // 2 passes through the headers
+
+            // Pass #1: find the "real" count.
+            // The number of things which are strings or numbers.
+            // Anything else should be ignored.
+            // We could throw a TypeError, but ignoring silently is more JavaScript-like imo
+            var real_header_count: usize = 0;
+            var estimated_buffer_len: usize = 0;
+            var j: usize = 0;
+            while (j < total_header_count) : (j += 1) {
+                var key_ref = js.JSPropertyNameArrayGetNameAtIndex(header_keys, j);
+                var value_ref = js.JSObjectGetProperty(ctx, header_prop, key_ref, null);
+
+                switch (js.JSValueGetType(ctx, value_ref)) {
+                    js.JSType.kJSTypeNumber => {
+                        const key_len = js.JSStringGetLength(key_ref);
+                        if (key_len > 0) {
+                            real_header_count += 1;
+                            estimated_buffer_len += key_len;
+                            estimated_buffer_len += std.fmt.count("{d}", .{js.JSValueToNumber(ctx, value_ref, null)});
+                        }
+                    },
+                    js.JSType.kJSTypeString => {
+                        const key_len = js.JSStringGetLength(key_ref);
+                        const value_len = js.JSStringGetLength(value_ref);
+                        if (key_len > 0 and value_len > 0) {
+                            real_header_count += 1;
+                            estimated_buffer_len += key_len + value_len;
+                        }
+                    },
+                    else => {},
+                }
+            }
+
+            if (real_header_count == 0 or estimated_buffer_len == 0) return null;
+
+            j = 0;
+            var allocator = getAllocator(ctx);
+            var headers = Headers{
+                .allocator = allocator,
+                .buf = try std.ArrayListUnmanaged(u8).initCapacity(allocator, estimated_buffer_len),
+                .entries = Headers.Entries{},
+            };
+            errdefer headers.deinit();
+            try headers.entries.ensureTotalCapacity(allocator, real_header_count);
+            headers.buf.expandToCapacity();
+            while (j < total_header_count) : (j += 1) {
+                var key_ref = js.JSPropertyNameArrayGetNameAtIndex(header_keys, j);
+                var value_ref = js.JSObjectGetProperty(ctx, header_prop, key_ref, null);
+
+                switch (js.JSValueGetType(ctx, value_ref)) {
+                    js.JSType.kJSTypeNumber => {
+                        if (js.JSStringGetLength(key_ref) == 0) continue;
+                        try headers.appendInit(ctx, key_ref, .kJSTypeNumber, value_ref);
+                    },
+                    js.JSType.kJSTypeString => {
+                        if (js.JSStringGetLength(value_ref) == 0 or js.JSStringGetLength(key_ref) == 0) continue;
+                        try headers.appendInit(ctx, key_ref, .kJSTypeString, value_ref);
+                    },
+                    else => {},
+                }
+            }
+            return headers;
+        }
+
         // https://developer.mozilla.org/en-US/docs/Web/API/Headers/Headers
         pub fn constructor(
             ctx: js.JSContextRef,
@@ -283,6 +682,14 @@ pub const Headers = struct {
             if (arguments.len > 0 and js.JSValueIsObjectOfClass(ctx, arguments[0], Headers.Class.get().*)) {
                 var other = castObj(arguments[0], Headers);
                 other.clone(headers) catch unreachable;
+            } else if (arguments.len == 1 and js.JSValueIsObject(ctx, arguments[0])) {
+                headers.* = (JS.headersInit(ctx, arguments[0]) catch unreachable) orelse Headers{
+                    .entries = @TypeOf(headers.entries){},
+                    .buf = @TypeOf(headers.buf){},
+                    .used = 0,
+                    .allocator = getAllocator(ctx),
+                    .guard = Guard.none,
+                };
             } else {
                 headers.* = Headers{
                     .entries = @TypeOf(headers.entries){},
@@ -356,26 +763,25 @@ pub const Headers = struct {
         none,
     };
 
-    // TODO: is it worth making this lazy? instead of copying all the request headers, should we just do it on get/put/iterator?
-    pub fn fromRequestCtx(allocator: *std.mem.Allocator, request: *http.RequestContext) !Headers {
+    pub fn fromPicoHeaders(allocator: *std.mem.Allocator, picohttp_headers: []const picohttp.Header) !Headers {
         var total_len: usize = 0;
-        for (request.request.headers) |header| {
+        for (picohttp_headers) |header| {
             total_len += header.name.len;
             total_len += header.value.len;
         }
         // for the null bytes
-        total_len += request.request.headers.len * 2;
+        total_len += picohttp_headers.len * 2;
         var headers = Headers{
             .allocator = allocator,
             .entries = Entries{},
             .buf = std.ArrayListUnmanaged(u8){},
         };
-        try headers.entries.ensureTotalCapacity(allocator, request.request.headers.len);
+        try headers.entries.ensureTotalCapacity(allocator, picohttp_headers.len);
         try headers.buf.ensureTotalCapacity(allocator, total_len);
         headers.buf.expandToCapacity();
         headers.guard = Guard.request;
 
-        for (request.request.headers) |header| {
+        for (picohttp_headers) |header| {
             headers.entries.appendAssumeCapacity(Kv{
                 .name = headers.appendString(
                     string,
@@ -394,9 +800,12 @@ pub const Headers = struct {
             });
         }
 
-        headers.guard = Guard.immutable;
-
         return headers;
+    }
+
+    // TODO: is it worth making this lazy? instead of copying all the request headers, should we just do it on get/put/iterator?
+    pub fn fromRequestCtx(allocator: *std.mem.Allocator, request: *http.RequestContext) !Headers {
+        return fromPicoHeaders(allocator, request.request.headers);
     }
 
     pub fn asStr(headers: *const Headers, ptr: Api.StringPointer) []u8 {
@@ -479,7 +888,7 @@ pub const Headers = struct {
                 ),
                 .value = headers.appendString(
                     string,
-                    key,
+                    value,
                     needs_lowercase,
                     needs_normalize,
                     append_null,
@@ -577,6 +986,9 @@ pub const Headers = struct {
 pub const Body = struct {
     init: Init,
     value: Value,
+    ptr: ?[*]u8 = null,
+    len: usize = 0,
+    ptr_allocator: ?*std.mem.Allocator = null,
 
     pub fn deinit(this: *Body, allocator: *std.mem.Allocator) void {
         if (this.init.headers) |headers| {
@@ -602,7 +1014,7 @@ pub const Body = struct {
             defer js.JSPropertyNameArrayRelease(array);
             const count = js.JSPropertyNameArrayGetCount(array);
             var i: usize = 0;
-            upper: while (i < count) : (i += 1) {
+            while (i < count) : (i += 1) {
                 var property_name_ref = js.JSPropertyNameArrayGetNameAtIndex(array, i);
                 switch (js.JSStringGetLength(property_name_ref)) {
                     "headers".len => {
@@ -611,73 +1023,7 @@ pub const Body = struct {
                             if (js.JSObjectGetProperty(ctx, init_ref, property_name_ref, null)) |header_prop| {
                                 switch (js.JSValueGetType(ctx, header_prop)) {
                                     js.JSType.kJSTypeObject => {
-                                        const header_keys = js.JSObjectCopyPropertyNames(ctx, header_prop);
-                                        defer js.JSPropertyNameArrayRelease(header_keys);
-                                        const total_header_count = js.JSPropertyNameArrayGetCount(array);
-                                        if (total_header_count == 0) continue :upper;
-
-                                        // 2 passes through the headers
-
-                                        // Pass #1: find the "real" count.
-                                        // The number of things which are strings or numbers.
-                                        // Anything else should be ignored.
-                                        // We could throw a TypeError, but ignoring silently is more JavaScript-like imo
-                                        var real_header_count: usize = 0;
-                                        var estimated_buffer_len: usize = 0;
-                                        var j: usize = 0;
-                                        while (j < total_header_count) : (j += 1) {
-                                            var key_ref = js.JSPropertyNameArrayGetNameAtIndex(header_keys, j);
-                                            var value_ref = js.JSObjectGetProperty(ctx, header_prop, key_ref, null);
-
-                                            switch (js.JSValueGetType(ctx, value_ref)) {
-                                                js.JSType.kJSTypeNumber => {
-                                                    const key_len = js.JSStringGetLength(key_ref);
-                                                    if (key_len > 0) {
-                                                        real_header_count += 1;
-                                                        estimated_buffer_len += key_len;
-                                                        estimated_buffer_len += std.fmt.count("{d}", .{js.JSValueToNumber(ctx, value_ref, null)});
-                                                    }
-                                                },
-                                                js.JSType.kJSTypeString => {
-                                                    const key_len = js.JSStringGetLength(key_ref);
-                                                    const value_len = js.JSStringGetLength(value_ref);
-                                                    if (key_len > 0 and value_len > 0) {
-                                                        real_header_count += 1;
-                                                        estimated_buffer_len += key_len + value_len;
-                                                    }
-                                                },
-                                                else => {},
-                                            }
-                                        }
-
-                                        if (real_header_count == 0 or estimated_buffer_len == 0) continue :upper;
-
-                                        j = 0;
-                                        var headers = Headers{
-                                            .allocator = allocator,
-                                            .buf = try std.ArrayListUnmanaged(u8).initCapacity(allocator, estimated_buffer_len),
-                                            .entries = Headers.Entries{},
-                                        };
-                                        errdefer headers.deinit();
-                                        try headers.entries.ensureTotalCapacity(allocator, real_header_count);
-
-                                        while (j < total_header_count) : (j += 1) {
-                                            var key_ref = js.JSPropertyNameArrayGetNameAtIndex(header_keys, j);
-                                            var value_ref = js.JSObjectGetProperty(ctx, header_prop, key_ref, null);
-
-                                            switch (js.JSValueGetType(ctx, value_ref)) {
-                                                js.JSType.kJSTypeNumber => {
-                                                    if (js.JSStringGetLength(key_ref) == 0) continue;
-                                                    try headers.appendInit(ctx, key_ref, .kJSTypeNumber, value_ref);
-                                                },
-                                                js.JSType.kJSTypeString => {
-                                                    if (js.JSStringGetLength(value_ref) == 0 or js.JSStringGetLength(key_ref) == 0) continue;
-                                                    try headers.appendInit(ctx, key_ref, .kJSTypeString, value_ref);
-                                                },
-                                                else => {},
-                                            }
-                                        }
-                                        result.headers = headers;
+                                        result.headers = try Headers.JS.headersInit(ctx, header_prop);
                                     },
                                     else => {},
                                 }
@@ -705,10 +1051,12 @@ pub const Body = struct {
         ArrayBuffer: ArrayBuffer,
         String: string,
         Empty: u0,
+        Unconsumed: u0,
         pub const Tag = enum {
             ArrayBuffer,
             String,
             Empty,
+            Unconsumed,
         };
 
         pub fn length(value: *const Value) usize {
@@ -719,7 +1067,7 @@ pub const Body = struct {
                 .String => |str| {
                     return str.len;
                 },
-                .Empty => {
+                else => {
                     return 0;
                 },
             }
@@ -783,6 +1131,8 @@ pub const Body = struct {
                 }
 
                 body.value = Value{ .String = str.characters8()[0..len] };
+                body.ptr = @intToPtr([*]u8, @ptrToInt(body.value.String.ptr));
+                body.len = body.value.String.len;
                 return body;
             },
             .kJSTypeObject => {
@@ -807,6 +1157,8 @@ pub const Body = struct {
                             } else |err| {}
                         }
                         body.value = Value{ .ArrayBuffer = buffer };
+                        body.ptr = buffer.ptr[buffer.offset..buffer.byte_len].ptr;
+                        body.len = buffer.ptr[buffer.offset..buffer.byte_len].len;
                         return body;
                     },
                 }

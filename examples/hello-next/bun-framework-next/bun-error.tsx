@@ -555,6 +555,32 @@ const JSException = ({ value }: { value: JSExceptionType }) => {
     }
 
     default: {
+      const newline = value.message.indexOf("\n");
+      if (newline > -1) {
+        const subtitle = value.message.substring(newline + 1).trim();
+        const message = value.message.substring(0, newline).trim();
+        if (subtitle.length) {
+          return (
+            <div className={`BunError-JSException`}>
+              <div className="BunError-error-header">
+                <div className={`BunError-error-code`}>{value.name}</div>
+                {errorTags[ErrorTagType.server]}
+              </div>
+
+              <div className={`BunError-error-message`}>{message}</div>
+              <div className={`BunError-error-subtitle`}>{subtitle}</div>
+
+              {value.stack && (
+                <NativeStackTrace
+                  frames={value.stack.frames}
+                  sourceLines={value.stack.source_lines}
+                />
+              )}
+            </div>
+          );
+        }
+      }
+
       return (
         <div className={`BunError-JSException`}>
           <div className="BunError-error-header">

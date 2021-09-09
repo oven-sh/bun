@@ -27,6 +27,13 @@ const _url_code: string = @embedFile("./node-fallbacks/out/url.js");
 const _util_code: string = @embedFile("./node-fallbacks/out/util.js");
 const _zlib_code: string = @embedFile("./node-fallbacks/out/zlib.js");
 
+const _node_fetch_code: string = @embedFile("./node-fallbacks/out/node-fetch.js");
+const _isomorphic_fetch_code: string = @embedFile("./node-fallbacks/out/isomorphic-fetch.js");
+const _vercel_fetch_code: string = @embedFile("./node-fallbacks/out/@vercel_fetch.js");
+const node_fetch_code: *const string = &_node_fetch_code;
+const isomorphic_fetch_code: *const string = &_isomorphic_fetch_code;
+const vercel_fetch_code: *const string = &_vercel_fetch_code;
+
 const assert_code: *const string = &_assert_code;
 const buffer_code: *const string = &_buffer_code;
 const console_code: *const string = &_console_code;
@@ -72,6 +79,10 @@ const tty_import_path = "/bun-vfs/node_modules/tty/index.js";
 const url_import_path = "/bun-vfs/node_modules/url/index.js";
 const util_import_path = "/bun-vfs/node_modules/util/index.js";
 const zlib_import_path = "/bun-vfs/node_modules/zlib/index.js";
+
+const node_fetch_import_path = "/bun-vfs/node_modules/node-fetch/index.js";
+const isomorphic_fetch_import_path = "/bun-vfs/node_modules/isomorphic-fetch/index.js";
+const vercel_fetch_import_path = "/bun-vfs/node_modules/@vercel/fetch/index.js";
 
 const assert_package_json = PackageJSON{
     .name = "assert",
@@ -277,6 +288,34 @@ const zlib_package_json = PackageJSON{
     .source = logger.Source.initPathString("/bun-vfs/node_modules/zlib/package.json", ""),
 };
 
+const node_fetch_package_json = PackageJSON{
+    .name = "node-fetch",
+    .version = "0.0.0-polyfill",
+    .module_type = .cjs,
+    .hash = @truncate(u32, std.hash.Wyhash.hash(0, "node-fetch@0.0.0-polyfill")),
+    .main_fields = undefined,
+    .browser_map = undefined,
+    .source = logger.Source.initPathString("/bun-vfs/node_modules/node-fetch/package.json", ""),
+};
+const isomorphic_fetch_package_json = PackageJSON{
+    .name = "isomorphic-fetch",
+    .version = "0.0.0-polyfill",
+    .module_type = .cjs,
+    .hash = @truncate(u32, std.hash.Wyhash.hash(0, "isomorphic-fetch@0.0.0-polyfill")),
+    .main_fields = undefined,
+    .browser_map = undefined,
+    .source = logger.Source.initPathString("/bun-vfs/node_modules/isomorphic-fetch/package.json", ""),
+};
+const vercel_fetch_package_json = PackageJSON{
+    .name = "@vercel/fetch",
+    .version = "0.0.0-polyfill",
+    .module_type = .cjs,
+    .hash = @truncate(u32, std.hash.Wyhash.hash(0, "@vercel/fetch@0.0.0-polyfill")),
+    .main_fields = undefined,
+    .browser_map = undefined,
+    .source = logger.Source.initPathString("/bun-vfs/node_modules/@vercel/fetch/package.json", ""),
+};
+
 pub const FallbackModule = struct {
     path: Fs.Path,
     code: *const string,
@@ -392,6 +431,24 @@ pub const FallbackModule = struct {
         .code = zlib_code,
         .package_json = &zlib_package_json,
     };
+
+    pub const @"node-fetch" = FallbackModule{
+        .path = Fs.Path.initWithNamespaceVirtual(node_fetch_import_path, "node", "node-fetch"),
+        .code = node_fetch_code,
+        .package_json = &node_fetch_package_json,
+    };
+
+    pub const @"isomorphic-fetch" = FallbackModule{
+        .path = Fs.Path.initWithNamespaceVirtual(isomorphic_fetch_import_path, "node", "isomorphic-fetch"),
+        .code = isomorphic_fetch_code,
+        .package_json = &isomorphic_fetch_package_json,
+    };
+
+    pub const @"@vercel/fetch" = FallbackModule{
+        .path = Fs.Path.initWithNamespaceVirtual(vercel_fetch_import_path, "node", "@vercel/fetch"),
+        .code = vercel_fetch_code,
+        .package_json = &vercel_fetch_package_json,
+    };
 };
 
 pub const Map = std.ComptimeStringMap(FallbackModule, .{
@@ -417,4 +474,8 @@ pub const Map = std.ComptimeStringMap(FallbackModule, .{
     &.{ "url", FallbackModule.url },
     &.{ "util", FallbackModule.util },
     &.{ "zlib", FallbackModule.zlib },
+
+    &.{ "node-fetch", FallbackModule.@"node-fetch" },
+    &.{ "isomorphic-fetch", FallbackModule.@"isomorphic-fetch" },
+    &.{ "@vercel/fetch", FallbackModule.@"@vercel/fetch" },
 });

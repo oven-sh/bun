@@ -124,6 +124,7 @@ a:hover {
 
 .BunError-NativeStackTrace {
   margin-top: 0;
+  width: 100%;
 }
 
 .BunError-NativeStackTrace-filename {

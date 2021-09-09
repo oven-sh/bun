@@ -33,6 +33,7 @@ pub const GlobalClasses = [_]type{
     BuildError.Class,
     ResolveError.Class,
     Bun.Class,
+    Fetch.Class,
 };
 const Blob = @import("../../blob.zig");
 
@@ -275,6 +276,10 @@ pub const Bun = struct {
             .match = .{
                 .rfn = Router.match,
                 .ts = Router.match_type_definition,
+            },
+            .fetch = .{
+                .rfn = Fetch.call,
+                .ts = d.ts{},
             },
             .getImportedStyles = .{
                 .rfn = Bun.getImportedStyles,
@@ -1347,7 +1352,6 @@ pub const EventListenerMixin = struct {
 
         // Rely on JS finalizer
         var fetch_event = try vm.allocator.create(FetchEvent);
-
 
         fetch_event.* = FetchEvent{
             .request_context = request_context,

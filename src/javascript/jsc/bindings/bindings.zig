@@ -438,8 +438,17 @@ pub const JSPromise = extern struct {
     pub fn resolvedPromise(globalThis: *JSGlobalObject, value: JSValue) *JSPromise {
         return cppFn("resolvedPromise", .{ globalThis, value });
     }
+
+    pub fn resolvedPromiseValue(globalThis: *JSGlobalObject, value: JSValue) JSValue {
+        return cppFn("resolvedPromiseValue", .{ globalThis, value });
+    }
+
     pub fn rejectedPromise(globalThis: *JSGlobalObject, value: JSValue) *JSPromise {
         return cppFn("rejectedPromise", .{ globalThis, value });
+    }
+
+    pub fn rejectedPromiseValue(globalThis: *JSGlobalObject, value: JSValue) JSValue {
+        return cppFn("rejectedPromiseValue", .{ globalThis, value });
     }
 
     pub fn resolve(this: *JSPromise, globalThis: *JSGlobalObject, value: JSValue) void {
@@ -470,6 +479,8 @@ pub const JSPromise = extern struct {
         "rejectAsHandled",
         // "rejectException",
         "rejectAsHandledException",
+        "rejectedPromiseValue",
+        "resolvedPromiseValue",
     };
 };
 

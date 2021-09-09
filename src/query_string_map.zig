@@ -20,6 +20,37 @@ pub const URL = struct {
     username: string = "",
     port_was_automatically_set: bool = false,
 
+    pub fn isDomainName(this: *const URL) bool {
+        for (this.hostname) |c, i| {
+            switch (c) {
+                '0'...'9', '.', ':' => {},
+                else => {
+                    return true;
+                },
+            }
+        }
+
+        return false;
+    }
+
+    pub fn isLocalhost(this: *const URL) bool {
+        return this.hostname.len == 0 or strings.eqlComptime(this.hostname, "localhost") or strings.eqlComptime(this.hostname, "0.0.0.0");
+    }
+
+    pub fn getIPv4Address(this: *const URL) ?std.x.net.ip.Address.IPv4 {
+        return (if (this.hostname.length > 0)
+            std.x.os.IPv4.parse(this.hostname)
+        else
+            std.x.os.IPv4.parse(this.href)) catch return null;
+    }
+
+    pub fn getIPv6Address(this: *const URL) ?std.x.net.ip.Address.IPv6 {
+        return (if (this.hostname.length > 0)
+            std.x.os.IPv6.parse(this.hostname)
+        else
+            std.x.os.IPv6.parse(this.href)) catch return null;
+    }
+
     pub fn displayProtocol(this: *const URL) string {
         if (this.protocol.len > 0) {
             return this.protocol;
@@ -32,6 +63,10 @@ pub const URL = struct {
         }
 
         return "http";
+    }
+
+    pub inline fn isHTTPS(this: *const URL) bool {
+        return strings.eqlComptime(this.protocol, "https");
     }
 
     pub fn displayHostname(this: *const URL) string {
@@ -48,6 +83,10 @@ pub const URL = struct {
 
     pub fn getPort(this: *const URL) ?u16 {
         return std.fmt.parseInt(u16, this.port, 10) catch null;
+    }
+
+    pub fn getPortAuto(this: *const URL) u16 {
+        return this.getPort() orelse (if (this.isHTTPS()) @as(u16, 443) else @as(u16, 80));
     }
 
     pub fn hasValidPort(this: *const URL) bool {

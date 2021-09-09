@@ -106,8 +106,9 @@ pub const Response = struct {
     status_code: usize,
     status: []const u8,
     headers: []const Header,
+    bytes_read: c_int = 0,
 
-    pub fn parse(buf: []const u8, src: []Header) !Response {
+    pub fn parseParts(buf: []const u8, src: []Header, offset: ?*usize) !Response {
         var minor_version: c_int = undefined;
         var status_code: c_int = undefined;
         var status: []const u8 = undefined;
@@ -122,19 +123,28 @@ pub const Response = struct {
             &status.len,
             @ptrCast([*c]c.phr_header, src.ptr),
             &num_headers,
-            0,
+            offset.?.*,
         );
 
         return switch (rc) {
             -1 => error.BadResponse,
-            -2 => error.ShortRead,
+            -2 => brk: {
+                offset.?.* += buf.len;
+
+                break :brk error.ShortRead;
+            },
             else => |bytes_read| Response{
                 .minor_version = @intCast(usize, minor_version),
                 .status_code = @intCast(usize, status_code),
                 .status = status,
                 .headers = src[0..num_headers],
+                .bytes_read = bytes_read,
             },
         };
+    }
+
+    pub fn parse(buf: []const u8, src: []Header) !Response {
+        return try parseParts(buf, src, 0);
     }
 };
 

@@ -1129,16 +1129,18 @@ pub const Body = struct {
                     } else |err| {}
                 }
 
-                var str = JSValue.fromRef(body_ref).toWTFString(VirtualMachine.vm.global);
-                const len = str.length();
-                if (len == 0) {
+                var str: ZigString = ZigString.Empty;
+                JSValue.fromRef(body_ref).toZigString(&str, VirtualMachine.vm.global);
+
+                if (str.len == 0) {
                     body.value = .{ .String = "" };
                     return body;
                 }
 
-                body.value = Value{ .String = str.characters8()[0..len] };
-                body.ptr = @intToPtr([*]u8, @ptrToInt(body.value.String.ptr));
-                body.len = body.value.String.len;
+                body.value = Value{ .String = str.slice() };
+                // body.ptr = body.
+                // body.len = body.value.String.len;str.characters8()[0..len] };
+             
                 return body;
             },
             .kJSTypeObject => {

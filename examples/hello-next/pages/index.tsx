@@ -1,25 +1,16 @@
 import Head from "next/head";
 import Link from "next/link";
-import { useRouter } from "next/router";
 import React from "react";
-import {
-  Tweet,
-  TwitterContextProvider,
-} from "@jarred/react-static-tweets/src/index";
-import "@jarred/react-static-tweets/styles.css";
-import { fetchTweetAst } from "@jarred/static-tweets/src/fetchTweetAst";
-import { SWRConfig } from "swr";
 import styles from "../styles/Home.module.css";
 
 export async function getStaticProps(ctx) {
   return {
     props: {
-      tweetAst: await fetchTweetAst("1390084458724741121"),
     },
   };
 }
 
-export default function Home({ tweetAst }) {
+export default function Home({  }) {
   return (
     <div className={styles.container}>
       <Head>

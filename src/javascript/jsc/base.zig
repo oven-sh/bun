@@ -742,7 +742,7 @@ pub fn NewClass(
         var property_name_refs = std.mem.zeroes([property_names.len]js.JSStringRef);
         const property_name_literals = property_names;
         var static_properties = brk: {
-            var props: [property_names.len]js.JSStaticValue = undefined;
+            var props: [property_names.len + 1]js.JSStaticValue = undefined;
             std.mem.set(
                 js.JSStaticValue,
                 &props,

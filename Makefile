@@ -12,8 +12,8 @@ sign-macos-x64:
 sign-macos-aarch64: 
 	gon sign.macos-aarch64.json
 
-release-macos-x64: build-obj bun-link-lld-release sign-macos-x64
-release-macos-aarch64: build-obj bun-link-lld-release sign-macos-aarch64
+release-macos-x64: build-obj jsc-bindings-mac bun-link-lld-release sign-macos-x64
+release-macos-aarch64: build-obj jsc-bindings-mac bun-link-lld-release sign-macos-aarch64
 
 api: 
 	npm install; ./node_modules/.bin/peechy --schema src/api/schema.peechy --esm src/api/schema.js --ts src/api/schema.d.ts --zig src/api/schema.zig

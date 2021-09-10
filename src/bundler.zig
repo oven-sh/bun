@@ -2697,7 +2697,7 @@ pub const Transformer = struct {
                         .transform_imports = false,
                         .runtime_imports = ast.runtime_imports,
                     },
-                    u1,
+                    ?*c_void,
                     null,
                 );
             },

@@ -4,10 +4,10 @@ bun: vendor bun-prod-native bun-prod-wasi bun-prod-wasm
 vendor: api node-fallbacks runtime_js fallback_decoder mimalloc picohttp jsc
 
 build-obj: 
-	zig build obj -Drelease-fast
+	zig build obj -Drelease-safe
 
 sign-macos-x64: 
-	codesign -s 417F1E55D8BDFB5DE25DA3126EDF238ED1F45B7E -f -v --timestamp --entitlements entitlements.plist ./build/macos-aarch64/bun
+	gon sign-macos-x64.json
 
 sign-macos-aarch64: 
 	gon sign.macos-aarch64.json

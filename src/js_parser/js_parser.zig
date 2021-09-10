@@ -9886,7 +9886,7 @@ pub fn NewParser(
         const JSXTag = struct {
             pub const TagType = enum { fragment, tag };
             pub const Data = union(TagType) {
-                fragment: u1,
+                fragment: u8,
                 tag: Expr,
 
                 pub fn asExpr(d: *const Data) ?ExprNodeIndex {
@@ -14506,12 +14506,12 @@ pub fn NewParser(
                 .require_resolve_transposer = undefined,
                 .source = source,
 
-                .needs_jsx_import = if (only_scan_imports_and_do_not_visit) false else NeedsJSXType{},
+                .needs_jsx_import = if (comptime only_scan_imports_and_do_not_visit) false else NeedsJSXType{},
                 .lexer = lexer,
                 .hmr_exports_list = @TypeOf(this.hmr_exports_list).init(allocator),
             };
 
-            if (!only_scan_imports_and_do_not_visit) {
+            if (comptime !only_scan_imports_and_do_not_visit) {
                 this.import_records = @TypeOf(this.import_records).init(allocator);
                 this.named_imports = NamedImportsType.init(allocator);
             }

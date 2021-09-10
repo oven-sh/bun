@@ -71,10 +71,6 @@ const notImplementedProxy = (base) =>
     }
   );
 
-globalThis.fetch = (url, options) => {
-  return Promise.reject(new Error(`fetch is not implemented yet. sorry!!`));
-};
-
 function getScripts(files: DocumentFiles) {
   const { context, props } = this;
   const {
@@ -574,6 +570,9 @@ export async function render({
     ctx,
   });
 
+  const pageProps = Object.assign({}, props.pageProps || {});
+  // This isn't correct.
+  // We don't call getServerSideProps on clients.
   // This isn't correct.
   // We don't call getServerSideProps on clients.
   const getServerSideProps = PageNamespace.getServerSideProps;
@@ -594,7 +593,7 @@ export async function render({
     if (result) {
       if ("props" in result) {
         if (typeof result.props === "object") {
-          Object.assign(props, result.props);
+          Object.assign(pageProps, result.props);
         }
       }
     }
@@ -615,7 +614,7 @@ export async function render({
     if (result) {
       if ("props" in result) {
         if (typeof result.props === "object") {
-          Object.assign(props, result.props);
+          Object.assign(pageProps, result.props);
         }
       }
     }
@@ -623,6 +622,7 @@ export async function render({
 
   const renderToString = ReactDOMServer.renderToString;
   const ErrorDebug = null;
+  props.pageProps = pageProps;
 
   const renderPage: RenderPage = (
     options: ComponentsEnhancer = {}
@@ -648,7 +648,12 @@ export async function render({
 
     const htmlOrPromise = renderToString(
       <AppContainer>
-        <EnhancedApp Component={EnhancedComponent} router={router} {...props} />
+        <EnhancedApp
+          Component={EnhancedComponent}
+          router={router}
+          {...props}
+          pageProps={pageProps}
+        />
       </AppContainer>
     );
     return typeof htmlOrPromise === "string"

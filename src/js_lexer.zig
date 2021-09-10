@@ -2682,6 +2682,7 @@ pub const CodepointIterator = struct {
 // TODO: implement this to actually work right
 // this fn is a stub!
 pub fn rangeOfIdentifier(source: *const Source, loc: logger.Loc) logger.Range {
+    if (loc.start == -1) return logger.Range.None;
     const text = source.contents[loc.toUsize()..];
     var r = logger.Range{ .loc = loc, .len = 0 };
     if (text.len == 0) {

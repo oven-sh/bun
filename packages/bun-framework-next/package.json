@@ -24,6 +24,9 @@
       "fallback": "fallback.development.tsx",
       "server": "server.development.tsx",
       "css": "onimportcss",
+      "override": {
+        "next/dist/client/image.js": "next-image-polyfill.tsx"
+      },
       "define": {
         "client": {
           ".env": "NEXT_PUBLIC_",

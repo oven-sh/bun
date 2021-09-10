@@ -105,16 +105,30 @@ pub const Response = struct {
         arguments: []const js.JSValueRef,
         exception: js.ExceptionRef,
     ) js.JSValueRef {
-        defer this.body.value = .Empty;
         var zig_string = ZigString.init("");
+        var deallocate = false;
+        defer {
+            if (deallocate) {
+                if (this.body.value == .Unconsumed) {
+                    this.body.ptr_allocator.?.free(this.body.ptr.?[0..this.body.len]);
+                    this.body.ptr_allocator = null;
+                    this.body.ptr = null;
+                    this.body.len = 0;
+                }
+            }
 
-        var js_string = (js.JSValueCreateJSONString(
+            this.body.value = .Empty;
+        }
+
+        var json_value = (js.JSValueMakeFromJSONString(
             ctx,
             brk: {
                 switch (this.body.value) {
                     .Unconsumed => {
                         if (this.body.ptr) |_ptr| {
                             zig_string = ZigString.init(_ptr[0..this.body.len]);
+                            deallocate = true;
+
                             break :brk zig_string.toJSStringRef();
                         }
 
@@ -133,8 +147,6 @@ pub const Response = struct {
                     },
                 }
             },
-            0,
-            exception,
         ) orelse {
             var out = std.fmt.bufPrint(&temp_error_buffer, "Invalid JSON\n\n \"{s}\"", .{zig_string.slice()[0..std.math.min(zig_string.len, 4000)]}) catch unreachable;
             error_arg_list[0] = ZigString.init(out).toValueGC(VirtualMachine.vm.global).asRef();
@@ -150,16 +162,10 @@ pub const Response = struct {
                 ),
             ).asRef();
         });
-        defer js.JSStringRelease(js_string);
 
         return JSPromise.resolvedPromiseValue(
             VirtualMachine.vm.global,
-            JSValue.fromRef(
-                js.JSValueMakeString(
-                    ctx,
-                    js_string,
-                ),
-            ),
+            JSValue.fromRef(json_value),
         ).asRef();
     }
     pub fn getArrayBuffer(

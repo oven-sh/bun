@@ -256,6 +256,8 @@ message FrameworkConfig {
 
   CSSInJSBehavior client_css_in_js = 6;
   string display_name = 7;
+
+  StringMap overrideModules = 8;
 }
 
 struct FrameworkEntryPoint {
@@ -281,6 +283,7 @@ struct LoadedFramework {
   bool development;
   FrameworkEntryPointMap entry_points;
   CSSInJSBehavior client_css_in_js;
+  StringMap overrideModules;
 }
 
 struct LoadedRouteConfig {

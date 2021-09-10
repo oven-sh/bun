@@ -142,7 +142,7 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
                     try p.lexer.next();
                     var is_single_line = !p.lexer.has_newline_before;
                     var properties = std.ArrayList(G.Property).init(p.allocator);
-                    var duplicates = std.BufSet.init(p.allocator);
+                    var duplicates = std.AutoHashMap(u64, void).init(p.allocator);
                     defer duplicates.deinit();
 
                     while (p.lexer.token != .t_close_brace) {
@@ -159,13 +159,13 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
                         }
 
                         var str = p.lexer.toEString();
-                        const is_duplicate = duplicates.contains(p.lexer.string_literal_slice);
-                        if (!is_duplicate) {
-                            duplicates.insert(p.lexer.string_literal_slice) catch unreachable;
-                        }
+                        const hash_key = str.hash();
+                        const duplicate_get_or_put = duplicates.getOrPut(hash_key) catch unreachable;
+                        duplicate_get_or_put.key_ptr.* = hash_key;
+
                         var key_range = p.lexer.range();
                         // Warn about duplicate keys
-                        if (is_duplicate) {
+                        if (duplicate_get_or_put.found_existing) {
                             p.log.addRangeWarningFmt(p.source, key_range, p.allocator, "Duplicate key \"{s}\" in object literal", .{p.lexer.string_literal_slice}) catch unreachable;
                         }
 

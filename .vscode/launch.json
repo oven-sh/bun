@@ -98,7 +98,7 @@
       // "args": ["--serve", "--origin=http://localhost:3000"],
       "args": ["dev", "--origin=http://localhost:3000"],
       "cwd": "${workspaceFolder}/examples/hello-next",
-      "console": "internalConsole"
+      "console": "internalConsole" 
     },
     {
       "type": "lldb",
@@ -154,7 +154,7 @@
       "request": "launch",
       "name": "Demo .bun",
       "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
-      "args": ["bun", "--use=./bun-framework-next"],
+      "args": ["bun", "--use=bun-framework-next"],
       "cwd": "${workspaceFolder}/examples/hello-next",
       "console": "internalConsole"
     },

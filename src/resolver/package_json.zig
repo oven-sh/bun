@@ -108,6 +108,29 @@ pub const PackageJSON = struct {
         }
     }
 
+    fn loadOverrides(
+        framework: *options.Framework,
+        json: *const js_ast.E.Object,
+        allocator: *std.mem.Allocator,
+    ) void {
+        var valid_count: usize = 0;
+        for (json.properties) |prop| {
+            if (prop.value.?.data != .e_string) continue;
+            valid_count += 1;
+        }
+
+        var buffer = allocator.alloc([]const u8, valid_count * 2) catch unreachable;
+        var keys = buffer[0 .. buffer.len / 2];
+        var values = buffer[keys.len..];
+        var i: usize = 0;
+        for (json.properties) |prop| {
+            if (prop.value.?.data != .e_string) continue;
+            keys[i] = prop.key.?.data.e_string.string(allocator) catch unreachable;
+            values[i] = prop.value.?.data.e_string.string(allocator) catch unreachable;
+        }
+        framework.override_modules = Api.StringMap{ .keys = keys, .values = values };
+    }
+
     fn loadDefineExpression(
         env: *options.Env,
         json: *const js_ast.E.Object,
@@ -175,6 +198,12 @@ pub const PackageJSON = struct {
                 } else {
                     framework.client_css_in_js = .facade;
                 }
+            }
+        }
+
+        if (json.asProperty("override")) |override| {
+            if (override.expr.data == .e_object) {
+                loadOverrides(framework, override.expr.data.e_object, allocator);
             }
         }
 

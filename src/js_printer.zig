@@ -3243,7 +3243,7 @@ pub fn NewPrinter(
             }
         }
 
-        pub fn printModuleExportSymbol(p: *Printer) void {
+        pub inline fn printModuleExportSymbol(p: *Printer) void {
             p.print("module.exports");
         }
 
@@ -3446,7 +3446,7 @@ pub fn NewPrinter(
 
         pub fn printBundledRexport(p: *Printer, name: string, import_record_index: u32) void {
             p.print("Object.defineProperty(");
-            p.print("module.exports");
+            p.printModuleExportSymbol();
             p.print(",");
             p.printQuotedUTF8(name, true);
 
@@ -3456,13 +3456,11 @@ pub fn NewPrinter(
         }
 
         pub fn printBundledExport(p: *Printer, name: string, identifier: string) void {
-            p.print("Object.defineProperty(");
-            p.print("module.exports");
-            p.print(",");
-            p.printQuotedUTF8(name, true);
-            p.print(",{get: () => (");
+            p.printModuleExportSymbol();
+            p.print(".");
+            p.printIdentifier(name);
+            p.print(" = ");
             p.printIdentifier(identifier);
-            p.print("), enumerable: true, configurable: true})");
         }
 
         pub fn printForLoopInit(p: *Printer, initSt: Stmt) void {
@@ -3603,7 +3601,10 @@ pub fn NewPrinter(
         pub fn printDeclStmt(p: *Printer, is_export: bool, comptime keyword: string, decls: []G.Decl) void {
             if (rewrite_esm_to_cjs and keyword[0] == 'v' and is_export) {
                 // this is a top-level export
-                if (decls.len == 1 and std.meta.activeTag(decls[0].binding.data) == .b_identifier and decls[0].binding.data.b_identifier.ref.eql(p.options.bundle_export_ref.?)) {
+                if (decls.len == 1 and
+                    std.meta.activeTag(decls[0].binding.data) == .b_identifier and
+                    decls[0].binding.data.b_identifier.ref.eql(p.options.bundle_export_ref.?))
+                {
                     p.print("// ");
                     p.print(p.options.source_path.?.pretty);
                     p.print("\nexport var $");

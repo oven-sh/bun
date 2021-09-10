@@ -660,6 +660,21 @@ pub const CodepointIterator = struct {
         return if (!(it.i > it.bytes.len)) it.bytes[it.i - cp_len .. it.i] else "";
     }
 
+    pub fn needsUTF8Decoding(slice: string) bool {
+        var it = CodepointIterator{ .bytes = slice, .i = 0 };
+
+        while (true) {
+            const part = it.nextCodepointSlice();
+            it.width = @intCast(u3, part.len);
+            @setRuntimeSafety(false);
+            switch (it.width) {
+                0 => return false,
+                1 => continue,
+                else => return true,
+            }
+        }
+    }
+
     pub fn nextCodepoint(it: *CodepointIterator) CodePoint {
         const slice = it.nextCodepointSlice();
         it.width = @intCast(u3, slice.len);

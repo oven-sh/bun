@@ -37,6 +37,7 @@ export var __toModule = (module) => {
   );
 };
 
+var tagSymbol = Symbol("CommonJSTransformed");
 export var __commonJS = (cb, name) => {
   var mod = {};
   var has_run = false;
@@ -59,21 +60,8 @@ export var __commonJS = (cb, name) => {
       if (
         kind === "object" &&
         "default" in mod.exports &&
-        Object.keys(mod.exports).len === 1
-      ) {
-        mod.exports = mod.exports.default;
-        Object.defineProperty(mod.exports, "default", {
-          get() {
-            return mod.exports;
-          },
-          enumerable: true,
-          configurable: true,
-        });
-        // If it's a namespace export without .default, pretend .default is the same as mod.exports
-      } else if (
-        kind === "object" &&
-        "default" in mod.exports &&
-        Object.keys(mod.exports).len === 1
+        !mod.exports[tagSymbol] &&
+        Object.keys(mod.exports).length === 1
       ) {
         mod.exports = mod.exports.default;
         Object.defineProperty(mod.exports, "default", {
@@ -98,6 +86,14 @@ export var __commonJS = (cb, name) => {
           },
           enumerable: true,
           configurable: true,
+        });
+      }
+
+      if (kind === "object" && !mod.exports[tagSymbol]) {
+        Object.defineProperty(mod.exports, tagSymbol, {
+          value: true,
+          enumerable: false,
+          configurable: false,
         });
       }
 

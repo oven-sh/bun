@@ -1611,6 +1611,10 @@ pub const Framework = struct {
     resolved: bool = false,
     from_bundle: bool = false,
 
+    resolved_dir: string = "",
+    override_modules: Api.StringMap = Api.StringMap{},
+    override_modules_hashes: []u64 = &[_]u64{},
+
     client_css_in_js: Api.CssInJsBehavior = .auto_onimportcss,
 
     pub const fallback_html: string = @embedFile("./fallback.html");
@@ -1633,6 +1637,7 @@ pub const Framework = struct {
             .from_bundle = true,
             .client_css_in_js = loaded.client_css_in_js,
             .display_name = loaded.display_name,
+            .override_modules = loaded.override_modules,
         };
 
         if (loaded.entry_points.fallback) |fallback| {
@@ -1667,6 +1672,7 @@ pub const Framework = struct {
                 .server = try this.server.toAPI(allocator, toplevel_path, .server),
             },
             .client_css_in_js = this.client_css_in_js,
+            .override_modules = this.override_modules,
         };
     }
 
@@ -1701,6 +1707,7 @@ pub const Framework = struct {
             .package = transform.package orelse "",
             .display_name = transform.display_name orelse "",
             .development = transform.development orelse true,
+            .override_modules = transform.override_modules orelse .{ .keys = &.{}, .values = &.{} },
             .resolved = false,
             .client_css_in_js = switch (transform.client_css_in_js orelse .auto_onimportcss) {
                 .facade_onimportcss => .facade_onimportcss,

@@ -15,7 +15,12 @@ export function insertStyleSheet(url: string) {
     link.onerror = () => reject();
 
     link.href = url;
+
+    // if (headCount) {
+    //   document.head.insertBefore(headCount, link);
+    // } else {
     document.head.appendChild(link);
+    // }
   });
 }
 

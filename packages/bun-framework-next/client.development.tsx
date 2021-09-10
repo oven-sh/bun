@@ -1,5 +1,6 @@
 globalThis.global = globalThis;
 globalThis.Bun_disableCSSImports = true;
+import "./bun-error";
 
 import * as React from "react";
 var onlyChildPolyfill = React.Children.only;
@@ -367,7 +368,7 @@ export async function _boot(EntryPointNamespace, isError) {
       <TopLevelRender
         App={CachedApp}
         Component={PageComponent}
-        props={{ pageProps: hydrateProps }}
+        props={hydrateProps}
       />,
       document.querySelector("#__next")
     );
@@ -376,7 +377,7 @@ export async function _boot(EntryPointNamespace, isError) {
       <TopLevelRender
         App={CachedApp}
         Component={PageComponent}
-        props={{ pageProps: hydrateProps }}
+        props={hydrateProps}
       />,
       document.querySelector("#__next")
     );

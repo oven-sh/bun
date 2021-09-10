@@ -401,6 +401,7 @@ type uint32 = number;
     development?: boolean;
     client_css_in_js?: CSSInJSBehavior;
     display_name?: string;
+    overrideModules?: StringMap;
   }
 
   export interface FrameworkEntryPoint {
@@ -426,6 +427,7 @@ type uint32 = number;
     development: boolean;
     entry_points: FrameworkEntryPointMap;
     client_css_in_js: CSSInJSBehavior;
+    overrideModules: StringMap;
   }
 
   export interface LoadedRouteConfig {

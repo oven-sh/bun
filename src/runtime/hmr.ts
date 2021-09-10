@@ -611,7 +611,6 @@ if (typeof window !== "undefined") {
       this.client.verbose = verbose;
       this.client.start();
       globalThis["__BUN_HMR"] = this.client;
-      globalThis["__BUN"] = this;
     }
 
     handleBuildFailure(buffer: ByteBuffer, timestamp: number) {
@@ -1341,6 +1340,7 @@ if (typeof window !== "undefined") {
 
     window.addEventListener("error", HMRClient.onError, { passive: true });
   }
+  globalThis["__BUN"] = HMRClient;
 }
 
 export { __HMRModule, __FastRefreshModule, __HMRClient };

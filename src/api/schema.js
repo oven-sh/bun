@@ -1226,6 +1226,10 @@ function decodeFrameworkConfig(bb) {
       result["display_name"] = bb.readString();
       break;
 
+    case 8:
+      result["overrideModules"] = decodeStringMap(bb);
+      break;
+
     default:
       throw new Error("Attempted to parse invalid message");
     }
@@ -1276,6 +1280,12 @@ bb.writeByte(encoded);
   if (value != null) {
     bb.writeByte(7);
     bb.writeString(value);
+  }
+
+  var value = message["overrideModules"];
+  if (value != null) {
+    bb.writeByte(8);
+    encodeStringMap(value, bb);
   }
   bb.writeByte(0);
 
@@ -1413,6 +1423,7 @@ function decodeLoadedFramework(bb) {
   result["development"] = !!bb.readByte();
   result["entry_points"] = decodeFrameworkEntryPointMap(bb);
   result["client_css_in_js"] = CSSInJSBehavior[bb.readByte()];
+  result["overrideModules"] = decodeStringMap(bb);
   return result;
 }
 
@@ -1453,6 +1464,13 @@ if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value)
 bb.writeByte(encoded);
   } else {
     throw new Error("Missing required field \"client_css_in_js\"");
+  }
+
+  var value = message["overrideModules"];
+  if (value != null) {
+    encodeStringMap(value, bb);
+  } else {
+    throw new Error("Missing required field \"overrideModules\"");
   }
 
 }

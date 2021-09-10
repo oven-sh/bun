@@ -10643,23 +10643,39 @@ pub fn NewParser(
                         .classic => {
                             // Arguments to createElement()
                             const args = p.allocator.alloc(Expr, 2 + children_count) catch unreachable;
+                            // There are at least two args:
+                            // - name of the tag
+                            // - props
                             var i: usize = 1;
                             args[0] = tag;
                             if (e_.properties.len > 0) {
+                                for (e_.properties) |prop, prop_i| {
+                                    if (prop.key) |key| {
+                                        e_.properties[prop_i].key = p.visitExpr(key);
+                                    }
+
+                                    if (prop.value) |val| {
+                                        e_.properties[prop_i].value = p.visitExpr(val);
+                                    }
+                                }
+
                                 if (e_.key) |key| {
-                                    var props = List(G.Property).fromOwnedSlice(p.allocator, e_.properties);
-                                    props.append(G.Property{ .key = Expr{ .loc = key.loc, .data = keyExprData }, .value = key }) catch unreachable;
-                                    args[1] = p.e(E.Object{ .properties = props.toOwnedSlice() }, expr.loc);
+                                    var props = p.allocator.alloc(G.Property, e_.properties.len + 1) catch unreachable;
+                                    std.mem.copy(G.Property, props, e_.properties);
+                                    props[props.len - 1] = G.Property{ .key = Expr{ .loc = key.loc, .data = keyExprData }, .value = key };
+                                    args[1] = p.e(E.Object{ .properties = props }, expr.loc);
                                 } else {
                                     args[1] = p.e(E.Object{ .properties = e_.properties }, expr.loc);
                                 }
+                                i = 2;
                             } else {
                                 args[1] = p.e(E.Null{}, expr.loc);
+                                i = 2;
                             }
 
                             for (e_.children[0..children_count]) |child| {
                                 args[i] = p.visitExpr(child);
-                                i += 1;
+                                i += @intCast(usize, @boolToInt(args[i].data != .e_missing));
                             }
 
                             // Call createElement()
@@ -11227,9 +11243,9 @@ pub fn NewParser(
                                     }
 
                                     // maybe won't do this idk
-                                    if (Expr.maybeSimplifyNot(&e_.value, p.allocator)) |exp| {
-                                        return exp;
-                                    }
+                                    // if (Expr.maybeSimplifyNot(&e_.value, p.allocator)) |exp| {
+                                    //     return exp;
+                                    // }
                                 },
                                 .un_void => {
                                     if (p.exprCanBeRemovedIfUnused(&e_.value)) {

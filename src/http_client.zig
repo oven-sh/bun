@@ -35,6 +35,7 @@ header_entries: Headers.Entries,
 header_buf: string,
 url: URL,
 allocator: *std.mem.Allocator,
+verbose: bool = true,
 
 pub fn init(allocator: *std.mem.Allocator, method: Method, url: URL, header_entries: Headers.Entries, header_buf: string) HTTPClient {
     return HTTPClient{
@@ -155,7 +156,7 @@ pub fn buildRequest(this: *const HTTPClient, body_len: usize) picohttp.Request {
 
     return picohttp.Request{
         .method = @tagName(this.method),
-        .path = this.url.path,
+        .path = this.url.pathname,
         .minor_version = 1,
         .headers = request_headers_buf[0..header_count],
     };
@@ -203,7 +204,9 @@ pub fn sendHTTP(this: *HTTPClient, body: []const u8, body_out_str: *MutableStrin
         std.os.closeSocket(client.socket.fd);
     }
     var request = buildRequest(this, body.len);
-
+    if (this.verbose) {
+        Output.prettyErrorln("{s}", .{request});
+    }
     var client_writer = client.writer(SOCKET_FLAGS);
     {
         var client_writer_buffered = std.io.bufferedWriter(client_writer);
@@ -246,8 +249,10 @@ pub fn sendHTTP(this: *HTTPClient, body: []const u8, body_out_str: *MutableStrin
         switch (hashHeaderName(header.name)) {
             content_length_header_hash => {
                 content_length = std.fmt.parseInt(u32, header.value, 10) catch 0;
-                try body_out_str.inflate(content_length);
+                // Always write a sentinel
+                try body_out_str.inflate(content_length + 1);
                 body_out_str.list.expandToCapacity();
+                body_out_str.list.items[content_length] = 0;
             },
             content_encoding_hash => {
                 return error.UnsupportedEncoding;
@@ -311,6 +316,9 @@ pub fn sendHTTPS(this: *HTTPClient, body_str: []const u8, body_out_str: *Mutable
     }
 
     var request = buildRequest(this, body_str.len);
+    if (this.verbose) {
+        Output.prettyErrorln("{s}", .{request});
+    }
     const body = body_str;
 
     var client_writer = client.writer();

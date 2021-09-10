@@ -509,6 +509,8 @@ pub fn NewResolver(cache_files: bool) type {
 
             var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 
+            pair.framework.resolved_dir = pkg.source.path.sourceDir();
+
             if (pair.framework.client.isEnabled()) {
                 var parts = [_]string{ dir, pair.framework.client.path };
                 const abs = r.fs.abs(&parts);

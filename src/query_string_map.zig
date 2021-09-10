@@ -226,7 +226,12 @@ pub const URL = struct {
         }
 
         if (base.len > path_offset and base[path_offset] == '/' and offset > 0) {
-            url.pathname = base[path_offset..std.math.min(offset, base.len)];
+            if (url.search.len > 0) {
+                url.pathname = base[path_offset..std.math.min(offset + url.search.len, base.len)];
+            } else {
+                url.pathname = base[path_offset..std.math.min(offset, base.len)];
+            }
+
             url.origin = base[0..path_offset];
         }
 

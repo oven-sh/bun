@@ -1128,6 +1128,18 @@ pub const E = struct {
             }
         }
 
+        pub fn hash(s: *const String) u64 {
+            if (s.isBlank()) return 0;
+
+            if (s.isUTF8()) {
+                // hash utf-8
+                return std.hash.Wyhash.hash(0, s.utf8);
+            } else {
+                // hash utf-16
+                return std.hash.Wyhash.hash(0, @ptrCast([*]u8, s.value.ptr)[0 .. s.value.len * 2]);
+            }
+        }
+
         pub fn jsonStringify(s: *const String, options: anytype, writer: anytype) !void {
             var buf = [_]u8{0} ** 4096;
             var i: usize = 0;

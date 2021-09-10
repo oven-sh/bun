@@ -1,6 +1,7 @@
-import "./bun-error";
 globalThis.global = globalThis;
 globalThis.Bun_disableCSSImports = true;
+
+import "./bun-error";
 
 import * as React from "react";
 var onlyChildPolyfill = React.Children.only;

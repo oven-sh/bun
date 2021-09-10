@@ -35,6 +35,14 @@ pub const Request = struct {
     minor_version: usize,
     headers: []const Header,
 
+    pub fn format(self: Request, comptime layout: []const u8, opts: fmt.FormatOptions, writer: anytype) !void {
+        try fmt.format(writer, "{s} {s}\n", .{ self.method, self.path });
+        for (self.headers) |header| {
+            _ = try writer.write("\t");
+            try fmt.format(writer, "{s}\n", .{header});
+        }
+    }
+
     pub fn parse(buf: []const u8, src: []Header) !Request {
         var method: []const u8 = undefined;
         var path: []const u8 = undefined;

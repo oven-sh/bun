@@ -1340,6 +1340,9 @@ client_css_in_js: ?CssInJsBehavior = null,
 /// display_name
 display_name: ?[]const u8 = null,
 
+/// overrideModules
+override_modules: ?StringMap = null,
+
 
 pub fn decode(reader: anytype) anyerror!FrameworkConfig {
   var this = std.mem.zeroes(FrameworkConfig);
@@ -1368,6 +1371,9 @@ pub fn decode(reader: anytype) anyerror!FrameworkConfig {
 },
       7 => {
         this.display_name = try reader.readValue([]const u8); 
+},
+      8 => {
+        this.override_modules = try reader.readValue(StringMap); 
 },
       else => {
       return error.InvalidMessage;
@@ -1405,6 +1411,10 @@ if (this.client_css_in_js) |client_css_in_js| {
 if (this.display_name) |display_name| {
   try writer.writeFieldID(7);
    try writer.writeValue(display_name);
+}
+if (this.override_modules) |override_modules| {
+  try writer.writeFieldID(8);
+   try writer.writeValue(override_modules);
 }
 try writer.endMessage();
 }
@@ -1551,6 +1561,9 @@ entry_points: FrameworkEntryPointMap,
 /// client_css_in_js
 client_css_in_js: CssInJsBehavior,
 
+/// overrideModules
+override_modules: StringMap,
+
 
 pub fn decode(reader: anytype) anyerror!LoadedFramework {
   var this = std.mem.zeroes(LoadedFramework);
@@ -1560,6 +1573,7 @@ pub fn decode(reader: anytype) anyerror!LoadedFramework {
   this.development = try reader.readValue(bool); 
   this.entry_points = try reader.readValue(FrameworkEntryPointMap); 
   this.client_css_in_js = try reader.readValue(CssInJsBehavior); 
+  this.override_modules = try reader.readValue(StringMap); 
    return this;
 }
 
@@ -1569,6 +1583,7 @@ pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
    try writer.writeInt(@intCast(u8, @boolToInt(this.development)));
    try writer.writeValue(this.entry_points);
    try writer.writeEnum(this.client_css_in_js);
+   try writer.writeValue(this.override_modules);
 }
 
 };

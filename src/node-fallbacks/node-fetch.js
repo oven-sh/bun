@@ -1,1 +1,1 @@
-export default Bun.fetch;
+export default "Bun" in globalThis ? Bun.fetch : globalThis.fetch;

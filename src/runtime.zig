@@ -7,8 +7,7 @@ const Fs = @import("./fs.zig");
 const Schema = @import("./api/schema.zig");
 
 const Api = Schema.Api;
-
-const ErrorCSSPath = "packages/bun-framework-next/bun-error.css";
+const ErrorCSSPath = "../packages/bun-framework-next/bun-error.css";
 
 pub const ErrorCSS = struct {
     pub const ProdSourceContent = @embedFile(ErrorCSSPath);
@@ -18,7 +17,7 @@ pub const ErrorCSS = struct {
             var env = std.process.getEnvMap(default_allocator) catch unreachable;
             var out_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
             var dirname = std.fs.selfExeDirPath(&out_buffer) catch unreachable;
-            var paths = [_]string{ dirname, "../../../", ErrorCSSPath };
+            var paths = [_]string{ dirname, "../../", ErrorCSSPath };
             const file = std.fs.cwd().openFile(
                 resolve_path.joinAbsString(dirname, std.mem.span(&paths), .auto),
                 .{

@@ -42,64 +42,61 @@ export var __commonJS = (cb, name) => {
   var mod = {};
   var has_run = false;
 
-  return {
-    [`require(${name})`]() {
-      if (has_run) {
-        return mod.exports;
-      }
-      has_run = true;
-      __name(cb);
-
-      mod = { exports: {} };
-
-      cb(mod, mod.exports);
-
-      const kind = typeof mod.exports;
-
-      // If it's a default-only export, don't crash if they call .default on the module
-      if (
-        kind === "object" &&
-        "default" in mod.exports &&
-        !mod.exports[tagSymbol] &&
-        Object.keys(mod.exports).length === 1
-      ) {
-        mod.exports = mod.exports.default;
-        Object.defineProperty(mod.exports, "default", {
-          get() {
-            return mod.exports;
-          },
-          enumerable: true,
-          configurable: true,
-        });
-        // If it's a namespace export without .default, pretend .default is the same as mod.exports
-      } else if (
-        (kind === "function" || kind === "object") &&
-        !("default" in mod.exports)
-      ) {
-        var defaultValue = mod.exports;
-        Object.defineProperty(mod.exports, "default", {
-          get() {
-            return defaultValue;
-          },
-          set(value) {
-            defaultValue = value;
-          },
-          enumerable: true,
-          configurable: true,
-        });
-      }
-
-      if (kind === "object" && !mod.exports[tagSymbol]) {
-        Object.defineProperty(mod.exports, tagSymbol, {
-          value: true,
-          enumerable: false,
-          configurable: false,
-        });
-      }
-
+  return function require() {
+    if (has_run) {
       return mod.exports;
-    },
-  }[`require(${name})`];
+    }
+    has_run = true;
+
+    mod = { exports: {} };
+
+    cb(mod, mod.exports);
+
+    const kind = typeof mod.exports;
+
+    // If it's a default-only export, don't crash if they call .default on the module
+    if (
+      kind === "object" &&
+      "default" in mod.exports &&
+      !mod.exports[tagSymbol] &&
+      Object.keys(mod.exports).length === 1
+    ) {
+      mod.exports = mod.exports.default;
+      Object.defineProperty(mod.exports, "default", {
+        get() {
+          return mod.exports;
+        },
+        enumerable: true,
+        configurable: true,
+      });
+      // If it's a namespace export without .default, pretend .default is the same as mod.exports
+    } else if (
+      (kind === "function" || kind === "object") &&
+      !("default" in mod.exports)
+    ) {
+      var defaultValue = mod.exports;
+      Object.defineProperty(mod.exports, "default", {
+        get() {
+          return defaultValue;
+        },
+        set(value) {
+          defaultValue = value;
+        },
+        enumerable: true,
+        configurable: true,
+      });
+    }
+
+    if (kind === "object" && !mod.exports[tagSymbol]) {
+      Object.defineProperty(mod.exports, tagSymbol, {
+        value: true,
+        enumerable: false,
+        configurable: false,
+      });
+    }
+
+    return mod.exports;
+  };
 };
 
 export var __cJS2eSM = (cb, name) => {
@@ -168,9 +165,7 @@ if (
     new Map();
 }
 
-export var $$m = (package_json_name, module_path, cb) => {
-  return __commonJS(cb, `${package_json_name}/${module_path}`);
-};
+export var $$m = __commonJS;
 
 export var __name = (target, name) => {
   Object.defineProperty(target, "name", {

@@ -51,7 +51,7 @@ pub fn stringHashMapFromArrays(comptime t: type, allocator: *std.mem.Allocator, 
 pub const ExternalModules = struct {
     node_modules: std.BufSet,
     abs_paths: std.BufSet,
-    patterns: []WildcardPattern,
+    patterns: []const WildcardPattern,
     pub const WildcardPattern = struct {
         prefix: string,
         suffix: string,
@@ -60,6 +60,21 @@ pub const ExternalModules = struct {
     pub fn isNodeBuiltin(str: string) bool {
         return NodeBuiltinsMap.has(str);
     }
+
+    const default_wildcard_patterns = &[_]WildcardPattern{
+        .{
+            .prefix = "/bun:",
+            .suffix = "",
+        },
+        // .{
+        //     .prefix = "/src:",
+        //     .suffix = "",
+        // },
+        // .{
+        //     .prefix = "/blob:",
+        //     .suffix = "",
+        // },
+    };
 
     pub fn init(
         allocator: *std.mem.Allocator,
@@ -72,7 +87,7 @@ pub const ExternalModules = struct {
         var result = ExternalModules{
             .node_modules = std.BufSet.init(allocator),
             .abs_paths = std.BufSet.init(allocator),
-            .patterns = &([_]WildcardPattern{}),
+            .patterns = std.mem.span(default_wildcard_patterns),
         };
 
         switch (platform) {
@@ -98,7 +113,8 @@ pub const ExternalModules = struct {
             return result;
         }
 
-        var patterns = std.ArrayList(WildcardPattern).init(allocator);
+        var patterns = std.ArrayList(WildcardPattern).initCapacity(allocator, default_wildcard_patterns.len) catch unreachable;
+        patterns.appendSliceAssumeCapacity(std.mem.span(default_wildcard_patterns));
 
         for (externals) |external| {
             const path = external;

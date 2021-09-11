@@ -82,7 +82,6 @@ export default class PageLoader extends NextPageLoader {
       this.pages[route] || this.pages[getAssetPathFromRoute(route)];
 
     var src;
-    console.log(getAssetPathFromRoute(route), assets);
     for (let asset of assets) {
       if (!asset.endsWith(".css")) {
         src = asset;
@@ -90,6 +89,10 @@ export default class PageLoader extends NextPageLoader {
       }
     }
     console.assert(src, "Invalid or unknown route passed to loadPage");
+
+    if ("__BunClearBuildFailure" in globalThis) {
+      globalThis.__BunClearBuildFailure();
+    }
 
     document.removeEventListener("onimportcss", this.onImportCSS);
     this.cssQueue.length = 0;

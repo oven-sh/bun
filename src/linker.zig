@@ -264,18 +264,20 @@ pub fn NewLinker(comptime BundlerType: type) type {
                                                             }
                                                         }
 
-                                                        linker.log.addErrorFmt(
-                                                            null,
-                                                            logger.Loc.Empty,
+                                                        linker.log.addRangeWarningFmt(
+                                                            &result.source,
+                                                            import_record.range,
                                                             linker.allocator,
-                                                            "\"{s}\" version changed, please regenerate the .bun.\nOld version: \"{s}\"\nNew version: \"{s}\"\nRun this command:\nbun bun",
+                                                            "Multiple versions of \"{s}\".\n    {s}@{s}\n    {s}@{s}",
                                                             .{
                                                                 package_json.name,
+                                                                package_json.name,
                                                                 node_modules_bundle.str(node_modules_bundle.bundle.packages[possible_pkg_ids[0]].version),
+                                                                package_json.name,
                                                                 package_json.version,
                                                             },
                                                         ) catch {};
-                                                        return error.RunBunBun;
+                                                        break :bundled;
                                                     };
 
                                                     const package = &node_modules_bundle.bundle.packages[pkg_id];
@@ -290,16 +292,16 @@ pub fn NewLinker(comptime BundlerType: type) type {
                                                     );
 
                                                     const found_module = node_modules_bundle.findModuleInPackage(package, package_relative_path) orelse {
-                                                        linker.log.addErrorFmt(
-                                                            null,
-                                                            logger.Loc.Empty,
-                                                            linker.allocator,
-                                                            "New dependency import: \"{s}/{s}\"\nPlease run `bun bun` to update the .bun.",
-                                                            .{
-                                                                package_json.name,
-                                                                package_relative_path,
-                                                            },
-                                                        ) catch {};
+                                                        // linker.log.addErrorFmt(
+                                                        //     null,
+                                                        //     logger.Loc.Empty,
+                                                        //     linker.allocator,
+                                                        //     "New dependency import: \"{s}/{s}\"\nPlease run `bun bun` to update the .bun.",
+                                                        //     .{
+                                                        //         package_json.name,
+                                                        //         package_relative_path,
+                                                        //     },
+                                                        // ) catch {};
                                                         break :bundled;
                                                     };
 
@@ -428,6 +430,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
                     ),
                     .range = logger.Range{ .loc = logger.Loc{ .start = 0 }, .len = 0 },
                 };
+                result.ast.runtime_import_record_id = @truncate(u32, import_records.len - 1);
             }
 
             // This is a bad idea

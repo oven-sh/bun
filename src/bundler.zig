@@ -721,7 +721,10 @@ pub fn NewBundler(cache_files: bool) type {
                 if (bundler.log.level == .verbose) {
                     bundler.resolver.debug_logs = try DebugLogs.init(allocator);
                 }
-                const include_refresh_runtime = !this.bundler.options.production and this.bundler.options.jsx.supports_fast_refresh and bundler.options.platform.isWebLike();
+                const include_refresh_runtime =
+                    !this.bundler.options.production and
+                    this.bundler.options.jsx.supports_fast_refresh and
+                    bundler.options.platform.isWebLike();
 
                 const resolve_queue_estimate = bundler.options.entry_points.len +
                     @intCast(usize, @boolToInt(framework_config != null)) +
@@ -805,6 +808,7 @@ pub fn NewBundler(cache_files: bool) type {
                     } else |err| {}
                 }
 
+                var refresh_runtime_module_id: u32 = 0;
                 if (include_refresh_runtime) {
                     defer this.bundler.resetStore();
 
@@ -814,6 +818,9 @@ pub fn NewBundler(cache_files: bool) type {
                         .require,
                     )) |refresh_runtime| {
                         try this.enqueueItem(refresh_runtime);
+                        if (BundledModuleData.get(this, &refresh_runtime)) |mod| {
+                            refresh_runtime_module_id = mod.module_id;
+                        }
                     } else |err| {}
                 }
 
@@ -828,6 +835,24 @@ pub fn NewBundler(cache_files: bool) type {
                     // We stop here because if there are errors we don't know if the bundle is valid
                     // This manifests as a crash when sorting through the module list because we may have added files to the bundle which were never actually finished being added.
                     return null;
+                }
+
+                // Delay by one tick so that the rest of the file loads first
+                if (include_refresh_runtime and refresh_runtime_module_id > 0) {
+                    var refresh_runtime_injector_buf: [1024]u8 = undefined;
+                    var fixed_buffer = std.io.fixedBufferStream(&refresh_runtime_injector_buf);
+                    var fixed_buffer_writer = fixed_buffer.writer();
+
+                    fixed_buffer_writer.print(
+                        \\if ('window' in globalThis) {{
+                        \\  (async function() {{
+                        \\    BUN_RUNTIME.__injectFastRefresh(${x}());
+                        \\  }})();
+                        \\}}
+                    ,
+                        .{refresh_runtime_module_id},
+                    ) catch unreachable;
+                    try this.tmpfile.writeAll(fixed_buffer.buffer[0..fixed_buffer.pos]);
                 }
 
                 // Ensure we never overflow
@@ -1201,9 +1226,9 @@ pub fn NewBundler(cache_files: bool) type {
                         var bufwriter = buffered.writer();
                         try bufwriter.writeAll("// ");
                         try bufwriter.writeAll(package_relative_path);
-                        try bufwriter.writeAll("(disabled or empty file) \nexport var $");
+                        try bufwriter.writeAll(" (disabled/empty file)\nexport var $");
                         std.fmt.formatInt(module_id, 16, .lower, .{}, bufwriter) catch unreachable;
-                        try bufwriter.writeAll(" = () => (var obj = {}, Object.defineProperty(obj, 'default', { value: obj, enumerable: false, configurable: true }, obj);\n");
+                        try bufwriter.writeAll(" = () => { var obj = {}; Object.defineProperty(obj, 'default', { value: obj, enumerable: false, configurable: true }, obj); return obj; }; \n");
                         try buffered.flush();
                         this.tmpfile_byte_offset = @truncate(u32, try this.tmpfile.getPos());
                     } else {
@@ -1388,21 +1413,24 @@ pub fn NewBundler(cache_files: bool) type {
                             }
                         }
 
-                        var part = &ast.parts[ast.parts.len - 1];
-                        var new_stmts: [1]Stmt = undefined;
-                        var register_args: [3]Expr = undefined;
+                        var package_path = js_ast.E.String{ .utf8 = module_data.package_path };
 
-                        var package_json_string = E.String{ .utf8 = package.name };
-                        var module_path_string = E.String{ .utf8 = module_data.import_path };
                         var target_identifier = E.Identifier{ .ref = register_ref };
                         var cjs_args: [2]js_ast.G.Arg = undefined;
                         var module_binding = js_ast.B.Identifier{ .ref = ast.module_ref.? };
                         var exports_binding = js_ast.B.Identifier{ .ref = ast.exports_ref.? };
 
-                        // if (!ast.uses_module_ref) {
-                        //     var symbol = &ast.symbols[ast.module_ref.?.inner_index];
-                        //     symbol.original_name = "_$$";
-                        // }
+                        var part = &ast.parts[ast.parts.len - 1];
+
+                        var new_stmts: [1]Stmt = undefined;
+                        var register_args: [1]Expr = undefined;
+                        var closure = E.Arrow{
+                            .args = &cjs_args,
+                            .body = .{
+                                .loc = logger.Loc.Empty,
+                                .stmts = part.stmts,
+                            },
+                        };
 
                         cjs_args[0] = js_ast.G.Arg{
                             .binding = js_ast.Binding{
@@ -1417,20 +1445,29 @@ pub fn NewBundler(cache_files: bool) type {
                             },
                         };
 
-                        var closure = E.Arrow{
-                            .args = &cjs_args,
-                            .body = .{
-                                .loc = logger.Loc.Empty,
-                                .stmts = part.stmts,
-                            },
+                        var properties: [1]js_ast.G.Property = undefined;
+                        var e_object = E.Object{
+                            .properties = &properties,
                         };
+                        const module_path_str = js_ast.Expr{ .data = .{ .e_string = &package_path }, .loc = logger.Loc.Empty };
+                        properties[0] = js_ast.G.Property{
+                            .key = module_path_str,
+                            .value = Expr{ .loc = logger.Loc.Empty, .data = .{ .e_arrow = &closure } },
+                        };
+
+                        // if (!ast.uses_module_ref) {
+                        //     var symbol = &ast.symbols[ast.module_ref.?.inner_index];
+                        //     symbol.original_name = "_$$";
+                        // }
 
                         // $$m(12345, "react", "index.js", function(module, exports) {
 
                         // })
-                        register_args[0] = Expr{ .loc = .{ .start = 0 }, .data = .{ .e_string = &package_json_string } };
-                        register_args[1] = Expr{ .loc = .{ .start = 0 }, .data = .{ .e_string = &module_path_string } };
-                        register_args[2] = Expr{ .loc = .{ .start = 0 }, .data = .{ .e_arrow = &closure } };
+                        var accessor = js_ast.E.Index{ .index = module_path_str, .target = js_ast.Expr{
+                            .data = .{ .e_object = &e_object },
+                            .loc = logger.Loc.Empty,
+                        } };
+                        register_args[0] = Expr{ .loc = logger.Loc.Empty, .data = .{ .e_index = &accessor } };
 
                         var call_register = E.Call{
                             .target = Expr{

@@ -1,7 +1,7 @@
 import { ByteBuffer } from "peechy";
 import * as API from "../api/schema";
 
-var __HMRModule, __FastRefreshModule, __HMRClient;
+var __HMRModule, __FastRefreshModule, __HMRClient, __injectFastRefresh;
 if (typeof window !== "undefined") {
   // We add a scope here to minimize chances of namespace collisions
   var runOnce = false;
@@ -56,6 +56,42 @@ if (typeof window !== "undefined") {
         FastRefreshLoader.isUpdateInProgress = true;
       } finally {
         FastRefreshLoader.isUpdateInProgress = false;
+      }
+    },
+  };
+
+  const BunError = {
+    module: null,
+    prom: null,
+    cancel: false,
+    lastError: null,
+    render(error, cwd) {
+      BunError.lastError = [error, cwd];
+      BunError.cancel = false;
+
+      if (!BunError.module) {
+        if (BunError.prom) return;
+        BunError.prom = import("/bun:error.js").then((mod) => {
+          BunError.module = mod;
+          !BunError.cancel &&
+            BunError.render(BunError.lastError[0], BunError.lastError[1]);
+        });
+        return;
+      }
+
+      const { renderBuildFailure } = BunError.module;
+      renderBuildFailure(BunError.lastError[0], BunError.lastError[1]);
+    },
+
+    clear() {
+      BunError.lastError = null;
+      BunError.cancel = true;
+
+      if (BunError.module) {
+        const { clearBuildFailure } = BunError.module;
+        clearBuildFailure();
+      } else if ("__BunClearBuildFailure" in globalThis) {
+        globalThis.__BunClearBuildFailure();
       }
     },
   };
@@ -284,6 +320,9 @@ if (typeof window !== "undefined") {
       }
 
       let filepath = update.file;
+      if (filepath.startsWith(this.hmr.cwd)) {
+        filepath = filepath.substring(this.hmr.cwd.length);
+      }
       const _timestamp = timestamp;
       const from_timestamp = build.from_timestamp;
       function onLoadHandler() {
@@ -635,11 +674,56 @@ if (typeof window !== "undefined") {
     }
 
     maybeReportBuildFailure(failure: API.WebsocketMessageBuildFailure) {
-      globalThis.renderBuildFailure(failure, this.cwd);
+      BunError.render(failure, this.cwd);
     }
+
+    needsConsoleClear = false;
+
     reportBuildFailure(failure: API.WebsocketMessageBuildFailure) {
-      __hmrlog.error("Build failed", failure.module_path);
-      globalThis.renderBuildFailure(failure, this.cwd);
+      BunError.render(failure, this.cwd);
+
+      console.group(
+        `Build failed: ${failure.module_path} (${failure.log.errors} errors)`
+      );
+      this.needsConsoleClear = true;
+      for (let msg of failure.log.msgs) {
+        var logFunction;
+        switch (msg.level) {
+          case API.MessageLevel.err: {
+            logFunction = console.error;
+            break;
+          }
+          case API.MessageLevel.warn: {
+            logFunction = console.warn;
+            break;
+          }
+          default: {
+            logFunction = console.info;
+            break;
+          }
+        }
+
+        const { text, location } = msg.data;
+        var output = "";
+
+        if (location) {
+          if (location.line > -1 && location.column > -1) {
+            output += `${location.file}:${location.line}:${location.column}`;
+          } else if (location.line > -1) {
+            output += `${location.file}:${location.line}`;
+          } else if (location.file.length > 0) {
+            output += `${location.file}`;
+          }
+        }
+        if (location && location.line_text) {
+          output = output.trimRight() + "\n" + location.line_text.trim();
+        }
+
+        output = output.trimRight() + "\n " + text;
+
+        logFunction(output.trim());
+      }
+      console.groupEnd();
     }
 
     verbose = false;
@@ -671,6 +755,11 @@ if (typeof window !== "undefined") {
       }
 
       if (build.loader === API.Loader.css) {
+        BunError.clear();
+        if (this.needsConsoleClear) {
+          console.clear();
+          this.needsConsoleClear = false;
+        }
         return this.loaders.css.handleBuildSuccess(buffer, build, timestamp);
       }
 
@@ -686,10 +775,11 @@ if (typeof window !== "undefined") {
       }
 
       if (this.verbose) {
-        __hmrlog.debug(
-          "Preparing to reload",
-          HMRModule.dependencies.modules[index].file_path
-        );
+        var filepath = HMRModule.dependencies.modules[index].file_path;
+        if (filepath.startsWith(this.cwd)) {
+          filepath = filepath.substring(this.cwd.length);
+        }
+        __hmrlog.debug("Preparing to reload", filepath);
       }
 
       var reload = new HotReload(
@@ -703,11 +793,25 @@ if (typeof window !== "undefined") {
         ReloadBehavior.hotReload
       );
       reload.timings.notify = timestamp - build.from_timestamp;
+
+      BunError.clear();
+
       reload.run().then(
         ([module, timings]) => {
+          var filepath = module.file_path;
+
+          if (filepath.startsWith(this.cwd)) {
+            filepath = filepath.substring(this.cwd.length);
+          }
+
+          if (this.needsConsoleClear) {
+            console.clear();
+            this.needsConsoleClear = false;
+          }
+
           __hmrlog.log(
-            `Reloaded in ${formatDuration(timings.total)}ms :`,
-            module.file_path
+            `[${formatDuration(timings.total)}ms] Reloaded`,
+            filepath
           );
         },
         (err) => {
@@ -1012,6 +1116,11 @@ if (typeof window !== "undefined") {
                 this.module_index
               ].additional_updaters.push(oldModule.update.bind(oldModule));
             }
+
+            const end = Math.min(
+              this.module_index + 1,
+              HMRModule.dependencies.graph_used
+            );
             // -- For generic hot reloading --
             // ES Modules delay execution until all imports are parsed
             // They execute depth-first
@@ -1029,35 +1138,31 @@ if (typeof window !== "undefined") {
             // If we do not find a React Refresh boundary, we must instead perform a full page reload.
             for (
               let i = 0;
-              i <= this.module_index;
+              i <= end;
               i++ // let i = HMRModule.dependencies.graph_used - 1; // i > this.module_index; // i--
             ) {
-              let handled =
-                !HMRModule.dependencies.modules[i].exports.__hmrDisable;
-              if (
-                typeof HMRModule.dependencies.modules[i].dispose === "function"
-              ) {
-                HMRModule.dependencies.modules[i].dispose();
-                handled = true;
-              }
-              if (
-                typeof HMRModule.dependencies.modules[i].accept === "function"
-              ) {
-                HMRModule.dependencies.modules[i].accept();
-                handled = true;
-              }
+              const mod = HMRModule.dependencies.modules[i];
+              let handled = false;
 
-              // Automatically re-initialize the dependency
-              if (!handled) {
-                HMRModule.dependencies.modules[i].update();
-              }
+              if (!mod.exports.__hmrDisable) {
+                if (typeof mod.dispose === "function") {
+                  mod.dispose();
+                  handled = true;
+                }
+                if (typeof mod.accept === "function") {
+                  mod.accept();
+                  handled = true;
+                }
 
-              // If we don't find a boundary, we will need to do a full page load
-              if (
-                (HMRModule.dependencies.modules[i] as FastRefreshModule)
-                  .isRefreshBoundary
-              ) {
-                foundBoundary = true;
+                // If we don't find a boundary, we will need to do a full page load
+                if ((mod as FastRefreshModule).isRefreshBoundary) {
+                  foundBoundary = true;
+                }
+
+                // Automatically re-initialize the dependency
+                if (!handled) {
+                  mod.update();
+                }
               }
             }
 
@@ -1204,6 +1309,13 @@ if (typeof window !== "undefined") {
     exports = {};
   }
 
+  function injectFastRefresh(RefreshRuntime) {
+    if (!FastRefreshLoader.hasInjectedFastRefresh) {
+      RefreshRuntime.injectIntoGlobalHook(globalThis);
+      FastRefreshLoader.hasInjectedFastRefresh = true;
+    }
+  }
+
   class FastRefreshModule extends HMRModule {
     constructor(id: number, file_path: string, RefreshRuntime: any) {
       super(id, file_path);
@@ -1332,15 +1444,15 @@ if (typeof window !== "undefined") {
   __HMRModule = HMRModule;
   __FastRefreshModule = FastRefreshModule;
   __HMRClient = HMRClient;
-
+  __injectFastRefresh = injectFastRefresh;
   if ("document" in globalThis) {
     document.addEventListener("onimportcss", HMRClient.onCSSImport, {
       passive: true,
     });
 
-    window.addEventListener("error", HMRClient.onError, { passive: true });
+    // window.addEventListener("error", HMRClient.onError, { passive: true });
   }
   globalThis["__BUN"] = HMRClient;
 }
 
-export { __HMRModule, __FastRefreshModule, __HMRClient };
+export { __HMRModule, __FastRefreshModule, __HMRClient, __injectFastRefresh };

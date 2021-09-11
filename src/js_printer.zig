@@ -47,6 +47,12 @@ fn notimpl() void {
     Global.panic("Not implemented yet!", .{});
 }
 
+pub fn writeModuleId(comptime Writer: type, writer: Writer, module_id: u32) void {
+    std.debug.assert(module_id != 0); // either module_id is forgotten or it should be disabled
+    _ = writer.writeAll("$") catch unreachable;
+    std.fmt.formatInt(module_id, 16, .lower, .{}, writer) catch unreachable;
+}
+
 pub const SourceMapChunk = struct {
     buffer: MutableString,
     end_state: State = State{},
@@ -405,13 +411,6 @@ pub fn NewPrinter(
         pub fn printSymbol(p: *Printer, ref: Ref) void {
             debug("<printSymbol>\n   {s}", .{ref});
             defer debugl("</printSymbol>");
-            if (bun) {
-                if (p.options.require_ref) |require| {
-                    if (ref.eql(require)) {
-                        return p.printIdentifier("module.require");
-                    }
-                }
-            }
             const name = p.renamer.nameForSymbol(ref);
 
             p.printIdentifier(name);
@@ -2949,38 +2948,85 @@ pub fn NewPrinter(
                     }
 
                     if (record.wrap_with_to_module) {
-                        if (p.options.runtime_imports.__require) |require_ref| {
-                            var module_name_buf: [256]u8 = undefined;
-                            var fixed_buf_allocator = std.heap.FixedBufferAllocator.init(&module_name_buf);
-                            const module_name_segment = (fs.PathName.init(record.path.pretty).nonUniqueNameString(&fixed_buf_allocator.allocator) catch unreachable);
-                            p.print("import * as $$");
-                            p.print(module_name_segment);
-                            p.print(" from \"");
-                            p.print(record.path.text);
-                            p.print("\";\n");
+                        const require_ref = p.options.require_ref orelse {
+                            
+                        };
 
-                            if (record.contains_import_star) {
-                                p.print("var ");
-                                p.printSymbol(s.namespace_ref);
-                                p.print(" = ");
-                                p.printSymbol(require_ref);
-                                p.print("($$");
-                                p.print(module_name_segment);
-                                p.print(");\n");
-                            }
+                        const module_id = @truncate(
+                            u32,
+                            std.hash.Wyhash.hash(2, record.path.pretty),
+                        );
+                        p.print("import * as ");
+                        p.printModuleId(module_id);
+
+                        p.print(" from \"");
+                        p.print(record.path.text);
+                        p.print("\";\n");
+
+                        if (record.contains_import_star) {
+                            p.print("var ");
+                            p.printSymbol(s.namespace_ref);
+                            p.print(" = ");
+                            p.printSymbol(require_ref);
+                            p.print("(");
+                            p.printModuleId(module_id);
+
+                            p.print(");\n");
+                        }
+
+                        if (s.items.len > 0 or s.default_name != null) {
+                            p.printIndent();
+                            p.printSpaceBeforeIdentifier();
+                            p.print("var { ");
 
                             if (s.default_name) |default_name| {
-                                p.print("var ");
+                                p.print("default: ");
                                 p.printSymbol(default_name.ref.?);
-                                p.print(" = ");
-                                p.printSymbol(require_ref);
-                                p.print("($$");
-                                p.print(module_name_segment);
-                                p.print(");\n");
+
+                                if (s.items.len > 0) {
+                                    p.print(", ");
+                                    for (s.items) |item, i| {
+                                        p.print(item.alias);
+                                        const name = p.renamer.nameForSymbol(item.name.ref.?);
+                                        if (!strings.eql(name, item.alias)) {
+                                            p.print(": ");
+                                            p.printSymbol(item.name.ref.?);
+                                        }
+
+                                        if (i < s.items.len - 1) {
+                                            p.print(", ");
+                                        }
+                                    }
+                                }
+                            } else {
+                                for (s.items) |item, i| {
+                                    p.print(item.alias);
+                                    const name = p.renamer.nameForSymbol(item.name.ref.?);
+                                    if (!strings.eql(name, item.alias)) {
+                                        p.print(":");
+                                        p.printSymbol(item.name.ref.?);
+                                    }
+
+                                    if (i < s.items.len - 1) {
+                                        p.print(", ");
+                                    }
+                                }
                             }
 
-                            return;
+                            p.print("} = ");
+
+                            if (record.contains_import_star) {
+                                p.printSymbol(s.namespace_ref);
+                                p.print(";\n");
+                            } else {
+                                p.printSymbol(require_ref);
+                                p.print("(");
+                                p.printModuleId(module_id);
+                                p.print(");\n");
+                            }
                         }
+
+                        return;
                     } else if (record.is_bundled) {
                         if (!record.path.is_disabled) {
                             if (!p.has_printed_bundled_import_statement) {
@@ -3432,10 +3478,15 @@ pub fn NewPrinter(
                 return;
             }
 
-            std.debug.assert(record.module_id != 0); // either module_id is forgotten or it should be disabled
-            p.print("$");
-            std.fmt.formatInt(record.module_id, 16, .lower, .{}, p) catch unreachable;
+            @call(.{ .modifier = .always_inline }, printModuleId, .{ p, p.import_records[import_record_index].module_id });
         }
+
+        inline fn printModuleId(p: *Printer, module_id: u32) void {
+            std.debug.assert(module_id != 0); // either module_id is forgotten or it should be disabled
+            p.print("$");
+            std.fmt.formatInt(module_id, 16, .lower, .{}, p) catch unreachable;
+        }
+
         pub fn printBundledRequire(p: *Printer, require: E.Require) void {
             if (p.import_records[require.import_record_index].is_internal) {
                 return;
@@ -3455,12 +3506,20 @@ pub fn NewPrinter(
             p.print("), enumerable: true, configurable: true})");
         }
 
+        // We must use Object.defineProperty() to handle re-exports from ESM -> CJS
+        // Here is an example where a runtime error occurs when assigning directly to module.exports
+        // > 24077 |   module.exports.init = init;
+        // >       ^
+        // >  TypeError: Attempted to assign to readonly property.
         pub fn printBundledExport(p: *Printer, name: string, identifier: string) void {
+            // In the event that
+            p.print("Object.defineProperty(");
             p.printModuleExportSymbol();
-            p.print(".");
-            p.printIdentifier(name);
-            p.print(" = ");
+            p.print(",");
+            p.printQuotedUTF8(name, true);
+            p.print(",{get: () => ");
             p.printIdentifier(identifier);
+            p.print(", enumerable: true, configurable: true})");
         }
 
         pub fn printForLoopInit(p: *Printer, initSt: Stmt) void {

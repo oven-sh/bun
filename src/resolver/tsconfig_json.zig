@@ -76,7 +76,9 @@ pub const TSConfigJSON = struct {
         var result: TSConfigJSON = TSConfigJSON{ .abs_path = source.key_path.text, .paths = PathsMap.init(allocator) };
         errdefer allocator.free(result.paths);
         if (json.asProperty("extends")) |extends_value| {
-            log.addWarning(&source, extends_value.loc, "\"extends\" is not implemented yet") catch unreachable;
+            if (!source.path.isNodeModule()) {  
+                log.addWarning(&source, extends_value.loc, "\"extends\" is not implemented yet") catch unreachable;
+            }
             // if ((extends_value.expr.asString(allocator) catch null)) |str| {
             //     if (extends(str, source.rangeOfString(extends_value.loc))) |base| {
             //         result.jsx = base.jsx;

@@ -2038,7 +2038,7 @@ pub const Expr = struct {
     // associative. For example, the "-" operator is not associative for
     // floating-point numbers.
     pub fn joinWithLeftAssociativeOp(
-        op: Op.Code,
+        comptime op: Op.Code,
         a: Expr,
         b: Expr,
         allocator: *std.mem.Allocator,
@@ -2942,7 +2942,7 @@ pub const Expr = struct {
         return maybeSimplifyNot(expr, allocator) orelse expr.*;
     }
 
-    pub fn hasValueForThisInCall(expr: *const Expr) bool {
+    pub fn hasValueForThisInCall(expr: Expr) bool {
         return switch (expr.data) {
             .e_dot, .e_index => true,
             else => false,

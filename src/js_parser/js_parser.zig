@@ -641,13 +641,12 @@ pub const SideEffects = enum(u2) {
             .e_unary => |e| {
                 if (e.op == .un_not) {
                     // "!!a" => "a"
-                    if (std.meta.activeTag(e.value.data) == .e_unary and e.value.data.e_unary.op == .un_not) {
+                    if (e.value.data == .e_unary and e.value.data.e_unary.op == .un_not) {
                         return simplifyBoolean(p, e.value.data.e_unary.value);
                     }
 
                     e.value = simplifyBoolean(p, e.value);
                 }
-                return expr;
             },
             .e_binary => |e| {
                 switch (e.op) {
@@ -657,7 +656,6 @@ pub const SideEffects = enum(u2) {
                             // "if (anything && truthyNoSideEffects)" => "if (anything)"
                             return e.left;
                         }
-                        return expr;
                     },
                     .bin_logical_or => {
                         const effects = SideEffects.toBoolean(e.right.data);
@@ -665,18 +663,14 @@ pub const SideEffects = enum(u2) {
                             // "if (anything || falsyNoSideEffects)" => "if (anything)"
                             return e.left;
                         }
-                        return expr;
                     },
-                    else => {
-                        return expr;
-                    },
+                    else => {},
                 }
             },
-            else => {
-                return expr;
-            },
+            else => {},
         }
-        unreachable;
+
+        return expr;
     }
 
     pub fn toNumber(data: Expr.Data) ?f64 {
@@ -821,8 +815,9 @@ pub const SideEffects = enum(u2) {
                         // Preserve short-circuit behavior: the left expression is only unused if
                         // the right expression can be completely removed. Otherwise, the left
                         // expression is important for the branch.
-                        bin.right = simpifyUnusedExpr(p, bin.right) orelse bin.right.toEmpty();
-                        if (bin.right.isEmpty()) {
+                        if (simpifyUnusedExpr(p, bin.right)) |right| {
+                            bin.right = right;
+                        } else {
                             return simpifyUnusedExpr(p, bin.left);
                         }
                     },
@@ -1043,7 +1038,13 @@ pub const SideEffects = enum(u2) {
                     },
 
                     // These always return one of the arguments unmodified
-                    .bin_logical_and, .bin_logical_or, .bin_nullish_coalescing, .bin_logical_and_assign, .bin_logical_or_assign, .bin_nullish_coalescing_assign => {
+                    .bin_logical_and,
+                    .bin_logical_or,
+                    .bin_nullish_coalescing,
+                    .bin_logical_and_assign,
+                    .bin_logical_or_assign,
+                    .bin_nullish_coalescing_assign,
+                    => {
                         return isPrimitiveWithSideEffects(e.left.data) and isPrimitiveWithSideEffects(e.right.data);
                     },
                     .bin_comma => {
@@ -8989,7 +8990,7 @@ pub fn NewParser(
                         }
 
                         try p.lexer.next();
-                        left = p.e(E.Binary{ .op = .bin_shl_assign, .left = left, .right = try p.parseExpr(Level.assign.sub(1)) }, left.loc);
+                        left = p.e(E.Binary{ .op = .bin_shr_assign, .left = left, .right = try p.parseExpr(Level.assign.sub(1)) }, left.loc);
                     },
                     .t_greater_than_greater_than_greater_than => {
                         if (level.gte(.shift)) {
@@ -9115,7 +9116,7 @@ pub fn NewParser(
                         }
 
                         try p.lexer.next();
-                        left = p.e(E.Binary{ .op = .bin_shl_assign, .left = left, .right = try p.parseExpr(Level.assign.sub(1)) }, left.loc);
+                        left = p.e(E.Binary{ .op = .bin_bitwise_and_assign, .left = left, .right = try p.parseExpr(Level.assign.sub(1)) }, left.loc);
                     },
                     .t_caret => {
                         if (level.gte(.bitwise_xor)) {
@@ -10875,8 +10876,8 @@ pub fn NewParser(
                         },
                         .bin_nullish_coalescing => {
                             const side_effects = SideEffects.toNullOrUndefined(e_.left.data);
-                            if (side_effects.ok and side_effects.value) {
-                                // "false && dead"
+                            if (side_effects.ok and !side_effects.value) {
+                                // "notNullOrUndefined ?? dead"
                                 const old = p.is_control_flow_dead;
                                 p.is_control_flow_dead = true;
                                 e_.right = p.visitExpr(e_.right);
@@ -10955,31 +10956,51 @@ pub fn NewParser(
                         },
                         .bin_nullish_coalescing => {
                             const nullorUndefined = SideEffects.toNullOrUndefined(e_.left.data);
-                            if (!nullorUndefined.value) {
-                                return e_.left;
-                            } else if (nullorUndefined.side_effects == .no_side_effects) {
-                                // TODO:
-                                // "(null ?? fn)()" => "fn()"
-                                // "(null ?? this.fn)" => "this.fn"
-                                // "(null ?? this.fn)()" => "(0, this.fn)()"
+                            if (nullorUndefined.ok) {
+                                if (!nullorUndefined.value) {
+                                    return e_.left;
+                                } else if (nullorUndefined.side_effects == .no_side_effects) {
+                                    // "(null ?? fn)()" => "fn()"
+                                    // "(null ?? this.fn)" => "this.fn"
+                                    // "(null ?? this.fn)()" => "(0, this.fn)()"
+                                    if (is_call_target and e_.right.hasValueForThisInCall()) {
+                                        return Expr.joinWithComma(Expr{ .data = Prefill.Data.Zero, .loc = e_.left.loc }, e_.right, p.allocator);
+                                    }
 
+                                    return e_.right;
+                                }
                             }
                         },
                         .bin_logical_or => {
                             const side_effects = SideEffects.toBoolean(e_.left.data);
                             if (side_effects.ok and side_effects.value) {
                                 return e_.left;
-                            } else if (side_effects.ok) {
-                                // TODO:
+                            } else if (side_effects.ok and side_effects.side_effects == .no_side_effects) {
                                 // "(0 || fn)()" => "fn()"
                                 // "(0 || this.fn)" => "this.fn"
                                 // "(0 || this.fn)()" => "(0, this.fn)()"
+                                if (is_call_target and e_.right.hasValueForThisInCall()) {
+                                    return Expr.joinWithComma(Expr{ .data = Prefill.Data.Zero, .loc = e_.left.loc }, e_.right, p.allocator);
+                                }
+
+                                return e_.right;
                             }
                         },
                         .bin_logical_and => {
                             const side_effects = SideEffects.toBoolean(e_.left.data);
                             if (side_effects.ok) {
-                                return e_.left;
+                                if (!side_effects.value) {
+                                    return e_.left;
+                                } else if (side_effects.side_effects == .no_side_effects) {
+                                    // "(1 && fn)()" => "fn()"
+                                    // "(1 && this.fn)" => "this.fn"
+                                    // "(1 && this.fn)()" => "(0, this.fn)()"
+                                    if (is_call_target and e_.right.hasValueForThisInCall()) {
+                                        return Expr.joinWithComma(Expr{ .data = Prefill.Data.Zero, .loc = e_.left.loc }, e_.right, p.allocator);
+                                    }
+
+                                    return e_.right;
+                                }
                             }
 
                             // TODO:
@@ -12434,8 +12455,7 @@ pub fn NewParser(
                     // TODO: simplify boolean expression
                 },
                 .s_if => |data| {
-                    var test__ = p.visitExpr(data.test_);
-                    data.test_ = SideEffects.simplifyBoolean(p, test__);
+                    data.test_ = SideEffects.simplifyBoolean(p, p.visitExpr(data.test_));
 
                     const effects = SideEffects.toBoolean(data.test_.data);
                     if (effects.ok and !effects.value) {
@@ -14431,7 +14451,7 @@ pub fn NewParser(
                 .import_keyword = p.es6_import_keyword,
                 .export_keyword = p.es6_export_keyword,
                 .bundle_export_ref = p.bundle_export_ref,
-                .require_ref = if (p.symbols.items[p.require_ref.inner_index].use_count_estimate > 0) p.require_ref else null,
+                .require_ref = p.require_ref,
                 // .top_Level_await_keyword = p.top_level_await_keyword,
             };
         }

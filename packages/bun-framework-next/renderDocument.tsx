@@ -141,6 +141,7 @@ function renderDocument(
     pathname,
     query,
     buildId,
+    page,
     canonicalBase,
     assetPrefix,
     runtimeConfig,
@@ -201,7 +202,7 @@ function renderDocument(
   const htmlProps = {
     __NEXT_DATA__: {
       props, // The result of getInitialProps
-      page: pathname, // The rendered page
+      page: page, // The rendered page
       query, // querystring parsed / passed by the user
       buildId, // buildId is used to facilitate caching of page bundles, we send it to the client so that pageloader knows where to load bundles
       assetPrefix: assetPrefix === "" ? undefined : assetPrefix, // send assetPrefix to the client side when configured, otherwise don't sent in the resulting HTML
@@ -364,6 +365,7 @@ Object.defineProperty(NextDocument.NextScript.prototype, "getScripts", {
 
 export async function render({
   route,
+  request,
   PageNamespace,
   AppNamespace,
   appStylesheets = [],
@@ -380,6 +382,7 @@ export async function render({
   appStylesheets: string[];
   pageStylesheets: string[];
   routePaths: string[];
+  request: Request;
 }): Promise<Response> {
   const { default: Component, getStaticProps = null } = PageNamespace || {};
   const { default: AppComponent_ } = AppNamespace || {};
@@ -395,10 +398,8 @@ export async function render({
       path.indexOf("_next/pages/") + "_next/pages".length
     );
     const name = filePath.substring(0, filePath.indexOf("."));
-    pages[name] = [path];
+    pages[name] = [Bun.origin + path];
   }
-
-  pages[pathname] = [route.scriptSrc, ...pageStylesheets];
 
   if (appStylesheets.length > 0) {
     if (pages["/_app"]) {
@@ -407,6 +408,7 @@ export async function render({
       pages["/_app"] = appStylesheets;
     }
   }
+  pages[pathname] = [route.scriptSrc, ...pageStylesheets];
 
   const AppComponent = AppComponent_ || App.default;
   const Document =
@@ -576,12 +578,61 @@ export async function render({
   // This isn't correct.
   // We don't call getServerSideProps on clients.
   const getServerSideProps = PageNamespace.getServerSideProps;
+
+  var responseHeaders: Headers;
+
   if (typeof getServerSideProps === "function") {
     const result = await getServerSideProps({
       params: route.params,
       query: route.query,
-      req: notImplementedProxy("req"),
-      res: notImplementedProxy("res"),
+      req: {
+        destroy() {},
+        method: request.method,
+        httpVersion: "1.1",
+        rawHeaders: [],
+        rawTrailers: [],
+        socket: null,
+        statusCode: 200,
+        statusMessage: "OK",
+        trailers: {},
+        url: request.url,
+        headers: new Proxy(
+          {},
+          {
+            get(target, name) {
+              return request.headers.get(name as string);
+            },
+            has(target, name) {
+              return request.headers.has(name as string);
+            },
+          }
+        ),
+      },
+      res: {
+        getHeaders() {
+          return {};
+        },
+        getHeaderNames() {
+          return {};
+        },
+        flushHeaders() {},
+        getHeader(name) {
+          if (!responseHeaders) return undefined;
+          return responseHeaders.get(name);
+        },
+        hasHeader(name) {
+          if (!responseHeaders) return undefined;
+          return responseHeaders.has(name);
+        },
+        headersSent: false,
+        setHeader(name, value) {
+          responseHeaders = responseHeaders || new Headers();
+          responseHeaders.set(name, String(value));
+        },
+        cork() {},
+        end() {},
+        finished: false,
+      },
       resolvedUrl: route.pathname,
       preview: false,
       previewData: null,
@@ -601,8 +652,8 @@ export async function render({
     const result = await getStaticProps({
       params: route.params,
       query: route.query,
-      req: notImplementedProxy("req"),
-      res: notImplementedProxy("res"),
+      req: null,
+      res: null,
       resolvedUrl: route.pathname,
       preview: false,
       previewData: null,
@@ -740,9 +791,19 @@ export async function render({
     (false ? "<!-- __NEXT_DATA__ -->" : "") +
     docProps.html +
     html.substring(bodyRenderIdx + BODY_RENDER_TARGET.length);
-  return new Response(
-    html
-      .replaceAll("/_next/http://", "http://")
-      .replaceAll("/_next/https://", "https://")
-  );
+
+  if (responseHeaders) {
+    return new Response(
+      html
+        .replaceAll("/_next/http://", "http://")
+        .replaceAll("/_next/https://", "https://"),
+      { headers: responseHeaders }
+    );
+  } else {
+    return new Response(
+      html
+        .replaceAll("/_next/http://", "http://")
+        .replaceAll("/_next/https://", "https://")
+    );
+  }
 }

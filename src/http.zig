@@ -13,6 +13,7 @@ const Fs = @import("./fs.zig");
 const Options = @import("./options.zig");
 const Fallback = @import("./runtime.zig").Fallback;
 const ErrorCSS = @import("./runtime.zig").ErrorCSS;
+const ErrorJS = @import("./runtime.zig").ErrorJS;
 const Css = @import("css_scanner.zig");
 const NodeModuleBundle = @import("./node_module_bundle.zig").NodeModuleBundle;
 const resolve_path = @import("./resolver/resolve_path.zig");
@@ -2057,6 +2058,26 @@ pub const RequestContext = struct {
             return;
         }
 
+        if (strings.eqlComptime(path, "error.js")) {
+            const buffer = ErrorJS.sourceContent();
+            ctx.appendHeader("Content-Type", MimeType.javascript.value);
+            if (FeatureFlags.strong_etags_for_built_files) {
+                const did_send = ctx.writeETag(buffer) catch false;
+                if (did_send) return;
+            }
+
+            if (buffer.len == 0) {
+                return try ctx.sendNoContent();
+            }
+            const send_body = ctx.method == .GET;
+            defer ctx.done();
+            try ctx.writeStatus(200);
+            try ctx.prepareToSendBody(buffer.len, false);
+            if (!send_body) return;
+            _ = try ctx.writeSocket(buffer, SOCKET_FLAGS);
+            return;
+        }
+
         if (strings.eqlComptime(path, "erro.css")) {
             const buffer = ErrorCSS.sourceContent();
             ctx.appendHeader("Content-Type", MimeType.css.value);
@@ -2480,9 +2501,13 @@ pub const Server = struct {
         // However, we want to optimize for easy to copy paste
         // Nobody should get weird CORS errors when you go to the printed url.
         if (std.mem.readIntNative(u32, &addr.ipv4.host.octets) == 0 or std.mem.readIntNative(u128, &addr.ipv6.host.octets) == 0) {
-            Output.prettyError(" Bun!!<r>\n\n\n<d>  Link:<r> <b><cyan>http://localhost:{d}<r>\n\n\n", .{addr.ipv4.port});
+            Output.prettyError(" Bun!!<r>\n\n\n<d>  Link:<r> <b><cyan>http://localhost:{d}<r>\n\n\n", .{
+                addr.ipv4.port,
+            });
         } else {
-            Output.prettyError(" Bun!!<r>\n\n\n<d>  Link:<r> <b><cyan>http://{s}<r>\n\n\n", .{addr});
+            Output.prettyError(" Bun!!<r>\n\n\n<d>  Link:<r> <b><cyan>http://{s}<r>\n\n\n", .{
+                addr,
+            });
         }
 
         Output.flush();

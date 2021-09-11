@@ -44,6 +44,7 @@ const ServerBundleGeneratorThread = struct {
             null,
             env_loader_,
         );
+        server_bundler.options.jsx.supports_fast_refresh = false;
         server_bundler.configureLinker();
         server_bundler.router = router;
         try server_bundler.configureDefines();

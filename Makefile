@@ -1,10 +1,10 @@
 
 bun: vendor bun-prod-native bun-prod-wasi bun-prod-wasm
 
-vendor: api node-fallbacks runtime_js fallback_decoder mimalloc picohttp jsc
+vendor: api node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp jsc
 
 build-obj: 
-	zig build obj -Drelease-safe
+	zig build obj -Drelease-fast
 
 sign-macos-x64: 
 	gon sign-macos-x64.json
@@ -25,13 +25,16 @@ fallback_decoder:
 	esbuild --target=esnext  --bundle src/fallback.ts --format=iife --platform=browser --minify > src/fallback.out.js
 
 runtime_js:
-	esbuild --target=esnext  --bundle src/runtime/index.ts --format=iife --platform=browser --global-name=BUN_RUNTIME --minify > src/runtime.out.js; cat src/runtime.footer.js >> src/runtime.out.js
+	NODE_ENV=production esbuild --define:process.env.NODE_ENV="production" --target=esnext  --bundle src/runtime/index.ts --format=iife --platform=browser --global-name=BUN_RUNTIME --minify --external:/bun:* > src/runtime.out.js; cat src/runtime.footer.js >> src/runtime.out.js
+
+bun_error:
+	cd packages/bun-error; npm install; npm run --silent build
 
 jsc: jsc-build jsc-bindings
 jsc-build: jsc-build-mac jsc-copy-headers
 jsc-bindings: jsc-bindings-headers jsc-bindings-mac
 	
-	
+
 
 jsc-bindings-headers:
 	mkdir -p src/JavaScript/jsc/bindings-obj/

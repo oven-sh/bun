@@ -330,6 +330,66 @@ pub const Fetch = struct {
     var fetch_body_string: MutableString = undefined;
     var fetch_body_string_loaded = false;
 
+    const JSType = js.JSType;
+
+    const fetch_error_no_args = "fetch() expects a string but received no arguments.";
+    const fetch_error_blank_url = "fetch() URL must not be blank string.";
+    const JSTypeErrorEnum = std.enums.EnumArray(JSType, string);
+    const fetch_type_error_names: JSTypeErrorEnum = brk: {
+        var errors = JSTypeErrorEnum.initUndefined();
+        errors.set(JSType.kJSTypeUndefined, "Undefined");
+        errors.set(JSType.kJSTypeNull, "Null");
+        errors.set(JSType.kJSTypeBoolean, "Boolean");
+        errors.set(JSType.kJSTypeNumber, "Number");
+        errors.set(JSType.kJSTypeString, "String");
+        errors.set(JSType.kJSTypeObject, "Object");
+        errors.set(JSType.kJSTypeSymbol, "Symbol");
+        break :brk errors;
+    };
+
+    const fetch_type_error_string_values = .{
+        std.fmt.comptimePrint("fetch() expects a string, but received {s}", .{fetch_type_error_names.get(JSType.kJSTypeUndefined)}),
+        std.fmt.comptimePrint("fetch() expects a string, but received {s}", .{fetch_type_error_names.get(JSType.kJSTypeNull)}),
+        std.fmt.comptimePrint("fetch() expects a string, but received {s}", .{fetch_type_error_names.get(JSType.kJSTypeBoolean)}),
+        std.fmt.comptimePrint("fetch() expects a string, but received {s}", .{fetch_type_error_names.get(JSType.kJSTypeNumber)}),
+        std.fmt.comptimePrint("fetch() expects a string, but received {s}", .{fetch_type_error_names.get(JSType.kJSTypeString)}),
+        std.fmt.comptimePrint("fetch() expects a string, but received {s}", .{fetch_type_error_names.get(JSType.kJSTypeObject)}),
+        std.fmt.comptimePrint("fetch() expects a string, but received {s}", .{fetch_type_error_names.get(JSType.kJSTypeSymbol)}),
+    };
+
+    const fetch_type_error_strings: JSTypeErrorEnum = brk: {
+        var errors = JSTypeErrorEnum.initUndefined();
+        errors.set(
+            JSType.kJSTypeUndefined,
+            std.mem.span(fetch_type_error_string_values[0]),
+        );
+        errors.set(
+            JSType.kJSTypeNull,
+            std.mem.span(fetch_type_error_string_values[1]),
+        );
+        errors.set(
+            JSType.kJSTypeBoolean,
+            std.mem.span(fetch_type_error_string_values[2]),
+        );
+        errors.set(
+            JSType.kJSTypeNumber,
+            std.mem.span(fetch_type_error_string_values[3]),
+        );
+        errors.set(
+            JSType.kJSTypeString,
+            std.mem.span(fetch_type_error_string_values[4]),
+        );
+        errors.set(
+            JSType.kJSTypeObject,
+            std.mem.span(fetch_type_error_string_values[5]),
+        );
+        errors.set(
+            JSType.kJSTypeSymbol,
+            std.mem.span(fetch_type_error_string_values[6]),
+        );
+        break :brk errors;
+    };
+
     pub const Class = NewClass(
         void,
         .{ .name = "fetch" },
@@ -342,6 +402,7 @@ pub const Fetch = struct {
         .{},
     );
 
+    const fetch_error_cant_fetch_same_origin = "fetch to same-origin on the server is not supported yet - sorry! (it would just hang forever)";
     pub fn call(
         this: void,
         ctx: js.JSContextRef,
@@ -350,13 +411,14 @@ pub const Fetch = struct {
         arguments: []const js.JSValueRef,
         exception: js.ExceptionRef,
     ) js.JSObjectRef {
-        if (arguments.len == 0 or arguments.len > 2) return js.JSValueMakeNull(ctx);
-        var http_client = HTTPClient.init(getAllocator(ctx), .GET, ZigURL{}, .{}, "");
-        var headers: ?Headers = null;
-        var body: string = "";
+        if (arguments.len == 0) {
+            const fetch_error = fetch_error_no_args;
+            return JSPromise.rejectedPromiseValue(VirtualMachine.vm.global, ZigString.init(fetch_error).toErrorInstance(VirtualMachine.vm.global)).asRef();
+        }
 
         if (!js.JSValueIsString(ctx, arguments[0])) {
-            return js.JSValueMakeNull(ctx);
+            const fetch_error = fetch_type_error_strings.get(js.JSValueGetType(ctx, arguments[0]));
+            return JSPromise.rejectedPromiseValue(VirtualMachine.vm.global, ZigString.init(fetch_error).toErrorInstance(VirtualMachine.vm.global)).asRef();
         }
 
         var url_zig_str = ZigString.init("");
@@ -365,10 +427,29 @@ pub const Fetch = struct {
             VirtualMachine.vm.global,
         );
         var url_str = url_zig_str.slice();
-        if (url_str.len == 0) return js.JSValueMakeNull(ctx);
-        http_client.url = ZigURL.parse(url_str);
+        if (url_str.len == 0) {
+            const fetch_error = fetch_error_blank_url;
+            return JSPromise.rejectedPromiseValue(VirtualMachine.vm.global, ZigString.init(fetch_error).toErrorInstance(VirtualMachine.vm.global)).asRef();
+        }
 
-        if (arguments.len == 2 and js.JSValueIsObject(ctx, arguments[1])) {
+        var dealloc_url_str = false;
+        if (url_str[0] == '/') {
+            url_str = strings.append(getAllocator(ctx), VirtualMachine.vm.bundler.options.origin.origin, url_str) catch unreachable;
+            dealloc_url_str = true;
+        }
+        defer if (dealloc_url_str) getAllocator(ctx).free(url_str);
+
+        var http_client = HTTPClient.init(getAllocator(ctx), .GET, ZigURL.parse(url_str), .{}, "");
+
+        if (http_client.url.origin.len > 0 and strings.eql(http_client.url.origin, VirtualMachine.vm.bundler.options.origin.origin)) {
+            const fetch_error = fetch_error_cant_fetch_same_origin;
+            return JSPromise.rejectedPromiseValue(VirtualMachine.vm.global, ZigString.init(fetch_error).toErrorInstance(VirtualMachine.vm.global)).asRef();
+        }
+
+        var headers: ?Headers = null;
+        var body: string = "";
+
+        if (arguments.len >= 2 and js.JSValueIsObject(ctx, arguments[1])) {
             var array = js.JSObjectCopyPropertyNames(ctx, arguments[1]);
             defer js.JSPropertyNameArrayRelease(array);
             const count = js.JSPropertyNameArrayGetCount(array);
@@ -391,7 +472,7 @@ pub const Fetch = struct {
                         if (js.JSStringIsEqualToUTF8CString(property_name_ref, "body")) {
                             if (js.JSObjectGetProperty(ctx, arguments[1], property_name_ref, null)) |value| {
                                 var body_ = Body.extractBody(ctx, value, false, null, exception);
-                                if (exception != null) return js.JSValueMakeNull(ctx);
+                                if (exception.* != null) return js.JSValueMakeNull(ctx);
                                 switch (body_.value) {
                                     .ArrayBuffer => |arraybuffer| {
                                         body = arraybuffer.ptr[0..arraybuffer.byte_len];
@@ -409,7 +490,7 @@ pub const Fetch = struct {
                             if (js.JSObjectGetProperty(ctx, arguments[1], property_name_ref, null)) |value| {
                                 var string_ref = js.JSValueToStringCopy(ctx, value, exception);
 
-                                if (exception != null) return js.JSValueMakeNull(ctx);
+                                if (exception.* != null) return js.JSValueMakeNull(ctx);
                                 defer js.JSStringRelease(string_ref);
                                 var method_name_buf: [16]u8 = undefined;
                                 var method_name = method_name_buf[0..js.JSStringGetUTF8CString(string_ref, &method_name_buf, method_name_buf.len)];
@@ -435,7 +516,14 @@ pub const Fetch = struct {
         }
 
         var http_response = http_client.send(body, &fetch_body_string) catch |err| {
-            const fetch_error = std.fmt.allocPrint(getAllocator(ctx), "Fetch error: {s}", .{@errorName(err)}) catch unreachable;
+            const fetch_error = std.fmt.allocPrint(
+                getAllocator(ctx),
+                "Fetch error: {s}\nURL: \"{s}\"",
+                .{
+                    @errorName(err),
+                    url_str,
+                },
+            ) catch unreachable;
             return JSPromise.rejectedPromiseValue(VirtualMachine.vm.global, ZigString.init(fetch_error).toErrorInstance(VirtualMachine.vm.global)).asRef();
         };
 
@@ -1129,18 +1217,19 @@ pub const Body = struct {
                     } else |err| {}
                 }
 
-                var str: ZigString = ZigString.Empty;
-                JSValue.fromRef(body_ref).toZigString(&str, VirtualMachine.vm.global);
+                var wtf_string = JSValue.fromRef(body_ref).toWTFString(VirtualMachine.vm.global);
 
-                if (str.len == 0) {
+                if (wtf_string.isEmpty()) {
                     body.value = .{ .String = "" };
                     return body;
                 }
 
-                body.value = Value{ .String = str.slice() };
+                body.value = Value{
+                    .String = wtf_string.characters8()[0..wtf_string.length()],
+                };
                 // body.ptr = body.
                 // body.len = body.value.String.len;str.characters8()[0..len] };
-             
+
                 return body;
             },
             .kJSTypeObject => {

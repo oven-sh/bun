@@ -1,5 +1,19 @@
+import nextPackage from "next/package.json";
 import "./polyfills";
 import { render } from "./renderDocument";
+
+const { version } = nextPackage;
+if (
+  !version.startsWith("11.1") ||
+  version === "11.1.0" ||
+  version === "11.1.1"
+) {
+  console.warn(
+    "Possibly incompatible Next.js version: ",
+    version,
+    ". Please upgrade to Next.js 11.1.2 or later.\n"
+  );
+}
 
 let buildId = 0;
 
@@ -49,6 +63,7 @@ addEventListener("fetch", async (event: FetchEvent) => {
       AppNamespace: appRoute,
       buildId,
       routePaths: Bun.getRouteFiles(),
+      request: event.request,
     })
   );
   buildId++;

@@ -105,7 +105,7 @@ Bun is a project with incredibly large scope, and it's early days.
 | `@jsxPragma` comments                                                                                                  | JS Transpiler  |
 | JSX source file name                                                                                                   | JS Transpiler  |
 | Sharing `.bun` files                                                                                                   | Bun            |
-| [fetch](https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API)                                                    | Bun.js         |
+| [Finish fetch](https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API)                                             | Bun.js         |
 | [setTimeout](https://developer.mozilla.org/en-US/docs/Web/API/setTimeout)                                              | Bun.js         |
 | `bun run` command                                                                                                      | Bun.js         |
 

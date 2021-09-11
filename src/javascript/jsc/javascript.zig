@@ -260,6 +260,27 @@ pub const Bun = struct {
         }
     }
 
+    var public_path_temp_str: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+
+    pub fn getPublicPathJS(
+        this: void,
+        ctx: js.JSContextRef,
+        function: js.JSObjectRef,
+        thisObject: js.JSObjectRef,
+        arguments: []const js.JSValueRef,
+        exception: js.ExceptionRef,
+    ) js.JSValueRef {
+        var zig_str: ZigString = ZigString.Empty;
+        JSValue.toZigString(JSValue.fromRef(arguments[0]), &zig_str, VirtualMachine.vm.global);
+
+        const to = zig_str.slice();
+
+        var stream = std.io.fixedBufferStream(&public_path_temp_str);
+        var writer = stream.writer();
+        getPublicPath(to, @TypeOf(&writer), &writer);
+        return ZigString.init(stream.buffer[0..stream.pos]).toValueGC(VirtualMachine.vm.global).asRef();
+    }
+
     pub const Class = NewClass(
         void,
         .{
@@ -299,6 +320,13 @@ pub const Bun = struct {
                 .rfn = Bun.readFileAsString,
                 .ts = d.ts{
                     .name = "readFile",
+                    .@"return" = "string",
+                },
+            },
+            .getPublicPath = .{
+                .rfn = Bun.getPublicPathJS,
+                .ts = d.ts{
+                    .name = "getPublicPath",
                     .@"return" = "string",
                 },
             },

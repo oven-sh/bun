@@ -5,7 +5,7 @@ import type {
 } from "../../../src/api/schema";
 
 var once = false;
-function insertGlobalStyleSheet(detail) {
+function insertNextHeadCount() {
   if (!once) {
     document.head.insertAdjacentHTML(
       "beforeend",
@@ -13,7 +13,13 @@ function insertGlobalStyleSheet(detail) {
     );
     once = true;
   }
-  pageLoader.cssQueue.push(insertStyleSheet(detail).then(() => {}));
+}
+function insertGlobalStyleSheet(detail) {
+  pageLoader.cssQueue.push(
+    insertStyleSheet(detail).then(() => {
+      insertNextHeadCount();
+    })
+  );
 }
 
 [...globalThis["__BUN"].allImportedStyles].map((detail) =>
@@ -25,7 +31,6 @@ document.addEventListener("onimportcss", insertGlobalStyleSheet, {
 });
 
 import { renderError, _boot, pageLoader } from "./client.development";
-import { renderFallbackError } from "bun-error";
 
 function renderFallback({
   router,
@@ -52,6 +57,7 @@ function renderFallback({
 
   return import(route)
     .then((Namespace) => {
+      insertNextHeadCount();
       return _boot(Namespace, true);
     })
     .then(() => {
@@ -66,18 +72,20 @@ function renderFallback({
 }
 
 export default function render(props: FallbackMessageContainer) {
-  renderFallback(props).then(
-    () => {
-      Promise.all(pageLoader.cssQueue).finally(() => {
-        renderFallbackError(props);
-        document.body.style.visibility = "visible";
-      });
-    },
-    (err) => {
-      console.error(err);
-      Promise.all(pageLoader.cssQueue).finally(() => {
-        renderFallbackError(props);
-      });
-    }
-  );
+  return import("/bun:error.js").then(({ renderFallbackError }) => {
+    return renderFallback(props).then(
+      () => {
+        Promise.all(pageLoader.cssQueue).finally(() => {
+          renderFallbackError(props);
+          document.body.style.visibility = "visible";
+        });
+      },
+      (err) => {
+        console.error(err);
+        Promise.all(pageLoader.cssQueue).finally(() => {
+          renderFallbackError(props);
+        });
+      }
+    );
+  });
 }

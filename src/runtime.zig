@@ -7,9 +7,11 @@ const Fs = @import("./fs.zig");
 const Schema = @import("./api/schema.zig");
 
 const Api = Schema.Api;
-const ErrorCSSPath = "../packages/bun-framework-next/bun-error.css";
 
 pub const ErrorCSS = struct {
+    const ErrorCSSPath = "../packages/bun-error/dist/bun-error.css";
+    const ErrorCSSPathDev = "../packages/bun-error/bun-error.css";
+
     pub const ProdSourceContent = @embedFile(ErrorCSSPath);
 
     pub fn sourceContent() string {
@@ -17,7 +19,32 @@ pub const ErrorCSS = struct {
             var env = std.process.getEnvMap(default_allocator) catch unreachable;
             var out_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
             var dirname = std.fs.selfExeDirPath(&out_buffer) catch unreachable;
-            var paths = [_]string{ dirname, "../../", ErrorCSSPath };
+            var paths = [_]string{ dirname, "../../", ErrorCSSPathDev };
+            const file = std.fs.cwd().openFile(
+                resolve_path.joinAbsString(dirname, std.mem.span(&paths), .auto),
+                .{
+                    .read = true,
+                },
+            ) catch unreachable;
+            defer file.close();
+            return file.readToEndAlloc(default_allocator, (file.stat() catch unreachable).size) catch unreachable;
+        } else {
+            return ProdSourceContent;
+        }
+    }
+};
+
+pub const ErrorJS = struct {
+    const ErrorJSPath = "../packages/bun-error/dist/index.js";
+
+    pub const ProdSourceContent = @embedFile(ErrorJSPath);
+
+    pub fn sourceContent() string {
+        if (comptime isDebug) {
+            var env = std.process.getEnvMap(default_allocator) catch unreachable;
+            var out_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+            var dirname = std.fs.selfExeDirPath(&out_buffer) catch unreachable;
+            var paths = [_]string{ dirname, "../../", ErrorJSPath };
             const file = std.fs.cwd().openFile(
                 resolve_path.joinAbsString(dirname, std.mem.span(&paths), .auto),
                 .{

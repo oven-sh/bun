@@ -33,7 +33,6 @@ pub const JSType = enum(c_uint) {
     kJSTypeString,
     kJSTypeObject,
     kJSTypeSymbol,
-    _,
 };
 pub const kJSTypeUndefined = @enumToInt(JSType.kJSTypeUndefined);
 pub const kJSTypeNull = @enumToInt(JSType.kJSTypeNull);

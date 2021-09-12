@@ -2131,6 +2131,14 @@ pub fn NewBundler(cache_files: bool) type {
                     }
                 }
 
+                if (strings.eqlComptime(path.namespace, "node")) {
+                    if (NodeFallbackModules.contentsFromPath(path.text)) |code| {
+                        break :brk logger.Source.initPathString(path.text, code);
+                    }
+
+                    break :brk logger.Source.initPathString(path.text, "");
+                }
+
                 const entry = bundler.resolver.caches.fs.readFile(
                     bundler.fs,
                     path.text,

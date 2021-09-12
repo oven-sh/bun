@@ -219,6 +219,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
                                 // runtime is included in the bundle, so we don't need to dynamically import it
                                 if (linker.options.node_modules_bundle != null) {
                                     import_record.path.text = linker.nodeModuleBundleImportPath();
+                                    result.ast.runtime_import_record_id = record_index;
                                 } else {
                                     import_record.path = try linker.generateImportPath(
                                         source_dir,
@@ -432,16 +433,20 @@ pub fn NewLinker(comptime BundlerType: type) type {
             if (result.ast.needs_runtime and result.ast.runtime_import_record_id == null) {
                 var import_records = try linker.allocator.alloc(ImportRecord, result.ast.import_records.len + 1);
                 std.mem.copy(ImportRecord, import_records, result.ast.import_records);
+
                 import_records[import_records.len - 1] = ImportRecord{
                     .kind = .stmt,
-                    .path = try linker.generateImportPath(
-                        source_dir,
-                        linker.runtime_source_path,
-                        Runtime.version(),
-                        false,
-                        "bun",
-                        import_path_format,
-                    ),
+                    .path = if (linker.options.node_modules_bundle != null)
+                        Fs.Path.init(linker.nodeModuleBundleImportPath())
+                    else
+                        try linker.generateImportPath(
+                            source_dir,
+                            linker.runtime_source_path,
+                            Runtime.version(),
+                            false,
+                            "bun",
+                            import_path_format,
+                        ),
                     .range = logger.Range{ .loc = logger.Loc{ .start = 0 }, .len = 0 },
                 };
                 result.ast.runtime_import_record_id = @truncate(u32, import_records.len - 1);
@@ -544,6 +549,10 @@ pub fn NewLinker(comptime BundlerType: type) type {
         ) !Fs.Path {
             switch (import_path_format) {
                 .absolute_path => {
+                    if (strings.eqlComptime(namespace, "node")) {
+                        return Fs.Path.initWithNamespace(source_path, "node");
+                    }
+
                     var relative_name = linker.fs.relative(source_dir, source_path);
 
                     return Fs.Path.initWithPretty(source_path, relative_name);
@@ -599,9 +608,12 @@ pub fn NewLinker(comptime BundlerType: type) type {
 
                 .absolute_url => {
                     if (strings.eqlComptime(namespace, "node")) {
+                        if (comptime isDebug) std.debug.assert(strings.eqlComptime(source_path[0..5], "node:"));
+
                         return Fs.Path.init(try std.fmt.allocPrint(
                             linker.allocator,
-                            "{s}/node:{s}",
+                            // assumption: already starts with "node:"
+                            "{s}/{s}",
                             .{
                                 linker.options.origin.origin,
                                 source_path,

@@ -316,6 +316,7 @@ pub fn NewResolver(cache_files: bool) type {
         log: *logger.Log,
         allocator: *std.mem.Allocator,
         node_module_bundle: ?*NodeModuleBundle,
+        extension_order: []const string = undefined,
 
         debug_logs: ?DebugLogs = null,
         elapsed: i128 = 0, // tracing
@@ -379,6 +380,7 @@ pub fn NewResolver(cache_files: bool) type {
                 resolver_Mutex = Mutex.init();
                 resolver_Mutex_loaded = true;
             }
+
             return ThisResolver{
                 .allocator = allocator,
                 .dir_cache = DirInfo.HashMap.init(allocator),
@@ -388,6 +390,7 @@ pub fn NewResolver(cache_files: bool) type {
                 .fs = _fs,
                 .node_module_bundle = opts.node_modules_bundle,
                 .log = log,
+                .extension_order = opts.extension_order,
             };
         }
 
@@ -559,6 +562,8 @@ pub fn NewResolver(cache_files: bool) type {
         }
 
         pub fn resolve(r: *ThisResolver, source_dir: string, import_path: string, kind: ast.ImportKind) !Result {
+            r.extension_order = if (kind.isFromCSS()) std.mem.span(&options.BundleOptions.Defaults.CSSExtensionOrder) else r.opts.extension_order;
+
             if (FeatureFlags.tracing) {
                 tracing_start = std.time.nanoTimestamp();
             }
@@ -728,6 +733,7 @@ pub fn NewResolver(cache_files: bool) type {
         }
 
         pub fn resolveWithoutSymlinks(r: *ThisResolver, source_dir: string, import_path: string, kind: ast.ImportKind) !?Result {
+
             // This implements the module resolution algorithm from node.js, which is
             // described here: https://nodejs.org/api/modules.html#modules_all_together
             var result: Result = Result{ .path_pair = PathPair{ .primary = Path.empty } };
@@ -1641,7 +1647,7 @@ pub fn NewResolver(cache_files: bool) type {
             }
             var remapped = pkg.browser_map.get(cleaned);
             if (remapped == null) {
-                for (r.opts.extension_order) |ext| {
+                for (r.extension_order) |ext| {
                     std.mem.copy(u8, &TemporaryBuffer.ExtensionPathBuf, cleaned);
                     std.mem.copy(u8, TemporaryBuffer.ExtensionPathBuf[cleaned.len .. cleaned.len + ext.len], ext);
                     const new_path = TemporaryBuffer.ExtensionPathBuf[0 .. cleaned.len + ext.len];
@@ -1831,7 +1837,7 @@ pub fn NewResolver(cache_files: bool) type {
         }
 
         pub fn loadAsFileOrDirectory(r: *ThisResolver, path: string, kind: ast.ImportKind) ?MatchResult {
-            const extension_order = r.opts.extension_order;
+            const extension_order = r.extension_order;
 
             // Is this a file?
             if (r.loadAsFile(path, extension_order)) |file| {
@@ -2045,7 +2051,7 @@ pub fn NewResolver(cache_files: bool) type {
 
             // Try the path with extensions
             std.mem.copy(u8, &TemporaryBuffer.ExtensionPathBuf, path);
-            for (r.opts.extension_order) |ext| {
+            for (r.extension_order) |ext| {
                 var buffer = TemporaryBuffer.ExtensionPathBuf[0 .. path.len + ext.len];
                 std.mem.copy(u8, buffer[path.len..buffer.len], ext);
                 const file_name = buffer[path.len - base.len .. buffer.len];

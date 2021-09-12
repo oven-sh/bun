@@ -121,12 +121,8 @@ export var __BUN_INTERNAL_DO_NOT_USE_OR_YOU_WILL_BE_FIRED = {
 // );
 
 export var __require = (namespace) => {
-  if (
-    typeof namespace === "object" &&
-    "default" in namespace &&
-    namespace.default[cjsRequireSymbol]
-  )
-    return namespace.default();
+  if (typeof namespace === "function" && namespace[cjsRequireSymbol])
+    return namespace();
 
   return namespace;
   // // is it an ESM module record?

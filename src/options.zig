@@ -882,7 +882,17 @@ pub const BundleOptions = struct {
     };
 
     pub const Defaults = struct {
-        pub var ExtensionOrder = [_]string{ ".tsx", ".ts", ".jsx", ".js", ".json", ".css" };
+        pub const ExtensionOrder = [_]string{
+            ".tsx",
+            ".ts",
+            ".jsx",
+            ".js",
+            ".json",
+        };
+
+        pub const CSSExtensionOrder = [_]string{
+            ".css",
+        };
     };
 
     pub fn fromApi(

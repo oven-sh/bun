@@ -17,6 +17,9 @@ usingnamespace @import("imports.zig");
 const TemplatePartTuple = std.meta.Tuple(&[_]type{ []E.TemplatePart, logger.Loc });
 const ScopeOrderList = std.ArrayListUnmanaged(?ScopeOrder);
 
+const JSXFactoryName = "JSX";
+const JSXAutomaticName = "jsx_module";
+
 pub fn ExpressionTransposer(
     comptime Kontext: type,
     visitor: fn (ptr: *Kontext, arg: Expr, state: anytype) Expr,
@@ -1916,12 +1919,11 @@ pub const Parser = struct {
 
         // Auto-import JSX
         if (p.options.jsx.parse) {
-            const jsx_symbol: Symbol = p.symbols.items[p.jsx_runtime_ref.inner_index];
-            const jsx_static_symbol: Symbol = p.symbols.items[p.jsxs_runtime_ref.inner_index];
-
-            const jsx_fragment_symbol: Symbol = p.symbols.items[p.jsx_fragment_ref.inner_index];
-            const jsx_factory_symbol: Symbol = p.symbols.items[p.jsx_factory_ref.inner_index];
-            const jsx_filename_symbol = p.symbols.items[p.jsx_filename_ref.inner_index];
+            const jsx_symbol: *const Symbol = &p.symbols.items[p.jsx_runtime_ref.inner_index];
+            const jsx_static_symbol: *const Symbol = &p.symbols.items[p.jsxs_runtime_ref.inner_index];
+            const jsx_fragment_symbol: *const Symbol = &p.symbols.items[p.jsx_fragment_ref.inner_index];
+            const jsx_factory_symbol: *const Symbol = &p.symbols.items[p.jsx_factory_ref.inner_index];
+            const jsx_filename_symbol: *const Symbol = &p.symbols.items[p.jsx_filename_ref.inner_index];
 
             // Currently, React (and most node_modules) ship a CJS version or a UMD version
             // but we should assume that it'll pretty much always be CJS
@@ -1983,6 +1985,19 @@ pub const Parser = struct {
                 var stmt_i: usize = 0;
 
                 if (jsx_symbol.use_count_estimate > 0 or jsx_static_symbol.use_count_estimate > 0) {
+                    if (jsx_automatic_symbol.use_count_estimate > 0) {
+                        if (jsx_automatic_symbol.link != null) {
+                            p.symbols.items[p.jsx_automatic_ref.inner_index].link = null;
+                            p.symbols.items[p.jsx_automatic_ref.inner_index].original_name = try std.fmt.allocPrint(
+                                p.allocator,
+                                "jsxImport{x}",
+                                .{
+                                    @truncate(u16, std.hash.Wyhash.hash(0, p.options.jsx.import_source)),
+                                },
+                            );
+                        }
+                    }
+
                     declared_symbols[declared_symbols_i] = .{ .ref = automatic_namespace_ref, .is_top_level = true };
                     declared_symbols_i += 1;
 
@@ -1998,6 +2013,17 @@ pub const Parser = struct {
                     };
 
                     if (jsx_symbol.use_count_estimate > 0) {
+                        if (jsx_symbol.link != null) {
+                            p.symbols.items[p.jsx_runtime_ref.inner_index].link = null;
+                            p.symbols.items[p.jsx_runtime_ref.inner_index].original_name = try std.fmt.allocPrint(
+                                p.allocator,
+                                "jsx_{x}",
+                                .{
+                                    @truncate(u16, std.hash.Wyhash.hash(0, p.options.jsx.import_source)),
+                                },
+                            );
+                        }
+
                         declared_symbols[declared_symbols_i] = .{ .ref = p.jsx_runtime_ref, .is_top_level = true };
                         declared_symbols_i += 1;
 
@@ -2022,6 +2048,17 @@ pub const Parser = struct {
                     }
 
                     if (jsx_static_symbol.use_count_estimate > 0) {
+                        if (jsx_static_symbol.link != null) {
+                            p.symbols.items[p.jsxs_runtime_ref.inner_index].link = null;
+                            p.symbols.items[p.jsxs_runtime_ref.inner_index].original_name = try std.fmt.allocPrint(
+                                p.allocator,
+                                "jsxs_{x}",
+                                .{
+                                    @truncate(u16, std.hash.Wyhash.hash(0, p.options.jsx.import_source)),
+                                },
+                            );
+                        }
+
                         declared_symbols[declared_symbols_i] = .{ .ref = p.jsxs_runtime_ref, .is_top_level = true };
                         declared_symbols_i += 1;
 
@@ -2047,6 +2084,15 @@ pub const Parser = struct {
                     }
 
                     if (jsx_filename_symbol.use_count_estimate > 0) {
+                        if (jsx_filename_symbol.link != null) {
+                            p.symbols.items[p.jsx_filename_ref.inner_index].link = null;
+                            p.symbols.items[p.jsx_filename_ref.inner_index].original_name = try std.fmt.allocPrint(
+                                p.allocator,
+                                "jsxFilename_{x}",
+                                .{@truncate(u16, std.hash.Wyhash.hash(0, p.options.jsx.import_source))},
+                            );
+                        }
+
                         declared_symbols[declared_symbols_i] = .{ .ref = p.jsx_filename_ref, .is_top_level = true };
                         declared_symbols_i += 1;
                         decls[decl_i] = G.Decl{
@@ -2091,6 +2137,14 @@ pub const Parser = struct {
                 }
 
                 if (jsx_classic_symbol.use_count_estimate > 0) {
+                    if (jsx_classic_symbol.link != null) {
+                        p.symbols.items[p.jsx_classic_ref.inner_index].link = null;
+                        p.symbols.items[p.jsx_classic_ref.inner_index].original_name = try std.fmt.allocPrint(p.allocator, "{s}${x}", .{
+                            p.symbols.items[p.jsx_classic_ref.inner_index].original_name,
+                            jsx_classic_symbol.use_count_estimate,
+                        });
+                    }
+
                     const classic_identifier = p.e(E.Identifier{ .ref = classic_namespace_ref }, loc);
 
                     const dot_call_target = brk: {
@@ -2106,6 +2160,14 @@ pub const Parser = struct {
                     };
 
                     if (jsx_factory_symbol.use_count_estimate > 0) {
+                        if (jsx_factory_symbol.link != null) {
+                            p.symbols.items[p.jsx_factory_ref.inner_index].link = null;
+                            p.symbols.items[p.jsx_factory_ref.inner_index].original_name = try std.fmt.allocPrint(p.allocator, "{s}${x}", .{
+                                p.symbols.items[p.jsx_factory_ref.inner_index].original_name,
+                                jsx_factory_symbol.use_count_estimate,
+                            });
+                        }
+
                         declared_symbols[declared_symbols_i] = .{ .ref = p.jsx_factory_ref, .is_top_level = true };
                         declared_symbols_i += 1;
                         decls[decl_i] = G.Decl{
@@ -2129,6 +2191,14 @@ pub const Parser = struct {
                     }
 
                     if (jsx_fragment_symbol.use_count_estimate > 0) {
+                        if (jsx_fragment_symbol.link != null) {
+                            p.symbols.items[p.jsx_fragment_ref.inner_index].link = null;
+                            p.symbols.items[p.jsx_fragment_ref.inner_index].original_name = try std.fmt.allocPrint(p.allocator, "{s}${x}", .{
+                                p.symbols.items[p.jsx_fragment_ref.inner_index].original_name,
+                                jsx_fragment_symbol.use_count_estimate,
+                            });
+                        }
+
                         declared_symbols[declared_symbols_i] = .{ .ref = p.jsx_fragment_ref, .is_top_level = true };
                         declared_symbols_i += 1;
                         decls[decl_i] = G.Decl{
@@ -2176,7 +2246,14 @@ pub const Parser = struct {
 
                 if (p.options.features.react_fast_refresh) {
                     defer did_import_fast_refresh = true;
-                    const refresh_runtime_symbol: Symbol = p.symbols.items[p.jsx_refresh_runtime_ref.inner_index];
+                    const refresh_runtime_symbol: *const Symbol = &p.symbols.items[p.jsx_refresh_runtime_ref.inner_index];
+                    if (refresh_runtime_symbol.link != null) {
+                        p.symbols.items[p.jsx_refresh_runtime_ref.inner_index].link = null;
+                        p.symbols.items[p.jsx_refresh_runtime_ref.inner_index].original_name = try std.fmt.allocPrint(p.allocator, "{s}${x}", .{
+                            p.symbols.items[p.jsx_refresh_runtime_ref.inner_index].original_name,
+                            refresh_runtime_symbol.use_count_estimate,
+                        });
+                    }
 
                     declared_symbols[declared_symbols_i] = .{ .ref = p.jsx_refresh_runtime_ref, .is_top_level = true };
                     declared_symbols_i += 1;
@@ -2231,7 +2308,15 @@ pub const Parser = struct {
             }, loc);
 
             p.recordUsage(p.jsx_refresh_runtime_ref);
-            const refresh_runtime_symbol: Symbol = p.symbols.items[p.jsx_refresh_runtime_ref.inner_index];
+            const refresh_runtime_symbol: *const Symbol = &p.symbols.items[p.jsx_refresh_runtime_ref.inner_index];
+            if (refresh_runtime_symbol.link != null) {
+                p.symbols.items[p.jsx_refresh_runtime_ref.inner_index].link = null;
+                p.symbols.items[p.jsx_refresh_runtime_ref.inner_index].original_name = try std.fmt.allocPrint(p.allocator, "{s}${x}", .{
+                    p.symbols.items[p.jsx_refresh_runtime_ref.inner_index].original_name,
+                    refresh_runtime_symbol.use_count_estimate,
+                });
+            }
+
             p.named_imports.put(
                 p.jsx_refresh_runtime_ref,
                 js_ast.NamedImport{
@@ -2475,6 +2560,7 @@ pub const Prefill = struct {
         pub var CommonJS = "__commonJS";
         pub var ReExport = "__reExport";
         pub var ToModule = "__toModule";
+        const JSXShortname = "jsx";
     };
 };
 
@@ -3154,7 +3240,7 @@ pub fn NewParser(
             }
         }
 
-        pub fn logArrowArgErrors(p: *P, errors: *DeferredArrowArgErrors) void {
+        fn logArrowArgErrors(p: *P, errors: *DeferredArrowArgErrors) void {
             if (errors.invalid_expr_await.len > 0) {
                 var r = errors.invalid_expr_await;
                 p.log.addRangeError(p.source, r, "Cannot use an \"await\" expression here") catch unreachable;
@@ -3166,7 +3252,7 @@ pub fn NewParser(
             }
         }
 
-        pub fn keyNameForError(p: *P, key: js_ast.Expr) string {
+        fn keyNameForError(p: *P, key: js_ast.Expr) string {
             switch (key.data) {
                 .e_string => {
                     return p.lexer.raw();
@@ -3181,7 +3267,7 @@ pub fn NewParser(
             }
         }
 
-        pub fn canMergeSymbols(p: *P, scope: *js_ast.Scope, existing: Symbol.Kind, new: Symbol.Kind) SymbolMergeResult {
+        fn canMergeSymbols(p: *P, scope: *js_ast.Scope, existing: Symbol.Kind, new: Symbol.Kind) SymbolMergeResult {
             if (existing == .unbound) {
                 return .replace_with_new;
             }
@@ -3405,32 +3491,54 @@ pub fn NewParser(
 
             p.hoistSymbols(p.module_scope);
 
-            p.exports_ref = try p.declareSymbol(.hoisted, logger.Loc.Empty, "exports");
-            p.module_ref = try p.declareSymbol(.hoisted, logger.Loc.Empty, "module");
+            var generated_symbols_count: u32 = 3;
+
+            if (p.options.enable_bundling) {
+                generated_symbols_count += 4;
+            }
+
+            if (p.options.features.hot_module_reloading) {
+                generated_symbols_count += 3;
+
+                if (is_react_fast_refresh_enabled) {
+                    generated_symbols_count += 1;
+                }
+            }
+
+            if (is_jsx_enabled) {
+                generated_symbols_count += 7;
+
+                if (p.options.jsx.development) generated_symbols_count += 1;
+            }
+
+            try p.module_scope.generated.ensureUnusedCapacity(generated_symbols_count);
+
+            p.exports_ref = try p.declareCommonJSSymbol(.unbound, "exports");
+            p.module_ref = try p.declareCommonJSSymbol(.unbound, "module");
             p.require_ref = try p.declareCommonJSSymbol(.unbound, "require");
 
             if (p.options.enable_bundling) {
-                p.bundle_export_ref = try p.declareSymbol(.unbound, logger.Loc.Empty, "IF_YOU_SEE_THIS_ITS_A_BUNDLER_BUG_PLEASE_FILE_AN_ISSUE_THX");
-                p.runtime_imports.__reExport = try p.declareSymbol(.unbound, logger.Loc.Empty, "__reExport");
-                p.runtime_imports.register = try p.declareSymbol(.unbound, logger.Loc.Empty, "$$m");
-                p.runtime_imports.lazy_export = try p.declareSymbol(.unbound, logger.Loc.Empty, "$$lzy");
+                p.bundle_export_ref = try p.declareGeneratedSymbol(.other, "IF_YOU_SEE_THIS_ITS_A_BUNDLER_BUG_PLEASE_FILE_AN_ISSUE_THX");
+                p.runtime_imports.__reExport = try p.declareGeneratedSymbol(.other, "__reExport");
+                p.runtime_imports.register = try p.declareGeneratedSymbol(.other, "$$m");
+                p.runtime_imports.lazy_export = try p.declareGeneratedSymbol(.other, "$$lzy");
 
                 p.runtime_imports.__export = p.exports_ref;
-            } else {}
+            }
 
             if (p.options.features.hot_module_reloading) {
-                p.hmr_module_ref = try p.declareSymbol(.hoisted, logger.Loc.Empty, "__hmrModule");
+                p.hmr_module_ref = try p.declareGeneratedSymbol(.other, "__hmrModule");
                 if (is_react_fast_refresh_enabled) {
-                    p.jsx_refresh_runtime_ref = try p.declareSymbol(.hoisted, logger.Loc.Empty, "__RefreshRuntime");
+                    p.jsx_refresh_runtime_ref = try p.declareGeneratedSymbol(.other, "__RefreshRuntime");
 
-                    p.runtime_imports.__FastRefreshModule = try p.declareSymbol(.hoisted, logger.Loc.Empty, "__FastRefreshModule");
+                    p.runtime_imports.__FastRefreshModule = try p.declareGeneratedSymbol(.other, "__FastRefreshModule");
                     p.recordUsage(p.runtime_imports.__FastRefreshModule.?);
                 } else {
-                    p.runtime_imports.__HMRModule = try p.declareSymbol(.hoisted, logger.Loc.Empty, "__HMRModule");
+                    p.runtime_imports.__HMRModule = try p.declareGeneratedSymbol(.other, "__HMRModule");
                     p.recordUsage(p.runtime_imports.__HMRModule.?);
                 }
 
-                p.runtime_imports.__HMRClient = try p.declareSymbol(.hoisted, logger.Loc.Empty, "__HMRClient");
+                p.runtime_imports.__HMRClient = try p.declareGeneratedSymbol(.other, "__HMRClient");
                 p.recordUsage(p.hmr_module_ref);
                 p.recordUsage(p.runtime_imports.__HMRClient.?);
             } else {
@@ -3440,28 +3548,40 @@ pub fn NewParser(
 
             if (is_jsx_enabled) {
                 if (p.options.jsx.development) {
-                    p.jsx_filename_ref = p.newSymbol(.hoisted, Prefill.Runtime.JSXFilename) catch unreachable;
+                    p.jsx_filename_ref = p.declareGeneratedSymbol(.other, Prefill.Runtime.JSXFilename) catch unreachable;
                 }
-                p.jsx_fragment_ref = p.declareSymbol(.hoisted, logger.Loc.Empty, p.options.jsx.fragment[p.options.jsx.fragment.len - 1]) catch unreachable;
-                p.jsx_runtime_ref = p.declareSymbol(.hoisted, logger.Loc.Empty, p.options.jsx.jsx) catch unreachable;
-                p.jsxs_runtime_ref = p.declareSymbol(.hoisted, logger.Loc.Empty, p.options.jsx.jsx_static) catch unreachable;
-                p.jsx_factory_ref = p.declareSymbol(.hoisted, logger.Loc.Empty, p.options.jsx.factory[p.options.jsx.factory.len - 1]) catch unreachable;
+                p.jsx_fragment_ref = p.declareGeneratedSymbol(.other, p.options.jsx.fragment[p.options.jsx.fragment.len - 1]) catch unreachable;
+                p.jsx_runtime_ref = p.declareGeneratedSymbol(.other, Prefill.Runtime.JSXShortname) catch unreachable;
+                p.jsxs_runtime_ref = p.declareGeneratedSymbol(.other, p.options.jsx.jsx_static) catch unreachable;
+                p.jsx_factory_ref = p.declareGeneratedSymbol(.other, p.options.jsx.factory[p.options.jsx.factory.len - 1]) catch unreachable;
 
                 if (p.options.jsx.factory.len > 1 or FeatureFlags.jsx_runtime_is_cjs) {
-                    const source_name_base = fs.PathName.init(p.options.jsx.factory[0]).nonUniqueNameString(p.allocator) catch unreachable;
-                    const namespace_name = strings.cat(p.allocator, source_name_base, if (source_name_base[source_name_base.len - 1] == '_') "dot_jsx" else "_dot_jsx") catch unreachable;
-                    p.jsx_classic_ref = p.declareSymbol(.hoisted, logger.Loc.Empty, namespace_name) catch unreachable;
+                    p.jsx_classic_ref = p.declareGeneratedSymbol(.other, JSXFactoryName) catch unreachable;
                 }
 
                 if (p.options.jsx.import_source.len > 0) {
-                    const source_name_base = fs.PathName.init(p.options.jsx.import_source).nonUniqueNameString(p.allocator) catch unreachable;
-                    const namespace_name = strings.cat(p.allocator, source_name_base, if (source_name_base[source_name_base.len - 1] == '_') "runtime" else "_runtime") catch unreachable;
-                    p.jsx_automatic_ref = p.declareSymbol(.hoisted, logger.Loc.Empty, namespace_name) catch unreachable;
+                    var jsx_symbol_name: string = JSXAutomaticName;
+                    // try to do:
+                    // var jsx = react.jsxDEV;
+                    // var jsx = emotion.jsxDEV;
+                    if (isPackagePath(p.options.jsx.import_source)) {
+                        var basename = p.options.jsx.import_source;
+                        basename = if (basename[0] == '@') basename[1..] else basename;
+                        if (strings.indexOfChar(basename, '/')) |path_end| {
+                            if (basename[0..path_end].len > 0) {
+                                if (js_lexer.isIdentifier(basename[0..path_end])) {
+                                    jsx_symbol_name = basename[0..path_end];
+                                }
+                            }
+                        }
+                    }
+
+                    p.jsx_automatic_ref = p.declareGeneratedSymbol(.other, jsx_symbol_name) catch unreachable;
                 }
             }
         }
 
-        pub fn hoistSymbols(p: *P, scope: *js_ast.Scope) void {
+        fn hoistSymbols(p: *P, scope: *js_ast.Scope) void {
             if (!scope.kindStopsHoisting()) {
                 var iter = scope.members.iterator();
                 nextMember: while (iter.next()) |res| {
@@ -3494,8 +3614,8 @@ pub fn NewParser(
                         }
 
                         if (_scope.members.getEntryWithHash(symbol.original_name, hash)) |existing_member_entry| {
-                            const existing_member = existing_member_entry.value;
-                            const existing_symbol: Symbol = p.symbols.items[existing_member.ref.inner_index];
+                            const existing_member = &existing_member_entry.value;
+                            const existing_symbol: *const Symbol = &p.symbols.items[existing_member.ref.inner_index];
 
                             // We can hoist the symbol from the child scope into the symbol in
                             // this scope if:
@@ -3510,6 +3630,34 @@ pub fn NewParser(
                             {
                                 // Silently merge this symbol into the existing symbol
                                 symbol.link = existing_member.ref;
+                                continue :nextMember;
+                            }
+
+                            // Otherwise if this isn't a catch identifier, it's a collision
+                            if (existing_symbol.kind != .catch_identifier) {
+
+                                // An identifier binding from a catch statement and a function
+                                // declaration can both silently shadow another hoisted symbol
+                                if (symbol.kind != .catch_identifier and symbol.kind != .hoisted_function) {
+                                    const r = js_lexer.rangeOfIdentifier(p.source, res.value.loc);
+                                    var notes = p.allocator.alloc(logger.Data, 1) catch unreachable;
+                                    notes[0] =
+                                        logger.rangeData(
+                                        p.source,
+                                        r,
+                                        std.fmt.allocPrint(p.allocator, "{s} has already been declared", .{symbol.original_name}) catch unreachable,
+                                    );
+
+                                    p.log.addRangeErrorFmtWithNotes(
+                                        p.source,
+                                        js_lexer.rangeOfIdentifier(p.source, existing_member_entry.value.loc),
+                                        p.allocator,
+                                        notes,
+                                        "{s} was originally declared here",
+                                        .{existing_symbol.original_name},
+                                    ) catch unreachable;
+                                }
+
                                 continue :nextMember;
                             }
                         }
@@ -3528,13 +3676,13 @@ pub fn NewParser(
             }
         }
 
-        pub fn nextScopeInOrderForVisitPass(p: *P) ScopeOrder {
+        fn nextScopeInOrderForVisitPass(p: *P) ScopeOrder {
             const head = p.scope_order_to_visit[0];
             p.scope_order_to_visit = p.scope_order_to_visit[1..p.scope_order_to_visit.len];
             return head;
         }
 
-        pub fn pushScopeForVisitPass(p: *P, kind: js_ast.Scope.Kind, loc: logger.Loc) !void {
+        fn pushScopeForVisitPass(p: *P, kind: js_ast.Scope.Kind, loc: logger.Loc) !void {
             // Output.print("\n+Loc: {d}\n", .{loc.start});
             // for (p.scopes_in_order.items[p.scopes_in_order_visitor_index..p.scopes_in_order.items.len]) |scope_order, i| {
             //     if (scope_order) |ord| {
@@ -3553,7 +3701,7 @@ pub fn NewParser(
             try p.scopes_for_current_part.append(order.scope);
         }
 
-        pub fn pushScopeForParsePass(p: *P, comptime kind: js_ast.Scope.Kind, loc: logger.Loc) !usize {
+        fn pushScopeForParsePass(p: *P, comptime kind: js_ast.Scope.Kind, loc: logger.Loc) !usize {
             debugl("<pushScopeForParsePass>");
             defer debugl("</pushScopeForParsePass>");
             var parent: *Scope = p.current_scope;
@@ -3620,7 +3768,7 @@ pub fn NewParser(
         // from expression to binding should be written to "invalidLog" instead. That
         // way we can potentially keep this as an expression if it turns out it's not
         // needed as a binding after all.
-        pub fn convertExprToBinding(p: *P, expr: ExprNodeIndex, invalid_loc: *LocList) ?Binding {
+        fn convertExprToBinding(p: *P, expr: ExprNodeIndex, invalid_loc: *LocList) ?Binding {
             switch (expr.data) {
                 .e_missing => {
                     return null;
@@ -3710,7 +3858,7 @@ pub fn NewParser(
             return null;
         }
 
-        pub fn convertExprToBindingAndInitializer(p: *P, _expr: *ExprNodeIndex, invalid_log: *LocList, is_spread: bool) ExprBindingTuple {
+        fn convertExprToBindingAndInitializer(p: *P, _expr: *ExprNodeIndex, invalid_log: *LocList, is_spread: bool) ExprBindingTuple {
             var initializer: ?ExprNodeIndex = null;
             var expr = _expr;
             var override: ?ExprNodeIndex = null;
@@ -3737,11 +3885,11 @@ pub fn NewParser(
             return ExprBindingTuple{ .binding = bind, .expr = initializer };
         }
 
-        pub fn forbidLexicalDecl(p: *P, loc: logger.Loc) !void {
+        fn forbidLexicalDecl(p: *P, loc: logger.Loc) !void {
             try p.log.addRangeError(p.source, p.lexer.range(), "Cannot use a declaration in a single-statement context");
         }
 
-        pub fn logExprErrors(p: *P, errors: *DeferredErrors) void {
+        fn logExprErrors(p: *P, errors: *DeferredErrors) void {
             if (errors.invalid_expr_default_value) |r| {
                 p.log.addRangeError(
                     p.source,
@@ -3761,7 +3909,7 @@ pub fn NewParser(
 
         // This assumes the "function" token has already been parsed
 
-        pub fn parseFnStmt(p: *P, loc: logger.Loc, opts: *ParseStatementOptions, asyncRange: ?logger.Range) !Stmt {
+        fn parseFnStmt(p: *P, loc: logger.Loc, opts: *ParseStatementOptions, asyncRange: ?logger.Range) !Stmt {
             const is_generator = p.lexer.token == T.t_asterisk;
             const is_async = asyncRange != null;
 
@@ -3869,7 +4017,7 @@ pub fn NewParser(
             }, func.open_parens_loc);
         }
 
-        pub fn popAndDiscardScope(p: *P, scope_index: usize) void {
+        fn popAndDiscardScope(p: *P, scope_index: usize) void {
             // Move up to the parent scope
             var to_discard = p.current_scope;
             var parent = to_discard.parent orelse unreachable;
@@ -3889,7 +4037,7 @@ pub fn NewParser(
             _ = children.popOrNull();
         }
 
-        pub fn parseFn(p: *P, name: ?js_ast.LocRef, opts: FnOrArrowDataParse) anyerror!G.Fn {
+        fn parseFn(p: *P, name: ?js_ast.LocRef, opts: FnOrArrowDataParse) anyerror!G.Fn {
             // if data.allowAwait and data.allowYield {
             // 	p.markSyntaxFeature(compat.AsyncGenerator, data.asyncRange)
             // }
@@ -4230,11 +4378,11 @@ pub fn NewParser(
             };
         };
 
-        pub fn skipTypeScriptType(p: *P, level: js_ast.Op.Level) anyerror!void {
+        fn skipTypeScriptType(p: *P, level: js_ast.Op.Level) anyerror!void {
             try p.skipTypeScriptTypeWithOpts(level, .{});
         }
 
-        pub fn skipTypeScriptBinding(p: *P) anyerror!void {
+        fn skipTypeScriptBinding(p: *P) anyerror!void {
             switch (p.lexer.token) {
                 .t_identifier, .t_this => {
                     try p.lexer.next();
@@ -4309,7 +4457,7 @@ pub fn NewParser(
             }
         }
 
-        pub fn skipTypescriptFnArgs(p: *P) anyerror!void {
+        fn skipTypescriptFnArgs(p: *P) anyerror!void {
             try p.lexer.expect(.t_open_paren);
 
             while (p.lexer.token != .t_close_paren) {
@@ -4357,7 +4505,7 @@ pub fn NewParser(
         //     let x = (y: any): (y) => {return 0};
         //     let x = (y: any): asserts y is (y) => {};
         //
-        pub fn skipTypeScriptParenOrFnType(p: *P) anyerror!void {
+        fn skipTypeScriptParenOrFnType(p: *P) anyerror!void {
             if (p.trySkipTypeScriptArrowArgsWithBacktracking()) {
                 try p.skipTypescriptReturnType();
             } else {
@@ -4367,7 +4515,7 @@ pub fn NewParser(
             }
         }
 
-        pub fn skipTypeScriptTypeWithOpts(p: *P, level: js_ast.Op.Level, opts: TypeScript.SkipTypeOptions) anyerror!void {
+        fn skipTypeScriptTypeWithOpts(p: *P, level: js_ast.Op.Level, opts: TypeScript.SkipTypeOptions) anyerror!void {
             if (!is_typescript_enabled) {
                 unreachable;
             }
@@ -4640,7 +4788,7 @@ pub fn NewParser(
                 }
             }
         }
-        pub fn skipTypeScriptObjectType(p: *P) anyerror!void {
+        fn skipTypeScriptObjectType(p: *P) anyerror!void {
             try p.lexer.expect(.t_open_brace);
 
             while (p.lexer.token != .t_close_brace) {
@@ -4748,7 +4896,7 @@ pub fn NewParser(
 
         // This is the type parameter declarations that go with other symbol
         // declarations (class, function, type, etc.)
-        pub fn skipTypeScriptTypeParameters(p: *P) anyerror!void {
+        fn skipTypeScriptTypeParameters(p: *P) anyerror!void {
             if (p.lexer.token == .t_less_than) {
                 try p.lexer.next();
 
@@ -4807,7 +4955,7 @@ pub fn NewParser(
             };
         }
 
-        pub fn parseLabelName(p: *P) !?js_ast.LocRef {
+        fn parseLabelName(p: *P) !?js_ast.LocRef {
             if (p.lexer.token != .t_identifier or p.lexer.has_newline_before) {
                 return null;
             }
@@ -4817,7 +4965,7 @@ pub fn NewParser(
             return name;
         }
 
-        pub fn parseClassStmt(p: *P, loc: logger.Loc, opts: *ParseStatementOptions) !Stmt {
+        fn parseClassStmt(p: *P, loc: logger.Loc, opts: *ParseStatementOptions) !Stmt {
             var name: ?js_ast.LocRef = null;
             var class_keyword = p.lexer.range();
             if (p.lexer.token == .t_class) {
@@ -4918,7 +5066,7 @@ pub fn NewParser(
 
         // pub fn maybeRewriteExportSymbol(p: *P, )
 
-        pub fn parseStmt(p: *P, opts: *ParseStatementOptions) anyerror!Stmt {
+        fn parseStmt(p: *P, opts: *ParseStatementOptions) anyerror!Stmt {
             var loc = p.lexer.loc();
 
             switch (p.lexer.token) {
@@ -6184,7 +6332,7 @@ pub fn NewParser(
             return js_ast.Stmt.empty();
         }
 
-        pub fn discardScopesUpTo(p: *P, scope_index: usize) void {
+        fn discardScopesUpTo(p: *P, scope_index: usize) void {
             // Remove any direct children from their parent
             var scope = p.current_scope;
             var children = scope.children;
@@ -6208,7 +6356,7 @@ pub fn NewParser(
             p.scopes_in_order.shrinkRetainingCapacity(scope_index);
         }
 
-        pub fn skipTypeScriptTypeStmt(p: *P, opts: *ParseStatementOptions) anyerror!void {
+        fn skipTypeScriptTypeStmt(p: *P, opts: *ParseStatementOptions) anyerror!void {
             if (opts.is_export and p.lexer.token == .t_open_brace) {
                 // "export type {foo}"
                 // "export type {foo} from 'bar'"
@@ -6234,7 +6382,7 @@ pub fn NewParser(
             try p.lexer.expectOrInsertSemicolon();
         }
 
-        pub fn parseTypeScriptNamespaceStmt(p: *P, loc: logger.Loc, opts: *ParseStatementOptions) anyerror!Stmt {
+        fn parseTypeScriptNamespaceStmt(p: *P, loc: logger.Loc, opts: *ParseStatementOptions) anyerror!Stmt {
             // "namespace foo {}";
             const name_loc = p.lexer.loc();
             const name_text = p.lexer.identifier;
@@ -6347,7 +6495,7 @@ pub fn NewParser(
             );
         }
 
-        pub fn skipTypeScriptInterfaceStmt(p: *P, opts: *ParseStatementOptions) !void {
+        fn skipTypeScriptInterfaceStmt(p: *P, opts: *ParseStatementOptions) !void {
             const name = p.lexer.identifier;
             try p.lexer.expect(.t_identifier);
 
@@ -6385,7 +6533,7 @@ pub fn NewParser(
 
         // This assumes the caller has already parsed the "import" token
 
-        pub fn parseTypeScriptImportEqualsStmt(p: *P, loc: logger.Loc, opts: *ParseStatementOptions, default_name_loc: logger.Loc, default_name: string) anyerror!Stmt {
+        fn parseTypeScriptImportEqualsStmt(p: *P, loc: logger.Loc, opts: *ParseStatementOptions, default_name_loc: logger.Loc, default_name: string) anyerror!Stmt {
             try p.lexer.expect(.t_equals);
 
             const kind = S.Local.Kind.k_const;
@@ -6432,7 +6580,7 @@ pub fn NewParser(
             return p.s(S.Local{ .kind = kind, .decls = decls, .is_export = opts.is_export, .was_ts_import_equals = true }, loc);
         }
 
-        pub fn parseClauseAlias(p: *P, kind: string) !string {
+        fn parseClauseAlias(p: *P, kind: string) !string {
             const loc = p.lexer.loc();
 
             // The alias may now be a string (see https://github.com/tc39/ecma262/pull/2154)
@@ -6459,7 +6607,7 @@ pub fn NewParser(
             return alias;
         }
 
-        pub fn parseImportClause(
+        fn parseImportClause(
             p: *P,
         ) !ImportClause {
             var items = List(js_ast.ClauseItem).init(p.allocator);
@@ -6521,7 +6669,7 @@ pub fn NewParser(
             return ImportClause{ .items = items.toOwnedSlice(), .is_single_line = is_single_line };
         }
 
-        pub fn forbidInitializers(p: *P, decls: []G.Decl, loop_type: string, is_var: bool) !void {
+        fn forbidInitializers(p: *P, decls: []G.Decl, loop_type: string, is_var: bool) !void {
             if (decls.len > 1) {
                 try p.log.addErrorFmt(p.source, decls[0].binding.loc, p.allocator, "for-{s} loops must have a single declaration", .{loop_type});
             } else if (decls.len == 1) {
@@ -6538,7 +6686,7 @@ pub fn NewParser(
             }
         }
 
-        pub fn parseExprOrLetStmt(p: *P, opts: *ParseStatementOptions) !ExprOrLetStmt {
+        fn parseExprOrLetStmt(p: *P, opts: *ParseStatementOptions) !ExprOrLetStmt {
             var let_range = p.lexer.range();
             var raw = p.lexer.raw();
             if (p.lexer.token != .t_identifier or !strings.eqlComptime(raw, "let")) {
@@ -6577,7 +6725,7 @@ pub fn NewParser(
             return ExprOrLetStmt{ .stmt_or_expr = js_ast.StmtOrExpr{ .expr = try p.parseSuffix(expr, .lowest, null, Expr.EFlags.none) } };
         }
 
-        pub fn requireInitializers(p: *P, decls: []G.Decl) !void {
+        fn requireInitializers(p: *P, decls: []G.Decl) !void {
             for (decls) |decl| {
                 if (decl.value == null) {
                     switch (decl.binding.data) {
@@ -6594,7 +6742,7 @@ pub fn NewParser(
             }
         }
 
-        pub fn parseBinding(p: *P) anyerror!Binding {
+        fn parseBinding(p: *P) anyerror!Binding {
             var loc = p.lexer.loc();
 
             switch (p.lexer.token) {
@@ -6825,7 +6973,7 @@ pub fn NewParser(
             };
         }
 
-        pub fn parseAndDeclareDecls(p: *P, kind: Symbol.Kind, opts: *ParseStatementOptions) anyerror![]G.Decl {
+        fn parseAndDeclareDecls(p: *P, kind: Symbol.Kind, opts: *ParseStatementOptions) anyerror![]G.Decl {
             var decls = List(G.Decl).init(p.allocator);
 
             while (true) {
@@ -6989,7 +7137,7 @@ pub fn NewParser(
             }, loc);
         }
 
-        pub fn parseExportClause(p: *P) !ExportClauseResult {
+        fn parseExportClause(p: *P) !ExportClauseResult {
             var items = List(js_ast.ClauseItem).initCapacity(p.allocator, 1) catch unreachable;
             try p.lexer.expect(.t_open_brace);
             var is_single_line = !p.lexer.has_newline_before;
@@ -7085,7 +7233,7 @@ pub fn NewParser(
         // TODO:
         pub fn checkForNonBMPCodePoint(p: *P, loc: logger.Loc, name: string) void {}
 
-        pub fn parseStmtsUpTo(p: *P, eend: js_lexer.T, _opts: *ParseStatementOptions) ![]Stmt {
+        fn parseStmtsUpTo(p: *P, eend: js_lexer.T, _opts: *ParseStatementOptions) ![]Stmt {
             var opts = _opts.*;
             var stmts = StmtList.init(p.allocator);
 
@@ -7179,7 +7327,7 @@ pub fn NewParser(
             return stmts.toOwnedSlice();
         }
 
-        pub fn markStrictModeFeature(p: *P, feature: StrictModeFeature, r: logger.Range, detail: string) !void {
+        fn markStrictModeFeature(p: *P, feature: StrictModeFeature, r: logger.Range, detail: string) !void {
             var text: string = undefined;
             var can_be_transformed = false;
             switch (feature) {
@@ -7248,7 +7396,7 @@ pub fn NewParser(
             return p.current_scope.strict_mode != .sloppy_mode;
         }
 
-        pub fn isStrictModeOutputFormat(p: *P) bool {
+        pub inline fn isStrictModeOutputFormat(p: *P) bool {
             return true;
         }
 
@@ -7296,12 +7444,23 @@ pub fn NewParser(
             return ref;
         }
 
-        pub fn declareSymbol(p: *P, kind: Symbol.Kind, loc: logger.Loc, name: string) !Ref {
+        fn declareGeneratedSymbol(p: *P, kind: Symbol.Kind, name: string) !Ref {
+            return try declareSymbolMaybeGenerated(p, kind, logger.Loc.Empty, name, true);
+        }
+
+        fn declareSymbol(p: *P, kind: Symbol.Kind, loc: logger.Loc, name: string) !Ref {
+            return try declareSymbolMaybeGenerated(p, kind, loc, name, false);
+        }
+
+        inline fn declareSymbolMaybeGenerated(p: *P, kind: Symbol.Kind, loc: logger.Loc, name: string, comptime is_generated: bool) !Ref {
             // p.checkForNonBMPCodePoint(loc, name)
 
-            // Forbid declaring a symbol with a reserved word in strict mode
-            if (p.isStrictMode() and js_lexer.StrictModeReservedWords.has(name)) {
-                try p.markStrictModeFeature(.reserved_word, js_lexer.rangeOfIdentifier(p.source, loc), name);
+            if (comptime !is_generated) {
+
+                // Forbid declaring a symbol with a reserved word in strict mode
+                if (p.isStrictMode() and js_lexer.StrictModeReservedWords.has(name)) {
+                    try p.markStrictModeFeature(.reserved_word, js_lexer.rangeOfIdentifier(p.source, loc), name);
+                }
             }
 
             // Allocate a new symbol
@@ -7311,41 +7470,49 @@ pub fn NewParser(
             var entry = try scope.members.getOrPut(name);
             if (entry.found_existing) {
                 const existing = entry.entry.value;
-                var symbol: *Symbol = &p.symbols.items[@intCast(usize, existing.ref.inner_index)];
 
-                switch (p.canMergeSymbols(scope, symbol.kind, kind)) {
-                    .forbidden => {
-                        const r = js_lexer.rangeOfIdentifier(p.source, loc);
-                        var notes: []logger.Data = &[_]logger.Data{};
-                        notes = &([_]logger.Data{logger.rangeData(p.source, r, try std.fmt.allocPrint(p.allocator, "{s} has already been declared", .{name}))});
-                        try p.log.addRangeErrorWithNotes(p.source, r, try std.fmt.allocPrint(p.allocator, "{s} was originally declared here", .{name}), notes);
-                        return existing.ref;
-                    },
-                    .keep_existing => {
-                        ref = existing.ref;
-                    },
-                    .replace_with_new => {
-                        symbol.link = ref;
-                    },
-                    .become_private_get_set_pair => {
-                        ref = existing.ref;
-                        symbol.kind = .private_get_set_pair;
-                    },
-                    .become_private_static_get_set_pair => {
-                        ref = existing.ref;
-                        symbol.kind = .private_static_get_set_pair;
-                    },
+                if (comptime !is_generated) {
+                    var symbol: *Symbol = &p.symbols.items[@intCast(usize, existing.ref.inner_index)];
 
-                    .overwrite_with_new => {},
-                    // else => unreachable,
+                    switch (p.canMergeSymbols(scope, symbol.kind, kind)) {
+                        .forbidden => {
+                            const r = js_lexer.rangeOfIdentifier(p.source, loc);
+                            var notes = try p.allocator.alloc(logger.Data, 1);
+                            notes[0] = logger.rangeData(p.source, r, try std.fmt.allocPrint(p.allocator, "{s} has already been declared", .{name}));
+                            try p.log.addRangeErrorWithNotes(p.source, r, try std.fmt.allocPrint(p.allocator, "{s} was originally declared here", .{name}), notes);
+                            return existing.ref;
+                        },
+                        .keep_existing => {
+                            ref = existing.ref;
+                        },
+                        .replace_with_new => {
+                            symbol.link = ref;
+                        },
+                        .become_private_get_set_pair => {
+                            ref = existing.ref;
+                            symbol.kind = .private_get_set_pair;
+                        },
+                        .become_private_static_get_set_pair => {
+                            ref = existing.ref;
+                            symbol.kind = .private_static_get_set_pair;
+                        },
+
+                        .overwrite_with_new => {},
+                        // else => unreachable,
+                    }
+                } else {
+                    p.symbols.items[ref.inner_index].link = existing.ref;
                 }
             }
 
             entry.entry.value = js_ast.Scope.Member{ .ref = ref, .loc = loc };
+            if (comptime is_generated) {
+                try p.module_scope.generated.append(ref);
+            }
             return ref;
         }
 
-        pub fn validateFunctionName(p: *P, func: G.Fn, kind: FunctionKind) void {
+        fn validateFunctionName(p: *P, func: G.Fn, kind: FunctionKind) void {
             if (func.name) |name| {
                 const original_name = p.symbols.items[name.ref.?.inner_index].original_name;
 
@@ -7365,7 +7532,7 @@ pub fn NewParser(
             }
         }
 
-        pub fn parseFnExpr(p: *P, loc: logger.Loc, is_async: bool, async_range: logger.Range) !Expr {
+        fn parseFnExpr(p: *P, loc: logger.Loc, is_async: bool, async_range: logger.Range) !Expr {
             try p.lexer.next();
             const is_generator = p.lexer.token == T.t_asterisk;
             if (is_generator) {
@@ -7417,7 +7584,7 @@ pub fn NewParser(
             }, loc);
         }
 
-        pub fn parseFnBody(p: *P, data: *FnOrArrowDataParse) !G.FnBody {
+        fn parseFnBody(p: *P, data: *FnOrArrowDataParse) !G.FnBody {
             var oldFnOrArrowData = p.fn_or_arrow_data_parse;
             var oldAllowIn = p.allow_in;
             p.fn_or_arrow_data_parse = data.*;
@@ -7437,7 +7604,7 @@ pub fn NewParser(
             return G.FnBody{ .loc = loc, .stmts = stmts };
         }
 
-        pub fn parseArrowBody(p: *P, args: []js_ast.G.Arg, data: *FnOrArrowDataParse) !E.Arrow {
+        fn parseArrowBody(p: *P, args: []js_ast.G.Arg, data: *FnOrArrowDataParse) !E.Arrow {
             var arrow_loc = p.lexer.loc();
 
             // Newlines are not allowed before "=>"
@@ -7476,7 +7643,7 @@ pub fn NewParser(
             return E.Arrow{ .args = args, .prefer_expr = true, .body = G.FnBody{ .loc = arrow_loc, .stmts = stmts } };
         }
 
-        pub fn declareBinding(p: *P, kind: Symbol.Kind, binding: *BindingNodeIndex, opts: *ParseStatementOptions) !void {
+        fn declareBinding(p: *P, kind: Symbol.Kind, binding: *BindingNodeIndex, opts: *ParseStatementOptions) !void {
             switch (binding.data) {
                 .b_missing => {},
                 .b_identifier => |bind| {
@@ -9403,8 +9570,10 @@ pub fn NewParser(
 
                         _ = p.pushScopeForParsePass(.function_args, loc) catch unreachable;
                         defer p.popScope();
-                        // Output.print("HANDLE START ", .{});
-                        return p.e(try p.parseArrowBody(args, p.m(FnOrArrowDataParse{})), loc);
+
+                        var fn_or_arrow_data = FnOrArrowDataParse{};
+                        const ret = p.e(try p.parseArrowBody(args, &fn_or_arrow_data), loc);
+                        return ret;
                     }
 
                     const ref = p.storeNameInRef(name) catch unreachable;
@@ -9843,13 +10012,13 @@ pub fn NewParser(
         // esbuild's version of this function is much more complicated.
         // I'm not sure why defines is strictly relevant for this case
         // do people do <API_URL>?
-        pub fn jsxStringsToMemberExpression(p: *P, loc: logger.Loc, ref: Ref) Expr {
+        fn jsxStringsToMemberExpression(p: *P, loc: logger.Loc, ref: Ref) Expr {
             p.recordUsage(ref);
             return p.e(E.Identifier{ .ref = ref }, loc);
         }
 
         // Note: The caller has already parsed the "import" keyword
-        pub fn parseImportExpr(p: *P, loc: logger.Loc, level: Level) anyerror!Expr {
+        fn parseImportExpr(p: *P, loc: logger.Loc, level: Level) anyerror!Expr {
             // Parse an "import.meta" expression
             if (p.lexer.token == .t_dot) {
                 p.es6_import_keyword = js_lexer.rangeOfIdentifier(p.source, loc);
@@ -9881,6 +10050,19 @@ pub fn NewParser(
             try p.lexer.expect(.t_close_paren);
 
             p.allow_in = old_allow_in;
+
+            if (comptime only_scan_imports_and_do_not_visit) {
+                if (value.data == .e_string and value.data.e_string.isUTF8() and value.data.e_string.isPresent()) {
+                    const import_record_index = p.addImportRecord(.dynamic, value.loc, value.data.e_string.utf8);
+
+                    return p.e(E.Import{
+                        .expr = value,
+                        .leading_interior_comments = comments,
+                        .import_record_index = import_record_index,
+                    }, loc);
+                }
+            }
+
             return p.e(E.Import{ .expr = value, .leading_interior_comments = comments, .import_record_index = 0 }, loc);
         }
 
@@ -9964,7 +10146,7 @@ pub fn NewParser(
             }
         };
 
-        pub fn parseJSXPropValueIdentifier(p: *P, previous_string_with_backslash_loc: *logger.Loc) !Expr {
+        fn parseJSXPropValueIdentifier(p: *P, previous_string_with_backslash_loc: *logger.Loc) !Expr {
             // Use NextInsideJSXElement() not Next() so we can parse a JSX-style string literal
             try p.lexer.nextInsideJSXElement();
             if (p.lexer.token == .t_string_literal) {
@@ -9982,7 +10164,7 @@ pub fn NewParser(
             }
         }
 
-        pub fn parseJSXElement(p: *P, loc: logger.Loc) anyerror!Expr {
+        fn parseJSXElement(p: *P, loc: logger.Loc) anyerror!Expr {
             if (only_scan_imports_and_do_not_visit) {
                 p.needs_jsx_import = true;
             }
@@ -10183,7 +10365,7 @@ pub fn NewParser(
             }
         }
 
-        pub fn willNeedBindingPattern(p: *P) bool {
+        fn willNeedBindingPattern(p: *P) bool {
             switch (p.lexer.token) {
                 .t_equals => {
                     // "[a] = b;"
@@ -10203,11 +10385,11 @@ pub fn NewParser(
             }
         }
 
-        pub fn parsePrefix(p: *P, level: Level, errors: ?*DeferredErrors, flags: Expr.EFlags) anyerror!Expr {
+        fn parsePrefix(p: *P, level: Level, errors: ?*DeferredErrors, flags: Expr.EFlags) anyerror!Expr {
             return try p._parsePrefix(level, errors orelse &DeferredErrors.None, flags);
         }
 
-        pub fn appendPart(p: *P, parts: *List(js_ast.Part), stmts: []Stmt) !void {
+        fn appendPart(p: *P, parts: *List(js_ast.Part), stmts: []Stmt) !void {
             p.symbol_uses = SymbolUseMap.init(p.allocator);
             p.declared_symbols.deinit();
             p.declared_symbols = @TypeOf(p.declared_symbols).init(p.allocator);
@@ -10267,7 +10449,7 @@ pub fn NewParser(
             }
         }
 
-        pub fn bindingCanBeRemovedIfUnused(p: *P, binding: Binding) bool {
+        fn bindingCanBeRemovedIfUnused(p: *P, binding: Binding) bool {
             switch (binding.data) {
                 .b_array => |bi| {
                     for (bi.items) |*item| {
@@ -10305,7 +10487,7 @@ pub fn NewParser(
             return true;
         }
 
-        pub fn stmtsCanBeRemovedIfUnused(p: *P, stmts: []Stmt) bool {
+        fn stmtsCanBeRemovedIfUnused(p: *P, stmts: []Stmt) bool {
             for (stmts) |stmt| {
                 switch (stmt.data) {
                     // These never have side effects
@@ -10379,7 +10561,7 @@ pub fn NewParser(
             return true;
         }
 
-        pub fn visitStmtsAndPrependTempRefs(p: *P, stmts: *List(Stmt), opts: *PrependTempRefsOpts) !void {
+        fn visitStmtsAndPrependTempRefs(p: *P, stmts: *List(Stmt), opts: *PrependTempRefsOpts) !void {
             if (only_scan_imports_and_do_not_visit) {
                 @compileError("only_scan_imports_and_do_not_visit must not run this.");
             }
@@ -10404,14 +10586,14 @@ pub fn NewParser(
             }
         }
 
-        pub fn recordDeclaredSymbol(p: *P, ref: Ref) !void {
+        fn recordDeclaredSymbol(p: *P, ref: Ref) !void {
             try p.declared_symbols.append(js_ast.DeclaredSymbol{
                 .ref = ref,
                 .is_top_level = p.current_scope == p.module_scope,
             });
         }
 
-        pub fn visitExpr(p: *P, expr: Expr) Expr {
+        fn visitExpr(p: *P, expr: Expr) Expr {
             if (only_scan_imports_and_do_not_visit) {
                 @compileError("only_scan_imports_and_do_not_visit must not run this.");
             }
@@ -10419,7 +10601,7 @@ pub fn NewParser(
             return @call(.{ .modifier = .always_inline }, P.visitExprInOut, .{ p, expr, ExprIn{} });
         }
 
-        pub fn visitFunc(p: *P, _func: G.Fn, open_parens_loc: logger.Loc) G.Fn {
+        fn visitFunc(p: *P, _func: G.Fn, open_parens_loc: logger.Loc) G.Fn {
             if (only_scan_imports_and_do_not_visit) {
                 @compileError("only_scan_imports_and_do_not_visit must not run this.");
             }
@@ -10466,11 +10648,11 @@ pub fn NewParser(
             return func;
         }
 
-        pub fn maybeKeepExprSymbolName(p: *P, expr: Expr, original_name: string, was_anonymous_named_expr: bool) Expr {
+        fn maybeKeepExprSymbolName(p: *P, expr: Expr, original_name: string, was_anonymous_named_expr: bool) Expr {
             return if (was_anonymous_named_expr) p.keepExprSymbolName(expr, original_name) else expr;
         }
 
-        pub fn valueForThis(p: *P, loc: logger.Loc) ?Expr {
+        fn valueForThis(p: *P, loc: logger.Loc) ?Expr {
             // Substitute "this" if we're inside a static class property initializer
             if (p.fn_only_data_visit.this_class_static_ref) |ref| {
                 p.recordUsage(ref);
@@ -10496,7 +10678,7 @@ pub fn NewParser(
             return null;
         }
 
-        pub fn visitExprInOut(p: *P, expr: Expr, in: ExprIn) Expr {
+        fn visitExprInOut(p: *P, expr: Expr, in: ExprIn) Expr {
             // Output.print("\nVisit: {s} - {d}\n", .{ @tagName(expr.data), expr.loc.start });
             switch (expr.data) {
                 .e_null, .e_super, .e_boolean, .e_big_int, .e_reg_exp, .e_new_target, .e_undefined => {},
@@ -11652,7 +11834,7 @@ pub fn NewParser(
             is_unique_formal_parameters: bool = false,
         };
 
-        pub fn visitArgs(p: *P, args: []G.Arg, opts: VisitArgsOpts) void {
+        fn visitArgs(p: *P, args: []G.Arg, opts: VisitArgsOpts) void {
             const strict_loc = fnBodyContainsUseStrict(opts.body);
             const has_simple_args = isSimpleParameterList(args, opts.has_rest_arg);
             var duplicate_args_check: ?StringBoolMap = null;
@@ -11929,7 +12111,7 @@ pub fn NewParser(
             return false;
         }
 
-        pub fn jsxStringsToMemberExpressionAutomatic(p: *P, loc: logger.Loc, is_static: bool) Expr {
+        fn jsxStringsToMemberExpressionAutomatic(p: *P, loc: logger.Loc, is_static: bool) Expr {
             return p.jsxStringsToMemberExpression(loc, if (is_static and !p.options.jsx.development) p.jsxs_runtime_ref else p.jsx_runtime_ref);
         }
 
@@ -11950,7 +12132,7 @@ pub fn NewParser(
             ok: bool = false,
         };
 
-        pub fn maybeRelocateVarsToTopLevel(p: *P, decls: []G.Decl, mode: RelocateVars.Mode) RelocateVars {
+        fn maybeRelocateVarsToTopLevel(p: *P, decls: []G.Decl, mode: RelocateVars.Mode) RelocateVars {
             // Only do this when the scope is not already top-level and when we're not inside a function.
             if (p.current_scope == p.module_scope) {
                 return .{ .ok = false };
@@ -11991,7 +12173,7 @@ pub fn NewParser(
         // EDot nodes represent a property access. This function may return an
         // expression to replace the property access with. It assumes that the
         // target of the EDot expression has already been visited.
-        pub fn maybeRewritePropertyAccess(
+        fn maybeRewritePropertyAccess(
             p: *P,
             loc: logger.Loc,
             assign_target: js_ast.AssignTarget,
@@ -12092,7 +12274,7 @@ pub fn NewParser(
             // the value is ignored because that's what the TypeScript compiler does.
         }
 
-        pub fn visitAndAppendStmt(p: *P, stmts: *List(Stmt), stmt: *Stmt) !void {
+        fn visitAndAppendStmt(p: *P, stmts: *List(Stmt), stmt: *Stmt) !void {
             switch (stmt.data) {
                 // These don't contain anything to traverse
 
@@ -12901,7 +13083,7 @@ pub fn NewParser(
             return;
         }
 
-        pub fn markExportedBindingInsideNamespace(p: *P, ref: Ref, binding: BindingNodeIndex) void {
+        fn markExportedBindingInsideNamespace(p: *P, ref: Ref, binding: BindingNodeIndex) void {
             switch (binding.data) {
                 .b_missing => {},
                 .b_identifier => |ident| {
@@ -12923,7 +13105,7 @@ pub fn NewParser(
             }
         }
 
-        pub fn generateClosureForTypeScriptNamespaceOrEnum(
+        fn generateClosureForTypeScriptNamespaceOrEnum(
             p: *P,
             stmts: *List(Stmt),
             stmt_loc: logger.Loc,
@@ -13082,7 +13264,7 @@ pub fn NewParser(
             stmts.append(closure) catch unreachable;
         }
 
-        pub fn lowerClass(p: *P, stmtorexpr: js_ast.StmtOrExpr, ref: Ref) []Stmt {
+        fn lowerClass(p: *P, stmtorexpr: js_ast.StmtOrExpr, ref: Ref) []Stmt {
             switch (stmtorexpr) {
                 .stmt => |stmt| {
                     var stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
@@ -13097,7 +13279,7 @@ pub fn NewParser(
             }
         }
 
-        pub fn visitForLoopInit(p: *P, stmt: Stmt, is_in_or_of: bool) Stmt {
+        fn visitForLoopInit(p: *P, stmt: Stmt, is_in_or_of: bool) Stmt {
             switch (stmt.data) {
                 .s_expr => |st| {
                     const assign_target = if (is_in_or_of) js_ast.AssignTarget.replace else js_ast.AssignTarget.none;
@@ -13123,7 +13305,7 @@ pub fn NewParser(
             return stmt;
         }
 
-        pub fn wrapIdentifierNamespace(
+        fn wrapIdentifierNamespace(
             p: *P,
             loc: logger.Loc,
             ref: Ref,
@@ -13137,7 +13319,7 @@ pub fn NewParser(
             }, loc);
         }
 
-        pub fn wrapIdentifierHoisting(
+        fn wrapIdentifierHoisting(
             p: *P,
             loc: logger.Loc,
             ref: Ref,
@@ -13148,7 +13330,7 @@ pub fn NewParser(
             return p.e(E.Identifier{ .ref = _ref }, loc);
         }
 
-        pub fn isAnonymousNamedExpr(p: *P, expr: ExprNodeIndex) bool {
+        fn isAnonymousNamedExpr(p: *P, expr: ExprNodeIndex) bool {
             switch (expr.data) {
                 .e_arrow => {
                     return true;
@@ -13165,7 +13347,7 @@ pub fn NewParser(
             }
         }
 
-        pub fn valueForDefine(p: *P, loc: logger.Loc, assign_target: js_ast.AssignTarget, is_delete_target: bool, define_data: *const DefineData) Expr {
+        fn valueForDefine(p: *P, loc: logger.Loc, assign_target: js_ast.AssignTarget, is_delete_target: bool, define_data: *const DefineData) Expr {
             switch (define_data.value) {
                 .e_identifier => {
                     var ident = define_data.value.e_identifier;
@@ -13195,7 +13377,7 @@ pub fn NewParser(
 
         // This function is recursive
         // But it shouldn't be that long
-        pub fn isDotDefineMatch(p: *P, expr: Expr, parts: []const string) bool {
+        fn isDotDefineMatch(p: *P, expr: Expr, parts: []const string) bool {
             switch (expr.data) {
                 .e_dot => |ex| {
                     if (parts.len > 1) {
@@ -13253,7 +13435,7 @@ pub fn NewParser(
             return false;
         }
 
-        pub fn visitBinding(p: *P, binding: BindingNodeIndex, duplicate_arg_check: ?*StringBoolMap) void {
+        fn visitBinding(p: *P, binding: BindingNodeIndex, duplicate_arg_check: ?*StringBoolMap) void {
             switch (binding.data) {
                 .b_missing => {},
                 .b_identifier => |bind| {
@@ -13327,7 +13509,7 @@ pub fn NewParser(
             }
         }
 
-        pub fn visitLoopBody(p: *P, stmt: StmtNodeIndex) StmtNodeIndex {
+        fn visitLoopBody(p: *P, stmt: StmtNodeIndex) StmtNodeIndex {
             const old_is_inside_loop = p.fn_or_arrow_data_visit.is_inside_loop;
             p.fn_or_arrow_data_visit.is_inside_loop = true;
             p.loop_body = stmt.data;
@@ -13336,7 +13518,7 @@ pub fn NewParser(
             return res;
         }
 
-        pub fn visitSingleStmt(p: *P, stmt: Stmt, kind: StmtsKind) Stmt {
+        fn visitSingleStmt(p: *P, stmt: Stmt, kind: StmtsKind) Stmt {
             const has_if_scope = has_if: {
                 switch (stmt.data) {
                     .s_function => {
@@ -13365,7 +13547,7 @@ pub fn NewParser(
         }
 
         // One statement could potentially expand to several statements
-        pub fn stmtsToSingleStmt(p: *P, loc: logger.Loc, stmts: []Stmt) Stmt {
+        fn stmtsToSingleStmt(p: *P, loc: logger.Loc, stmts: []Stmt) Stmt {
             if (stmts.len == 0) {
                 return Stmt{ .data = Prefill.Data.SEmpty, .loc = loc };
             }
@@ -13378,7 +13560,7 @@ pub fn NewParser(
             return p.s(S.Block{ .stmts = stmts }, loc);
         }
 
-        pub fn findLabelSymbol(p: *P, loc: logger.Loc, name: string) FindLabelSymbolResult {
+        fn findLabelSymbol(p: *P, loc: logger.Loc, name: string) FindLabelSymbolResult {
             var res = FindLabelSymbolResult{ .ref = Ref.None, .is_loop = false };
 
             var _scope: ?*Scope = p.current_scope;
@@ -13408,7 +13590,7 @@ pub fn NewParser(
             return res;
         }
 
-        pub fn visitClass(p: *P, name_scope_loc: logger.Loc, class: *G.Class) Ref {
+        fn visitClass(p: *P, name_scope_loc: logger.Loc, class: *G.Class) Ref {
             if (only_scan_imports_and_do_not_visit) {
                 @compileError("only_scan_imports_and_do_not_visit must not run this.");
             }
@@ -13874,7 +14056,7 @@ pub fn NewParser(
             }
         }
 
-        pub fn maybeCommaSpreadError(p: *P, _comma_after_spread: ?logger.Loc) void {
+        fn maybeCommaSpreadError(p: *P, _comma_after_spread: ?logger.Loc) void {
             const comma_after_spread = _comma_after_spread orelse return;
             if (comma_after_spread.start == -1) return;
 
@@ -14452,6 +14634,10 @@ pub fn NewParser(
                 .export_keyword = p.es6_export_keyword,
                 .bundle_export_ref = p.bundle_export_ref,
                 .require_ref = p.require_ref,
+
+                .uses_module_ref = (p.symbols.items[p.module_ref.inner_index].use_count_estimate > 0),
+                .uses_exports_ref = (p.symbols.items[p.exports_ref.inner_index].use_count_estimate > 0),
+                .uses_require_ref = (p.symbols.items[p.require_ref.inner_index].use_count_estimate > 0),
                 // .top_Level_await_keyword = p.top_level_await_keyword,
             };
         }

@@ -10,6 +10,7 @@ const unicode = std.unicode;
 const expect = std.testing.expect;
 const assert = std.debug.assert;
 const ArrayList = std.ArrayList;
+const StringBuilder = @import("./string_builder.zig");
 
 pub const Kind = enum(i8) {
     err,
@@ -122,13 +123,18 @@ pub const Location = struct {
     pub fn init_or_nil(_source: ?*const Source, r: Range) ?Location {
         if (_source) |source| {
             var data = source.initErrorPosition(r.loc);
+            var full_line = source.contents[data.line_start..data.line_end];
+            if (full_line.len > 80 + data.column_count) {
+                full_line = full_line[std.math.max(data.column_count, 40) - 40 .. std.math.min(data.column_count + 40, full_line.len - 40) + 40];
+            }
+
             return Location{
                 .file = source.path.pretty,
                 .namespace = source.path.namespace,
                 .line = usize2Loc(data.line_count).start,
                 .column = usize2Loc(data.column_count).start,
-                .length = source.contents.len,
-                .line_text = source.contents[data.line_start..data.line_end],
+                .length = full_line.len,
+                .line_text = full_line,
                 .offset = @intCast(usize, std.math.max(r.loc.start, 0)),
             };
         } else {
@@ -404,6 +410,32 @@ pub const Log = struct {
     }
 
     pub fn appendTo(self: *Log, other: *Log) !void {
+        var notes_count: usize = 0;
+
+        for (self.msgs.items) |msg_| {
+            const msg: Msg = msg_;
+            if (msg.notes) |notes| {
+                for (notes) |note| {
+                    notes_count += @intCast(usize, @boolToInt(note.text.len > 0));
+                }
+            }
+        }
+
+        if (notes_count > 0) {
+            var notes = try other.msgs.allocator.alloc(Data, notes_count);
+            var note_i: usize = 0;
+            for (self.msgs.items) |*msg| {
+                if (msg.notes) |current_notes| {
+                    var start_note_i: usize = note_i;
+                    for (current_notes) |note| {
+                        notes[note_i] = note;
+                        note_i += 1;
+                    }
+                    msg.notes = notes[start_note_i..note_i];
+                }
+            }
+        }
+
         try other.msgs.appendSlice(self.msgs.items);
         other.warnings += self.warnings;
         other.errors += self.errors;
@@ -416,22 +448,67 @@ pub const Log = struct {
         other.errors += self.errors;
 
         if (source.contents_is_recycled) {
-            var i: usize = 0;
-            var j: usize = other.msgs.items.len - self.msgs.items.len;
+            var string_builder = StringBuilder{};
+            var notes_count: usize = 0;
+            {
+                var i: usize = 0;
+                var j: usize = other.msgs.items.len - self.msgs.items.len;
 
-            while (i < self.msgs.items.len) : ({
-                i += 1;
-                j += 1;
-            }) {
-                const msg = self.msgs.items[i];
-                if (msg.data.location) |location| {
-                    if (location.line_text) |line_text| {
-                        other.msgs.items[j].data.location.?.line_text = try other.msgs.allocator.dupe(
-                            u8,
+                while (i < self.msgs.items.len) : ({
+                    i += 1;
+                    j += 1;
+                }) {
+                    const msg = self.msgs.items[i];
+                    if (msg.data.location) |location| {
+                        if (location.line_text) |line_text| {
+
                             // Naively truncate to 690 characters per line.
                             // This doesn't catch where an error occurred for extremely long, minified lines.
-                            line_text[0..std.math.min(line_text.len, 690)],
-                        );
+                            string_builder.count(line_text[0..std.math.min(line_text.len, 690)]);
+                        }
+                    }
+
+                    if (msg.notes) |notes| {
+                        notes_count += notes.len;
+                        for (notes) |note| {
+                            string_builder.count(note.text);
+                        }
+                    }
+                }
+            }
+
+            try string_builder.allocate(other.msgs.allocator);
+            var notes_buf = try other.msgs.allocator.alloc(Data, notes_count);
+            var note_i: usize = 0;
+
+            {
+                var i: usize = 0;
+                var j: usize = other.msgs.items.len - self.msgs.items.len;
+
+                while (i < self.msgs.items.len) : ({
+                    i += 1;
+                    j += 1;
+                }) {
+                    const msg = self.msgs.items[i];
+
+                    if (msg.data.location) |location| {
+                        if (location.line_text) |line_text| {
+                            other.msgs.items[j].data.location.?.line_text = string_builder.append(
+                                // Naively truncate to 690 characters per line.
+                                // This doesn't catch where an error occurred for extremely long, minified lines.
+                                line_text[0..std.math.min(line_text.len, 690)],
+                            );
+                        }
+                    }
+
+                    if (msg.notes) |notes| {
+                        var start_notes_i: usize = note_i;
+                        for (notes) |note| {
+                            notes_buf[note_i] = note;
+                            notes_buf[note_i].text = string_builder.append(note.text);
+                            note_i += 1;
+                        }
+                        other.msgs.items[j].notes = notes_buf[start_notes_i..note_i];
                     }
                 }
             }
@@ -833,6 +910,7 @@ pub const Source = struct {
                 else => {},
             }
         }
+
         return ErrorPosition{
             .line_start = if (line_start > 0) line_start - 1 else line_start,
             .line_end = line_end,

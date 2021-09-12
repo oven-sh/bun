@@ -184,6 +184,11 @@ pub fn NewLinker(comptime BundlerType: type) type {
         // This modifies the Ast in-place!
         // But more importantly, this does the following:
         // - Wrap CommonJS files
+        threadlocal var require_part: js_ast.Part = undefined;
+        threadlocal var require_part_stmts: [1]js_ast.Stmt = undefined;
+        threadlocal var require_part_import_statement: js_ast.S.Import = undefined;
+        threadlocal var require_part_import_clauses: [1]js_ast.ClauseItem = undefined;
+        const require_alias: string = "__require";
         pub fn link(
             linker: *ThisLinker,
             file_path: Fs.Path,
@@ -200,6 +205,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
             var needs_bundle = false;
             var first_bundled_index: ?u32 = null;
             var had_resolve_errors = false;
+            var needs_require = false;
 
             // Step 1. Resolve imports & requires
             switch (result.loader) {
@@ -219,6 +225,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
                                         linker.runtime_source_path,
                                         Runtime.version(),
                                         false,
+                                        "bun",
                                         import_path_format,
                                     );
                                     result.ast.runtime_import_record_id = record_index;
@@ -348,9 +355,15 @@ pub fn NewLinker(comptime BundlerType: type) type {
                             // If it's a namespace import, assume it's safe.
                             // We can do this in the printer instead of creating a bunch of AST nodes here.
                             // But we need to at least tell the printer that this needs to happen.
-                            if (result.ast.exports_kind != .cjs and (import_record.kind == .require or (import_record.kind == .stmt and resolved_import.shouldAssumeCommonJS(import_record)))) {
+                            if (result.ast.exports_kind != .cjs and
+                                (import_record.kind == .require or
+                                (import_record.kind == .stmt and resolved_import.shouldAssumeCommonJS(import_record))))
+                            {
                                 import_record.wrap_with_to_module = true;
+                                import_record.module_id = @truncate(u32, std.hash.Wyhash.hash(0, path.pretty));
+
                                 result.ast.needs_runtime = true;
+                                needs_require = true;
                             }
                         } else |err| {
                             had_resolve_errors = true;
@@ -413,7 +426,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
                 },
                 else => {},
             }
-            if (had_resolve_errors) return error.LinkError;
+            if (had_resolve_errors) return error.ResolveError;
             result.ast.externals = externals.toOwnedSlice();
 
             if (result.ast.needs_runtime and result.ast.runtime_import_record_id == null) {
@@ -426,11 +439,42 @@ pub fn NewLinker(comptime BundlerType: type) type {
                         linker.runtime_source_path,
                         Runtime.version(),
                         false,
+                        "bun",
                         import_path_format,
                     ),
                     .range = logger.Range{ .loc = logger.Loc{ .start = 0 }, .len = 0 },
                 };
                 result.ast.runtime_import_record_id = @truncate(u32, import_records.len - 1);
+                result.ast.import_records = import_records;
+            }
+
+            // We _assume_ you're importing ESM.
+            // But, that assumption can be wrong without parsing code of the imports.
+            // That's where in here, we inject
+            // > import {require} from 'bun:runtime';
+            // Since they definitely aren't using require, we don't have to worry about the symbol being renamed.
+            if (needs_require and !result.ast.uses_require_ref) {
+                result.ast.uses_require_ref = true;
+                require_part_import_clauses[0] = js_ast.ClauseItem{
+                    .alias = require_alias,
+                    .original_name = "",
+                    .alias_loc = logger.Loc.Empty,
+                    .name = js_ast.LocRef{
+                        .loc = logger.Loc.Empty,
+                        .ref = result.ast.require_ref,
+                    },
+                };
+
+                require_part_import_statement = js_ast.S.Import{
+                    .namespace_ref = Ref.None,
+                    .items = std.mem.span(&require_part_import_clauses),
+                    .import_record_index = result.ast.runtime_import_record_id.?,
+                };
+                require_part_stmts[0] = js_ast.Stmt{
+                    .data = .{ .s_import = &require_part_import_statement },
+                    .loc = logger.Loc.Empty,
+                };
+                result.ast.prepend_part = js_ast.Part{ .stmts = std.mem.span(&require_part_stmts) };
             }
 
             // This is a bad idea
@@ -495,6 +539,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
             source_path: string,
             package_version: ?string,
             use_hashed_name: bool,
+            namespace: string,
             comptime import_path_format: Options.BundleOptions.ImportPathFormat,
         ) !Fs.Path {
             switch (import_path_format) {
@@ -553,35 +598,46 @@ pub fn NewLinker(comptime BundlerType: type) type {
                 },
 
                 .absolute_url => {
-                    var absolute_pathname = Fs.PathName.init(source_path);
+                    if (strings.eqlComptime(namespace, "node")) {
+                        return Fs.Path.init(try std.fmt.allocPrint(
+                            linker.allocator,
+                            "{s}/node:{s}",
+                            .{
+                                linker.options.origin.origin,
+                                source_path,
+                            },
+                        ));
+                    } else {
+                        var absolute_pathname = Fs.PathName.init(source_path);
 
-                    if (!linker.options.preserve_extensions) {
-                        if (linker.options.out_extensions.get(absolute_pathname.ext)) |ext| {
-                            absolute_pathname.ext = ext;
+                        if (!linker.options.preserve_extensions) {
+                            if (linker.options.out_extensions.get(absolute_pathname.ext)) |ext| {
+                                absolute_pathname.ext = ext;
+                            }
                         }
+
+                        var base = linker.fs.relativeTo(source_path);
+                        if (strings.lastIndexOfChar(base, '.')) |dot| {
+                            base = base[0..dot];
+                        }
+
+                        var dirname = std.fs.path.dirname(base) orelse "";
+
+                        var basename = std.fs.path.basename(base);
+
+                        if (use_hashed_name) {
+                            var basepath = Fs.Path.init(source_path);
+                            basename = try linker.getHashedFilename(basepath, null);
+                        }
+
+                        return Fs.Path.init(try linker.options.origin.joinAlloc(
+                            linker.allocator,
+                            linker.options.routes.asset_prefix_path,
+                            dirname,
+                            basename,
+                            absolute_pathname.ext,
+                        ));
                     }
-
-                    var base = linker.fs.relativeTo(source_path);
-                    if (strings.lastIndexOfChar(base, '.')) |dot| {
-                        base = base[0..dot];
-                    }
-
-                    var dirname = std.fs.path.dirname(base) orelse "";
-
-                    var basename = std.fs.path.basename(base);
-
-                    if (use_hashed_name) {
-                        var basepath = Fs.Path.init(source_path);
-                        basename = try linker.getHashedFilename(basepath, null);
-                    }
-
-                    return Fs.Path.init(try linker.options.origin.joinAlloc(
-                        linker.allocator,
-                        linker.options.routes.asset_prefix_path,
-                        dirname,
-                        basename,
-                        absolute_pathname.ext,
-                    ));
                 },
 
                 else => unreachable,
@@ -610,6 +666,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
                 if (path.is_symlink and import_path_format == .absolute_url and linker.options.platform != .bun) path.pretty else path.text,
                 if (resolve_result.package_json) |package_json| package_json.version else "",
                 BundlerType.isCacheEnabled and loader == .file,
+                path.namespace,
                 import_path_format,
             );
 

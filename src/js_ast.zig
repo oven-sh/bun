@@ -759,7 +759,10 @@ pub const Symbol = struct {
     }
 
     pub inline fn isKindHoisted(kind: Symbol.Kind) bool {
-        return @enumToInt(kind) == @enumToInt(Symbol.Kind.hoisted) or @enumToInt(kind) == @enumToInt(Symbol.Kind.hoisted_function);
+        return switch (kind) {
+            .hoisted, .hoisted_function => true,
+            else => false,
+        };
     }
 
     pub inline fn isHoisted(self: *const Symbol) bool {
@@ -767,11 +770,17 @@ pub const Symbol = struct {
     }
 
     pub inline fn isKindHoistedOrFunction(kind: Symbol.Kind) bool {
-        return isKindHoisted(kind) or kind == Symbol.Kind.generator_or_async_function;
+        return switch (kind) {
+            .hoisted, .hoisted_function, .generator_or_async_function => true,
+            else => false,
+        };
     }
 
     pub inline fn isKindFunction(kind: Symbol.Kind) bool {
-        return kind == Symbol.Kind.hoisted_function or kind == Symbol.Kind.generator_or_async_function;
+        return switch (kind) {
+            .hoisted_function, .generator_or_async_function => true,
+            else => false,
+        };
     }
 
     pub fn isReactComponentishName(symbol: *const Symbol) bool {
@@ -3619,6 +3628,7 @@ pub const Ast = struct {
     has_top_level_return: bool = false,
     uses_exports_ref: bool = false,
     uses_module_ref: bool = false,
+    uses_require_ref: bool = false,
     exports_kind: ExportsKind = ExportsKind.none,
 
     bundle_export_ref: ?Ref = null,
@@ -3643,9 +3653,10 @@ pub const Ast = struct {
     exports_ref: ?Ref = null,
     module_ref: ?Ref = null,
     wrapper_ref: ?Ref = null,
-    require_ref: ?Ref = null,
+    require_ref: Ref = Ref.None,
 
     bundle_namespace_ref: ?Ref = null,
+    prepend_part: ?Part = null,
 
     // These are used when bundling. They are filled in during the parser pass
     // since we already have to traverse the AST then anyway and the parser pass

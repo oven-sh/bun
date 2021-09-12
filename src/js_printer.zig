@@ -768,18 +768,10 @@ pub fn NewPrinter(
 
                     p.printSpaceBeforeIdentifier();
 
-                    if (bun) {
-                        p.print("module.require(");
-                    } else {
-                        p.print("require(");
-                    }
-                    // if (p.options.platform == .node) {
-
+                    p.printSymbol(p.options.require_ref.?);
+                    p.print("(");
                     p.printQuotedUTF8(record.path.text, true);
                     p.print(")");
-                    // } else {
-                    //  p.options.platform
-                    // }
                     return;
                 }
 
@@ -2948,14 +2940,10 @@ pub fn NewPrinter(
                     }
 
                     if (record.wrap_with_to_module) {
-                        const require_ref = p.options.require_ref orelse {
-                            
-                        };
+                        const require_ref = p.options.require_ref.?;
 
-                        const module_id = @truncate(
-                            u32,
-                            std.hash.Wyhash.hash(2, record.path.pretty),
-                        );
+                        const module_id = record.module_id;
+
                         p.print("import * as ");
                         p.printModuleId(module_id);
 
@@ -4063,6 +4051,16 @@ pub fn printAst(
         opts,
         linker,
     );
+
+    if (tree.prepend_part) |part| {
+        for (part.stmts) |stmt| {
+            try printer.printStmt(stmt);
+            if (printer.writer.getError()) {} else |err| {
+                return err;
+            }
+        }
+    }
+
     for (tree.parts) |part| {
         for (part.stmts) |stmt| {
             try printer.printStmt(stmt);
@@ -4098,6 +4096,15 @@ pub fn printCommonJS(
         opts,
         linker,
     );
+
+    if (tree.prepend_part) |part| {
+        for (part.stmts) |stmt| {
+            try printer.printStmt(stmt);
+            if (printer.writer.getError()) {} else |err| {
+                return err;
+            }
+        }
+    }
     for (tree.parts) |part| {
         for (part.stmts) |stmt| {
             try printer.printStmt(stmt);
@@ -4146,6 +4153,16 @@ pub fn printCommonJSThreaded(
         opts,
         linker,
     );
+
+    if (tree.prepend_part) |part| {
+        for (part.stmts) |stmt| {
+            try printer.printStmt(stmt);
+            if (printer.writer.getError()) {} else |err| {
+                return err;
+            }
+        }
+    }
+
     for (tree.parts) |part| {
         for (part.stmts) |stmt| {
             try printer.printStmt(stmt);

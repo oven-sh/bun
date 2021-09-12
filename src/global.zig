@@ -168,7 +168,7 @@ pub const Output = struct {
         if (comptime isWasm) {
             source.stream.seekTo(0) catch return;
             source.stream.writer().print(fmt, args) catch return;
-            
+
             root.console_log(root.Uint8Array.fromSlice(source.out_buffer[0..source.stream.pos]));
         } else {
             if (enable_buffering) {
@@ -437,32 +437,3 @@ pub const FileDescriptorType = if (isBrowser) u0 else std.os.fd_t;
 // such is often the case with macOS
 // As a useful optimization, we can store file descriptors and just keep them open...forever
 pub const StoredFileDescriptorType = if (isWindows or isBrowser) u0 else std.os.fd_t;
-
-pub const PathBuilder = struct {
-    const StringBuilderType = NewStringBuilder(std.fs.MAX_PATH_BYTES);
-    builder: StringBuilderType = StringBuilderType.init(),
-
-    pub fn init() PathBuilder {
-        return PathBuilder{};
-    }
-
-    fn load(this: *PathBuilder) void {
-        return @call(.{ .modifier = .always_inline }, StringBuilderType.load, .{&this.builder});
-    }
-
-    pub fn append(this: *PathBuilder, _str: string) void {
-        return @call(.{ .modifier = .always_inline }, StringBuilderType.append, .{ &this.builder, _str });
-    }
-
-    pub fn pop(this: *PathBuilder, count: usize) void {
-        return @call(.{ .modifier = .always_inline }, StringBuilderType.pop, .{ &this.builder, count });
-    }
-
-    pub fn str(this: *PathBuilder) string {
-        return @call(.{ .modifier = .always_inline }, StringBuilderType.str, .{&this.builder});
-    }
-
-    pub fn reset(this: *PathBuilder) void {
-        return @call(.{ .modifier = .always_inline }, StringBuilderType.reset, .{&this.builder});
-    }
-};

@@ -903,6 +903,7 @@ pub const FileSystem = struct {
             var _kind = stat.kind;
             var cache = Entry.Cache{ .kind = Entry.Kind.file, .symlink = "" };
             var symlink: []const u8 = "";
+
             if (is_symlink) {
                 var file = if (existing_fd != 0) std.fs.File{ .handle = existing_fd } else try std.fs.openFileAbsoluteZ(absolute_path_c, .{ .read = true });
                 setMaxFd(file.handle);

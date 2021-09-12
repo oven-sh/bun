@@ -13,16 +13,12 @@ usingnamespace @import("defines.zig");
 usingnamespace @import("global.zig");
 const panicky = @import("panic_handler.zig");
 const cli = @import("cli.zig");
-pub const MainPanicHandler = panicky.NewPanicHandler(panicky.default_panic);
+pub const MainPanicHandler = panicky.NewPanicHandler(std.builtin.default_panic);
 const js = @import("javascript/jsc/bindings/bindings.zig");
 usingnamespace @import("javascript/jsc/javascript.zig");
 
 pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace) noreturn {
-    if (MainPanicHandler.Singleton) |singleton| {
-        MainPanicHandler.handle_panic(msg, error_return_trace);
-    } else {
-        panicky.default_panic(msg, error_return_trace);
-    }
+    MainPanicHandler.handle_panic(msg, error_return_trace);
 }
 pub var start_time: i128 = 0;
 pub fn main() anyerror!void {

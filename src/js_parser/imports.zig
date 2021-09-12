@@ -17,7 +17,7 @@ pub usingnamespace @import("../global.zig");
 pub usingnamespace @import("../ast/base.zig");
 pub usingnamespace js_ast.G;
 pub usingnamespace @import("../defines.zig");
-
+pub const isPackagePath = @import("../resolver/resolver.zig").isPackagePath;
 pub const ImportKind = importRecord.ImportKind;
 pub const BindingNodeIndex = js_ast.BindingNodeIndex;
 

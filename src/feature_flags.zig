@@ -42,6 +42,8 @@ pub const watch_directories = true;
 
 pub const tailwind_css_at_keyword = true;
 
+pub const bundle_dynamic_import = true;
+
 // This feature flag exists so when you have defines inside package.json, you can use single quotes in nested strings.
 pub const allow_json_single_quotes = true;
 

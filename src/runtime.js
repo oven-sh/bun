@@ -38,11 +38,12 @@ export var __toModule = (module) => {
 };
 
 var tagSymbol = Symbol("CommonJSTransformed");
+var cjsRequireSymbol = Symbol("CommonJS");
 export var __commonJS = (cb, name) => {
   var mod = {};
   var has_run = false;
 
-  return function require() {
+  const requireFunction = function load() {
     if (has_run) {
       return mod.exports;
     }
@@ -97,11 +98,12 @@ export var __commonJS = (cb, name) => {
 
     return mod.exports;
   };
+
+  requireFunction[cjsRequireSymbol] = true;
+  return requireFunction;
 };
 
-export var __cJS2eSM = (cb, name) => {
-  return __commonJS(cb, name)();
-};
+export var __cJS2eSM = __commonJS;
 
 var require_cache = new WeakMap();
 
@@ -119,51 +121,44 @@ export var __BUN_INTERNAL_DO_NOT_USE_OR_YOU_WILL_BE_FIRED = {
 // );
 
 export var __require = (namespace) => {
-  var entry = require_cache.get(namespace);
-  if (typeof entry !== "undefined") {
-    return entry;
-  }
+  if (
+    typeof namespace === "object" &&
+    "default" in namespace &&
+    namespace.default[cjsRequireSymbol]
+  )
+    return namespace.default();
 
-  var target =
-    Object.prototype.hasOwnProperty.call(namespace, "default") &&
-    Object.keys(namespace).length === 1
-      ? namespace["default"]
-      : namespace;
+  return namespace;
+  // // is it an ESM module record?
+  // if (namespaceType === "object") return namespace;
+  // // is it a CommonJS module?
 
-  if (typeof target !== "function") {
-    throw new __BUN_INTERNAL_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.RequireFailedError(
-      `Couldn't find module "${
-        typeof namespace === "string"
-          ? namespace
-          : namespace.name || namespace.displayName || namespace.toString()
-      }"`
-    );
-  }
+  // // i have no idea what it is so i'm just going to try stuff and pray
+  // var entry = require_cache.get(namespace);
+  // if (typeof entry !== "undefined") {
+  //   return entry;
+  // }
 
-  var exports = target();
-  require_cache.set(namespace, exports);
-  return exports;
+  // var target =
+  //   Object.prototype.hasOwnProperty.call(namespace, "default") &&
+  //   Object.keys(namespace).length === 1
+  //     ? namespace["default"]
+  //     : namespace;
+
+  // if (typeof target !== "function") {
+  //   throw new __BUN_INTERNAL_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.RequireFailedError(
+  //     `Couldn't find module "${
+  //       typeof namespace === "string"
+  //         ? namespace
+  //         : namespace.name || namespace.displayName || namespace.toString()
+  //     }"`
+  //   );
+  // }
+
+  // var exports = target();
+  // require_cache.set(namespace, exports);
+  // return exports;
 };
-
-if (
-  !(
-    "__BUN_INTERNAL_DO_NOT_USE_OR_YOU_WILL_BE_FIRED__MODULE_LOAD_CACHE" in
-    globalThis
-  )
-) {
-  globalThis.__BUN_INTERNAL_DO_NOT_USE_OR_YOU_WILL_BE_FIRED__MODULE_LOAD_CACHE =
-    new Map();
-}
-
-if (
-  !(
-    "__BUN_INTERNAL_DO_NOT_USE_OR_YOU_WILL_BE_FIRED__MODULE_REGISTRY" in
-    globalThis
-  )
-) {
-  globalThis.__BUN_INTERNAL_DO_NOT_USE_OR_YOU_WILL_BE_FIRED__MODULE_REGISTRY =
-    new Map();
-}
 
 export var $$m = __commonJS;
 

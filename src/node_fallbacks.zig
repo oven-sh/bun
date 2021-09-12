@@ -479,3 +479,21 @@ pub const Map = std.ComptimeStringMap(FallbackModule, .{
     &.{ "isomorphic-fetch", FallbackModule.@"isomorphic-fetch" },
     &.{ "@vercel/fetch", FallbackModule.@"@vercel/fetch" },
 });
+
+pub fn contentsFromPath(path: string) ?string {
+    var module_name = path["/bun-vfs/node_modules/".len..];
+
+    if (module_name[0] == '@') {
+        var end = std.mem.indexOfScalar(u8, module_name, '/').? + 1;
+        end += std.mem.indexOfScalar(u8, module_name[end..], '/').?;
+
+        module_name = module_name[0..end];
+    } else {
+        module_name = module_name[0..std.mem.indexOfScalar(u8, module_name, '/').?];
+    }
+
+    if (Map.get(module_name)) |mod| {
+        return mod.code.*;
+    }
+    return null;
+}

@@ -497,3 +497,5 @@ pub fn contentsFromPath(path: string) ?string {
     }
     return null;
 }
+
+pub const buffer_fallback_import_name: string = "node:buffer";

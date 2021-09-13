@@ -1,5 +1,6 @@
 usingnamespace @import("imports.zig");
 
+const NodeFallbackModules = @import("../node_fallbacks.zig");
 // Dear reader,
 // There are some things you should know about this file to make it easier for humans to read
 // "P" is the internal parts of the parser
@@ -650,14 +651,22 @@ const StaticSymbolName = struct {
             };
         }
 
+        fn NewStaticSymbolWithBackup(comptime basename: string, comptime backup: string) StaticSymbolName {
+            return comptime StaticSymbolName{
+                .internal = basename ++ "_" ++ std.fmt.comptimePrint("{x}", .{std.hash.Wyhash.hash(0, basename)}),
+                .primary = basename,
+                .backup = backup,
+            };
+        }
+
         pub const jsx = NewStaticSymbol("jsx");
         pub const jsxs = NewStaticSymbol("jsxs");
         pub const ImportSource = NewStaticSymbol("JSX");
         pub const ClassicImportSource = NewStaticSymbol("JSXClassic");
-        pub const jsxFilename = NewStaticSymbol("jsxFilename");
-        pub const Factory = NewStaticSymbol("createElement");
-        pub const Refresher = NewStaticSymbol("Refresher");
-        pub const Fragment = NewStaticSymbol("Fragment");
+        pub const jsxFilename = NewStaticSymbolWithBackup("fileName", "jsxFileName");
+        pub const Factory = NewStaticSymbol("jsxEl");
+        pub const Refresher = NewStaticSymbol("FastRefresh");
+        pub const Fragment = NewStaticSymbol("JSXFrag");
 
         pub const __name = NewStaticSymbol("__name");
         pub const __toModule = NewStaticSymbol("__toModule");
@@ -667,9 +676,9 @@ const StaticSymbolName = struct {
         pub const __reExport = NewStaticSymbol("__reExport");
         pub const __load = NewStaticSymbol("__load");
         pub const @"$$lzy" = NewStaticSymbol("$$lzy");
-        pub const __HMRModule = NewStaticSymbol("__HMRModule");
-        pub const __HMRClient = NewStaticSymbol("__HMRClient");
-        pub const __FastRefreshModule = NewStaticSymbol("__FastRefreshModule");
+        pub const __HMRModule = NewStaticSymbol("HMR");
+        pub const __HMRClient = NewStaticSymbol("Bun");
+        pub const __FastRefreshModule = NewStaticSymbol("FastHMR");
 
         pub const @"$$m" = NewStaticSymbol("$$m");
 
@@ -2332,6 +2341,28 @@ pub const Parser = struct {
         if (p.options.enable_bundling) p.resolveBundlingSymbols();
 
         var runtime_imports_iter = p.runtime_imports.iter();
+
+        // If they use Buffer...just automatically import it.
+        // ✨ magic ✨ (i don't like this)
+        if (p.symbols.items[p.buffer_ref.inner_index].use_count_estimate > 0) {
+            var named_import = p.named_imports.getOrPut(p.buffer_ref);
+
+            // if Buffer is actually an import, let them use that one instead.
+            if (!named_import.found_existing) {
+                const import_record_id = p.addImportRecord(
+                    .require,
+                    logger.Loc.empty,
+                    NodeFallbacks.buffer_fallback_import_name,
+                );
+                var import_stmt = p.s(S.Import{
+                    .namespace_ref = p.buffer_ref,
+                    .star_name_loc = loc,
+                    .is_single_line = true,
+                    .import_record_index = import_record_id,
+                }, loc);
+            }
+        }
+
         const has_cjs_imports = p.cjs_import_stmts.items.len > 0 and p.options.transform_require_to_import;
         // - don't import runtime if we're bundling, it's already included
         // - when HMR is enabled, we always need to import the runtime for HMRClient and HMRModule.
@@ -2668,6 +2699,7 @@ pub fn NewParser(
         exports_ref: js_ast.Ref = js_ast.Ref.None,
         require_ref: js_ast.Ref = js_ast.Ref.None,
         module_ref: js_ast.Ref = js_ast.Ref.None,
+        buffer_ref: js_ast.Ref = js_ast.Ref.None,
         import_meta_ref: js_ast.Ref = js_ast.Ref.None,
         promise_ref: ?js_ast.Ref = null,
         scopes_in_order_visitor_index: usize = 0,
@@ -3505,11 +3537,12 @@ pub fn NewParser(
             p.exports_ref = try p.declareCommonJSSymbol(.unbound, "exports");
             p.module_ref = try p.declareCommonJSSymbol(.unbound, "module");
             p.require_ref = try p.declareCommonJSSymbol(.unbound, "require");
+            p.buffer_ref = try p.declareCommonJSSymbol(.unbound, "Buffer");
 
             if (p.options.enable_bundling) {
                 p.runtime_imports.__reExport = try p.declareGeneratedSymbol(.other, "__reExport");
                 p.runtime_imports.@"$$m" = try p.declareGeneratedSymbol(.other, "$$m");
-                p.recordUsage(p.runtime_imports.@"$$m".?.ref);
+
                 p.runtime_imports.@"$$lzy" = try p.declareGeneratedSymbol(.other, "$$lzy");
 
                 p.runtime_imports.__export = GeneratedSymbol{ .ref = p.exports_ref, .primary = Ref.None, .backup = Ref.None };
@@ -3558,20 +3591,24 @@ pub fn NewParser(
         pub fn resolveGeneratedSymbol(p: *P, generated_symbol: *GeneratedSymbol) void {
             if (generated_symbol.ref.isNull()) return;
 
-            if (p.symbols.items[generated_symbol.ref.inner_index].use_count_estimate == 0) {
+            if (p.symbols.items[generated_symbol.primary.inner_index].use_count_estimate == 0 and
+                p.symbols.items[generated_symbol.primary.inner_index].link == null)
+            {
+                p.symbols.items[generated_symbol.ref.inner_index].original_name = p.symbols.items[generated_symbol.primary.inner_index].original_name;
                 return;
             }
 
-            if (p.symbols.items[generated_symbol.primary.inner_index].use_count_estimate == 0 and p.symbols.items[generated_symbol.primary.inner_index].link == null) {
-                p.symbols.items[generated_symbol.ref.inner_index].original_name = p.symbols.items[generated_symbol.primary.inner_index].original_name;
-            }
-
-            if (p.symbols.items[generated_symbol.backup.inner_index].use_count_estimate == 0 and p.symbols.items[generated_symbol.backup.inner_index].link == null) {
+            if (p.symbols.items[generated_symbol.backup.inner_index].use_count_estimate == 0 and
+                p.symbols.items[generated_symbol.backup.inner_index].link == null)
+            {
                 p.symbols.items[generated_symbol.ref.inner_index].original_name = p.symbols.items[generated_symbol.backup.inner_index].original_name;
+                return;
             }
         }
 
         pub fn resolveBundlingSymbols(p: *P) void {
+            p.recordUsage(p.runtime_imports.@"$$m".?.ref);
+
             p.resolveGeneratedSymbol(&p.runtime_imports.__reExport.?);
             p.resolveGeneratedSymbol(&p.runtime_imports.@"$$m".?);
             p.resolveGeneratedSymbol(&p.runtime_imports.@"$$lzy".?);
@@ -3588,6 +3625,7 @@ pub fn NewParser(
             p.resolveGeneratedSymbol(&p.jsx_runtime);
             p.resolveGeneratedSymbol(&p.jsxs_runtime);
             p.resolveGeneratedSymbol(&p.jsx_factory);
+            p.resolveGeneratedSymbol(&p.jsx_fragment);
             p.resolveGeneratedSymbol(&p.jsx_classic);
             p.resolveGeneratedSymbol(&p.jsx_automatic);
             p.resolveGeneratedSymbol(&p.jsx_filename);
@@ -7459,17 +7497,17 @@ pub fn NewParser(
         fn declareGeneratedSymbol(p: *P, kind: Symbol.Kind, comptime name: string) !GeneratedSymbol {
             const static = @field(StaticSymbolName.List, name);
             return GeneratedSymbol{
+                .backup = try declareSymbolMaybeGenerated(p, .other, logger.Loc.Empty, static.backup, true),
+                .primary = try declareSymbolMaybeGenerated(p, .other, logger.Loc.Empty, static.primary, true),
                 .ref = try declareSymbolMaybeGenerated(p, kind, logger.Loc.Empty, static.internal, true),
-                .primary = try declareSymbolMaybeGenerated(p, .hoisted, logger.Loc.Empty, static.primary, true),
-                .backup = try declareSymbolMaybeGenerated(p, .hoisted, logger.Loc.Empty, static.backup, true),
             };
         }
 
         fn declareSymbol(p: *P, kind: Symbol.Kind, loc: logger.Loc, name: string) !Ref {
-            return try declareSymbolMaybeGenerated(p, kind, loc, name, false);
+            return try @call(.{ .modifier = .always_inline }, declareSymbolMaybeGenerated, .{ p, kind, loc, name, false });
         }
 
-        inline fn declareSymbolMaybeGenerated(p: *P, kind: Symbol.Kind, loc: logger.Loc, name: string, comptime is_generated: bool) !Ref {
+        fn declareSymbolMaybeGenerated(p: *P, kind: Symbol.Kind, loc: logger.Loc, name: string, comptime is_generated: bool) !Ref {
             // p.checkForNonBMPCodePoint(loc, name)
 
             if (comptime !is_generated) {

@@ -202,7 +202,7 @@ pub const FileSystem = struct {
                     // for each entry was a big performance issue for that package.
                     .need_stat = entry.kind == .SymLink,
                     .cache = Entry.Cache{
-                        .symlink = "",
+                        .symlink = PathString.empty,
                         .kind = _kind,
                     },
                 },
@@ -327,6 +327,8 @@ pub const FileSystem = struct {
         mutex: Mutex,
         need_stat: bool = true,
 
+        abs_path: PathString = PathString.empty,
+
         pub inline fn base(this: *const Entry) string {
             return this.base_.slice();
         }
@@ -350,12 +352,12 @@ pub const FileSystem = struct {
             e.base_.deinit(allocator);
 
             allocator.free(e.dir);
-            allocator.free(e.cache.symlink);
+            allocator.free(e.cache.symlink.slice());
             allocator.destroy(e);
         }
 
         pub const Cache = struct {
-            symlink: string = "",
+            symlink: PathString = PathString.empty,
             fd: StoredFileDescriptorType = 0,
             kind: Kind = Kind.file,
         };
@@ -378,7 +380,7 @@ pub const FileSystem = struct {
                 entry.need_stat = false;
                 entry.cache = fs.kind(entry.dir, entry.base(), entry.cache.fd) catch unreachable;
             }
-            return entry.cache.symlink;
+            return entry.cache.symlink.slice();
         }
     };
 
@@ -901,7 +903,10 @@ pub const FileSystem = struct {
             var stat = try C.lstat_absolute(absolute_path_c);
             const is_symlink = stat.kind == std.fs.File.Kind.SymLink;
             var _kind = stat.kind;
-            var cache = Entry.Cache{ .kind = Entry.Kind.file, .symlink = "" };
+            var cache = Entry.Cache{
+                .kind = Entry.Kind.file,
+                .symlink = PathString.empty,
+            };
             var symlink: []const u8 = "";
 
             if (is_symlink) {
@@ -930,7 +935,7 @@ pub const FileSystem = struct {
                 cache.kind = .file;
             }
             if (symlink.len > 0) {
-                cache.symlink = try FilenameStore.instance.append([]const u8, symlink);
+                cache.symlink = PathString.init(try FilenameStore.instance.append([]const u8, symlink));
             }
 
             return cache;

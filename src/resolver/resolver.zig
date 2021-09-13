@@ -8,11 +8,13 @@ const cache = @import("../cache.zig");
 const sync = @import("../sync.zig");
 const TSConfigJSON = @import("./tsconfig_json.zig").TSConfigJSON;
 const PackageJSON = @import("./package_json.zig").PackageJSON;
+const BrowserMap = @import("./package_json.zig").BrowserMap;
+
 usingnamespace @import("./data_url.zig");
 pub const DirInfo = @import("./dir_info.zig");
 const HTTPWatcher = @import("../http.zig").Watcher;
 const Wyhash = std.hash.Wyhash;
-
+const ResolvePath = @import("./resolve_path.zig");
 const NodeFallbackModules = @import("../node_fallbacks.zig");
 
 const Mutex = @import("../lock.zig").Lock;
@@ -191,6 +193,7 @@ pub const DirEntryResolveQueueItem = struct {
     safe_path: string = "",
     fd: StoredFileDescriptorType = 0,
 };
+
 threadlocal var _dir_entry_paths_to_resolve: [256]DirEntryResolveQueueItem = undefined;
 threadlocal var _open_dirs: [256]std.fs.Dir = undefined;
 threadlocal var resolve_without_remapping_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
@@ -203,6 +206,10 @@ threadlocal var load_as_file_or_directory_via_tsconfig_base_path: [std.fs.MAX_PA
 threadlocal var node_modules_check_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 threadlocal var field_abs_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 threadlocal var tsconfig_path_abs_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+threadlocal var check_browser_map_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+threadlocal var remap_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+threadlocal var load_as_file_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+threadlocal var remap_path_trailing_slash: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 
 pub const DebugLogs = struct {
     what: string = "",
@@ -291,6 +298,7 @@ pub const MatchResult = struct {
     is_node_module: bool = false,
     package_json: ?*PackageJSON = null,
     diff_case: ?Fs.FileSystem.Entry.Lookup.DifferentCase = null,
+    dir_info: ?*DirInfo = null,
 };
 
 pub const LoadResult = struct {
@@ -298,6 +306,7 @@ pub const LoadResult = struct {
     diff_case: ?Fs.FileSystem.Entry.Lookup.DifferentCase,
     dirname_fd: StoredFileDescriptorType = 0,
     file_fd: StoredFileDescriptorType = 0,
+    dir_info: ?*DirInfo = null,
 };
 
 // This is a global so even if multiple resolvers are created, the mutex will still work
@@ -715,7 +724,7 @@ pub fn NewResolver(cache_files: bool) type {
                             if (r.debug_logs) |*debug| {
                                 debug.addNoteFmt("Resolved symlink \"{s}\" to \"{s}\"", .{ symlink, path.text }) catch {};
                             }
-                            query.entry.cache.symlink = symlink;
+                            query.entry.cache.symlink = PathString.init(symlink);
                             if (result.file_fd == 0) result.file_fd = query.entry.cache.fd;
 
                             path.setRealpath(symlink);
@@ -755,7 +764,7 @@ pub fn NewResolver(cache_files: bool) type {
                 // First, check path overrides from the nearest enclosing TypeScript "tsconfig.json" file
                 if ((r.dirInfoCached(source_dir) catch null)) |_dir_info| {
                     const dir_info: *DirInfo = _dir_info;
-                    if (dir_info.tsconfig_json) |tsconfig| {
+                    if (dir_info.enclosing_tsconfig_json) |tsconfig| {
                         if (tsconfig.paths.count() > 0) {
                             if (r.matchTSConfigPaths(tsconfig, import_path, kind)) |res| {
 
@@ -826,36 +835,37 @@ pub fn NewResolver(cache_files: bool) type {
                     };
                 }
 
-                // Check the "browser" map for the first time (1 out of 2)
+                // Check the "browser" map
                 if (r.dirInfoCached(std.fs.path.dirname(abs_path) orelse unreachable) catch null) |_import_dir_info| {
                     if (_import_dir_info.getEnclosingBrowserScope()) |import_dir_info| {
-                        if (import_dir_info.package_json) |pkg| {
-                            const pkg_json_dir = std.fs.path.dirname(pkg.source.key_path.text) orelse unreachable;
+                        const pkg = import_dir_info.package_json.?;
+                        if (r.checkBrowserMap(
+                            import_dir_info,
+                            abs_path,
+                            .AbsolutePath,
+                        )) |remap| {
 
-                            const rel_path = r.fs.relative(pkg_json_dir, abs_path);
-                            if (r.checkBrowserMap(pkg, rel_path)) |remap| {
-                                // Is the path disabled?
-                                if (remap.len == 0) {
-                                    var _path = Path.init(r.fs.dirname_store.append(string, abs_path) catch unreachable);
-                                    _path.is_disabled = true;
-                                    return Result{
-                                        .path_pair = PathPair{
-                                            .primary = _path,
-                                        },
-                                    };
-                                }
+                            // Is the path disabled?
+                            if (remap.len == 0) {
+                                var _path = Path.init(r.fs.dirname_store.append(string, abs_path) catch unreachable);
+                                _path.is_disabled = true;
+                                return Result{
+                                    .path_pair = PathPair{
+                                        .primary = _path,
+                                    },
+                                };
+                            }
 
-                                if (r.resolveWithoutRemapping(import_dir_info, remap, kind)) |_result| {
-                                    result = Result{
-                                        .path_pair = _result.path_pair,
-                                        .diff_case = _result.diff_case,
-                                        .module_type = pkg.module_type,
-                                        .dirname_fd = _result.dirname_fd,
-                                        .package_json = pkg,
-                                    };
-                                    check_relative = false;
-                                    check_package = false;
-                                }
+                            if (r.resolveWithoutRemapping(import_dir_info, remap, kind)) |_result| {
+                                result = Result{
+                                    .path_pair = _result.path_pair,
+                                    .diff_case = _result.diff_case,
+                                    .module_type = pkg.module_type,
+                                    .dirname_fd = _result.dirname_fd,
+                                    .package_json = pkg,
+                                };
+                                check_relative = false;
+                                check_package = false;
                             }
                         }
                     }
@@ -893,7 +903,15 @@ pub fn NewResolver(cache_files: bool) type {
                         result.package_json = @intToPtr(*PackageJSON, @ptrToInt(fallback_module.package_json));
                         result.is_from_node_modules = true;
                         return result;
-                    } else if (had_node_prefix) {
+                    // "node:*
+                    // "fs"
+                    // "fs/*"
+                    // These are disabled!
+                    } else if (had_node_prefix or
+                        (import_path_without_node_prefix.len >= 2 and strings.eqlComptimeIgnoreLen(import_path_without_node_prefix[0..2], "fs") and
+                        (import_path_without_node_prefix.len == 2 or
+                        import_path_without_node_prefix[3] == '/')))
+                    {
                         result.path_pair.primary.namespace = "node";
                         result.path_pair.primary.text = import_path_without_node_prefix;
                         result.path_pair.primary.name = Fs.PathName.init(import_path_without_node_prefix);
@@ -930,7 +948,11 @@ pub fn NewResolver(cache_files: bool) type {
                 // Support remapping one package path to another via the "browser" field
                 if (source_dir_info.getEnclosingBrowserScope()) |browser_scope| {
                     if (browser_scope.package_json) |package_json| {
-                        if (r.checkBrowserMap(package_json, import_path)) |remapped| {
+                        if (r.checkBrowserMap(
+                            browser_scope,
+                            import_path,
+                            .PackagePath,
+                        )) |remapped| {
                             if (remapped.len == 0) {
                                 // "browser": {"module": false}
                                 if (r.loadNodeModules(import_path, kind, source_dir_info)) |node_module| {
@@ -960,42 +982,45 @@ pub fn NewResolver(cache_files: bool) type {
                 }
 
                 if (r.resolveWithoutRemapping(source_dir_info, import_path, kind)) |res| {
-                    result = Result{
-                        .path_pair = res.path_pair,
-                        .diff_case = res.diff_case,
-                        .dirname_fd = res.dirname_fd,
-                        .package_json = res.package_json,
-                    };
+                    result.path_pair = res.path_pair;
+                    result.dirname_fd = res.dirname_fd;
+                    result.file_fd = res.file_fd;
+                    result.package_json = res.package_json;
+                    result.diff_case = res.diff_case;
+
+                    if (res.path_pair.primary.is_disabled and res.path_pair.secondary == null) {
+                        return result;
+                    }
+
+                    if (res.package_json) |pkg| {
+                        var base_dir_info = res.dir_info orelse (r.readDirInfo(res.path_pair.primary.name.dir) catch null) orelse return result;
+                        if (base_dir_info.getEnclosingBrowserScope()) |browser_scope| {
+                            if (r.checkBrowserMap(
+                                browser_scope,
+                                res.path_pair.primary.text,
+                                .AbsolutePath,
+                            )) |remap| {
+                                if (remap.len == 0) {
+                                    result.path_pair.primary.is_disabled = true;
+                                    result.path_pair.primary = Fs.Path.initWithNamespace(remap, "file");
+                                } else {
+                                    if (r.resolveWithoutRemapping(base_dir_info, remap, kind)) |remapped| {
+                                        result.path_pair = remapped.path_pair;
+                                        result.dirname_fd = remapped.dirname_fd;
+                                        result.file_fd = remapped.file_fd;
+                                        result.package_json = remapped.package_json;
+                                        result.diff_case = remapped.diff_case;
+                                        return result;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    return result;
                 } else {
                     // Note: node's "self references" are not currently supported
                     return null;
-                }
-            }
-
-            var iter = result.path_pair.iter();
-            while (iter.next()) |path| {
-                const dirname = std.fs.path.dirname(path.text) orelse continue;
-                const base_dir_info = ((r.dirInfoCached(dirname) catch null)) orelse continue;
-                const dir_info = base_dir_info.getEnclosingBrowserScope() orelse continue;
-                const pkg_json = dir_info.package_json orelse continue;
-                const rel_path = r.fs.relative(pkg_json.source.path.name.dirWithTrailingSlash(), path.text);
-                result.module_type = pkg_json.module_type;
-                result.package_json = result.package_json orelse pkg_json;
-                if (r.checkBrowserMap(pkg_json, rel_path)) |remapped| {
-                    if (remapped.len == 0) {
-                        path.is_disabled = true;
-                    } else if (r.resolveWithoutRemapping(dir_info, remapped, kind)) |remapped_result| {
-                        // iter.index is the next one, not the prev
-                        switch (iter.index - 1) {
-                            0 => {
-                                result.path_pair.primary = remapped_result.path_pair.primary;
-                                result.dirname_fd = remapped_result.dirname_fd;
-                            },
-                            else => {
-                                result.path_pair.secondary = remapped_result.path_pair.primary;
-                            },
-                        }
-                    }
                 }
             }
 
@@ -1090,6 +1115,7 @@ pub fn NewResolver(cache_files: bool) type {
         pub fn loadNodeModules(r: *ThisResolver, import_path: string, kind: ast.ImportKind, _dir_info: *DirInfo) ?MatchResult {
             var res = _loadNodeModules(r, import_path, kind, _dir_info) orelse return null;
             res.is_node_module = true;
+
             return res;
         }
 
@@ -1108,7 +1134,7 @@ pub fn NewResolver(cache_files: bool) type {
 
             // First, check path overrides from the nearest enclosing TypeScript "tsconfig.json" file
 
-            if (dir_info.tsconfig_json) |tsconfig| {
+            if (dir_info.enclosing_tsconfig_json) |tsconfig| {
                 // Try path substitutions first
                 if (tsconfig.paths.count() > 0) {
                     if (r.matchTSConfigPaths(tsconfig, import_path, kind)) |res| {
@@ -1182,7 +1208,7 @@ pub fn NewResolver(cache_files: bool) type {
             const key_path = Path.init(file);
 
             const source = logger.Source.initPathString(key_path.text, entry.contents);
-            const file_dir = std.fs.path.dirname(file) orelse return null;
+            const file_dir = source.path.sourceDir();
 
             var result = (try TSConfigJSON.parse(r.allocator, r.log, source, @TypeOf(r.caches.json), &r.caches.json)) orelse return null;
 
@@ -1516,7 +1542,7 @@ pub fn NewResolver(cache_files: bool) type {
 
         // This closely follows the behavior of "tryLoadModuleUsingPaths()" in the
         // official TypeScript compiler
-        pub fn matchTSConfigPaths(r: *ThisResolver, tsconfig: *TSConfigJSON, path: string, kind: ast.ImportKind) ?MatchResult {
+        pub fn matchTSConfigPaths(r: *ThisResolver, tsconfig: *const TSConfigJSON, path: string, kind: ast.ImportKind) ?MatchResult {
             if (r.debug_logs) |*debug| {
                 debug.addNoteFmt("Matching \"{s}\" against \"paths\" in \"{s}\"", .{ path, tsconfig.abs_path }) catch unreachable;
             }
@@ -1628,55 +1654,163 @@ pub fn NewResolver(cache_files: bool) type {
             return null;
         }
 
-        pub fn checkBrowserMap(r: *ThisResolver, pkg: *PackageJSON, input_path: string) ?string {
+        const BrowserMapPath = struct {
+            remapped: string = "",
+            cleaned: string = "",
+            input_path: string = "",
+            extension_order: []const string,
+            map: BrowserMap,
+
+            pub threadlocal var abs_to_rel_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+
+            pub const Kind = enum { PackagePath, AbsolutePath };
+
+            pub fn checkPath(
+                this: *BrowserMapPath,
+                path_to_check: string,
+            ) bool {
+                const map = this.map;
+
+                const cleaned = this.cleaned;
+                // Check for equality
+                if (this.map.get(path_to_check)) |result| {
+                    this.remapped = result;
+                    this.input_path = path_to_check;
+                    return true;
+                }
+
+                std.mem.copy(u8, &TemporaryBuffer.ExtensionPathBuf, cleaned);
+
+                // If that failed, try adding implicit extensions
+                for (this.extension_order) |ext| {
+                    std.mem.copy(u8, TemporaryBuffer.ExtensionPathBuf[cleaned.len .. cleaned.len + ext.len], ext);
+                    const new_path = TemporaryBuffer.ExtensionPathBuf[0 .. cleaned.len + ext.len];
+                    // if (r.debug_logs) |*debug| {
+                    //     debug.addNoteFmt("Checking for \"{s}\" ", .{new_path}) catch {};
+                    // }
+                    if (map.get(new_path)) |_remapped| {
+                        this.remapped = _remapped;
+                        this.cleaned = new_path;
+                        this.input_path = new_path;
+                        return true;
+                    }
+                }
+
+                // If that failed, try assuming this is a directory and looking for an "index" file
+
+                var index_path: string = "";
+                {
+                    var parts = [_]string{ std.mem.trimRight(u8, path_to_check, std.fs.path.sep_str), std.fs.path.sep_str ++ "index" };
+                    index_path = ResolvePath.joinStringBuf(&tsconfig_base_url_buf, &parts, .auto);
+                }
+
+                if (map.get(index_path)) |_remapped| {
+                    this.remapped = _remapped;
+                    this.input_path = index_path;
+                    return true;
+                }
+
+                std.mem.copy(u8, &TemporaryBuffer.ExtensionPathBuf, index_path);
+
+                for (this.extension_order) |ext| {
+                    std.mem.copy(u8, TemporaryBuffer.ExtensionPathBuf[index_path.len .. index_path.len + ext.len], ext);
+                    const new_path = TemporaryBuffer.ExtensionPathBuf[0 .. index_path.len + ext.len];
+                    // if (r.debug_logs) |*debug| {
+                    //     debug.addNoteFmt("Checking for \"{s}\" ", .{new_path}) catch {};
+                    // }
+                    if (map.get(new_path)) |_remapped| {
+                        this.remapped = _remapped;
+                        this.cleaned = new_path;
+                        this.input_path = new_path;
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+        };
+
+        pub fn checkBrowserMap(
+            r: *ThisResolver,
+            dir_info: *const DirInfo,
+            input_path_: string,
+            comptime kind: BrowserMapPath.Kind,
+        ) ?string {
+            const package_json = dir_info.package_json orelse return null;
+            const browser_map = package_json.browser_map;
+
+            if (browser_map.count() == 0) return null;
+
+            var input_path = input_path_;
+
+            if (comptime kind == .AbsolutePath) {
+                const abs_path = dir_info.abs_path;
+                // Turn absolute paths into paths relative to the "browser" map location
+                if (!strings.startsWith(input_path, abs_path)) {
+                    return null;
+                }
+
+                input_path = input_path[abs_path.len..];
+            }
+
+            if (input_path.len == 0 or (input_path.len == 1 and (input_path[0] == '.' or input_path[0] == std.fs.path.sep))) {
+                // No bundler supports remapping ".", so we don't either
+                return null;
+            }
+
             // Normalize the path so we can compare against it without getting confused by "./"
-            var cleaned = r.fs.normalize(input_path);
-            const original_cleaned = cleaned;
+            var cleaned = r.fs.normalizeBuf(&check_browser_map_buf, input_path);
 
             if (cleaned.len == 1 and cleaned[0] == '.') {
                 // No bundler supports remapping ".", so we don't either
                 return null;
             }
 
-            if (r.debug_logs) |*debug| {
-                debug.addNoteFmt("Checking for \"{s}\" in the \"browser\" map in \"{s}\"", .{ input_path, pkg.source.path.text }) catch {};
+            var checker = BrowserMapPath{
+                .remapped = "",
+                .cleaned = cleaned,
+                .input_path = input_path,
+                .extension_order = r.extension_order,
+                .map = package_json.browser_map,
+            };
+
+            if (checker.checkPath(input_path)) {
+                return checker.remapped;
             }
 
-            if (r.debug_logs) |*debug| {
-                debug.addNoteFmt("Checking for \"{s}\" ", .{cleaned}) catch {};
-            }
-            var remapped = pkg.browser_map.get(cleaned);
-            if (remapped == null) {
-                for (r.extension_order) |ext| {
-                    std.mem.copy(u8, &TemporaryBuffer.ExtensionPathBuf, cleaned);
-                    std.mem.copy(u8, TemporaryBuffer.ExtensionPathBuf[cleaned.len .. cleaned.len + ext.len], ext);
-                    const new_path = TemporaryBuffer.ExtensionPathBuf[0 .. cleaned.len + ext.len];
-                    if (r.debug_logs) |*debug| {
-                        debug.addNoteFmt("Checking for \"{s}\" ", .{new_path}) catch {};
-                    }
-                    if (pkg.browser_map.get(new_path)) |_remapped| {
-                        remapped = _remapped;
-                        cleaned = new_path;
-                        break;
-                    }
-                }
-            }
+            // First try the import path as a package path
+            if (isPackagePath(checker.input_path)) {
+                switch (comptime kind) {
+                    .AbsolutePath => {
+                        BrowserMapPath.abs_to_rel_buf[0..2].* = "./".*;
+                        std.mem.copy(u8, BrowserMapPath.abs_to_rel_buf[2..], checker.input_path);
+                        if (checker.checkPath(BrowserMapPath.abs_to_rel_buf[0 .. checker.input_path.len + 2])) {
+                            return checker.remapped;
+                        }
+                    },
+                    .PackagePath => {
+                        // Browserify allows a browser map entry of "./pkg" to override a package
+                        // path of "require('pkg')". This is weird, and arguably a bug. But we
+                        // replicate this bug for compatibility. However, Browserify only allows
+                        // this within the same package. It does not allow such an entry in a
+                        // parent package to override this in a child package. So this behavior
+                        // is disallowed if there is a "node_modules" folder in between the child
+                        // package and the parent package.
+                        const isInSamePackage = brk: {
+                            const parent = dir_info.getParent() orelse break :brk true;
+                            break :brk !parent.is_node_modules;
+                        };
 
-            if (remapped) |remap| {
-                // "" == disabled, {"browser": { "file.js": false }}
-                if (remap.len == 0 or (remap.len == 1 and remap[0] == '.')) {
-                    if (r.debug_logs) |*debug| {
-                        debug.addNoteFmt("Found \"{s}\" marked as disabled", .{remap}) catch {};
-                    }
-                    return remap;
-                }
+                        if (isInSamePackage) {
+                            BrowserMapPath.abs_to_rel_buf[0..2].* = "./".*;
+                            std.mem.copy(u8, BrowserMapPath.abs_to_rel_buf[2..], checker.input_path);
 
-                if (r.debug_logs) |*debug| {
-                    debug.addNoteFmt("Found \"{s}\" remapped to \"{s}\"", .{ original_cleaned, remap }) catch {};
+                            if (checker.checkPath(BrowserMapPath.abs_to_rel_buf[0 .. checker.input_path.len + 2])) {
+                                return checker.remapped;
+                            }
+                        }
+                    },
                 }
-
-                // Only allocate on successful remapping.
-                return r.allocator.dupe(u8, remap) catch unreachable;
             }
 
             return null;
@@ -1699,7 +1833,11 @@ pub fn NewResolver(cache_files: bool) type {
             // Potentially remap using the "browser" field
             if (dir_info.getEnclosingBrowserScope()) |browser_scope| {
                 if (browser_scope.package_json) |browser_json| {
-                    if (r.checkBrowserMap(browser_json, field_rel_path)) |remap| {
+                    if (r.checkBrowserMap(
+                        browser_scope,
+                        field_rel_path,
+                        .AbsolutePath,
+                    )) |remap| {
                         // Is the path disabled?
                         if (remap.len == 0) {
                             const paths = [_]string{ path, field_rel_path };
@@ -1759,9 +1897,16 @@ pub fn NewResolver(cache_files: bool) type {
                 if (dir_info.getEntries()) |entries| {
                     if (entries.get(base)) |lookup| {
                         if (lookup.entry.kind(rfs) == .file) {
-                            const parts = [_]string{ path, base };
-                            const out_buf_ = r.fs.absBuf(&parts, &index_buf);
-                            const out_buf = r.fs.dirname_store.append(@TypeOf(out_buf_), out_buf_) catch unreachable;
+                            const out_buf = brk: {
+                                if (lookup.entry.abs_path.isEmpty()) {
+                                    const parts = [_]string{ path, base };
+                                    const out_buf_ = r.fs.absBuf(&parts, &index_buf);
+                                    lookup.entry.abs_path =
+                                        PathString.init(r.fs.dirname_store.append(@TypeOf(out_buf_), out_buf_) catch unreachable);
+                                }
+                                break :brk lookup.entry.abs_path.slice();
+                            };
+
                             if (r.debug_logs) |*debug| {
                                 debug.addNoteFmt("Found file: \"{s}\"", .{out_buf}) catch unreachable;
                             }
@@ -1793,16 +1938,30 @@ pub fn NewResolver(cache_files: bool) type {
             return null;
         }
 
-        pub fn loadAsIndexWithBrowserRemapping(r: *ThisResolver, dir_info: *DirInfo, path: string, extension_order: []const string) ?MatchResult {
+        pub fn loadAsIndexWithBrowserRemapping(r: *ThisResolver, dir_info: *DirInfo, path_: string, extension_order: []const string) ?MatchResult {
+            // In order for our path handling logic to be correct, it must end with a trailing slash.
+            var path = path_;
+            if (!strings.endsWithChar(path_, std.fs.path.sep)) {
+                std.mem.copy(u8, &remap_path_trailing_slash, path);
+                remap_path_trailing_slash[path.len] = std.fs.path.sep;
+                remap_path_trailing_slash[path.len + 1] = 0;
+                path = remap_path_trailing_slash[0 .. path.len + 1];
+            }
+
             if (dir_info.getEnclosingBrowserScope()) |browser_scope| {
                 const field_rel_path = comptime "index";
+
                 if (browser_scope.package_json) |browser_json| {
-                    if (r.checkBrowserMap(browser_json, field_rel_path)) |remap| {
+                    if (r.checkBrowserMap(
+                        browser_scope,
+                        field_rel_path,
+                        .AbsolutePath,
+                    )) |remap| {
+
                         // Is the path disabled?
-                        // This doesn't really make sense to me.
                         if (remap.len == 0) {
                             const paths = [_]string{ path, field_rel_path };
-                            const new_path = r.fs.absAlloc(r.allocator, &paths) catch unreachable;
+                            const new_path = r.fs.absBuf(&paths, &remap_path_buf);
                             var _path = Path.init(new_path);
                             _path.is_disabled = true;
                             return MatchResult{
@@ -1814,7 +1973,7 @@ pub fn NewResolver(cache_files: bool) type {
                         }
 
                         const new_paths = [_]string{ path, remap };
-                        const remapped_abs = r.fs.absAlloc(r.allocator, &new_paths) catch unreachable;
+                        const remapped_abs = r.fs.absBuf(&new_paths, &remap_path_buf);
 
                         // Is this a file
                         if (r.loadAsFile(remapped_abs, extension_order)) |file_result| {
@@ -1833,7 +1992,7 @@ pub fn NewResolver(cache_files: bool) type {
                 }
             }
 
-            return r.loadAsIndex(dir_info, path, extension_order);
+            return r.loadAsIndex(dir_info, path_, extension_order);
         }
 
         pub fn loadAsFileOrDirectory(r: *ThisResolver, path: string, kind: ast.ImportKind) ?MatchResult {
@@ -2037,8 +2196,15 @@ pub fn NewResolver(cache_files: bool) type {
                     if (r.debug_logs) |*debug| {
                         debug.addNoteFmt("Found file \"{s}\" ", .{base}) catch {};
                     }
-                    const abs_path_parts = [_]string{ query.entry.dir, query.entry.base() };
-                    const abs_path = r.fs.dirname_store.append(string, r.fs.absBuf(&abs_path_parts, &TemporaryBuffer.ExtensionPathBuf)) catch unreachable;
+
+                    const abs_path = brk: {
+                        if (query.entry.abs_path.isEmpty()) {
+                            const abs_path_parts = [_]string{ query.entry.dir, query.entry.base() };
+                            query.entry.abs_path = PathString.init(r.fs.dirname_store.append(string, r.fs.absBuf(&abs_path_parts, &load_as_file_buf)) catch unreachable);
+                        }
+
+                        break :brk query.entry.abs_path.slice();
+                    };
 
                     return LoadResult{
                         .path = abs_path,
@@ -2050,9 +2216,9 @@ pub fn NewResolver(cache_files: bool) type {
             }
 
             // Try the path with extensions
-            std.mem.copy(u8, &TemporaryBuffer.ExtensionPathBuf, path);
+            std.mem.copy(u8, &load_as_file_buf, path);
             for (r.extension_order) |ext| {
-                var buffer = TemporaryBuffer.ExtensionPathBuf[0 .. path.len + ext.len];
+                var buffer = load_as_file_buf[0 .. path.len + ext.len];
                 std.mem.copy(u8, buffer[path.len..buffer.len], ext);
                 const file_name = buffer[path.len - base.len .. buffer.len];
 
@@ -2068,7 +2234,14 @@ pub fn NewResolver(cache_files: bool) type {
 
                         // now that we've found it, we allocate it.
                         return LoadResult{
-                            .path = r.fs.dirname_store.append(@TypeOf(buffer), buffer) catch unreachable,
+                            .path = brk: {
+                                query.entry.abs_path = if (query.entry.abs_path.isEmpty())
+                                    PathString.init(r.fs.dirname_store.append(@TypeOf(buffer), buffer) catch unreachable)
+                                else
+                                    query.entry.abs_path;
+
+                                break :brk query.entry.abs_path.slice();
+                            },
                             .diff_case = query.diff_case,
                             .dirname_fd = entries.fd,
                             .file_fd = query.entry.cache.fd,
@@ -2096,12 +2269,12 @@ pub fn NewResolver(cache_files: bool) type {
                 const ext = base[last_dot..base.len];
                 if (strings.eql(ext, ".js") or strings.eql(ext, ".jsx")) {
                     const segment = base[0..last_dot];
-                    std.mem.copy(u8, &TemporaryBuffer.ExtensionPathBuf, segment);
+                    std.mem.copy(u8, &load_as_file_buf, segment);
 
                     const exts = comptime [_]string{ ".ts", ".tsx" };
 
                     for (exts) |ext_to_replace| {
-                        var buffer = TemporaryBuffer.ExtensionPathBuf[0 .. segment.len + ext_to_replace.len];
+                        var buffer = load_as_file_buf[0 .. segment.len + ext_to_replace.len];
                         std.mem.copy(u8, buffer[segment.len..buffer.len], ext_to_replace);
 
                         if (entries.get(buffer)) |query| {
@@ -2111,7 +2284,14 @@ pub fn NewResolver(cache_files: bool) type {
                                 }
 
                                 return LoadResult{
-                                    .path = r.fs.dirname_store.append(@TypeOf(buffer), buffer) catch unreachable,
+                                    .path = brk: {
+                                        query.entry.abs_path = if (query.entry.abs_path.isEmpty())
+                                            PathString.init(r.fs.dirname_store.append(@TypeOf(buffer), buffer) catch unreachable)
+                                        else
+                                            query.entry.abs_path;
+
+                                        break :brk query.entry.abs_path.slice();
+                                    },
                                     .diff_case = query.diff_case,
                                     .dirname_fd = entries.fd,
                                     .file_fd = query.entry.cache.fd,
@@ -2169,8 +2349,10 @@ pub fn NewResolver(cache_files: bool) type {
             // base must
             if (base.len > 1 and base[base.len - 1] == std.fs.path.sep) base = base[0 .. base.len - 1];
 
+            info.is_node_modules = strings.eqlComptime(base, "node_modules");
+
             // if (entries != null) {
-            if (!strings.eqlComptime(base, "node_modules")) {
+            if (!info.is_node_modules) {
                 if (entries.getComptimeQuery("node_modules")) |entry| {
                     info.has_node_modules = (entry.entry.kind(rfs)) == .dir;
                 }
@@ -2181,6 +2363,8 @@ pub fn NewResolver(cache_files: bool) type {
 
                 // Propagate the browser scope into child directories
                 info.enclosing_browser_scope = parent.?.enclosing_browser_scope;
+                info.enclosing_package_json = parent.?.enclosing_package_json;
+                info.enclosing_tsconfig_json = parent.?.enclosing_tsconfig_json;
 
                 // Make sure "absRealPath" is the real path of the directory (resolving any symlinks)
                 if (!r.opts.preserve_symlinks) {
@@ -2198,11 +2382,12 @@ pub fn NewResolver(cache_files: bool) type {
                             } else if (parent.?.abs_real_path.len > 0) {
                                 // this might leak a little i'm not sure
                                 const parts = [_]string{ parent.?.abs_real_path, base };
-                                symlink = r.fs.dirname_store.append(string, r.fs.joinBuf(&parts, &dir_info_uncached_filename_buf)) catch unreachable;
+                                symlink = r.fs.dirname_store.append(string, r.fs.absBuf(&parts, &dir_info_uncached_filename_buf)) catch unreachable;
 
                                 if (r.debug_logs) |*logs| {
                                     try logs.addNote(std.fmt.allocPrint(r.allocator, "Resolved symlink \"{s}\" to \"{s}\"", .{ path, symlink }) catch unreachable);
                                 }
+                                lookup.entry.cache.symlink = PathString.init(symlink);
                                 info.abs_real_path = symlink;
                             }
                         }
@@ -2219,6 +2404,7 @@ pub fn NewResolver(cache_files: bool) type {
                     if (info.package_json) |pkg| {
                         if (pkg.browser_map.count() > 0) {
                             info.enclosing_browser_scope = result.index;
+                            info.enclosing_package_json = pkg;
                         }
 
                         if (r.debug_logs) |*logs| {
@@ -2269,11 +2455,8 @@ pub fn NewResolver(cache_files: bool) type {
                         }
                         break :brk null;
                     };
+                    info.enclosing_tsconfig_json = info.tsconfig_json;
                 }
-            }
-
-            if (info.tsconfig_json == null and parent != null) {
-                info.tsconfig_json = parent.?.tsconfig_json;
             }
         }
     };

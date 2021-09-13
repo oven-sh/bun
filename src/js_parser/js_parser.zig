@@ -59,6 +59,17 @@ pub fn locAfterOp(e: E.Binary) logger.Loc {
     }
 }
 const ExportsStringName = "exports";
+
+// We must prevent collisions from generated names.
+// We want to avoid adding a pass over all the symbols in the file.
+// To do that:
+// For every generated symbol, we reserve two backup symbol names
+// If any usages of the preferred ref, we swap original_name with the backup
+// If any usages of the backup ref, we swap original_name with the internal
+// We *assume* the internal name is never used.
+// In practice, it is possible. But, the internal names are so crazy long you'd have to be deliberately trying to use them.
+const GeneratedSymbol = @import("../runtime.zig").Runtime.GeneratedSymbol;
+
 pub const ImportScanner = struct {
     stmts: []Stmt = &([_]Stmt{}),
 
@@ -623,6 +634,47 @@ pub const ImportScanner = struct {
         scanner.stmts = stmts[0..stmts_end];
         return scanner;
     }
+};
+
+const StaticSymbolName = struct {
+    internal: string,
+    primary: string,
+    backup: string,
+
+    pub const List = struct {
+        fn NewStaticSymbol(comptime basename: string) StaticSymbolName {
+            return comptime StaticSymbolName{
+                .internal = basename ++ "_" ++ std.fmt.comptimePrint("{x}", .{std.hash.Wyhash.hash(0, basename)}),
+                .primary = basename,
+                .backup = "_" ++ basename ++ "$",
+            };
+        }
+
+        pub const jsx = NewStaticSymbol("jsx");
+        pub const jsxs = NewStaticSymbol("jsxs");
+        pub const ImportSource = NewStaticSymbol("JSX");
+        pub const ClassicImportSource = NewStaticSymbol("JSXClassic");
+        pub const jsxFilename = NewStaticSymbol("jsxFilename");
+        pub const Factory = NewStaticSymbol("createElement");
+        pub const Refresher = NewStaticSymbol("Refresher");
+        pub const Fragment = NewStaticSymbol("Fragment");
+
+        pub const __name = NewStaticSymbol("__name");
+        pub const __toModule = NewStaticSymbol("__toModule");
+        pub const __require = NewStaticSymbol("__require");
+        pub const __cJS2eSM = NewStaticSymbol("__cJS2eSM");
+        pub const __export = NewStaticSymbol("__export");
+        pub const __reExport = NewStaticSymbol("__reExport");
+        pub const __load = NewStaticSymbol("__load");
+        pub const @"$$lzy" = NewStaticSymbol("$$lzy");
+        pub const __HMRModule = NewStaticSymbol("__HMRModule");
+        pub const __HMRClient = NewStaticSymbol("__HMRClient");
+        pub const __FastRefreshModule = NewStaticSymbol("__FastRefreshModule");
+
+        pub const @"$$m" = NewStaticSymbol("$$m");
+
+        pub const hmr = NewStaticSymbol("hmr");
+    };
 };
 
 pub const SideEffects = enum(u2) {
@@ -1919,11 +1971,11 @@ pub const Parser = struct {
 
         // Auto-import JSX
         if (p.options.jsx.parse) {
-            const jsx_symbol: *const Symbol = &p.symbols.items[p.jsx_runtime_ref.inner_index];
-            const jsx_static_symbol: *const Symbol = &p.symbols.items[p.jsxs_runtime_ref.inner_index];
-            const jsx_fragment_symbol: *const Symbol = &p.symbols.items[p.jsx_fragment_ref.inner_index];
-            const jsx_factory_symbol: *const Symbol = &p.symbols.items[p.jsx_factory_ref.inner_index];
-            const jsx_filename_symbol: *const Symbol = &p.symbols.items[p.jsx_filename_ref.inner_index];
+            const jsx_symbol: *const Symbol = &p.symbols.items[p.jsx_runtime.ref.inner_index];
+            const jsx_static_symbol: *const Symbol = &p.symbols.items[p.jsxs_runtime.ref.inner_index];
+            const jsx_fragment_symbol: *const Symbol = &p.symbols.items[p.jsx_fragment.ref.inner_index];
+            const jsx_factory_symbol: *const Symbol = &p.symbols.items[p.jsx_factory.ref.inner_index];
+            const jsx_filename_symbol: *const Symbol = &p.symbols.items[p.jsx_filename.ref.inner_index];
 
             // Currently, React (and most node_modules) ship a CJS version or a UMD version
             // but we should assume that it'll pretty much always be CJS
@@ -1933,20 +1985,20 @@ pub const Parser = struct {
             // This is kind of a broken way of doing it because it wouldn't work if it was more than one level deep
             if (FeatureFlags.jsx_runtime_is_cjs) {
                 if (jsx_symbol.use_count_estimate > 0 or jsx_static_symbol.use_count_estimate > 0) {
-                    p.recordUsage(p.jsx_automatic_ref);
+                    p.recordUsage(p.jsx_automatic.ref);
                 }
 
                 if (jsx_fragment_symbol.use_count_estimate > 0) {
-                    p.recordUsage(p.jsx_classic_ref);
+                    p.recordUsage(p.jsx_classic.ref);
                 }
 
                 if (jsx_factory_symbol.use_count_estimate > 0) {
-                    p.recordUsage(p.jsx_classic_ref);
+                    p.recordUsage(p.jsx_classic.ref);
                 }
             }
 
-            const jsx_classic_symbol: Symbol = p.symbols.items[p.jsx_classic_ref.inner_index];
-            const jsx_automatic_symbol: Symbol = p.symbols.items[p.jsx_automatic_ref.inner_index];
+            const jsx_classic_symbol: *const Symbol = &p.symbols.items[p.jsx_classic.ref.inner_index];
+            const jsx_automatic_symbol: *const Symbol = &p.symbols.items[p.jsx_automatic.ref.inner_index];
 
             // JSX auto-imports
             // The classic runtime is a different import than the main import
@@ -1955,8 +2007,9 @@ pub const Parser = struct {
             // 2. If you use a React.Fragment
             // So we have to support both.
             if (jsx_classic_symbol.use_count_estimate > 0 or jsx_automatic_symbol.use_count_estimate > 0) {
-                const classic_namespace_ref = p.jsx_classic_ref;
-                const automatic_namespace_ref = p.jsx_automatic_ref;
+                p.resolveStaticJSXSymbols();
+                const classic_namespace_ref = p.jsx_classic.ref;
+                const automatic_namespace_ref = p.jsx_automatic.ref;
 
                 const decls_count: u32 =
                     @intCast(u32, @boolToInt(jsx_symbol.use_count_estimate > 0)) * 2 + @intCast(u32, @boolToInt(jsx_static_symbol.use_count_estimate > 0)) * 2 +
@@ -1987,8 +2040,8 @@ pub const Parser = struct {
                 if (jsx_symbol.use_count_estimate > 0 or jsx_static_symbol.use_count_estimate > 0) {
                     if (jsx_automatic_symbol.use_count_estimate > 0) {
                         if (jsx_automatic_symbol.link != null) {
-                            p.symbols.items[p.jsx_automatic_ref.inner_index].link = null;
-                            p.symbols.items[p.jsx_automatic_ref.inner_index].original_name = try std.fmt.allocPrint(
+                            p.symbols.items[p.jsx_automatic.ref.inner_index].link = null;
+                            p.symbols.items[p.jsx_automatic.ref.inner_index].original_name = try std.fmt.allocPrint(
                                 p.allocator,
                                 "jsxImport{x}",
                                 .{
@@ -2013,24 +2066,13 @@ pub const Parser = struct {
                     };
 
                     if (jsx_symbol.use_count_estimate > 0) {
-                        if (jsx_symbol.link != null) {
-                            p.symbols.items[p.jsx_runtime_ref.inner_index].link = null;
-                            p.symbols.items[p.jsx_runtime_ref.inner_index].original_name = try std.fmt.allocPrint(
-                                p.allocator,
-                                "jsx_{x}",
-                                .{
-                                    @truncate(u16, std.hash.Wyhash.hash(0, p.options.jsx.import_source)),
-                                },
-                            );
-                        }
-
-                        declared_symbols[declared_symbols_i] = .{ .ref = p.jsx_runtime_ref, .is_top_level = true };
+                        declared_symbols[declared_symbols_i] = .{ .ref = p.jsx_runtime.ref, .is_top_level = true };
                         declared_symbols_i += 1;
 
                         decls[decl_i] = G.Decl{
                             .binding = p.b(
                                 B.Identifier{
-                                    .ref = p.jsx_runtime_ref,
+                                    .ref = p.jsx_runtime.ref,
                                 },
                                 loc,
                             ),
@@ -2048,24 +2090,13 @@ pub const Parser = struct {
                     }
 
                     if (jsx_static_symbol.use_count_estimate > 0) {
-                        if (jsx_static_symbol.link != null) {
-                            p.symbols.items[p.jsxs_runtime_ref.inner_index].link = null;
-                            p.symbols.items[p.jsxs_runtime_ref.inner_index].original_name = try std.fmt.allocPrint(
-                                p.allocator,
-                                "jsxs_{x}",
-                                .{
-                                    @truncate(u16, std.hash.Wyhash.hash(0, p.options.jsx.import_source)),
-                                },
-                            );
-                        }
-
-                        declared_symbols[declared_symbols_i] = .{ .ref = p.jsxs_runtime_ref, .is_top_level = true };
+                        declared_symbols[declared_symbols_i] = .{ .ref = p.jsxs_runtime.ref, .is_top_level = true };
                         declared_symbols_i += 1;
 
                         decls[decl_i] = G.Decl{
                             .binding = p.b(
                                 B.Identifier{
-                                    .ref = p.jsxs_runtime_ref,
+                                    .ref = p.jsxs_runtime.ref,
                                 },
                                 loc,
                             ),
@@ -2084,21 +2115,12 @@ pub const Parser = struct {
                     }
 
                     if (jsx_filename_symbol.use_count_estimate > 0) {
-                        if (jsx_filename_symbol.link != null) {
-                            p.symbols.items[p.jsx_filename_ref.inner_index].link = null;
-                            p.symbols.items[p.jsx_filename_ref.inner_index].original_name = try std.fmt.allocPrint(
-                                p.allocator,
-                                "jsxFilename_{x}",
-                                .{@truncate(u16, std.hash.Wyhash.hash(0, p.options.jsx.import_source))},
-                            );
-                        }
-
-                        declared_symbols[declared_symbols_i] = .{ .ref = p.jsx_filename_ref, .is_top_level = true };
+                        declared_symbols[declared_symbols_i] = .{ .ref = p.jsx_filename.ref, .is_top_level = true };
                         declared_symbols_i += 1;
                         decls[decl_i] = G.Decl{
                             .binding = p.b(
                                 B.Identifier{
-                                    .ref = p.jsx_filename_ref,
+                                    .ref = p.jsx_filename.ref,
                                 },
                                 loc,
                             ),
@@ -2137,14 +2159,6 @@ pub const Parser = struct {
                 }
 
                 if (jsx_classic_symbol.use_count_estimate > 0) {
-                    if (jsx_classic_symbol.link != null) {
-                        p.symbols.items[p.jsx_classic_ref.inner_index].link = null;
-                        p.symbols.items[p.jsx_classic_ref.inner_index].original_name = try std.fmt.allocPrint(p.allocator, "{s}${x}", .{
-                            p.symbols.items[p.jsx_classic_ref.inner_index].original_name,
-                            jsx_classic_symbol.use_count_estimate,
-                        });
-                    }
-
                     const classic_identifier = p.e(E.Identifier{ .ref = classic_namespace_ref }, loc);
 
                     const dot_call_target = brk: {
@@ -2160,20 +2174,12 @@ pub const Parser = struct {
                     };
 
                     if (jsx_factory_symbol.use_count_estimate > 0) {
-                        if (jsx_factory_symbol.link != null) {
-                            p.symbols.items[p.jsx_factory_ref.inner_index].link = null;
-                            p.symbols.items[p.jsx_factory_ref.inner_index].original_name = try std.fmt.allocPrint(p.allocator, "{s}${x}", .{
-                                p.symbols.items[p.jsx_factory_ref.inner_index].original_name,
-                                jsx_factory_symbol.use_count_estimate,
-                            });
-                        }
-
-                        declared_symbols[declared_symbols_i] = .{ .ref = p.jsx_factory_ref, .is_top_level = true };
+                        declared_symbols[declared_symbols_i] = .{ .ref = p.jsx_factory.ref, .is_top_level = true };
                         declared_symbols_i += 1;
                         decls[decl_i] = G.Decl{
                             .binding = p.b(
                                 B.Identifier{
-                                    .ref = p.jsx_factory_ref,
+                                    .ref = p.jsx_factory.ref,
                                 },
                                 loc,
                             ),
@@ -2191,20 +2197,12 @@ pub const Parser = struct {
                     }
 
                     if (jsx_fragment_symbol.use_count_estimate > 0) {
-                        if (jsx_fragment_symbol.link != null) {
-                            p.symbols.items[p.jsx_fragment_ref.inner_index].link = null;
-                            p.symbols.items[p.jsx_fragment_ref.inner_index].original_name = try std.fmt.allocPrint(p.allocator, "{s}${x}", .{
-                                p.symbols.items[p.jsx_fragment_ref.inner_index].original_name,
-                                jsx_fragment_symbol.use_count_estimate,
-                            });
-                        }
-
-                        declared_symbols[declared_symbols_i] = .{ .ref = p.jsx_fragment_ref, .is_top_level = true };
+                        declared_symbols[declared_symbols_i] = .{ .ref = p.jsx_fragment.ref, .is_top_level = true };
                         declared_symbols_i += 1;
                         decls[decl_i] = G.Decl{
                             .binding = p.b(
                                 B.Identifier{
-                                    .ref = p.jsx_fragment_ref,
+                                    .ref = p.jsx_fragment.ref,
                                 },
                                 loc,
                             ),
@@ -2246,21 +2244,15 @@ pub const Parser = struct {
 
                 if (p.options.features.react_fast_refresh) {
                     defer did_import_fast_refresh = true;
-                    const refresh_runtime_symbol: *const Symbol = &p.symbols.items[p.jsx_refresh_runtime_ref.inner_index];
-                    if (refresh_runtime_symbol.link != null) {
-                        p.symbols.items[p.jsx_refresh_runtime_ref.inner_index].link = null;
-                        p.symbols.items[p.jsx_refresh_runtime_ref.inner_index].original_name = try std.fmt.allocPrint(p.allocator, "{s}${x}", .{
-                            p.symbols.items[p.jsx_refresh_runtime_ref.inner_index].original_name,
-                            refresh_runtime_symbol.use_count_estimate,
-                        });
-                    }
+                    p.resolveGeneratedSymbol(&p.jsx_refresh_runtime);
+                    const refresh_runtime_symbol: *const Symbol = &p.symbols.items[p.jsx_refresh_runtime.ref.inner_index];
 
-                    declared_symbols[declared_symbols_i] = .{ .ref = p.jsx_refresh_runtime_ref, .is_top_level = true };
+                    declared_symbols[declared_symbols_i] = .{ .ref = p.jsx_refresh_runtime.ref, .is_top_level = true };
                     declared_symbols_i += 1;
 
                     const import_record_id = p.addImportRecord(.require, loc, p.options.jsx.refresh_runtime);
                     jsx_part_stmts[stmt_i] = p.s(S.Import{
-                        .namespace_ref = p.jsx_refresh_runtime_ref,
+                        .namespace_ref = p.jsx_refresh_runtime.ref,
                         .star_name_loc = loc,
                         .is_single_line = true,
                         .import_record_index = import_record_id,
@@ -2268,18 +2260,18 @@ pub const Parser = struct {
 
                     stmt_i += 1;
                     p.named_imports.put(
-                        p.jsx_refresh_runtime_ref,
+                        p.jsx_refresh_runtime.ref,
                         js_ast.NamedImport{
                             .alias = refresh_runtime_symbol.original_name,
                             .alias_is_star = true,
                             .alias_loc = loc,
-                            .namespace_ref = p.jsx_refresh_runtime_ref,
+                            .namespace_ref = p.jsx_refresh_runtime.ref,
                             .import_record_index = import_record_id,
                         },
                     ) catch unreachable;
-                    p.is_import_item.put(p.jsx_refresh_runtime_ref, true) catch unreachable;
+                    p.is_import_item.put(p.jsx_refresh_runtime.ref, true) catch unreachable;
                     import_records[import_record_i] = import_record_id;
-                    p.recordUsage(p.jsx_refresh_runtime_ref);
+                    p.recordUsage(p.jsx_refresh_runtime.ref);
                 }
 
                 jsx_part_stmts[stmt_i] = p.s(S.Local{ .kind = .k_var, .decls = decls[0..decl_i] }, loc);
@@ -2296,41 +2288,36 @@ pub const Parser = struct {
         }
 
         if (!did_import_fast_refresh and p.options.features.react_fast_refresh) {
+            p.resolveGeneratedSymbol(&p.jsx_refresh_runtime);
+
             std.debug.assert(!p.options.enable_bundling);
             var declared_symbols = try p.allocator.alloc(js_ast.DeclaredSymbol, 1);
             const loc = logger.Loc.Empty;
             const import_record_id = p.addImportRecord(.require, loc, p.options.jsx.refresh_runtime);
             var import_stmt = p.s(S.Import{
-                .namespace_ref = p.jsx_refresh_runtime_ref,
+                .namespace_ref = p.jsx_refresh_runtime.ref,
                 .star_name_loc = loc,
                 .is_single_line = true,
                 .import_record_index = import_record_id,
             }, loc);
 
-            p.recordUsage(p.jsx_refresh_runtime_ref);
-            const refresh_runtime_symbol: *const Symbol = &p.symbols.items[p.jsx_refresh_runtime_ref.inner_index];
-            if (refresh_runtime_symbol.link != null) {
-                p.symbols.items[p.jsx_refresh_runtime_ref.inner_index].link = null;
-                p.symbols.items[p.jsx_refresh_runtime_ref.inner_index].original_name = try std.fmt.allocPrint(p.allocator, "{s}${x}", .{
-                    p.symbols.items[p.jsx_refresh_runtime_ref.inner_index].original_name,
-                    refresh_runtime_symbol.use_count_estimate,
-                });
-            }
+            p.recordUsage(p.jsx_refresh_runtime.ref);
+            const refresh_runtime_symbol: *const Symbol = &p.symbols.items[p.jsx_refresh_runtime.ref.inner_index];
 
             p.named_imports.put(
-                p.jsx_refresh_runtime_ref,
+                p.jsx_refresh_runtime.ref,
                 js_ast.NamedImport{
                     .alias = refresh_runtime_symbol.original_name,
                     .alias_is_star = true,
                     .alias_loc = loc,
-                    .namespace_ref = p.jsx_refresh_runtime_ref,
+                    .namespace_ref = p.jsx_refresh_runtime.ref,
                     .import_record_index = import_record_id,
                 },
             ) catch unreachable;
-            p.is_import_item.put(p.jsx_refresh_runtime_ref, true) catch unreachable;
+            p.is_import_item.put(p.jsx_refresh_runtime.ref, true) catch unreachable;
             var import_records = try p.allocator.alloc(@TypeOf(import_record_id), 1);
             import_records[0] = import_record_id;
-            declared_symbols[0] = .{ .ref = p.jsx_refresh_runtime_ref, .is_top_level = true };
+            declared_symbols[0] = .{ .ref = p.jsx_refresh_runtime.ref, .is_top_level = true };
             var part_stmts = try p.allocator.alloc(Stmt, 1);
             part_stmts[0] = import_stmt;
 
@@ -2342,6 +2329,8 @@ pub const Parser = struct {
             }) catch unreachable;
         }
 
+        if (p.options.enable_bundling) p.resolveBundlingSymbols();
+
         var runtime_imports_iter = p.runtime_imports.iter();
         const has_cjs_imports = p.cjs_import_stmts.items.len > 0 and p.options.transform_require_to_import;
         // - don't import runtime if we're bundling, it's already included
@@ -2349,6 +2338,8 @@ pub const Parser = struct {
         // - when HMR is not enabled, we only need any runtime imports if we're importing require()
         if (!p.options.enable_bundling and (p.has_called_runtime or p.options.features.hot_module_reloading or has_cjs_imports)) {
             const before_start = before.items.len;
+            if (p.options.features.hot_module_reloading) p.resolveHMRSymbols();
+
             while (runtime_imports_iter.next()) |entry| {
                 const imports = [_]u16{entry.key};
                 p.generateImportStmt(
@@ -2682,17 +2673,11 @@ pub fn NewParser(
         scopes_in_order_visitor_index: usize = 0,
         has_classic_runtime_warned: bool = false,
 
-        hmr_module_ref: js_ast.Ref = js_ast.Ref.None,
-        hmr_activate_ref: js_ast.Ref = js_ast.Ref.None,
-        hmr_client_ref: js_ast.Ref = js_ast.Ref.None,
-        hmr_module_class_ref: js_ast.Ref = js_ast.Ref.None,
-        hmr_exports_list: std.ArrayList(js_ast.ClauseItem),
+        hmr_module: GeneratedSymbol = GeneratedSymbol{ .primary = Ref.None, .backup = Ref.None, .ref = Ref.None },
 
         has_called_runtime: bool = false,
 
         cjs_import_stmts: std.ArrayList(Stmt),
-
-        bundle_export_ref: ?Ref = null,
 
         injected_define_symbols: List(Ref),
         symbol_uses: SymbolUseMap,
@@ -2734,18 +2719,15 @@ pub fn NewParser(
         // "visit" pass.
         enclosing_namespace_arg_ref: ?js_ast.Ref = null,
 
-        jsx_filename_ref: js_ast.Ref = Ref.None,
-        jsx_runtime_ref: js_ast.Ref = Ref.None,
-        jsx_factory_ref: js_ast.Ref = Ref.None,
-        jsx_fragment_ref: js_ast.Ref = Ref.None,
-        jsx_automatic_ref: js_ast.Ref = Ref.None,
-        jsxs_runtime_ref: js_ast.Ref = Ref.None,
-        jsx_classic_ref: js_ast.Ref = Ref.None,
-
+        jsx_filename: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
+        jsx_runtime: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
+        jsx_factory: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
+        jsx_fragment: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
+        jsx_automatic: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
+        jsxs_runtime: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
+        jsx_classic: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
         // only applicable when is_react_fast_refresh_enabled
-        jsx_refresh_runtime_ref: js_ast.Ref = Ref.None,
-
-        jsx_source_list_ref: js_ast.Ref = Ref.None,
+        jsx_refresh_runtime: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
 
         // Imports (both ES6 and CommonJS) are tracked at the top level
         import_records: ImportRecordList,
@@ -2965,15 +2947,21 @@ pub fn NewParser(
                         return p.e(E.Require{ .import_record_index = import_record_index }, arg.loc);
                     }
 
-                    const suffix = "_module";
-                    var base_identifier_name = fs.PathName.init(original_name).nonUniqueNameString(p.allocator) catch unreachable;
-                    var cjs_import_name = p.allocator.alloc(u8, base_identifier_name.len + suffix.len) catch unreachable;
-                    std.mem.copy(
-                        u8,
-                        cjs_import_name,
-                        base_identifier_name,
-                    );
-                    std.mem.copy(u8, cjs_import_name[base_identifier_name.len..], suffix);
+                    const cjs_import_name = std.fmt.allocPrint(
+                        p.allocator,
+                        "{s}_{x}_{d}",
+                        .{
+                            original_name,
+                            @truncate(
+                                u16,
+                                std.hash.Wyhash.hash(
+                                    0,
+                                    p.import_records.items[import_record_index].path.text,
+                                ),
+                            ),
+                            p.cjs_import_stmts.items.len,
+                        },
+                    ) catch unreachable;
 
                     const namespace_ref = p.declareSymbol(.hoisted, arg.loc, cjs_import_name) catch unreachable;
 
@@ -3511,74 +3499,98 @@ pub fn NewParser(
                 if (p.options.jsx.development) generated_symbols_count += 1;
             }
 
-            try p.module_scope.generated.ensureUnusedCapacity(generated_symbols_count);
+            try p.module_scope.generated.ensureUnusedCapacity(generated_symbols_count * 3);
+            try p.module_scope.members.ensureCapacity(generated_symbols_count * 3 + p.module_scope.members.count());
 
             p.exports_ref = try p.declareCommonJSSymbol(.unbound, "exports");
             p.module_ref = try p.declareCommonJSSymbol(.unbound, "module");
             p.require_ref = try p.declareCommonJSSymbol(.unbound, "require");
 
             if (p.options.enable_bundling) {
-                p.bundle_export_ref = try p.declareGeneratedSymbol(.other, "IF_YOU_SEE_THIS_ITS_A_BUNDLER_BUG_PLEASE_FILE_AN_ISSUE_THX");
                 p.runtime_imports.__reExport = try p.declareGeneratedSymbol(.other, "__reExport");
-                p.runtime_imports.register = try p.declareGeneratedSymbol(.other, "$$m");
-                p.runtime_imports.lazy_export = try p.declareGeneratedSymbol(.other, "$$lzy");
+                p.runtime_imports.@"$$m" = try p.declareGeneratedSymbol(.other, "$$m");
+                p.recordUsage(p.runtime_imports.@"$$m".?.ref);
+                p.runtime_imports.@"$$lzy" = try p.declareGeneratedSymbol(.other, "$$lzy");
 
-                p.runtime_imports.__export = p.exports_ref;
+                p.runtime_imports.__export = GeneratedSymbol{ .ref = p.exports_ref, .primary = Ref.None, .backup = Ref.None };
             }
 
             if (p.options.features.hot_module_reloading) {
-                p.hmr_module_ref = try p.declareGeneratedSymbol(.other, "__hmrModule");
+                p.hmr_module = try p.declareGeneratedSymbol(.other, "hmr");
                 if (is_react_fast_refresh_enabled) {
-                    p.jsx_refresh_runtime_ref = try p.declareGeneratedSymbol(.other, "__RefreshRuntime");
+                    p.jsx_refresh_runtime = try p.declareGeneratedSymbol(.other, "Refresher");
 
                     p.runtime_imports.__FastRefreshModule = try p.declareGeneratedSymbol(.other, "__FastRefreshModule");
-                    p.recordUsage(p.runtime_imports.__FastRefreshModule.?);
+                    p.recordUsage(p.runtime_imports.__FastRefreshModule.?.ref);
                 } else {
                     p.runtime_imports.__HMRModule = try p.declareGeneratedSymbol(.other, "__HMRModule");
-                    p.recordUsage(p.runtime_imports.__HMRModule.?);
+                    p.recordUsage(p.runtime_imports.__HMRModule.?.ref);
                 }
 
                 p.runtime_imports.__HMRClient = try p.declareGeneratedSymbol(.other, "__HMRClient");
-                p.recordUsage(p.hmr_module_ref);
-                p.recordUsage(p.runtime_imports.__HMRClient.?);
+                p.recordUsage(p.hmr_module.ref);
+                p.recordUsage(p.runtime_imports.__HMRClient.?.ref);
             } else {
-                p.runtime_imports.__export = p.exports_ref;
-                p.runtime_imports.__require = p.require_ref;
+                p.runtime_imports.__export = GeneratedSymbol{ .ref = p.exports_ref, .primary = Ref.None, .backup = Ref.None };
+                p.runtime_imports.__require = GeneratedSymbol{ .ref = p.require_ref, .primary = Ref.None, .backup = Ref.None };
             }
 
             if (is_jsx_enabled) {
                 if (p.options.jsx.development) {
-                    p.jsx_filename_ref = p.declareGeneratedSymbol(.other, Prefill.Runtime.JSXFilename) catch unreachable;
+                    p.jsx_filename = p.declareGeneratedSymbol(.other, "jsxFilename") catch unreachable;
                 }
-                p.jsx_fragment_ref = p.declareGeneratedSymbol(.other, p.options.jsx.fragment[p.options.jsx.fragment.len - 1]) catch unreachable;
-                p.jsx_runtime_ref = p.declareGeneratedSymbol(.other, Prefill.Runtime.JSXShortname) catch unreachable;
-                p.jsxs_runtime_ref = p.declareGeneratedSymbol(.other, p.options.jsx.jsx_static) catch unreachable;
-                p.jsx_factory_ref = p.declareGeneratedSymbol(.other, p.options.jsx.factory[p.options.jsx.factory.len - 1]) catch unreachable;
+                p.jsx_fragment = p.declareGeneratedSymbol(.other, "Fragment") catch unreachable;
+                p.jsx_runtime = p.declareGeneratedSymbol(.other, "jsx") catch unreachable;
+                p.jsxs_runtime = p.declareGeneratedSymbol(.other, "jsxs") catch unreachable;
+                p.jsx_factory = p.declareGeneratedSymbol(.other, "Factory") catch unreachable;
 
                 if (p.options.jsx.factory.len > 1 or FeatureFlags.jsx_runtime_is_cjs) {
-                    p.jsx_classic_ref = p.declareGeneratedSymbol(.other, JSXFactoryName) catch unreachable;
+                    p.jsx_classic = p.declareGeneratedSymbol(.other, "ClassicImportSource") catch unreachable;
                 }
 
                 if (p.options.jsx.import_source.len > 0) {
-                    var jsx_symbol_name: string = JSXAutomaticName;
-                    // try to do:
-                    // var jsx = react.jsxDEV;
-                    // var jsx = emotion.jsxDEV;
-                    if (isPackagePath(p.options.jsx.import_source)) {
-                        var basename = p.options.jsx.import_source;
-                        basename = if (basename[0] == '@') basename[1..] else basename;
-                        if (strings.indexOfChar(basename, '/')) |path_end| {
-                            if (basename[0..path_end].len > 0) {
-                                if (js_lexer.isIdentifier(basename[0..path_end])) {
-                                    jsx_symbol_name = basename[0..path_end];
-                                }
-                            }
-                        }
-                    }
-
-                    p.jsx_automatic_ref = p.declareGeneratedSymbol(.other, jsx_symbol_name) catch unreachable;
+                    p.jsx_automatic = p.declareGeneratedSymbol(.other, "ImportSource") catch unreachable;
                 }
             }
+        }
+
+        // This won't work for adversarial cases
+        pub fn resolveGeneratedSymbol(p: *P, generated_symbol: *GeneratedSymbol) void {
+            if (generated_symbol.ref.isNull()) return;
+
+            if (p.symbols.items[generated_symbol.ref.inner_index].use_count_estimate == 0) {
+                return;
+            }
+
+            if (p.symbols.items[generated_symbol.primary.inner_index].use_count_estimate == 0 and p.symbols.items[generated_symbol.primary.inner_index].link == null) {
+                p.symbols.items[generated_symbol.ref.inner_index].original_name = p.symbols.items[generated_symbol.primary.inner_index].original_name;
+            }
+
+            if (p.symbols.items[generated_symbol.backup.inner_index].use_count_estimate == 0 and p.symbols.items[generated_symbol.backup.inner_index].link == null) {
+                p.symbols.items[generated_symbol.ref.inner_index].original_name = p.symbols.items[generated_symbol.backup.inner_index].original_name;
+            }
+        }
+
+        pub fn resolveBundlingSymbols(p: *P) void {
+            p.resolveGeneratedSymbol(&p.runtime_imports.__reExport.?);
+            p.resolveGeneratedSymbol(&p.runtime_imports.@"$$m".?);
+            p.resolveGeneratedSymbol(&p.runtime_imports.@"$$lzy".?);
+        }
+
+        pub fn resolveHMRSymbols(p: *P) void {
+            p.resolveGeneratedSymbol(&p.hmr_module);
+            if (p.runtime_imports.__FastRefreshModule != null) p.resolveGeneratedSymbol(&p.runtime_imports.__FastRefreshModule.?);
+            if (p.runtime_imports.__HMRModule != null) p.resolveGeneratedSymbol(&p.runtime_imports.__HMRModule.?);
+            if (p.runtime_imports.__HMRClient != null) p.resolveGeneratedSymbol(&p.runtime_imports.__HMRClient.?);
+        }
+
+        pub fn resolveStaticJSXSymbols(p: *P) void {
+            p.resolveGeneratedSymbol(&p.jsx_runtime);
+            p.resolveGeneratedSymbol(&p.jsxs_runtime);
+            p.resolveGeneratedSymbol(&p.jsx_factory);
+            p.resolveGeneratedSymbol(&p.jsx_classic);
+            p.resolveGeneratedSymbol(&p.jsx_automatic);
+            p.resolveGeneratedSymbol(&p.jsx_filename);
         }
 
         fn hoistSymbols(p: *P, scope: *js_ast.Scope) void {
@@ -7444,8 +7456,13 @@ pub fn NewParser(
             return ref;
         }
 
-        fn declareGeneratedSymbol(p: *P, kind: Symbol.Kind, name: string) !Ref {
-            return try declareSymbolMaybeGenerated(p, kind, logger.Loc.Empty, name, true);
+        fn declareGeneratedSymbol(p: *P, kind: Symbol.Kind, comptime name: string) !GeneratedSymbol {
+            const static = @field(StaticSymbolName.List, name);
+            return GeneratedSymbol{
+                .ref = try declareSymbolMaybeGenerated(p, kind, logger.Loc.Empty, static.internal, true),
+                .primary = try declareSymbolMaybeGenerated(p, .hoisted, logger.Loc.Empty, static.primary, true),
+                .backup = try declareSymbolMaybeGenerated(p, .hoisted, logger.Loc.Empty, static.backup, true),
+            };
         }
 
         fn declareSymbol(p: *P, kind: Symbol.Kind, loc: logger.Loc, name: string) !Ref {
@@ -10787,7 +10804,7 @@ pub fn NewParser(
                         if (e_.tag) |_tag| {
                             break :tagger p.visitExpr(_tag);
                         } else {
-                            break :tagger p.jsxStringsToMemberExpression(expr.loc, p.jsx_fragment_ref);
+                            break :tagger p.jsxStringsToMemberExpression(expr.loc, p.jsx_fragment.ref);
                         }
                     };
 
@@ -10810,9 +10827,7 @@ pub fn NewParser(
 
                     const is_childless_tag = FeatureFlags.react_specific_warnings and children_count > 0 and tag.data == .e_string and tag.data.e_string.isUTF8() and js_lexer.ChildlessJSXTags.has(tag.data.e_string.utf8);
 
-                    if (is_childless_tag) {
-                        children_count = 0;
-                    }
+                    children_count = if (is_childless_tag) 0 else children_count;
 
                     if (children_count != e_.children.len) {
                         // Error: meta is a void element tag and must neither have `children` nor use `dangerouslySetInnerHTML`.
@@ -10863,7 +10878,7 @@ pub fn NewParser(
 
                             // Call createElement()
                             return p.e(E.Call{
-                                .target = p.jsxStringsToMemberExpression(expr.loc, p.jsx_factory_ref),
+                                .target = p.jsxStringsToMemberExpression(expr.loc, p.jsx_factory.ref),
                                 .args = args[0..i],
                                 // Enable tree shaking
                                 .can_be_unwrapped_if_unused = !p.options.ignore_dce_annotations,
@@ -10953,10 +10968,10 @@ pub fn NewParser(
                                 };
 
                                 var source = p.allocator.alloc(G.Property, 2) catch unreachable;
-                                p.recordUsage(p.jsx_filename_ref);
+                                p.recordUsage(p.jsx_filename.ref);
                                 source[0] = G.Property{
                                     .key = Expr{ .loc = expr.loc, .data = Prefill.Data.Filename },
-                                    .value = p.e(E.Identifier{ .ref = p.jsx_filename_ref }, expr.loc),
+                                    .value = p.e(E.Identifier{ .ref = p.jsx_filename.ref }, expr.loc),
                                 };
 
                                 source[1] = G.Property{
@@ -12112,7 +12127,7 @@ pub fn NewParser(
         }
 
         fn jsxStringsToMemberExpressionAutomatic(p: *P, loc: logger.Loc, is_static: bool) Expr {
-            return p.jsxStringsToMemberExpression(loc, if (is_static and !p.options.jsx.development) p.jsxs_runtime_ref else p.jsx_runtime_ref);
+            return p.jsxStringsToMemberExpression(loc, if (is_static and !p.options.jsx.development) p.jsxs_runtime.ref else p.jsx_runtime.ref);
         }
 
         // If we are currently in a hoisted child of the module scope, relocate these
@@ -13724,9 +13739,10 @@ pub fn NewParser(
             p.has_called_runtime = true;
 
             if (!p.runtime_imports.contains(name)) {
-                ref = p.newSymbol(.other, name) catch unreachable;
+                const generated_symbol = p.declareGeneratedSymbol(.other, name) catch unreachable;
+                ref = generated_symbol.ref;
                 p.module_scope.generated.append(ref) catch unreachable;
-                p.runtime_imports.put(name, ref);
+                p.runtime_imports.put(name, generated_symbol);
             } else {
                 ref = p.runtime_imports.at(name).?;
             }
@@ -14286,20 +14302,20 @@ pub fn NewParser(
                 const new_call_args_count: usize = comptime if (is_react_fast_refresh_enabled) 3 else 2;
                 var call_args = try p.allocator.alloc(Expr, new_call_args_count + 1);
                 var new_call_args = call_args[0..new_call_args_count];
-                var hmr_module_ident = p.e(E.Identifier{ .ref = p.hmr_module_ref }, logger.Loc.Empty);
+                var hmr_module_ident = p.e(E.Identifier{ .ref = p.hmr_module.ref }, logger.Loc.Empty);
 
                 new_call_args[0] = p.e(E.Number{ .value = @intToFloat(f64, p.options.filepath_hash_for_hmr) }, logger.Loc.Empty);
                 // This helps us provide better error messages
                 new_call_args[1] = p.e(E.String{ .utf8 = p.source.path.pretty }, logger.Loc.Empty);
                 if (is_react_fast_refresh_enabled) {
-                    new_call_args[2] = p.e(E.Identifier{ .ref = p.jsx_refresh_runtime_ref }, logger.Loc.Empty);
+                    new_call_args[2] = p.e(E.Identifier{ .ref = p.jsx_refresh_runtime.ref }, logger.Loc.Empty);
                 }
                 var exports_dot = p.e(E.Dot{
                     .target = hmr_module_ident,
                     .name = ExportsStringName,
                     .name_loc = logger.Loc.Empty,
                 }, logger.Loc.Empty);
-                var hmr_module_class_ident = p.e(E.Identifier{ .ref = p.runtime_imports.__HMRClient.? }, logger.Loc.Empty);
+                var hmr_module_class_ident = p.e(E.Identifier{ .ref = p.runtime_imports.__HMRClient.?.ref }, logger.Loc.Empty);
                 var toplevel_stmts_i: u8 = 0;
                 // HMRClient.activate(true)
                 toplevel_stmts[toplevel_stmts_i] = p.s(
@@ -14321,15 +14337,18 @@ pub fn NewParser(
                 var first_decl = decls[0..2];
                 // We cannot rely on import.meta.url because if we import it within a blob: url, it will be nonsensical
                 // var __hmrModule = new HMRModule(123123124, "/index.js"), __exports = __hmrModule.exports;
-                const hmr_import_ref = if (comptime is_react_fast_refresh_enabled) p.runtime_imports.__FastRefreshModule else p.runtime_imports.__HMRModule;
+                const hmr_import_ref = (if (comptime is_react_fast_refresh_enabled)
+                    p.runtime_imports.__FastRefreshModule.?
+                else
+                    p.runtime_imports.__HMRModule.?).ref;
 
                 first_decl[0] = G.Decl{
-                    .binding = p.b(B.Identifier{ .ref = p.hmr_module_ref }, logger.Loc.Empty),
+                    .binding = p.b(B.Identifier{ .ref = p.hmr_module.ref }, logger.Loc.Empty),
                     .value = p.e(E.New{
                         .args = new_call_args,
                         .target = p.e(
                             E.Identifier{
-                                .ref = hmr_import_ref.?,
+                                .ref = hmr_import_ref,
                             },
                             logger.Loc.Empty,
                         ),
@@ -14338,7 +14357,7 @@ pub fn NewParser(
                 first_decl[1] = G.Decl{
                     .binding = p.b(B.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty),
                     .value = p.e(E.Dot{
-                        .target = p.e(E.Identifier{ .ref = p.hmr_module_ref }, logger.Loc.Empty),
+                        .target = p.e(E.Identifier{ .ref = p.hmr_module.ref }, logger.Loc.Empty),
                         .name = "exports",
                         .name_loc = logger.Loc.Empty,
                     }, logger.Loc.Empty),
@@ -14632,7 +14651,6 @@ pub fn NewParser(
                 .named_exports = p.named_exports,
                 .import_keyword = p.es6_import_keyword,
                 .export_keyword = p.es6_export_keyword,
-                .bundle_export_ref = p.bundle_export_ref,
                 .require_ref = p.require_ref,
 
                 .uses_module_ref = (p.symbols.items[p.module_ref.inner_index].use_count_estimate > 0),
@@ -14714,7 +14732,6 @@ pub fn NewParser(
 
                 .needs_jsx_import = if (comptime only_scan_imports_and_do_not_visit) false else NeedsJSXType{},
                 .lexer = lexer,
-                .hmr_exports_list = @TypeOf(this.hmr_exports_list).init(allocator),
             };
 
             if (comptime !only_scan_imports_and_do_not_visit) {

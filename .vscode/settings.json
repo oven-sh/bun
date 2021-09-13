@@ -118,5 +118,7 @@
     "set": "cpp",
     "__memory": "cpp",
     "memory_resource": "cpp"
-  }
+  },
+  "go.logging.level": "off",
+  "cmake.configureOnOpen": false
 }

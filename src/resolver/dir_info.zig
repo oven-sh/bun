@@ -15,13 +15,21 @@ parent: Index = allocators.NotFound,
 // A pointer to the enclosing dirInfo with a valid "browser" field in
 // package.json. We need this to remap paths after they have been resolved.
 enclosing_browser_scope: Index = allocators.NotFound,
+enclosing_package_json: ?*const PackageJSON = null,
+enclosing_tsconfig_json: ?*const TSConfigJSON = null,
 
 abs_path: string = "",
 entries: Index = undefined,
 has_node_modules: bool = false, // Is there a "node_modules" subdirectory?
+is_node_modules: bool = false, // Is this a "node_modules" directory?
 package_json: ?*PackageJSON = null, // Is there a "package.json" file?
 tsconfig_json: ?*TSConfigJSON = null, // Is there a "tsconfig.json" file in this directory or a parent directory?
 abs_real_path: string = "", // If non-empty, this is the real absolute path resolving any symlinks
+
+pub fn hasParentPackage(this: *const DirInfo) bool {
+    const parent = this.getParent() orelse return false;
+    return !parent.is_node_modules;
+}
 
 pub fn getFileDescriptor(dirinfo: *const DirInfo) StoredFileDescriptorType {
     if (!FeatureFlags.store_file_descriptors) {

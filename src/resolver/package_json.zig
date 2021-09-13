@@ -12,7 +12,7 @@ const resolver = @import("./resolver.zig");
 // Assume they're not going to have hundreds of main fields or browser map
 // so use an array-backed hash table instead of bucketed
 const MainFieldMap = std.StringArrayHashMap(string);
-const BrowserMap = std.StringArrayHashMap(string);
+pub const BrowserMap = std.StringArrayHashMap(string);
 threadlocal var hashy: [2048]u8 = undefined;
 
 pub const PackageJSON = struct {

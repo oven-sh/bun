@@ -208,21 +208,26 @@ pub const Runtime = struct {
         pub const ActivateFunction = "activate";
     };
 
+    pub const GeneratedSymbol = struct {
+        primary: Ref,
+        backup: Ref,
+        ref: Ref,
+    };
+
     // If you change this, remember to update "runtime.footer.js" and rebuild the runtime.js
     pub const Imports = struct {
-        __name: ?Ref = null,
-        __toModule: ?Ref = null,
-        __cJS2eSM: ?Ref = null,
-        __require: ?Ref = null,
-        __export: ?Ref = null,
-        __reExport: ?Ref = null,
-        __load: ?Ref = null,
-        load_from_bundle: ?Ref = null,
-        register: ?Ref = null,
-        lazy_export: ?Ref = null,
-        __HMRModule: ?Ref = null,
-        __HMRClient: ?Ref = null,
-        __FastRefreshModule: ?Ref = null,
+        __name: ?GeneratedSymbol = null,
+        __toModule: ?GeneratedSymbol = null,
+        __cJS2eSM: ?GeneratedSymbol = null,
+        __require: ?GeneratedSymbol = null,
+        __export: ?GeneratedSymbol = null,
+        __reExport: ?GeneratedSymbol = null,
+        __load: ?GeneratedSymbol = null,
+        @"$$m": ?GeneratedSymbol = null,
+        @"$$lzy": ?GeneratedSymbol = null,
+        __HMRModule: ?GeneratedSymbol = null,
+        __HMRClient: ?GeneratedSymbol = null,
+        __FastRefreshModule: ?GeneratedSymbol = null,
 
         pub const all = [_][]const u8{
             "__name",
@@ -232,11 +237,8 @@ pub const Runtime = struct {
             "__export",
             "__reExport",
             "__load",
-            // require
-            "load_from_bundle",
-            //
-            "register",
-            "lazy_export",
+            "$$m",
+            "$$lzy",
             "__HMRModule",
             "__HMRClient",
             "__FastRefreshModule",
@@ -260,67 +262,62 @@ pub const Runtime = struct {
                     switch (this.i) {
                         0 => {
                             if (@field(this.runtime_imports, all[0])) |val| {
-                                return Entry{ .key = 0, .value = val };
+                                return Entry{ .key = 0, .value = val.ref };
                             }
                         },
                         1 => {
                             if (@field(this.runtime_imports, all[1])) |val| {
-                                return Entry{ .key = 1, .value = val };
+                                return Entry{ .key = 1, .value = val.ref };
                             }
                         },
                         2 => {
                             if (@field(this.runtime_imports, all[2])) |val| {
-                                return Entry{ .key = 2, .value = val };
+                                return Entry{ .key = 2, .value = val.ref };
                             }
                         },
                         3 => {
                             if (@field(this.runtime_imports, all[3])) |val| {
-                                return Entry{ .key = 3, .value = val };
+                                return Entry{ .key = 3, .value = val.ref };
                             }
                         },
                         4 => {
                             if (@field(this.runtime_imports, all[4])) |val| {
-                                return Entry{ .key = 4, .value = val };
+                                return Entry{ .key = 4, .value = val.ref };
                             }
                         },
                         5 => {
                             if (@field(this.runtime_imports, all[5])) |val| {
-                                return Entry{ .key = 5, .value = val };
+                                return Entry{ .key = 5, .value = val.ref };
                             }
                         },
                         6 => {
                             if (@field(this.runtime_imports, all[6])) |val| {
-                                return Entry{ .key = 6, .value = val };
+                                return Entry{ .key = 6, .value = val.ref };
                             }
                         },
                         7 => {
                             if (@field(this.runtime_imports, all[7])) |val| {
-                                return Entry{ .key = 7, .value = val };
+                                return Entry{ .key = 7, .value = val.ref };
                             }
                         },
                         8 => {
                             if (@field(this.runtime_imports, all[8])) |val| {
-                                return Entry{ .key = 8, .value = val };
+                                return Entry{ .key = 8, .value = val.ref };
                             }
                         },
                         9 => {
                             if (@field(this.runtime_imports, all[9])) |val| {
-                                return Entry{ .key = 9, .value = val };
+                                return Entry{ .key = 9, .value = val.ref };
                             }
                         },
                         10 => {
                             if (@field(this.runtime_imports, all[10])) |val| {
-                                return Entry{ .key = 10, .value = val };
+                                return Entry{ .key = 10, .value = val.ref };
                             }
                         },
                         11 => {
                             if (@field(this.runtime_imports, all[11])) |val| {
-                                return Entry{ .key = 11, .value = val };
-                            }
-                        },
-                        12 => {
-                            if (@field(this.runtime_imports, all[12])) |val| {
-                                return Entry{ .key = 12, .value = val };
+                                return Entry{ .key = 11, .value = val.ref };
                             }
                         },
 
@@ -352,15 +349,15 @@ pub const Runtime = struct {
             return false;
         }
 
-        pub fn put(imports: *Imports, comptime key: string, ref: Ref) void {
-            @field(imports, key) = ref;
+        pub fn put(imports: *Imports, comptime key: string, generated_symbol: GeneratedSymbol) void {
+            @field(imports, key) = generated_symbol;
         }
 
         pub fn at(
             imports: *Imports,
             comptime key: string,
         ) ?Ref {
-            return @field(imports, key);
+            return (@field(imports, key) orelse return null).ref;
         }
 
         pub fn get(
@@ -368,19 +365,18 @@ pub const Runtime = struct {
             key: anytype,
         ) ?Ref {
             return switch (key) {
-                0 => @field(imports, all[0]),
-                1 => @field(imports, all[1]),
-                2 => @field(imports, all[2]),
-                3 => @field(imports, all[3]),
-                4 => @field(imports, all[4]),
-                5 => @field(imports, all[5]),
-                6 => @field(imports, all[6]),
-                7 => @field(imports, all[7]),
-                8 => @field(imports, all[8]),
-                9 => @field(imports, all[9]),
-                10 => @field(imports, all[10]),
-                11 => @field(imports, all[11]),
-                12 => @field(imports, all[12]),
+                0 => (@field(imports, all[0]) orelse return null).ref,
+                1 => (@field(imports, all[1]) orelse return null).ref,
+                2 => (@field(imports, all[2]) orelse return null).ref,
+                3 => (@field(imports, all[3]) orelse return null).ref,
+                4 => (@field(imports, all[4]) orelse return null).ref,
+                5 => (@field(imports, all[5]) orelse return null).ref,
+                6 => (@field(imports, all[6]) orelse return null).ref,
+                7 => (@field(imports, all[7]) orelse return null).ref,
+                8 => (@field(imports, all[8]) orelse return null).ref,
+                9 => (@field(imports, all[9]) orelse return null).ref,
+                10 => (@field(imports, all[10]) orelse return null).ref,
+                11 => (@field(imports, all[11]) orelse return null).ref,
                 else => null,
             };
         }

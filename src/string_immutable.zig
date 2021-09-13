@@ -206,6 +206,10 @@ pub inline fn endsWith(self: string, str: string) bool {
     return str.len == 0 or @call(.{ .modifier = .always_inline }, std.mem.endsWith, .{ u8, self, str });
 }
 
+pub inline fn endsWithChar(self: string, char: u8) bool {
+    return self.len == 0 or self[self.len - 1] == char;
+}
+
 pub fn endsWithAny(self: string, str: string) bool {
     const end = self[self.len - 1];
     for (str) |char| {

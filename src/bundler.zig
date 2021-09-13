@@ -835,6 +835,10 @@ pub fn NewBundler(cache_files: bool) type {
                 try this.pool.start(this);
                 try this.pool.wait(this);
 
+                // if (comptime !isRelease) {
+                //     this.queue.checkDuplicatesSlow();
+                // }
+
                 if (this.log.errors > 0) {
                     tmpfile.close();
                     tmpdir.deleteFile(std.mem.span(tmpname)) catch {};
@@ -876,6 +880,33 @@ pub fn NewBundler(cache_files: bool) type {
                     this,
                     GenerateNodeModuleBundle.sortJavascriptModuleByPath,
                 );
+
+                if (comptime isDebug) {
+                    const SeenHash = std.AutoHashMap(u64, void);
+                    var map = SeenHash.init(this.allocator);
+                    var ids = SeenHash.init(this.allocator);
+                    try map.ensureTotalCapacity(@truncate(u32, this.module_list.items.len));
+                    try ids.ensureTotalCapacity(@truncate(u32, this.module_list.items.len));
+
+                    for (this.module_list.items) |a| {
+                        const a_pkg: Api.JavascriptBundledPackage = this.package_list.items[a.package_id];
+                        const a_name = this.metadataStringPointer(a_pkg.name);
+                        const a_version = this.metadataStringPointer(a_pkg.version);
+                        const a_path = this.metadataStringPointer(a.path);
+
+                        std.debug.assert(a_name.len > 0);
+                        std.debug.assert(a_version.len > 0);
+                        std.debug.assert(a_path.len > 0);
+                        var hash_print = std.mem.zeroes([4096]u8);
+                        const hash = std.hash.Wyhash.hash(0, std.fmt.bufPrint(&hash_print, "{s}@{s}/{s}", .{ a_name, a_version, a_path }) catch unreachable);
+                        var result1 = map.getOrPutAssumeCapacity(hash);
+                        std.debug.assert(!result1.found_existing);
+
+                        var result2 = ids.getOrPutAssumeCapacity(a.id);
+                        std.debug.assert(!result2.found_existing);
+                    }
+                }
+
                 var hasher = std.hash.Wyhash.init(0);
 
                 // We want to sort the packages as well as the files
@@ -1004,36 +1035,6 @@ pub fn NewBundler(cache_files: bool) type {
 
             // Since we trim the prefixes, we must also compare the package name and version
             pub fn sortJavascriptModuleByPath(ctx: *GenerateNodeModuleBundle, a: Api.JavascriptBundledModule, b: Api.JavascriptBundledModule) bool {
-                if (comptime isDebug) {
-                    const a_pkg: Api.JavascriptBundledPackage = ctx.package_list.items[a.package_id];
-                    const b_pkg: Api.JavascriptBundledPackage = ctx.package_list.items[b.package_id];
-                    const a_name = ctx.metadataStringPointer(a_pkg.name);
-                    const b_name = ctx.metadataStringPointer(b_pkg.name);
-                    const a_version = ctx.metadataStringPointer(a_pkg.version);
-                    const b_version = ctx.metadataStringPointer(b_pkg.version);
-                    const a_path = ctx.metadataStringPointer(a.path);
-                    const b_path = ctx.metadataStringPointer(b.path);
-
-                    std.debug.assert(a_name.len > 0);
-                    std.debug.assert(b_name.len > 0);
-                    std.debug.assert(a_version.len > 0);
-                    std.debug.assert(b_version.len > 0);
-                    std.debug.assert(a_path.len > 0);
-                    std.debug.assert(b_path.len > 0);
-
-                    if (strings.eql(a_name, b_name)) {
-                        if (strings.eql(a_version, b_version)) {
-                            std.debug.assert(a_pkg.hash == b_pkg.hash); // hash collision
-                            std.debug.assert(a.package_id == b.package_id); // duplicate package
-                            std.debug.assert(!strings.eql(a_path, b_path)); // duplicate module
-                        } else {
-                            std.debug.assert(a_pkg.hash != b_pkg.hash); // incorrectly generated hash
-                        }
-                    } else {
-                        std.debug.assert(a_pkg.hash != b_pkg.hash); // incorrectly generated hash
-                    }
-                }
-
                 return switch (std.mem.order(
                     u8,
                     ctx.metadataStringPointer(
@@ -1138,6 +1139,57 @@ pub fn NewBundler(cache_files: bool) type {
             };
             var json_ast_symbols_list = std.mem.span(&json_ast_symbols);
             threadlocal var override_file_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+
+            pub fn appendToModuleList(
+                this: *GenerateNodeModuleBundle,
+                package: *const PackageJSON,
+                module_id: u32,
+                code_offset: u32,
+                package_relative_path: string,
+            ) !void {
+                this.list_lock.lock();
+                defer this.list_lock.unlock();
+
+                const code_length = @atomicLoad(u32, &this.tmpfile_byte_offset, .SeqCst) - code_offset;
+
+                if (comptime isDebug) {
+                    std.debug.assert(code_length > 0);
+                    std.debug.assert(package.hash != 0);
+                    std.debug.assert(package.version.len > 0);
+                    std.debug.assert(package.name.len > 0);
+                    std.debug.assert(module_id > 0);
+                }
+
+                var package_get_or_put_entry = try this.package_list_map.getOrPut(package.hash);
+
+                if (!package_get_or_put_entry.found_existing) {
+                    package_get_or_put_entry.value_ptr.* = @truncate(u32, this.package_list.items.len);
+                    try this.package_list.append(
+                        Api.JavascriptBundledPackage{
+                            .name = try this.appendHeaderString(package.name),
+                            .version = try this.appendHeaderString(package.version),
+                            .hash = package.hash,
+                        },
+                    );
+                    this.has_jsx = this.has_jsx or strings.eql(package.name, this.bundler.options.jsx.package_name);
+                }
+
+                var path_extname_length = @truncate(u8, std.fs.path.extension(package_relative_path).len);
+                try this.module_list.append(
+                    Api.JavascriptBundledModule{
+                        .path = try this.appendHeaderString(
+                            package_relative_path,
+                        ),
+                        .path_extname_length = path_extname_length,
+                        .package_id = package_get_or_put_entry.value_ptr.*,
+                        .id = module_id,
+                        .code = Api.StringPointer{
+                            .length = @truncate(u32, code_length),
+                            .offset = @truncate(u32, code_offset),
+                        },
+                    },
+                );
+            }
             pub fn processFile(this: *GenerateNodeModuleBundle, worker: *ThreadPool.Worker, _resolve: _resolver.Result) !void {
                 const resolve = _resolve;
                 if (resolve.is_external) return;
@@ -1372,11 +1424,11 @@ pub fn NewBundler(cache_files: bool) type {
                                     ast = js_ast.Ast.initTest(parts);
 
                                     ast.runtime_imports = runtime.Runtime.Imports{};
-                                    ast.runtime_imports.register = Ref{ .source_index = 0, .inner_index = 0 };
-                                    ast.runtime_imports.__export = Ref{ .source_index = 0, .inner_index = 1 };
+                                    ast.runtime_imports.@"$$m" = .{ .ref = Ref{ .source_index = 0, .inner_index = 0 }, .primary = Ref.None, .backup = Ref.None };
+                                    ast.runtime_imports.__export = .{ .ref = Ref{ .source_index = 0, .inner_index = 1 }, .primary = Ref.None, .backup = Ref.None };
                                     ast.symbols = json_ast_symbols_list;
                                     ast.module_ref = Ref{ .source_index = 0, .inner_index = 2 };
-                                    ast.exports_ref = ast.runtime_imports.__export;
+                                    ast.exports_ref = ast.runtime_imports.__export.?.ref;
                                     ast.bundle_export_ref = Ref{ .source_index = 0, .inner_index = 3 };
                                 } else {
                                     var parts = &[_]js_ast.Part{};
@@ -1396,9 +1448,7 @@ pub fn NewBundler(cache_files: bool) type {
                                 code_offset = try this.writeEmptyModule(module_data.package_path, module_id);
                             },
                             else => {
-                                // const load_from_symbol_ref = ast.runtime_imports.$$r.?;
-                                // const reexport_ref = ast.runtime_imports.__reExport.?;
-                                const register_ref = ast.runtime_imports.register.?;
+                                const register_ref = ast.runtime_imports.@"$$m".?.ref;
                                 const E = js_ast.E;
                                 const Expr = js_ast.Expr;
                                 const Stmt = js_ast.Stmt;
@@ -1480,7 +1530,7 @@ pub fn NewBundler(cache_files: bool) type {
                                 };
                                 var register_expr = Expr{ .loc = call_register.target.loc, .data = .{ .e_call = &call_register } };
                                 var decls: [1]js_ast.G.Decl = undefined;
-                                var bundle_export_binding = js_ast.B.Identifier{ .ref = ast.bundle_export_ref.? };
+                                var bundle_export_binding = js_ast.B.Identifier{ .ref = ast.runtime_imports.@"$$m".?.ref };
                                 var binding = js_ast.Binding{
                                     .loc = register_expr.loc,
                                     .data = .{ .b_identifier = &bundle_export_binding },
@@ -1512,7 +1562,7 @@ pub fn NewBundler(cache_files: bool) type {
                                     false,
                                     js_printer.Options{
                                         .to_module_ref = Ref.RuntimeRef,
-                                        .bundle_export_ref = ast.bundle_export_ref.?,
+                                        .bundle_export_ref = ast.runtime_imports.@"$$m".?.ref,
                                         .source_path = file_path,
                                         .externals = ast.externals,
                                         .indent = 0,
@@ -1528,10 +1578,10 @@ pub fn NewBundler(cache_files: bool) type {
                                     std.fs.File,
                                     this.tmpfile,
                                     std.fs.File.getPos,
+                                    &this.tmpfile_byte_offset,
                                 );
 
                                 code_offset = write_result.off;
-                                this.tmpfile_byte_offset = write_result.end_off;
                             },
                         }
                     }
@@ -1542,47 +1592,11 @@ pub fn NewBundler(cache_files: bool) type {
                         std.debug.assert(package_relative_path.len > 0);
                     }
 
-                    this.list_lock.lock();
-                    defer this.list_lock.unlock();
-
-                    const code_length = this.tmpfile_byte_offset - code_offset;
-
-                    if (comptime isDebug) {
-                        std.debug.assert(code_length > 0);
-                        std.debug.assert(package.hash != 0);
-                        std.debug.assert(package.version.len > 0);
-                        std.debug.assert(package.name.len > 0);
-                        std.debug.assert(module_id > 0);
-                    }
-
-                    var package_get_or_put_entry = try this.package_list_map.getOrPut(package.hash);
-
-                    if (!package_get_or_put_entry.found_existing) {
-                        package_get_or_put_entry.value_ptr.* = @truncate(u32, this.package_list.items.len);
-                        try this.package_list.append(
-                            Api.JavascriptBundledPackage{
-                                .name = try this.appendHeaderString(package.name),
-                                .version = try this.appendHeaderString(package.version),
-                                .hash = package.hash,
-                            },
-                        );
-                        this.has_jsx = this.has_jsx or strings.eql(package.name, this.bundler.options.jsx.package_name);
-                    }
-
-                    var path_extname_length = @truncate(u8, std.fs.path.extension(package_relative_path).len);
-                    try this.module_list.append(
-                        Api.JavascriptBundledModule{
-                            .path = try this.appendHeaderString(
-                                package_relative_path,
-                            ),
-                            .path_extname_length = path_extname_length,
-                            .package_id = package_get_or_put_entry.value_ptr.*,
-                            .id = module_id,
-                            .code = Api.StringPointer{
-                                .length = @truncate(u32, code_length),
-                                .offset = @truncate(u32, code_offset),
-                            },
-                        },
+                    try this.appendToModuleList(
+                        package,
+                        module_id,
+                        code_offset,
+                        package_relative_path,
                     );
                 } else {
                     // If it's app code, scan but do not fully parse.

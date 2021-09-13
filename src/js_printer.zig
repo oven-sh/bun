@@ -2437,7 +2437,7 @@ pub fn NewPrinter(
                             return;
                             // module.exports = $react();
                         } else {
-                            p.printSymbol(p.options.runtime_imports.__reExport.?);
+                            p.printSymbol(p.options.runtime_imports.__reExport.?.ref);
                             p.print("(");
                             p.printModuleExportSymbol();
                             p.print(",");
@@ -2572,7 +2572,7 @@ pub fn NewPrinter(
                         // $$lz(export, $React(), {default: "React"});
                         if (s.items.len == 1) {
                             const item = s.items[0];
-                            p.printSymbol(p.options.runtime_imports.lazy_export.?);
+                            p.printSymbol(p.options.runtime_imports.@"$$lzy".?.ref);
                             p.print("(");
                             p.printModuleExportSymbol();
                             p.print(",");
@@ -2588,7 +2588,7 @@ pub fn NewPrinter(
                             p.printSemicolonAfterStatement();
                             // $$lz(export, $React(), {createElement: "React"});
                         } else {
-                            p.printSymbol(p.options.runtime_imports.lazy_export.?);
+                            p.printSymbol(p.options.runtime_imports.@"$$lzy".?.ref);
                             p.print("(");
                             p.printModuleExportSymbol();
                             p.print(",");
@@ -4142,6 +4142,7 @@ pub fn printCommonJSThreaded(
     comptime GetPosType: type,
     getter: GetPosType,
     comptime getPos: fn (ctx: GetPosType) anyerror!u64,
+    end_off_ptr: *u32,
 ) !WriteResult {
     const PrinterType = NewPrinter(false, Writer, LinkerType, true, false);
     var writer = _writer;
@@ -4191,7 +4192,9 @@ pub fn printCommonJSThreaded(
             }
         }
         try printer.writer.done();
+        @fence(.SeqCst);
         result.end_off = @truncate(u32, try getPos(getter));
+        @atomicStore(u32, end_off_ptr, result.end_off, .SeqCst);
     }
 
     result.len = @intCast(usize, std.math.max(printer.writer.written, 0));

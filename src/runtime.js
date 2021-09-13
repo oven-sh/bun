@@ -127,7 +127,7 @@ export var __require = (namespace) => {
   return namespace;
   // // is it an ESM module record?
   // if (namespaceType === "object") return namespace;
-  // // is it a CommonJS module?
+    // // is it a CommonJS module?
 
   // // i have no idea what it is so i'm just going to try stuff and pray
   // var entry = require_cache.get(namespace);

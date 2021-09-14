@@ -1,5 +1,4 @@
-
-bun: vendor bun-prod-native bun-prod-wasi bun-prod-wasm
+bun: vendor build-obj bun-link-lld-release
 
 vendor: api node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp jsc
 
@@ -7,7 +6,7 @@ build-obj:
 	zig build obj -Drelease-fast
 
 sign-macos-x64: 
-	gon sign-macos-x64.json
+	gon sign.macos-x64.json
 
 sign-macos-aarch64: 
 	gon sign.macos-aarch64.json
@@ -34,8 +33,6 @@ jsc: jsc-build jsc-bindings
 jsc-build: jsc-build-mac jsc-copy-headers
 jsc-bindings: jsc-bindings-headers jsc-bindings-mac
 	
-
-
 jsc-bindings-headers:
 	mkdir -p src/JavaScript/jsc/bindings-obj/
 	zig build headers

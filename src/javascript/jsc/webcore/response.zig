@@ -1339,7 +1339,7 @@ pub const Request = struct {
         prop: js.JSStringRef,
         exception: js.ExceptionRef,
     ) js.JSValueRef {
-        return js.JSValueMakeString(ctx, Properties.Refs.default);
+        return js.JSValueMakeString(ctx, ZigString.init(Properties.UTF8.default).toValueGC(VirtualMachine.vm.global).asRef());
     }
     pub fn getCredentials(
         this: *Request,
@@ -1348,7 +1348,7 @@ pub const Request = struct {
         prop: js.JSStringRef,
         exception: js.ExceptionRef,
     ) js.JSValueRef {
-        return js.JSValueMakeString(ctx, Properties.Refs.include);
+        return js.JSValueMakeString(ctx, ZigString.init(Properties.UTF8.include).toValueGC(VirtualMachine.vm.global).asRef());
     }
     pub fn getDestination(
         this: *Request,
@@ -1357,7 +1357,7 @@ pub const Request = struct {
         prop: js.JSStringRef,
         exception: js.ExceptionRef,
     ) js.JSValueRef {
-        return js.JSValueMakeString(ctx, Properties.Refs.empty_string);
+        return js.JSValueMakeString(ctx, ZigString.init("").toValueGC(VirtualMachine.vm.global).asRef());
     }
     pub fn getHeaders(
         this: *Request,
@@ -1379,7 +1379,7 @@ pub const Request = struct {
         prop: js.JSStringRef,
         exception: js.ExceptionRef,
     ) js.JSValueRef {
-        return js.JSValueMakeString(ctx, Properties.Refs.empty_string);
+        return ZigString.Empty.toValueGC(VirtualMachine.vm.global).asRef();
     }
     pub fn getMethod(
         this: *Request,
@@ -1388,16 +1388,17 @@ pub const Request = struct {
         prop: js.JSStringRef,
         exception: js.ExceptionRef,
     ) js.JSValueRef {
-        const string_ref = switch (this.request_context.method) {
-            .GET => Properties.Refs.GET,
-            .HEAD => Properties.Refs.HEAD,
-            .PATCH => Properties.Refs.PATCH,
-            .PUT => Properties.Refs.PUT,
-            .POST => Properties.Refs.POST,
-            .OPTIONS => Properties.Refs.OPTIONS,
-            else => Properties.Refs.empty_string,
+        const string_contents: string = switch (this.request_context.method) {
+            .GET => Properties.UTF8.GET,
+            .HEAD => Properties.UTF8.HEAD,
+            .PATCH => Properties.UTF8.PATCH,
+            .PUT => Properties.UTF8.PUT,
+            .POST => Properties.UTF8.POST,
+            .OPTIONS => Properties.UTF8.OPTIONS,
+            else => "",
         };
-        return js.JSValueMakeString(ctx, string_ref);
+
+        return ZigString.init(string_contents).toValueGC(VirtualMachine.vm.global).asRef();
     }
 
     pub fn getMode(
@@ -1407,7 +1408,7 @@ pub const Request = struct {
         prop: js.JSStringRef,
         exception: js.ExceptionRef,
     ) js.JSValueRef {
-        return js.JSValueMakeString(ctx, Properties.Refs.navigate);
+        return ZigString.init(Properties.UTF8.navigate).toValueGC(VirtualMachine.vm.global).asRef();
     }
     pub fn getRedirect(
         this: *Request,
@@ -1416,7 +1417,7 @@ pub const Request = struct {
         prop: js.JSStringRef,
         exception: js.ExceptionRef,
     ) js.JSValueRef {
-        return js.JSValueMakeString(ctx, Properties.Refs.follow);
+        return ZigString.init(Properties.UTF8.follow).toValueGC(VirtualMachine.vm.global).asRef();
     }
     pub fn getReferrer(
         this: *Request,
@@ -1425,7 +1426,11 @@ pub const Request = struct {
         prop: js.JSStringRef,
         exception: js.ExceptionRef,
     ) js.JSValueRef {
-        return js.JSValueMakeString(ctx, Properties.Refs.empty_string);
+        if (this.request_context.header("Referrer")) |referrer| {
+            return ZigString.init(referrer.value).toValueGC(VirtualMachine.vm.global).asRef();
+        } else {
+            return ZigString.init("").toValueGC(VirtualMachine.vm.global).asRef();
+        }
     }
     pub fn getReferrerPolicy(
         this: *Request,
@@ -1434,7 +1439,7 @@ pub const Request = struct {
         prop: js.JSStringRef,
         exception: js.ExceptionRef,
     ) js.JSValueRef {
-        return js.JSValueMakeString(ctx, Properties.Refs.empty_string);
+        return ZigString.init("").toValueGC(VirtualMachine.vm.global).asRef();
     }
     pub fn getUrl(
         this: *Request,

@@ -2342,24 +2342,26 @@ pub const Parser = struct {
 
         var runtime_imports_iter = p.runtime_imports.iter();
 
-        // If they use Buffer...just automatically import it.
-        // ✨ magic ✨ (i don't like this)
-        if (p.symbols.items[p.buffer_ref.inner_index].use_count_estimate > 0) {
-            var named_import = p.named_imports.getOrPut(p.buffer_ref);
+        if (FeatureFlags.auto_import_buffer) {
+            // If they use Buffer...just automatically import it.
+            // ✨ magic ✨ (i don't like this)
+            if (p.symbols.items[p.buffer_ref.inner_index].use_count_estimate > 0) {
+                var named_import = p.named_imports.getOrPut(p.buffer_ref);
 
-            // if Buffer is actually an import, let them use that one instead.
-            if (!named_import.found_existing) {
-                const import_record_id = p.addImportRecord(
-                    .require,
-                    logger.Loc.empty,
-                    NodeFallbacks.buffer_fallback_import_name,
-                );
-                var import_stmt = p.s(S.Import{
-                    .namespace_ref = p.buffer_ref,
-                    .star_name_loc = loc,
-                    .is_single_line = true,
-                    .import_record_index = import_record_id,
-                }, loc);
+                // if Buffer is actually an import, let them use that one instead.
+                if (!named_import.found_existing) {
+                    const import_record_id = p.addImportRecord(
+                        .require,
+                        logger.Loc.empty,
+                        NodeFallbacks.buffer_fallback_import_name,
+                    );
+                    var import_stmt = p.s(S.Import{
+                        .namespace_ref = p.buffer_ref,
+                        .star_name_loc = loc,
+                        .is_single_line = true,
+                        .import_record_index = import_record_id,
+                    }, loc);
+                }
             }
         }
 
@@ -3537,7 +3539,10 @@ pub fn NewParser(
             p.exports_ref = try p.declareCommonJSSymbol(.unbound, "exports");
             p.module_ref = try p.declareCommonJSSymbol(.unbound, "module");
             p.require_ref = try p.declareCommonJSSymbol(.unbound, "require");
-            p.buffer_ref = try p.declareCommonJSSymbol(.unbound, "Buffer");
+
+            if (FeatureFlags.auto_import_buffer) {
+                p.buffer_ref = try p.declareCommonJSSymbol(.unbound, "Buffer");
+            }
 
             if (p.options.enable_bundling) {
                 p.runtime_imports.__reExport = try p.declareGeneratedSymbol(.other, "__reExport");

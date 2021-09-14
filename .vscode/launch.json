@@ -98,7 +98,7 @@
       // "args": ["--serve", "--origin=http://localhost:3000"],
       "args": ["dev", "--origin=http://localhost:3000"],
       "cwd": "${workspaceFolder}/examples/hello-next",
-      "console": "internalConsole" 
+      "console": "internalConsole"
     },
     {
       "type": "lldb",
@@ -247,7 +247,7 @@
       "console": "internalConsole"
     },
     {
-      "type": "lldb",
+      "type": "cppvsdbg",
       "request": "launch",
       "name": "Fixtures Rel",
       "program": "${workspaceFolder}/build/macos-x86_64/bun",
@@ -257,6 +257,7 @@
     },
     {
       "type": "lldb",
+
       "request": "launch",
       "name": "Context Dev",
       "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",

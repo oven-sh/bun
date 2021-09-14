@@ -768,6 +768,7 @@ export async function render({
     headTags: await headTags(documentCtx),
     isFallback,
     docProps,
+    page: pathname,
     pathname,
     ampPath: undefined,
     query,

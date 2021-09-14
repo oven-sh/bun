@@ -1,4 +1,4 @@
-# Bun: a fast bundler & transpiler for developing web software
+# Bun
 
 Bun is a new:
 

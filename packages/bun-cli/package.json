@@ -1,4 +1,13 @@
 {
+  "bin": {
+    "bun": "bin/bun"
+  },
+  "license": "MIT",
   "name": "bun-cli",
-  "version": "0.0.0-2"
+  "repository": "https://github.com/jarred-sumner/bun",
+  "scripts": {
+    "postinstall": "node postinstall.js",
+    "prepublishOnly": "rm -rf ./bin/bun; chmod +x ./reset-bin.js; cp ./reset-bin.js ./bin/bun"
+  },
+  "version": "0.0.0-10"
 }

@@ -63,3 +63,8 @@ sign.json
 release/
 *.dmg
 sign.*.json
+packages/debug-*
+packages/bun-cli/postinstall.js
+packages/bun-*/bin/*
+
+packages/bun-cli/bin/*

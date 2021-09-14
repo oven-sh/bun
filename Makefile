@@ -1,3 +1,17 @@
+OS_NAME := $(shell uname -s | tr '[:upper:]' '[:lower:]')
+ARCH_NAME_DENORAMLZIED_1 := $(shell uname -m)
+ARCH_NAME_DENORAMLZIED_2 := $(shell tr '[_]' '[--]' <<< $(ARCH_NAME_DENORAMLZIED_1))
+ARCH_NAME := $(shell sed s/x86-64/x64/ <<< $(ARCH_NAME_DENORAMLZIED_2))
+TRIPLET := $(OS_NAME)-$(ARCH_NAME)
+PACKAGE_DIR := packages/bun-cli-$(TRIPLET)
+DEBUG_PACKAGE_DIR := packages/debug-bun-cli-$(TRIPLET)
+BIN_DIR := $(PACKAGE_DIR)/bin
+RELEASE_BIN := $(BIN_DIR)/bun
+DEBUG_BIN := $(DEBUG_PACKAGE_DIR)/bin/bun-debug
+BUILD_ID := $(shell cat ./build-id)
+PACKAGE_JSON_VERSION := 0.0.0-$(BUILD_ID)
+BUN_BUILD_TAG := bun-v$(PACKAGE_JSON_VERSION)
+
 bun: vendor build-obj bun-link-lld-release
 
 vendor: api node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp jsc
@@ -11,8 +25,11 @@ sign-macos-x64:
 sign-macos-aarch64: 
 	gon sign.macos-aarch64.json
 
-release-macos-x64: build-obj jsc-bindings-mac bun-link-lld-release sign-macos-x64 release-macos-x64-push
+release-macos-x64: build-obj jsc-bindings-mac bun-link-lld-release
 release-macos-aarch64: build-obj jsc-bindings-mac bun-link-lld-release sign-macos-aarch64
+
+bin-dir:
+	@echo $(BIN_DIR)
 
 api: 
 	npm install; ./node_modules/.bin/peechy --schema src/api/schema.peechy --esm src/api/schema.js --ts src/api/schema.d.ts --zig src/api/schema.zig
@@ -21,10 +38,10 @@ node-fallbacks:
 	cd src/node-fallbacks; npm install; npm run --silent build
 
 fallback_decoder:
-	esbuild --target=esnext  --bundle src/fallback.ts --format=iife --platform=browser --minify > src/fallback.out.js
+	@esbuild --target=esnext  --bundle src/fallback.ts --format=iife --platform=browser --minify > src/fallback.out.js
 
 runtime_js:
-	NODE_ENV=production esbuild --define:process.env.NODE_ENV="production" --target=esnext  --bundle src/runtime/index.ts --format=iife --platform=browser --global-name=BUN_RUNTIME --minify --external:/bun:* > src/runtime.out.js; cat src/runtime.footer.js >> src/runtime.out.js
+	@NODE_ENV=production esbuild --define:process.env.NODE_ENV="production" --target=esnext  --bundle src/runtime/index.ts --format=iife --platform=browser --global-name=BUN_RUNTIME --minify --external:/bun:* > src/runtime.out.js; cat src/runtime.footer.js >> src/runtime.out.js
 
 bun_error:
 	cd packages/bun-error; npm install; npm run --silent build
@@ -37,25 +54,37 @@ jsc-bindings-headers:
 	mkdir -p src/JavaScript/jsc/bindings-obj/
 	zig build headers
 
-BUILD_ID := $(shell cat ./build-id)
-
-bump-build-id: 
+bump: 
 	expr $(BUILD_ID) + 1 > build-id
 
-BUN_BUILD_TAG := bun-build-$(BUILD_ID)
+
+build_postinstall: 
+	@esbuild --bundle --format=cjs --platform=node --define:BUN_VERSION="\"$(PACKAGE_JSON_VERSION)\"" packages/bun-cli/scripts/postinstall.ts > packages/bun-cli/postinstall.js
+
+write-package-json-version-cli: 
+	jq -S --raw-output '.version = "${PACKAGE_JSON_VERSION}"' packages/bun-cli/package.json  > packages/bun-cli/package.json.new
+	mv packages/bun-cli/package.json.new packages/bun-cli/package.json
+
+write-package-json-version-arch: 
+	jq -S --raw-output '.version = "${PACKAGE_JSON_VERSION}"' $(PACKAGE_DIR)/package.json  > $(PACKAGE_DIR)/package.json.new
+	mv $(PACKAGE_DIR)/package.json.new $(PACKAGE_DIR)/package.json
 
 tag: 
 	git tag $(BUN_BUILD_TAG)
 	git push --tags
 
-prepare-release: bump-build-id tag release-create
+prepare-release: build_postinstall tag release-create write-package-json-version-arch write-package-json-version-cli
 
 release-create:
-	gh release create --title "Bun - build $(BUILD_ID)" "$(BUN_BUILD_TAG)"
+	gh release create --title "Bun v$(PACKAGE_JSON_VERSION)" "$(BUN_BUILD_TAG)"
+
+release-cli-push:
+	cd packages/bun-cli && npm pack --pack-destination /tmp/
+	gh release upload $(BUN_BUILD_TAG) --clobber /tmp/bun-cli-$(PACKAGE_JSON_VERSION).tgz
 
 release-macos-x64-push:
-	gh release upload $(BUN_BUILD_TAG) --clobber release/bun-macos-x64.zip
-
+	cd packages/bun-cli-darwin-x64 && npm pack --pack-destination /tmp/
+	gh release upload $(BUN_BUILD_TAG) --clobber /tmp/bun-cli-darwin-x64-$(PACKAGE_JSON_VERSION).tgz
 
 jsc-copy-headers:
 	find src/JavaScript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/Headers/JavaScriptCore/ -name "*.h" -exec cp {} src/JavaScript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/PrivateHeaders/JavaScriptCore \;
@@ -140,12 +169,13 @@ bun-link-lld-debug:
 
 bun-link-lld-release:
 	clang++ $(BUN_LLD_FLAGS) \
-		build/macos-x86_64/bun.o \
-		-o build/macos-x86_64/bun \
+		packages/bun-cli-darwin-x64/bin/bun.o \
+		-o packages/bun-cli-darwin-x64/bin/bun \
 		-Wl,-dead_strip \
 		-ftls-model=local-exec \
 		-flto \
 		-O3
+	rm packages/bun-cli-darwin-x64/bin/bun.o
 
 bun-link-lld-release-aarch64:
 	clang++ $(BUN_LLD_FLAGS) \
@@ -169,3 +199,4 @@ sizegen:
 
 picohttp:
 	 clang -O3 -g -c src/deps/picohttpparser.c -Isrc/deps -o src/deps/picohttpparser.o; cd ../../	
+

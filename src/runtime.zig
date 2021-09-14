@@ -6,20 +6,23 @@ const resolve_path = @import("./resolver/resolve_path.zig");
 const Fs = @import("./fs.zig");
 const Schema = @import("./api/schema.zig");
 
+// packages/bun-cli-*/bin/bun
+const BUN_ROOT = "../../../";
+
 const Api = Schema.Api;
 
 pub const ErrorCSS = struct {
-    const ErrorCSSPath = "../packages/bun-error/dist/bun-error.css";
-    const ErrorCSSPathDev = "../packages/bun-error/bun-error.css";
+    const ErrorCSSPath = "packages/bun-error/dist/bun-error.css";
+    const ErrorCSSPathDev = "packages/bun-error/bun-error.css";
 
-    pub const ProdSourceContent = @embedFile(ErrorCSSPath);
+    pub const ProdSourceContent = @embedFile("../" ++ ErrorCSSPath);
 
     pub fn sourceContent() string {
         if (comptime isDebug) {
             var env = std.process.getEnvMap(default_allocator) catch unreachable;
             var out_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
             var dirname = std.fs.selfExeDirPath(&out_buffer) catch unreachable;
-            var paths = [_]string{ dirname, "../../", ErrorCSSPathDev };
+            var paths = [_]string{ dirname, BUN_ROOT, ErrorCSSPathDev };
             const file = std.fs.cwd().openFile(
                 resolve_path.joinAbsString(dirname, std.mem.span(&paths), .auto),
                 .{
@@ -35,16 +38,16 @@ pub const ErrorCSS = struct {
 };
 
 pub const ErrorJS = struct {
-    const ErrorJSPath = "../packages/bun-error/dist/index.js";
+    const ErrorJSPath = "packages/bun-error/dist/index.js";
 
-    pub const ProdSourceContent = @embedFile(ErrorJSPath);
+    pub const ProdSourceContent = @embedFile("../" ++ ErrorJSPath);
 
     pub fn sourceContent() string {
         if (comptime isDebug) {
             var env = std.process.getEnvMap(default_allocator) catch unreachable;
             var out_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
             var dirname = std.fs.selfExeDirPath(&out_buffer) catch unreachable;
-            var paths = [_]string{ dirname, "../../", ErrorJSPath };
+            var paths = [_]string{ dirname, BUN_ROOT, ErrorJSPath };
             const file = std.fs.cwd().openFile(
                 resolve_path.joinAbsString(dirname, std.mem.span(&paths), .auto),
                 .{

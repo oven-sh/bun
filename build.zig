@@ -24,8 +24,8 @@ pub fn addPicoHTTP(step: *std.build.LibExeObjStep, comptime with_obj: bool) void
     // set -gx ICU_INCLUDE_DIRS "/usr/local/opt/icu4c/include"
     // homebrew-provided icu4c
 }
-
-pub fn build(b: *std.build.Builder) void {
+var x64 = "x64";
+pub fn build(b: *std.build.Builder) !void {
     // Standard target options allows the person running `zig build` to choose
     // what target to build for. Here we do not override the defaults, which
     // means any target is allowed, and the default is native. Other options
@@ -39,12 +39,39 @@ pub fn build(b: *std.build.Builder) void {
     const cwd: []const u8 = b.pathFromRoot(".");
     var exe: *std.build.LibExeObjStep = undefined;
     var output_dir_buf = std.mem.zeroes([4096]u8);
-    var bin_label = if (mode == std.builtin.Mode.Debug) "/debug/" else "/";
-    const output_dir = b.pathFromRoot(std.fmt.bufPrint(&output_dir_buf, "build{s}{s}-{s}", .{ bin_label, @tagName(target.getOs().tag), @tagName(target.getCpuArch()) }) catch unreachable);
+    var bin_label = if (mode == std.builtin.Mode.Debug) "packages/debug-bun-cli-" else "packages/bun-cli-";
+
+    var triplet_buf: [64]u8 = undefined;
+    var os_tagname = @tagName(target.getOs().tag);
+    if (std.mem.eql(u8, os_tagname, "macos")) {
+        os_tagname = "darwin";
+    }
+
+    std.mem.copy(
+        u8,
+        &triplet_buf,
+        os_tagname,
+    );
+    var osname = triplet_buf[0..os_tagname.len];
+    triplet_buf[osname.len] = '-';
+
+    std.mem.copy(u8, triplet_buf[osname.len + 1 ..], @tagName(target.getCpuArch()));
+    var cpuArchName = triplet_buf[osname.len + 1 ..][0..@tagName(target.getCpuArch()).len];
+    std.mem.replaceScalar(u8, cpuArchName, '_', '-');
+    if (std.mem.eql(u8, cpuArchName, "x86-64")) {
+        std.mem.copy(u8, cpuArchName, "x64");
+        cpuArchName = cpuArchName[0..3];
+    }
+
+    var triplet = triplet_buf[0 .. osname.len + cpuArchName.len + 1];
+
+    const output_dir_base = try std.fmt.bufPrint(&output_dir_buf, "{s}{s}/bin", .{ bin_label, triplet });
+    const output_dir = b.pathFromRoot(output_dir_base);
+    const bun_executable_name = if (mode == std.builtin.Mode.Debug) "bun-debug" else "bun";
 
     if (target.getOsTag() == .wasi) {
         exe.enable_wasmtime = true;
-        exe = b.addExecutable("bun", "src/main_wasi.zig");
+        exe = b.addExecutable(bun_executable_name, "src/main_wasi.zig");
         exe.linkage = .dynamic;
         exe.setOutputDir(output_dir);
     } else if (target.getCpuArch().isWasm()) {
@@ -54,7 +81,7 @@ pub fn build(b: *std.build.Builder) void {
         // );
         // exe.is_linking_libc = false;
         // exe.is_dynamic = true;
-        var lib = b.addExecutable("bun", "src/main_wasm.zig");
+        var lib = b.addExecutable(bun_executable_name, "src/main_wasm.zig");
         lib.single_threaded = true;
         // exe.want_lto = true;
         // exe.linkLibrary(lib);
@@ -94,7 +121,7 @@ pub fn build(b: *std.build.Builder) void {
 
         return;
     } else {
-        exe = b.addExecutable("bun", "src/main.zig");
+        exe = b.addExecutable(bun_executable_name, "src/main.zig");
     }
     // exe.setLibCFile("libc.txt");
     exe.linkLibC();
@@ -244,7 +271,7 @@ pub fn build(b: *std.build.Builder) void {
         }
 
         var obj_step = b.step("obj", "Build Bun as a .o file");
-        var obj = b.addObject("bun", exe.root_src.?.path);
+        var obj = b.addObject(bun_executable_name, exe.root_src.?.path);
         obj.bundle_compiler_rt = true;
         addPicoHTTP(obj, false);
         obj.addPackage(.{
@@ -275,7 +302,7 @@ pub fn build(b: *std.build.Builder) void {
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
-    var log_step = b.addLog("Destination: {s}/{s}\n", .{ output_dir, "bun" });
+    var log_step = b.addLog("Destination: {s}/{s}\n", .{ output_dir, bun_executable_name });
     log_step.step.dependOn(&exe.step);
 
     var typings_cmd: *std.build.RunStep = typings_exe.run();

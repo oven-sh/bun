@@ -150,7 +150,7 @@ pub const Arguments = struct {
 
     pub const ParamType = clap.Param(clap.Help);
 
-    const params: [23]ParamType = brk: {
+    const params: [24]ParamType = brk: {
         @setEvalBranchQuota(9999);
         break :brk [_]ParamType{
             clap.parseParam("--use <STR>                       Choose a framework, e.g. \"--use next\". It checks first for a package named \"bun-framework-packagename\" and then \"packagename\".") catch unreachable,
@@ -166,6 +166,7 @@ pub const Arguments = struct {
             clap.parseParam("--jsx-runtime <STR>               \"automatic\" (default) or \"classic\"") catch unreachable,
             clap.parseParam("--main-fields <STR>...            Main fields to lookup in package.json. Defaults to --platform dependent") catch unreachable,
             clap.parseParam("--no-summary                      Don't print a summary (when generating .bun") catch unreachable,
+            clap.parseParam("--version                         Print version and exit") catch unreachable,
             clap.parseParam("--origin <STR>                    Rewrite import paths to start with --origin. Default: \"/\"") catch unreachable,
             clap.parseParam("--platform <STR>                  \"browser\" or \"node\". Defaults to \"browser\"") catch unreachable,
             // clap.parseParam("--production                      [not implemented] generate production code") catch unreachable,
@@ -184,6 +185,13 @@ pub const Arguments = struct {
         };
     };
 
+    fn printVersionAndExit() noreturn {
+        @setCold(true);
+        Output.writer().writeAll(Global.package_json_version) catch {};
+        Output.flush();
+        std.os.exit(0);
+    }
+
     pub fn parse(allocator: *std.mem.Allocator, comptime cmd: Command.Tag) !Api.TransformOptions {
         var diag = clap.Diagnostic{};
 
@@ -192,6 +200,10 @@ pub const Arguments = struct {
             diag.report(Output.errorWriter(), err) catch {};
             return err;
         };
+
+        if (args.flag("--version")) {
+            printVersionAndExit();
+        }
 
         var cwd_paths = [_]string{args.option("--cwd") orelse try std.process.getCwdAlloc(allocator)};
         var cwd = try std.fs.path.resolve(allocator, &cwd_paths);
@@ -252,7 +264,7 @@ pub const Arguments = struct {
                 ))) {
                     entry_points = entry_points[1..];
                 }
-        },
+            },
             .DevCommand => {
                 if (entry_points.len > 0 and (strings.eqlComptime(
                     entry_points[0],

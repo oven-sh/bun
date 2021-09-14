@@ -385,6 +385,10 @@ pub const Output = struct {
 
 pub const Global = struct {
     pub const build_id = std.fmt.parseInt(u64, std.mem.trim(u8, @embedFile("../build-id"), "\n \r\t"), 10) catch unreachable;
+    pub const package_json_version = if (isDebug)
+        std.fmt.comptimePrint("0.0.0-{d}_debug", .{build_id})
+    else
+        std.fmt.comptimePrint("0.0.0-{d}", .{build_id});
 
     pub fn panic(comptime fmt: string, args: anytype) noreturn {
         @setCold(true);

@@ -1532,6 +1532,8 @@ pub const Lexer = struct {
 
     pub fn unexpected(lexer: *LexerType) !void {
         const found = finder: {
+            lexer.start = std.math.min(lexer.start, lexer.end);
+
             if (lexer.start == lexer.source.contents.len) {
                 break :finder "end of file";
             } else {

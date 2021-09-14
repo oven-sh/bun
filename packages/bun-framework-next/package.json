@@ -1,6 +1,6 @@
 {
   "name": "bun-framework-next",
-  "version": "0.0.0-19",
+  "version": "0.0.0-20",
   "description": "",
   "framework": {
     "displayName": "Next.js",

@@ -117,12 +117,14 @@ Bun is a project with incredibly large scope, and it's early days.
 
 Bun is great for building websites &amp; webapps. For libraries, consider using Rollup or esbuild instead. Bun currently doesn't minify code and Bun's dead code elimination doesn't look beyond the current file.
 
-Bun is focused on:
+Today, Bun is focused on:
 
 - Development, not production
 - Compatibility with existing frameworks & tooling
 
 Ideally, most projects can use Bun with their existing tooling while making few changes to their codebase. That means using Bun in development, and continuing to use Webpack, esbuild, or another bundler in production. Using two bundlers might sound strange at first, but after all the production-only AST transforms, minification, and special development/production-only imported files...it's not far from the status quo.
+
+Longer-term, Bun intends to replace Node.js, Webpack, Babel, and PostCSS (in production).
 
 # Configuration
 

@@ -2553,7 +2553,7 @@ pub const Server = struct {
             }
         } else {
             if (server.bundler.options.routes.single_page_app_routing) {
-                Output.prettyError(" Bun!!<r>\n\n\n<d>  Link:<r> <b><cyan>http://{s}<r>\n       <d>./{s}/index.html<r> \n\n\n", .{
+                Output.prettyError(" Bun!! <d>build {d}<r>\n\n\n<d>  Link:<r> <b><cyan>http://{s}<r>\n       <d>./{s}/index.html<r> \n\n\n", .{
                     Global.build_id,
                     addr,
                     resolve_path.relative(server.bundler.fs.top_level_dir, server.bundler.options.routes.static_dir),

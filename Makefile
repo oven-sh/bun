@@ -11,7 +11,7 @@ sign-macos-x64:
 sign-macos-aarch64: 
 	gon sign.macos-aarch64.json
 
-release-macos-x64: build-obj jsc-bindings-mac bun-link-lld-release sign-macos-x64
+release-macos-x64: build-obj jsc-bindings-mac bun-link-lld-release sign-macos-x64 release-macos-x64-push
 release-macos-aarch64: build-obj jsc-bindings-mac bun-link-lld-release sign-macos-aarch64
 
 api: 
@@ -37,10 +37,25 @@ jsc-bindings-headers:
 	mkdir -p src/JavaScript/jsc/bindings-obj/
 	zig build headers
 
-bump: 
+BUILD_ID := $(shell cat ./build-id)
+
+bump-build-id: 
 	expr $(BUILD_ID) + 1 > build-id
 
-BUILD_ID := $(shell cat ./build-id)
+BUN_BUILD_TAG := bun-build-$(BUILD_ID)
+
+tag: 
+	git tag $(BUN_BUILD_TAG)
+	git push --tags
+
+prepare-release: bump-build-id tag release-create
+
+release-create:
+	gh release create --title "Bun - build $(BUILD_ID)" "$(BUN_BUILD_TAG)"
+
+release-macos-x64-push:
+	gh release upload $(BUN_BUILD_TAG) --clobber release/bun-macos-x64.zip
+
 
 jsc-copy-headers:
 	find src/JavaScript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/Headers/JavaScriptCore/ -name "*.h" -exec cp {} src/JavaScript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/PrivateHeaders/JavaScriptCore \;

@@ -384,6 +384,8 @@ pub const Output = struct {
 };
 
 pub const Global = struct {
+    pub const build_id = std.fmt.parseInt(u64, @embedFile("../build-id"), 10) catch unreachable;
+
     pub fn panic(comptime fmt: string, args: anytype) noreturn {
         @setCold(true);
         if (comptime isWasm) {

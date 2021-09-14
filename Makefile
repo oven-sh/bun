@@ -37,6 +37,11 @@ jsc-bindings-headers:
 	mkdir -p src/JavaScript/jsc/bindings-obj/
 	zig build headers
 
+bump: 
+	expr $(BUILD_ID) + 1 > build-id
+
+BUILD_ID := $(shell cat ./build-id)
+
 jsc-copy-headers:
 	find src/JavaScript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/Headers/JavaScriptCore/ -name "*.h" -exec cp {} src/JavaScript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/PrivateHeaders/JavaScriptCore \;
 

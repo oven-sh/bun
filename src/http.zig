@@ -2538,25 +2538,29 @@ pub const Server = struct {
         if (std.mem.readIntNative(u32, &addr.ipv4.host.octets) == 0 or std.mem.readIntNative(u128, &addr.ipv6.host.octets) == 0) {
             if (server.bundler.options.routes.single_page_app_routing) {
                 Output.prettyError(
-                    " Bun!!<r>\n\n\n<d>  Link:<r> <b><cyan>http://localhost:{d}<r>\n        <d>./{s}/index.html<r> \n\n\n",
+                    " Bun!! <d>build {d}<r>\n\n\n<d>  Link:<r> <b><cyan>http://localhost:{d}<r>\n        <d>./{s}/index.html<r> \n\n\n",
                     .{
+                        Global.build_id,
                         addr.ipv4.port,
                         resolve_path.relative(server.bundler.fs.top_level_dir, server.bundler.options.routes.static_dir),
                     },
                 );
             } else {
-                Output.prettyError(" Bun!!<r>\n\n\n<d>  Link:<r> <b><cyan>http://localhost:{d}<r>\n\n\n", .{
+                Output.prettyError(" Bun!! <d>build {d}<r>\n\n\n<d>  Link:<r> <b><cyan>http://localhost:{d}<r>\n\n\n", .{
+                    Global.build_id,
                     addr.ipv4.port,
                 });
             }
         } else {
             if (server.bundler.options.routes.single_page_app_routing) {
                 Output.prettyError(" Bun!!<r>\n\n\n<d>  Link:<r> <b><cyan>http://{s}<r>\n       <d>./{s}/index.html<r> \n\n\n", .{
+                    Global.build_id,
                     addr,
                     resolve_path.relative(server.bundler.fs.top_level_dir, server.bundler.options.routes.static_dir),
                 });
             } else {
-                Output.prettyError(" Bun!!<r>\n\n\n<d>  Link:<r> <b><cyan>http://{s}<r>\n\n\n", .{
+                Output.prettyError(" Bun!! <d>build {d}\n\n\n<d>  Link:<r> <b><cyan>http://{s}<r>\n\n\n", .{
+                    Global.build_id,
                     addr,
                 });
             }

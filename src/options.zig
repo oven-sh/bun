@@ -1153,6 +1153,29 @@ pub const BundleOptions = struct {
                 };
                 opts.routes.static_dir_enabled = opts.routes.static_dir_handle != null;
             }
+
+            if (opts.routes.static_dir_enabled and (opts.framework == null or !opts.framework.?.server.isEnabled()) and !opts.routes.routes_enabled) {
+                const dir = opts.routes.static_dir_handle.?;
+                var index_html_file = dir.openFile("index.html", .{ .read = true }) catch |err| brk: {
+                    switch (err) {
+                        error.FileNotFound => {},
+                        else => {
+                            Output.prettyErrorln(
+                                "{s} when trying to open {s}/index.html. single page app routing is disabled.",
+                                .{ @errorName(err), opts.routes.static_dir },
+                            );
+                        },
+                    }
+                    opts.routes.single_page_app_routing = false;
+                    break :brk null;
+                };
+
+                if (index_html_file) |index_dot_html| {
+                    opts.routes.single_page_app_routing = true;
+                    opts.routes.single_page_app_fd = index_dot_html.handle;
+                }
+            }
+
             // Windows has weird locking rules for file access.
             // so it's a bad idea to keep a file handle open for a long time on Windows.
             if (isWindows and opts.routes.static_dir_handle != null) {
@@ -1763,6 +1786,8 @@ pub const RouteConfig = struct {
     static_dir: string = "",
     static_dir_handle: ?std.fs.Dir = null,
     static_dir_enabled: bool = false,
+    single_page_app_routing: bool = false,
+    single_page_app_fd: StoredFileDescriptorType = 0,
 
     pub fn toAPI(this: *const RouteConfig) Api.LoadedRouteConfig {
         return .{

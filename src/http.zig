@@ -317,14 +317,20 @@ pub const RequestContext = struct {
             // std.mem.copy(u8, &tmp_buildfile_buf, relative_unrooted_path);
             // std.mem.copy(u8, tmp_buildfile_buf[relative_unrooted_path.len..], "/"
             // Search for /index.html
-            if (public_dir.openFile("index.html", .{})) |file| {
+            if (this.bundler.options.routes.single_page_app_routing and
+                this.bundler.options.routes.single_page_app_fd != 0)
+            {
+                this.sendSinglePageHTML() catch {};
+                return null;
+            } else if (public_dir.openFile("index.html", .{})) |file| {
                 var index_path = "index.html".*;
                 relative_unrooted_path = &(index_path);
                 _file = file;
                 extension = "html";
             } else |err| {}
+
             // Okay is it actually a full path?
-        } else {
+        } else if (extension.len > 0) {
             if (public_dir.openFile(relative_unrooted_path, .{})) |file| {
                 _file = file;
             } else |err| {}
@@ -623,6 +629,35 @@ pub const RequestContext = struct {
             ctx.conn.client.socket.fd,
             node_modules_bundle.fd,
             node_modules_bundle.codeStartOffset(),
+            content_length,
+            &[_]std.os.iovec_const{},
+            &[_]std.os.iovec_const{},
+            0,
+        );
+    }
+
+    pub fn sendSinglePageHTML(ctx: *RequestContext) !void {
+        ctx.appendHeader("Content-Type", MimeType.html.value);
+        ctx.appendHeader("Cache-Control", "no-cache");
+
+        defer ctx.done();
+
+        std.debug.assert(ctx.bundler.options.routes.single_page_app_fd > 0);
+        const file = std.fs.File{ .handle = ctx.bundler.options.routes.single_page_app_fd };
+        const stats = file.stat() catch |err| {
+            Output.prettyErrorln("<r><red>Error {s}<r> reading index.html", .{@errorName(err)});
+            ctx.writeStatus(500) catch {};
+            return;
+        };
+
+        const content_length = stats.size;
+        try ctx.writeStatus(200);
+        try ctx.prepareToSendBody(content_length, false);
+
+        _ = try std.os.sendfile(
+            ctx.conn.client.socket.fd,
+            ctx.bundler.options.routes.single_page_app_fd,
+            0,
             content_length,
             &[_]std.os.iovec_const{},
             &[_]std.os.iovec_const{},
@@ -2501,13 +2536,30 @@ pub const Server = struct {
         // However, we want to optimize for easy to copy paste
         // Nobody should get weird CORS errors when you go to the printed url.
         if (std.mem.readIntNative(u32, &addr.ipv4.host.octets) == 0 or std.mem.readIntNative(u128, &addr.ipv6.host.octets) == 0) {
-            Output.prettyError(" Bun!!<r>\n\n\n<d>  Link:<r> <b><cyan>http://localhost:{d}<r>\n\n\n", .{
-                addr.ipv4.port,
-            });
+            if (server.bundler.options.routes.single_page_app_routing) {
+                Output.prettyError(
+                    " Bun!!<r>\n\n\n<d>  Link:<r> <b><cyan>http://localhost:{d}<r>\n        <d>./{s}/index.html<r> \n\n\n",
+                    .{
+                        addr.ipv4.port,
+                        resolve_path.relative(server.bundler.fs.top_level_dir, server.bundler.options.routes.static_dir),
+                    },
+                );
+            } else {
+                Output.prettyError(" Bun!!<r>\n\n\n<d>  Link:<r> <b><cyan>http://localhost:{d}<r>\n\n\n", .{
+                    addr.ipv4.port,
+                });
+            }
         } else {
-            Output.prettyError(" Bun!!<r>\n\n\n<d>  Link:<r> <b><cyan>http://{s}<r>\n\n\n", .{
-                addr,
-            });
+            if (server.bundler.options.routes.single_page_app_routing) {
+                Output.prettyError(" Bun!!<r>\n\n\n<d>  Link:<r> <b><cyan>http://{s}<r>\n       <d>./{s}/index.html<r> \n\n\n", .{
+                    addr,
+                    resolve_path.relative(server.bundler.fs.top_level_dir, server.bundler.options.routes.static_dir),
+                });
+            } else {
+                Output.prettyError(" Bun!!<r>\n\n\n<d>  Link:<r> <b><cyan>http://{s}<r>\n\n\n", .{
+                    addr,
+                });
+            }
         }
 
         Output.flush();
@@ -2698,6 +2750,8 @@ pub const Server = struct {
                                 return;
                             };
                         }
+
+                        finished = finished or req_ctx.has_called_done;
                     }
                 },
                 else => {},
@@ -2720,19 +2774,21 @@ pub const Server = struct {
                 finished = true;
             }
         } else {
-            if (!finished) {
-                req_ctx.handleRequest() catch |err| {
-                    switch (err) {
-                        error.ModuleNotFound => {
-                            req_ctx.sendNotFound() catch {};
-                        },
-                        else => {
-                            Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
-                            did_print = true;
-                        },
-                    }
-                };
-                finished = true;
+            request_handler: {
+                if (!finished) {
+                    req_ctx.handleRequest() catch |err| {
+                        switch (err) {
+                            error.ModuleNotFound => {
+                                break :request_handler;
+                            },
+                            else => {
+                                Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
+                                did_print = true;
+                            },
+                        }
+                    };
+                    finished = true;
+                }
             }
         }
 
@@ -2745,7 +2801,23 @@ pub const Server = struct {
                         did_print = true;
                     };
                 }
+
+                finished = finished or req_ctx.has_called_done;
             }
+        }
+
+        if (comptime features.public_folder != .none) {
+            if (!finished and (req_ctx.bundler.options.routes.single_page_app_routing and req_ctx.url.extname.len == 0)) {
+                req_ctx.sendSinglePageHTML() catch |err| {
+                    Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
+                    did_print = true;
+                };
+                finished = true;
+            }
+        }
+
+        if (!finished) {
+            req_ctx.sendNotFound() catch {};
         }
     }
 

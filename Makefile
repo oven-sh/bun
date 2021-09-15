@@ -161,7 +161,7 @@ mimalloc:
 
 bun-link-lld-debug:
 	clang++ $(BUN_LLD_FLAGS) \
-		build/debug/macos-x86_64/bun.o \
+		$(DEBUG_BUN)/bun.o \
 		-Wl,-dead_strip \
 		-ftls-model=local-exec \
 		-flto \

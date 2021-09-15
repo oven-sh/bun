@@ -37,9 +37,11 @@ Here's what doesn't work yet:
 - `getStaticPaths`
 - same-origin `fetch` inside of `getStaticProps` or `getServerSideProps`
 - locales, zones, `assetPrefix` (workaround: change `--origin \"http://localhsot:3000/assetPrefixInhere\"`)
-- `next/image` - `<Image />` component
+- `next/image` is polyfilled to a regular `<img src>` tag.
 - `proxy` and anything else in `next.config.js`
 - API, catch-all &amp; catch-all fallback routes. Dynamic routes _are_ supported.
+
+When using Next.js, Bun automatically reads configuration from `.env.local`, `.env.development` and `.env` (in that order). `process.env.NEXT_PUBLIC_` and `process.env.NEXT_` automatically are replaced via `--define`.
 
 Currently, any time you import new dependencies from `node_modules`, you will need to re-run `bun bun --use next`. This will eventually be automatic.
 
@@ -72,7 +74,7 @@ If `public/index.html` exists, it becomes the default page instead of a 404 page
 To use Bun with `create-react-app`, there are two changes you will need to make in `public/index.html`:
 
 1. Replace `%PUBLIC_URL%` with `/`
-2. Insert `<script type="module" async src="/src/index.js>` just before `</body>`
+2. Insert `<script type="module" async src="/src/index.js">` just before `</body>`
 
 These changes are (sadly) necessary until Bun supports parsing &amp; transpiling HTML.
 
@@ -93,7 +95,7 @@ Here are examples of routing source code file paths:
 | /src/index.tsx             | src/index.tsx               |
 | /pages/index.js            | pages/index.js              |
 
-For the most part, you shouldn't have to worry about this. You _do not_ need to include file extensions in `import` paths.
+You do not need to include file extensions in `import` paths. CommonJS-style import paths without the file extension works.
 
 You can override the public directory by passing `--public-dir="path-to-folder"`.
 
@@ -101,7 +103,7 @@ If no directory is specified and `./public/` doesn't exist, Bun will try `./stat
 
 ## Using Bun with TypeScript
 
-TypeScript just works. There's nothing to configure and nothing extra to install. If you import a `.ts` or `.tsx` file, Bun will transpile it into JavaScript. Bun will also transpile any `node_modules` containing `.ts` or `.tsx` files. This is powered by Bun's TypeScript transpiler.
+TypeScript just works. There's nothing to configure and nothing extra to install. If you import a `.ts` or `.tsx` file, Bun will transpile it into JavaScript. Bun also transpiles `node_modules` containing `.ts` or `.tsx` files. This is powered by Bun's TypeScript transpiler, so it's fast.
 
 Bun also reads `tsconfig.json`, including `baseUrl` and `paths`.
 

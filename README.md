@@ -30,50 +30,80 @@ bun bun --use next
 bun
 ```
 
-Here are some features of Next.js that **aren't supported** yet:
+Many of Next.js' features are supported, but not all.
+
+Here's what doesn't work yet:
 
 - `getStaticPaths`
-- `fetch` inside of `getStaticProps` or `getServerSideProps`
+- same-origin `fetch` inside of `getStaticProps` or `getServerSideProps`
 - locales, zones, `assetPrefix` (workaround: change `--origin \"http://localhsot:3000/assetPrefixInhere\"`)
 - `next/image` - `<Image />` component
+- `proxy` and anything else in `next.config.js`
+- API, catch-all &amp; catch-all fallback routes. Dynamic routes _are_ supported.
 
 Currently, any time you import new dependencies from `node_modules`, you will need to re-run `bun bun --use next`. This will eventually be automatic.
 
-## Using Bun without a framework or with Create React App
+## Using Bun with single page apps
 
 In your project folder root (where `package.json` is):
 
 ```bash
 bun bun ./entry-point-1.js ./entry-point-2.jsx
-bun dev ./entry-point-1.js ./entry-point-2.jsx --origin https://localhost:3000
+bun
 ```
 
-By default, `bun dev` will look for any HTML files in the `public` directory and serve that. For browsers navigating to the page, the `.html` file extension is optional in the URL, and `index.html` will automatically rewrite for the directory.
+By default, `bun` will look for any HTML files in the `public` directory and serve that. For browsers navigating to the page, the `.html` file extension is optional in the URL, and `index.html` will automatically rewrite for the directory.
 
 Here are examples of routing from `public/` and how they're matched:
-| File Path | Dev Server URL |
-| --------- | ------------- |
-| public/dir/index.html | /dir |
-| public/index.html | / |
-| public/hi.html | /hi |
-| public/file.html | /file |
-| public/font/Inter.woff2 | /font/Inter.woff2 |
+| Dev Server URL | File Path |
+|----------------|-----------|
+| /dir | public/dir/index.html |
+| / | public/index.html |
+| /index | public/index.html |
+| /hi | public/hi.html |
+| /file | public/file.html |
+| /font/Inter.woff2 | public/font/Inter.woff2 |
+| /hello | public/index.html |
 
-For **Create React App** users, note that Bun does not transpile HTML yet, so `%PUBLIC_URL%` will need to be replaced with '/'`.
+If `public/index.html` exists, it becomes the default page instead of a 404 page, unless that pathname has a file extension.
 
-From there, Bun relies on the filesystem for mapping dev server paths to source files. All URL paths are relative to the project root (where `package.json` is).
+#### Using Bun with Create React App
+
+To use Bun with `create-react-app`, there are two changes you will need to make in `public/index.html`:
+
+1. Replace `%PUBLIC_URL%` with `/`
+2. Insert `<script type="module" async src="/src/index.js>` just before `</body>`
+
+These changes are (sadly) necessary until Bun supports parsing &amp; transpiling HTML.
+
+In your project folder root (where `package.json` is):
+
+```bash
+bun bun ./src/index.js
+bun
+```
+
+From there, Bun relies on the filesystem for mapping dev server paths to source files. All URL paths are relative to the project root (where `package.json` is located).
 
 Here are examples of routing source code file paths:
 
-| File Path (relative to cwd) | Dev Server URL             |
-| --------------------------- | -------------------------- |
-| src/components/Button.tsx   | /src/components/Button.tsx |
-| src/index.tsx               | /src/index.tsx             |
-| pages/index.js              | /pages/index.js            |
+| Dev Server URL             | File Path (relative to cwd) |
+| -------------------------- | --------------------------- |
+| /src/components/Button.tsx | src/components/Button.tsx   |
+| /src/index.tsx             | src/index.tsx               |
+| /pages/index.js            | pages/index.js              |
+
+For the most part, you shouldn't have to worry about this. You _do not_ need to include file extensions in `import` paths.
 
 You can override the public directory by passing `--public-dir="path-to-folder"`.
 
 If no directory is specified and `./public/` doesn't exist, Bun will try `./static/`. If `./static/` does not exist, but won't serve from a public directory. If you pass `--public-dir=./` Bun will serve from the current directory, but it will check the current directory last instead of first.
+
+## Using Bun with TypeScript
+
+TypeScript just works. There's nothing to configure and nothing extra to install. If you import a `.ts` or `.tsx` file, Bun will transpile it into JavaScript. Bun will also transpile any `node_modules` containing `.ts` or `.tsx` files. This is powered by Bun's TypeScript transpiler.
+
+Bun also reads `tsconfig.json`, including `baseUrl` and `paths`.
 
 ## Using Tailwind with Bun
 

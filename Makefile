@@ -161,7 +161,7 @@ mimalloc:
 
 bun-link-lld-debug:
 	clang++ $(BUN_LLD_FLAGS) \
-		$(DEBUG_BIN)/bun.o \
+		$(DEBUG_BIN)/bun-debug.o \
 		-Wl,-dead_strip \
 		-ftls-model=local-exec \
 		-flto \

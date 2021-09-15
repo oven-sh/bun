@@ -165,7 +165,7 @@ bun-link-lld-debug:
 		-Wl,-dead_strip \
 		-ftls-model=local-exec \
 		-flto \
-		-o build/debug/macos-x86_64/bun
+		-o $(DEBUG_BIN)/bun-debug
 
 bun-link-lld-release:
 	clang++ $(BUN_LLD_FLAGS) \

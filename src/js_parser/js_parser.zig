@@ -670,7 +670,7 @@ const StaticSymbolName = struct {
 
         pub const __name = NewStaticSymbol("__name");
         pub const __toModule = NewStaticSymbol("__toModule");
-        pub const __require = NewStaticSymbol("__require");
+        pub const __require = NewStaticSymbol("require");
         pub const __cJS2eSM = NewStaticSymbol("__cJS2eSM");
         pub const __export = NewStaticSymbol("__export");
         pub const __reExport = NewStaticSymbol("__reExport");
@@ -2366,6 +2366,9 @@ pub const Parser = struct {
         }
 
         const has_cjs_imports = p.cjs_import_stmts.items.len > 0 and p.options.transform_require_to_import;
+
+        p.resolveCommonJSSymbols();
+
         // - don't import runtime if we're bundling, it's already included
         // - when HMR is enabled, we always need to import the runtime for HMRClient and HMRModule.
         // - when HMR is not enabled, we only need any runtime imports if we're importing require()
@@ -2972,20 +2975,21 @@ pub fn NewParser(
                         return Expr{ .data = nullExprData, .loc = arg.loc };
                     }
 
-                    const original_name = str.string(p.allocator) catch unreachable;
-                    const import_record_index = p.addImportRecord(.require, arg.loc, original_name);
+                    const pathname = str.string(p.allocator) catch unreachable;
+
+                    const import_record_index = p.addImportRecord(.require, arg.loc, pathname);
                     p.import_records.items[import_record_index].handles_import_errors = p.fn_or_arrow_data_visit.try_body_count != 0;
                     p.import_records_for_current_part.append(import_record_index) catch unreachable;
 
                     if (!p.options.transform_require_to_import) {
                         return p.e(E.Require{ .import_record_index = import_record_index }, arg.loc);
                     }
-
+                    const symbol_name = p.import_records.items[import_record_index].path.name.nonUniqueNameString(p.allocator);
                     const cjs_import_name = std.fmt.allocPrint(
                         p.allocator,
                         "{s}_{x}_{d}",
                         .{
-                            original_name,
+                            symbol_name,
                             @truncate(
                                 u16,
                                 std.hash.Wyhash.hash(
@@ -3572,7 +3576,6 @@ pub fn NewParser(
                 p.recordUsage(p.runtime_imports.__HMRClient.?.ref);
             } else {
                 p.runtime_imports.__export = GeneratedSymbol{ .ref = p.exports_ref, .primary = Ref.None, .backup = Ref.None };
-                p.runtime_imports.__require = GeneratedSymbol{ .ref = p.require_ref, .primary = Ref.None, .backup = Ref.None };
             }
 
             if (is_jsx_enabled) {
@@ -3610,6 +3613,12 @@ pub fn NewParser(
             {
                 p.symbols.items[generated_symbol.ref.inner_index].original_name = p.symbols.items[generated_symbol.backup.inner_index].original_name;
                 return;
+            }
+        }
+
+        pub fn resolveCommonJSSymbols(p: *P) void {
+            if (p.runtime_imports.__require) |*require| {
+                p.resolveGeneratedSymbol(require);
             }
         }
 
@@ -13785,10 +13794,21 @@ pub fn NewParser(
             p.has_called_runtime = true;
 
             if (!p.runtime_imports.contains(name)) {
-                const generated_symbol = p.declareGeneratedSymbol(.other, name) catch unreachable;
-                ref = generated_symbol.ref;
+                ref = brk: {
+                    if (comptime strings.eqlComptime(name, "__require")) {
+                        p.runtime_imports.__require = GeneratedSymbol{
+                            .backup = declareSymbolMaybeGenerated(p, .other, logger.Loc.Empty, StaticSymbolName.List.__require.backup, true) catch unreachable,
+                            .primary = p.require_ref,
+                            .ref = declareSymbolMaybeGenerated(p, .other, logger.Loc.Empty, StaticSymbolName.List.__require.internal, true) catch unreachable,
+                        };
+                        break :brk p.runtime_imports.__require.?.ref;
+                    }
+                    const generated_symbol = p.declareGeneratedSymbol(.other, name) catch unreachable;
+                    p.runtime_imports.put(name, generated_symbol);
+                    break :brk generated_symbol.ref;
+                };
+
                 p.module_scope.generated.append(ref) catch unreachable;
-                p.runtime_imports.put(name, generated_symbol);
             } else {
                 ref = p.runtime_imports.at(name).?;
             }
@@ -14697,11 +14717,17 @@ pub fn NewParser(
                 .named_exports = p.named_exports,
                 .import_keyword = p.es6_import_keyword,
                 .export_keyword = p.es6_export_keyword,
-                .require_ref = p.require_ref,
+                .require_ref = if (p.runtime_imports.__require != null)
+                    p.runtime_imports.__require.?.ref
+                else
+                    p.require_ref,
 
                 .uses_module_ref = (p.symbols.items[p.module_ref.inner_index].use_count_estimate > 0),
                 .uses_exports_ref = (p.symbols.items[p.exports_ref.inner_index].use_count_estimate > 0),
-                .uses_require_ref = (p.symbols.items[p.require_ref.inner_index].use_count_estimate > 0),
+                .uses_require_ref = if (p.runtime_imports.__require != null)
+                    (p.symbols.items[p.runtime_imports.__require.?.ref.inner_index].use_count_estimate > 0)
+                else
+                    false,
                 // .top_Level_await_keyword = p.top_level_await_keyword,
             };
         }

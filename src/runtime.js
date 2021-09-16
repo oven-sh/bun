@@ -121,39 +121,18 @@ export var __BUN_INTERNAL_DO_NOT_USE_OR_YOU_WILL_BE_FIRED = {
 // );
 
 export var __require = (namespace) => {
-  if (typeof namespace === "function" && namespace[cjsRequireSymbol])
+  const namespaceType = typeof namespace;
+  if (namespaceType === "function" && namespace[cjsRequireSymbol])
     return namespace();
 
+  if (
+    namespaceType === "object" &&
+    "default" in namespace &&
+    namespace.default[cjsRequireSymbol]
+  )
+    return namespace.default();
+
   return namespace;
-  // // is it an ESM module record?
-  // if (namespaceType === "object") return namespace;
-    // // is it a CommonJS module?
-
-  // // i have no idea what it is so i'm just going to try stuff and pray
-  // var entry = require_cache.get(namespace);
-  // if (typeof entry !== "undefined") {
-  //   return entry;
-  // }
-
-  // var target =
-  //   Object.prototype.hasOwnProperty.call(namespace, "default") &&
-  //   Object.keys(namespace).length === 1
-  //     ? namespace["default"]
-  //     : namespace;
-
-  // if (typeof target !== "function") {
-  //   throw new __BUN_INTERNAL_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.RequireFailedError(
-  //     `Couldn't find module "${
-  //       typeof namespace === "string"
-  //         ? namespace
-  //         : namespace.name || namespace.displayName || namespace.toString()
-  //     }"`
-  //   );
-  // }
-
-  // var exports = target();
-  // require_cache.set(namespace, exports);
-  // return exports;
 };
 
 export var $$m = __commonJS;

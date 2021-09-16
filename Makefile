@@ -85,7 +85,7 @@ release-cli-push:
 	gh release upload $(BUN_BUILD_TAG) --clobber /tmp/bun-cli-$(PACKAGE_JSON_VERSION).tgz
 	npm publish /tmp/bun-cli-$(PACKAGE_JSON_VERSION).tgz
 
-release-mac-push:
+release-mac-push: write-package-json-version
 	cd $(PACKAGE_DIR) && npm pack --pack-destination /tmp/
 	gh release upload $(BUN_BUILD_TAG) --clobber /tmp/bun-cli-$(TRIPLET)-$(PACKAGE_JSON_VERSION).tgz
 	npm publish /tmp/bun-cli-$(TRIPLET)-$(PACKAGE_JSON_VERSION).tgz

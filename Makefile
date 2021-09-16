@@ -84,9 +84,9 @@ release-cli-push:
 	npm publish /tmp/bun-cli-$(PACKAGE_JSON_VERSION).tgz
 
 release-mac-push:
-	cd packages/bun-cli-darwin-x64 && npm pack --pack-destination /tmp/
-	gh release upload $(BUN_BUILD_TAG) --clobber /tmp/bun-cli-darwin-x64-$(PACKAGE_JSON_VERSION).tgz
-	npm publish /tmp/bun-cli-darwin-x64-$(PACKAGE_JSON_VERSION).tgz
+	cd $(PACKAGE_DIR) && npm pack --pack-destination /tmp/
+	gh release upload $(BUN_BUILD_TAG) --clobber /tmp/bun-cli-$(TRIPLET)-$(PACKAGE_JSON_VERSION).tgz
+	npm publish /tmp/bun-cli-$(TRIPLET)-$(PACKAGE_JSON_VERSION).tgz
 
 
 jsc-copy-headers:

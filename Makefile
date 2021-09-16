@@ -1,7 +1,8 @@
 OS_NAME := $(shell uname -s | tr '[:upper:]' '[:lower:]')
 ARCH_NAME_DENORAMLZIED_1 := $(shell uname -m)
 ARCH_NAME_DENORAMLZIED_2 := $(shell tr '[_]' '[--]' <<< $(ARCH_NAME_DENORAMLZIED_1))
-ARCH_NAME := $(shell sed s/x86-64/x64/ <<< $(ARCH_NAME_DENORAMLZIED_2))
+ARCH_NAME_DENORAMLZIED_3 := $(shell sed s/x86-64/x64/ <<< $(ARCH_NAME_DENORAMLZIED_2))
+ARCH_NAME := $(shell sed s/arm64/aarch64/ <<< $(ARCH_NAME_DENORAMLZIED_3))
 TRIPLET := $(OS_NAME)-$(ARCH_NAME)
 PACKAGE_DIR := packages/bun-cli-$(TRIPLET)
 DEBUG_PACKAGE_DIR := packages/debug-bun-cli-$(TRIPLET)
@@ -169,13 +170,13 @@ bun-link-lld-debug:
 
 bun-link-lld-release:
 	clang++ $(BUN_LLD_FLAGS) \
-		packages/bun-cli-darwin-x64/bin/bun.o \
-		-o packages/bun-cli-darwin-x64/bin/bun \
+		$(BIN_DIR)/bun.o \
+		-o $(BIN_DIR)/bun \
 		-Wl,-dead_strip \
 		-ftls-model=local-exec \
 		-flto \
 		-O3
-	rm packages/bun-cli-darwin-x64/bin/bun.o
+	rm $(BIN_DIR)/bun.o
 
 bun-link-lld-release-aarch64:
 	clang++ $(BUN_LLD_FLAGS) \

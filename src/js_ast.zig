@@ -832,7 +832,7 @@ pub const E = struct {
         op: Op.Code,
     };
 
-    pub const Boolean = packed struct { value: bool };
+    pub const Boolean = struct { value: bool };
     pub const Super = struct {};
     pub const Null = struct {};
     pub const This = struct {};

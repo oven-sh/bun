@@ -13368,10 +13368,11 @@ pub fn NewParser(
             loc: logger.Loc,
             ref: Ref,
         ) Expr {
-            p.recordUsage((p.enclosing_namespace_arg_ref orelse unreachable));
+            const enclosing_ref = p.enclosing_namespace_arg_ref.?;
+            p.recordUsage(enclosing_ref);
 
             return p.e(E.Dot{
-                .target = p.e(E.Identifier{ .ref = p.enclosing_namespace_arg_ref orelse unreachable }, loc),
+                .target = p.e(E.Identifier{ .ref = enclosing_ref}, loc),
                 .name = p.symbols.items[ref.inner_index].original_name,
                 .name_loc = loc,
             }, loc);

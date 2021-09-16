@@ -2267,14 +2267,15 @@ pub fn NewResolver(cache_files: bool) type {
             // https://github.com/microsoft/TypeScript/issues/4595
             if (strings.lastIndexOfChar(base, '.')) |last_dot| {
                 const ext = base[last_dot..base.len];
-                if (strings.eql(ext, ".js") or strings.eql(ext, ".jsx")) {
+                if (strings.eqlComptime(ext, ".js") or strings.eqlComptime(ext, ".jsx")) {
                     const segment = base[0..last_dot];
-                    std.mem.copy(u8, &load_as_file_buf, segment);
+                    var tail = load_as_file_buf[path.len - base.len ..];
+                    std.mem.copy(u8, tail, segment);
 
                     const exts = comptime [_]string{ ".ts", ".tsx" };
 
-                    for (exts) |ext_to_replace| {
-                        var buffer = load_as_file_buf[0 .. segment.len + ext_to_replace.len];
+                    inline for (exts) |ext_to_replace| {
+                        var buffer = tail[0 .. segment.len + ext_to_replace.len];
                         std.mem.copy(u8, buffer[segment.len..buffer.len], ext_to_replace);
 
                         if (entries.get(buffer)) |query| {
@@ -2285,10 +2286,11 @@ pub fn NewResolver(cache_files: bool) type {
 
                                 return LoadResult{
                                     .path = brk: {
-                                        query.entry.abs_path = if (query.entry.abs_path.isEmpty())
-                                            PathString.init(r.fs.dirname_store.append(@TypeOf(buffer), buffer) catch unreachable)
-                                        else
-                                            query.entry.abs_path;
+                                        if (query.entry.abs_path.isEmpty()) {
+                                            // Should already have a trailing slash so we shouldn't need to worry.
+                                            var parts = [_]string{ query.entry.dir, buffer };
+                                            query.entry.abs_path = PathString.init(r.fs.filename_store.append(@TypeOf(parts), parts) catch unreachable);
+                                        }
 
                                         break :brk query.entry.abs_path.slice();
                                     },

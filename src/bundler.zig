@@ -1415,7 +1415,7 @@ pub fn NewBundler(cache_files: bool) type {
                             .json => {
                                 var expr = json_parser.ParseJSON(&source, worker.data.log, worker.allocator) catch return;
                                 if (expr.data != .e_missing) {
-                                    var stmt = js_ast.Stmt.alloc(worker.allocator, js_ast.S.ExportDefault{
+                                    var stmt = js_ast.Stmt.alloc(worker.allocator, js_ast.S.ExportDefault, js_ast.S.ExportDefault{
                                         .value = js_ast.StmtOrExpr{ .expr = expr },
                                         .default_name = js_ast.LocRef{ .loc = logger.Loc{}, .ref = Ref{} },
                                     }, logger.Loc{ .start = 0 });
@@ -2215,7 +2215,7 @@ pub fn NewBundler(cache_files: bool) type {
                 },
                 .json => {
                     var expr = json_parser.ParseJSON(&source, bundler.log, allocator) catch return null;
-                    var stmt = js_ast.Stmt.alloc(allocator, js_ast.S.ExportDefault{
+                    var stmt = js_ast.Stmt.alloc(allocator, js_ast.S.ExportDefault, js_ast.S.ExportDefault{
                         .value = js_ast.StmtOrExpr{ .expr = expr },
                         .default_name = js_ast.LocRef{ .loc = logger.Loc{}, .ref = Ref{} },
                     }, logger.Loc{ .start = 0 });

@@ -3041,8 +3041,9 @@ pub fn NewParser(
         };
 
         pub fn s(p: *P, t: anytype, loc: logger.Loc) Stmt {
+            const Type = @TypeOf(t);
             // Output.print("\nStmt: {s} - {d}\n", .{ @typeName(@TypeOf(t)), loc.start });
-            if (@typeInfo(@TypeOf(t)) == .Pointer) {
+            if (@typeInfo(Type) == .Pointer) {
                 // ExportFrom normally becomes import records during the visiting pass
                 // However, we skip the visiting pass in this mode
                 // So we must generate a minimum version of it here.
@@ -3060,18 +3061,19 @@ pub fn NewParser(
                     // }
                 }
 
-                return Stmt.init(t, loc);
+                return Stmt.init(std.meta.Child(Type), t, loc);
             } else {
-                return Stmt.alloc(p.allocator, t, loc);
+                return Stmt.alloc(p.allocator, Type, t, loc);
             }
         }
 
         pub fn e(p: *P, t: anytype, loc: logger.Loc) Expr {
+            const Type = @TypeOf(t);
 
             // Output.print("\nExpr: {s} - {d}\n", .{ @typeName(@TypeOf(t)), loc.start });
-            if (@typeInfo(@TypeOf(t)) == .Pointer) {
+            if (@typeInfo(Type) == .Pointer) {
                 if (comptime only_scan_imports_and_do_not_visit) {
-                    if (@TypeOf(t) == *E.Call) {
+                    if (Type == *E.Call) {
                         const call: *E.Call = t;
                         switch (call.target.data) {
                             .e_identifier => |ident| {
@@ -3084,10 +3086,10 @@ pub fn NewParser(
                         }
                     }
                 }
-                return Expr.init(t, loc);
+                return Expr.init(std.meta.Child(Type), t, loc);
             } else {
                 if (comptime only_scan_imports_and_do_not_visit) {
-                    if (@TypeOf(t) == E.Call) {
+                    if (Type == E.Call) {
                         const call: E.Call = t;
                         switch (call.target.data) {
                             .e_identifier => |ident| {
@@ -3100,7 +3102,7 @@ pub fn NewParser(
                         }
                     }
                 }
-                return Expr.alloc(p.allocator, t, loc);
+                return Expr.alloc(p.allocator, Type, t, loc);
             }
         }
 

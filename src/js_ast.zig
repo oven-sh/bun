@@ -247,7 +247,7 @@ pub const Binding = struct {
 
         switch (binding.data) {
             .b_missing => {
-                return Expr.alloc(wrapper.allocator, E.Missing{}, loc);
+                return Expr{ .data = .{ .e_missing = E.Missing{} }, .loc = loc };
             },
 
             .b_identifier => |b| {
@@ -261,7 +261,7 @@ pub const Binding = struct {
                     exprs[i] = convert: {
                         const expr = toExpr(&item.binding, wrapper);
                         if (b.has_spread and i == exprs.len - 1) {
-                            break :convert Expr.alloc(wrapper.allocator, E.Spread{ .value = expr }, expr.loc);
+                            break :convert Expr.alloc(wrapper.allocator, E.Spread, E.Spread{ .value = expr }, expr.loc);
                         } else if (item.default_value) |default| {
                             break :convert Expr.assign(expr, default, wrapper.allocator);
                         } else {
@@ -270,7 +270,7 @@ pub const Binding = struct {
                     };
                 }
 
-                return Expr.alloc(wrapper.allocator, E.Array{ .items = exprs, .is_single_line = b.is_single_line }, loc);
+                return Expr.alloc(wrapper.allocator, E.Array, E.Array{ .items = exprs, .is_single_line = b.is_single_line }, loc);
             },
             .b_object => |b| {
                 var properties = wrapper.allocator.alloc(G.Property, b.properties.len) catch unreachable;
@@ -284,7 +284,7 @@ pub const Binding = struct {
                         .initializer = item.default_value,
                     };
                 }
-                return Expr.alloc(wrapper.allocator, E.Object{ .properties = properties, .is_single_line = b.is_single_line }, loc);
+                return Expr.alloc(wrapper.allocator, E.Object, E.Object{ .properties = properties, .is_single_line = b.is_single_line }, loc);
             },
             else => {
                 Global.panic("Interanl error", .{});
@@ -1246,10 +1246,10 @@ pub const Stmt = struct {
     }
 
     pub fn empty() Stmt {
-        return Stmt.init(Stmt.None, logger.Loc.Empty);
+        return Stmt{ .data = .{ .s_empty = None }, .loc = logger.Loc{} };
     }
 
-    var None = S.Empty{};
+    const None = S.Empty{};
 
     pub inline fn getBlock(self: *const @This()) *S.Block {
         return self.data.s_block;
@@ -1351,17 +1351,14 @@ pub const Stmt = struct {
         return self.data.s_with;
     }
     pub var icount: usize = 0;
-    pub fn init(origData: anytype, loc: logger.Loc) Stmt {
+    pub fn init(comptime StatementType: type, origData: *StatementType, loc: logger.Loc) Stmt {
         icount += 1;
-        if (@typeInfo(@TypeOf(origData)) != .Pointer and @TypeOf(origData) != S.Empty) {
-            @compileError("Stmt.init needs a pointer.");
-        }
 
-        if (@TypeOf(origData) == S.Empty) {
+        if (StatementType == S.Empty) {
             return Stmt{ .loc = loc, .data = Data{ .s_empty = S.Empty{} } };
         }
 
-        switch (@TypeOf(origData.*)) {
+        switch (StatementType) {
             S.Block => {
                 return Stmt.comptime_init("s_block", S.Block, origData, loc);
             },
@@ -1470,13 +1467,13 @@ pub const Stmt = struct {
         return Stmt{ .loc = loc, .data = @unionInit(Data, tag_name, Data.Store.append(typename, origData)) };
     }
 
-    inline fn comptime_init(comptime tag_name: string, comptime typename: type, origData: anytype, loc: logger.Loc) Stmt {
+    inline fn comptime_init(comptime tag_name: string, comptime TypeName: type, origData: anytype, loc: logger.Loc) Stmt {
         return Stmt{ .loc = loc, .data = @unionInit(Data, tag_name, origData) };
     }
 
-    pub fn alloc(allocator: *std.mem.Allocator, origData: anytype, loc: logger.Loc) Stmt {
+    pub fn alloc(allocator: *std.mem.Allocator, comptime StatementData: type, origData: StatementData, loc: logger.Loc) Stmt {
         icount += 1;
-        switch (@TypeOf(origData)) {
+        switch (StatementData) {
             S.Block => {
                 return Stmt.comptime_alloc(allocator, "s_block", S.Block, origData, loc);
             },
@@ -2080,7 +2077,7 @@ pub const Expr = struct {
 
         // "a op b" => "a op b"
         // "(a op b) op c" => "(a op b) op c"
-        return Expr.alloc(allocator, E.Binary{ .op = op, .left = a, .right = b }, a.loc);
+        return Expr.alloc(allocator, E.Binary, E.Binary{ .op = op, .left = a, .right = b }, a.loc);
     }
 
     pub fn joinWithComma(a: Expr, b: Expr, allocator: *std.mem.Allocator) Expr {
@@ -2092,7 +2089,7 @@ pub const Expr = struct {
             return a;
         }
 
-        return Expr.alloc(allocator, E.Binary{ .op = .bin_comma, .left = a, .right = b }, a.loc);
+        return Expr.alloc(allocator, E.Binary, E.Binary{ .op = .bin_comma, .left = a, .right = b }, a.loc);
     }
 
     pub fn joinAllWithComma(all: []Expr, allocator: *std.mem.Allocator) Expr {
@@ -2190,16 +2187,16 @@ pub const Expr = struct {
     var false_bool = E.Boolean{ .value = false };
     var bool_values = [_]*E.Boolean{ &false_bool, &true_bool };
 
-    pub fn init(exp: anytype, loc: logger.Loc) Expr {
+    pub fn init(comptime Type: type, exp: *const Type, loc: logger.Loc) Expr {
         icount += 1;
         const st = exp.*;
 
-        switch (@TypeOf(st)) {
+        switch (Type) {
             E.Array => {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_array = Data.Store.All.append(@TypeOf(st), st),
+                        .e_array = Data.Store.All.append(Type, st),
                     },
                 };
             },
@@ -2207,7 +2204,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_class = Data.Store.All.append(@TypeOf(st), st),
+                        .e_class = Data.Store.All.append(Type, st),
                     },
                 };
             },
@@ -2215,7 +2212,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_unary = Data.Store.All.append(@TypeOf(st), st),
+                        .e_unary = Data.Store.All.append(Type, st),
                     },
                 };
             },
@@ -2223,7 +2220,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_binary = Data.Store.All.append(@TypeOf(st), st),
+                        .e_binary = Data.Store.All.append(Type, st),
                     },
                 };
             },
@@ -2271,7 +2268,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_new = Data.Store.All.append(@TypeOf(st), st),
+                        .e_new = Data.Store.All.append(Type, st),
                     },
                 };
             },
@@ -2287,7 +2284,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_function = Data.Store.All.append(@TypeOf(st), st),
+                        .e_function = Data.Store.All.append(Type, st),
                     },
                 };
             },
@@ -2303,7 +2300,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_call = Data.Store.All.append(@TypeOf(st), st),
+                        .e_call = Data.Store.All.append(Type, st),
                     },
                 };
             },
@@ -2311,7 +2308,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_dot = Data.Store.All.append(@TypeOf(st), st),
+                        .e_dot = Data.Store.All.append(Type, st),
                     },
                 };
             },
@@ -2319,7 +2316,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_index = Data.Store.All.append(@TypeOf(st), st),
+                        .e_index = Data.Store.All.append(Type, st),
                     },
                 };
             },
@@ -2327,7 +2324,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_arrow = Data.Store.All.append(@TypeOf(st), st),
+                        .e_arrow = Data.Store.All.append(Type, st),
                     },
                 };
             },
@@ -2335,7 +2332,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_identifier = Data.Store.Identifier.append(@TypeOf(st), st),
+                        .e_identifier = Data.Store.Identifier.append(Type, st),
                     },
                 };
             },
@@ -2343,7 +2340,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_import_identifier = Data.Store.All.append(@TypeOf(st), st),
+                        .e_import_identifier = Data.Store.All.append(Type, st),
                     },
                 };
             },
@@ -2351,7 +2348,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_private_identifier = Data.Store.All.append(@TypeOf(st), st),
+                        .e_private_identifier = Data.Store.All.append(Type, st),
                     },
                 };
             },
@@ -2359,7 +2356,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_jsx_element = Data.Store.All.append(@TypeOf(st), st),
+                        .e_jsx_element = Data.Store.All.append(Type, st),
                     },
                 };
             },
@@ -2370,7 +2367,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_number = Data.Store.All.append(@TypeOf(st), st),
+                        .e_number = Data.Store.All.append(Type, st),
                     },
                 };
             },
@@ -2378,7 +2375,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_big_int = Data.Store.All.append(@TypeOf(st), st),
+                        .e_big_int = Data.Store.All.append(Type, st),
                     },
                 };
             },
@@ -2386,7 +2383,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_object = Data.Store.All.append(@TypeOf(st), st),
+                        .e_object = Data.Store.All.append(Type, st),
                     },
                 };
             },
@@ -2394,7 +2391,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_spread = Data.Store.All.append(@TypeOf(st), st),
+                        .e_spread = Data.Store.All.append(Type, st),
                     },
                 };
             },
@@ -2410,7 +2407,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_string = Data.Store.All.append(@TypeOf(st), st),
+                        .e_string = Data.Store.All.append(Type, st),
                     },
                 };
             },
@@ -2418,7 +2415,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_template_part = Data.Store.All.append(@TypeOf(st), st),
+                        .e_template_part = Data.Store.All.append(Type, st),
                     },
                 };
             },
@@ -2426,7 +2423,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_template = Data.Store.All.append(@TypeOf(st), st),
+                        .e_template = Data.Store.All.append(Type, st),
                     },
                 };
             },
@@ -2434,7 +2431,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_reg_exp = Data.Store.All.append(@TypeOf(st), st),
+                        .e_reg_exp = Data.Store.All.append(Type, st),
                     },
                 };
             },
@@ -2442,7 +2439,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_await = Data.Store.All.append(@TypeOf(st), st),
+                        .e_await = Data.Store.All.append(Type, st),
                     },
                 };
             },
@@ -2450,7 +2447,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_yield = Data.Store.All.append(@TypeOf(st), st),
+                        .e_yield = Data.Store.All.append(Type, st),
                     },
                 };
             },
@@ -2458,7 +2455,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_if = Data.Store.All.append(@TypeOf(st), st),
+                        .e_if = Data.Store.All.append(Type, st),
                     },
                 };
             },
@@ -2466,7 +2463,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_require_or_require_resolve = Data.Store.All.append(@TypeOf(st), st),
+                        .e_require_or_require_resolve = Data.Store.All.append(Type, st),
                     },
                 };
             },
@@ -2474,7 +2471,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_import = Data.Store.All.append(@TypeOf(st), st),
+                        .e_import = Data.Store.All.append(Type, st),
                     },
                 };
             },
@@ -2482,7 +2479,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_require = Data.Store.All.append(@TypeOf(st), st),
+                        .e_require = Data.Store.All.append(Type, st),
                     },
                 };
             },
@@ -2496,14 +2493,14 @@ pub const Expr = struct {
             },
 
             else => {
-                @compileError("Invalid type passed to Expr.init: " ++ @typeName(@TypeOf(st)));
+                @compileError("Invalid type passed to Expr.init: " ++ @typeName(Type));
             },
         }
     }
 
-    pub fn alloc(allocator: *std.mem.Allocator, st: anytype, loc: logger.Loc) Expr {
+    pub fn alloc(allocator: *std.mem.Allocator, comptime Type: type, st: Type, loc: logger.Loc) Expr {
         icount += 1;
-        return init(&st, loc);
+        return init(Type, &st, loc);
     }
 
     pub const Tag = enum(u6) {
@@ -2933,14 +2930,14 @@ pub const Expr = struct {
     }
 
     pub fn assign(a: Expr, b: Expr, allocator: *std.mem.Allocator) Expr {
-        return alloc(allocator, E.Binary{
+        return alloc(allocator, E.Binary, E.Binary{
             .op = .bin_assign,
             .left = a,
             .right = b,
         }, a.loc);
     }
-    pub inline fn at(expr: *Expr, t: anytype, allocator: *std.mem.Allocator) Expr {
-        return alloc(allocator, t, expr.loc);
+    pub inline fn at(expr: Expr, comptime Type: type, t: Type, allocator: *std.mem.Allocator) Expr {
+        return alloc(allocator, Type, t, expr.loc);
     }
 
     // Wraps the provided expression in the "!" prefix operator. The expression
@@ -2966,22 +2963,22 @@ pub const Expr = struct {
     pub fn maybeSimplifyNot(expr: *Expr, allocator: *std.mem.Allocator) ?Expr {
         switch (expr.data) {
             .e_null, .e_undefined => {
-                return expr.at(E.Boolean{ .value = true }, allocator);
+                return expr.at(E.Boolean, E.Boolean{ .value = true }, allocator);
             },
             .e_boolean => |b| {
-                return expr.at(E.Boolean{ .value = b.value }, allocator);
+                return expr.at(E.Boolean, E.Boolean{ .value = b.value }, allocator);
             },
             .e_number => |n| {
-                return expr.at(E.Boolean{ .value = (n.value == 0 or std.math.isNan(n.value)) }, allocator);
+                return expr.at(E.Boolean, E.Boolean{ .value = (n.value == 0 or std.math.isNan(n.value)) }, allocator);
             },
             .e_big_int => |b| {
-                return expr.at(E.Boolean{ .value = strings.eqlComptime(b.value, "0") }, allocator);
+                return expr.at(E.Boolean, E.Boolean{ .value = strings.eqlComptime(b.value, "0") }, allocator);
             },
             .e_function,
             .e_arrow,
             .e_reg_exp,
             => {
-                return expr.at(E.Boolean{ .value = false }, allocator);
+                return expr.at(E.Boolean, E.Boolean{ .value = false }, allocator);
             },
             // "!!!a" => "!a"
             .e_unary => |un| {
@@ -3028,6 +3025,7 @@ pub const Expr = struct {
     pub fn assignStmt(a: Expr, b: Expr, allocator: *std.mem.Allocator) Stmt {
         return Stmt.alloc(
             allocator,
+            S.SExpr,
             S.SExpr{
                 .value = Expr.assign(a, b, allocator),
             },
@@ -3985,10 +3983,11 @@ test "Stmt.init" {
 
 test "Expr.init" {
     var allocator = std.heap.page_allocator;
-    const ident = Expr.alloc(allocator, E.Identifier{}, logger.Loc{ .start = 100 });
+    const ident = Expr.alloc(allocator, E.Identifier, E.Identifier{}, logger.Loc{ .start = 100 });
     var list = [_]Expr{ident};
     var expr = Expr.alloc(
         allocator,
+        E.Array,
         E.Array{ .items = list[0..] },
         logger.Loc{ .start = 1 },
     );

@@ -13372,7 +13372,7 @@ pub fn NewParser(
             p.recordUsage(enclosing_ref);
 
             return p.e(E.Dot{
-                .target = p.e(E.Identifier{ .ref = enclosing_ref}, loc),
+                .target = p.e(E.Identifier{ .ref = enclosing_ref }, loc),
                 .name = p.symbols.items[ref.inner_index].original_name,
                 .name_loc = loc,
             }, loc);

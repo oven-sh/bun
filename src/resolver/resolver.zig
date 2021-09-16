@@ -903,10 +903,10 @@ pub fn NewResolver(cache_files: bool) type {
                         result.package_json = @intToPtr(*PackageJSON, @ptrToInt(fallback_module.package_json));
                         result.is_from_node_modules = true;
                         return result;
-                    // "node:*
-                    // "fs"
-                    // "fs/*"
-                    // These are disabled!
+                        // "node:*
+                        // "fs"
+                        // "fs/*"
+                        // These are disabled!
                     } else if (had_node_prefix or
                         (import_path_without_node_prefix.len >= 2 and strings.eqlComptimeIgnoreLen(import_path_without_node_prefix[0..2], "fs") and
                         (import_path_without_node_prefix.len == 2 or

@@ -1559,6 +1559,10 @@ pub const VM = extern struct {
         return cppFn("deinit", .{ vm, global_object });
     }
 
+    pub fn isJITEnabled() bool {
+        return cppFn("isJITEnabled", .{});
+    }
+
     pub fn deleteAllCode(
         vm: *VM,
         global_object: *JSGlobalObject,
@@ -1623,7 +1627,7 @@ pub const VM = extern struct {
         });
     }
 
-    pub const Extern = [_][]const u8{ "deleteAllCode", "apiLock", "create", "deinit", "setExecutionForbidden", "executionForbidden", "isEntered", "throwError", "drainMicrotasks", "whenIdle", "shrinkFootprint" };
+    pub const Extern = [_][]const u8{ "isJITEnabled", "deleteAllCode", "apiLock", "create", "deinit", "setExecutionForbidden", "executionForbidden", "isEntered", "throwError", "drainMicrotasks", "whenIdle", "shrinkFootprint" };
 };
 
 pub const ThrowScope = extern struct {

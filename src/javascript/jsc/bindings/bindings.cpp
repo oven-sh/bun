@@ -1433,6 +1433,8 @@ const WTF__StringImpl *JSC__PropertyName__uid(JSC__PropertyName *arg0) { return 
 
 #pragma mark - JSC::VM
 
+bool JSC__VM__isJITEnabled() { return JSC::Options::useJIT(); }
+
 void JSC__VM__shrinkFootprint(JSC__VM *arg0) { arg0->shrinkFootprintWhenIdle(); };
 void JSC__VM__whenIdle(JSC__VM *arg0, void (*ArgFn1)()) { arg0->whenIdle(ArgFn1); };
 

@@ -308,6 +308,7 @@ pub extern fn JSC__VM__deleteAllCode(arg0: [*c]JSC__VM, arg1: [*c]JSC__JSGlobalO
 pub extern fn JSC__VM__drainMicrotasks(arg0: [*c]JSC__VM) void;
 pub extern fn JSC__VM__executionForbidden(arg0: [*c]JSC__VM) bool;
 pub extern fn JSC__VM__isEntered(arg0: [*c]JSC__VM) bool;
+pub extern fn JSC__VM__isJITEnabled(...) bool;
 pub extern fn JSC__VM__setExecutionForbidden(arg0: [*c]JSC__VM, arg1: bool) void;
 pub extern fn JSC__VM__shrinkFootprint(arg0: [*c]JSC__VM) void;
 pub extern fn JSC__VM__throwError(arg0: [*c]JSC__VM, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]JSC__ThrowScope, arg3: [*c]const u8, arg4: usize) bool;

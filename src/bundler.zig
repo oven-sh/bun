@@ -1232,30 +1232,32 @@ pub fn NewBundler(cache_files: bool) type {
                     file_path.pretty = module_data.package_path;
 
                     const entry: CacheEntry = brk: {
-                        if (this.bundler.options.framework.?.override_modules_hashes.len > 0) {
-                            const package_relative_path_hash = std.hash.Wyhash.hash(0, module_data.package_path);
-                            if (std.mem.indexOfScalar(
-                                u64,
-                                this.bundler.options.framework.?.override_modules_hashes,
-                                package_relative_path_hash,
-                            )) |index| {
-                                const relative_path = [_]string{
-                                    this.bundler.options.framework.?.resolved_dir,
-                                    this.bundler.options.framework.?.override_modules.values[index],
-                                };
-                                var override_path = this.bundler.fs.absBuf(
-                                    &relative_path,
-                                    &override_file_path_buf,
-                                );
-                                override_file_path_buf[override_path.len] = 0;
-                                var override_pathZ = override_file_path_buf[0..override_path.len :0];
-                                break :brk try bundler.resolver.caches.fs.readFileShared(
-                                    bundler.fs,
-                                    override_pathZ,
-                                    0,
-                                    null,
-                                    shared_buffer,
-                                );
+                        if (this.bundler.options.framework) |framework| {
+                            if (framework.override_modules_hashes.len > 0) {
+                                const package_relative_path_hash = std.hash.Wyhash.hash(0, module_data.package_path);
+                                if (std.mem.indexOfScalar(
+                                    u64,
+                                    framework.override_modules_hashes,
+                                    package_relative_path_hash,
+                                )) |index| {
+                                    const relative_path = [_]string{
+                                        framework.resolved_dir,
+                                        framework.override_modules.values[index],
+                                    };
+                                    var override_path = this.bundler.fs.absBuf(
+                                        &relative_path,
+                                        &override_file_path_buf,
+                                    );
+                                    override_file_path_buf[override_path.len] = 0;
+                                    var override_pathZ = override_file_path_buf[0..override_path.len :0];
+                                    break :brk try bundler.resolver.caches.fs.readFileShared(
+                                        bundler.fs,
+                                        override_pathZ,
+                                        0,
+                                        null,
+                                        shared_buffer,
+                                    );
+                                }
                             }
                         }
 

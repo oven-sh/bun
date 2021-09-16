@@ -334,7 +334,7 @@ const knownWindowsPackages: Record<string, string> = {
 };
 const knownUnixlikePackages: Record<string, string> = {
   //   "android arm64 LE": "bun-cli-android-arm64",
-  //   "darwin arm64 LE": "bun-cli-darwin-arm64",
+  "darwin arm64 LE": "bun-cli-darwin-aarch64",
   "darwin x64 LE": "bun-cli-darwin-x64",
   //   "freebsd arm64 LE": "bun-cli-freebsd-arm64",
   //   "freebsd x64 LE": "bun-cli-freebsd-64",

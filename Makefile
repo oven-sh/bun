@@ -26,8 +26,7 @@ sign-macos-x64:
 sign-macos-aarch64: 
 	gon sign.macos-aarch64.json
 
-release-macos-x64: build-obj jsc-bindings-mac bun-link-lld-release
-release-macos-aarch64: build-obj jsc-bindings-mac bun-link-lld-release sign-macos-aarch64
+release-macos: build-obj jsc-bindings-mac bun-link-lld-release
 
 bin-dir:
 	@echo $(BIN_DIR)
@@ -62,11 +61,11 @@ bump:
 build_postinstall: 
 	@esbuild --bundle --format=cjs --platform=node --define:BUN_VERSION="\"$(PACKAGE_JSON_VERSION)\"" packages/bun-cli/scripts/postinstall.ts > packages/bun-cli/postinstall.js
 
-write-package-json-version-cli: 
+write-package-json-version-cli: build_postinstall
 	jq -S --raw-output '.version = "${PACKAGE_JSON_VERSION}"' packages/bun-cli/package.json  > packages/bun-cli/package.json.new
 	mv packages/bun-cli/package.json.new packages/bun-cli/package.json
 
-write-package-json-version-arch: 
+write-package-json-version: 
 	jq -S --raw-output '.version = "${PACKAGE_JSON_VERSION}"' $(PACKAGE_DIR)/package.json  > $(PACKAGE_DIR)/package.json.new
 	mv $(PACKAGE_DIR)/package.json.new $(PACKAGE_DIR)/package.json
 
@@ -74,7 +73,7 @@ tag:
 	git tag $(BUN_BUILD_TAG)
 	git push --tags
 
-prepare-release: build_postinstall tag release-create write-package-json-version-arch write-package-json-version-cli
+prepare-release: tag release-create write-package-json-version-cli write-package-json-version
 
 release-create:
 	gh release create --title "Bun v$(PACKAGE_JSON_VERSION)" "$(BUN_BUILD_TAG)"
@@ -82,10 +81,13 @@ release-create:
 release-cli-push:
 	cd packages/bun-cli && npm pack --pack-destination /tmp/
 	gh release upload $(BUN_BUILD_TAG) --clobber /tmp/bun-cli-$(PACKAGE_JSON_VERSION).tgz
+	npm publish /tmp/bun-cli-$(PACKAGE_JSON_VERSION).tgz
 
-release-macos-x64-push:
+release-mac-push:
 	cd packages/bun-cli-darwin-x64 && npm pack --pack-destination /tmp/
 	gh release upload $(BUN_BUILD_TAG) --clobber /tmp/bun-cli-darwin-x64-$(PACKAGE_JSON_VERSION).tgz
+	npm publish /tmp/bun-cli-darwin-x64-$(PACKAGE_JSON_VERSION).tgz
+
 
 jsc-copy-headers:
 	find src/JavaScript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/Headers/JavaScriptCore/ -name "*.h" -exec cp {} src/JavaScript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/PrivateHeaders/JavaScriptCore \;

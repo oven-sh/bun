@@ -10,7 +10,7 @@ BIN_DIR := $(PACKAGE_DIR)/bin
 RELEASE_BIN := $(BIN_DIR)/bun
 DEBUG_BIN := $(DEBUG_PACKAGE_DIR)/bin
 BUILD_ID := $(shell cat ./build-id)
-PACKAGE_JSON_VERSION := 0.0.0-$(BUILD_ID)
+PACKAGE_JSON_VERSION := 0.0.$(BUILD_ID)
 BUN_BUILD_TAG := bun-v$(PACKAGE_JSON_VERSION)
 
 bun: vendor build-obj bun-link-lld-release
@@ -26,7 +26,9 @@ sign-macos-x64:
 sign-macos-aarch64: 
 	gon sign.macos-aarch64.json
 
-release-macos: build-obj jsc-bindings-mac bun-link-lld-release
+release-macos: all-js build-obj jsc-bindings-mac bun-link-lld-release
+
+all-js: runtime_js fallback_decoder bun_error node-fallbacks
 
 bin-dir:
 	@echo $(BIN_DIR)
@@ -35,7 +37,7 @@ api:
 	npm install; ./node_modules/.bin/peechy --schema src/api/schema.peechy --esm src/api/schema.js --ts src/api/schema.d.ts --zig src/api/schema.zig
 
 node-fallbacks: 
-	cd src/node-fallbacks; npm install; npm run --silent build
+	@cd src/node-fallbacks; npm install; npm run --silent build
 
 fallback_decoder:
 	@esbuild --target=esnext  --bundle src/fallback.ts --format=iife --platform=browser --minify > src/fallback.out.js
@@ -44,7 +46,7 @@ runtime_js:
 	@NODE_ENV=production esbuild --define:process.env.NODE_ENV="production" --target=esnext  --bundle src/runtime/index.ts --format=iife --platform=browser --global-name=BUN_RUNTIME --minify --external:/bun:* > src/runtime.out.js; cat src/runtime.footer.js >> src/runtime.out.js
 
 bun_error:
-	cd packages/bun-error; npm install; npm run --silent build
+	@cd packages/bun-error; npm install; npm run --silent build
 
 jsc: jsc-build jsc-bindings
 jsc-build: jsc-build-mac jsc-copy-headers

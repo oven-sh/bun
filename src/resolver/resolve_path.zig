@@ -1,8 +1,9 @@
 const tester = @import("../test/tester.zig");
+const std = @import("std");
 
 const FeatureFlags = @import("../feature_flags.zig");
 const default_allocator = @import("../memory_allocator.zig").c_allocator;
-const std = @import("std");
+
 
 threadlocal var parser_join_input_buffer: [1024]u8 = undefined;
 threadlocal var parser_buffer: [1024]u8 = undefined;

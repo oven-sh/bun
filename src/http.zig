@@ -1220,7 +1220,7 @@ pub const RequestContext = struct {
         pub fn runLoop(vm: *JavaScript.VirtualMachine, thread: *HandlerThread) !void {
             var module_map = ZigGlobalObject.getModuleRegistryMap(vm.global);
             if (!VM.isJITEnabled()) {
-                Output.prettyErrorln("<red><r>warn:<r> JIT is disabled,,, this is a bug in Bun and/or a permissions problem. JS will run slower.", .{});
+                Output.prettyErrorln("<red><r>warn:<r> JIT is disabled,,,this is a bug in Bun and/or a permissions problem. JS will run slower.", .{});
             }
 
             while (true) {

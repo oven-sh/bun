@@ -91,13 +91,10 @@ extern "C" JSC__JSGlobalObject *Zig__GlobalObject__create(JSClassRef *globalObje
   WTF::initializeMainThread();
   JSC::initialize();
 
+
   // JSC::Options::useCodeCache() = false;
 
-#ifdef WTF_CPU_ARM64
-  auto heapSize = JSC::SmallHeap;
-#else
   auto heapSize = JSC::LargeHeap;
-#endif
 
   JSC::VM &vm = JSC::VM::create(heapSize).leakRef();
   vm.heap.acquireAccess();
@@ -107,7 +104,7 @@ extern "C" JSC__JSGlobalObject *Zig__GlobalObject__create(JSClassRef *globalObje
 
   JSC::JSLockHolder locker(vm);
   Zig::GlobalObject *globalObject =
-    Zig::GlobalObject::create(vm, Zig::GlobalObject::createStructure(vm, JSC::jsNull()));
+  Zig::GlobalObject::create(vm, Zig::GlobalObject::createStructure(vm, JSC::jsNull()));
   globalObject->setConsole(globalObject);
 
   if (count > 0) { globalObject->installAPIGlobals(globalObjectClass, count); }

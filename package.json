@@ -1,9 +1,14 @@
 {
   "dependencies": {
-    "peechy": "^0.4.18"
+    "peechy": "^0.4.18",
+    "puppeteer": "^10.2.0"
   },
   "scripts": {
     "build-runtime": "esbuild --target=esnext  --bundle src/runtime/index.ts --format=iife --platform=browser --global-name=BUN_RUNTIME > src/runtime.out.js; cat src/runtime.footer.js >> src/runtime.out.js",
     "build-fallback": "esbuild --target=esnext  --bundle src/fallback.ts --format=iife --platform=browser --minify > src/fallback.out.js"
+  },
+  "devDependencies": {
+    "@types/node": "^16.9.2",
+    "@types/puppeteer": "^5.4.4"
   }
 }

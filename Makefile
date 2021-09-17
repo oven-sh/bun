@@ -50,12 +50,20 @@ runtime_js:
 bun_error:
 	@cd packages/bun-error; npm install; npm run --silent build
 
+JSC_BUILD_STEPS :=
+ifeq ($(OS_NAME),linux)
+	JSC_BUILD_STEPS += jsc-build-linux jsc-copy-headers
+endif
+ifeq ($(OS_NAME),darwin)
+	JSC_BUILD_STEPS += jsc-build-mac jsc-copy-headers
+endif
+
 jsc: jsc-build jsc-bindings
-jsc-build: jsc-build-mac jsc-copy-headers
+jsc-build: $(JSC_BUILD_STEPS)
 jsc-bindings: jsc-bindings-headers jsc-bindings-mac
 	
 jsc-bindings-headers:
-	mkdir -p src/JavaScript/jsc/bindings-obj/
+	mkdir -p src/javascript/jsc/bindings-obj/
 	zig build headers
 
 bump: 
@@ -134,8 +142,9 @@ jsc-build-mac-compile:
 jsc-build-linux-compile:
 	cd src/javascript/jsc/WebKit && ./Tools/Scripts/build-jsc --jsc-only --cmakeargs="-DENABLE_STATIC_JSC=ON -DCMAKE_BUILD_TYPE=relwithdebinfo
 
-
 jsc-build-mac: jsc-build-mac-compile jsc-build-mac-copy
+
+jsc-build-linux: jsc-build-linux-compile jsc-build-mac-copy
 
 jsc-build-mac-copy:
 	cp src/JavaScript/jsc/WebKit/WebKitBuild/Release/lib/libJavaScriptCore.a src/deps/libJavaScriptCore.a
@@ -146,7 +155,10 @@ JSC_FILES := src/deps/libJavaScriptCore.a \
 	src/deps/libWTF.a \
 	src/deps/libbmalloc.a 
 
-HOMEBREW_PREFIX := $(shell brew --prefix)/
+
+ifeq ($(OS_NAME),darwin)
+	HOMEBREW_PREFIX := $(shell brew --prefix)/
+endif
 
 SRC_DIR := src/javascript/jsc/bindings
 OBJ_DIR := src/javascript/jsc/bindings-obj

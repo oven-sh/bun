@@ -2,7 +2,7 @@ usingnamespace @import("./shared.zig");
 usingnamespace @import("./headers.zig");
 pub const Shimmer = @import("./shimmer.zig").Shimmer;
 const hasRef = std.meta.trait.hasField("ref");
-const C_API = @import("../JavaScriptCore.zig");
+const C_API = @import("../JavascriptCore.zig");
 const StringPointer = @import("../../../api/schema.zig").Api.StringPointer;
 pub const JSObject = extern struct {
     pub const shim = Shimmer("JSC", "JSObject", @This());

@@ -19,7 +19,7 @@
   "devDependencies": {
     "@babel/standalone": "^7.15.3",
     "@types/react": "^17.0.19",
-    "bun-framework-next": "^0.0.0-18",
+    "bun-framework-next": "^0.0.0-21",
     "typescript": "^4.3.5"
   }
 }

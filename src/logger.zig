@@ -127,7 +127,7 @@ pub const Location = struct {
             }
 
             return Location{
-                .file = source.path.pretty,
+                .file = source.path.text,
                 .namespace = source.path.namespace,
                 .line = usize2Loc(data.line_count).start,
                 .column = usize2Loc(data.column_count).start,

@@ -3237,8 +3237,8 @@ pub fn NewParser(
                     js_lexer.rangeOfIdentifier(p.source, loc),
                     p.allocator,
                     notes,
-                    "Multiple exports with the same name {s}",
-                    .{alias},
+                    "Multiple exports with the same name \"{s}\"",
+                    .{std.mem.trim(u8, alias, "\"'")},
                 );
             } else {
                 try p.named_exports.put(alias, js_ast.NamedExport{ .alias_loc = loc, .ref = ref });
@@ -9467,7 +9467,10 @@ pub fn NewParser(
             var panic_buffer = p.allocator.alloc(u8, 32 * 1024) catch unreachable;
             var panic_stream = std.io.fixedBufferStream(panic_buffer);
             p.log.addRangeErrorFmt(p.source, p.lexer.range(), p.allocator, str, args) catch unreachable;
-            p.log.print(panic_stream.writer()) catch unreachable;
+
+            p.log.printForLogLevel(
+                panic_stream.writer(),
+            ) catch unreachable;
             Global.panic("{s}", .{panic_buffer[0..panic_stream.pos]});
         }
 

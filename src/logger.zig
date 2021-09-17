@@ -61,12 +61,10 @@ pub const Loc = packed struct {
         return if (loc.start == -1) null else loc.*;
     }
 
-    // TODO: remove this stupidity
     pub inline fn toUsize(self: *const Loc) usize {
         return @intCast(usize, self.start);
     }
 
-    // TODO: remove this stupidity
     pub inline fn i(self: *const Loc) usize {
         return @intCast(usize, self.start);
     }
@@ -179,24 +177,123 @@ pub const Data = struct {
         this: *const Data,
         to: anytype,
         kind: Kind,
+        comptime enable_ansi_colors: bool,
+        comptime is_note: bool,
     ) !void {
         if (this.text.len == 0) return;
 
+        const message_color = switch (kind) {
+            .err => comptime Output.color_map.get("b").?,
+            .note => comptime Output.color_map.get("cyan").? ++ Output.color_map.get("d").?,
+            else => comptime Output.color_map.get("d").? ++ Output.color_map.get("b").?,
+        };
+
+        const color_name: string = switch (kind) {
+            .err => comptime Output.color_map.get("red").?,
+            .note => comptime Output.color_map.get("cyan").?,
+            else => comptime Output.color_map.get("d").?,
+        };
+
+        try to.writeAll("\n\n");
+
+        if (comptime enable_ansi_colors) {
+            try to.writeAll(color_name);
+        }
+
+        try to.writeAll(kind.string());
+
+        try std.fmt.format(to, comptime Output.prettyFmt("<r><d>: <r>", enable_ansi_colors), .{});
+
+        if (comptime enable_ansi_colors) {
+            try to.writeAll(message_color);
+        }
+
+        try std.fmt.format(to, comptime Output.prettyFmt("{s}<r>\n", enable_ansi_colors), .{this.text});
+
         if (this.location) |location| {
-            try std.fmt.format(to, "\n\n{s}: {s}\n{s}\n{s}:{}:{} {d}", .{
-                kind.string(),
-                this.text,
-                location.line_text,
-                location.file,
-                location.line,
-                location.column,
-                location.offset,
-            });
-        } else {
-            try std.fmt.format(to, "\n\n{s}: {s}\n", .{
-                kind.string(),
-                this.text,
-            });
+            if (location.line_text) |line_text_| {
+                const line_text = std.mem.trimRight(u8, line_text_, "\r\n\t");
+
+                const location_in_line_text = @intCast(u32, std.math.max(location.column, 1) - 1);
+                const has_position = location.column > -1 and line_text.len > 0 and location_in_line_text < line_text.len;
+
+                if (has_position) {
+                    if (comptime enable_ansi_colors) {
+                        const is_colored = message_color.len > 0;
+
+                        const before_segment = line_text[0..location_in_line_text];
+
+                        try to.writeAll(before_segment);
+
+                        if (is_colored) {
+                            try to.writeAll(color_name);
+                        }
+
+                        var end_of_segment: usize = 1;
+                        // extremely naive: we should really use IsIdentifierContinue || isIdentifierStart here
+                        var rest_of_line = line_text[location_in_line_text..];
+                        while (end_of_segment < rest_of_line.len) : (end_of_segment += 1) {
+                            if (!switch (rest_of_line[end_of_segment]) {
+                                'A'...'Z', 'a'...'z', '0'...'9', '_', '$', '(', ')' => true,
+                                else => false,
+                            }) break;
+                        }
+
+                        try to.writeAll(rest_of_line[0..end_of_segment]);
+                        if (is_colored) {
+                            try to.writeAll("\x1b[0m");
+                        }
+
+                        try to.writeAll(rest_of_line[end_of_segment..]);
+                    } else {
+                        try to.writeAll(line_text);
+                    }
+
+                    try to.writeAll("\n");
+
+                    try to.writeByteNTimes(' ', location_in_line_text);
+                    if (comptime enable_ansi_colors) {
+                        const is_colored = message_color.len > 0;
+                        if (is_colored) {
+                            try to.writeAll(message_color);
+                            try to.writeAll(color_name);
+                        }
+
+                        try to.writeByte('^');
+
+                        if (is_colored) {
+                            try to.writeAll("\x1b[0m\n");
+                        }
+                    } else {
+                        try to.writeAll("^\n");
+                    }
+                }
+            }
+
+            if (location.file.len > 0) {
+                if (comptime enable_ansi_colors) {
+                    if (!is_note and kind == .err) {
+                        try to.writeAll(comptime Output.color_map.get("b").?);
+                    } else {}
+                }
+
+                try std.fmt.format(to, comptime Output.prettyFmt("{s}<r>", enable_ansi_colors), .{
+                    location.file,
+                });
+
+                if (location.line > -1 and location.column > -1) {
+                    try std.fmt.format(to, comptime Output.prettyFmt("<d>:<r><yellow>{d}<r><d>:<r><yellow>{d}<r> <d>{d}<r>", enable_ansi_colors), .{
+                        location.line,
+                        location.column,
+                        location.offset,
+                    });
+                } else if (location.line > -1) {
+                    try std.fmt.format(to, comptime Output.prettyFmt("<d>:<r><yellow>{d}<r> <d>{d}<r>", enable_ansi_colors), .{
+                        location.line,
+                        location.offset,
+                    });
+                }
+            }
         }
     }
 };
@@ -286,26 +383,15 @@ pub const Msg = struct {
     pub fn writeFormat(
         msg: *const Msg,
         to: anytype,
+        comptime enable_ansi_colors: bool,
     ) !void {
-        try msg.data.writeFormat(to, msg.kind);
+        try msg.data.writeFormat(to, msg.kind, enable_ansi_colors, false);
 
         if (msg.notes) |notes| {
             for (notes) |note| {
-                try note.writeFormat(to, msg.kind);
+                try note.writeFormat(to, .note, enable_ansi_colors, true);
             }
         }
-    }
-
-    pub fn doFormat(msg: *const Msg, to: anytype, formatterFunc: anytype) !void {
-        try formatterFunc(to, "\n\n{s}: {s}\n{s}\n{s}:{s}:{s} {d}", .{
-            msg.kind.string(),
-            msg.data.text,
-            msg.data.location.?.line_text,
-            msg.data.location.?.file,
-            msg.data.location.?.line,
-            msg.data.location.?.column,
-            msg.data.location.?.offset,
-        });
     }
 
     pub fn formatWriter(
@@ -694,29 +780,28 @@ pub const Log = struct {
         });
     }
 
-    // TODO:
     pub fn addMsg(self: *Log, msg: Msg) !void {
         try self.msgs.append(msg);
     }
 
-    // TODO:
     pub fn addError(self: *Log, _source: ?*const Source, loc: Loc, text: string) !void {
         self.errors += 1;
         try self.addMsg(Msg{ .kind = .err, .data = rangeData(_source, Range{ .loc = loc }, text) });
     }
 
-    // TODO:
-    pub fn print(self: *Log, to: anytype) !void {
-        for (self.msgs.items) |msg| {
-            try msg.writeFormat(to);
+    pub fn printForLogLevel(self: *Log, to: anytype) !void {
+        if (Output.enable_ansi_colors) {
+            return self.printForLogLevelWithEnableAnsiColors(to, true);
+        } else {
+            return self.printForLogLevelWithEnableAnsiColors(to, false);
         }
     }
 
-    pub fn printForLogLevel(self: *Log, to: anytype) !void {
+    pub fn printForLogLevelWithEnableAnsiColors(self: *Log, to: anytype, comptime enable_ansi_colors: bool) !void {
         var printed = false;
         for (self.msgs.items) |msg| {
             if (msg.kind.shouldPrint(self.level)) {
-                try msg.writeFormat(to);
+                try msg.writeFormat(to, enable_ansi_colors);
                 printed = true;
             }
         }
@@ -922,48 +1007,4 @@ pub const Source = struct {
 
 pub fn rangeData(source: ?*const Source, r: Range, text: string) Data {
     return Data{ .text = text, .location = Location.init_or_nil(source, r) };
-}
-
-test "print msg" {
-    var msgs = ArrayList(Msg).init(std.testing.allocator);
-    var log = Log{ .msgs = msgs };
-    defer log.msgs.deinit();
-    var filename = "test.js".*;
-    var syntax = "for (i".*;
-    var err = "invalid syntax".*;
-    var namespace = "file".*;
-
-    try log.addMsg(Msg{
-        .kind = .err,
-        .data = Data{
-            .location = Location.init_file(&filename, 1, 3, 0, &syntax, ""),
-            .text = &err,
-        },
-    });
-
-    const stdout = std.io.getStdOut().writer();
-
-    // try log.print(stdout);
-}
-
-test "ErrorPosition" {
-    const source = Source.initPathString("/src/test/fixtures/simple.jsx", @embedFile("./test/fixtures/simple.jsx"));
-    const error_position = source.initErrorPosition(Loc{ .start = 979 });
-
-    std.testing.expectEqual(@as(usize, 973), @as(usize, error_position.line_start));
-    std.testing.expectEqual(@as(usize, 1016), @as(usize, error_position.line_end));
-
-    var msgs = ArrayList(Msg).init(std.testing.allocator);
-    var log = Log{ .msgs = msgs };
-    defer log.msgs.deinit();
-
-    try log.addMsg(Msg{
-        .kind = .err,
-        .data = rangeData(&source, Range{ .loc = Loc{
-            .start = 979,
-        }, .len = 15 }, "Oh no"),
-    });
-
-    const stdout = std.io.getStdOut().writer();
-    try log.print(stdout);
 }

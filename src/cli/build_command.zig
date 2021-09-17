@@ -140,14 +140,26 @@ pub const BuildCommand = struct {
             }) catch {};
         }
 
-        for (result.errors) |err| {
-            try err.writeFormat(err_writer);
-            _ = try err_writer.write("\n");
-        }
+        if (Output.enable_ansi_colors) {
+            for (result.errors) |err| {
+                try err.writeFormat(err_writer, true);
+                _ = try err_writer.write("\n");
+            }
 
-        for (result.warnings) |err| {
-            try err.writeFormat(err_writer);
-            _ = try err_writer.write("\n");
+            for (result.warnings) |err| {
+                try err.writeFormat(err_writer, true);
+                _ = try err_writer.write("\n");
+            }
+        } else {
+            for (result.errors) |err| {
+                try err.writeFormat(err_writer, false);
+                _ = try err_writer.write("\n");
+            }
+
+            for (result.warnings) |err| {
+                try err.writeFormat(err_writer, false);
+                _ = try err_writer.write("\n");
+            }
         }
 
         const duration = std.time.nanoTimestamp() - ctx.start_time;

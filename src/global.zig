@@ -192,10 +192,23 @@ pub const Output = struct {
     // <d> - dim
     // </r> - reset
     // <r> - reset
+    const ED = "\x1b[";
+    pub const color_map = std.ComptimeStringMap(string, .{
+        &.{ "black", ED ++ "30m" },
+        &.{ "blue", ED ++ "34m" },
+        &.{ "b", ED ++ "1m" },
+        &.{ "d", ED ++ "2m" },
+        &.{ "cyan", ED ++ "36m" },
+        &.{ "green", ED ++ "32m" },
+        &.{ "magenta", ED ++ "35m" },
+        &.{ "red", ED ++ "31m" },
+        &.{ "white", ED ++ "37m" },
+        &.{ "yellow", ED ++ "33m" },
+    });
+
     pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) string {
         comptime var new_fmt: [fmt.len * 4]u8 = undefined;
         comptime var new_fmt_i: usize = 0;
-        const ED = comptime "\x1b[";
 
         @setEvalBranchQuota(9999);
         comptime var i: usize = 0;
@@ -239,26 +252,8 @@ pub const Output = struct {
 
                     const color_name = fmt[start..i];
                     const color_str = color_picker: {
-                        if (std.mem.eql(u8, color_name, "black")) {
-                            break :color_picker ED ++ "30m";
-                        } else if (std.mem.eql(u8, color_name, "blue")) {
-                            break :color_picker ED ++ "34m";
-                        } else if (std.mem.eql(u8, color_name, "b")) {
-                            break :color_picker ED ++ "1m";
-                        } else if (std.mem.eql(u8, color_name, "d")) {
-                            break :color_picker ED ++ "2m";
-                        } else if (std.mem.eql(u8, color_name, "cyan")) {
-                            break :color_picker ED ++ "36m";
-                        } else if (std.mem.eql(u8, color_name, "green")) {
-                            break :color_picker ED ++ "32m";
-                        } else if (std.mem.eql(u8, color_name, "magenta")) {
-                            break :color_picker ED ++ "35m";
-                        } else if (std.mem.eql(u8, color_name, "red")) {
-                            break :color_picker ED ++ "31m";
-                        } else if (std.mem.eql(u8, color_name, "white")) {
-                            break :color_picker ED ++ "37m";
-                        } else if (std.mem.eql(u8, color_name, "yellow")) {
-                            break :color_picker ED ++ "33m";
+                        if (color_map.get(color_name)) |color_name_literal| {
+                            break :color_picker color_name_literal;
                         } else if (std.mem.eql(u8, color_name, "r")) {
                             is_reset = true;
                             break :color_picker "";

@@ -957,9 +957,17 @@ pub const RequestContext = struct {
 
                 defer this.log.msgs.clearRetainingCapacity();
 
-                if (this.log.msgs.items.len > 0) {
-                    for (this.log.msgs.items) |msg| {
-                        msg.writeFormat(Output.errorWriter()) catch continue;
+                if (Output.enable_ansi_colors) {
+                    if (this.log.msgs.items.len > 0) {
+                        for (this.log.msgs.items) |msg| {
+                            msg.writeFormat(Output.errorWriter(), true) catch continue;
+                        }
+                    }
+                } else {
+                    if (this.log.msgs.items.len > 0) {
+                        for (this.log.msgs.items) |msg| {
+                            msg.writeFormat(Output.errorWriter(), false) catch continue;
+                        }
                     }
                 }
 
@@ -995,9 +1003,17 @@ pub const RequestContext = struct {
                         &exception_list,
                     );
                 } else {
-                    if (this.log.msgs.items.len > 0) {
-                        for (this.log.msgs.items) |msg| {
-                            msg.writeFormat(Output.errorWriter()) catch continue;
+                    if (Output.enable_ansi_colors) {
+                        if (this.log.msgs.items.len > 0) {
+                            for (this.log.msgs.items) |msg| {
+                                msg.writeFormat(Output.errorWriter(), true) catch continue;
+                            }
+                        }
+                    } else {
+                        if (this.log.msgs.items.len > 0) {
+                            for (this.log.msgs.items) |msg| {
+                                msg.writeFormat(Output.errorWriter(), false) catch continue;
+                            }
                         }
                     }
 
@@ -1036,9 +1052,17 @@ pub const RequestContext = struct {
                     );
                     did_log_messages = start_count != this.log.msgs.items.len and exception_list.items.len == 0;
                 } else {
-                    if (this.log.msgs.items.len > 0) {
-                        for (this.log.msgs.items) |msg| {
-                            msg.writeFormat(Output.errorWriter()) catch continue;
+                    if (Output.enable_ansi_colors) {
+                        if (this.log.msgs.items.len > 0) {
+                            for (this.log.msgs.items) |msg| {
+                                msg.writeFormat(Output.errorWriter(), true) catch continue;
+                            }
+                        }
+                    } else {
+                        if (this.log.msgs.items.len > 0) {
+                            for (this.log.msgs.items) |msg| {
+                                msg.writeFormat(Output.errorWriter(), false) catch continue;
+                            }
                         }
                     }
 

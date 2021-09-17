@@ -170,7 +170,7 @@ pub const BunCommand = struct {
 
             if (node_modules_) |node_modules| {
                 if (log.errors > 0) {
-                    try log.print(Output.errorWriter());
+                    try log.printForLogLevel(Output.errorWriter());
                 } else {
                     var elapsed = @divTrunc(std.time.nanoTimestamp() - ctx.start_time, @as(i128, std.time.ns_per_ms));
                     const print_summary = !(ctx.args.no_summary orelse false);
@@ -190,7 +190,7 @@ pub const BunCommand = struct {
                     try log.printForLogLevel(Output.errorWriter());
                 }
             } else {
-                try log.print(Output.errorWriter());
+                try log.printForLogLevel(Output.errorWriter());
             }
         }
     }

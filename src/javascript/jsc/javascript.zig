@@ -834,9 +834,17 @@ pub const VirtualMachine = struct {
 
         if (log.warnings > 0) {
             var writer = Output.errorWriter();
-            for (log.msgs.items) |msg| {
-                if (msg.kind == .warn) {
-                    msg.writeFormat(writer) catch {};
+            if (Output.enable_ansi_colors) {
+                for (log.msgs.items) |msg| {
+                    if (msg.kind == .warn) {
+                        msg.writeFormat(writer, true) catch {};
+                    }
+                }
+            } else {
+                for (log.msgs.items) |msg| {
+                    if (msg.kind == .warn) {
+                        msg.writeFormat(writer, false) catch {};
+                    }
                 }
             }
         }

@@ -91,6 +91,7 @@ async function main() {
     "/export.js",
     "/type-only-imports.ts",
     "/global-is-remapped-to-globalThis.js",
+    "/multiple-imports.js",
   ];
 
   for (let test of tests) {

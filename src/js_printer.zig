@@ -43,6 +43,9 @@ const first_low_surrogate: u21 = 0xDC00;
 const last_low_surrogate: u21 = 0xDFFF;
 const assert = std.debug.assert;
 
+threadlocal var imported_module_ids_list: std.ArrayList(u32) = undefined;
+threadlocal var imported_module_ids_list_unset: bool = true;
+
 fn notimpl() void {
     Global.panic("Not implemented yet!", .{});
 }
@@ -234,6 +237,7 @@ pub fn NewPrinter(
         writer: Writer,
 
         has_printed_bundled_import_statement: bool = false,
+        imported_module_ids: std.ArrayList(u32),
 
         renamer: rename.Renamer,
         prev_stmt_tag: Stmt.Tag = .s_empty,
@@ -2943,12 +2947,14 @@ pub fn NewPrinter(
 
                         const module_id = record.module_id;
 
-                        p.print("import * as ");
-                        p.printModuleId(module_id);
-
-                        p.print(" from \"");
-                        p.print(record.path.text);
-                        p.print("\";\n");
+                        if (std.mem.indexOfScalar(u32, p.imported_module_ids.items, module_id) == null) {
+                            p.print("import * as ");
+                            p.printModuleId(module_id);
+                            p.print(" from \"");
+                            p.print(record.path.text);
+                            p.print("\";\n");
+                            try p.imported_module_ids.append(module_id);
+                        }
 
                         if (record.contains_import_star) {
                             p.print("var ");
@@ -3761,12 +3767,20 @@ pub fn NewPrinter(
             opts: Options,
             linker: ?*Linker,
         ) !Printer {
+            if (imported_module_ids_list_unset) {
+                imported_module_ids_list = std.ArrayList(u32).init(default_allocator);
+                imported_module_ids_list_unset = false;
+            }
+
+            imported_module_ids_list.clearRetainingCapacity();
+
             return Printer{
                 .import_records = tree.import_records,
                 .options = opts,
                 .symbols = symbols,
                 .writer = writer,
                 .linker = linker,
+                .imported_module_ids = imported_module_ids_list,
                 .renamer = rename.Renamer.init(symbols, source),
             };
         }

@@ -12407,9 +12407,19 @@ pub fn NewParser(
                     data.items = data.items[0..end];
                 },
                 .s_export_from => |data| {
+                    // When HMR is enabled, we need to transform this into
+                    // import {foo} from "./foo";
+                    // export {foo};
+
+                    // From:
+                    // export {foo as default} from './foo';
+                    // To:
+                    // import {default as foo} from './foo';
+                    // export {foo};
 
                     // "export {foo} from 'path'"
                     const name = p.loadNameFromRef(data.namespace_ref);
+
                     data.namespace_ref = try p.newSymbol(.other, name);
                     try p.current_scope.generated.append(data.namespace_ref);
                     try p.recordDeclaredSymbol(data.namespace_ref);
@@ -12425,7 +12435,7 @@ pub fn NewParser(
                 },
                 .s_export_star => |data| {
 
-                    // "export {foo} from 'path'"
+                    // "export * from 'path'"
                     const name = p.loadNameFromRef(data.namespace_ref);
                     data.namespace_ref = try p.newSymbol(.other, name);
                     try p.current_scope.generated.append(data.namespace_ref);
@@ -14262,6 +14272,7 @@ pub fn NewParser(
                 );
             } else if (p.options.features.hot_module_reloading) {
                 var named_exports_count: usize = p.named_exports.count();
+                const named_imports: js_ast.Ast.NamedImports = p.named_imports;
 
                 // To transform to something HMR'able, we must:
                 // 1. Wrap the top level code in an IIFE
@@ -14336,7 +14347,6 @@ pub fn NewParser(
                 curr_stmts = curr_stmts[toplevel_stmts.len..];
                 var exports_from = curr_stmts[0..exports_from_count];
                 curr_stmts = curr_stmts[exports_from.len..];
-                var stmts_for_top_part = _stmts[0 .. imports_list.len + toplevel_stmts.len + exports_from.len];
                 // This is used for onSetExports
                 var update_function_stmts = curr_stmts[0..named_exports_count];
                 curr_stmts = curr_stmts[update_function_stmts.len..];
@@ -14462,6 +14472,11 @@ pub fn NewParser(
                 update_function_args[0] = G.Arg{ .binding = p.b(B.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty) };
 
                 while (named_exports_iter.next()) |named_export| {
+                    // Do not try to HMR export {foo} from 'bar';
+                    if (named_imports.get(named_export.value_ptr.ref)) |named_import| {
+                        if (named_import.is_exported) continue;
+                    }
+
                     var export_name_string = export_name_string_remainder[0 .. named_export.key_ptr.len + "$$hmr_".len];
                     export_name_string_remainder = export_name_string_remainder[export_name_string.len..];
                     std.mem.copy(u8, export_name_string, "$$hmr_");
@@ -14523,7 +14538,7 @@ pub fn NewParser(
                 }
                 var export_all_args = call_args[new_call_args.len..];
                 export_all_args[0] = p.e(
-                    E.Object{ .properties = export_properties },
+                    E.Object{ .properties = export_properties[0..named_export_i] },
                     logger.Loc.Empty,
                 );
 
@@ -14596,15 +14611,21 @@ pub fn NewParser(
 
                 toplevel_stmts_i += 1;
 
-                if (has_any_exports) {
+                if (named_export_i > 0) {
                     toplevel_stmts[toplevel_stmts_i] = p.s(
                         S.Local{
-                            .decls = exports_decls,
+                            .decls = exports_decls[0..named_export_i],
                         },
                         logger.Loc.Empty,
                     );
-                    toplevel_stmts_i += 1;
+                } else {
+                    toplevel_stmts[toplevel_stmts_i] = p.s(
+                        S.Empty{},
+                        logger.Loc.Empty,
+                    );
                 }
+
+                toplevel_stmts_i += 1;
 
                 toplevel_stmts[toplevel_stmts_i] = p.s(
                     S.SExpr{
@@ -14620,7 +14641,7 @@ pub fn NewParser(
                             p.e(
                                 E.Function{
                                     .func = .{
-                                        .body = .{ .loc = logger.Loc.Empty, .stmts = update_function_stmts },
+                                        .body = .{ .loc = logger.Loc.Empty, .stmts = update_function_stmts[0..named_export_i] },
                                         .name = null,
                                         .args = update_function_args,
                                         .open_parens_loc = logger.Loc.Empty,
@@ -14634,16 +14655,23 @@ pub fn NewParser(
                     logger.Loc.Empty,
                 );
                 toplevel_stmts_i += 1;
-                if (export_clauses.len > 0) {
+                if (named_export_i > 0) {
                     toplevel_stmts[toplevel_stmts_i] = p.s(
                         S.ExportClause{
-                            .items = export_clauses,
+                            .items = export_clauses[0..named_export_i],
                         },
+                        logger.Loc.Empty,
+                    );
+                } else {
+                    toplevel_stmts[toplevel_stmts_i] = p.s(
+                        S.Empty{},
                         logger.Loc.Empty,
                     );
                 }
 
-                part.stmts = stmts_for_top_part;
+                toplevel_stmts_i += 1;
+
+                part.stmts = _stmts[0 .. imports_list.len + toplevel_stmts.len + exports_from.len];
             }
 
             {

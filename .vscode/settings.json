@@ -12,6 +12,16 @@
   "[zig]": {
     "editor.defaultFormatter": "tiehuis.zig"
   },
+  "files.exclude": {
+    "**/.git": true,
+    "**/.svn": true,
+    "**/.hg": true,
+    "**/CVS": true,
+    "**/.DS_Store": true,
+    "**/Thumbs.db": true,
+    "integration/snapshots": true,
+    "integration/snapshots-no-hmr": true
+  },
   "C_Cpp.files.exclude": {
     "**/.vscode": true,
     "src/javascript/jsc/WebKit/JSTests": true,

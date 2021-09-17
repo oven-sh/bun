@@ -1,4 +1,4 @@
-pub const js = @import("./JavaScriptCore.zig");
+pub const js = @import("./JavascriptCore.zig");
 const std = @import("std");
 pub usingnamespace @import("../../global.zig");
 usingnamespace @import("./javascript.zig");

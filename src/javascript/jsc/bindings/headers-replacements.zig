@@ -1,5 +1,5 @@
 const bindings = @import("./bindings.zig");
-pub usingnamespace @import("../JavaScriptCore.zig");
+pub usingnamespace @import("../JavascriptCore.zig");
 
 pub const struct_JSC__StringPrototype = bindings.StringPrototype;
 pub const struct_JSC__SetIteratorPrototype = bindings.SetIteratorPrototype;

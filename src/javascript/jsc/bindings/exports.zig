@@ -1,7 +1,7 @@
 usingnamespace @import("./bindings.zig");
 usingnamespace @import("./shared.zig");
 const Fs = @import("../../../fs.zig");
-const CAPI = @import("../JavaScriptCore.zig");
+const CAPI = @import("../JavascriptCore.zig");
 const JS = @import("../javascript.zig");
 const JSBase = @import("../base.zig");
 const ZigURL = @import("../../../query_string_map.zig").URL;

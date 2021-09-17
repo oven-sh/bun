@@ -257,6 +257,8 @@ pub const Data = struct {
                         if (is_colored) {
                             try to.writeAll(message_color);
                             try to.writeAll(color_name);
+                            // always bold the ^
+                            try to.writeAll(comptime Output.color_map.get("b").?);
                         }
 
                         try to.writeByte('^');

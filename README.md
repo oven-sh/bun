@@ -478,8 +478,6 @@ git checkout jarred/zig-sloppy-with-small-structs
 cmake . -DCMAKE_PREFIX_PATH=$(brew --prefix llvm) -DZIG_STATIC_LLVM=ON -DCMAKE_BUILD_TYPE=Release && make -j 16
 ```
 
-Note that `brew install zig` won't work. Bun uses a build of Zig with a couple patches.
-
 You'll want to make sure `zig` is in `$PATH`. The `zig` binary wil be in the same folder as the newly-cloned `zig` repo. If you use fish, you can run `fish_add_path (pwd)`.
 
 In `bun`:
@@ -491,3 +489,7 @@ zig build headers
 make jsc-bindings-mac
 zig build -Drelease-fast
 ```
+
+Note that `brew install zig` won't work. Bun uses a build of Zig with a couple patches.
+
+Additionally, you'll need `cmake`, `npm` and `esbuild` installed globally.

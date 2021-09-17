@@ -9,5 +9,5 @@
     "postinstall": "node postinstall.js",
     "prepublishOnly": "rm -rf ./bin/bun; chmod +x ./reset-bin.js; cp ./reset-bin.js ./bin/bun"
   },
-  "version": "0.0.18"
+  "version": "0.0.19"
 }

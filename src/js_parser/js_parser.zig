@@ -12438,7 +12438,7 @@ pub fn NewParser(
 
                         // jarred: For now, just always do this transform.
                         // because Safari doesn't support it and I've seen cases where this breaks
-                        // TODO: backport unsupportedJSFeatures map
+
                         p.recordUsage(data.namespace_ref);
                         try stmts.ensureCapacity(stmts.items.len + 2);
                         stmts.appendAssumeCapacity(p.s(S.Import{ .namespace_ref = data.namespace_ref, .star_name_loc = alias.loc, .import_record_index = data.import_record_index }, stmt.loc));
@@ -12446,6 +12446,7 @@ pub fn NewParser(
                         var items = try List(js_ast.ClauseItem).initCapacity(p.allocator, 1);
                         items.appendAssumeCapacity(js_ast.ClauseItem{ .alias = alias.original_name, .original_name = alias.original_name, .alias_loc = alias.loc, .name = LocRef{ .loc = alias.loc, .ref = data.namespace_ref } });
                         stmts.appendAssumeCapacity(p.s(S.ExportClause{ .items = items.toOwnedSlice(), .is_single_line = true }, stmt.loc));
+                        return;
                     }
                 },
                 .s_export_default => |data| {

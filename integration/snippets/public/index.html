@@ -46,6 +46,23 @@
 
         return await testFunction();
       };
+
+      if (globalThis.location.pathname.endsWith("-test")) {
+        globalThis.testDone = (path) => alert(`test ${path} success`);
+        globalThis.testFail = (path) => alert(`!test ${path} fail`);
+        runTest(
+          globalThis.location.pathname.substring(
+            0,
+            location.pathname.length - "-test".length
+          )
+        ).then(
+          () => {},
+          (err) => {
+            console.error(err);
+            alert(err.toString());
+          }
+        );
+      }
     </script>
   </body>
 </html>

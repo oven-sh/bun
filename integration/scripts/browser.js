@@ -94,7 +94,9 @@ async function main() {
     "/multiple-imports.js",
     "/ts-fallback-rewrite-works.js",
     "/tsx-fallback-rewrite-works.js",
+    "/lodash-regexp.js",
   ];
+  tests.reverse();
 
   for (let test of tests) {
     await runPage(test);

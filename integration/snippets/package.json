@@ -4,6 +4,7 @@
   "main": "index.js",
   "license": "MIT",
   "dependencies": {
+    "lodash": "^4.17.21",
     "react": "^17.0.2",
     "redux": "^4.1.1"
   }

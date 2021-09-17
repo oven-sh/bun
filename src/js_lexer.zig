@@ -805,19 +805,6 @@ pub const Lexer = struct {
         return result;
     }
 
-    pub fn debugInfo(self: *LexerType) void {
-        if (self.log.errors > 0) {
-            const stderr = std.io.getStdErr().writer();
-            self.log.print(stderr) catch unreachable;
-        } else {
-            if (self.token == T.t_identifier or self.token == T.t_string_literal) {
-                Output.print(" {s} ", .{self.raw()});
-            } else {
-                Output.print(" <{s}> ", .{tokenToString.get(self.token)});
-            }
-        }
-    }
-
     pub fn expectContextualKeyword(self: *LexerType, comptime keyword: string) !void {
         if (!self.isContextualKeyword(keyword)) {
             if (std.builtin.mode == std.builtin.Mode.Debug) {

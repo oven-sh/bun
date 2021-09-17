@@ -243,7 +243,11 @@ pub const Arguments = struct {
 
         const print_help = args.flag("--help");
         if (print_help) {
-            clap.help(Output.errorWriter(), &params) catch {};
+            clap.help(Output.writer(), &params) catch {};
+            Output.prettyln("\n-------\n\n", .{});
+            Output.flush();
+            HelpCommand.printWithReason(.explicit);
+            Output.flush();
             std.os.exit(0);
         }
 
@@ -450,8 +454,8 @@ const HelpCommand = struct {
         explicit,
         invalid_command,
     };
-    pub fn execWithReason(allocator: *std.mem.Allocator, comptime reason: Reason) void {
-        @setCold(true);
+
+    pub fn printWithReason(comptime reason: Reason) void {
         var cwd_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
         const cwd = std.os.getcwd(&cwd_buf) catch unreachable;
         const dirname = std.fs.path.basename(cwd);
@@ -465,7 +469,7 @@ const HelpCommand = struct {
             ;
 
             switch (reason) {
-                .explicit => Output.pretty("Bun: a fast bundler & transpiler for web software.\n\n" ++ fmt, .{}),
+                .explicit => Output.pretty("<r><b><magenta>Bun<r>: a fast bundler & transpiler for web software.\n\n" ++ fmt, .{}),
                 .invalid_command => Output.prettyError("<r><red>Uh-oh<r> not sure what to do with that command.\n\n" ++ fmt, .{}),
             }
         } else {
@@ -481,12 +485,16 @@ const HelpCommand = struct {
             ;
 
             switch (reason) {
-                .explicit => Output.pretty("Bun: a fast bundler & transpiler for web software.\n\n" ++ fmt, .{dirname}),
+                .explicit => Output.pretty("<r><b><magenta>Bun<r>: a fast bundler & transpiler for web software.\n\n" ++ fmt, .{dirname}),
                 .invalid_command => Output.prettyError("<r><red>Uh-oh<r> not sure what to do with that command.\n\n" ++ fmt, .{dirname}),
             }
         }
 
         Output.flush();
+    }
+    pub fn execWithReason(allocator: *std.mem.Allocator, comptime reason: Reason) void {
+        @setCold(true);
+        printWithReason(reason);
 
         if (reason == .invalid_command) {
             std.process.exit(1);

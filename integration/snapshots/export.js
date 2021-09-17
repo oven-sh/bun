@@ -6,7 +6,7 @@ __HMRClient as Bun
 } from "http://localhost:8080/__runtime.js";
 import what from "http://localhost:8080/_auth.js";
 import * as where from "http://localhost:8080/_auth.js";
-Bun.activate(true);
+Bun.activate(false);
 
 var hmr = new HMR(1879780259, "export.js"), exports = hmr.exports;
 (hmr._load = function() {

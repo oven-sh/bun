@@ -7,7 +7,7 @@ TRIPLET := $(OS_NAME)-$(ARCH_NAME)
 PACKAGE_DIR := packages/bun-cli-$(TRIPLET)
 DEBUG_PACKAGE_DIR := packages/debug-bun-cli-$(TRIPLET)
 BIN_DIR := $(PACKAGE_DIR)/bin
-RELEASE_BUN := $(BIN_DIR)/bun
+RELEASE_BUN := $(shell realpath $(PACKAGE_DIR)/bin/bun)
 DEBUG_BIN := $(DEBUG_PACKAGE_DIR)/bin
 DEBUG_BIN_REALPATH := $(shell realpath $(DEBUG_PACKAGE_DIR)/bin)
 DEBUG_BUN := $(shell realpath $(DEBUG_BIN)/bun-debug)
@@ -112,12 +112,14 @@ test-install:
 	cd integration/scripts && npm install
 
 test-all: test-install test-with-hmr test-no-hmr
+
+kill-bun:
+	-killall -9 bun bun-debug
 	
-test-with-hmr:
-	-killall bun -9;
+test-with-hmr: kill-bun
 	BUN_BIN=$(RELEASE_BUN) node integration/scripts/browser.js
 
-test-no-hmr:
+test-no-hmr: kill-bun
 	-killall bun -9;
 	DISABLE_HMR="DISABLE_HMR" BUN_BIN=$(RELEASE_BUN) node integration/scripts/browser.js
 

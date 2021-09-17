@@ -14,7 +14,7 @@ var jsx = require(JSX).jsxDEV, fileName = "multiple-imports.js", JSXFrag = requi
 
 var { default: React} = require($bbcd215f);
 var { default: React2} = require($bbcd215f);
-Bun.activate(true);
+Bun.activate(false);
 
 var hmr = new HMR(2165509932, "multiple-imports.js"), exports = hmr.exports;
 (hmr._load = function() {

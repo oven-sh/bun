@@ -4,7 +4,7 @@ __HMRModule as HMR
 import {
 __HMRClient as Bun
 } from "http://localhost:8080/__runtime.js";
-Bun.activate(true);
+Bun.activate(false);
 
 var hmr = new HMR(713665787, "global-is-remapped-to-globalThis.js"), exports = hmr.exports;
 (hmr._load = function() {

@@ -455,13 +455,16 @@ pub const Lexer = struct {
                 else => {},
             }
 
-            if (iter.c <= 0xFFFF) {
-                buf.append(@intCast(u16, c)) catch unreachable;
-            } else {
-                iter.c -= 0x10000;
-                buf.ensureUnusedCapacity(2) catch unreachable;
-                buf.appendAssumeCapacity(@intCast(u16, 0xD800 + ((iter.c >> 10) & 0x3FF)));
-                buf.appendAssumeCapacity(@intCast(u16, 0xDC00 + (iter.c & 0x3FF)));
+            switch (iter.c) {
+                0...0xFFFF => {
+                    buf.append(@intCast(u16, iter.c)) catch unreachable;
+                },
+                else => {
+                    iter.c -= 0x10000;
+                    buf.ensureUnusedCapacity(2) catch unreachable;
+                    buf.appendAssumeCapacity(@intCast(u16, 0xD800 + ((iter.c >> 10) & 0x3FF)));
+                    buf.appendAssumeCapacity(@intCast(u16, 0xDC00 + (iter.c & 0x3FF)));
+                },
             }
         }
     }
@@ -477,12 +480,6 @@ pub const Lexer = struct {
                 '\\' => {
                     try lexer.step();
 
-                    // Skip slow path for a handful of common escaped characters that don't need UTf16 handling
-                    needs_slow_path = switch (lexer.code_point) {
-                        'n', '`', '\'', '0', '"' => false,
-                        else => true,
-                    };
-
                     // Handle Windows CRLF
                     if (lexer.code_point == '\r' and lexer.json_options != null) {
                         try lexer.step();
@@ -491,6 +488,13 @@ pub const Lexer = struct {
                         }
                         continue :stringLiteral;
                     }
+
+                    // Skip slow path for a handful of common escaped characters that don't need UTf16 handling
+                    needs_slow_path = switch (lexer.code_point) {
+                        // if it was previously marked as needing slow path, then keep it
+                        'n', '`', '\'', '0', '"' => needs_slow_path,
+                        else => true,
+                    };
                 },
                 // This indicates the end of the file
 

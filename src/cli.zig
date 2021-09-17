@@ -150,7 +150,7 @@ pub const Arguments = struct {
 
     pub const ParamType = clap.Param(clap.Help);
 
-    const params: [24]ParamType = brk: {
+    const params: [25]ParamType = brk: {
         @setEvalBranchQuota(9999);
         break :brk [_]ParamType{
             clap.parseParam("--use <STR>                       Choose a framework, e.g. \"--use next\". It checks first for a package named \"bun-framework-packagename\" and then \"packagename\".") catch unreachable,
@@ -158,6 +158,7 @@ pub const Arguments = struct {
             clap.parseParam("--server-bunfile <STR>            Use a .server.bun file (default: node_modules.server.bun)") catch unreachable,
             clap.parseParam("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd.") catch unreachable,
             clap.parseParam("--disable-react-fast-refresh      Disable React Fast Refresh") catch unreachable,
+            clap.parseParam("--disable-hmr                     Disable Hot Module Reloading (disables fast refresh too)") catch unreachable,
             clap.parseParam("--extension-order <STR>...        defaults to: .tsx,.ts,.jsx,.js,.json ") catch unreachable,
             clap.parseParam("--jsx-factory <STR>               Changes the function called when compiling JSX elements using the classic JSX runtime") catch unreachable,
             clap.parseParam("--jsx-fragment <STR>              Changes the function called when compiling JSX fragments using the classic JSX runtime") catch unreachable,
@@ -239,6 +240,7 @@ pub const Arguments = struct {
             .extension_order = args.options("--extension-order"),
             .entry_points = undefined,
             .no_summary = args.flag("--no-summary"),
+            .disable_hmr = args.flag("--disable-hmr"),
         };
 
         const print_help = args.flag("--help");

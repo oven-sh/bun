@@ -468,6 +468,7 @@ type uint32 = number;
     framework?: FrameworkConfig;
     router?: RouteConfig;
     no_summary?: boolean;
+    disable_hmr?: boolean;
   }
 
   export interface FileHandle {

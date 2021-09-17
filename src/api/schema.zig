@@ -1,3 +1,4 @@
+
 const std = @import("std");
 
 pub const Reader = struct {
@@ -281,2351 +282,2494 @@ pub fn Writer(comptime WritableStream: type) type {
 pub const ByteWriter = Writer(*std.io.FixedBufferStream([]u8));
 pub const FileWriter = Writer(std.fs.File);
 
-pub const Api = struct {
-    pub const Loader = enum(u8) {
-        _none,
-        /// jsx
-        jsx,
 
-        /// js
-        js,
 
-        /// ts
-        ts,
 
-        /// tsx
-        tsx,
+pub const Api = struct { 
 
-        /// css
-        css,
+pub const Loader = enum(u8) {
 
-        /// file
-        file,
+_none,
+  /// jsx
+  jsx,
 
-        /// json
-        json,
+  /// js
+  js,
 
-        _,
+  /// ts
+  ts,
 
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
-        }
-    };
+  /// tsx
+  tsx,
 
-    pub const FrameworkEntryPointType = enum(u8) {
-        _none,
-        /// client
-        client,
+  /// css
+  css,
 
-        /// server
-        server,
+  /// file
+  file,
 
-        /// fallback
-        fallback,
+  /// json
+  json,
 
-        _,
+_,
 
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
-        }
-    };
-
-    pub const StackFrameScope = enum(u8) {
-        _none,
-        /// Eval
-        eval,
-
-        /// Module
-        module,
-
-        /// Function
-        function,
-
-        /// Global
-        global,
-
-        /// Wasm
-        wasm,
-
-        /// Constructor
-        constructor,
-
-        _,
-
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
-        }
-    };
-
-    pub const StackFrame = struct {
-        /// function_name
-        function_name: []const u8,
-
-        /// file
-        file: []const u8,
-
-        /// position
-        position: StackFramePosition,
-
-        /// scope
-        scope: StackFrameScope,
-
-        pub fn decode(reader: anytype) anyerror!StackFrame {
-            var this = std.mem.zeroes(StackFrame);
-
-            this.function_name = try reader.readValue([]const u8);
-            this.file = try reader.readValue([]const u8);
-            this.position = try reader.readValue(StackFramePosition);
-            this.scope = try reader.readValue(StackFrameScope);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeValue(this.function_name);
-            try writer.writeValue(this.file);
-            try writer.writeValue(this.position);
-            try writer.writeEnum(this.scope);
-        }
-    };
-
-    pub const StackFramePosition = packed struct {
-        /// source_offset
-        source_offset: i32 = 0,
-
-        /// line
-        line: i32 = 0,
-
-        /// line_start
-        line_start: i32 = 0,
-
-        /// line_stop
-        line_stop: i32 = 0,
-
-        /// column_start
-        column_start: i32 = 0,
-
-        /// column_stop
-        column_stop: i32 = 0,
-
-        /// expression_start
-        expression_start: i32 = 0,
-
-        /// expression_stop
-        expression_stop: i32 = 0,
-
-        pub fn decode(reader: anytype) anyerror!StackFramePosition {
-            var this = std.mem.zeroes(StackFramePosition);
-
-            this.source_offset = try reader.readValue(i32);
-            this.line = try reader.readValue(i32);
-            this.line_start = try reader.readValue(i32);
-            this.line_stop = try reader.readValue(i32);
-            this.column_start = try reader.readValue(i32);
-            this.column_stop = try reader.readValue(i32);
-            this.expression_start = try reader.readValue(i32);
-            this.expression_stop = try reader.readValue(i32);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeInt(this.source_offset);
-            try writer.writeInt(this.line);
-            try writer.writeInt(this.line_start);
-            try writer.writeInt(this.line_stop);
-            try writer.writeInt(this.column_start);
-            try writer.writeInt(this.column_stop);
-            try writer.writeInt(this.expression_start);
-            try writer.writeInt(this.expression_stop);
-        }
-    };
-
-    pub const SourceLine = struct {
-        /// line
-        line: i32 = 0,
-
-        /// text
-        text: []const u8,
-
-        pub fn decode(reader: anytype) anyerror!SourceLine {
-            var this = std.mem.zeroes(SourceLine);
-
-            this.line = try reader.readValue(i32);
-            this.text = try reader.readValue([]const u8);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeInt(this.line);
-            try writer.writeValue(this.text);
-        }
-    };
-
-    pub const StackTrace = struct {
-        /// source_lines
-        source_lines: []const SourceLine,
-
-        /// frames
-        frames: []const StackFrame,
-
-        pub fn decode(reader: anytype) anyerror!StackTrace {
-            var this = std.mem.zeroes(StackTrace);
-
-            this.source_lines = try reader.readArray(SourceLine);
-            this.frames = try reader.readArray(StackFrame);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeArray(SourceLine, this.source_lines);
-            try writer.writeArray(StackFrame, this.frames);
-        }
-    };
-
-    pub const JsException = struct {
-        /// name
-        name: ?[]const u8 = null,
-
-        /// message
-        message: ?[]const u8 = null,
-
-        /// runtime_type
-        runtime_type: ?u16 = null,
-
-        /// code
-        code: ?u8 = null,
-
-        /// stack
-        stack: ?StackTrace = null,
-
-        pub fn decode(reader: anytype) anyerror!JsException {
-            var this = std.mem.zeroes(JsException);
-
-            while (true) {
-                switch (try reader.readByte()) {
-                    0 => {
-                        return this;
-                    },
-
-                    1 => {
-                        this.name = try reader.readValue([]const u8);
-                    },
-                    2 => {
-                        this.message = try reader.readValue([]const u8);
-                    },
-                    3 => {
-                        this.runtime_type = try reader.readValue(u16);
-                    },
-                    4 => {
-                        this.code = try reader.readValue(u8);
-                    },
-                    5 => {
-                        this.stack = try reader.readValue(StackTrace);
-                    },
-                    else => {
-                        return error.InvalidMessage;
-                    },
+                pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
+                    return try std.json.stringify(@tagName(self), opts, o);
                 }
-            }
-            unreachable;
-        }
 
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            if (this.name) |name| {
-                try writer.writeFieldID(1);
-                try writer.writeValue(name);
-            }
-            if (this.message) |message| {
-                try writer.writeFieldID(2);
-                try writer.writeValue(message);
-            }
-            if (this.runtime_type) |runtime_type| {
-                try writer.writeFieldID(3);
-                try writer.writeInt(runtime_type);
-            }
-            if (this.code) |code| {
-                try writer.writeFieldID(4);
-                try writer.writeInt(code);
-            }
-            if (this.stack) |stack| {
-                try writer.writeFieldID(5);
-                try writer.writeValue(stack);
-            }
-            try writer.endMessage();
-        }
-    };
-
-    pub const FallbackStep = enum(u8) {
-        _none,
-        /// ssr_disabled
-        ssr_disabled,
-
-        /// create_vm
-        create_vm,
-
-        /// configure_router
-        configure_router,
-
-        /// configure_defines
-        configure_defines,
-
-        /// resolve_entry_point
-        resolve_entry_point,
-
-        /// load_entry_point
-        load_entry_point,
-
-        /// eval_entry_point
-        eval_entry_point,
-
-        /// fetch_event_handler
-        fetch_event_handler,
-
-        _,
-
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
-        }
-    };
-
-    pub const Problems = struct {
-        /// code
-        code: u16 = 0,
-
-        /// name
-        name: []const u8,
-
-        /// exceptions
-        exceptions: []const JsException,
-
-        /// build
-        build: Log,
-
-        pub fn decode(reader: anytype) anyerror!Problems {
-            var this = std.mem.zeroes(Problems);
-
-            this.code = try reader.readValue(u16);
-            this.name = try reader.readValue([]const u8);
-            this.exceptions = try reader.readArray(JsException);
-            this.build = try reader.readValue(Log);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeInt(this.code);
-            try writer.writeValue(this.name);
-            try writer.writeArray(JsException, this.exceptions);
-            try writer.writeValue(this.build);
-        }
-    };
-
-    pub const Router = struct {
-        /// routes
-        routes: []const []const u8,
-
-        /// route
-        route: i32 = 0,
-
-        /// params
-        params: StringMap,
-
-        pub fn decode(reader: anytype) anyerror!Router {
-            var this = std.mem.zeroes(Router);
-
-            this.routes = try reader.readArray([]const u8);
-            this.route = try reader.readValue(i32);
-            this.params = try reader.readValue(StringMap);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeArray([]const u8, this.routes);
-            try writer.writeInt(this.route);
-            try writer.writeValue(this.params);
-        }
-    };
-
-    pub const FallbackMessageContainer = struct {
-        /// message
-        message: ?[]const u8 = null,
-
-        /// router
-        router: ?Router = null,
-
-        /// reason
-        reason: ?FallbackStep = null,
-
-        /// problems
-        problems: ?Problems = null,
-
-        /// cwd
-        cwd: ?[]const u8 = null,
-
-        pub fn decode(reader: anytype) anyerror!FallbackMessageContainer {
-            var this = std.mem.zeroes(FallbackMessageContainer);
-
-            while (true) {
-                switch (try reader.readByte()) {
-                    0 => {
-                        return this;
-                    },
-
-                    1 => {
-                        this.message = try reader.readValue([]const u8);
-                    },
-                    2 => {
-                        this.router = try reader.readValue(Router);
-                    },
-                    3 => {
-                        this.reason = try reader.readValue(FallbackStep);
-                    },
-                    4 => {
-                        this.problems = try reader.readValue(Problems);
-                    },
-                    5 => {
-                        this.cwd = try reader.readValue([]const u8);
-                    },
-                    else => {
-                        return error.InvalidMessage;
-                    },
-                }
-            }
-            unreachable;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            if (this.message) |message| {
-                try writer.writeFieldID(1);
-                try writer.writeValue(message);
-            }
-            if (this.router) |router| {
-                try writer.writeFieldID(2);
-                try writer.writeValue(router);
-            }
-            if (this.reason) |reason| {
-                try writer.writeFieldID(3);
-                try writer.writeEnum(reason);
-            }
-            if (this.problems) |problems| {
-                try writer.writeFieldID(4);
-                try writer.writeValue(problems);
-            }
-            if (this.cwd) |cwd| {
-                try writer.writeFieldID(5);
-                try writer.writeValue(cwd);
-            }
-            try writer.endMessage();
-        }
-    };
-
-    pub const ResolveMode = enum(u8) {
-        _none,
-        /// disable
-        disable,
-
-        /// lazy
-        lazy,
-
-        /// dev
-        dev,
-
-        /// bundle
-        bundle,
-
-        _,
-
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
-        }
-    };
-
-    pub const Platform = enum(u8) {
-        _none,
-        /// browser
-        browser,
-
-        /// node
-        node,
-
-        /// bun
-        bun,
-
-        _,
-
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
-        }
-    };
-
-    pub const CssInJsBehavior = enum(u8) {
-        _none,
-        /// facade
-        facade,
-
-        /// facade_onimportcss
-        facade_onimportcss,
-
-        /// auto_onimportcss
-        auto_onimportcss,
-
-        _,
-
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
-        }
-    };
-
-    pub const JsxRuntime = enum(u8) {
-        _none,
-        /// automatic
-        automatic,
-
-        /// classic
-        classic,
-
-        _,
-
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
-        }
-    };
-
-    pub const Jsx = struct {
-        /// factory
-        factory: []const u8,
-
-        /// runtime
-        runtime: JsxRuntime,
-
-        /// fragment
-        fragment: []const u8,
-
-        /// development
-        development: bool = false,
-
-        /// import_source
-        import_source: []const u8,
-
-        /// react_fast_refresh
-        react_fast_refresh: bool = false,
-
-        pub fn decode(reader: anytype) anyerror!Jsx {
-            var this = std.mem.zeroes(Jsx);
-
-            this.factory = try reader.readValue([]const u8);
-            this.runtime = try reader.readValue(JsxRuntime);
-            this.fragment = try reader.readValue([]const u8);
-            this.development = try reader.readValue(bool);
-            this.import_source = try reader.readValue([]const u8);
-            this.react_fast_refresh = try reader.readValue(bool);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeValue(this.factory);
-            try writer.writeEnum(this.runtime);
-            try writer.writeValue(this.fragment);
-            try writer.writeInt(@intCast(u8, @boolToInt(this.development)));
-            try writer.writeValue(this.import_source);
-            try writer.writeInt(@intCast(u8, @boolToInt(this.react_fast_refresh)));
-        }
-    };
-
-    pub const StringPointer = packed struct {
-        /// offset
-        offset: u32 = 0,
-
-        /// length
-        length: u32 = 0,
-
-        pub fn decode(reader: anytype) anyerror!StringPointer {
-            var this = std.mem.zeroes(StringPointer);
-
-            this.offset = try reader.readValue(u32);
-            this.length = try reader.readValue(u32);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeInt(this.offset);
-            try writer.writeInt(this.length);
-        }
-    };
-
-    pub const JavascriptBundledModule = struct {
-        /// path
-        path: StringPointer,
-
-        /// code
-        code: StringPointer,
-
-        /// package_id
-        package_id: u32 = 0,
-
-        /// id
-        id: u32 = 0,
-
-        /// path_extname_length
-        path_extname_length: u8 = 0,
-
-        pub fn decode(reader: anytype) anyerror!JavascriptBundledModule {
-            var this = std.mem.zeroes(JavascriptBundledModule);
-
-            this.path = try reader.readValue(StringPointer);
-            this.code = try reader.readValue(StringPointer);
-            this.package_id = try reader.readValue(u32);
-            this.id = try reader.readValue(u32);
-            this.path_extname_length = try reader.readValue(u8);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeValue(this.path);
-            try writer.writeValue(this.code);
-            try writer.writeInt(this.package_id);
-            try writer.writeInt(this.id);
-            try writer.writeInt(this.path_extname_length);
-        }
-    };
-
-    pub const JavascriptBundledPackage = struct {
-        /// name
-        name: StringPointer,
-
-        /// version
-        version: StringPointer,
-
-        /// hash
-        hash: u32 = 0,
-
-        /// modules_offset
-        modules_offset: u32 = 0,
-
-        /// modules_length
-        modules_length: u32 = 0,
-
-        pub fn decode(reader: anytype) anyerror!JavascriptBundledPackage {
-            var this = std.mem.zeroes(JavascriptBundledPackage);
-
-            this.name = try reader.readValue(StringPointer);
-            this.version = try reader.readValue(StringPointer);
-            this.hash = try reader.readValue(u32);
-            this.modules_offset = try reader.readValue(u32);
-            this.modules_length = try reader.readValue(u32);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeValue(this.name);
-            try writer.writeValue(this.version);
-            try writer.writeInt(this.hash);
-            try writer.writeInt(this.modules_offset);
-            try writer.writeInt(this.modules_length);
-        }
-    };
-
-    pub const JavascriptBundle = struct {
-        /// modules
-        modules: []const JavascriptBundledModule,
-
-        /// packages
-        packages: []const JavascriptBundledPackage,
-
-        /// etag
-        etag: []const u8,
-
-        /// generated_at
-        generated_at: u32 = 0,
-
-        /// app_package_json_dependencies_hash
-        app_package_json_dependencies_hash: []const u8,
-
-        /// import_from_name
-        import_from_name: []const u8,
-
-        /// manifest_string
-        manifest_string: []const u8,
-
-        pub fn decode(reader: anytype) anyerror!JavascriptBundle {
-            var this = std.mem.zeroes(JavascriptBundle);
-
-            this.modules = try reader.readArray(JavascriptBundledModule);
-            this.packages = try reader.readArray(JavascriptBundledPackage);
-            this.etag = try reader.readArray(u8);
-            this.generated_at = try reader.readValue(u32);
-            this.app_package_json_dependencies_hash = try reader.readArray(u8);
-            this.import_from_name = try reader.readArray(u8);
-            this.manifest_string = try reader.readArray(u8);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeArray(JavascriptBundledModule, this.modules);
-            try writer.writeArray(JavascriptBundledPackage, this.packages);
-            try writer.writeArray(u8, this.etag);
-            try writer.writeInt(this.generated_at);
-            try writer.writeArray(u8, this.app_package_json_dependencies_hash);
-            try writer.writeArray(u8, this.import_from_name);
-            try writer.writeArray(u8, this.manifest_string);
-        }
-    };
-
-    pub const JavascriptBundleContainer = struct {
-        /// bundle_format_version
-        bundle_format_version: ?u32 = null,
-
-        /// routes
-        routes: ?LoadedRouteConfig = null,
-
-        /// framework
-        framework: ?LoadedFramework = null,
-
-        /// bundle
-        bundle: ?JavascriptBundle = null,
-
-        /// code_length
-        code_length: ?u32 = null,
-
-        pub fn decode(reader: anytype) anyerror!JavascriptBundleContainer {
-            var this = std.mem.zeroes(JavascriptBundleContainer);
-
-            while (true) {
-                switch (try reader.readByte()) {
-                    0 => {
-                        return this;
-                    },
-
-                    1 => {
-                        this.bundle_format_version = try reader.readValue(u32);
-                    },
-                    2 => {
-                        this.routes = try reader.readValue(LoadedRouteConfig);
-                    },
-                    3 => {
-                        this.framework = try reader.readValue(LoadedFramework);
-                    },
-                    4 => {
-                        this.bundle = try reader.readValue(JavascriptBundle);
-                    },
-                    5 => {
-                        this.code_length = try reader.readValue(u32);
-                    },
-                    else => {
-                        return error.InvalidMessage;
-                    },
-                }
-            }
-            unreachable;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            if (this.bundle_format_version) |bundle_format_version| {
-                try writer.writeFieldID(1);
-                try writer.writeInt(bundle_format_version);
-            }
-            if (this.routes) |routes| {
-                try writer.writeFieldID(2);
-                try writer.writeValue(routes);
-            }
-            if (this.framework) |framework| {
-                try writer.writeFieldID(3);
-                try writer.writeValue(framework);
-            }
-            if (this.bundle) |bundle| {
-                try writer.writeFieldID(4);
-                try writer.writeValue(bundle);
-            }
-            if (this.code_length) |code_length| {
-                try writer.writeFieldID(5);
-                try writer.writeInt(code_length);
-            }
-            try writer.endMessage();
-        }
-    };
-
-    pub const ScanDependencyMode = enum(u8) {
-        _none,
-        /// app
-        app,
-
-        /// all
-        all,
-
-        _,
-
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
-        }
-    };
-
-    pub const ModuleImportType = enum(u8) {
-        _none,
-        /// import
-        import,
-
-        /// require
-        require,
-
-        _,
-
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
-        }
-    };
-
-    pub const ModuleImportRecord = struct {
-        /// kind
-        kind: ModuleImportType,
-
-        /// path
-        path: []const u8,
-
-        /// dynamic
-        dynamic: bool = false,
-
-        pub fn decode(reader: anytype) anyerror!ModuleImportRecord {
-            var this = std.mem.zeroes(ModuleImportRecord);
-
-            this.kind = try reader.readValue(ModuleImportType);
-            this.path = try reader.readValue([]const u8);
-            this.dynamic = try reader.readValue(bool);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeEnum(this.kind);
-            try writer.writeValue(this.path);
-            try writer.writeInt(@intCast(u8, @boolToInt(this.dynamic)));
-        }
-    };
-
-    pub const Module = struct {
-        /// path
-        path: []const u8,
-
-        /// imports
-        imports: []const ModuleImportRecord,
-
-        pub fn decode(reader: anytype) anyerror!Module {
-            var this = std.mem.zeroes(Module);
-
-            this.path = try reader.readValue([]const u8);
-            this.imports = try reader.readArray(ModuleImportRecord);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeValue(this.path);
-            try writer.writeArray(ModuleImportRecord, this.imports);
-        }
-    };
-
-    pub const StringMap = struct {
-        /// keys
-        keys: []const []const u8,
-
-        /// values
-        values: []const []const u8,
-
-        pub fn decode(reader: anytype) anyerror!StringMap {
-            var this = std.mem.zeroes(StringMap);
-
-            this.keys = try reader.readArray([]const u8);
-            this.values = try reader.readArray([]const u8);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeArray([]const u8, this.keys);
-            try writer.writeArray([]const u8, this.values);
-        }
-    };
-
-    pub const LoaderMap = struct {
-        /// extensions
-        extensions: []const []const u8,
-
-        /// loaders
-        loaders: []const Loader,
-
-        pub fn decode(reader: anytype) anyerror!LoaderMap {
-            var this = std.mem.zeroes(LoaderMap);
-
-            this.extensions = try reader.readArray([]const u8);
-            this.loaders = try reader.readArray(Loader);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeArray([]const u8, this.extensions);
-            try writer.writeArray(Loader, this.loaders);
-        }
-    };
-
-    pub const DotEnvBehavior = enum(u32) {
-        _none,
-        /// disable
-        disable,
-
-        /// prefix
-        prefix,
-
-        /// load_all
-        load_all,
-
-        _,
-
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
-        }
-    };
-
-    pub const EnvConfig = struct {
-        /// prefix
-        prefix: ?[]const u8 = null,
-
-        /// defaults
-        defaults: ?StringMap = null,
-
-        pub fn decode(reader: anytype) anyerror!EnvConfig {
-            var this = std.mem.zeroes(EnvConfig);
-
-            while (true) {
-                switch (try reader.readByte()) {
-                    0 => {
-                        return this;
-                    },
-
-                    1 => {
-                        this.prefix = try reader.readValue([]const u8);
-                    },
-                    2 => {
-                        this.defaults = try reader.readValue(StringMap);
-                    },
-                    else => {
-                        return error.InvalidMessage;
-                    },
-                }
-            }
-            unreachable;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            if (this.prefix) |prefix| {
-                try writer.writeFieldID(1);
-                try writer.writeValue(prefix);
-            }
-            if (this.defaults) |defaults| {
-                try writer.writeFieldID(2);
-                try writer.writeValue(defaults);
-            }
-            try writer.endMessage();
-        }
-    };
-
-    pub const LoadedEnvConfig = struct {
-        /// dotenv
-        dotenv: DotEnvBehavior,
-
-        /// defaults
-        defaults: StringMap,
-
-        /// prefix
-        prefix: []const u8,
-
-        pub fn decode(reader: anytype) anyerror!LoadedEnvConfig {
-            var this = std.mem.zeroes(LoadedEnvConfig);
-
-            this.dotenv = try reader.readValue(DotEnvBehavior);
-            this.defaults = try reader.readValue(StringMap);
-            this.prefix = try reader.readValue([]const u8);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeEnum(this.dotenv);
-            try writer.writeValue(this.defaults);
-            try writer.writeValue(this.prefix);
-        }
-    };
-
-    pub const FrameworkConfig = struct {
-        /// package
-        package: ?[]const u8 = null,
-
-        /// client
-        client: ?FrameworkEntryPointMessage = null,
-
-        /// server
-        server: ?FrameworkEntryPointMessage = null,
-
-        /// fallback
-        fallback: ?FrameworkEntryPointMessage = null,
-
-        /// development
-        development: ?bool = null,
-
-        /// client_css_in_js
-        client_css_in_js: ?CssInJsBehavior = null,
-
-        /// display_name
-        display_name: ?[]const u8 = null,
-
-        /// overrideModules
-        override_modules: ?StringMap = null,
-
-        pub fn decode(reader: anytype) anyerror!FrameworkConfig {
-            var this = std.mem.zeroes(FrameworkConfig);
-
-            while (true) {
-                switch (try reader.readByte()) {
-                    0 => {
-                        return this;
-                    },
-
-                    1 => {
-                        this.package = try reader.readValue([]const u8);
-                    },
-                    2 => {
-                        this.client = try reader.readValue(FrameworkEntryPointMessage);
-                    },
-                    3 => {
-                        this.server = try reader.readValue(FrameworkEntryPointMessage);
-                    },
-                    4 => {
-                        this.fallback = try reader.readValue(FrameworkEntryPointMessage);
-                    },
-                    5 => {
-                        this.development = try reader.readValue(bool);
-                    },
-                    6 => {
-                        this.client_css_in_js = try reader.readValue(CssInJsBehavior);
-                    },
-                    7 => {
-                        this.display_name = try reader.readValue([]const u8);
-                    },
-                    8 => {
-                        this.override_modules = try reader.readValue(StringMap);
-                    },
-                    else => {
-                        return error.InvalidMessage;
-                    },
-                }
-            }
-            unreachable;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            if (this.package) |package| {
-                try writer.writeFieldID(1);
-                try writer.writeValue(package);
-            }
-            if (this.client) |client| {
-                try writer.writeFieldID(2);
-                try writer.writeValue(client);
-            }
-            if (this.server) |server| {
-                try writer.writeFieldID(3);
-                try writer.writeValue(server);
-            }
-            if (this.fallback) |fallback| {
-                try writer.writeFieldID(4);
-                try writer.writeValue(fallback);
-            }
-            if (this.development) |development| {
-                try writer.writeFieldID(5);
-                try writer.writeInt(@intCast(u8, @boolToInt(development)));
-            }
-            if (this.client_css_in_js) |client_css_in_js| {
-                try writer.writeFieldID(6);
-                try writer.writeEnum(client_css_in_js);
-            }
-            if (this.display_name) |display_name| {
-                try writer.writeFieldID(7);
-                try writer.writeValue(display_name);
-            }
-            if (this.override_modules) |override_modules| {
-                try writer.writeFieldID(8);
-                try writer.writeValue(override_modules);
-            }
-            try writer.endMessage();
-        }
-    };
-
-    pub const FrameworkEntryPoint = struct {
-        /// kind
-        kind: FrameworkEntryPointType,
-
-        /// path
-        path: []const u8,
-
-        /// env
-        env: LoadedEnvConfig,
-
-        pub fn decode(reader: anytype) anyerror!FrameworkEntryPoint {
-            var this = std.mem.zeroes(FrameworkEntryPoint);
-
-            this.kind = try reader.readValue(FrameworkEntryPointType);
-            this.path = try reader.readValue([]const u8);
-            this.env = try reader.readValue(LoadedEnvConfig);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeEnum(this.kind);
-            try writer.writeValue(this.path);
-            try writer.writeValue(this.env);
-        }
-    };
-
-    pub const FrameworkEntryPointMap = struct {
-        /// client
-        client: ?FrameworkEntryPoint = null,
-
-        /// server
-        server: ?FrameworkEntryPoint = null,
-
-        /// fallback
-        fallback: ?FrameworkEntryPoint = null,
-
-        pub fn decode(reader: anytype) anyerror!FrameworkEntryPointMap {
-            var this = std.mem.zeroes(FrameworkEntryPointMap);
-
-            while (true) {
-                switch (try reader.readByte()) {
-                    0 => {
-                        return this;
-                    },
-
-                    1 => {
-                        this.client = try reader.readValue(FrameworkEntryPoint);
-                    },
-                    2 => {
-                        this.server = try reader.readValue(FrameworkEntryPoint);
-                    },
-                    3 => {
-                        this.fallback = try reader.readValue(FrameworkEntryPoint);
-                    },
-                    else => {
-                        return error.InvalidMessage;
-                    },
-                }
-            }
-            unreachable;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            if (this.client) |client| {
-                try writer.writeFieldID(1);
-                try writer.writeValue(client);
-            }
-            if (this.server) |server| {
-                try writer.writeFieldID(2);
-                try writer.writeValue(server);
-            }
-            if (this.fallback) |fallback| {
-                try writer.writeFieldID(3);
-                try writer.writeValue(fallback);
-            }
-            try writer.endMessage();
-        }
-    };
-
-    pub const FrameworkEntryPointMessage = struct {
-        /// path
-        path: ?[]const u8 = null,
-
-        /// env
-        env: ?EnvConfig = null,
-
-        pub fn decode(reader: anytype) anyerror!FrameworkEntryPointMessage {
-            var this = std.mem.zeroes(FrameworkEntryPointMessage);
-
-            while (true) {
-                switch (try reader.readByte()) {
-                    0 => {
-                        return this;
-                    },
-
-                    1 => {
-                        this.path = try reader.readValue([]const u8);
-                    },
-                    2 => {
-                        this.env = try reader.readValue(EnvConfig);
-                    },
-                    else => {
-                        return error.InvalidMessage;
-                    },
-                }
-            }
-            unreachable;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            if (this.path) |path| {
-                try writer.writeFieldID(1);
-                try writer.writeValue(path);
-            }
-            if (this.env) |env| {
-                try writer.writeFieldID(2);
-                try writer.writeValue(env);
-            }
-            try writer.endMessage();
-        }
-    };
-
-    pub const LoadedFramework = struct {
-        /// package
-        package: []const u8,
-
-        /// display_name
-        display_name: []const u8,
-
-        /// development
-        development: bool = false,
-
-        /// entry_points
-        entry_points: FrameworkEntryPointMap,
-
-        /// client_css_in_js
-        client_css_in_js: CssInJsBehavior,
-
-        /// overrideModules
-        override_modules: StringMap,
-
-        pub fn decode(reader: anytype) anyerror!LoadedFramework {
-            var this = std.mem.zeroes(LoadedFramework);
-
-            this.package = try reader.readValue([]const u8);
-            this.display_name = try reader.readValue([]const u8);
-            this.development = try reader.readValue(bool);
-            this.entry_points = try reader.readValue(FrameworkEntryPointMap);
-            this.client_css_in_js = try reader.readValue(CssInJsBehavior);
-            this.override_modules = try reader.readValue(StringMap);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeValue(this.package);
-            try writer.writeValue(this.display_name);
-            try writer.writeInt(@intCast(u8, @boolToInt(this.development)));
-            try writer.writeValue(this.entry_points);
-            try writer.writeEnum(this.client_css_in_js);
-            try writer.writeValue(this.override_modules);
-        }
-    };
-
-    pub const LoadedRouteConfig = struct {
-        /// dir
-        dir: []const u8,
-
-        /// extensions
-        extensions: []const []const u8,
-
-        /// static_dir
-        static_dir: []const u8,
-
-        /// asset_prefix
-        asset_prefix: []const u8,
-
-        pub fn decode(reader: anytype) anyerror!LoadedRouteConfig {
-            var this = std.mem.zeroes(LoadedRouteConfig);
-
-            this.dir = try reader.readValue([]const u8);
-            this.extensions = try reader.readArray([]const u8);
-            this.static_dir = try reader.readValue([]const u8);
-            this.asset_prefix = try reader.readValue([]const u8);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeValue(this.dir);
-            try writer.writeArray([]const u8, this.extensions);
-            try writer.writeValue(this.static_dir);
-            try writer.writeValue(this.asset_prefix);
-        }
-    };
-
-    pub const RouteConfig = struct {
-        /// dir
-        dir: []const []const u8,
-
-        /// extensions
-        extensions: []const []const u8,
-
-        /// static_dir
-        static_dir: ?[]const u8 = null,
-
-        /// asset_prefix
-        asset_prefix: ?[]const u8 = null,
-
-        pub fn decode(reader: anytype) anyerror!RouteConfig {
-            var this = std.mem.zeroes(RouteConfig);
-
-            while (true) {
-                switch (try reader.readByte()) {
-                    0 => {
-                        return this;
-                    },
-
-                    1 => {
-                        this.dir = try reader.readArray([]const u8);
-                    },
-                    2 => {
-                        this.extensions = try reader.readArray([]const u8);
-                    },
-                    3 => {
-                        this.static_dir = try reader.readValue([]const u8);
-                    },
-                    4 => {
-                        this.asset_prefix = try reader.readValue([]const u8);
-                    },
-                    else => {
-                        return error.InvalidMessage;
-                    },
-                }
-            }
-            unreachable;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            if (this.dir) |dir| {
-                try writer.writeFieldID(1);
-                try writer.writeArray([]const u8, dir);
-            }
-            if (this.extensions) |extensions| {
-                try writer.writeFieldID(2);
-                try writer.writeArray([]const u8, extensions);
-            }
-            if (this.static_dir) |static_dir| {
-                try writer.writeFieldID(3);
-                try writer.writeValue(static_dir);
-            }
-            if (this.asset_prefix) |asset_prefix| {
-                try writer.writeFieldID(4);
-                try writer.writeValue(asset_prefix);
-            }
-            try writer.endMessage();
-        }
-    };
-
-    pub const TransformOptions = struct {
-        /// jsx
-        jsx: ?Jsx = null,
-
-        /// tsconfig_override
-        tsconfig_override: ?[]const u8 = null,
-
-        /// resolve
-        resolve: ?ResolveMode = null,
-
-        /// origin
-        origin: ?[]const u8 = null,
-
-        /// absolute_working_dir
-        absolute_working_dir: ?[]const u8 = null,
-
-        /// define
-        define: ?StringMap = null,
-
-        /// preserve_symlinks
-        preserve_symlinks: ?bool = null,
-
-        /// entry_points
-        entry_points: []const []const u8,
-
-        /// write
-        write: ?bool = null,
-
-        /// inject
-        inject: []const []const u8,
-
-        /// output_dir
-        output_dir: ?[]const u8 = null,
-
-        /// external
-        external: []const []const u8,
-
-        /// loaders
-        loaders: ?LoaderMap = null,
-
-        /// main_fields
-        main_fields: []const []const u8,
-
-        /// platform
-        platform: ?Platform = null,
-
-        /// serve
-        serve: ?bool = null,
-
-        /// extension_order
-        extension_order: []const []const u8,
-
-        /// generate_node_module_bundle
-        generate_node_module_bundle: ?bool = null,
-
-        /// node_modules_bundle_path
-        node_modules_bundle_path: ?[]const u8 = null,
-
-        /// node_modules_bundle_path_server
-        node_modules_bundle_path_server: ?[]const u8 = null,
-
-        /// framework
-        framework: ?FrameworkConfig = null,
-
-        /// router
-        router: ?RouteConfig = null,
-
-        /// no_summary
-        no_summary: ?bool = null,
-
-        pub fn decode(reader: anytype) anyerror!TransformOptions {
-            var this = std.mem.zeroes(TransformOptions);
-
-            while (true) {
-                switch (try reader.readByte()) {
-                    0 => {
-                        return this;
-                    },
-
-                    1 => {
-                        this.jsx = try reader.readValue(Jsx);
-                    },
-                    2 => {
-                        this.tsconfig_override = try reader.readValue([]const u8);
-                    },
-                    3 => {
-                        this.resolve = try reader.readValue(ResolveMode);
-                    },
-                    4 => {
-                        this.origin = try reader.readValue([]const u8);
-                    },
-                    5 => {
-                        this.absolute_working_dir = try reader.readValue([]const u8);
-                    },
-                    6 => {
-                        this.define = try reader.readValue(StringMap);
-                    },
-                    7 => {
-                        this.preserve_symlinks = try reader.readValue(bool);
-                    },
-                    8 => {
-                        this.entry_points = try reader.readArray([]const u8);
-                    },
-                    9 => {
-                        this.write = try reader.readValue(bool);
-                    },
-                    10 => {
-                        this.inject = try reader.readArray([]const u8);
-                    },
-                    11 => {
-                        this.output_dir = try reader.readValue([]const u8);
-                    },
-                    12 => {
-                        this.external = try reader.readArray([]const u8);
-                    },
-                    13 => {
-                        this.loaders = try reader.readValue(LoaderMap);
-                    },
-                    14 => {
-                        this.main_fields = try reader.readArray([]const u8);
-                    },
-                    15 => {
-                        this.platform = try reader.readValue(Platform);
-                    },
-                    16 => {
-                        this.serve = try reader.readValue(bool);
-                    },
-                    17 => {
-                        this.extension_order = try reader.readArray([]const u8);
-                    },
-                    18 => {
-                        this.generate_node_module_bundle = try reader.readValue(bool);
-                    },
-                    19 => {
-                        this.node_modules_bundle_path = try reader.readValue([]const u8);
-                    },
-                    20 => {
-                        this.node_modules_bundle_path_server = try reader.readValue([]const u8);
-                    },
-                    21 => {
-                        this.framework = try reader.readValue(FrameworkConfig);
-                    },
-                    22 => {
-                        this.router = try reader.readValue(RouteConfig);
-                    },
-                    23 => {
-                        this.no_summary = try reader.readValue(bool);
-                    },
-                    else => {
-                        return error.InvalidMessage;
-                    },
-                }
-            }
-            unreachable;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            if (this.jsx) |jsx| {
-                try writer.writeFieldID(1);
-                try writer.writeValue(jsx);
-            }
-            if (this.tsconfig_override) |tsconfig_override| {
-                try writer.writeFieldID(2);
-                try writer.writeValue(tsconfig_override);
-            }
-            if (this.resolve) |resolve| {
-                try writer.writeFieldID(3);
-                try writer.writeEnum(resolve);
-            }
-            if (this.origin) |origin| {
-                try writer.writeFieldID(4);
-                try writer.writeValue(origin);
-            }
-            if (this.absolute_working_dir) |absolute_working_dir| {
-                try writer.writeFieldID(5);
-                try writer.writeValue(absolute_working_dir);
-            }
-            if (this.define) |define| {
-                try writer.writeFieldID(6);
-                try writer.writeValue(define);
-            }
-            if (this.preserve_symlinks) |preserve_symlinks| {
-                try writer.writeFieldID(7);
-                try writer.writeInt(@intCast(u8, @boolToInt(preserve_symlinks)));
-            }
-            if (this.entry_points) |entry_points| {
-                try writer.writeFieldID(8);
-                try writer.writeArray([]const u8, entry_points);
-            }
-            if (this.write) |write| {
-                try writer.writeFieldID(9);
-                try writer.writeInt(@intCast(u8, @boolToInt(write)));
-            }
-            if (this.inject) |inject| {
-                try writer.writeFieldID(10);
-                try writer.writeArray([]const u8, inject);
-            }
-            if (this.output_dir) |output_dir| {
-                try writer.writeFieldID(11);
-                try writer.writeValue(output_dir);
-            }
-            if (this.external) |external| {
-                try writer.writeFieldID(12);
-                try writer.writeArray([]const u8, external);
-            }
-            if (this.loaders) |loaders| {
-                try writer.writeFieldID(13);
-                try writer.writeValue(loaders);
-            }
-            if (this.main_fields) |main_fields| {
-                try writer.writeFieldID(14);
-                try writer.writeArray([]const u8, main_fields);
-            }
-            if (this.platform) |platform| {
-                try writer.writeFieldID(15);
-                try writer.writeEnum(platform);
-            }
-            if (this.serve) |serve| {
-                try writer.writeFieldID(16);
-                try writer.writeInt(@intCast(u8, @boolToInt(serve)));
-            }
-            if (this.extension_order) |extension_order| {
-                try writer.writeFieldID(17);
-                try writer.writeArray([]const u8, extension_order);
-            }
-            if (this.generate_node_module_bundle) |generate_node_module_bundle| {
-                try writer.writeFieldID(18);
-                try writer.writeInt(@intCast(u8, @boolToInt(generate_node_module_bundle)));
-            }
-            if (this.node_modules_bundle_path) |node_modules_bundle_path| {
-                try writer.writeFieldID(19);
-                try writer.writeValue(node_modules_bundle_path);
-            }
-            if (this.node_modules_bundle_path_server) |node_modules_bundle_path_server| {
-                try writer.writeFieldID(20);
-                try writer.writeValue(node_modules_bundle_path_server);
-            }
-            if (this.framework) |framework| {
-                try writer.writeFieldID(21);
-                try writer.writeValue(framework);
-            }
-            if (this.router) |router| {
-                try writer.writeFieldID(22);
-                try writer.writeValue(router);
-            }
-            if (this.no_summary) |no_summary| {
-                try writer.writeFieldID(23);
-                try writer.writeInt(@intCast(u8, @boolToInt(no_summary)));
-            }
-            try writer.endMessage();
-        }
-    };
-
-    pub const FileHandle = struct {
-        /// path
-        path: []const u8,
-
-        /// size
-        size: u32 = 0,
-
-        /// fd
-        fd: u32 = 0,
-
-        pub fn decode(reader: anytype) anyerror!FileHandle {
-            var this = std.mem.zeroes(FileHandle);
-
-            this.path = try reader.readValue([]const u8);
-            this.size = try reader.readValue(u32);
-            this.fd = try reader.readValue(u32);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeValue(this.path);
-            try writer.writeInt(this.size);
-            try writer.writeInt(this.fd);
-        }
-    };
-
-    pub const Transform = struct {
-        /// handle
-        handle: ?FileHandle = null,
-
-        /// path
-        path: ?[]const u8 = null,
-
-        /// contents
-        contents: []const u8,
-
-        /// loader
-        loader: ?Loader = null,
-
-        /// options
-        options: ?TransformOptions = null,
-
-        pub fn decode(reader: anytype) anyerror!Transform {
-            var this = std.mem.zeroes(Transform);
-
-            while (true) {
-                switch (try reader.readByte()) {
-                    0 => {
-                        return this;
-                    },
-
-                    1 => {
-                        this.handle = try reader.readValue(FileHandle);
-                    },
-                    2 => {
-                        this.path = try reader.readValue([]const u8);
-                    },
-                    3 => {
-                        this.contents = try reader.readArray(u8);
-                    },
-                    4 => {
-                        this.loader = try reader.readValue(Loader);
-                    },
-                    5 => {
-                        this.options = try reader.readValue(TransformOptions);
-                    },
-                    else => {
-                        return error.InvalidMessage;
-                    },
-                }
-            }
-            unreachable;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            if (this.handle) |handle| {
-                try writer.writeFieldID(1);
-                try writer.writeValue(handle);
-            }
-            if (this.path) |path| {
-                try writer.writeFieldID(2);
-                try writer.writeValue(path);
-            }
-            if (this.contents) |contents| {
-                try writer.writeFieldID(3);
-                try writer.writeArray(u8, contents);
-            }
-            if (this.loader) |loader| {
-                try writer.writeFieldID(4);
-                try writer.writeEnum(loader);
-            }
-            if (this.options) |options| {
-                try writer.writeFieldID(5);
-                try writer.writeValue(options);
-            }
-            try writer.endMessage();
-        }
-    };
-
-    pub const TransformResponseStatus = enum(u32) {
-        _none,
-        /// success
-        success,
-
-        /// fail
-        fail,
-
-        _,
-
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
-        }
-    };
-
-    pub const OutputFile = struct {
-        /// data
-        data: []const u8,
-
-        /// path
-        path: []const u8,
-
-        pub fn decode(reader: anytype) anyerror!OutputFile {
-            var this = std.mem.zeroes(OutputFile);
-
-            this.data = try reader.readArray(u8);
-            this.path = try reader.readValue([]const u8);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeArray(u8, this.data);
-            try writer.writeValue(this.path);
-        }
-    };
-
-    pub const TransformResponse = struct {
-        /// status
-        status: TransformResponseStatus,
-
-        /// files
-        files: []const OutputFile,
-
-        /// errors
-        errors: []const Message,
-
-        pub fn decode(reader: anytype) anyerror!TransformResponse {
-            var this = std.mem.zeroes(TransformResponse);
-
-            this.status = try reader.readValue(TransformResponseStatus);
-            this.files = try reader.readArray(OutputFile);
-            this.errors = try reader.readArray(Message);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeEnum(this.status);
-            try writer.writeArray(OutputFile, this.files);
-            try writer.writeArray(Message, this.errors);
-        }
-    };
-
-    pub const MessageLevel = enum(u32) {
-        _none,
-        /// err
-        err,
-
-        /// warn
-        warn,
-
-        /// note
-        note,
-
-        /// debug
-        debug,
-
-        _,
-
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
-        }
-    };
-
-    pub const Location = struct {
-        /// file
-        file: []const u8,
-
-        /// namespace
-        namespace: []const u8,
-
-        /// line
-        line: i32 = 0,
-
-        /// column
-        column: i32 = 0,
-
-        /// line_text
-        line_text: []const u8,
-
-        /// suggestion
-        suggestion: []const u8,
-
-        /// offset
-        offset: u32 = 0,
-
-        pub fn decode(reader: anytype) anyerror!Location {
-            var this = std.mem.zeroes(Location);
-
-            this.file = try reader.readValue([]const u8);
-            this.namespace = try reader.readValue([]const u8);
-            this.line = try reader.readValue(i32);
-            this.column = try reader.readValue(i32);
-            this.line_text = try reader.readValue([]const u8);
-            this.suggestion = try reader.readValue([]const u8);
-            this.offset = try reader.readValue(u32);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeValue(this.file);
-            try writer.writeValue(this.namespace);
-            try writer.writeInt(this.line);
-            try writer.writeInt(this.column);
-            try writer.writeValue(this.line_text);
-            try writer.writeValue(this.suggestion);
-            try writer.writeInt(this.offset);
-        }
-    };
-
-    pub const MessageData = struct {
-        /// text
-        text: ?[]const u8 = null,
-
-        /// location
-        location: ?Location = null,
-
-        pub fn decode(reader: anytype) anyerror!MessageData {
-            var this = std.mem.zeroes(MessageData);
-
-            while (true) {
-                switch (try reader.readByte()) {
-                    0 => {
-                        return this;
-                    },
-
-                    1 => {
-                        this.text = try reader.readValue([]const u8);
-                    },
-                    2 => {
-                        this.location = try reader.readValue(Location);
-                    },
-                    else => {
-                        return error.InvalidMessage;
-                    },
-                }
-            }
-            unreachable;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            if (this.text) |text| {
-                try writer.writeFieldID(1);
-                try writer.writeValue(text);
-            }
-            if (this.location) |location| {
-                try writer.writeFieldID(2);
-                try writer.writeValue(location);
-            }
-            try writer.endMessage();
-        }
-    };
-
-    pub const MessageMeta = struct {
-        /// resolve
-        resolve: ?[]const u8 = null,
-
-        /// build
-        build: ?bool = null,
-
-        pub fn decode(reader: anytype) anyerror!MessageMeta {
-            var this = std.mem.zeroes(MessageMeta);
-
-            while (true) {
-                switch (try reader.readByte()) {
-                    0 => {
-                        return this;
-                    },
-
-                    1 => {
-                        this.resolve = try reader.readValue([]const u8);
-                    },
-                    2 => {
-                        this.build = try reader.readValue(bool);
-                    },
-                    else => {
-                        return error.InvalidMessage;
-                    },
-                }
-            }
-            unreachable;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            if (this.resolve) |resolve| {
-                try writer.writeFieldID(1);
-                try writer.writeValue(resolve);
-            }
-            if (this.build) |build| {
-                try writer.writeFieldID(2);
-                try writer.writeInt(@intCast(u8, @boolToInt(build)));
-            }
-            try writer.endMessage();
-        }
-    };
-
-    pub const Message = struct {
-        /// level
-        level: MessageLevel,
-
-        /// data
-        data: MessageData,
-
-        /// notes
-        notes: []const MessageData,
-
-        /// on
-        on: MessageMeta,
-
-        pub fn decode(reader: anytype) anyerror!Message {
-            var this = std.mem.zeroes(Message);
-
-            this.level = try reader.readValue(MessageLevel);
-            this.data = try reader.readValue(MessageData);
-            this.notes = try reader.readArray(MessageData);
-            this.on = try reader.readValue(MessageMeta);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeEnum(this.level);
-            try writer.writeValue(this.data);
-            try writer.writeArray(MessageData, this.notes);
-            try writer.writeValue(this.on);
-        }
-    };
-
-    pub const Log = struct {
-        /// warnings
-        warnings: u32 = 0,
-
-        /// errors
-        errors: u32 = 0,
-
-        /// msgs
-        msgs: []const Message,
-
-        pub fn decode(reader: anytype) anyerror!Log {
-            var this = std.mem.zeroes(Log);
-
-            this.warnings = try reader.readValue(u32);
-            this.errors = try reader.readValue(u32);
-            this.msgs = try reader.readArray(Message);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeInt(this.warnings);
-            try writer.writeInt(this.errors);
-            try writer.writeArray(Message, this.msgs);
-        }
-    };
-
-    pub const Reloader = enum(u8) {
-        _none,
-        /// disable
-        disable,
-
-        /// live
-        live,
-
-        /// fast_refresh
-        fast_refresh,
-
-        _,
-
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
-        }
-    };
-
-    pub const WebsocketMessageKind = enum(u8) {
-        _none,
-        /// welcome
-        welcome,
-
-        /// file_change_notification
-        file_change_notification,
-
-        /// build_success
-        build_success,
-
-        /// build_fail
-        build_fail,
-
-        /// manifest_success
-        manifest_success,
-
-        /// manifest_fail
-        manifest_fail,
-
-        _,
-
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
-        }
-    };
-
-    pub const WebsocketCommandKind = enum(u8) {
-        _none,
-        /// build
-        build,
-
-        /// manifest
-        manifest,
-
-        _,
-
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
-        }
-    };
-
-    pub const WebsocketMessage = struct {
-        /// timestamp
-        timestamp: u32 = 0,
-
-        /// kind
-        kind: WebsocketMessageKind,
-
-        pub fn decode(reader: anytype) anyerror!WebsocketMessage {
-            var this = std.mem.zeroes(WebsocketMessage);
-
-            this.timestamp = try reader.readValue(u32);
-            this.kind = try reader.readValue(WebsocketMessageKind);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeInt(this.timestamp);
-            try writer.writeEnum(this.kind);
-        }
-    };
-
-    pub const WebsocketMessageWelcome = struct {
-        /// epoch
-        epoch: u32 = 0,
-
-        /// javascriptReloader
-        javascript_reloader: Reloader,
-
-        /// cwd
-        cwd: []const u8,
-
-        pub fn decode(reader: anytype) anyerror!WebsocketMessageWelcome {
-            var this = std.mem.zeroes(WebsocketMessageWelcome);
-
-            this.epoch = try reader.readValue(u32);
-            this.javascript_reloader = try reader.readValue(Reloader);
-            this.cwd = try reader.readValue([]const u8);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeInt(this.epoch);
-            try writer.writeEnum(this.javascript_reloader);
-            try writer.writeValue(this.cwd);
-        }
-    };
-
-    pub const WebsocketMessageFileChangeNotification = struct {
-        /// id
-        id: u32 = 0,
-
-        /// loader
-        loader: Loader,
-
-        pub fn decode(reader: anytype) anyerror!WebsocketMessageFileChangeNotification {
-            var this = std.mem.zeroes(WebsocketMessageFileChangeNotification);
-
-            this.id = try reader.readValue(u32);
-            this.loader = try reader.readValue(Loader);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeInt(this.id);
-            try writer.writeEnum(this.loader);
-        }
-    };
-
-    pub const WebsocketCommand = struct {
-        /// kind
-        kind: WebsocketCommandKind,
-
-        /// timestamp
-        timestamp: u32 = 0,
-
-        pub fn decode(reader: anytype) anyerror!WebsocketCommand {
-            var this = std.mem.zeroes(WebsocketCommand);
-
-            this.kind = try reader.readValue(WebsocketCommandKind);
-            this.timestamp = try reader.readValue(u32);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeEnum(this.kind);
-            try writer.writeInt(this.timestamp);
-        }
-    };
-
-    pub const WebsocketCommandBuild = packed struct {
-        /// id
-        id: u32 = 0,
-
-        pub fn decode(reader: anytype) anyerror!WebsocketCommandBuild {
-            var this = std.mem.zeroes(WebsocketCommandBuild);
-
-            this.id = try reader.readValue(u32);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeInt(this.id);
-        }
-    };
-
-    pub const WebsocketCommandManifest = packed struct {
-        /// id
-        id: u32 = 0,
-
-        pub fn decode(reader: anytype) anyerror!WebsocketCommandManifest {
-            var this = std.mem.zeroes(WebsocketCommandManifest);
-
-            this.id = try reader.readValue(u32);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeInt(this.id);
-        }
-    };
-
-    pub const WebsocketMessageBuildSuccess = struct {
-        /// id
-        id: u32 = 0,
-
-        /// from_timestamp
-        from_timestamp: u32 = 0,
-
-        /// loader
-        loader: Loader,
-
-        /// module_path
-        module_path: []const u8,
-
-        /// blob_length
-        blob_length: u32 = 0,
-
-        pub fn decode(reader: anytype) anyerror!WebsocketMessageBuildSuccess {
-            var this = std.mem.zeroes(WebsocketMessageBuildSuccess);
-
-            this.id = try reader.readValue(u32);
-            this.from_timestamp = try reader.readValue(u32);
-            this.loader = try reader.readValue(Loader);
-            this.module_path = try reader.readValue([]const u8);
-            this.blob_length = try reader.readValue(u32);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeInt(this.id);
-            try writer.writeInt(this.from_timestamp);
-            try writer.writeEnum(this.loader);
-            try writer.writeValue(this.module_path);
-            try writer.writeInt(this.blob_length);
-        }
-    };
-
-    pub const WebsocketMessageBuildFailure = struct {
-        /// id
-        id: u32 = 0,
-
-        /// from_timestamp
-        from_timestamp: u32 = 0,
-
-        /// loader
-        loader: Loader,
-
-        /// module_path
-        module_path: []const u8,
-
-        /// log
-        log: Log,
-
-        pub fn decode(reader: anytype) anyerror!WebsocketMessageBuildFailure {
-            var this = std.mem.zeroes(WebsocketMessageBuildFailure);
-
-            this.id = try reader.readValue(u32);
-            this.from_timestamp = try reader.readValue(u32);
-            this.loader = try reader.readValue(Loader);
-            this.module_path = try reader.readValue([]const u8);
-            this.log = try reader.readValue(Log);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeInt(this.id);
-            try writer.writeInt(this.from_timestamp);
-            try writer.writeEnum(this.loader);
-            try writer.writeValue(this.module_path);
-            try writer.writeValue(this.log);
-        }
-    };
-
-    pub const DependencyManifest = struct {
-        /// ids
-        ids: []const u32,
-
-        pub fn decode(reader: anytype) anyerror!DependencyManifest {
-            var this = std.mem.zeroes(DependencyManifest);
-
-            this.ids = try reader.readArray(u32);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeArray(u32, this.ids);
-        }
-    };
-
-    pub const FileList = struct {
-        /// ptrs
-        ptrs: []const StringPointer,
-
-        /// files
-        files: []const u8,
-
-        pub fn decode(reader: anytype) anyerror!FileList {
-            var this = std.mem.zeroes(FileList);
-
-            this.ptrs = try reader.readArray(StringPointer);
-            this.files = try reader.readValue([]const u8);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeArray(StringPointer, this.ptrs);
-            try writer.writeValue(this.files);
-        }
-    };
-
-    pub const WebsocketMessageResolveIDs = struct {
-        /// id
-        id: []const u32,
-
-        /// list
-        list: FileList,
-
-        pub fn decode(reader: anytype) anyerror!WebsocketMessageResolveIDs {
-            var this = std.mem.zeroes(WebsocketMessageResolveIDs);
-
-            this.id = try reader.readArray(u32);
-            this.list = try reader.readValue(FileList);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeArray(u32, this.id);
-            try writer.writeValue(this.list);
-        }
-    };
-
-    pub const WebsocketCommandResolveIDs = struct {
-        /// ptrs
-        ptrs: []const StringPointer,
-
-        /// files
-        files: []const u8,
-
-        pub fn decode(reader: anytype) anyerror!WebsocketCommandResolveIDs {
-            var this = std.mem.zeroes(WebsocketCommandResolveIDs);
-
-            this.ptrs = try reader.readArray(StringPointer);
-            this.files = try reader.readValue([]const u8);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeArray(StringPointer, this.ptrs);
-            try writer.writeValue(this.files);
-        }
-    };
-
-    pub const WebsocketMessageManifestSuccess = struct {
-        /// id
-        id: u32 = 0,
-
-        /// module_path
-        module_path: []const u8,
-
-        /// loader
-        loader: Loader,
-
-        /// manifest
-        manifest: DependencyManifest,
-
-        pub fn decode(reader: anytype) anyerror!WebsocketMessageManifestSuccess {
-            var this = std.mem.zeroes(WebsocketMessageManifestSuccess);
-
-            this.id = try reader.readValue(u32);
-            this.module_path = try reader.readValue([]const u8);
-            this.loader = try reader.readValue(Loader);
-            this.manifest = try reader.readValue(DependencyManifest);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeInt(this.id);
-            try writer.writeValue(this.module_path);
-            try writer.writeEnum(this.loader);
-            try writer.writeValue(this.manifest);
-        }
-    };
-
-    pub const WebsocketMessageManifestFailure = struct {
-        /// id
-        id: u32 = 0,
-
-        /// from_timestamp
-        from_timestamp: u32 = 0,
-
-        /// loader
-        loader: Loader,
-
-        /// log
-        log: Log,
-
-        pub fn decode(reader: anytype) anyerror!WebsocketMessageManifestFailure {
-            var this = std.mem.zeroes(WebsocketMessageManifestFailure);
-
-            this.id = try reader.readValue(u32);
-            this.from_timestamp = try reader.readValue(u32);
-            this.loader = try reader.readValue(Loader);
-            this.log = try reader.readValue(Log);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeInt(this.id);
-            try writer.writeInt(this.from_timestamp);
-            try writer.writeEnum(this.loader);
-            try writer.writeValue(this.log);
-        }
-    };
+                
 };
+
+pub const FrameworkEntryPointType = enum(u8) {
+
+_none,
+  /// client
+  client,
+
+  /// server
+  server,
+
+  /// fallback
+  fallback,
+
+_,
+
+                pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
+                    return try std.json.stringify(@tagName(self), opts, o);
+                }
+
+                
+};
+
+pub const StackFrameScope = enum(u8) {
+
+_none,
+  /// Eval
+  eval,
+
+  /// Module
+  module,
+
+  /// Function
+  function,
+
+  /// Global
+  global,
+
+  /// Wasm
+  wasm,
+
+  /// Constructor
+  constructor,
+
+_,
+
+                pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
+                    return try std.json.stringify(@tagName(self), opts, o);
+                }
+
+                
+};
+
+pub const StackFrame = struct {
+/// function_name
+function_name: []const u8,
+
+/// file
+file: []const u8,
+
+/// position
+position: StackFramePosition,
+
+/// scope
+scope: StackFrameScope,
+
+
+pub fn decode(reader: anytype) anyerror!StackFrame {
+  var this = std.mem.zeroes(StackFrame);
+
+  this.function_name = try reader.readValue([]const u8); 
+  this.file = try reader.readValue([]const u8); 
+  this.position = try reader.readValue(StackFramePosition); 
+  this.scope = try reader.readValue(StackFrameScope); 
+   return this;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+   try writer.writeValue(this.function_name);
+   try writer.writeValue(this.file);
+   try writer.writeValue(this.position);
+   try writer.writeEnum(this.scope);
+}
+
+};
+
+pub const StackFramePosition = packed struct {
+/// source_offset
+source_offset: i32 = 0,
+
+/// line
+line: i32 = 0,
+
+/// line_start
+line_start: i32 = 0,
+
+/// line_stop
+line_stop: i32 = 0,
+
+/// column_start
+column_start: i32 = 0,
+
+/// column_stop
+column_stop: i32 = 0,
+
+/// expression_start
+expression_start: i32 = 0,
+
+/// expression_stop
+expression_stop: i32 = 0,
+
+
+pub fn decode(reader: anytype) anyerror!StackFramePosition {
+  var this = std.mem.zeroes(StackFramePosition);
+
+  this.source_offset = try reader.readValue(i32); 
+  this.line = try reader.readValue(i32); 
+  this.line_start = try reader.readValue(i32); 
+  this.line_stop = try reader.readValue(i32); 
+  this.column_start = try reader.readValue(i32); 
+  this.column_stop = try reader.readValue(i32); 
+  this.expression_start = try reader.readValue(i32); 
+  this.expression_stop = try reader.readValue(i32); 
+   return this;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+   try writer.writeInt(this.source_offset);
+   try writer.writeInt(this.line);
+   try writer.writeInt(this.line_start);
+   try writer.writeInt(this.line_stop);
+   try writer.writeInt(this.column_start);
+   try writer.writeInt(this.column_stop);
+   try writer.writeInt(this.expression_start);
+   try writer.writeInt(this.expression_stop);
+}
+
+};
+
+pub const SourceLine = struct {
+/// line
+line: i32 = 0,
+
+/// text
+text: []const u8,
+
+
+pub fn decode(reader: anytype) anyerror!SourceLine {
+  var this = std.mem.zeroes(SourceLine);
+
+  this.line = try reader.readValue(i32); 
+  this.text = try reader.readValue([]const u8); 
+   return this;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+   try writer.writeInt(this.line);
+   try writer.writeValue(this.text);
+}
+
+};
+
+pub const StackTrace = struct {
+/// source_lines
+source_lines: []const SourceLine,
+
+/// frames
+frames: []const StackFrame,
+
+
+pub fn decode(reader: anytype) anyerror!StackTrace {
+  var this = std.mem.zeroes(StackTrace);
+
+  this.source_lines = try reader.readArray(SourceLine); 
+  this.frames = try reader.readArray(StackFrame); 
+   return this;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+   try writer.writeArray(SourceLine, this.source_lines);
+   try writer.writeArray(StackFrame, this.frames);
+}
+
+};
+
+pub const JsException = struct {
+/// name
+name: ?[]const u8 = null,
+
+/// message
+message: ?[]const u8 = null,
+
+/// runtime_type
+runtime_type: ?u16 = null,
+
+/// code
+code: ?u8 = null,
+
+/// stack
+stack: ?StackTrace = null,
+
+
+pub fn decode(reader: anytype) anyerror!JsException {
+  var this = std.mem.zeroes(JsException);
+
+  while(true) {
+    switch (try reader.readByte()) {
+      0 => { return this; },
+
+      1 => {
+        this.name = try reader.readValue([]const u8); 
+},
+      2 => {
+        this.message = try reader.readValue([]const u8); 
+},
+      3 => {
+        this.runtime_type = try reader.readValue(u16); 
+},
+      4 => {
+        this.code = try reader.readValue(u8); 
+},
+      5 => {
+        this.stack = try reader.readValue(StackTrace); 
+},
+      else => {
+      return error.InvalidMessage;
+      },
+      }
+      }
+unreachable;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+if (this.name) |name| {
+  try writer.writeFieldID(1);
+   try writer.writeValue(name);
+}
+if (this.message) |message| {
+  try writer.writeFieldID(2);
+   try writer.writeValue(message);
+}
+if (this.runtime_type) |runtime_type| {
+  try writer.writeFieldID(3);
+   try writer.writeInt(runtime_type);
+}
+if (this.code) |code| {
+  try writer.writeFieldID(4);
+   try writer.writeInt(code);
+}
+if (this.stack) |stack| {
+  try writer.writeFieldID(5);
+   try writer.writeValue(stack);
+}
+try writer.endMessage();
+}
+
+};
+
+pub const FallbackStep = enum(u8) {
+
+_none,
+  /// ssr_disabled
+  ssr_disabled,
+
+  /// create_vm
+  create_vm,
+
+  /// configure_router
+  configure_router,
+
+  /// configure_defines
+  configure_defines,
+
+  /// resolve_entry_point
+  resolve_entry_point,
+
+  /// load_entry_point
+  load_entry_point,
+
+  /// eval_entry_point
+  eval_entry_point,
+
+  /// fetch_event_handler
+  fetch_event_handler,
+
+_,
+
+                pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
+                    return try std.json.stringify(@tagName(self), opts, o);
+                }
+
+                
+};
+
+pub const Problems = struct {
+/// code
+code: u16 = 0,
+
+/// name
+name: []const u8,
+
+/// exceptions
+exceptions: []const JsException,
+
+/// build
+build: Log,
+
+
+pub fn decode(reader: anytype) anyerror!Problems {
+  var this = std.mem.zeroes(Problems);
+
+  this.code = try reader.readValue(u16); 
+  this.name = try reader.readValue([]const u8); 
+  this.exceptions = try reader.readArray(JsException); 
+  this.build = try reader.readValue(Log); 
+   return this;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+   try writer.writeInt(this.code);
+   try writer.writeValue(this.name);
+   try writer.writeArray(JsException, this.exceptions);
+   try writer.writeValue(this.build);
+}
+
+};
+
+pub const Router = struct {
+/// routes
+routes: []const []const u8,
+
+/// route
+route: i32 = 0,
+
+/// params
+params: StringMap,
+
+
+pub fn decode(reader: anytype) anyerror!Router {
+  var this = std.mem.zeroes(Router);
+
+  this.routes = try reader.readArray([]const u8); 
+  this.route = try reader.readValue(i32); 
+  this.params = try reader.readValue(StringMap); 
+   return this;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+   try writer.writeArray([]const u8, this.routes);
+   try writer.writeInt(this.route);
+   try writer.writeValue(this.params);
+}
+
+};
+
+pub const FallbackMessageContainer = struct {
+/// message
+message: ?[]const u8 = null,
+
+/// router
+router: ?Router = null,
+
+/// reason
+reason: ?FallbackStep = null,
+
+/// problems
+problems: ?Problems = null,
+
+/// cwd
+cwd: ?[]const u8 = null,
+
+
+pub fn decode(reader: anytype) anyerror!FallbackMessageContainer {
+  var this = std.mem.zeroes(FallbackMessageContainer);
+
+  while(true) {
+    switch (try reader.readByte()) {
+      0 => { return this; },
+
+      1 => {
+        this.message = try reader.readValue([]const u8); 
+},
+      2 => {
+        this.router = try reader.readValue(Router); 
+},
+      3 => {
+        this.reason = try reader.readValue(FallbackStep); 
+},
+      4 => {
+        this.problems = try reader.readValue(Problems); 
+},
+      5 => {
+        this.cwd = try reader.readValue([]const u8); 
+},
+      else => {
+      return error.InvalidMessage;
+      },
+      }
+      }
+unreachable;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+if (this.message) |message| {
+  try writer.writeFieldID(1);
+   try writer.writeValue(message);
+}
+if (this.router) |router| {
+  try writer.writeFieldID(2);
+   try writer.writeValue(router);
+}
+if (this.reason) |reason| {
+  try writer.writeFieldID(3);
+   try writer.writeEnum(reason);
+}
+if (this.problems) |problems| {
+  try writer.writeFieldID(4);
+   try writer.writeValue(problems);
+}
+if (this.cwd) |cwd| {
+  try writer.writeFieldID(5);
+   try writer.writeValue(cwd);
+}
+try writer.endMessage();
+}
+
+};
+
+pub const ResolveMode = enum(u8) {
+
+_none,
+  /// disable
+  disable,
+
+  /// lazy
+  lazy,
+
+  /// dev
+  dev,
+
+  /// bundle
+  bundle,
+
+_,
+
+                pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
+                    return try std.json.stringify(@tagName(self), opts, o);
+                }
+
+                
+};
+
+pub const Platform = enum(u8) {
+
+_none,
+  /// browser
+  browser,
+
+  /// node
+  node,
+
+  /// bun
+  bun,
+
+_,
+
+                pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
+                    return try std.json.stringify(@tagName(self), opts, o);
+                }
+
+                
+};
+
+pub const CssInJsBehavior = enum(u8) {
+
+_none,
+  /// facade
+  facade,
+
+  /// facade_onimportcss
+  facade_onimportcss,
+
+  /// auto_onimportcss
+  auto_onimportcss,
+
+_,
+
+                pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
+                    return try std.json.stringify(@tagName(self), opts, o);
+                }
+
+                
+};
+
+pub const JsxRuntime = enum(u8) {
+
+_none,
+  /// automatic
+  automatic,
+
+  /// classic
+  classic,
+
+_,
+
+                pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
+                    return try std.json.stringify(@tagName(self), opts, o);
+                }
+
+                
+};
+
+pub const Jsx = struct {
+/// factory
+factory: []const u8,
+
+/// runtime
+runtime: JsxRuntime,
+
+/// fragment
+fragment: []const u8,
+
+/// development
+development: bool = false,
+
+/// import_source
+import_source: []const u8,
+
+/// react_fast_refresh
+react_fast_refresh: bool = false,
+
+
+pub fn decode(reader: anytype) anyerror!Jsx {
+  var this = std.mem.zeroes(Jsx);
+
+  this.factory = try reader.readValue([]const u8); 
+  this.runtime = try reader.readValue(JsxRuntime); 
+  this.fragment = try reader.readValue([]const u8); 
+  this.development = try reader.readValue(bool); 
+  this.import_source = try reader.readValue([]const u8); 
+  this.react_fast_refresh = try reader.readValue(bool); 
+   return this;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+   try writer.writeValue(this.factory);
+   try writer.writeEnum(this.runtime);
+   try writer.writeValue(this.fragment);
+   try writer.writeInt(@intCast(u8, @boolToInt(this.development)));
+   try writer.writeValue(this.import_source);
+   try writer.writeInt(@intCast(u8, @boolToInt(this.react_fast_refresh)));
+}
+
+};
+
+pub const StringPointer = packed struct {
+/// offset
+offset: u32 = 0,
+
+/// length
+length: u32 = 0,
+
+
+pub fn decode(reader: anytype) anyerror!StringPointer {
+  var this = std.mem.zeroes(StringPointer);
+
+  this.offset = try reader.readValue(u32); 
+  this.length = try reader.readValue(u32); 
+   return this;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+   try writer.writeInt(this.offset);
+   try writer.writeInt(this.length);
+}
+
+};
+
+pub const JavascriptBundledModule = struct {
+/// path
+path: StringPointer,
+
+/// code
+code: StringPointer,
+
+/// package_id
+package_id: u32 = 0,
+
+/// id
+id: u32 = 0,
+
+/// path_extname_length
+path_extname_length: u8 = 0,
+
+
+pub fn decode(reader: anytype) anyerror!JavascriptBundledModule {
+  var this = std.mem.zeroes(JavascriptBundledModule);
+
+  this.path = try reader.readValue(StringPointer); 
+  this.code = try reader.readValue(StringPointer); 
+  this.package_id = try reader.readValue(u32); 
+  this.id = try reader.readValue(u32); 
+  this.path_extname_length = try reader.readValue(u8); 
+   return this;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+   try writer.writeValue(this.path);
+   try writer.writeValue(this.code);
+   try writer.writeInt(this.package_id);
+   try writer.writeInt(this.id);
+   try writer.writeInt(this.path_extname_length);
+}
+
+};
+
+pub const JavascriptBundledPackage = struct {
+/// name
+name: StringPointer,
+
+/// version
+version: StringPointer,
+
+/// hash
+hash: u32 = 0,
+
+/// modules_offset
+modules_offset: u32 = 0,
+
+/// modules_length
+modules_length: u32 = 0,
+
+
+pub fn decode(reader: anytype) anyerror!JavascriptBundledPackage {
+  var this = std.mem.zeroes(JavascriptBundledPackage);
+
+  this.name = try reader.readValue(StringPointer); 
+  this.version = try reader.readValue(StringPointer); 
+  this.hash = try reader.readValue(u32); 
+  this.modules_offset = try reader.readValue(u32); 
+  this.modules_length = try reader.readValue(u32); 
+   return this;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+   try writer.writeValue(this.name);
+   try writer.writeValue(this.version);
+   try writer.writeInt(this.hash);
+   try writer.writeInt(this.modules_offset);
+   try writer.writeInt(this.modules_length);
+}
+
+};
+
+pub const JavascriptBundle = struct {
+/// modules
+modules: []const JavascriptBundledModule,
+
+/// packages
+packages: []const JavascriptBundledPackage,
+
+/// etag
+etag: []const u8,
+
+/// generated_at
+generated_at: u32 = 0,
+
+/// app_package_json_dependencies_hash
+app_package_json_dependencies_hash: []const u8,
+
+/// import_from_name
+import_from_name: []const u8,
+
+/// manifest_string
+manifest_string: []const u8,
+
+
+pub fn decode(reader: anytype) anyerror!JavascriptBundle {
+  var this = std.mem.zeroes(JavascriptBundle);
+
+  this.modules = try reader.readArray(JavascriptBundledModule); 
+  this.packages = try reader.readArray(JavascriptBundledPackage); 
+  this.etag = try reader.readArray(u8); 
+  this.generated_at = try reader.readValue(u32); 
+  this.app_package_json_dependencies_hash = try reader.readArray(u8); 
+  this.import_from_name = try reader.readArray(u8); 
+  this.manifest_string = try reader.readArray(u8); 
+   return this;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+   try writer.writeArray(JavascriptBundledModule, this.modules);
+   try writer.writeArray(JavascriptBundledPackage, this.packages);
+   try writer.writeArray(u8, this.etag);
+   try writer.writeInt(this.generated_at);
+   try writer.writeArray(u8, this.app_package_json_dependencies_hash);
+   try writer.writeArray(u8, this.import_from_name);
+   try writer.writeArray(u8, this.manifest_string);
+}
+
+};
+
+pub const JavascriptBundleContainer = struct {
+/// bundle_format_version
+bundle_format_version: ?u32 = null,
+
+/// routes
+routes: ?LoadedRouteConfig = null,
+
+/// framework
+framework: ?LoadedFramework = null,
+
+/// bundle
+bundle: ?JavascriptBundle = null,
+
+/// code_length
+code_length: ?u32 = null,
+
+
+pub fn decode(reader: anytype) anyerror!JavascriptBundleContainer {
+  var this = std.mem.zeroes(JavascriptBundleContainer);
+
+  while(true) {
+    switch (try reader.readByte()) {
+      0 => { return this; },
+
+      1 => {
+        this.bundle_format_version = try reader.readValue(u32); 
+},
+      2 => {
+        this.routes = try reader.readValue(LoadedRouteConfig); 
+},
+      3 => {
+        this.framework = try reader.readValue(LoadedFramework); 
+},
+      4 => {
+        this.bundle = try reader.readValue(JavascriptBundle); 
+},
+      5 => {
+        this.code_length = try reader.readValue(u32); 
+},
+      else => {
+      return error.InvalidMessage;
+      },
+      }
+      }
+unreachable;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+if (this.bundle_format_version) |bundle_format_version| {
+  try writer.writeFieldID(1);
+   try writer.writeInt(bundle_format_version);
+}
+if (this.routes) |routes| {
+  try writer.writeFieldID(2);
+   try writer.writeValue(routes);
+}
+if (this.framework) |framework| {
+  try writer.writeFieldID(3);
+   try writer.writeValue(framework);
+}
+if (this.bundle) |bundle| {
+  try writer.writeFieldID(4);
+   try writer.writeValue(bundle);
+}
+if (this.code_length) |code_length| {
+  try writer.writeFieldID(5);
+   try writer.writeInt(code_length);
+}
+try writer.endMessage();
+}
+
+};
+
+pub const ScanDependencyMode = enum(u8) {
+
+_none,
+  /// app
+  app,
+
+  /// all
+  all,
+
+_,
+
+                pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
+                    return try std.json.stringify(@tagName(self), opts, o);
+                }
+
+                
+};
+
+pub const ModuleImportType = enum(u8) {
+
+_none,
+  /// import
+  import,
+
+  /// require
+  require,
+
+_,
+
+                pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
+                    return try std.json.stringify(@tagName(self), opts, o);
+                }
+
+                
+};
+
+pub const ModuleImportRecord = struct {
+/// kind
+kind: ModuleImportType,
+
+/// path
+path: []const u8,
+
+/// dynamic
+dynamic: bool = false,
+
+
+pub fn decode(reader: anytype) anyerror!ModuleImportRecord {
+  var this = std.mem.zeroes(ModuleImportRecord);
+
+  this.kind = try reader.readValue(ModuleImportType); 
+  this.path = try reader.readValue([]const u8); 
+  this.dynamic = try reader.readValue(bool); 
+   return this;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+   try writer.writeEnum(this.kind);
+   try writer.writeValue(this.path);
+   try writer.writeInt(@intCast(u8, @boolToInt(this.dynamic)));
+}
+
+};
+
+pub const Module = struct {
+/// path
+path: []const u8,
+
+/// imports
+imports: []const ModuleImportRecord,
+
+
+pub fn decode(reader: anytype) anyerror!Module {
+  var this = std.mem.zeroes(Module);
+
+  this.path = try reader.readValue([]const u8); 
+  this.imports = try reader.readArray(ModuleImportRecord); 
+   return this;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+   try writer.writeValue(this.path);
+   try writer.writeArray(ModuleImportRecord, this.imports);
+}
+
+};
+
+pub const StringMap = struct {
+/// keys
+keys: []const []const u8,
+
+/// values
+values: []const []const u8,
+
+
+pub fn decode(reader: anytype) anyerror!StringMap {
+  var this = std.mem.zeroes(StringMap);
+
+  this.keys = try reader.readArray([]const u8); 
+  this.values = try reader.readArray([]const u8); 
+   return this;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+   try writer.writeArray([]const u8, this.keys);
+   try writer.writeArray([]const u8, this.values);
+}
+
+};
+
+pub const LoaderMap = struct {
+/// extensions
+extensions: []const []const u8,
+
+/// loaders
+loaders: []const Loader,
+
+
+pub fn decode(reader: anytype) anyerror!LoaderMap {
+  var this = std.mem.zeroes(LoaderMap);
+
+  this.extensions = try reader.readArray([]const u8); 
+  this.loaders = try reader.readArray(Loader); 
+   return this;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+   try writer.writeArray([]const u8, this.extensions);
+   try writer.writeArray(Loader, this.loaders);
+}
+
+};
+
+pub const DotEnvBehavior = enum(u32) {
+
+_none,
+  /// disable
+  disable,
+
+  /// prefix
+  prefix,
+
+  /// load_all
+  load_all,
+
+_,
+
+                pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
+                    return try std.json.stringify(@tagName(self), opts, o);
+                }
+
+                
+};
+
+pub const EnvConfig = struct {
+/// prefix
+prefix: ?[]const u8 = null,
+
+/// defaults
+defaults: ?StringMap = null,
+
+
+pub fn decode(reader: anytype) anyerror!EnvConfig {
+  var this = std.mem.zeroes(EnvConfig);
+
+  while(true) {
+    switch (try reader.readByte()) {
+      0 => { return this; },
+
+      1 => {
+        this.prefix = try reader.readValue([]const u8); 
+},
+      2 => {
+        this.defaults = try reader.readValue(StringMap); 
+},
+      else => {
+      return error.InvalidMessage;
+      },
+      }
+      }
+unreachable;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+if (this.prefix) |prefix| {
+  try writer.writeFieldID(1);
+   try writer.writeValue(prefix);
+}
+if (this.defaults) |defaults| {
+  try writer.writeFieldID(2);
+   try writer.writeValue(defaults);
+}
+try writer.endMessage();
+}
+
+};
+
+pub const LoadedEnvConfig = struct {
+/// dotenv
+dotenv: DotEnvBehavior,
+
+/// defaults
+defaults: StringMap,
+
+/// prefix
+prefix: []const u8,
+
+
+pub fn decode(reader: anytype) anyerror!LoadedEnvConfig {
+  var this = std.mem.zeroes(LoadedEnvConfig);
+
+  this.dotenv = try reader.readValue(DotEnvBehavior); 
+  this.defaults = try reader.readValue(StringMap); 
+  this.prefix = try reader.readValue([]const u8); 
+   return this;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+   try writer.writeEnum(this.dotenv);
+   try writer.writeValue(this.defaults);
+   try writer.writeValue(this.prefix);
+}
+
+};
+
+pub const FrameworkConfig = struct {
+/// package
+package: ?[]const u8 = null,
+
+/// client
+client: ?FrameworkEntryPointMessage = null,
+
+/// server
+server: ?FrameworkEntryPointMessage = null,
+
+/// fallback
+fallback: ?FrameworkEntryPointMessage = null,
+
+/// development
+development: ?bool = null,
+
+/// client_css_in_js
+client_css_in_js: ?CssInJsBehavior = null,
+
+/// display_name
+display_name: ?[]const u8 = null,
+
+/// overrideModules
+override_modules: ?StringMap = null,
+
+
+pub fn decode(reader: anytype) anyerror!FrameworkConfig {
+  var this = std.mem.zeroes(FrameworkConfig);
+
+  while(true) {
+    switch (try reader.readByte()) {
+      0 => { return this; },
+
+      1 => {
+        this.package = try reader.readValue([]const u8); 
+},
+      2 => {
+        this.client = try reader.readValue(FrameworkEntryPointMessage); 
+},
+      3 => {
+        this.server = try reader.readValue(FrameworkEntryPointMessage); 
+},
+      4 => {
+        this.fallback = try reader.readValue(FrameworkEntryPointMessage); 
+},
+      5 => {
+        this.development = try reader.readValue(bool); 
+},
+      6 => {
+        this.client_css_in_js = try reader.readValue(CssInJsBehavior); 
+},
+      7 => {
+        this.display_name = try reader.readValue([]const u8); 
+},
+      8 => {
+        this.override_modules = try reader.readValue(StringMap); 
+},
+      else => {
+      return error.InvalidMessage;
+      },
+      }
+      }
+unreachable;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+if (this.package) |package| {
+  try writer.writeFieldID(1);
+   try writer.writeValue(package);
+}
+if (this.client) |client| {
+  try writer.writeFieldID(2);
+   try writer.writeValue(client);
+}
+if (this.server) |server| {
+  try writer.writeFieldID(3);
+   try writer.writeValue(server);
+}
+if (this.fallback) |fallback| {
+  try writer.writeFieldID(4);
+   try writer.writeValue(fallback);
+}
+if (this.development) |development| {
+  try writer.writeFieldID(5);
+   try writer.writeInt(@intCast(u8, @boolToInt(development)));
+}
+if (this.client_css_in_js) |client_css_in_js| {
+  try writer.writeFieldID(6);
+   try writer.writeEnum(client_css_in_js);
+}
+if (this.display_name) |display_name| {
+  try writer.writeFieldID(7);
+   try writer.writeValue(display_name);
+}
+if (this.override_modules) |override_modules| {
+  try writer.writeFieldID(8);
+   try writer.writeValue(override_modules);
+}
+try writer.endMessage();
+}
+
+};
+
+pub const FrameworkEntryPoint = struct {
+/// kind
+kind: FrameworkEntryPointType,
+
+/// path
+path: []const u8,
+
+/// env
+env: LoadedEnvConfig,
+
+
+pub fn decode(reader: anytype) anyerror!FrameworkEntryPoint {
+  var this = std.mem.zeroes(FrameworkEntryPoint);
+
+  this.kind = try reader.readValue(FrameworkEntryPointType); 
+  this.path = try reader.readValue([]const u8); 
+  this.env = try reader.readValue(LoadedEnvConfig); 
+   return this;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+   try writer.writeEnum(this.kind);
+   try writer.writeValue(this.path);
+   try writer.writeValue(this.env);
+}
+
+};
+
+pub const FrameworkEntryPointMap = struct {
+/// client
+client: ?FrameworkEntryPoint = null,
+
+/// server
+server: ?FrameworkEntryPoint = null,
+
+/// fallback
+fallback: ?FrameworkEntryPoint = null,
+
+
+pub fn decode(reader: anytype) anyerror!FrameworkEntryPointMap {
+  var this = std.mem.zeroes(FrameworkEntryPointMap);
+
+  while(true) {
+    switch (try reader.readByte()) {
+      0 => { return this; },
+
+      1 => {
+        this.client = try reader.readValue(FrameworkEntryPoint); 
+},
+      2 => {
+        this.server = try reader.readValue(FrameworkEntryPoint); 
+},
+      3 => {
+        this.fallback = try reader.readValue(FrameworkEntryPoint); 
+},
+      else => {
+      return error.InvalidMessage;
+      },
+      }
+      }
+unreachable;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+if (this.client) |client| {
+  try writer.writeFieldID(1);
+   try writer.writeValue(client);
+}
+if (this.server) |server| {
+  try writer.writeFieldID(2);
+   try writer.writeValue(server);
+}
+if (this.fallback) |fallback| {
+  try writer.writeFieldID(3);
+   try writer.writeValue(fallback);
+}
+try writer.endMessage();
+}
+
+};
+
+pub const FrameworkEntryPointMessage = struct {
+/// path
+path: ?[]const u8 = null,
+
+/// env
+env: ?EnvConfig = null,
+
+
+pub fn decode(reader: anytype) anyerror!FrameworkEntryPointMessage {
+  var this = std.mem.zeroes(FrameworkEntryPointMessage);
+
+  while(true) {
+    switch (try reader.readByte()) {
+      0 => { return this; },
+
+      1 => {
+        this.path = try reader.readValue([]const u8); 
+},
+      2 => {
+        this.env = try reader.readValue(EnvConfig); 
+},
+      else => {
+      return error.InvalidMessage;
+      },
+      }
+      }
+unreachable;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+if (this.path) |path| {
+  try writer.writeFieldID(1);
+   try writer.writeValue(path);
+}
+if (this.env) |env| {
+  try writer.writeFieldID(2);
+   try writer.writeValue(env);
+}
+try writer.endMessage();
+}
+
+};
+
+pub const LoadedFramework = struct {
+/// package
+package: []const u8,
+
+/// display_name
+display_name: []const u8,
+
+/// development
+development: bool = false,
+
+/// entry_points
+entry_points: FrameworkEntryPointMap,
+
+/// client_css_in_js
+client_css_in_js: CssInJsBehavior,
+
+/// overrideModules
+override_modules: StringMap,
+
+
+pub fn decode(reader: anytype) anyerror!LoadedFramework {
+  var this = std.mem.zeroes(LoadedFramework);
+
+  this.package = try reader.readValue([]const u8); 
+  this.display_name = try reader.readValue([]const u8); 
+  this.development = try reader.readValue(bool); 
+  this.entry_points = try reader.readValue(FrameworkEntryPointMap); 
+  this.client_css_in_js = try reader.readValue(CssInJsBehavior); 
+  this.override_modules = try reader.readValue(StringMap); 
+   return this;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+   try writer.writeValue(this.package);
+   try writer.writeValue(this.display_name);
+   try writer.writeInt(@intCast(u8, @boolToInt(this.development)));
+   try writer.writeValue(this.entry_points);
+   try writer.writeEnum(this.client_css_in_js);
+   try writer.writeValue(this.override_modules);
+}
+
+};
+
+pub const LoadedRouteConfig = struct {
+/// dir
+dir: []const u8,
+
+/// extensions
+extensions: []const []const u8,
+
+/// static_dir
+static_dir: []const u8,
+
+/// asset_prefix
+asset_prefix: []const u8,
+
+
+pub fn decode(reader: anytype) anyerror!LoadedRouteConfig {
+  var this = std.mem.zeroes(LoadedRouteConfig);
+
+  this.dir = try reader.readValue([]const u8); 
+  this.extensions = try reader.readArray([]const u8); 
+  this.static_dir = try reader.readValue([]const u8); 
+  this.asset_prefix = try reader.readValue([]const u8); 
+   return this;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+   try writer.writeValue(this.dir);
+   try writer.writeArray([]const u8, this.extensions);
+   try writer.writeValue(this.static_dir);
+   try writer.writeValue(this.asset_prefix);
+}
+
+};
+
+pub const RouteConfig = struct {
+/// dir
+dir: []const []const u8,
+
+/// extensions
+extensions: []const []const u8,
+
+/// static_dir
+static_dir: ?[]const u8 = null,
+
+/// asset_prefix
+asset_prefix: ?[]const u8 = null,
+
+
+pub fn decode(reader: anytype) anyerror!RouteConfig {
+  var this = std.mem.zeroes(RouteConfig);
+
+  while(true) {
+    switch (try reader.readByte()) {
+      0 => { return this; },
+
+      1 => {
+        this.dir = try reader.readArray([]const u8); 
+},
+      2 => {
+        this.extensions = try reader.readArray([]const u8); 
+},
+      3 => {
+        this.static_dir = try reader.readValue([]const u8); 
+},
+      4 => {
+        this.asset_prefix = try reader.readValue([]const u8); 
+},
+      else => {
+      return error.InvalidMessage;
+      },
+      }
+      }
+unreachable;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+if (this.dir) |dir| {
+  try writer.writeFieldID(1);
+   try writer.writeArray([]const u8, dir);
+}
+if (this.extensions) |extensions| {
+  try writer.writeFieldID(2);
+   try writer.writeArray([]const u8, extensions);
+}
+if (this.static_dir) |static_dir| {
+  try writer.writeFieldID(3);
+   try writer.writeValue(static_dir);
+}
+if (this.asset_prefix) |asset_prefix| {
+  try writer.writeFieldID(4);
+   try writer.writeValue(asset_prefix);
+}
+try writer.endMessage();
+}
+
+};
+
+pub const TransformOptions = struct {
+/// jsx
+jsx: ?Jsx = null,
+
+/// tsconfig_override
+tsconfig_override: ?[]const u8 = null,
+
+/// resolve
+resolve: ?ResolveMode = null,
+
+/// origin
+origin: ?[]const u8 = null,
+
+/// absolute_working_dir
+absolute_working_dir: ?[]const u8 = null,
+
+/// define
+define: ?StringMap = null,
+
+/// preserve_symlinks
+preserve_symlinks: ?bool = null,
+
+/// entry_points
+entry_points: []const []const u8,
+
+/// write
+write: ?bool = null,
+
+/// inject
+inject: []const []const u8,
+
+/// output_dir
+output_dir: ?[]const u8 = null,
+
+/// external
+external: []const []const u8,
+
+/// loaders
+loaders: ?LoaderMap = null,
+
+/// main_fields
+main_fields: []const []const u8,
+
+/// platform
+platform: ?Platform = null,
+
+/// serve
+serve: ?bool = null,
+
+/// extension_order
+extension_order: []const []const u8,
+
+/// generate_node_module_bundle
+generate_node_module_bundle: ?bool = null,
+
+/// node_modules_bundle_path
+node_modules_bundle_path: ?[]const u8 = null,
+
+/// node_modules_bundle_path_server
+node_modules_bundle_path_server: ?[]const u8 = null,
+
+/// framework
+framework: ?FrameworkConfig = null,
+
+/// router
+router: ?RouteConfig = null,
+
+/// no_summary
+no_summary: ?bool = null,
+
+/// disable_hmr
+disable_hmr: ?bool = null,
+
+
+pub fn decode(reader: anytype) anyerror!TransformOptions {
+  var this = std.mem.zeroes(TransformOptions);
+
+  while(true) {
+    switch (try reader.readByte()) {
+      0 => { return this; },
+
+      1 => {
+        this.jsx = try reader.readValue(Jsx); 
+},
+      2 => {
+        this.tsconfig_override = try reader.readValue([]const u8); 
+},
+      3 => {
+        this.resolve = try reader.readValue(ResolveMode); 
+},
+      4 => {
+        this.origin = try reader.readValue([]const u8); 
+},
+      5 => {
+        this.absolute_working_dir = try reader.readValue([]const u8); 
+},
+      6 => {
+        this.define = try reader.readValue(StringMap); 
+},
+      7 => {
+        this.preserve_symlinks = try reader.readValue(bool); 
+},
+      8 => {
+        this.entry_points = try reader.readArray([]const u8); 
+},
+      9 => {
+        this.write = try reader.readValue(bool); 
+},
+      10 => {
+        this.inject = try reader.readArray([]const u8); 
+},
+      11 => {
+        this.output_dir = try reader.readValue([]const u8); 
+},
+      12 => {
+        this.external = try reader.readArray([]const u8); 
+},
+      13 => {
+        this.loaders = try reader.readValue(LoaderMap); 
+},
+      14 => {
+        this.main_fields = try reader.readArray([]const u8); 
+},
+      15 => {
+        this.platform = try reader.readValue(Platform); 
+},
+      16 => {
+        this.serve = try reader.readValue(bool); 
+},
+      17 => {
+        this.extension_order = try reader.readArray([]const u8); 
+},
+      18 => {
+        this.generate_node_module_bundle = try reader.readValue(bool); 
+},
+      19 => {
+        this.node_modules_bundle_path = try reader.readValue([]const u8); 
+},
+      20 => {
+        this.node_modules_bundle_path_server = try reader.readValue([]const u8); 
+},
+      21 => {
+        this.framework = try reader.readValue(FrameworkConfig); 
+},
+      22 => {
+        this.router = try reader.readValue(RouteConfig); 
+},
+      23 => {
+        this.no_summary = try reader.readValue(bool); 
+},
+      24 => {
+        this.disable_hmr = try reader.readValue(bool); 
+},
+      else => {
+      return error.InvalidMessage;
+      },
+      }
+      }
+unreachable;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+if (this.jsx) |jsx| {
+  try writer.writeFieldID(1);
+   try writer.writeValue(jsx);
+}
+if (this.tsconfig_override) |tsconfig_override| {
+  try writer.writeFieldID(2);
+   try writer.writeValue(tsconfig_override);
+}
+if (this.resolve) |resolve| {
+  try writer.writeFieldID(3);
+   try writer.writeEnum(resolve);
+}
+if (this.origin) |origin| {
+  try writer.writeFieldID(4);
+   try writer.writeValue(origin);
+}
+if (this.absolute_working_dir) |absolute_working_dir| {
+  try writer.writeFieldID(5);
+   try writer.writeValue(absolute_working_dir);
+}
+if (this.define) |define| {
+  try writer.writeFieldID(6);
+   try writer.writeValue(define);
+}
+if (this.preserve_symlinks) |preserve_symlinks| {
+  try writer.writeFieldID(7);
+   try writer.writeInt(@intCast(u8, @boolToInt(preserve_symlinks)));
+}
+if (this.entry_points) |entry_points| {
+  try writer.writeFieldID(8);
+   try writer.writeArray([]const u8, entry_points);
+}
+if (this.write) |write| {
+  try writer.writeFieldID(9);
+   try writer.writeInt(@intCast(u8, @boolToInt(write)));
+}
+if (this.inject) |inject| {
+  try writer.writeFieldID(10);
+   try writer.writeArray([]const u8, inject);
+}
+if (this.output_dir) |output_dir| {
+  try writer.writeFieldID(11);
+   try writer.writeValue(output_dir);
+}
+if (this.external) |external| {
+  try writer.writeFieldID(12);
+   try writer.writeArray([]const u8, external);
+}
+if (this.loaders) |loaders| {
+  try writer.writeFieldID(13);
+   try writer.writeValue(loaders);
+}
+if (this.main_fields) |main_fields| {
+  try writer.writeFieldID(14);
+   try writer.writeArray([]const u8, main_fields);
+}
+if (this.platform) |platform| {
+  try writer.writeFieldID(15);
+   try writer.writeEnum(platform);
+}
+if (this.serve) |serve| {
+  try writer.writeFieldID(16);
+   try writer.writeInt(@intCast(u8, @boolToInt(serve)));
+}
+if (this.extension_order) |extension_order| {
+  try writer.writeFieldID(17);
+   try writer.writeArray([]const u8, extension_order);
+}
+if (this.generate_node_module_bundle) |generate_node_module_bundle| {
+  try writer.writeFieldID(18);
+   try writer.writeInt(@intCast(u8, @boolToInt(generate_node_module_bundle)));
+}
+if (this.node_modules_bundle_path) |node_modules_bundle_path| {
+  try writer.writeFieldID(19);
+   try writer.writeValue(node_modules_bundle_path);
+}
+if (this.node_modules_bundle_path_server) |node_modules_bundle_path_server| {
+  try writer.writeFieldID(20);
+   try writer.writeValue(node_modules_bundle_path_server);
+}
+if (this.framework) |framework| {
+  try writer.writeFieldID(21);
+   try writer.writeValue(framework);
+}
+if (this.router) |router| {
+  try writer.writeFieldID(22);
+   try writer.writeValue(router);
+}
+if (this.no_summary) |no_summary| {
+  try writer.writeFieldID(23);
+   try writer.writeInt(@intCast(u8, @boolToInt(no_summary)));
+}
+if (this.disable_hmr) |disable_hmr| {
+  try writer.writeFieldID(24);
+   try writer.writeInt(@intCast(u8, @boolToInt(disable_hmr)));
+}
+try writer.endMessage();
+}
+
+};
+
+pub const FileHandle = struct {
+/// path
+path: []const u8,
+
+/// size
+size: u32 = 0,
+
+/// fd
+fd: u32 = 0,
+
+
+pub fn decode(reader: anytype) anyerror!FileHandle {
+  var this = std.mem.zeroes(FileHandle);
+
+  this.path = try reader.readValue([]const u8); 
+  this.size = try reader.readValue(u32); 
+  this.fd = try reader.readValue(u32); 
+   return this;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+   try writer.writeValue(this.path);
+   try writer.writeInt(this.size);
+   try writer.writeInt(this.fd);
+}
+
+};
+
+pub const Transform = struct {
+/// handle
+handle: ?FileHandle = null,
+
+/// path
+path: ?[]const u8 = null,
+
+/// contents
+contents: []const u8,
+
+/// loader
+loader: ?Loader = null,
+
+/// options
+options: ?TransformOptions = null,
+
+
+pub fn decode(reader: anytype) anyerror!Transform {
+  var this = std.mem.zeroes(Transform);
+
+  while(true) {
+    switch (try reader.readByte()) {
+      0 => { return this; },
+
+      1 => {
+        this.handle = try reader.readValue(FileHandle); 
+},
+      2 => {
+        this.path = try reader.readValue([]const u8); 
+},
+      3 => {
+        this.contents = try reader.readArray(u8); 
+},
+      4 => {
+        this.loader = try reader.readValue(Loader); 
+},
+      5 => {
+        this.options = try reader.readValue(TransformOptions); 
+},
+      else => {
+      return error.InvalidMessage;
+      },
+      }
+      }
+unreachable;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+if (this.handle) |handle| {
+  try writer.writeFieldID(1);
+   try writer.writeValue(handle);
+}
+if (this.path) |path| {
+  try writer.writeFieldID(2);
+   try writer.writeValue(path);
+}
+if (this.contents) |contents| {
+  try writer.writeFieldID(3);
+   try writer.writeArray(u8, contents);
+}
+if (this.loader) |loader| {
+  try writer.writeFieldID(4);
+   try writer.writeEnum(loader);
+}
+if (this.options) |options| {
+  try writer.writeFieldID(5);
+   try writer.writeValue(options);
+}
+try writer.endMessage();
+}
+
+};
+
+pub const TransformResponseStatus = enum(u32) {
+
+_none,
+  /// success
+  success,
+
+  /// fail
+  fail,
+
+_,
+
+                pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
+                    return try std.json.stringify(@tagName(self), opts, o);
+                }
+
+                
+};
+
+pub const OutputFile = struct {
+/// data
+data: []const u8,
+
+/// path
+path: []const u8,
+
+
+pub fn decode(reader: anytype) anyerror!OutputFile {
+  var this = std.mem.zeroes(OutputFile);
+
+  this.data = try reader.readArray(u8); 
+  this.path = try reader.readValue([]const u8); 
+   return this;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+   try writer.writeArray(u8, this.data);
+   try writer.writeValue(this.path);
+}
+
+};
+
+pub const TransformResponse = struct {
+/// status
+status: TransformResponseStatus,
+
+/// files
+files: []const OutputFile,
+
+/// errors
+errors: []const Message,
+
+
+pub fn decode(reader: anytype) anyerror!TransformResponse {
+  var this = std.mem.zeroes(TransformResponse);
+
+  this.status = try reader.readValue(TransformResponseStatus); 
+  this.files = try reader.readArray(OutputFile); 
+  this.errors = try reader.readArray(Message); 
+   return this;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+   try writer.writeEnum(this.status);
+   try writer.writeArray(OutputFile, this.files);
+   try writer.writeArray(Message, this.errors);
+}
+
+};
+
+pub const MessageLevel = enum(u32) {
+
+_none,
+  /// err
+  err,
+
+  /// warn
+  warn,
+
+  /// note
+  note,
+
+  /// debug
+  debug,
+
+_,
+
+                pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
+                    return try std.json.stringify(@tagName(self), opts, o);
+                }
+
+                
+};
+
+pub const Location = struct {
+/// file
+file: []const u8,
+
+/// namespace
+namespace: []const u8,
+
+/// line
+line: i32 = 0,
+
+/// column
+column: i32 = 0,
+
+/// line_text
+line_text: []const u8,
+
+/// suggestion
+suggestion: []const u8,
+
+/// offset
+offset: u32 = 0,
+
+
+pub fn decode(reader: anytype) anyerror!Location {
+  var this = std.mem.zeroes(Location);
+
+  this.file = try reader.readValue([]const u8); 
+  this.namespace = try reader.readValue([]const u8); 
+  this.line = try reader.readValue(i32); 
+  this.column = try reader.readValue(i32); 
+  this.line_text = try reader.readValue([]const u8); 
+  this.suggestion = try reader.readValue([]const u8); 
+  this.offset = try reader.readValue(u32); 
+   return this;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+   try writer.writeValue(this.file);
+   try writer.writeValue(this.namespace);
+   try writer.writeInt(this.line);
+   try writer.writeInt(this.column);
+   try writer.writeValue(this.line_text);
+   try writer.writeValue(this.suggestion);
+   try writer.writeInt(this.offset);
+}
+
+};
+
+pub const MessageData = struct {
+/// text
+text: ?[]const u8 = null,
+
+/// location
+location: ?Location = null,
+
+
+pub fn decode(reader: anytype) anyerror!MessageData {
+  var this = std.mem.zeroes(MessageData);
+
+  while(true) {
+    switch (try reader.readByte()) {
+      0 => { return this; },
+
+      1 => {
+        this.text = try reader.readValue([]const u8); 
+},
+      2 => {
+        this.location = try reader.readValue(Location); 
+},
+      else => {
+      return error.InvalidMessage;
+      },
+      }
+      }
+unreachable;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+if (this.text) |text| {
+  try writer.writeFieldID(1);
+   try writer.writeValue(text);
+}
+if (this.location) |location| {
+  try writer.writeFieldID(2);
+   try writer.writeValue(location);
+}
+try writer.endMessage();
+}
+
+};
+
+pub const MessageMeta = struct {
+/// resolve
+resolve: ?[]const u8 = null,
+
+/// build
+build: ?bool = null,
+
+
+pub fn decode(reader: anytype) anyerror!MessageMeta {
+  var this = std.mem.zeroes(MessageMeta);
+
+  while(true) {
+    switch (try reader.readByte()) {
+      0 => { return this; },
+
+      1 => {
+        this.resolve = try reader.readValue([]const u8); 
+},
+      2 => {
+        this.build = try reader.readValue(bool); 
+},
+      else => {
+      return error.InvalidMessage;
+      },
+      }
+      }
+unreachable;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+if (this.resolve) |resolve| {
+  try writer.writeFieldID(1);
+   try writer.writeValue(resolve);
+}
+if (this.build) |build| {
+  try writer.writeFieldID(2);
+   try writer.writeInt(@intCast(u8, @boolToInt(build)));
+}
+try writer.endMessage();
+}
+
+};
+
+pub const Message = struct {
+/// level
+level: MessageLevel,
+
+/// data
+data: MessageData,
+
+/// notes
+notes: []const MessageData,
+
+/// on
+on: MessageMeta,
+
+
+pub fn decode(reader: anytype) anyerror!Message {
+  var this = std.mem.zeroes(Message);
+
+  this.level = try reader.readValue(MessageLevel); 
+  this.data = try reader.readValue(MessageData); 
+  this.notes = try reader.readArray(MessageData); 
+  this.on = try reader.readValue(MessageMeta); 
+   return this;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+   try writer.writeEnum(this.level);
+   try writer.writeValue(this.data);
+   try writer.writeArray(MessageData, this.notes);
+   try writer.writeValue(this.on);
+}
+
+};
+
+pub const Log = struct {
+/// warnings
+warnings: u32 = 0,
+
+/// errors
+errors: u32 = 0,
+
+/// msgs
+msgs: []const Message,
+
+
+pub fn decode(reader: anytype) anyerror!Log {
+  var this = std.mem.zeroes(Log);
+
+  this.warnings = try reader.readValue(u32); 
+  this.errors = try reader.readValue(u32); 
+  this.msgs = try reader.readArray(Message); 
+   return this;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+   try writer.writeInt(this.warnings);
+   try writer.writeInt(this.errors);
+   try writer.writeArray(Message, this.msgs);
+}
+
+};
+
+pub const Reloader = enum(u8) {
+
+_none,
+  /// disable
+  disable,
+
+  /// live
+  live,
+
+  /// fast_refresh
+  fast_refresh,
+
+_,
+
+                pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
+                    return try std.json.stringify(@tagName(self), opts, o);
+                }
+
+                
+};
+
+pub const WebsocketMessageKind = enum(u8) {
+
+_none,
+  /// welcome
+  welcome,
+
+  /// file_change_notification
+  file_change_notification,
+
+  /// build_success
+  build_success,
+
+  /// build_fail
+  build_fail,
+
+  /// manifest_success
+  manifest_success,
+
+  /// manifest_fail
+  manifest_fail,
+
+_,
+
+                pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
+                    return try std.json.stringify(@tagName(self), opts, o);
+                }
+
+                
+};
+
+pub const WebsocketCommandKind = enum(u8) {
+
+_none,
+  /// build
+  build,
+
+  /// manifest
+  manifest,
+
+_,
+
+                pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
+                    return try std.json.stringify(@tagName(self), opts, o);
+                }
+
+                
+};
+
+pub const WebsocketMessage = struct {
+/// timestamp
+timestamp: u32 = 0,
+
+/// kind
+kind: WebsocketMessageKind,
+
+
+pub fn decode(reader: anytype) anyerror!WebsocketMessage {
+  var this = std.mem.zeroes(WebsocketMessage);
+
+  this.timestamp = try reader.readValue(u32); 
+  this.kind = try reader.readValue(WebsocketMessageKind); 
+   return this;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+   try writer.writeInt(this.timestamp);
+   try writer.writeEnum(this.kind);
+}
+
+};
+
+pub const WebsocketMessageWelcome = struct {
+/// epoch
+epoch: u32 = 0,
+
+/// javascriptReloader
+javascript_reloader: Reloader,
+
+/// cwd
+cwd: []const u8,
+
+
+pub fn decode(reader: anytype) anyerror!WebsocketMessageWelcome {
+  var this = std.mem.zeroes(WebsocketMessageWelcome);
+
+  this.epoch = try reader.readValue(u32); 
+  this.javascript_reloader = try reader.readValue(Reloader); 
+  this.cwd = try reader.readValue([]const u8); 
+   return this;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+   try writer.writeInt(this.epoch);
+   try writer.writeEnum(this.javascript_reloader);
+   try writer.writeValue(this.cwd);
+}
+
+};
+
+pub const WebsocketMessageFileChangeNotification = struct {
+/// id
+id: u32 = 0,
+
+/// loader
+loader: Loader,
+
+
+pub fn decode(reader: anytype) anyerror!WebsocketMessageFileChangeNotification {
+  var this = std.mem.zeroes(WebsocketMessageFileChangeNotification);
+
+  this.id = try reader.readValue(u32); 
+  this.loader = try reader.readValue(Loader); 
+   return this;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+   try writer.writeInt(this.id);
+   try writer.writeEnum(this.loader);
+}
+
+};
+
+pub const WebsocketCommand = struct {
+/// kind
+kind: WebsocketCommandKind,
+
+/// timestamp
+timestamp: u32 = 0,
+
+
+pub fn decode(reader: anytype) anyerror!WebsocketCommand {
+  var this = std.mem.zeroes(WebsocketCommand);
+
+  this.kind = try reader.readValue(WebsocketCommandKind); 
+  this.timestamp = try reader.readValue(u32); 
+   return this;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+   try writer.writeEnum(this.kind);
+   try writer.writeInt(this.timestamp);
+}
+
+};
+
+pub const WebsocketCommandBuild = packed struct {
+/// id
+id: u32 = 0,
+
+
+pub fn decode(reader: anytype) anyerror!WebsocketCommandBuild {
+  var this = std.mem.zeroes(WebsocketCommandBuild);
+
+  this.id = try reader.readValue(u32); 
+   return this;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+   try writer.writeInt(this.id);
+}
+
+};
+
+pub const WebsocketCommandManifest = packed struct {
+/// id
+id: u32 = 0,
+
+
+pub fn decode(reader: anytype) anyerror!WebsocketCommandManifest {
+  var this = std.mem.zeroes(WebsocketCommandManifest);
+
+  this.id = try reader.readValue(u32); 
+   return this;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+   try writer.writeInt(this.id);
+}
+
+};
+
+pub const WebsocketMessageBuildSuccess = struct {
+/// id
+id: u32 = 0,
+
+/// from_timestamp
+from_timestamp: u32 = 0,
+
+/// loader
+loader: Loader,
+
+/// module_path
+module_path: []const u8,
+
+/// blob_length
+blob_length: u32 = 0,
+
+
+pub fn decode(reader: anytype) anyerror!WebsocketMessageBuildSuccess {
+  var this = std.mem.zeroes(WebsocketMessageBuildSuccess);
+
+  this.id = try reader.readValue(u32); 
+  this.from_timestamp = try reader.readValue(u32); 
+  this.loader = try reader.readValue(Loader); 
+  this.module_path = try reader.readValue([]const u8); 
+  this.blob_length = try reader.readValue(u32); 
+   return this;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+   try writer.writeInt(this.id);
+   try writer.writeInt(this.from_timestamp);
+   try writer.writeEnum(this.loader);
+   try writer.writeValue(this.module_path);
+   try writer.writeInt(this.blob_length);
+}
+
+};
+
+pub const WebsocketMessageBuildFailure = struct {
+/// id
+id: u32 = 0,
+
+/// from_timestamp
+from_timestamp: u32 = 0,
+
+/// loader
+loader: Loader,
+
+/// module_path
+module_path: []const u8,
+
+/// log
+log: Log,
+
+
+pub fn decode(reader: anytype) anyerror!WebsocketMessageBuildFailure {
+  var this = std.mem.zeroes(WebsocketMessageBuildFailure);
+
+  this.id = try reader.readValue(u32); 
+  this.from_timestamp = try reader.readValue(u32); 
+  this.loader = try reader.readValue(Loader); 
+  this.module_path = try reader.readValue([]const u8); 
+  this.log = try reader.readValue(Log); 
+   return this;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+   try writer.writeInt(this.id);
+   try writer.writeInt(this.from_timestamp);
+   try writer.writeEnum(this.loader);
+   try writer.writeValue(this.module_path);
+   try writer.writeValue(this.log);
+}
+
+};
+
+pub const DependencyManifest = struct {
+/// ids
+ids: []const u32,
+
+
+pub fn decode(reader: anytype) anyerror!DependencyManifest {
+  var this = std.mem.zeroes(DependencyManifest);
+
+  this.ids = try reader.readArray(u32); 
+   return this;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+   try writer.writeArray(u32, this.ids);
+}
+
+};
+
+pub const FileList = struct {
+/// ptrs
+ptrs: []const StringPointer,
+
+/// files
+files: []const u8,
+
+
+pub fn decode(reader: anytype) anyerror!FileList {
+  var this = std.mem.zeroes(FileList);
+
+  this.ptrs = try reader.readArray(StringPointer); 
+  this.files = try reader.readValue([]const u8); 
+   return this;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+   try writer.writeArray(StringPointer, this.ptrs);
+   try writer.writeValue(this.files);
+}
+
+};
+
+pub const WebsocketMessageResolveIDs = struct {
+/// id
+id: []const u32,
+
+/// list
+list: FileList,
+
+
+pub fn decode(reader: anytype) anyerror!WebsocketMessageResolveIDs {
+  var this = std.mem.zeroes(WebsocketMessageResolveIDs);
+
+  this.id = try reader.readArray(u32); 
+  this.list = try reader.readValue(FileList); 
+   return this;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+   try writer.writeArray(u32, this.id);
+   try writer.writeValue(this.list);
+}
+
+};
+
+pub const WebsocketCommandResolveIDs = struct {
+/// ptrs
+ptrs: []const StringPointer,
+
+/// files
+files: []const u8,
+
+
+pub fn decode(reader: anytype) anyerror!WebsocketCommandResolveIDs {
+  var this = std.mem.zeroes(WebsocketCommandResolveIDs);
+
+  this.ptrs = try reader.readArray(StringPointer); 
+  this.files = try reader.readValue([]const u8); 
+   return this;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+   try writer.writeArray(StringPointer, this.ptrs);
+   try writer.writeValue(this.files);
+}
+
+};
+
+pub const WebsocketMessageManifestSuccess = struct {
+/// id
+id: u32 = 0,
+
+/// module_path
+module_path: []const u8,
+
+/// loader
+loader: Loader,
+
+/// manifest
+manifest: DependencyManifest,
+
+
+pub fn decode(reader: anytype) anyerror!WebsocketMessageManifestSuccess {
+  var this = std.mem.zeroes(WebsocketMessageManifestSuccess);
+
+  this.id = try reader.readValue(u32); 
+  this.module_path = try reader.readValue([]const u8); 
+  this.loader = try reader.readValue(Loader); 
+  this.manifest = try reader.readValue(DependencyManifest); 
+   return this;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+   try writer.writeInt(this.id);
+   try writer.writeValue(this.module_path);
+   try writer.writeEnum(this.loader);
+   try writer.writeValue(this.manifest);
+}
+
+};
+
+pub const WebsocketMessageManifestFailure = struct {
+/// id
+id: u32 = 0,
+
+/// from_timestamp
+from_timestamp: u32 = 0,
+
+/// loader
+loader: Loader,
+
+/// log
+log: Log,
+
+
+pub fn decode(reader: anytype) anyerror!WebsocketMessageManifestFailure {
+  var this = std.mem.zeroes(WebsocketMessageManifestFailure);
+
+  this.id = try reader.readValue(u32); 
+  this.from_timestamp = try reader.readValue(u32); 
+  this.loader = try reader.readValue(Loader); 
+  this.log = try reader.readValue(Log); 
+   return this;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+   try writer.writeInt(this.id);
+   try writer.writeInt(this.from_timestamp);
+   try writer.writeEnum(this.loader);
+   try writer.writeValue(this.log);
+}
+
+};
+
+
+};
+
 
 const ExamplePackedStruct = packed struct {
     len: u32 = 0,

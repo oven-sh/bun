@@ -1707,6 +1707,10 @@ function decodeTransformOptions(bb) {
       result["no_summary"] = !!bb.readByte();
       break;
 
+    case 24:
+      result["disable_hmr"] = !!bb.readByte();
+      break;
+
     default:
       throw new Error("Attempted to parse invalid message");
     }
@@ -1879,6 +1883,12 @@ bb.writeByte(encoded);
   var value = message["no_summary"];
   if (value != null) {
     bb.writeByte(23);
+    bb.writeByte(value);
+  }
+
+  var value = message["disable_hmr"];
+  if (value != null) {
+    bb.writeByte(24);
     bb.writeByte(value);
   }
   bb.writeByte(0);

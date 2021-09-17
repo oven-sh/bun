@@ -1902,12 +1902,21 @@ pub fn NewBundler(cache_files: bool) type {
                     try bundler.linker.link(file_path, &result, import_path_format, false);
 
                     return BuildResolveResultPair{
-                        .written = try bundler.print(
-                            result,
-                            Writer,
-                            writer,
-                            .esm,
-                        ),
+                        .written = switch (result.ast.exports_kind) {
+                            .esm => try bundler.print(
+                                result,
+                                Writer,
+                                writer,
+                                .esm,
+                            ),
+                            .cjs => try bundler.print(
+                                result,
+                                Writer,
+                                writer,
+                                .cjs,
+                            ),
+                            else => unreachable,
+                        },
                         .input_fd = result.input_fd,
                     };
                 },

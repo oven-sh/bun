@@ -1181,7 +1181,11 @@ pub const BundleOptions = struct {
             if (isWindows and opts.routes.static_dir_handle != null) {
                 opts.routes.static_dir_handle.?.close();
             }
-            opts.hot_module_reloading = opts.platform.isWebLike() and !(transform.disable_hmr orelse false);
+            opts.hot_module_reloading = opts.platform.isWebLike();
+
+            if (transform.disable_hmr orelse false)
+                opts.hot_module_reloading = false;
+
             opts.serve = true;
         }
 

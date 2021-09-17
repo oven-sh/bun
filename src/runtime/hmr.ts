@@ -66,6 +66,11 @@ if (typeof window !== "undefined") {
     cancel: false,
     lastError: null,
     render(error, cwd) {
+      if ("__BunRenderBuildError" in globalThis) {
+        globalThis.__BunRenderBuildError(error, cwd);
+        return;
+      }
+
       BunError.lastError = [error, cwd];
       BunError.cancel = false;
 
@@ -1076,6 +1081,15 @@ if (typeof window !== "undefined") {
         URL.revokeObjectURL(blobURL);
         // Ensure we don't keep the bytes around longer than necessary
         this.bytes = null;
+
+        if ("__BunRenderHMRError" in globalThis) {
+          globalThis.__BunRenderHMRError(
+            exception,
+            oldModule.file_path,
+            oldModule.id
+          );
+        }
+
         oldModule = null;
         throw exception;
       }

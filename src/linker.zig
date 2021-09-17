@@ -365,6 +365,8 @@ pub fn NewLinker(comptime BundlerType: type) type {
 
                                 result.ast.needs_runtime = true;
                                 needs_require = true;
+                            } else if (result.ast.exports_kind == .cjs) {
+                                import_record.module_id = @truncate(u32, std.hash.Wyhash.hash(0, path.pretty));
                             }
                         } else |err| {
                             had_resolve_errors = true;

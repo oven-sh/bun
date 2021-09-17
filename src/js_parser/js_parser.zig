@@ -1957,7 +1957,7 @@ pub const Parser = struct {
 
         var wrapper_expr: ?Expr = null;
 
-        if (p.es6_export_keyword.len > 0 or p.top_level_await_keyword.len > 0) {
+        if ((p.es6_export_keyword.len > 0 or p.top_level_await_keyword.len > 0) and !uses_module_ref and !uses_exports_ref) {
             exports_kind = .esm;
         } else if (uses_exports_ref or uses_module_ref or p.has_top_level_return) {
             exports_kind = .cjs;
@@ -2022,13 +2022,16 @@ pub const Parser = struct {
                 const automatic_namespace_ref = p.jsx_automatic.ref;
 
                 const decls_count: u32 =
-                    @intCast(u32, @boolToInt(jsx_symbol.use_count_estimate > 0)) * 2 + @intCast(u32, @boolToInt(jsx_static_symbol.use_count_estimate > 0)) * 2 +
+                    @intCast(u32, @boolToInt(jsx_symbol.use_count_estimate > 0)) * 2 +
+                    @intCast(u32, @boolToInt(jsx_static_symbol.use_count_estimate > 0)) * 2 +
                     @intCast(u32, @boolToInt(jsx_factory_symbol.use_count_estimate > 0)) +
                     @intCast(u32, @boolToInt(jsx_fragment_symbol.use_count_estimate > 0)) +
                     @intCast(u32, @boolToInt(jsx_filename_symbol.use_count_estimate > 0));
 
                 const imports_count =
-                    @intCast(u32, @boolToInt(std.math.max(jsx_symbol.use_count_estimate, jsx_static_symbol.use_count_estimate) > 0)) + @intCast(u32, std.math.max(jsx_factory_symbol.use_count_estimate, jsx_fragment_symbol.use_count_estimate)) + @intCast(u32, @boolToInt(p.options.features.react_fast_refresh));
+                    @intCast(u32, @boolToInt(std.math.max(jsx_symbol.use_count_estimate, jsx_static_symbol.use_count_estimate) > 0)) +
+                    @intCast(u32, std.math.max(jsx_factory_symbol.use_count_estimate, jsx_fragment_symbol.use_count_estimate)) +
+                    @intCast(u32, @boolToInt(p.options.features.react_fast_refresh));
                 const stmts_count = imports_count + 1;
                 const symbols_count: u32 = imports_count + decls_count;
                 const loc = logger.Loc{ .start = 0 };
@@ -2048,19 +2051,6 @@ pub const Parser = struct {
                 var stmt_i: usize = 0;
 
                 if (jsx_symbol.use_count_estimate > 0 or jsx_static_symbol.use_count_estimate > 0) {
-                    if (jsx_automatic_symbol.use_count_estimate > 0) {
-                        if (jsx_automatic_symbol.link != null) {
-                            p.symbols.items[p.jsx_automatic.ref.inner_index].link = null;
-                            p.symbols.items[p.jsx_automatic.ref.inner_index].original_name = try std.fmt.allocPrint(
-                                p.allocator,
-                                "jsxImport{x}",
-                                .{
-                                    @truncate(u16, std.hash.Wyhash.hash(0, p.options.jsx.import_source)),
-                                },
-                            );
-                        }
-                    }
-
                     declared_symbols[declared_symbols_i] = .{ .ref = automatic_namespace_ref, .is_top_level = true };
                     declared_symbols_i += 1;
 
@@ -3543,8 +3533,8 @@ pub fn NewParser(
             try p.module_scope.generated.ensureUnusedCapacity(generated_symbols_count * 3);
             try p.module_scope.members.ensureCapacity(generated_symbols_count * 3 + p.module_scope.members.count());
 
-            p.exports_ref = try p.declareCommonJSSymbol(.unbound, "exports");
-            p.module_ref = try p.declareCommonJSSymbol(.unbound, "module");
+            p.exports_ref = try p.declareCommonJSSymbol(.hoisted, "exports");
+            p.module_ref = try p.declareCommonJSSymbol(.hoisted, "module");
             p.require_ref = try p.declareCommonJSSymbol(.unbound, "require");
 
             if (FeatureFlags.auto_import_buffer) {
@@ -3575,8 +3565,6 @@ pub fn NewParser(
                 p.runtime_imports.__HMRClient = try p.declareGeneratedSymbol(.other, "__HMRClient");
                 p.recordUsage(p.hmr_module.ref);
                 p.recordUsage(p.runtime_imports.__HMRClient.?.ref);
-            } else {
-                p.runtime_imports.__export = GeneratedSymbol{ .ref = p.exports_ref, .primary = Ref.None, .backup = Ref.None };
             }
 
             if (is_jsx_enabled) {
@@ -12256,76 +12244,27 @@ pub fn NewParser(
             name_loc: logger.Loc,
             is_call_target: bool,
         ) ?Expr {
-            if (@as(Expr.Tag, target.data) == .e_identifier) {
-                const id = target.data.e_identifier;
+            switch (target.data) {
+                .e_identifier => |id| {
+                    // Rewrite "module.require()" to "require()" for Webpack compatibility.
+                    // See https://github.com/webpack/webpack/pull/7750 for more info.
+                    // This also makes correctness a little easier.
+                    if (is_call_target and id.ref.eql(p.module_ref) and strings.eqlComptime(name, "require")) {
+                        p.ignoreUsage(p.module_ref);
+                        p.recordUsage(p.require_ref);
+                        return p.e(E.Identifier{ .ref = p.require_ref }, name_loc);
+                    }
 
-                // Rewrite property accesses on explicit namespace imports as an identifier.
-                // This lets us replace them easily in the printer to rebind them to
-                // something else without paying the cost of a whole-tree traversal during
-                // module linking just to rewrite these EDot expressions.
-                // if (p.import_items_for_namespace.getPtr(id.ref)) |import_items| {
-                //     const item: LocRef = import_items.get(name) orelse brk: {
-                //         const _item = LocRef{ .loc = name_loc, .ref = p.newSymbol(.import, name) catch unreachable };
-                //         p.module_scope.generated.append(_item.ref orelse unreachable) catch unreachable;
-
-                //         import_items.put(name, _item) catch unreachable;
-                //         p.is_import_item.put(_item.ref orelse unreachable, true) catch unreachable;
-
-                //         var symbol: *js_ast.Symbol = &p.symbols.items[_item.ref.?.inner_index];
-                //         // Mark this as generated in case it's missing. We don't want to
-                //         // generate errors for missing import items that are automatically
-                //         // generated.
-                //         symbol.import_item_status = .generated;
-
-                //         // Make sure the printer prints this as a property access
-                //         symbol.namespace_alias = G.NamespaceAlias{ .namespace_ref = id.ref, .alias = name };
-                //         break :brk _item;
-                //     };
-
-                //     // Undo the usage count for the namespace itself. This is used later
-                //     // to detect whether the namespace symbol has ever been "captured"
-                //     // or whether it has just been used to read properties off of.
-                //     //
-                //     // The benefit of doing this is that if both this module and the
-                //     // imported module end up in the same module group and the namespace
-                //     // symbol has never been captured, then we don't need to generate
-                //     // any code for the namespace at all.
-                //     p.ignoreUsage(id.ref);
-
-                //     // Track how many times we've referenced this symbol
-                //     p.recordUsage(item.ref.?);
-                //     var ident_expr = p.e(
-                //         E.Identifier{
-                //             .ref = item.ref.?,
-                //         },
-                //         target.loc,
-                //     );
-
-                //     return p.handleIdentifier(name_loc, ident_expr.data.e_identifier, name, IdentifierOpts{
-                //         .assign_target = assign_target,
-                //         .is_delete_target = is_delete_target,
-                //         // If this expression is used as the target of a call expression, make
-                //         // sure the value of "this" is preserved.
-                //         .was_originally_identifier = false,
-                //     });
-                // }
-
-                if (is_call_target and id.ref.eql(p.module_ref) and strings.eqlComptime(name, "require")) {
-                    p.ignoreUsage(p.module_ref);
-                    p.recordUsage(p.require_ref);
-                    return p.e(E.Identifier{ .ref = p.require_ref }, name_loc);
-                }
-
-                // If this is a known enum value, inline the value of the enum
-                if (is_typescript_enabled) {
-                    if (p.known_enum_values.get(id.ref)) |enum_value_map| {
-                        if (enum_value_map.get(name)) |enum_value| {
-                            return p.e(E.Number{ .value = enum_value }, loc);
+                    // If this is a known enum value, inline the value of the enum
+                    if (is_typescript_enabled) {
+                        if (p.known_enum_values.get(id.ref)) |enum_value_map| {
+                            if (enum_value_map.get(name)) |enum_value| {
+                                return p.e(E.Number{ .value = enum_value }, loc);
+                            }
                         }
                     }
-                }
-
-                if (p.options.features.hot_module_reloading) {}
+                },
+                else => {},
             }
 
             return null;
@@ -14233,12 +14172,222 @@ pub fn NewParser(
             }
 
             if (commonjs_wrapper_expr) |commonjs_wrapper| {
+                var part = &parts[parts.len - 1];
+
                 var require_function_args = p.allocator.alloc(Arg, 2) catch unreachable;
+
+                var imports_count: u32 = 0;
+                // We have to also move export from, since we will preserve those
+                var exports_from_count: u32 = 0;
+
+                var additional_stmts_because_of_exports: u32 = 0;
+
+                // Two passes. First pass just counts.
+                for (parts[parts.len - 1].stmts) |stmt, i| {
+                    imports_count += switch (stmt.data) {
+                        .s_import => @as(u32, 1),
+                        else => @as(u32, 0),
+                    };
+
+                    exports_from_count += switch (stmt.data) {
+                        .s_export_star, .s_export_from => @as(u32, 1),
+                        else => @as(u32, 0),
+                    };
+                }
+
+                var new_stmts_list = p.allocator.alloc(Stmt, exports_from_count + imports_count + 1) catch unreachable;
+                var imports_list = new_stmts_list[0..imports_count];
+
+                var exports_list = if (exports_from_count > 0) new_stmts_list[imports_list.len + 1 ..] else &[_]Stmt{};
 
                 const name_ref = null;
                 require_function_args[0] = G.Arg{ .binding = p.b(B.Identifier{ .ref = p.module_ref }, logger.Loc.Empty) };
                 require_function_args[1] = G.Arg{ .binding = p.b(B.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty) };
+                var exports_identifier: ExprNodeIndex = undefined;
+                var exports_identifier_set = false;
                 const default_name_loc_ref = LocRef{ .ref = name_ref, .loc = logger.Loc.Empty };
+
+                var imports_list_i: u32 = 0;
+                var exports_list_i: u32 = 0;
+
+                for (part.stmts) |_, i| {
+                    switch (part.stmts[i].data) {
+                        .s_import => {
+                            imports_list[imports_list_i] = part.stmts[i];
+                            part.stmts[i] = Stmt.empty();
+                            part.stmts[i].loc = imports_list[imports_list_i].loc;
+                            imports_list_i += 1;
+                        },
+
+                        // .s_export_default => |s_export| {
+                        //     if (!exports_identifier_set) {
+                        //         exports_identifier = p.e(E.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty);
+                        //         exports_identifier_set = true;
+                        //     }
+
+                        //     switch (s_export.value) {
+                        //         .expr => |default_expr| {
+                        //             part.stmts[i] = Expr.assignStmt(p.e(
+                        //                 E.Dot{ .name = "default", .name_loc = part.stmts[i].loc, .target = exports_identifier },
+                        //                 part.stmts[i].loc,
+                        //             ), default_expr, p.allocator);
+                        //         },
+                        //         .stmt => |default_stmt| {
+                        //             switch (default_stmt.data) {
+                        //                 .s_function => |func| {
+                        //                     part.stmts[i] = Expr.assignStmt(p.e(
+                        //                         E.Dot{ .name = "default", .name_loc = part.stmts[i].loc, .target = exports_identifier },
+                        //                         part.stmts[i].loc,
+                        //                     ), p.e(
+                        //                         E.Function{ .func = func.func },
+                        //                         default_stmt.loc,
+                        //                     ), p.allocator);
+                        //                 },
+                        //                 .s_class => |class| {
+                        //                     part.stmts[i] = Expr.assignStmt(
+                        //                         p.e(
+                        //                             E.Dot{ .name = "default", .name_loc = part.stmts[i].loc, .target = exports_identifier },
+                        //                             part.stmts[i].loc,
+                        //                         ),
+                        //                         p.e(
+                        //                             default_stmt.data.s_class.class,
+                        //                             default_stmt.loc,
+                        //                         ),
+                        //                         p.allocator,
+                        //                     );
+                        //                 },
+                        //                 else => unreachable,
+                        //             }
+                        //         },
+                        //     }
+                        // },
+
+                        // .s_function => |func| {
+                        //     if (!exports_identifier_set) {
+                        //         exports_identifier = p.e(E.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty);
+                        //         exports_identifier_set = true;
+                        //     }
+
+                        //     part.stmts[i] = Expr.assignStmt(p.e(
+                        //         E.Dot{ .name = "default", .name_loc = part.stmts[i].loc, .target = exports_identifier },
+                        //         part.stmts[i].loc,
+                        //     ), default_expr, p.allocator);
+                        // },
+                        // .s_local => |local| {
+                        //     if (!exports_identifier_set) {
+                        //         exports_identifier = p.e(E.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty);
+                        //         exports_identifier_set = true;
+                        //     }
+
+                        //     const items = local.decls;
+
+                        //     for (items[1..]) |item| {
+                        //         assignment = Expr.joinWithComma(assignment, Expr.assign(
+                        //             p.e(E.Dot{
+                        //                 .name = item.alias,
+                        //                 .target = exports_identifier,
+                        //                 .name_loc = item.alias_loc,
+                        //             }, item.alias_loc),
+                        //             p.e(
+                        //                 E.Identifier{
+                        //                     .ref = item.name.ref.?,
+                        //                 },
+                        //                 item.name.loc,
+                        //             ),
+                        //             p.allocator,
+                        //         ), p.allocator);
+                        //     }
+
+                        //     const original_loc = part.stmts[i].loc;
+                        //     part.stmts[i] = p.s(S.SExpr{
+                        //         .value = assignment,
+                        //     }, original_loc);
+
+                        // },
+                        // .s_class => |class| {
+                        //     if (!exports_identifier_set) {
+                        //         exports_identifier = p.e(E.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty);
+                        //         exports_identifier_set = true;
+                        //     }
+
+                        //     part.stmts[i] = Expr.assignStmt(
+                        // },
+
+                        // .s_export_clause => |s_export| {
+                        //     const items = s_export.items;
+                        //     switch (items.len) {
+                        //         0 => {
+                        //             part.stmts[i] = Stmt.empty();
+                        //         },
+                        //         1 => {
+                        //             if (!exports_identifier_set) {
+                        //                 exports_identifier = p.e(E.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty);
+                        //                 exports_identifier_set = true;
+                        //             }
+
+                        //             part.stmts[i] = Expr.assignStmt(p.e(
+                        //                 E.Dot{
+                        //                     .name = items[0].alias,
+                        //                     .target = exports_identifier,
+                        //                     .name_loc = items[0].alias_loc,
+                        //                 },
+                        //                 items[0].alias_loc,
+                        //             ), p.e(
+                        //                 E.Identifier{
+                        //                     .ref = items[0].name.ref.?,
+                        //                 },
+                        //                 items[0].name.loc,
+                        //             ), p.allocator);
+                        //         },
+                        //         else => {
+                        //             if (!exports_identifier_set) {
+                        //                 exports_identifier = p.e(E.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty);
+                        //                 exports_identifier_set = true;
+                        //             }
+                        //             var assignment = Expr.assign(p.e(
+                        //                 E.Dot{
+                        //                     .name = items[0].alias,
+                        //                     .target = exports_identifier,
+                        //                     .name_loc = items[0].alias_loc,
+                        //                 },
+                        //                 items[0].alias_loc,
+                        //             ), p.e(E.Identifier{
+                        //                 .ref = items[0].name.ref.?,
+                        //             }, items[0].name.loc), p.allocator);
+
+                        //             for (items[1..]) |item| {
+                        //                 assignment = Expr.joinWithComma(assignment, Expr.assign(
+                        //                     p.e(E.Dot{
+                        //                         .name = item.alias,
+                        //                         .target = exports_identifier,
+                        //                         .name_loc = item.alias_loc,
+                        //                     }, item.alias_loc),
+                        //                     p.e(
+                        //                         E.Identifier{
+                        //                             .ref = item.name.ref.?,
+                        //                         },
+                        //                         item.name.loc,
+                        //                     ),
+                        //                     p.allocator,
+                        //                 ), p.allocator);
+                        //             }
+
+                        //             const original_loc = part.stmts[i].loc;
+                        //             part.stmts[i] = p.s(S.SExpr{
+                        //                 .value = assignment,
+                        //             }, original_loc);
+                        //         },
+                        //     }
+                        // },
+                        .s_export_star, .s_export_from => {
+                            exports_list[exports_list_i] = part.stmts[i];
+                            part.stmts[i] = Stmt.empty();
+                            part.stmts[i].loc = exports_list[exports_list_i].loc;
+                            exports_list_i += 1;
+                        },
+                        else => {},
+                    }
+                }
 
                 commonjs_wrapper.data.e_call.args[0] = p.e(
                     E.Function{ .func = G.Fn{
@@ -14260,8 +14409,8 @@ pub fn NewParser(
                     }
                 }
                 commonjs_wrapper.data.e_call.args[1] = p.e(E.String{ .utf8 = sourcefile_name }, logger.Loc.Empty);
-                parts[parts.len - 1].stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
-                parts[parts.len - 1].stmts[0] = p.s(
+
+                new_stmts_list[imports_list.len] = p.s(
                     S.ExportDefault{
                         .value = .{
                             .expr = commonjs_wrapper,
@@ -14270,6 +14419,7 @@ pub fn NewParser(
                     },
                     logger.Loc.Empty,
                 );
+                part.stmts = new_stmts_list;
             } else if (p.options.features.hot_module_reloading) {
                 var named_exports_count: usize = p.named_exports.count();
                 const named_imports: js_ast.Ast.NamedImports = p.named_imports;
@@ -14611,21 +14761,23 @@ pub fn NewParser(
 
                 toplevel_stmts_i += 1;
 
-                if (named_export_i > 0) {
-                    toplevel_stmts[toplevel_stmts_i] = p.s(
-                        S.Local{
-                            .decls = exports_decls[0..named_export_i],
-                        },
-                        logger.Loc.Empty,
-                    );
-                } else {
-                    toplevel_stmts[toplevel_stmts_i] = p.s(
-                        S.Empty{},
-                        logger.Loc.Empty,
-                    );
-                }
+                if (has_any_exports) {
+                    if (named_export_i > 0) {
+                        toplevel_stmts[toplevel_stmts_i] = p.s(
+                            S.Local{
+                                .decls = exports_decls[0..named_export_i],
+                            },
+                            logger.Loc.Empty,
+                        );
+                    } else {
+                        toplevel_stmts[toplevel_stmts_i] = p.s(
+                            S.Empty{},
+                            logger.Loc.Empty,
+                        );
+                    }
 
-                toplevel_stmts_i += 1;
+                    toplevel_stmts_i += 1;
+                }
 
                 toplevel_stmts[toplevel_stmts_i] = p.s(
                     S.SExpr{
@@ -14641,7 +14793,7 @@ pub fn NewParser(
                             p.e(
                                 E.Function{
                                     .func = .{
-                                        .body = .{ .loc = logger.Loc.Empty, .stmts = update_function_stmts[0..named_export_i] },
+                                        .body = .{ .loc = logger.Loc.Empty, .stmts = if (named_export_i > 0) update_function_stmts[0..named_export_i] else &.{} },
                                         .name = null,
                                         .args = update_function_args,
                                         .open_parens_loc = logger.Loc.Empty,
@@ -14655,21 +14807,21 @@ pub fn NewParser(
                     logger.Loc.Empty,
                 );
                 toplevel_stmts_i += 1;
-                if (named_export_i > 0) {
-                    toplevel_stmts[toplevel_stmts_i] = p.s(
-                        S.ExportClause{
-                            .items = export_clauses[0..named_export_i],
-                        },
-                        logger.Loc.Empty,
-                    );
-                } else {
-                    toplevel_stmts[toplevel_stmts_i] = p.s(
-                        S.Empty{},
-                        logger.Loc.Empty,
-                    );
+                if (has_any_exports) {
+                    if (named_export_i > 0) {
+                        toplevel_stmts[toplevel_stmts_i] = p.s(
+                            S.ExportClause{
+                                .items = export_clauses[0..named_export_i],
+                            },
+                            logger.Loc.Empty,
+                        );
+                    } else {
+                        toplevel_stmts[toplevel_stmts_i] = p.s(
+                            S.Empty{},
+                            logger.Loc.Empty,
+                        );
+                    }
                 }
-
-                toplevel_stmts_i += 1;
 
                 part.stmts = _stmts[0 .. imports_list.len + toplevel_stmts.len + exports_from.len];
             }

@@ -213,6 +213,7 @@ pub fn NewPrinter(
     comptime Linker: type,
     comptime rewrite_esm_to_cjs: bool,
     comptime bun: bool,
+    comptime is_inside_bundle: bool,
 ) type {
     return struct {
         symbols: Symbol.Map,
@@ -2315,7 +2316,7 @@ pub fn NewPrinter(
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
 
-                    if (!rewrite_esm_to_cjs) {
+                    if (!is_inside_bundle) {
                         p.print("export default");
                     }
 
@@ -2323,7 +2324,7 @@ pub fn NewPrinter(
 
                     switch (s.value) {
                         .expr => |expr| {
-                            if (rewrite_esm_to_cjs) {
+                            if (is_inside_bundle) {
                                 p.printModuleExportSymbol();
                                 p.print(".default = ");
                             }
@@ -2339,7 +2340,7 @@ pub fn NewPrinter(
                             switch (s2.data) {
                                 .s_function => |func| {
                                     p.printSpaceBeforeIdentifier();
-                                    if (rewrite_esm_to_cjs) {
+                                    if (is_inside_bundle) {
                                         if (func.func.name) |name| {
                                             // p.print("var ");
                                             // p.printSymbol(name.ref.?);
@@ -2368,15 +2369,13 @@ pub fn NewPrinter(
 
                                     p.printFunc(func.func);
 
-                                    if (rewrite_esm_to_cjs) {
+                                    if (is_inside_bundle) {
                                         p.printSemicolonAfterStatement();
 
-                                        if (rewrite_esm_to_cjs) {
-                                            if (func.func.name) |name| {
-                                                p.printIndent();
-                                                p.printBundledExport("default", p.renamer.nameForSymbol(name.ref.?));
-                                                p.printSemicolonAfterStatement();
-                                            }
+                                        if (func.func.name) |name| {
+                                            p.printIndent();
+                                            p.printBundledExport("default", p.renamer.nameForSymbol(name.ref.?));
+                                            p.printSemicolonAfterStatement();
                                         }
                                     } else {
                                         p.printNewline();
@@ -2385,7 +2384,7 @@ pub fn NewPrinter(
                                 .s_class => |class| {
                                     p.printSpaceBeforeIdentifier();
 
-                                    if (rewrite_esm_to_cjs) {
+                                    if (is_inside_bundle) {
                                         if (class.class.class_name) |name| {
                                             // p.print("var ");
                                             // p.printSymbol(name.ref.?);
@@ -2405,7 +2404,7 @@ pub fn NewPrinter(
 
                                     p.printClass(class.class);
 
-                                    if (rewrite_esm_to_cjs) {
+                                    if (is_inside_bundle) {
                                         p.printSemicolonAfterStatement();
 
                                         if (class.class.class_name) |name| {
@@ -2425,7 +2424,7 @@ pub fn NewPrinter(
                     }
                 },
                 .s_export_star => |s| {
-                    if (rewrite_esm_to_cjs) {
+                    if (is_inside_bundle) {
                         p.printIndent();
                         p.printSpaceBeforeIdentifier();
 
@@ -2566,7 +2565,7 @@ pub fn NewPrinter(
                     p.printSemicolonAfterStatement();
                 },
                 .s_export_from => |s| {
-                    if (rewrite_esm_to_cjs) {
+                    if (is_inside_bundle) {
                         const record = p.import_records[s.import_record_index];
 
                         // $$lz(export, $React(), {default: "React"});
@@ -2935,7 +2934,7 @@ pub fn NewPrinter(
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
 
-                    if (rewrite_esm_to_cjs) {
+                    if (is_inside_bundle) {
                         return p.printBundledImport(record, s, stmt);
                     }
 
@@ -3646,7 +3645,7 @@ pub fn NewPrinter(
         }
 
         pub fn printDeclStmt(p: *Printer, is_export: bool, comptime keyword: string, decls: []G.Decl) void {
-            if (rewrite_esm_to_cjs and keyword[0] == 'v' and is_export) {
+            if (rewrite_esm_to_cjs and keyword[0] == 'v' and is_export and is_inside_bundle) {
                 // this is a top-level export
                 if (decls.len == 1 and
                     std.meta.activeTag(decls[0].binding.data) == .b_identifier and
@@ -3680,9 +3679,16 @@ pub fn NewPrinter(
                 for (decls) |decl, i| {
                     p.print("'");
                     p.printBinding(decl.binding);
-                    p.print("': {get: () => (");
+                    p.print("': {get: () => ");
                     p.printBinding(decl.binding);
-                    p.print("), enumerable: true, configurable: true}");
+
+                    if (comptime !strings.eqlComptime(keyword, "const")) {
+                        p.print(", set: ($_newValue) => {");
+                        p.printBinding(decl.binding);
+                        p.print(" = $_newValue;}");
+                    }
+
+                    p.print(", enumerable: true, configurable: true}");
 
                     if (i < decls.len - 1) {
                         p.print(",\n");
@@ -4040,7 +4046,7 @@ pub fn printAst(
     comptime LinkerType: type,
     linker: ?*LinkerType,
 ) !usize {
-    const PrinterType = NewPrinter(false, Writer, LinkerType, false, false);
+    const PrinterType = NewPrinter(false, Writer, LinkerType, false, false, false);
     var writer = _writer;
 
     var printer = try PrinterType.init(
@@ -4086,7 +4092,7 @@ pub fn printCommonJS(
     comptime LinkerType: type,
     linker: ?*LinkerType,
 ) !usize {
-    const PrinterType = NewPrinter(false, Writer, LinkerType, true, false);
+    const PrinterType = NewPrinter(false, Writer, LinkerType, true, false, false);
     var writer = _writer;
     var printer = try PrinterType.init(
         writer,
@@ -4144,7 +4150,7 @@ pub fn printCommonJSThreaded(
     comptime getPos: fn (ctx: GetPosType) anyerror!u64,
     end_off_ptr: *u32,
 ) !WriteResult {
-    const PrinterType = NewPrinter(false, Writer, LinkerType, true, false);
+    const PrinterType = NewPrinter(false, Writer, LinkerType, true, false, true);
     var writer = _writer;
     var printer = try PrinterType.init(
         writer,

@@ -1,0 +1,51 @@
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Bun Test</title>
+  </head>
+  <body>
+    <script type="module">
+      globalThis.getModuleScriptSrc = async (name) => {
+        const response = await fetch(name, {
+          cache: "force-cache",
+        });
+
+        if (response.ok) {
+          return await response.text();
+        } else {
+          throw new Error(`Failed to get module script ${name}`);
+        }
+      };
+
+      globalThis.runTest = async (name) => {
+        var Namespace = await import(name);
+        var testFunction = Namespace.test;
+
+        if (
+          !("test" in Namespace) &&
+          "default" in Namespace &&
+          typeof Namespace.default === "function"
+        ) {
+          Namespace = Namespace.default();
+          testFunction = Namespace.test;
+        }
+
+        if (!testFunction) {
+          throw new Error("No test function found in " + name);
+        }
+
+        if (typeof testFunction !== "function") {
+          throw new Error(
+            `Expected (await import(\"${name}\"")) to have a test function.\nReceived: ${Object.keys(
+              Namespace
+            ).join(", ")} `
+          );
+        }
+
+        return await testFunction();
+      };
+    </script>
+  </body>
+</html>

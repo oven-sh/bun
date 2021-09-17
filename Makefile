@@ -7,8 +7,10 @@ TRIPLET := $(OS_NAME)-$(ARCH_NAME)
 PACKAGE_DIR := packages/bun-cli-$(TRIPLET)
 DEBUG_PACKAGE_DIR := packages/debug-bun-cli-$(TRIPLET)
 BIN_DIR := $(PACKAGE_DIR)/bin
-RELEASE_BIN := $(BIN_DIR)/bun
+RELEASE_BUN := $(BIN_DIR)/bun
 DEBUG_BIN := $(DEBUG_PACKAGE_DIR)/bin
+DEBUG_BIN_REALPATH := $(shell realpath $(DEBUG_PACKAGE_DIR)/bin)
+DEBUG_BUN := $(shell realpath $(DEBUG_BIN)/bun-debug)
 BUILD_ID := $(shell cat ./build-id)
 PACKAGE_JSON_VERSION := 0.0.$(BUILD_ID)
 BUN_BUILD_TAG := bun-v$(PACKAGE_JSON_VERSION)
@@ -90,6 +92,38 @@ release-mac-push: write-package-json-version
 	gh release upload $(BUN_BUILD_TAG) --clobber /tmp/bun-cli-$(TRIPLET)-$(PACKAGE_JSON_VERSION).tgz
 	npm publish /tmp/bun-cli-$(TRIPLET)-$(PACKAGE_JSON_VERSION).tgz
 
+dev-obj:
+	zig build obj
+
+dev: mkdir-dev dev-obj bun-link-lld-debug
+
+mkdir-dev:
+	mkdir -p $(DEBUG_PACKAGE_DIR)/bin
+
+test-install:
+	cd integration/scripts && npm install
+
+test-all: test-install test-with-hmr test-no-hmr
+	
+test-with-hmr:
+	-killall bun -9;
+	BUN_BIN=$(RELEASE_BUN) node integration/scripts/browser.js
+
+test-no-hmr:
+	-killall bun -9;
+	DISABLE_HMR="DISABLE_HMR" BUN_BIN=$(RELEASE_BUN) node integration/scripts/browser.js
+
+test-dev-with-hmr:
+	-killall bun-debug -9;
+	BUN_BIN=$(DEBUG_BUN) node integration/scripts/browser.js
+
+test-dev-no-hmr:
+	-killall bun-debug -9;
+	DISABLE_HMR="DISABLE_HMR" BUN_BIN=$(DEBUG_BUN) node integration/scripts/browser.js
+
+test-dev-all: test-dev-with-hmr test-dev-no-hmr
+
+test-dev: test-dev-with-hmr
 
 jsc-copy-headers:
 	find src/JavaScript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/Headers/JavaScriptCore/ -name "*.h" -exec cp {} src/JavaScript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/PrivateHeaders/JavaScriptCore \;

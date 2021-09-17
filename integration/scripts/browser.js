@@ -92,6 +92,8 @@ async function main() {
     "/type-only-imports.ts",
     "/global-is-remapped-to-globalThis.js",
     "/multiple-imports.js",
+    "/ts-fallback-rewrite-works.js",
+    "/tsx-fallback-rewrite-works.js",
   ];
 
   for (let test of tests) {

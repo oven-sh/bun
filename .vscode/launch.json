@@ -5,7 +5,7 @@
       "type": "lldb",
       "request": "launch",
       "name": "Transpile small",
-      "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+      "program": "${workspaceFolder}/packages/debug-bun-cli-darwin-x64/bin/bun-debug",
       "args": [
         // "/Users/jarred/Desktop/webpack4.js"
         // "/Users/jarred/Code/bun/examples/css-stress-test/nexty/node_modules/next/dist/build/utils.js"
@@ -32,7 +32,7 @@
       "type": "lldb",
       "request": "launch",
       "name": ".bun",
-      "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+      "program": "${workspaceFolder}/packages/debug-bun-cli-darwin-x64/bin/bun-debug",
       "args": [
         "./examples/hello-next/node_modules.server.bun"
         // "--origin=https://localhost:9000/"
@@ -44,7 +44,7 @@
       "type": "lldb",
       "request": "launch",
       "name": "Discord",
-      "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+      "program": "${workspaceFolder}/packages/debug-bun-cli-darwin-x64/bin/bun-debug",
       "args": [
         "discord"
         // "--origin=https://localhost:9000/"
@@ -69,7 +69,7 @@
       "type": "lldb",
       "request": "launch",
       "name": "Dev Launch",
-      "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+      "program": "${workspaceFolder}/packages/debug-bun-cli-darwin-x64/bin/bun-debug",
       "args": [
         "./simple.css",
         "--resolve=dev",
@@ -94,7 +94,7 @@
       "type": "lldb",
       "request": "launch",
       "name": "Demo Serve",
-      "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+      "program": "${workspaceFolder}/packages/debug-bun-cli-darwin-x64/bin/bun-debug",
       // "args": ["--serve", "--origin=http://localhost:3000"],
       "args": ["dev", "--origin=http://localhost:3000"],
       "cwd": "${workspaceFolder}/examples/hello-next",
@@ -114,7 +114,7 @@
       "type": "lldb",
       "request": "launch",
       "name": "Demo Lazy Build",
-      "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+      "program": "${workspaceFolder}/packages/debug-bun-cli-darwin-x64/bin/bun-debug",
       "args": [
         "./src/index.tsx",
         "--resolve=lazy",
@@ -128,7 +128,7 @@
       "type": "lldb",
       "request": "launch",
       "name": "Demo Build",
-      "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+      "program": "${workspaceFolder}/packages/debug-bun-cli-darwin-x64/bin/bun-debug",
       "args": [
         "./src/index.tsx",
         "--resolve=dev",
@@ -143,7 +143,7 @@
       "type": "lldb",
       "request": "launch",
       "name": "Fixture serve",
-      "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+      "program": "${workspaceFolder}/packages/debug-bun-cli-darwin-x64/bin/bun-debug",
       "args": [],
       "cwd": "${workspaceFolder}/src/test/fixtures",
       "console": "internalConsole"
@@ -153,7 +153,7 @@
       "type": "lldb",
       "request": "launch",
       "name": "Demo .bun",
-      "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+      "program": "${workspaceFolder}/packages/debug-bun-cli-darwin-x64/bin/bun-debug",
       "args": ["bun", "--use=bun-framework-next"],
       "cwd": "${workspaceFolder}/examples/hello-next",
       "console": "internalConsole"
@@ -162,7 +162,7 @@
       "type": "lldb",
       "request": "launch",
       "name": "PNPM .bun",
-      "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+      "program": "${workspaceFolder}/packages/debug-bun-cli-darwin-x64/bin/bun-debug",
       "args": ["bun", "./pages/index.js"],
       "cwd": "/Users/jarred/Build/pnpm-bun/packages/app",
       "console": "internalConsole"
@@ -172,7 +172,7 @@
       "type": "lldb",
       "request": "launch",
       "name": "PNPM serve",
-      "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+      "program": "${workspaceFolder}/packages/debug-bun-cli-darwin-x64/bin/bun-debug",
       "args": [],
       "cwd": "/Users/jarred/Build/pnpm-bun/packages/app",
       "console": "internalConsole"
@@ -181,7 +181,7 @@
       "type": "lldb",
       "request": "launch",
       "name": "Mixed case resolve",
-      "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+      "program": "${workspaceFolder}/packages/debug-bun-cli-darwin-x64/bin/bun-debug",
       "args": [
         "build",
         "./index.js",
@@ -196,7 +196,7 @@
       "type": "lldb",
       "request": "launch",
       "name": "Build .bun lotta-modules",
-      "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+      "program": "${workspaceFolder}/packages/debug-bun-cli-darwin-x64/bin/bun-debug",
       "args": ["bun", "./index.js", "--platform=browser"],
       "cwd": "${workspaceFolder}/examples/lotta-modules/",
       "console": "internalConsole"
@@ -205,7 +205,7 @@
       "type": "lldb",
       "request": "launch",
       "name": "Dev CRA",
-      "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+      "program": "${workspaceFolder}/packages/debug-bun-cli-darwin-x64/bin/bun-debug",
       "args": ["dev", "--platform=browser"],
       "cwd": "${workspaceFolder}/examples/hello-create-react-app/",
       "console": "internalConsole"
@@ -214,7 +214,7 @@
       "type": "lldb",
       "request": "launch",
       "name": "Fragment",
-      "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+      "program": "${workspaceFolder}/packages/debug-bun-cli-darwin-x64/bin/bun-debug",
       "args": [],
       "cwd": "${workspaceFolder}/src/test/fixtures",
       "console": "internalConsole"
@@ -223,7 +223,7 @@
       "type": "lldb",
       "request": "launch",
       "name": "Context Bun Bug",
-      "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+      "program": "${workspaceFolder}/packages/debug-bun-cli-darwin-x64/bin/bun-debug",
       "args": ["bun", "./code.js"],
       "cwd": "/Users/jarred/Build/context/www",
       "console": "internalConsole"
@@ -232,7 +232,7 @@
       "type": "lldb",
       "request": "launch",
       "name": "Context Bun",
-      "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+      "program": "${workspaceFolder}/packages/debug-bun-cli-darwin-x64/bin/bun-debug",
       "args": ["bun", "--use=next"],
       "cwd": "/Users/jarred/Build/context/www",
       "console": "internalConsole"
@@ -240,8 +240,35 @@
     {
       "type": "lldb",
       "request": "launch",
+      "name": "Bun-hello",
+      "program": "${workspaceFolder}/packages/debug-bun-cli-darwin-x64/bin/bun-debug",
+      "args": [],
+      "cwd": "${workspaceFolder}/packages/bun-hello",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Integration Test Dev",
+      "program": "${workspaceFolder}/packages/debug-bun-cli-darwin-x64/bin/bun-debug",
+      "args": [],
+      "cwd": "${workspaceFolder}/integration/snippets",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Integration Test Dev (no hmr)",
+      "program": "${workspaceFolder}/packages/debug-bun-cli-darwin-x64/bin/bun-debug",
+      "args": ["--disable-hmr"],
+      "cwd": "${workspaceFolder}/integration/snippets",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
       "name": "Fixtures Dev",
-      "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+      "program": "a",
       "args": ["dev"],
       "cwd": "${workspaceFolder}/src/test/fixtures",
       "console": "internalConsole"
@@ -260,7 +287,7 @@
 
       "request": "launch",
       "name": "Context Dev",
-      "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+      "program": "${workspaceFolder}/packages/debug-bun-cli-darwin-x64/bin/bun-debug",
       "args": [],
       "cwd": "/Users/jarred/Build/context/www",
       "console": "internalConsole"
@@ -279,16 +306,16 @@
       "type": "lldb",
       "request": "launch",
       "name": "Debug Dev",
-      "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+      "program": "${workspaceFolder}/packages/debug-bun-cli-darwin-x64/bin/bun-debug",
       "args": ["dev"],
-      "cwd": "${workspaceFolder}/examples/hello-next/bun-framework-next",
+      "cwd": "${workspaceFolder}/examples/hello-next",
       "console": "internalConsole"
     },
     {
       "type": "lldb",
       "request": "launch",
       "name": "Type-only import",
-      "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+      "program": "${workspaceFolder}/packages/debug-bun-cli-darwin-x64/bin/bun-debug",
       "args": [
         "bun",
         "./src/test/fixtures/type-only-import.ts",
@@ -301,7 +328,7 @@
       "type": "lldb",
       "request": "launch",
       "name": "Dev lotta-modules",
-      "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+      "program": "${workspaceFolder}/packages/debug-bun-cli-darwin-x64/bin/bun-debug",
       "args": ["dev", "./index.js", "--platform=browser"],
       "cwd": "${workspaceFolder}/examples/lotta-modules/",
       "console": "internalConsole"
@@ -310,7 +337,7 @@
       "type": "lldb",
       "request": "launch",
       "name": "Demo Build .bun",
-      "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+      "program": "${workspaceFolder}/packages/debug-bun-cli-darwin-x64/bin/bun-debug",
       "args": [
         "bun",
         // "./index.js",
@@ -325,7 +352,7 @@
       "type": "lldb",
       "request": "launch",
       "name": "PNPM Resolve symlink",
-      "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+      "program": "${workspaceFolder}/packages/debug-bun-cli-darwin-x64/bin/bun-debug",
       "args": ["--resolve=dev", "test-pnpm.js", "--platform=browser"],
       "cwd": "${workspaceFolder}/examples/css-stress-test",
       "console": "internalConsole"
@@ -334,7 +361,7 @@
       "type": "lldb",
       "request": "launch",
       "name": "Demo Print .bun",
-      "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+      "program": "${workspaceFolder}/packages/debug-bun-cli-darwin-x64/bin/bun-debug",
       "args": ["./node_modules.bun"],
       "cwd": "${workspaceFolder}/examples/simple-react",
       "console": "internalConsole"
@@ -363,7 +390,7 @@
     //   "type": "lldb",
     //   "request": "launch",
     //   "name": "Dev Launch (other)",
-    //   "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+    //   "program": "${workspaceFolder}/packages/debug-bun-cli-darwin-x64/bin/bun-debug",
     //   "args": ["./simple.jsx", "--resolve=disable"],
     //   "cwd": "${workspaceFolder}/src/test/fixtures",
     //   "console": "internalConsole"
@@ -372,7 +399,7 @@
     //   "type": "lldb",
     //   "request": "launch",
     //   "name": "Dev Launch",
-    //   "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+    //   "program": "${workspaceFolder}/packages/debug-bun-cli-darwin-x64/bin/bun-debug",
     //   "preLaunchTask": "build",
     //   "args": [
     //     "--resolve=disable",
@@ -387,7 +414,7 @@
     //   "type": "lldb",
     //   "request": "launch",
     //   "name": "Dev Launch",
-    //   "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+    //   "program": "${workspaceFolder}/packages/debug-bun-cli-darwin-x64/bin/bun-debug",
     //   "preLaunchTask": "build",
     //   "args": [
     //     "--resolve=dev",
@@ -404,7 +431,7 @@
     //   "type": "lldb",
     //   "request": "launch",
     //   "name": "Dev Launch",
-    //   "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+    //   "program": "${workspaceFolder}/packages/debug-bun-cli-darwin-x64/bin/bun-debug",
     //   "preLaunchTask": "build",
     //   "args": [
     //     "--resolve=dev",
@@ -421,7 +448,7 @@
     //   "type": "lldb",
     //   "request": "launch",
     //   "name": "Dev Launch",
-    //   "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+    //   "program": "${workspaceFolder}/packages/debug-bun-cli-darwin-x64/bin/bun-debug",
     //   // "preLaunchTask": "build",
     //   "args": [
     //     "--resolve=dev",
@@ -440,7 +467,7 @@
       "type": "lldb",
       "request": "launch",
       "name": "Rome",
-      // "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+      // "program": "${workspaceFolder}/packages/debug-bun-cli-darwin-x64/bin/bun-debug",
       "program": "${workspaceFolder}/build/macos-x86_64/bun",
       // "preLaunchTask": "build",
       "args": [
@@ -462,8 +489,8 @@
       "type": "lldb",
       "request": "launch",
       "name": "Rome Dev",
-      // "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
-      "program": "${workspaceFolder}/build/debug/macos-x86_64/bun",
+      // "program": "${workspaceFolder}/packages/debug-bun-cli-darwin-x64/bin/bun-debug",
+      "program": "${workspaceFolder}/packages/debug-bun-cli-darwin-x64/bin/bun-debug",
       // "preLaunchTask": "build",
       "args": [
         "--resolve=dev",

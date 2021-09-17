@@ -28,6 +28,13 @@ const defines_path = fs.Path.initWithNamespace("defines.json", "internal");
 pub const RawDefines = std.StringArrayHashMap(string);
 pub const UserDefines = std.StringHashMap(DefineData);
 
+const Rewrites = struct {
+    pub const global = "global";
+    pub const globalThis = "globalThis";
+};
+
+var globalThisIdentifier = js_ast.E.Identifier{};
+
 pub const DefineData = struct {
     value: js_ast.Expr.Data,
     valueless: bool = false,
@@ -202,7 +209,7 @@ pub const Define = struct {
         define.allocator = allocator;
         define.identifiers = std.StringHashMap(IdentifierDefine).init(allocator);
         define.dots = std.StringHashMap([]DotDefine).init(allocator);
-        try define.identifiers.ensureCapacity(641 + 2);
+        try define.identifiers.ensureCapacity(641 + 2 + 1);
         try define.dots.ensureCapacity(64);
 
         var val = js_ast.Expr.Data{ .e_undefined = .{} };
@@ -215,7 +222,7 @@ pub const Define = struct {
             if (global.len == 1) {
 
                 // TODO: when https://github.com/ziglang/zig/pull/8596 is merged, switch to putAssumeCapacityNoClobber
-                define.identifiers.putAssumeCapacity(global[0], value_define);
+                define.identifiers.putAssumeCapacityNoClobber(global[0], value_define);
             } else {
                 const key = global[global.len - 1];
                 // TODO: move this to comptime
@@ -318,9 +325,17 @@ pub const Define = struct {
                         try define.dots.put(tail, list.toOwnedSlice());
                     }
                 } else {
+
                     // e.g. IS_BROWSER
                     try define.identifiers.put(user_define_key, user_define.value_ptr.*);
                 }
+            }
+        }
+
+        {
+            var global_entry = define.identifiers.getOrPutAssumeCapacity(Rewrites.global);
+            if (!global_entry.found_existing) {
+                global_entry.value_ptr.* = DefineData{ .value = js_ast.Expr.Data{ .e_identifier = &globalThisIdentifier }, .original_name = Rewrites.globalThis };
             }
         }
 
@@ -337,13 +352,13 @@ test "UserDefines" {
     var log = logger.Log.init(alloc.dynamic);
     var data = try DefineData.from_input(orig, &log, alloc.dynamic);
 
-    expect(data.contains("process.env.NODE_ENV"));
-    expect(data.contains("globalThis"));
+    try expect(data.contains("process.env.NODE_ENV"));
+    try expect(data.contains("globalThis"));
     const globalThis = data.get("globalThis");
     const val = data.get("process.env.NODE_ENV");
-    expect(val != null);
-    expect(strings.utf16EqlString(val.?.value.e_string.value, "development"));
-    std.testing.expectEqualStrings(globalThis.?.original_name.?, "window");
+    try expect(val != null);
+    try expect(strings.utf16EqlString(val.?.value.e_string.value, "development"));
+    try std.testing.expectEqualStrings(globalThis.?.original_name.?, "window");
 }
 
 // 396,000ns was upper end of last time this was checked how long it took
@@ -358,12 +373,12 @@ test "Defines" {
     var defines = try Define.init(alloc.dynamic, data);
     Output.print("Time: {d}", .{std.time.nanoTimestamp() - start});
     const node_env_dots = defines.dots.get("NODE_ENV");
-    expect(node_env_dots != null);
-    expect(node_env_dots.?.len > 0);
+    try expect(node_env_dots != null);
+    try expect(node_env_dots.?.len > 0);
     const node_env = node_env_dots.?[0];
-    std.testing.expectEqual(node_env.parts.len, 2);
-    std.testing.expectEqualStrings("process", node_env.parts[0]);
-    std.testing.expectEqualStrings("env", node_env.parts[1]);
-    expect(node_env.data.original_name == null);
-    expect(strings.utf16EqlString(node_env.data.value.e_string.value, "development"));
+    try std.testing.expectEqual(node_env.parts.len, 2);
+    try std.testing.expectEqualStrings("process", node_env.parts[0]);
+    try std.testing.expectEqualStrings("env", node_env.parts[1]);
+    try expect(node_env.data.original_name == null);
+    try expect(strings.utf16EqlString(node_env.data.value.e_string.value, "development"));
 }

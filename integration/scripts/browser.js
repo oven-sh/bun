@@ -90,6 +90,7 @@ async function main() {
     "/bundled-entry-point.js",
     "/export.js",
     "/type-only-imports.ts",
+    "/global-is-remapped-to-globalThis.js",
   ];
 
   for (let test of tests) {

@@ -572,15 +572,14 @@ pub fn NewPrinter(
             var temp = [6]u8{ 0, 0, 0, 0, 0, 0 };
             var i: usize = 0;
             const n: usize = text.len;
-            var r: u21 = 0;
-            var c: u21 = 0;
-            var width: u3 = 0;
 
             // e(text.len) catch unreachable;
 
             while (i < n) {
-                c = text[i];
+                const c = @intCast(u21, text[i]);
                 i += 1;
+                var r: u21 = 0;
+                var width: u3 = 0;
 
                 // TODO: here
                 switch (c) {

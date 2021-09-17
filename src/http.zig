@@ -2525,14 +2525,14 @@ pub const Server = struct {
 
     fn run(server: *Server, comptime features: ConnectionFeatures) !void {
         adjustUlimit() catch {};
-        const listener = try tcp.Listener.init(.ip, .{ .close_on_exec = true });
-        defer listener.deinit();
         RequestContext.WebsocketHandler.open_websockets = @TypeOf(
             RequestContext.WebsocketHandler.open_websockets,
         ).init(server.allocator);
+        const listener = try tcp.Listener.init(.ip, .{ .close_on_exec = true });
+        defer listener.deinit();
 
         listener.setReuseAddress(true) catch {};
-        listener.setReusePort(true) catch {};
+        listener.setReusePort(false) catch {};
         listener.setFastOpen(true) catch {};
         // listener.setNoDelay(true) catch {};
         // listener.setQuickACK(true) catch {};
@@ -2545,10 +2545,46 @@ pub const Server = struct {
             port = _port;
         }
 
-        try listener.bind(ip.Address.initIPv4(
-            IPv4.unspecified,
-            port,
-        ));
+        {
+            var attempts: u8 = 0;
+
+            restart: while (attempts < 10) : (attempts += 1) {
+                listener.bind(ip.Address.initIPv4(
+                    IPv4.unspecified,
+                    port,
+                )) catch |err| {
+                    switch (err) {
+                        error.AddressInUse => {
+                            port += 1;
+                            continue :restart;
+                        },
+                        else => {
+                            Output.prettyErrorln("<r><red>{s} while trying to start listening on port {d}.\n\n", .{ @errorName(err), port });
+                            Output.flush();
+                            std.os.exit(1);
+                        },
+                    }
+                };
+                break :restart;
+            }
+
+            if (attempts >= 10) {
+                var random_number = std.rand.DefaultPrng.init(@intCast(u64, std.time.milliTimestamp()));
+                const default_port = @intCast(u16, server.bundler.options.origin.getPort() orelse 3000);
+                Output.prettyErrorln(
+                    "<r><red>error<r>: Bun can't start because <b>port {d} is already in use<r>. Tried {d} - {d}. Try closing the other apps or manually passing Bun a port\n\n  <r><cyan><b>bun --origin http://localhost:{d}/<r>\n",
+                    .{
+                        default_port,
+                        default_port,
+                        port,
+                        random_number.random.intRangeAtMost(u16, 3011, 65535),
+                    },
+                );
+                Output.flush();
+                std.os.exit(1);
+            }
+        }
+
         try listener.listen(1280);
         const addr = try listener.getLocalAddress();
         if (server.bundler.options.origin.getPort()) |_port| {

@@ -14,6 +14,8 @@ DEBUG_BUN := $(shell realpath $(DEBUG_BIN)/bun-debug)
 BUILD_ID := $(shell cat ./build-id)
 PACKAGE_JSON_VERSION := 0.0.$(BUILD_ID)
 BUN_BUILD_TAG := bun-v$(PACKAGE_JSON_VERSION)
+CC := clang
+CXX := clang++
 
 bun: vendor build-obj bun-link-lld-release
 
@@ -136,22 +138,22 @@ test-dev-all: test-dev-with-hmr test-dev-no-hmr
 test-dev: test-dev-with-hmr
 
 jsc-copy-headers:
-	find src/JavaScript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/Headers/JavaScriptCore/ -name "*.h" -exec cp {} src/JavaScript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/PrivateHeaders/JavaScriptCore \;
+	find src/javascript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/Headers/JavaScriptCore/ -name "*.h" -exec cp {} src/JavaScript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/PrivateHeaders/JavaScriptCore \;
 
 jsc-build-mac-compile:
 	cd src/javascript/jsc/WebKit && ICU_INCLUDE_DIRS="$(HOMEBREW_PREFIX)opt/icu4c/include" ./Tools/Scripts/build-jsc --jsc-only --cmakeargs="-DENABLE_STATIC_JSC=ON -DCMAKE_BUILD_TYPE=relwithdebinfo"
 
 jsc-build-linux-compile:
-	cd src/javascript/jsc/WebKit && ./Tools/Scripts/build-jsc --jsc-only --cmakeargs="-DENABLE_STATIC_JSC=ON -DCMAKE_BUILD_TYPE=relwithdebinfo
+	CC=$(CC) CXX=$(CXX) cd src/javascript/jsc/WebKit && ./Tools/Scripts/build-jsc --jsc-only --cmakeargs="-DENABLE_STATIC_JSC=ON -DCMAKE_BUILD_TYPE=relwithdebinfo"
 
 jsc-build-mac: jsc-build-mac-compile jsc-build-mac-copy
 
 jsc-build-linux: jsc-build-linux-compile jsc-build-mac-copy
 
 jsc-build-mac-copy:
-	cp src/JavaScript/jsc/WebKit/WebKitBuild/Release/lib/libJavaScriptCore.a src/deps/libJavaScriptCore.a
-	cp src/JavaScript/jsc/WebKit/WebKitBuild/Release/lib/libWTF.a src/deps/libWTF.a
-	cp src/JavaScript/jsc/WebKit/WebKitBuild/Release/lib/libbmalloc.a src/deps/libbmalloc.a
+	cp src/javascript/jsc/WebKit/WebKitBuild/Release/lib/libJavaScriptCore.a src/deps/libJavaScriptCore.a
+	cp src/javascript/jsc/WebKit/WebKitBuild/Release/lib/libWTF.a src/deps/libWTF.a
+	cp src/javascript/jsc/WebKit/WebKitBuild/Release/lib/libbmalloc.a src/deps/libbmalloc.a
 	 
 JSC_FILES := src/deps/libJavaScriptCore.a \
 	src/deps/libWTF.a \
@@ -213,7 +215,7 @@ mimalloc:
 	cd src/deps/mimalloc; cmake .; make; 
 
 bun-link-lld-debug:
-	clang++ $(BUN_LLD_FLAGS) \
+	$(CXX) $(BUN_LLD_FLAGS) \
 		$(DEBUG_BIN)/bun-debug.o \
 		-Wl,-dead_strip \
 		-ftls-model=local-exec \
@@ -221,7 +223,7 @@ bun-link-lld-debug:
 		-o $(DEBUG_BIN)/bun-debug
 
 bun-link-lld-release:
-	clang++ $(BUN_LLD_FLAGS) \
+	$(CXX) $(BUN_LLD_FLAGS) \
 		$(BIN_DIR)/bun.o \
 		-o $(BIN_DIR)/bun \
 		-Wl,-dead_strip \
@@ -231,7 +233,7 @@ bun-link-lld-release:
 	rm $(BIN_DIR)/bun.o
 
 bun-link-lld-release-aarch64:
-	clang++ $(BUN_LLD_FLAGS) \
+	$(CXX) $(BUN_LLD_FLAGS) \
 		build/macos-aarch64/bun.o \
 		-o build/macos-aarch64/bun \
 		-Wl,-dead_strip \
@@ -242,14 +244,14 @@ bun-link-lld-release-aarch64:
 # We do this outside of build.zig for performance reasons
 # The C compilation stuff with build.zig is really slow and we don't need to run this as often as the rest
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
-	clang++ -c -o $@ $< \
+	$(CXX) -c -o $@ $< \
 		$(CLANG_FLAGS) \
 		-O1
 
 sizegen:
-	clang++ src/javascript/jsc/headergen/sizegen.cpp -o /tmp/sizegen $(CLANG_FLAGS) -O1
+	$(CXX) src/javascript/jsc/headergen/sizegen.cpp -o /tmp/sizegen $(CLANG_FLAGS) -O1
 	/tmp/sizegen > src/javascript/jsc/bindings/sizes.zig
 
 picohttp:
-	 clang -O3 -g -c src/deps/picohttpparser.c -Isrc/deps -o src/deps/picohttpparser.o; cd ../../	
+	 $(CC) -O3 -g -c src/deps/picohttpparser.c -Isrc/deps -o src/deps/picohttpparser.o; cd ../../	
 

@@ -2071,8 +2071,17 @@ pub const Lexer = struct {
         }
     }
 
+    threadlocal var jsx_decode_buf: std.ArrayList(u16) = undefined;
+    threadlocal var jsx_decode_init = false;
     pub fn fixWhitespaceAndDecodeJSXEntities(lexer: *LexerType, text: string) !JavascriptString {
-        var decoded = std.ArrayList(u16).init(lexer.allocator);
+        if (!jsx_decode_init) {
+            jsx_decode_init = true;
+            jsx_decode_buf = std.ArrayList(u16).init(default_allocator);
+        }
+        jsx_decode_buf.clearRetainingCapacity();
+
+        var decoded = jsx_decode_buf;
+        defer jsx_decode_buf = decoded;
         var decoded_ptr = &decoded;
         var i: u32 = 0;
         var after_last_non_whitespace: ?u32 = null;
@@ -2129,7 +2138,7 @@ pub const Lexer = struct {
             try decodeJSXEntities(lexer, text[start..text.len], decoded_ptr);
         }
 
-        return decoded.toOwnedSlice();
+        return decoded.items;
     }
 
     pub fn decodeJSXEntities(lexer: *LexerType, text: string, out: *std.ArrayList(u16)) !void {

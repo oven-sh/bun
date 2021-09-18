@@ -206,7 +206,10 @@ pub const Lexer = struct {
         }
     }
 
-    pub fn decodeEscapeSequences(lexer: *LexerType, start: usize, text: string, comptime buf_type: type, buf: anytype) !void {
+    pub fn decodeEscapeSequences(lexer: *LexerType, start: usize, text: string, comptime BufType: type, buf_: *BufType) !void {
+        var buf = buf_.*;
+        defer buf_.* = buf;
+
         var iter = CodepointIterator{ .bytes = text[start..], .i = 0 };
         const start_length = buf.items.len;
         while (iter.nextCodepoint()) |c| {
@@ -268,11 +271,60 @@ pub const Lexer = struct {
                             buf.append(std.mem.readIntNative(u16, "\\v")) catch unreachable;
                             continue;
                         },
+
+                        // legacy octal literals
                         '0'...'7' => {
-                            try lexer.addUnsupportedSyntaxError("Legacy octal literals are not supported.");
+                            const octal_start = iter.i - 2;
+                            if (lexer.json_options != null) {
+                                lexer.end = start + iter.i - width2;
+                                try lexer.syntaxError();
+                            }
+
+                            // 1-3 digit octal
+                            var is_bad = false;
+                            var value: i64 = c2 - '0';
+
+                            const c3: CodePoint = iter.nextCodepoint() orelse return lexer.syntaxError();
+                            const width3 = iter.width;
+
+                            switch (c3) {
+                                '0'...'7' => {
+                                    value = value * 8 + c3 - '0';
+                                    iter.i += width3;
+
+                                    const c4 = iter.nextCodepoint() orelse return lexer.syntaxError();
+                                    const width4 = iter.width;
+                                    switch (c4) {
+                                        '0'...'7' => {
+                                            const temp = value * 8 + c4 - '0';
+                                            if (temp < 256) {
+                                                value = temp;
+                                                iter.i += width4;
+                                            }
+                                        },
+                                        '8', '9' => {
+                                            is_bad = true;
+                                        },
+                                        else => {},
+                                    }
+                                },
+                                '8', '9' => {
+                                    is_bad = true;
+                                },
+                                else => {},
+                            }
+                            iter.c = @intCast(i32, value);
+                            if (is_bad) {
+                                lexer.addRangeError(
+                                    logger.Range{ .loc = .{ .start = @intCast(i32, octal_start) }, .len = @intCast(i32, iter.i - octal_start) },
+                                    "Invalid legacy octal literal",
+                                    .{},
+                                    false,
+                                ) catch unreachable;
+                            }
                         },
                         '8', '9' => {
-                            try lexer.addUnsupportedSyntaxError("Legacy octal literals are not supported.");
+                            iter.c = c2;
                         },
                         // 2-digit hexadecimal
                         'x' => {
@@ -1992,9 +2044,7 @@ pub const Lexer = struct {
                             },
                             else => {
                                 // Non-ASCII strings need the slow path
-                                if (lexer.code_point >= 0x80) {
-                                    needs_fixing = true;
-                                }
+                                needs_fixing = needs_fixing or lexer.code_point >= 0x80;
                                 try lexer.step();
                             },
                         }
@@ -2024,18 +2074,23 @@ pub const Lexer = struct {
     pub fn fixWhitespaceAndDecodeJSXEntities(lexer: *LexerType, text: string) !JavascriptString {
         var decoded = std.ArrayList(u16).init(lexer.allocator);
         var decoded_ptr = &decoded;
-        var i: usize = 0;
-        var after_last_non_whitespace: ?usize = null;
+        var i: u32 = 0;
+        var after_last_non_whitespace: ?u32 = null;
 
         // Trim whitespace off the end of the first line
-        var first_non_whitespace: ?usize = null;
+        var first_non_whitespace: ?u32 = 0;
 
         while (i < text.len) {
-            const width = try std.unicode.utf8ByteSequenceLength(text[i]);
-            const i_0 = i;
-            var buf = [4]u8{ 0, 0, 0, 0 };
-            std.mem.copy(u8, &buf, text[i_0 .. i_0 + width]);
-            var c = std.mem.readIntNative(i32, &buf);
+            const width: u3 = strings.utf8ByteSequenceLength(text[i]);
+
+            const c: CodePoint = switch (width) {
+                0 => -1,
+                1 => @intCast(CodePoint, text[i]),
+                2 => @intCast(CodePoint, std.unicode.utf8Decode2(text[i..][0..2]) catch unreachable),
+                3 => @intCast(CodePoint, std.unicode.utf8Decode3(text[i..][0..3]) catch unreachable),
+                4 => @intCast(CodePoint, std.unicode.utf8Decode4(text[i..][0..4]) catch unreachable),
+                else => unreachable,
+            };
 
             switch (c) {
                 '\r', '\n', 0x2028, 0x2029 => {
@@ -2080,18 +2135,19 @@ pub const Lexer = struct {
     pub fn decodeJSXEntities(lexer: *LexerType, text: string, out: *std.ArrayList(u16)) !void {
         var i: usize = 0;
         var buf = [4]u8{ 0, 0, 0, 0 };
-        var c: i32 = 0;
-        var i_0: usize = 0;
-        var width: u3 = 0;
-        var buf_ptr = &buf;
 
         while (i < text.len) {
-            // We skip decoding because we've already decoded it here.
-            width = try std.unicode.utf8ByteSequenceLength(text[i]);
-            i_0 = i;
+            const width: u3 = strings.utf8ByteSequenceLength(text[i]);
+
+            var c: CodePoint = switch (width) {
+                0 => -1,
+                1 => @intCast(CodePoint, text[i]),
+                2 => @intCast(CodePoint, std.unicode.utf8Decode2(text[i..][0..2]) catch unreachable),
+                3 => @intCast(CodePoint, std.unicode.utf8Decode3(text[i..][0..3]) catch unreachable),
+                4 => @intCast(CodePoint, std.unicode.utf8Decode4(text[i..][0..4]) catch unreachable),
+                else => unreachable,
+            };
             i += width;
-            std.mem.copy(u8, buf_ptr, text[i_0..i]);
-            c = std.mem.readIntNative(i32, buf_ptr);
 
             if (c == '&') {
                 if (strings.indexOfChar(text[i..text.len], ';')) |length| {

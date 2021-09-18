@@ -2398,10 +2398,11 @@ pub const Expr = struct {
             E.String => {
                 if (comptime isDebug) {
                     // Sanity check: assert string is not a null ptr
-                    if (st.isUTF8()) {
+                    if (st.isUTF8() and st.utf8.len > 0) {
+                        std.debug.assert(@ptrToInt(st.utf8.ptr) > 0);
                         std.debug.assert(st.utf8[0] > 0);
                     } else if (st.value.len > 0) {
-                        std.debug.assert(st.value[0] > 0);
+                        std.debug.assert(@ptrToInt(st.value.ptr) > 0);
                     }
                 }
                 return Expr{

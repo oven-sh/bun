@@ -249,6 +249,15 @@
     {
       "type": "lldb",
       "request": "launch",
+      "name": "Macro",
+      "program": "${workspaceFolder}/packages/debug-bun-cli-darwin-x64/bin/bun-debug",
+      "args": ["dev"],
+      "cwd": "${workspaceFolder}/examples/macros",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
       "name": "Integration Test Dev",
       "program": "${workspaceFolder}/packages/debug-bun-cli-darwin-x64/bin/bun-debug",
       "args": [],

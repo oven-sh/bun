@@ -190,7 +190,6 @@ CLANG_FLAGS := $(INCLUDE_DIRS) \
 
 jsc-bindings-mac: $(OBJ_FILES)
 
-
 MACOS_ICU_FILES := $(HOMEBREW_PREFIX)opt/icu4c/lib/libicudata.a \
 	$(HOMEBREW_PREFIX)opt/icu4c/lib/libicui18n.a \
 	$(HOMEBREW_PREFIX)opt/icu4c/lib/libicuuc.a 

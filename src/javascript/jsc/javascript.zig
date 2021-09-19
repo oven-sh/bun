@@ -7,7 +7,7 @@ const NodeModuleBundle = @import("../../node_module_bundle.zig").NodeModuleBundl
 const logger = @import("../../logger.zig");
 const Api = @import("../../api/schema.zig").Api;
 const options = @import("../../options.zig");
-const Bundler = @import("../../bundler.zig").ServeBundler;
+const Bundler = @import("../../bundler.zig").Bundler;
 const ServerEntryPoint = @import("../../bundler.zig").ServerEntryPoint;
 const js_printer = @import("../../js_printer.zig");
 const js_parser = @import("../../js_parser.zig");
@@ -359,22 +359,16 @@ pub const Bun = struct {
 const bun_file_import_path = "/node_modules.server.bun";
 pub const LazyClasses = [_]type{};
 
-pub const Module = struct {
-    reload_pending: bool = false,
-};
-
 // If you read JavascriptCore/API/JSVirtualMachine.mm - https://github.com/WebKit/WebKit/blob/acff93fb303baa670c055cb24c2bad08691a01a0/Source/JavaScriptCore/API/JSVirtualMachine.mm#L101
 // We can see that it's sort of like std.mem.Allocator but for JSGlobalContextRef, to support Automatic Reference Counting
 // Its unavailable on Linux
 pub const VirtualMachine = struct {
-    const RequireCacheType = std.AutoHashMap(u32, *Module);
     global: *JSGlobalObject,
     allocator: *std.mem.Allocator,
     node_modules: ?*NodeModuleBundle = null,
     bundler: Bundler,
     watcher: ?*http.Watcher = null,
     console: *ZigConsoleClient,
-    require_cache: RequireCacheType,
     log: *logger.Log,
     event_listeners: EventListenerMixin.Map,
     main: string = "",
@@ -389,8 +383,8 @@ pub const VirtualMachine = struct {
     transpiled_count: usize = 0,
     resolved_count: usize = 0,
     had_errors: bool = false,
-    pub var vm_loaded = false;
-    pub var vm: *VirtualMachine = undefined;
+    pub threadlocal var vm_loaded = false;
+    pub threadlocal var vm: *VirtualMachine = undefined;
 
     pub fn init(
         allocator: *std.mem.Allocator,
@@ -421,7 +415,6 @@ pub const VirtualMachine = struct {
             .global = undefined,
             .allocator = allocator,
             .entry_point = ServerEntryPoint{},
-            .require_cache = RequireCacheType.init(allocator),
             .event_listeners = EventListenerMixin.Map.init(allocator),
             .bundler = bundler,
             .console = console,

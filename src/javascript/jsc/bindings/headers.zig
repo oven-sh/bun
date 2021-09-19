@@ -37,64 +37,65 @@ pub const __mbstate_t = extern union {
 pub const __darwin_mbstate_t = __mbstate_t;
 pub const __darwin_ptrdiff_t = c_long;
 pub const __darwin_size_t = c_ulong;
-
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
 pub const JSC__RegExpPrototype = struct_JSC__RegExpPrototype;
-
+                                                     
 pub const JSC__GeneratorPrototype = struct_JSC__GeneratorPrototype;
-
+                                                         
 pub const JSC__ArrayIteratorPrototype = struct_JSC__ArrayIteratorPrototype;
-
+                                                  
 pub const JSC__StringPrototype = struct_JSC__StringPrototype;
 pub const WTF__StringView = bWTF__StringView;
-
+                                                     
 pub const JSC__JSPromisePrototype = struct_JSC__JSPromisePrototype;
 pub const JSC__CatchScope = bJSC__CatchScope;
 pub const JSC__ThrowScope = bJSC__ThrowScope;
 pub const JSC__PropertyName = bJSC__PropertyName;
 pub const JSC__JSObject = bJSC__JSObject;
 pub const WTF__ExternalStringImpl = bWTF__ExternalStringImpl;
-
+                                                         
 pub const JSC__AsyncIteratorPrototype = struct_JSC__AsyncIteratorPrototype;
 pub const WTF__StringImpl = bWTF__StringImpl;
 pub const JSC__JSLock = bJSC__JSLock;
 pub const JSC__JSModuleLoader = bJSC__JSModuleLoader;
 pub const JSC__VM = bJSC__VM;
-
+                                                          
 pub const JSC__AsyncGeneratorPrototype = struct_JSC__AsyncGeneratorPrototype;
-
+                                                                  
 pub const JSC__AsyncGeneratorFunctionPrototype = struct_JSC__AsyncGeneratorFunctionPrototype;
 pub const JSC__JSGlobalObject = bJSC__JSGlobalObject;
 pub const JSC__JSFunction = bJSC__JSFunction;
-
+                                                 
 pub const JSC__ArrayPrototype = struct_JSC__ArrayPrototype;
-
+                                                         
 pub const JSC__AsyncFunctionPrototype = struct_JSC__AsyncFunctionPrototype;
-pub const JSC__Identifier = bJSC__Identifier;
 pub const JSC__JSPromise = bJSC__JSPromise;
-
+pub const JSC__Identifier = bJSC__Identifier;
+                                                       
 pub const JSC__SetIteratorPrototype = struct_JSC__SetIteratorPrototype;
 pub const JSC__SourceCode = bJSC__SourceCode;
 pub const JSC__JSCell = bJSC__JSCell;
-
+                                                  
 pub const JSC__BigIntPrototype = struct_JSC__BigIntPrototype;
-
+                                                             
 pub const JSC__GeneratorFunctionPrototype = struct_JSC__GeneratorFunctionPrototype;
 pub const JSC__SourceOrigin = bJSC__SourceOrigin;
 pub const JSC__JSModuleRecord = bJSC__JSModuleRecord;
 pub const WTF__String = bWTF__String;
 pub const WTF__URL = bWTF__URL;
-
+                             
+                                                    
 pub const JSC__IteratorPrototype = struct_JSC__IteratorPrototype;
 pub const JSC__JSInternalPromise = bJSC__JSInternalPromise;
-
+                                                    
 pub const JSC__FunctionPrototype = struct_JSC__FunctionPrototype;
 pub const Inspector__ScriptArguments = bInspector__ScriptArguments;
 pub const JSC__Exception = bJSC__Exception;
 pub const JSC__JSString = bJSC__JSString;
-
+                                                  
 pub const JSC__ObjectPrototype = struct_JSC__ObjectPrototype;
 pub const JSC__CallFrame = bJSC__CallFrame;
-
+                                                       
 pub const JSC__MapIteratorPrototype = struct_JSC__MapIteratorPrototype;
 pub extern fn JSC__JSObject__create(arg0: [*c]JSC__JSGlobalObject, arg1: usize, arg2: ?*c_void, ArgFn3: ?fn (?*c_void, [*c]JSC__JSObject, [*c]JSC__JSGlobalObject) callconv(.C) void) JSC__JSValue;
 pub extern fn JSC__JSObject__getArrayLength(arg0: [*c]JSC__JSObject) usize;
@@ -120,6 +121,7 @@ pub extern fn Inspector__ScriptArguments__argumentCount(arg0: [*c]Inspector__Scr
 pub extern fn Inspector__ScriptArguments__getFirstArgumentAsString(arg0: [*c]Inspector__ScriptArguments) bWTF__String;
 pub extern fn Inspector__ScriptArguments__isEqual(arg0: [*c]Inspector__ScriptArguments, arg1: [*c]Inspector__ScriptArguments) bool;
 pub extern fn Inspector__ScriptArguments__release(arg0: [*c]Inspector__ScriptArguments) void;
+pub extern fn JSC__JSModuleLoader__callExportedFunction(arg0: [*c]JSC__JSGlobalObject, arg1: ZigString, arg2: ZigString, arg3: [*c]JSC__JSValue, arg4: u8, arg5: [*c]ZigException) JSC__JSValue;
 pub extern fn JSC__JSModuleLoader__checkSyntax(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]const JSC__SourceCode, arg2: bool) bool;
 pub extern fn JSC__JSModuleLoader__evaluate(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]const u8, arg2: usize, arg3: [*c]const u8, arg4: usize, JSValue5: JSC__JSValue, arg6: [*c]JSC__JSValue) JSC__JSValue;
 pub extern fn JSC__JSModuleLoader__importModule(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]const JSC__Identifier) [*c]JSC__JSInternalPromise;
@@ -154,14 +156,14 @@ pub extern fn JSC__JSInternalPromise__then(arg0: [*c]JSC__JSInternalPromise, arg
 pub extern fn JSC__SourceOrigin__fromURL(arg0: [*c]const WTF__URL) bJSC__SourceOrigin;
 pub extern fn JSC__SourceCode__fromString(arg0: [*c]JSC__SourceCode, arg1: [*c]const WTF__String, arg2: [*c]const JSC__SourceOrigin, arg3: [*c]WTF__String, SourceType4: u8) void;
 pub extern fn JSC__JSFunction__calculatedDisplayName(arg0: [*c]JSC__JSFunction, arg1: [*c]JSC__VM) bWTF__String;
-pub extern fn JSC__JSFunction__callWithArguments(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]JSC__JSValue, arg3: usize, arg4: *?*JSC__Exception, arg5: [*c]const u8) JSC__JSValue;
-pub extern fn JSC__JSFunction__callWithArgumentsAndThis(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue, arg2: [*c]JSC__JSGlobalObject, arg3: [*c]JSC__JSValue, arg4: usize, arg5: *?*JSC__Exception, arg6: [*c]const u8) JSC__JSValue;
-pub extern fn JSC__JSFunction__callWithoutAnyArgumentsOrThis(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: *?*JSC__Exception, arg3: [*c]const u8) JSC__JSValue;
-pub extern fn JSC__JSFunction__callWithThis(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, JSValue2: JSC__JSValue, arg3: *?*JSC__Exception, arg4: [*c]const u8) JSC__JSValue;
-pub extern fn JSC__JSFunction__constructWithArguments(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]JSC__JSValue, arg3: usize, arg4: *?*JSC__Exception, arg5: [*c]const u8) JSC__JSValue;
-pub extern fn JSC__JSFunction__constructWithArgumentsAndNewTarget(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue, arg2: [*c]JSC__JSGlobalObject, arg3: [*c]JSC__JSValue, arg4: usize, arg5: *?*JSC__Exception, arg6: [*c]const u8) JSC__JSValue;
-pub extern fn JSC__JSFunction__constructWithNewTarget(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, JSValue2: JSC__JSValue, arg3: *?*JSC__Exception, arg4: [*c]const u8) JSC__JSValue;
-pub extern fn JSC__JSFunction__constructWithoutAnyArgumentsOrNewTarget(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: *?*JSC__Exception, arg3: [*c]const u8) JSC__JSValue;
+pub extern fn JSC__JSFunction__callWithArguments(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]JSC__JSValue, arg3: usize, arg4: *?*JSC__Exception     , arg5: [*c]const u8) JSC__JSValue;
+pub extern fn JSC__JSFunction__callWithArgumentsAndThis(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue, arg2: [*c]JSC__JSGlobalObject, arg3: [*c]JSC__JSValue, arg4: usize, arg5: *?*JSC__Exception     , arg6: [*c]const u8) JSC__JSValue;
+pub extern fn JSC__JSFunction__callWithoutAnyArgumentsOrThis(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: *?*JSC__Exception     , arg3: [*c]const u8) JSC__JSValue;
+pub extern fn JSC__JSFunction__callWithThis(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, JSValue2: JSC__JSValue, arg3: *?*JSC__Exception     , arg4: [*c]const u8) JSC__JSValue;
+pub extern fn JSC__JSFunction__constructWithArguments(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]JSC__JSValue, arg3: usize, arg4: *?*JSC__Exception     , arg5: [*c]const u8) JSC__JSValue;
+pub extern fn JSC__JSFunction__constructWithArgumentsAndNewTarget(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue, arg2: [*c]JSC__JSGlobalObject, arg3: [*c]JSC__JSValue, arg4: usize, arg5: *?*JSC__Exception     , arg6: [*c]const u8) JSC__JSValue;
+pub extern fn JSC__JSFunction__constructWithNewTarget(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, JSValue2: JSC__JSValue, arg3: *?*JSC__Exception     , arg4: [*c]const u8) JSC__JSValue;
+pub extern fn JSC__JSFunction__constructWithoutAnyArgumentsOrNewTarget(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: *?*JSC__Exception     , arg3: [*c]const u8) JSC__JSValue;
 pub extern fn JSC__JSFunction__createFromNative(arg0: [*c]JSC__JSGlobalObject, arg1: u16, arg2: [*c]const WTF__String, arg3: ?*c_void, ArgFn4: ?fn (?*c_void, [*c]JSC__JSGlobalObject, [*c]JSC__CallFrame) callconv(.C) JSC__JSValue) [*c]JSC__JSFunction;
 pub extern fn JSC__JSFunction__displayName(arg0: [*c]JSC__JSFunction, arg1: [*c]JSC__VM) bWTF__String;
 pub extern fn JSC__JSFunction__getName(arg0: [*c]JSC__JSFunction, arg1: [*c]JSC__VM) bWTF__String;

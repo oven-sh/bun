@@ -32,13 +32,6 @@ pub const BuildCommand = struct {
                     ctx.args,
                 );
             },
-            .lazy => {
-                result = try bundler.ServeBundler.bundle(
-                    ctx.allocator,
-                    ctx.log,
-                    ctx.args,
-                );
-            },
             else => {
                 result = try bundler.Bundler.bundle(
                     ctx.allocator,

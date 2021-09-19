@@ -373,12 +373,30 @@ pub const JSModuleLoader = extern struct {
         });
     }
 
+    pub fn callExportedFunction(
+        globalObject: *JSGlobalObject,
+        specifier: ZigString,
+        function_name: ZigString,
+        arguments_ptr: [*]JSValue,
+        arguments_len: u8,
+        exception: *ZigException,
+    ) JSValue {
+        return shim.cppFn("callExportedFunction", .{
+            globalObject,
+            specifier,
+            function_name,
+            arguments_ptr,
+            arguments_len,
+            exception,
+        });
+    }
     // pub fn dependencyKeysIfEvaluated(this: *JSModuleLoader, globalObject: *JSGlobalObject, moduleRecord: *JSModuleRecord) *JSValue {
     //     return shim.cppFn("dependencyKeysIfEvaluated", .{ this, globalObject, moduleRecord });
     // }
 
     pub const Extern = [_][]const u8{
         // "dependencyKeysIfEvaluated",
+        "callExportedFunction",
         "evaluate",
         "loadAndEvaluateModuleEntryPoint",
         "loadAndEvaluateModule",
@@ -821,7 +839,7 @@ pub const JSGlobalObject = extern struct {
 
     const cppFn = shim.cppFn;
 
-    pub fn ref(this: *JSGlobalObject) C_API.JSContextRef {
+    pub inline fn ref(this: *JSGlobalObject) C_API.JSContextRef {
         return @ptrCast(C_API.JSContextRef, this);
     }
     pub const ctx = ref;

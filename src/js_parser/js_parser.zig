@@ -87,6 +87,12 @@ pub const ImportScanner = struct {
                 .s_import => |st| {
                     var record: *ImportRecord = &p.import_records.items[st.import_record_index];
 
+                    if (strings.eqlComptime(record.path.namespace, "macro")) {
+                        record.is_unused = true;
+                        record.path.is_disabled = true;
+                        continue;
+                    }
+
                     // The official TypeScript compiler always removes unused imported
                     // symbols. However, we deliberately deviate from the official
                     // TypeScript compiler's behavior doing this in a specific scenario:
@@ -1764,6 +1770,7 @@ pub const Parser = struct {
         suppress_warnings_about_weird_code: bool = true,
         filepath_hash_for_hmr: u32 = 0,
         features: RuntimeFeatures = RuntimeFeatures{},
+        macro_context: *js_ast.Macro.MacroContext = undefined,
 
         warn_about_unbundled_modules: bool = true,
 
@@ -2653,6 +2660,8 @@ const FastRefresh = struct {};
 
 const ImportItemForNamespaceMap = std.StringArrayHashMap(LocRef);
 
+const MacroRefs = std.AutoArrayHashMap(Ref, u32);
+
 pub fn NewParser(
     comptime js_parser_features: ParserFeatures,
 ) type {
@@ -2671,6 +2680,7 @@ pub fn NewParser(
         const P = @This();
         allocator: *std.mem.Allocator,
         options: Parser.Options,
+        macro_refs: MacroRefs,
         log: *logger.Log,
         define: *Define,
         source: *const logger.Source,
@@ -6091,9 +6101,19 @@ pub fn NewParser(
                     }
 
                     const path = try p.parsePath();
+
                     stmt.import_record_index = p.addImportRecord(.stmt, path.loc, path.text);
                     p.import_records.items[stmt.import_record_index].was_originally_bare_import = was_originally_bare_import;
                     try p.lexer.expectOrInsertSemicolon();
+
+                    const is_macro = js_ast.Macro.isMacroPath(path.text);
+
+                    if (is_macro) {
+                        p.import_records.items[stmt.import_record_index].path.namespace = js_ast.Macro.namespace;
+                        if (comptime only_scan_imports_and_do_not_visit) {
+                            p.import_records.items[stmt.import_record_index].path.is_disabled = true;
+                        }
+                    }
 
                     if (stmt.star_name_loc) |star| {
                         const name = p.loadNameFromRef(stmt.namespace_ref);
@@ -6103,6 +6123,16 @@ pub fn NewParser(
                                 .ref = stmt.namespace_ref,
                                 .import_record_index = stmt.import_record_index,
                             }) catch unreachable;
+                        }
+                        if (is_macro) {
+                            p.log.addErrorFmt(
+                                p.source,
+                                star,
+                                p.allocator,
+                                "Macro cannot be a * import, must be default or an {{item}}",
+                                .{},
+                            ) catch unreachable;
+                            return error.SyntaxError;
                         }
                     } else {
                         var path_name = fs.PathName.init(strings.append(p.allocator, "import_", path.text) catch unreachable);
@@ -6126,6 +6156,10 @@ pub fn NewParser(
                                 .import_record_index = stmt.import_record_index,
                             }) catch unreachable;
                         }
+
+                        if (is_macro) {
+                            try p.macro_refs.put(ref, stmt.import_record_index);
+                        }
                     }
 
                     if (stmt.items.len > 0) {
@@ -6143,6 +6177,9 @@ pub fn NewParser(
                                     .ref = ref,
                                     .import_record_index = stmt.import_record_index,
                                 }) catch unreachable;
+                            }
+                            if (is_macro) {
+                                try p.macro_refs.put(ref, stmt.import_record_index);
                             }
                         }
                     }
@@ -11057,6 +11094,27 @@ pub fn NewParser(
                     for (e_.parts) |*part| {
                         part.value = p.visitExpr(part.value);
                     }
+
+                    if (e_.tag) |tag| {
+                        if (tag.data == .e_import_identifier) {
+                            const ref = tag.data.e_import_identifier.ref;
+                            if (p.macro_refs.get(ref)) |import_record_id| {
+                                const name = p.symbols.items[ref.inner_index].original_name;
+                                Output.prettyln("Calling Macro!! {s}\n", .{name});
+                                const record = &p.import_records.items[import_record_id];
+                                return p.options.macro_context.call(
+                                    record.path.text,
+                                    p.source.path.sourceDir(),
+                                    p.log,
+                                    p.source,
+                                    record.range,
+                                    expr,
+                                    &.{},
+                                    name,
+                                ) catch return expr;
+                            }
+                        }
+                    }
                 },
 
                 .e_binary => |e_| {
@@ -14942,6 +15000,7 @@ pub fn NewParser(
             scope_order.appendAssumeCapacity(ScopeOrder{ .loc = locModuleScope, .scope = scope });
             this.* = P{
                 .cjs_import_stmts = @TypeOf(this.cjs_import_stmts).init(allocator),
+                .macro_refs = @TypeOf(this.macro_refs).init(allocator),
                 // This must default to true or else parsing "in" won't work right.
                 // It will fail for the case in the "in-keyword.js" file
                 .allow_in = true,

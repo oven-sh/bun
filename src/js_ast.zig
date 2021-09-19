@@ -3921,6 +3921,283 @@ pub fn printmem(comptime format: string, args: anytype) void {
     // Output.print(format, args);
 }
 
+pub const Macro = struct {
+    const JavaScript = @import("./javascript/jsc/javascript.zig");
+    const JSC = @import("./javascript/jsc/bindings/bindings.zig");
+    const JSCBase = @import("./javascript/jsc/base.zig");
+    const Resolver = @import("./resolver/resolver.zig").Resolver;
+    const isPackagePath = @import("./resolver/resolver.zig").isPackagePath;
+    const ResolveResult = @import("./resolver/resolver.zig").Result;
+    const DotEnv = @import("./env_loader.zig");
+    const js = @import("./javascript/jsc/JavascriptCore.zig");
+    const Zig = @import("./javascript/jsc/bindings/exports.zig");
+    const Bundler = @import("./bundler.zig").Bundler;
+
+    pub const namespace: string = "macro";
+
+    pub fn isMacroPath(str: string) bool {
+        return (str.len > "macro:".len and strings.eqlComptimeIgnoreLen(str[0.."macro:".len], "macro:"));
+    }
+
+    pub const MacroContext = struct {
+        pub const MacroMap = std.AutoArrayHashMap(u64, Macro);
+
+        resolver: *Resolver,
+        env: *DotEnv.Loader,
+        macros: MacroMap,
+
+        pub fn init(bundler: *Bundler) MacroContext {
+            return MacroContext{
+                .macros = MacroMap.init(default_allocator),
+                .resolver = &bundler.resolver,
+                .env = bundler.env,
+            };
+        }
+
+        pub fn call(
+            this: *MacroContext,
+            specifier: string,
+            source_dir: string,
+            log: *logger.Log,
+            source: *const logger.Source,
+            import_range: logger.Range,
+            caller: Expr,
+            args: []Expr,
+            function_name: string,
+        ) anyerror!Expr {
+            // const is_package_path = isPackagePath(specifier);
+            std.debug.assert(strings.eqlComptime(specifier[0..6], "macro:"));
+
+            const resolve_result = this.resolver.resolve(source_dir, specifier["macro:".len..], .stmt) catch |err| {
+                switch (err) {
+                    error.ModuleNotFound => {
+                        log.addResolveError(
+                            source,
+                            import_range,
+                            log.msgs.allocator,
+                            "Macro \"{s}\" not found",
+                            .{specifier},
+                            .stmt,
+                        ) catch unreachable;
+                        return error.MacroNotFound;
+                    },
+                    else => {
+                        log.addRangeErrorFmt(
+                            source,
+                            import_range,
+                            log.msgs.allocator,
+                            "{s} resolving macro \"{s}\"",
+                            .{ @errorName(err), specifier },
+                        ) catch unreachable;
+                        return err;
+                    },
+                }
+            };
+
+            var macro_entry = this.macros.getOrPut(std.hash.Wyhash.hash(0, resolve_result.path_pair.primary.text)) catch unreachable;
+            if (!macro_entry.found_existing) {
+                macro_entry.value_ptr.* = try Macro.init(
+                    default_allocator,
+                    this.resolver,
+                    resolve_result,
+                    log,
+                    this.env,
+                    specifier,
+                    source_dir,
+                );
+            }
+            defer Output.flush();
+
+            return Macro.Runner.run(macro_entry.value_ptr.*, log, default_allocator, function_name, caller, args, source);
+            // this.macros.getOrPut(key: K)
+        }
+    };
+
+    pub const JSExpr = struct {
+        expr: Expr,
+        pub const Class = JSCBase.NewClass(
+            JSExpr,
+            .{
+                .name = "JSExpr",
+                .read_only = true,
+            },
+            .{
+                .toString = .{
+                    .rfn = toString,
+                },
+                // .toNumber = .{
+                //     .rfn = toNumber,
+                // },
+            },
+            .{
+                .tag = .{
+                    .get = getTag,
+                    .ro = true,
+                },
+                .tagName = .{
+                    .get = getTagName,
+                    .ro = true,
+                },
+                .position = .{
+                    .get = getPosition,
+                    .ro = true,
+                },
+            },
+        );
+
+        pub fn toString(
+            this: *JSExpr,
+            ctx: js.JSContextRef,
+            function: js.JSObjectRef,
+            thisObject: js.JSObjectRef,
+            arguments: []const js.JSValueRef,
+            exception: js.ExceptionRef,
+        ) js.JSObjectRef {
+            switch (this.expr.data) {
+                .e_string => |str| {
+                    if (str.isBlank()) {
+                        return JSC.ZigString.init("").toValue(JavaScript.VirtualMachine.vm.global).asRef();
+                    }
+
+                    if (str.isUTF8()) {
+                        return JSC.ZigString.init(str.utf8).toValue(JavaScript.VirtualMachine.vm.global).asRef();
+                    } else {
+                        return js.JSValueMakeString(ctx, js.JSStringCreateWithCharactersNoCopy(str.value.ptr, str.value.len));
+                    }
+                },
+                .e_template => |template| {
+                    const str = template.head;
+
+                    if (str.isBlank()) {
+                        return JSC.ZigString.init("").toValue(JavaScript.VirtualMachine.vm.global).asRef();
+                    }
+
+                    if (str.isUTF8()) {
+                        return JSC.ZigString.init(str.utf8).toValue(JavaScript.VirtualMachine.vm.global).asRef();
+                    } else {
+                        return js.JSValueMakeString(ctx, js.JSStringCreateWithCharactersNoCopy(str.value.ptr, str.value.len));
+                    }
+                },
+                else => {
+                    return JSC.ZigString.init("").toValue(JavaScript.VirtualMachine.vm.global).asRef();
+                },
+            }
+        }
+
+        pub fn getTag(
+            this: *JSExpr,
+            ctx: js.JSContextRef,
+            thisObject: js.JSValueRef,
+            prop: js.JSStringRef,
+            exception: js.ExceptionRef,
+        ) js.JSObjectRef {
+            return JSC.JSValue.jsNumberFromU16(@intCast(u16, @enumToInt(std.meta.activeTag(this.expr.data)))).asRef();
+        }
+        pub fn getTagName(
+            this: *JSExpr,
+            ctx: js.JSContextRef,
+            thisObject: js.JSValueRef,
+            prop: js.JSStringRef,
+            exception: js.ExceptionRef,
+        ) js.JSObjectRef {
+            return JSC.ZigString.init(@tagName(this.expr.data)).toValue(JavaScript.VirtualMachine.vm.global).asRef();
+        }
+        pub fn getPosition(
+            this: *JSExpr,
+            ctx: js.JSContextRef,
+            thisObject: js.JSValueRef,
+            prop: js.JSStringRef,
+            exception: js.ExceptionRef,
+        ) js.JSObjectRef {
+            return JSC.JSValue.jsNumberFromInt32(this.expr.loc.start).asRef();
+        }
+    };
+
+    resolver: *Resolver,
+    vm: *JavaScript.VirtualMachine = undefined,
+
+    resolved: ResolveResult = undefined,
+
+    pub fn init(
+        allocator: *std.mem.Allocator,
+        resolver: *Resolver,
+        resolved: ResolveResult,
+        log: *logger.Log,
+        env: *DotEnv.Loader,
+        specifier: string,
+        source_dir: string,
+    ) !Macro {
+        const path = resolved.path_pair.primary;
+
+        var vm: *JavaScript.VirtualMachine = if (JavaScript.VirtualMachine.vm_loaded)
+            JavaScript.VirtualMachine.vm
+        else brk: {
+            var _vm = try JavaScript.VirtualMachine.init(default_allocator, resolver.opts.transform_options, null, log, env);
+            _vm.bundler.configureLinker();
+            _vm.bundler.configureDefines() catch unreachable;
+            break :brk _vm;
+        };
+
+        JavaScript.VirtualMachine.vm_loaded = true;
+
+        var loaded_result = try vm.loadEntryPoint(path.text);
+
+        if (loaded_result.status(vm.global.vm()) == JSC.JSPromise.Status.Rejected) {
+            vm.defaultErrorHandler(loaded_result.result(vm.global.vm()), null);
+            return error.MacroLoadError;
+        }
+
+        return Macro{
+            .vm = vm,
+            .resolved = resolved,
+            .resolver = resolver,
+        };
+    }
+
+    pub const Runner = struct {
+        threadlocal var args_buf: [32]JSC.JSValue = undefined;
+        threadlocal var expr_nodes_buf: [32]JSExpr = undefined;
+        threadlocal var exception_holder: Zig.ZigException.Holder = undefined;
+        pub fn run(
+            macro: Macro,
+            log: *logger.Log,
+            allocator: *std.mem.Allocator,
+            function_name: string,
+            caller: Expr,
+            args: []Expr,
+            source: *const logger.Source,
+        ) Expr {
+            exception_holder = Zig.ZigException.Holder.init();
+            expr_nodes_buf[0] = JSExpr{ .expr = caller };
+            args_buf[0] = JSC.JSValue.fromRef(JSExpr.Class.make(
+                macro.vm.global.ref(),
+                &expr_nodes_buf[0],
+            ).?);
+            for (args) |arg, i| {
+                expr_nodes_buf[i + 1] = JSExpr{ .expr = arg };
+                args_buf[i + 1] = JSC.JSValue.fromRef(
+                    JSExpr.Class.make(
+                        macro.vm.global.ref(),
+                        &expr_nodes_buf[i + 1],
+                    ).?,
+                );
+            }
+
+            // Step 1. Resolve the macro specifier
+            const result = JSC.JSModuleLoader.callExportedFunction(
+                macro.vm.global,
+                JSC.ZigString.init(macro.resolved.path_pair.primary.text),
+                JSC.ZigString.init(function_name),
+                &args_buf,
+                @truncate(u8, args.len + 1),
+                &exception_holder.zig_exception,
+            );
+
+            return caller;
+        }
+    };
+};
+
 test "Binding.init" {
     var binding = Binding.alloc(
         std.heap.page_allocator,

@@ -4,6 +4,7 @@ pub usingnamespace @import("../../global.zig");
 usingnamespace @import("./javascript.zig");
 usingnamespace @import("./webcore/response.zig");
 const Router = @import("./api/router.zig");
+const JSExpr = @import("../../js_ast.zig").Macro.JSExpr;
 
 const TaggedPointerTypes = @import("../../tagged_pointer.zig");
 const TaggedPointerUnion = TaggedPointerTypes.TaggedPointerUnion;
@@ -839,6 +840,10 @@ pub fn NewClass(
         }
 
         pub fn customHasInstance(ctx: js.JSContextRef, obj: js.JSObjectRef, value: js.JSValueRef, exception: js.ExceptionRef) callconv(.C) bool {
+            if (comptime @typeInfo(ZigType) == .Struct and @hasDecl(ZigType, "isInstanceOf")) {
+                return ZigType.isInstanceOf(ctx, obj, value, exception);
+            }
+
             return js.JSValueIsObjectOfClass(ctx, value, get().*);
         }
 
@@ -1449,6 +1454,7 @@ pub fn NewClass(
 
             if (!singleton)
                 def.hasInstance = customHasInstance;
+
             return def;
         }
     };
@@ -1509,6 +1515,7 @@ pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     Headers,
     Body,
     Router,
+    JSExpr,
 });
 
 pub inline fn GetJSPrivateData(comptime Type: type, ref: js.JSObjectRef) ?*Type {

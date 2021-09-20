@@ -321,7 +321,7 @@ pub const Binding = struct {
             *B.Object => {
                 return Binding{ .loc = loc, .data = B{ .b_object = t } };
             },
-            *B.Missing => {
+            B.Missing => {
                 return Binding{ .loc = loc, .data = B{ .b_missing = t } };
             },
             else => {
@@ -1700,6 +1700,7 @@ pub const Stmt = struct {
             pub const All = NewBaseStore(Union, 128);
 
             threadlocal var has_inited = false;
+            pub threadlocal var disable_reset = false;
             pub fn create(allocator: *std.mem.Allocator) void {
                 if (has_inited) {
                     return;
@@ -1710,6 +1711,7 @@ pub const Stmt = struct {
             }
 
             pub fn reset() void {
+                if (disable_reset) return;
                 All.reset();
             }
 
@@ -2367,7 +2369,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_number = Data.Store.All.append(Type, st),
+                        .e_number = st,
                     },
                 };
             },
@@ -2542,8 +2544,160 @@ pub const Expr = struct {
         e_class,
         e_require,
 
+        pub inline fn toPublicValue(this: Tag) u16 {
+            return @intCast(u16, @enumToInt(this)) + 16;
+        }
+
+        pub inline fn fromPublicValue(comptime ValueType: type, value: ValueType) ?Tag {
+            if (value < 16 or value > @enumToInt(Tag.e_require)) return null;
+
+            switch (comptime ValueType) {
+                f64 => {
+                    return @intToEnum(@floatToInt(u16, value - 16), Tag);
+                },
+                else => {
+                    return @intToEnum(@intCast(u6, @intCast(u16, value) - 16), Tag);
+                },
+            }
+        }
+
+        pub const names_strings = [_]string{
+            "<array>",
+            "<unary>",
+            "<binary>",
+            "<boolean>",
+            "<super>",
+            "<null>",
+            "<void>",
+            "<new>",
+            "<function>",
+            "<ntarget>",
+            "<import>",
+            "<call>",
+            "<dot>",
+            "<index>",
+            "<arrow>",
+            "<id>",
+            "<importid>",
+            "<private>",
+            "<jsx>",
+            "<missing>",
+            "<number>",
+            "<bigint>",
+            "<object>",
+            "<spread>",
+            "<string>",
+            "<tpart>",
+            "<template>",
+            "<regexp>",
+            "<await>",
+            "<yield>",
+            "<if>",
+            "<resolve>",
+            "<import>",
+            "<this>",
+            "<class>",
+            "<require>",
+        };
+        pub const valid_names_list: string = brk: {
+            var names_list = names_strings[0];
+            for (names_strings[1..]) |name_str, i| {
+                names_list = names_list ++ "\n  " ++ name_str;
+            }
+            break :brk "  " ++ names_list;
+        };
+
+        pub const TagName = std.EnumArray(Tag, string);
+
+        pub const names: TagName = brk: {
+            var array = TagName.initUndefined();
+            array.set(.e_array, names_strings[0]);
+            array.set(.e_unary, names_strings[1]);
+            array.set(.e_binary, names_strings[2]);
+            array.set(.e_boolean, names_strings[3]);
+            array.set(.e_super, names_strings[4]);
+            array.set(.e_null, names_strings[5]);
+            array.set(.e_undefined, names_strings[6]);
+            array.set(.e_new, names_strings[7]);
+            array.set(.e_function, names_strings[8]);
+            array.set(.e_new_target, names_strings[9]);
+            array.set(.e_import_meta, names_strings[10]);
+            array.set(.e_call, names_strings[11]);
+            array.set(.e_dot, names_strings[12]);
+            array.set(.e_index, names_strings[13]);
+            array.set(.e_arrow, names_strings[14]);
+            array.set(.e_identifier, names_strings[15]);
+            array.set(.e_import_identifier, names_strings[16]);
+            array.set(.e_private_identifier, names_strings[17]);
+            array.set(.e_jsx_element, names_strings[18]);
+            array.set(.e_missing, names_strings[19]);
+            array.set(.e_number, names_strings[20]);
+            array.set(.e_big_int, names_strings[21]);
+            array.set(.e_object, names_strings[22]);
+            array.set(.e_spread, names_strings[23]);
+            array.set(.e_string, names_strings[24]);
+            array.set(.e_template_part, names_strings[25]);
+            array.set(.e_template, names_strings[26]);
+            array.set(.e_reg_exp, names_strings[27]);
+            array.set(.e_await, names_strings[28]);
+            array.set(.e_yield, names_strings[29]);
+            array.set(.e_if, names_strings[30]);
+            array.set(.e_require_or_require_resolve, names_strings[31]);
+            array.set(.e_import, names_strings[32]);
+            array.set(.e_this, names_strings[33]);
+            array.set(.e_class, names_strings[34]);
+            array.set(.e_require, names_strings[35]);
+            break :brk array;
+        };
+        pub const TagExactSizeMatcher = strings.ExactSizeMatcher(8);
+        pub fn find(name_: string) ?Tag {
+            return switch (TagExactSizeMatcher.match(name_)) {
+                TagExactSizeMatcher.case("array") => Tag.e_array,
+                TagExactSizeMatcher.case("unary") => Tag.e_unary,
+                TagExactSizeMatcher.case("binary") => Tag.e_binary,
+                TagExactSizeMatcher.case("boolean") => Tag.e_boolean,
+                TagExactSizeMatcher.case("true") => Tag.e_boolean,
+                TagExactSizeMatcher.case("false") => Tag.e_boolean,
+                TagExactSizeMatcher.case("super") => Tag.e_super,
+                TagExactSizeMatcher.case("null") => Tag.e_null,
+                TagExactSizeMatcher.case("void") => Tag.e_undefined,
+                TagExactSizeMatcher.case("new") => Tag.e_new,
+                TagExactSizeMatcher.case("function") => Tag.e_function,
+                TagExactSizeMatcher.case("ntarget") => Tag.e_new_target,
+                TagExactSizeMatcher.case("imeta") => Tag.e_import_meta,
+                TagExactSizeMatcher.case("call") => Tag.e_call,
+                TagExactSizeMatcher.case("dot") => Tag.e_dot,
+                TagExactSizeMatcher.case("index") => Tag.e_index,
+                TagExactSizeMatcher.case("arrow") => Tag.e_arrow,
+                TagExactSizeMatcher.case("id") => Tag.e_identifier,
+                TagExactSizeMatcher.case("importid") => Tag.e_import_identifier,
+                TagExactSizeMatcher.case("jsx") => Tag.e_jsx_element,
+                TagExactSizeMatcher.case("missing") => Tag.e_missing,
+                TagExactSizeMatcher.case("number") => Tag.e_number,
+                TagExactSizeMatcher.case("bigint") => Tag.e_big_int,
+                TagExactSizeMatcher.case("object") => Tag.e_object,
+                TagExactSizeMatcher.case("spread") => Tag.e_spread,
+                TagExactSizeMatcher.case("string") => Tag.e_string,
+                TagExactSizeMatcher.case("tpart") => Tag.e_template_part,
+                TagExactSizeMatcher.case("template") => Tag.e_template,
+                TagExactSizeMatcher.case("regexp") => Tag.e_reg_exp,
+                TagExactSizeMatcher.case("await") => Tag.e_await,
+                TagExactSizeMatcher.case("yield") => Tag.e_yield,
+                TagExactSizeMatcher.case("if") => Tag.e_if,
+                TagExactSizeMatcher.case("import") => Tag.e_import,
+                TagExactSizeMatcher.case("this") => Tag.e_this,
+                TagExactSizeMatcher.case("class") => Tag.e_class,
+                TagExactSizeMatcher.case("require") => Tag.e_require,
+                else => null,
+            };
+        }
+
+        pub inline fn name(this: Tag) string {
+            return names.get(this);
+        }
+
         pub fn jsonStringify(self: @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
+            return try std.json.stringify(self.name(), opts, o);
         }
 
         pub fn isArray(self: Tag) bool {
@@ -3074,7 +3228,7 @@ pub const Expr = struct {
         e_import: *E.Import,
 
         e_boolean: E.Boolean,
-        e_number: *E.Number,
+        e_number: E.Number,
         e_big_int: *E.BigInt,
         e_string: *E.String,
 
@@ -3129,6 +3283,7 @@ pub const Expr = struct {
             );
 
             threadlocal var has_inited = false;
+            pub threadlocal var disable_reset = false;
             pub fn create(allocator: *std.mem.Allocator) void {
                 if (has_inited) {
                     return;
@@ -3140,6 +3295,7 @@ pub const Expr = struct {
             }
 
             pub fn reset() void {
+                if (disable_reset) return;
                 All.reset();
                 Identifier.reset();
             }
@@ -3932,15 +4088,17 @@ pub const Macro = struct {
     const js = @import("./javascript/jsc/JavascriptCore.zig");
     const Zig = @import("./javascript/jsc/bindings/exports.zig");
     const Bundler = @import("./bundler.zig").Bundler;
+    const MacroEntryPoint = @import("./bundler.zig").MacroEntryPoint;
 
     pub const namespace: string = "macro";
+    pub const namespaceWithColon: string = namespace ++ ":";
 
     pub fn isMacroPath(str: string) bool {
-        return (str.len > "macro:".len and strings.eqlComptimeIgnoreLen(str[0.."macro:".len], "macro:"));
+        return (str.len > namespaceWithColon.len and strings.eqlComptimeIgnoreLen(str[0..namespaceWithColon.len], namespaceWithColon));
     }
 
     pub const MacroContext = struct {
-        pub const MacroMap = std.AutoArrayHashMap(u64, Macro);
+        pub const MacroMap = std.AutoArrayHashMap(i32, Macro);
 
         resolver: *Resolver,
         env: *DotEnv.Loader,
@@ -3956,7 +4114,7 @@ pub const Macro = struct {
 
         pub fn call(
             this: *MacroContext,
-            specifier: string,
+            import_record_path: string,
             source_dir: string,
             log: *logger.Log,
             source: *const logger.Source,
@@ -3965,10 +4123,14 @@ pub const Macro = struct {
             args: []Expr,
             function_name: string,
         ) anyerror!Expr {
+            Expr.Data.Store.disable_reset = true;
+            Stmt.Data.Store.disable_reset = true;
+            defer Expr.Data.Store.disable_reset = false;
+            defer Stmt.Data.Store.disable_reset = false;
             // const is_package_path = isPackagePath(specifier);
-            std.debug.assert(strings.eqlComptime(specifier[0..6], "macro:"));
+            std.debug.assert(isMacroPath(import_record_path));
 
-            const resolve_result = this.resolver.resolve(source_dir, specifier["macro:".len..], .stmt) catch |err| {
+            const resolve_result = this.resolver.resolve(source_dir, import_record_path[namespaceWithColon.len..], .stmt) catch |err| {
                 switch (err) {
                     error.ModuleNotFound => {
                         log.addResolveError(
@@ -3976,7 +4138,7 @@ pub const Macro = struct {
                             import_range,
                             log.msgs.allocator,
                             "Macro \"{s}\" not found",
-                            .{specifier},
+                            .{import_record_path},
                             .stmt,
                         ) catch unreachable;
                         return error.MacroNotFound;
@@ -3987,28 +4149,57 @@ pub const Macro = struct {
                             import_range,
                             log.msgs.allocator,
                             "{s} resolving macro \"{s}\"",
-                            .{ @errorName(err), specifier },
+                            .{ @errorName(err), import_record_path },
                         ) catch unreachable;
                         return err;
                     },
                 }
             };
 
-            var macro_entry = this.macros.getOrPut(std.hash.Wyhash.hash(0, resolve_result.path_pair.primary.text)) catch unreachable;
+            var specifier_buf: [64]u8 = undefined;
+            var specifier_buf_len: u32 = 0;
+            const hash = MacroEntryPoint.generateID(
+                resolve_result.path_pair.primary.text,
+                function_name,
+                &specifier_buf,
+                &specifier_buf_len,
+            );
+
+            var macro_entry = this.macros.getOrPut(hash) catch unreachable;
             if (!macro_entry.found_existing) {
-                macro_entry.value_ptr.* = try Macro.init(
+                macro_entry.value_ptr.* = Macro.init(
                     default_allocator,
                     this.resolver,
                     resolve_result,
                     log,
                     this.env,
-                    specifier,
-                    source_dir,
-                );
+                    function_name,
+                    specifier_buf[0..specifier_buf_len],
+                    hash,
+                ) catch |err| {
+                    macro_entry.value_ptr.* = Macro{ .resolver = undefined, .disabled = true };
+                    return err;
+                };
+                Output.flush();
             }
             defer Output.flush();
 
-            return Macro.Runner.run(macro_entry.value_ptr.*, log, default_allocator, function_name, caller, args, source);
+            const macro = macro_entry.value_ptr.*;
+            if (macro.disabled) {
+                return caller;
+            }
+            macro.vm.enableMacroMode();
+            defer macro.vm.disableMacroMode();
+            return Macro.Runner.run(
+                macro,
+                log,
+                default_allocator,
+                function_name,
+                caller,
+                args,
+                source,
+                hash,
+            );
             // this.macros.getOrPut(key: K)
         }
     };
@@ -4044,6 +4235,15 @@ pub const Macro = struct {
                 },
             },
         );
+
+        // pub fn isInstanceOf(
+        //     ctx: js.JSContextRef,
+        //     obj: js.JSObjectRef,
+        //     value: js.JSValueRef,
+        //     exception: js.ExceptionRef,
+        // ) bool {
+        //     js.JSValueToNumber(ctx, value, exception);
+        // }
 
         pub fn toString(
             this: *JSExpr,
@@ -4117,6 +4317,7 @@ pub const Macro = struct {
     vm: *JavaScript.VirtualMachine = undefined,
 
     resolved: ResolveResult = undefined,
+    disabled: bool = false,
 
     pub fn init(
         allocator: *std.mem.Allocator,
@@ -4124,8 +4325,9 @@ pub const Macro = struct {
         resolved: ResolveResult,
         log: *logger.Log,
         env: *DotEnv.Loader,
+        function_name: string,
         specifier: string,
-        source_dir: string,
+        hash: i32,
     ) !Macro {
         const path = resolved.path_pair.primary;
 
@@ -4133,19 +4335,28 @@ pub const Macro = struct {
             JavaScript.VirtualMachine.vm
         else brk: {
             var _vm = try JavaScript.VirtualMachine.init(default_allocator, resolver.opts.transform_options, null, log, env);
+            _vm.enableMacroMode();
+
             _vm.bundler.configureLinker();
             _vm.bundler.configureDefines() catch unreachable;
             break :brk _vm;
         };
 
-        JavaScript.VirtualMachine.vm_loaded = true;
+        vm.enableMacroMode();
 
-        var loaded_result = try vm.loadEntryPoint(path.text);
+        var loaded_result = try vm.loadMacroEntryPoint(path.text, function_name, specifier, hash);
 
         if (loaded_result.status(vm.global.vm()) == JSC.JSPromise.Status.Rejected) {
             vm.defaultErrorHandler(loaded_result.result(vm.global.vm()), null);
+            vm.disableMacroMode();
             return error.MacroLoadError;
         }
+
+        JavaScript.VirtualMachine.vm_loaded = true;
+
+        // We don't need to do anything with the result.
+        // We just want to make sure the promise is finished.
+        _ = loaded_result.result(vm.global.vm());
 
         return Macro{
             .vm = vm,
@@ -4155,7 +4366,7 @@ pub const Macro = struct {
     }
 
     pub const Runner = struct {
-        threadlocal var args_buf: [32]JSC.JSValue = undefined;
+        threadlocal var args_buf: [32]js.JSObjectRef = undefined;
         threadlocal var expr_nodes_buf: [32]JSExpr = undefined;
         threadlocal var exception_holder: Zig.ZigException.Holder = undefined;
         pub fn run(
@@ -4166,32 +4377,37 @@ pub const Macro = struct {
             caller: Expr,
             args: []Expr,
             source: *const logger.Source,
+            id: i32,
         ) Expr {
+            if (comptime isDebug) Output.prettyln("<r><d>[macro]<r> call <d><b>{s}<r>", .{function_name});
+
             exception_holder = Zig.ZigException.Holder.init();
             expr_nodes_buf[0] = JSExpr{ .expr = caller };
-            args_buf[0] = JSC.JSValue.fromRef(JSExpr.Class.make(
+            args_buf[0] = JSExpr.Class.make(
                 macro.vm.global.ref(),
                 &expr_nodes_buf[0],
-            ).?);
+            );
             for (args) |arg, i| {
                 expr_nodes_buf[i + 1] = JSExpr{ .expr = arg };
-                args_buf[i + 1] = JSC.JSValue.fromRef(
+                args_buf[i + 1] =
                     JSExpr.Class.make(
-                        macro.vm.global.ref(),
-                        &expr_nodes_buf[i + 1],
-                    ).?,
+                    macro.vm.global.ref(),
+                    &expr_nodes_buf[i + 1],
                 );
             }
+            args_buf[args.len + 2] = null;
 
-            // Step 1. Resolve the macro specifier
-            const result = JSC.JSModuleLoader.callExportedFunction(
-                macro.vm.global,
-                JSC.ZigString.init(macro.resolved.path_pair.primary.text),
-                JSC.ZigString.init(function_name),
-                &args_buf,
-                @truncate(u8, args.len + 1),
-                &exception_holder.zig_exception,
-            );
+            var macro_callback = macro.vm.macros.get(id) orelse return caller;
+            var result = js.JSObjectCallAsFunctionReturnValue(macro.vm.global.ref(), macro_callback, null, args.len + 1, &args_buf);
+            var promise = JSC.JSPromise.resolvedPromise(macro.vm.global, result);
+            macro.vm.global.vm().drainMicrotasks();
+
+            if (promise.status(macro.vm.global.vm()) == .Rejected) {
+                macro.vm.defaultErrorHandler(promise.result(macro.vm.global.vm()), null);
+                return caller;
+            }
+
+            const value = promise.result(macro.vm.global.vm());
 
             return caller;
         }

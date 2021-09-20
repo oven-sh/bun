@@ -751,7 +751,7 @@ pub const Bundler = struct {
             } else {}
 
             for (bundler.options.entry_points) |entry_point| {
-                if (bundler.options.platform == .bun) continue;
+                if (bundler.options.platform.isBun()) continue;
                 defer this.bundler.resetStore();
 
                 const entry_point_path = bundler.normalizeEntryPointPath(entry_point);
@@ -771,7 +771,7 @@ pub const Bundler = struct {
                             bundler.options.framework.?.override_modules_hashes[i] = std.hash.Wyhash.hash(0, key);
                         }
                     }
-                    if (bundler.options.platform == .bun) {
+                    if (bundler.options.platform.isBun()) {
                         if (framework.server.isEnabled()) {
                             const resolved = try bundler.linker.resolver.resolve(
                                 bundler.fs.top_level_dir,
@@ -971,7 +971,7 @@ pub const Bundler = struct {
 
             const basename = std.fs.path.basename(std.mem.span(destination));
             const extname = std.fs.path.extension(basename);
-            javascript_bundle.import_from_name = if (bundler.options.platform == .bun)
+            javascript_bundle.import_from_name = if (bundler.options.platform.isBun())
                 "/node_modules.server.bun"
             else
                 try std.fmt.allocPrint(
@@ -2201,7 +2201,7 @@ pub const Bundler = struct {
                 // or you're running in SSR
                 // or the file is a node_module
                 opts.features.hot_module_reloading = bundler.options.hot_module_reloading and
-                    bundler.options.platform != .bun and
+                    !bundler.options.platform.isBun() and
                     (!opts.can_import_from_bundle or
                     (opts.can_import_from_bundle and !path.isNodeModule()));
                 opts.features.react_fast_refresh = opts.features.hot_module_reloading and
@@ -2215,6 +2215,8 @@ pub const Bundler = struct {
                 }
 
                 opts.macro_context = &bundler.macro_context.?;
+
+                opts.features.is_macro = bundler.options.platform == .bunMacro;
 
                 const value = (bundler.resolver.caches.js.parse(
                     allocator,
@@ -3110,6 +3112,75 @@ pub const ServerEntryPoint = struct {
         entry.source = logger.Source.initPathString(name, code);
         entry.source.path.text = name;
         entry.source.path.namespace = "server-entry";
+    }
+};
+
+// This is not very fast.
+// The idea is: we want to generate a unique entry point per macro function export that registers the macro
+// Registering the macro happens in VirtualMachine
+// We "register" it which just marks the JSValue as protected.
+// This is mostly a workaround for being unable to call ESM exported functions from C++.
+// When that is resolved, we should remove this.
+pub const MacroEntryPoint = struct {
+    code_buffer: [std.fs.MAX_PATH_BYTES * 2 + 500]u8 = undefined,
+    output_code_buffer: [std.fs.MAX_PATH_BYTES * 8 + 500]u8 = undefined,
+    source: logger.Source = undefined,
+
+    pub fn generateID(entry_path: string, function_name: string, buf: []u8, len: *u32) i32 {
+        var hasher = std.hash.Wyhash.init(0);
+        hasher.update(js_ast.Macro.namespaceWithColon);
+        hasher.update(entry_path);
+        hasher.update(function_name);
+        const truncated_u32 = @truncate(u32, hasher.final());
+
+        const specifier = std.fmt.bufPrint(buf, js_ast.Macro.namespaceWithColon ++ "//{x}.js", .{truncated_u32}) catch unreachable;
+        len.* = @truncate(u32, specifier.len);
+
+        return generateIDFromSpecifier(specifier);
+    }
+
+    pub fn generateIDFromSpecifier(specifier: string) i32 {
+        return @bitCast(i32, @truncate(u32, std.hash.Wyhash.hash(0, specifier)));
+    }
+
+    pub fn generate(
+        entry: *MacroEntryPoint,
+        bundler: *Bundler,
+        import_path: Fs.PathName,
+        function_name: string,
+        macro_id: i32,
+        macro_label_: string,
+    ) !void {
+        const dir_to_use: string = import_path.dirWithTrailingSlash();
+        std.mem.copy(u8, entry.code_buffer[0..macro_label_.len], macro_label_);
+        const macro_label = entry.code_buffer[0..macro_label_.len];
+
+        const code = try std.fmt.bufPrint(
+            entry.code_buffer[macro_label.len..],
+            \\//Auto-generated file
+            \\import * as Macros from '{s}{s}';
+            \\
+            \\if (!('{s}' in Macros)) {{
+            \\  throw new Error("Macro '{s}' not found in '{s}{s}'");
+            \\}}
+            \\
+            \\Bun.registerMacro({d}, Macros['{s}']);
+        ,
+            .{
+                dir_to_use,
+                import_path.filename,
+                function_name,
+                function_name,
+                dir_to_use,
+                import_path.filename,
+                macro_id,
+                function_name,
+            },
+        );
+
+        entry.source = logger.Source.initPathString(macro_label, code);
+        entry.source.path.text = macro_label;
+        entry.source.path.namespace = js_ast.Macro.namespace;
     }
 };
 

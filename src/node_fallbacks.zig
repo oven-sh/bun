@@ -499,3 +499,11 @@ pub fn contentsFromPath(path: string) ?string {
 }
 
 pub const buffer_fallback_import_name: string = "node:buffer";
+
+pub fn isDisabledFallback(name: string) bool {
+    if (name.len >= 2) {
+        return (strings.eqlComptime(name, "fs") or strings.eqlComptime(name[0..3], "fs/")) or (name.len >= "module".len and strings.eqlComptime(name, "module"));
+    }
+
+    return false;
+}

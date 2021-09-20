@@ -165,7 +165,7 @@ pub const Linker = struct {
     }
 
     pub inline fn nodeModuleBundleImportPath(this: *const ThisLinker) string {
-        if (this.options.platform == .bun) return "/node_modules.server.bun";
+        if (this.options.platform.isBun()) return "/node_modules.server.bun";
 
         return if (this.options.node_modules_bundle_url.len > 0)
             this.options.node_modules_bundle_url

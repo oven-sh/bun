@@ -512,7 +512,7 @@ bWTF__String JSC__JSString__value(JSC__JSString *arg0, JSC__JSGlobalObject *arg1
 JSC__JSValue JSC__JSModuleLoader__callExportedFunction(JSC__JSGlobalObject *globalObject,
                                                        ZigString specifier, ZigString functionName,
                                                        JSC__JSValue *arguments,
-                                                       unsigned char args_len,
+                                                       unsigned char argumentsCount,
                                                        ZigException *zig_exception) {
   JSC::VM &vm = globalObject->vm();
   JSC::JSLockHolder lock(vm);
@@ -531,22 +531,21 @@ JSC__JSValue JSC__JSModuleLoader__callExportedFunction(JSC__JSGlobalObject *glob
     if (JSC::JSModuleRecord *record =
           JSC::jsDynamicCast<JSC::JSModuleRecord *>(vm, entry->getDirect(vm, recordIdentifier))) {
       auto fn_impl = WTF::ExternalStringImpl::createStatic(functionName.ptr, functionName.len);
-      auto fn_ident = reinterpret_cast<WTF::UniquedStringImpl *>(specifier_impl.ptr());
-      auto env = record->getModuleNamespace(globalObject);
+      auto fn_ident = reinterpret_cast<WTF::UniquedStringImpl *>(fn_impl.ptr());
+      auto moduleNamespace = record->getModuleNamespace(globalObject);
 
       if (JSC::JSValue macroFunctionExport =
-            env->getIfPropertyExists(globalObject, JSC::PropertyName(fn_ident))) {
+            moduleNamespace->getIfPropertyExists(globalObject, JSC::PropertyName(fn_ident))) {
 
         if (JSC::JSObject *macroFunction = JSC::asObject(macroFunctionExport.asCell())) {
-          // auto functionNameImpl =
-          //   WTF::ExternalStringImpl::createStatic(functionName.ptr, functionName.len);
           JSC::VMEntryScope entryScope(vm, globalObject);
 
           auto callData = JSC::getCallData(vm, macroFunction);
           if (callData.type == JSC::CallData::Type::None) return JSC::JSValue::encode({});
 
           JSC::MarkedArgumentBuffer argList;
-          for (size_t i = 0; i < args_len; i++) argList.append(JSC::JSValue::decode(arguments[i]));
+          for (size_t i = 0; i < argumentsCount; i++)
+            argList.append(JSC::JSValue::decode(arguments[i]));
 
           NakedPtr<JSC::Exception> uncaughtException;
           JSC::JSValue reval = JSC::call(globalObject, macroFunction, callData,

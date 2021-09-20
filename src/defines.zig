@@ -269,10 +269,10 @@ pub const Define = struct {
         // Step 2. Swap in certain literal values because those can be constant folded
         define.identifiers.putAssumeCapacity("undefined", value_define);
         define.identifiers.putAssumeCapacity("NaN", DefineData{
-            .value = js_ast.Expr.Data{ .e_number = &nan_val },
+            .value = js_ast.Expr.Data{ .e_number = nan_val },
         });
         define.identifiers.putAssumeCapacity("Infinity", DefineData{
-            .value = js_ast.Expr.Data{ .e_number = &inf_val },
+            .value = js_ast.Expr.Data{ .e_number = inf_val },
         });
 
         // Step 3. Load user data into hash tables

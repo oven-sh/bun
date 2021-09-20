@@ -337,18 +337,26 @@ pub const Platform = enum {
     neutral,
     browser,
     bun,
+    bunMacro,
     node,
+
+    pub inline fn isBun(this: Platform) bool {
+        return switch (this) {
+            .bunMacro, .bun => true,
+            else => false,
+        };
+    }
 
     pub inline fn isClient(this: Platform) bool {
         return switch (this) {
-            .bun => false,
+            .bunMacro, .bun => false,
             else => true,
         };
     }
 
     pub inline fn supportsBrowserField(this: Platform) bool {
         return switch (this) {
-            .neutral, .browser, .bun => true,
+            .bunMacro, .neutral, .browser, .bun => true,
             else => false,
         };
     }
@@ -359,7 +367,7 @@ pub const Platform = enum {
     pub inline fn processBrowserDefineValue(this: Platform) ?string {
         return switch (this) {
             .browser => browser_define_value_true,
-            .bun, .node => browser_define_value_false,
+            .bunMacro, .bun, .node => browser_define_value_false,
             else => null,
         };
     }
@@ -446,6 +454,7 @@ pub const Platform = enum {
         var listc = [_]string{ MAIN_FIELD_NAMES[0], MAIN_FIELD_NAMES[1], MAIN_FIELD_NAMES[2] };
         array.set(Platform.browser, &listc);
         array.set(Platform.bun, &listc);
+        array.set(Platform.bunMacro, &listc);
 
         // Original comment:
         // The neutral platform is for people that don't want esbuild to try to

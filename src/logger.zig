@@ -224,27 +224,42 @@ pub const Data = struct {
                         const before_segment = line_text[0..location_in_line_text];
 
                         try to.writeAll(before_segment);
-
                         if (is_colored) {
                             try to.writeAll(color_name);
                         }
 
-                        var end_of_segment: usize = 1;
-                        // extremely naive: we should really use IsIdentifierContinue || isIdentifierStart here
-                        var rest_of_line = line_text[location_in_line_text..];
-                        while (end_of_segment < rest_of_line.len) : (end_of_segment += 1) {
-                            if (!switch (rest_of_line[end_of_segment]) {
-                                'A'...'Z', 'a'...'z', '0'...'9', '_', '$', '(', ')' => true,
-                                else => false,
-                            }) break;
-                        }
+                        const rest_of_line = line_text[location_in_line_text..];
 
-                        try to.writeAll(rest_of_line[0..end_of_segment]);
-                        if (is_colored) {
+                        if (rest_of_line.len > 0) {
+                            var end_of_segment: usize = 1;
+                            var iter = strings.CodepointIterator{ .bytes = rest_of_line, .i = 1 };
+                            // extremely naive: we should really use IsIdentifierContinue || isIdentifierStart here
+
+                            // highlight until we reach the next matching
+                            switch (line_text[location_in_line_text]) {
+                                '\'' => {
+                                    end_of_segment = iter.scanUntilQuotedValueOrEOF('\'');
+                                },
+                                '"' => {
+                                    end_of_segment = iter.scanUntilQuotedValueOrEOF('"');
+                                },
+                                '<' => {
+                                    end_of_segment = iter.scanUntilQuotedValueOrEOF('>');
+                                },
+                                '`' => {
+                                    end_of_segment = iter.scanUntilQuotedValueOrEOF('`');
+                                },
+                                else => {},
+                            }
+                            try to.writeAll(rest_of_line[0..end_of_segment]);
+                            if (is_colored) {
+                                try to.writeAll("\x1b[0m");
+                            }
+
+                            try to.writeAll(rest_of_line[end_of_segment..]);
+                        } else if (is_colored) {
                             try to.writeAll("\x1b[0m");
                         }
-
-                        try to.writeAll(rest_of_line[end_of_segment..]);
                     } else {
                         try to.writeAll(line_text);
                     }

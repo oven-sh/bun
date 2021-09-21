@@ -679,6 +679,27 @@ pub const CodepointIterator = struct {
         }
     }
 
+    pub fn scanUntilQuotedValueOrEOF(iter: *CodepointIterator, comptime quote: CodePoint) usize {
+        @setRuntimeSafety(false);
+
+        while (iter.c > -1) {
+            if (!switch (iter.nextCodepoint()) {
+                quote => false,
+                '\\' => brk: {
+                    if (iter.nextCodepoint() == quote) {
+                        continue;
+                    }
+                    break :brk true;
+                },
+                else => true,
+            }) {
+                return iter.i + 1;
+            }
+        }
+
+        return iter.i;
+    }
+
     pub fn nextCodepoint(it: *CodepointIterator) CodePoint {
         const slice = it.nextCodepointSlice();
         it.width = @intCast(u3, slice.len);

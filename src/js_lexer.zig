@@ -29,6 +29,7 @@ pub var emptyJavaScriptString = ([_]u16{0});
 pub const JSONOptions = struct {
     allow_comments: bool = false,
     allow_trailing_commas: bool = false,
+    starts_with_string: bool = false,
 };
 
 pub const Lexer = struct {
@@ -524,7 +525,7 @@ pub const Lexer = struct {
     pub const InnerStringLiteral = packed struct { suffix_len: u3, needs_slow_path: bool };
     fn parseStringLiteralInnter(lexer: *LexerType, comptime quote: CodePoint) !InnerStringLiteral {
         var needs_slow_path = false;
-        var suffix_len: u3 = 1;
+        var suffix_len: u3 = if (comptime quote == 0) 0 else 1;
         stringLiteral: while (true) {
             @setRuntimeSafety(false);
 
@@ -533,7 +534,7 @@ pub const Lexer = struct {
                     try lexer.step();
 
                     // Handle Windows CRLF
-                    if (lexer.code_point == '\r' and lexer.json_options != null) {
+                    if (lexer.code_point == 'r' and lexer.json_options != null) {
                         try lexer.step();
                         if (lexer.code_point == '\n') {
                             try lexer.step();
@@ -541,17 +542,24 @@ pub const Lexer = struct {
                         continue :stringLiteral;
                     }
 
-                    // Skip slow path for a handful of common escaped characters that don't need UTf16 handling
-                    needs_slow_path = switch (lexer.code_point) {
-                        // if it was previously marked as needing slow path, then keep it
-                        'n', '`', '\'', '0', '"' => needs_slow_path,
-                        else => true,
-                    };
+                    switch (lexer.code_point) {
+                        't', 'r', 'n', '`', '\'', '0', '"', 0x2028, 0x2029 => {
+                            try lexer.step();
+                            continue :stringLiteral;
+                        },
+                        else => {
+                            needs_slow_path = true;
+                        },
+                    }
                 },
                 // This indicates the end of the file
 
                 -1 => {
-                    try lexer.addDefaultError("Unterminated string literal");
+                    if (comptime quote != 0) {
+                        try lexer.addDefaultError("Unterminated string literal");
+                    }
+
+                    break :stringLiteral;
                 },
 
                 '\r' => {
@@ -564,8 +572,17 @@ pub const Lexer = struct {
                 },
 
                 '\n' => {
-                    if (comptime quote != '`') {
-                        try lexer.addDefaultError("Unterminated string literal");
+
+                    // Implicitly-quoted strings end when they reach a newline OR end of file
+                    // This only applies to .env
+                    switch (comptime quote) {
+                        0 => {
+                            break :stringLiteral;
+                        },
+                        '`' => {},
+                        else => {
+                            try lexer.addDefaultError("Unterminated string literal");
+                        },
                     }
                 },
 
@@ -608,27 +625,23 @@ pub const Lexer = struct {
         return InnerStringLiteral{ .needs_slow_path = needs_slow_path, .suffix_len = suffix_len };
     }
 
-    fn parseStringLiteral(lexer: *LexerType) !void {
-        var quote: CodePoint = lexer.code_point;
-
-        if (quote != '`') {
+    pub fn parseStringLiteral(lexer: *LexerType, comptime quote: CodePoint) !void {
+        if (comptime quote != '`') {
             lexer.token = T.t_string_literal;
         } else if (lexer.rescan_close_brace_as_template_token) {
             lexer.token = T.t_template_tail;
         } else {
             lexer.token = T.t_no_substitution_template_literal;
         }
+        // quote is 0 when parsing JSON from .env
+        // .env values may not always be quoted.
         try lexer.step();
 
-        var string_literal_details = switch (quote) {
-            '`' => try lexer.parseStringLiteralInnter('`'),
-            '\'' => try lexer.parseStringLiteralInnter('\''),
-            '"' => try lexer.parseStringLiteralInnter('"'),
-            else => unreachable,
-        };
+        var string_literal_details = try lexer.parseStringLiteralInnter(quote);
 
         // Reset string literal
-        lexer.string_literal_slice = lexer.source.contents[lexer.start + 1 .. lexer.end - string_literal_details.suffix_len];
+        const base = if (comptime quote == 0) lexer.start else lexer.start + 1;
+        lexer.string_literal_slice = lexer.source.contents[base .. lexer.end - string_literal_details.suffix_len];
         lexer.string_literal_is_ascii = !string_literal_details.needs_slow_path;
         lexer.string_literal_buffer.shrinkRetainingCapacity(0);
         if (string_literal_details.needs_slow_path) {
@@ -1499,8 +1512,14 @@ pub const Lexer = struct {
                     }
                 },
 
-                '\'', '"', '`' => {
-                    try lexer.parseStringLiteral();
+                '\'' => {
+                    try lexer.parseStringLiteral('\'');
+                },
+                '"' => {
+                    try lexer.parseStringLiteral('"');
+                },
+                '`' => {
+                    try lexer.parseStringLiteral('`');
                 },
 
                 '_', '$', 'a'...'z', 'A'...'Z' => {
@@ -1778,7 +1797,6 @@ pub const Lexer = struct {
         return utf16ToString(lexer, js);
     }
 
-    // TODO: use wtf-8 encoding.
     pub fn utf16ToString(lexer: *LexerType, js: JavascriptString) string {
         var temp: [4]u8 = undefined;
         var list = std.ArrayList(u8).initCapacity(lexer.allocator, js.len) catch unreachable;
@@ -2595,16 +2613,32 @@ pub const Lexer = struct {
 
 pub fn isIdentifierStart(codepoint: CodePoint) bool {
     @setRuntimeSafety(false);
+    switch (codepoint) {
+        'a'...'z', 'A'...'Z', '_', '$' => return true,
+        else => {},
+    }
+
+    if (codepoint < 127) return false;
+
     return switch (codepoint) {
-        'a'...'z', 'A'...'Z', '_', '$' => true,
+        std.math.max(tables.id_start.r16_min, tables.id_start.latin_offset)...tables.id_start.r16_max => tables.id_start.inRange16(@intCast(u16, codepoint)),
+        tables.id_start.r32_min...tables.id_start.r32_max => tables.id_start.inRange32(@intCast(u32, codepoint)),
         else => false,
     };
 }
 pub fn isIdentifierContinue(codepoint: CodePoint) bool {
     @setRuntimeSafety(false);
 
+    switch (codepoint) {
+        'a'...'z', 'A'...'Z', '_', '$', '0'...'9' => return true,
+        else => {},
+    }
+
+    if (codepoint < 127) return false;
+
     return switch (codepoint) {
-        'a'...'z', 'A'...'Z', '_', '$', '0'...'9', 0x200C, 0x200D => true,
+        std.math.max(tables.id_continue.r16_min, tables.id_continue.latin_offset)...tables.id_continue.r16_max => tables.id_continue.inRange16(@intCast(u16, codepoint)),
+        tables.id_continue.r32_min...tables.id_continue.r32_max => tables.id_continue.inRange32(@intCast(u32, codepoint)),
         else => false,
     };
 }
@@ -2643,13 +2677,16 @@ pub fn isIdentifier(text: string) bool {
         return false;
     }
 
-    var iter = std.unicode.Utf8Iterator{ .bytes = text, .i = 0 };
-    if (!isIdentifierStart(iter.nextCodepoint() orelse unreachable)) {
+    var iter = strings.CodepointIterator{ .i = 0, .bytes = text };
+
+    if (!isIdentifierStart(iter.nextCodepoint())) {
         return false;
     }
 
-    while (iter.nextCodepoint()) |codepoint| {
-        if (!isIdentifierContinue(@intCast(CodePoint, codepoint))) {
+    iter.nextCodepointNoReturn();
+
+    while (iter.c > -1) : (iter.nextCodepointNoReturn()) {
+        if (!isIdentifierContinue(iter.c)) {
             return false;
         }
     }

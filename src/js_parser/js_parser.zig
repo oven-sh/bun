@@ -2539,22 +2539,22 @@ pub const Prefill = struct {
         };
     };
     pub const StringLiteral = struct {
-        pub var Key = [3]u16{ 'k', 'e', 'y' };
-        pub var Children = [_]u16{ 'c', 'h', 'i', 'l', 'd', 'r', 'e', 'n' };
-        pub var Filename = [_]u16{ 'f', 'i', 'l', 'e', 'N', 'a', 'm', 'e' };
-        pub var LineNumber = [_]u16{ 'l', 'i', 'n', 'e', 'N', 'u', 'm', 'b', 'e', 'r' };
-        pub var ColumnNumber = [_]u16{ 'c', 'o', 'l', 'u', 'm', 'n', 'N', 'u', 'm', 'b', 'e', 'r' };
+        pub var Key = [3]u8{ 'k', 'e', 'y' };
+        pub var Children = [_]u8{ 'c', 'h', 'i', 'l', 'd', 'r', 'e', 'n' };
+        pub var Filename = [_]u8{ 'f', 'i', 'l', 'e', 'N', 'a', 'm', 'e' };
+        pub var LineNumber = [_]u8{ 'l', 'i', 'n', 'e', 'N', 'u', 'm', 'b', 'e', 'r' };
+        pub var ColumnNumber = [_]u8{ 'c', 'o', 'l', 'u', 'm', 'n', 'N', 'u', 'm', 'b', 'e', 'r' };
     };
     pub const Value = struct {
         pub var EThis = E.This{};
         pub var Zero = E.Number{ .value = 0.0 };
     };
     pub const String = struct {
-        pub var Key = E.String{ .value = &Prefill.StringLiteral.Key };
-        pub var Children = E.String{ .value = &Prefill.StringLiteral.Children };
-        pub var Filename = E.String{ .value = &Prefill.StringLiteral.Filename };
-        pub var LineNumber = E.String{ .value = &Prefill.StringLiteral.LineNumber };
-        pub var ColumnNumber = E.String{ .value = &Prefill.StringLiteral.ColumnNumber };
+        pub var Key = E.String{ .utf8 = &Prefill.StringLiteral.Key };
+        pub var Children = E.String{ .utf8 = &Prefill.StringLiteral.Children };
+        pub var Filename = E.String{ .utf8 = &Prefill.StringLiteral.Filename };
+        pub var LineNumber = E.String{ .utf8 = &Prefill.StringLiteral.LineNumber };
+        pub var ColumnNumber = E.String{ .utf8 = &Prefill.StringLiteral.ColumnNumber };
     };
     pub const Data = struct {
         pub var BMissing = B{ .b_missing = BMissing_ };
@@ -4981,7 +4981,7 @@ pub fn NewParser(
         }
 
         fn createDefaultName(p: *P, loc: logger.Loc) !js_ast.LocRef {
-            var identifier = try std.fmt.allocPrint(p.allocator, "{s}_default", .{p.source.identifier_name});
+            var identifier = try std.fmt.allocPrint(p.allocator, "{s}_default", .{try p.source.path.name.nonUniqueNameString(p.allocator)});
 
             const name = js_ast.LocRef{ .loc = loc, .ref = try p.newSymbol(Symbol.Kind.other, identifier) };
 

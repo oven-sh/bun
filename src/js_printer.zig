@@ -272,7 +272,7 @@ pub fn NewPrinter(
             }
         }
 
-        pub fn unsafePrint(p: *Printer, str: string) void {
+        pub inline fn unsafePrint(p: *Printer, str: string) void {
             p.print(str);
         }
 
@@ -289,13 +289,13 @@ pub fn NewPrinter(
             }
         }
 
-        pub fn printSpace(p: *Printer) void {
+        pub inline fn printSpace(p: *Printer) void {
             p.print(" ");
         }
-        pub fn printNewline(p: *Printer) void {
+        pub inline fn printNewline(p: *Printer) void {
             p.print("\n");
         }
-        pub fn printSemicolonAfterStatement(p: *Printer) void {
+        pub inline fn printSemicolonAfterStatement(p: *Printer) void {
             p.print(";\n");
         }
         pub fn printSemicolonIfNeeded(p: *Printer) void {
@@ -304,7 +304,7 @@ pub fn NewPrinter(
                 p.needs_semicolon = false;
             }
         }
-        pub fn printSpaceBeforeIdentifier(
+        pub inline fn printSpaceBeforeIdentifier(
             p: *Printer,
         ) void {
             if (p.writer.written > 0 and (js_lexer.isIdentifierContinue(p.writer.prevChar()) or p.writer.written == p.prev_reg_exp_end)) {
@@ -312,7 +312,7 @@ pub fn NewPrinter(
             }
         }
 
-        pub fn maybePrintSpace(
+        pub inline fn maybePrintSpace(
             p: *Printer,
         ) void {
             switch (p.writer.prevChar()) {
@@ -327,7 +327,7 @@ pub fn NewPrinter(
             return .comma;
         }
 
-        pub fn printUndefined(p: *Printer, level: Level) void {
+        pub inline fn printUndefined(p: *Printer, level: Level) void {
             // void 0 is more efficient in output size
             // however, "void 0" is the same as "undefined" is a point of confusion for many
             // since we are optimizing for development, undefined is more clear.
@@ -414,8 +414,6 @@ pub fn NewPrinter(
         pub fn addSourceMapping(p: *Printer, loc: logger.Loc) void {}
 
         pub fn printSymbol(p: *Printer, ref: Ref) void {
-            debug("<printSymbol>\n   {s}", .{ref});
-            defer debugl("</printSymbol>");
             const name = p.renamer.nameForSymbol(ref);
 
             p.printIdentifier(name);
@@ -555,6 +553,7 @@ pub fn NewPrinter(
 
         pub fn printNonNegativeFloat(p: *Printer, float: f64) void {
             // Is this actually an integer?
+            @setRuntimeSafety(false);
             if (float < std.math.maxInt(u32) and std.math.ceil(float) == float) {
                 // In JavaScript, numbers are represented as 64 bit floats
                 // However, they could also be signed or unsigned int 32 (when doing bit shifts)
@@ -859,25 +858,28 @@ pub fn NewPrinter(
         pub fn printQuotedUTF8(p: *Printer, str: string, allow_backtick: bool) void {
             const quote = p.bestQuoteCharForString(str, allow_backtick);
             p.print(quote);
-            // I don't think this will work...
             p.print(str);
             p.print(quote);
         }
 
-        pub fn canPrintIdentifier(p: *Printer, name: string) bool {
-            if (ascii_only) {
+        pub inline fn canPrintIdentifier(p: *Printer, name: string) bool {
+            if (comptime ascii_only) {
                 return js_lexer.isIdentifier(name) and !strings.containsNonBmpCodePoint(name);
             } else {
                 return js_lexer.isIdentifier(name);
             }
         }
 
-        pub fn canPrintIdentifierUTF16(p: *Printer, name: JavascriptString) bool {
-            if (ascii_only) {
-                return js_lexer.isIdentifierUTF16(name) and !strings.containsNonBmpCodePointUTF16(name);
-            } else {
-                return js_lexer.isIdentifierUTF16(name);
-            }
+        pub inline fn canPrintIdentifierUTF16(p: *Printer, name: JavascriptString) bool {
+            // TODO: fix this
+            // this is commented out because something isn't quite right
+            // the problem may lie in isIdentifierUTF16, or it may lie in how these are allocated.
+            return false;
+            // if (comptime ascii_only) {
+            //     return js_lexer.isIdentifierUTF16(name) and !strings.containsNonBmpCodePointUTF16(name);
+            // } else {
+            //     return js_lexer.isIdentifierUTF16(name);
+            // }
         }
 
         pub fn printExpr(p: *Printer, expr: Expr, level: Level, _flags: ExprFlag) void {
@@ -1873,18 +1875,7 @@ pub fn NewPrinter(
                         // While each of those property keys are ASCII, a subset of ASCII is valid as the start of an identifier
                         // "=" and ":" are not valid
                         // So we need to check
-                        var needs_quoted = !js_lexer.isIdentifierStart(@intCast(js_lexer.CodePoint, key.utf8[0]));
-                        if (!needs_quoted) {
-                            var i: usize = 1;
-                            while (i < key.utf8.len) : (i += 1) {
-                                if (!js_lexer.isIdentifierContinue(@intCast(js_lexer.CodePoint, key.utf8[i]))) {
-                                    needs_quoted = true;
-                                    break;
-                                }
-                            }
-                        }
-
-                        if (!needs_quoted) {
+                        if (js_lexer.isIdentifier(key.utf8)) {
                             p.print(key.utf8);
                         } else {
                             allow_shorthand = false;
@@ -1971,17 +1962,10 @@ pub fn NewPrinter(
                             }
                         }
                     } else {
-                        if (key.isUTF8()) {
-                            const c = p.bestQuoteCharForString(key.utf8, false);
-                            p.print(c);
-                            p.printIdentifier(key.utf8);
-                            p.print(c);
-                        } else {
-                            const c = p.bestQuoteCharForString(key.value, false);
-                            p.print(c);
-                            p.printQuotedUTF16(key.value, c);
-                            p.print(c);
-                        }
+                        const c = p.bestQuoteCharForString(key.value, false);
+                        p.print(c);
+                        p.printQuotedUTF16(key.value, c);
+                        p.print(c);
                     }
                 },
                 else => {

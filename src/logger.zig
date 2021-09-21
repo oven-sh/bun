@@ -847,11 +847,6 @@ pub const Source = struct {
     contents: string,
     contents_is_recycled: bool = false,
 
-    // An identifier that is mixed in to automatically-generated symbol names to
-    // improve readability. For example, if the identifier is "util" then the
-    // symbol for an "export default" statement will be called "util_default".
-    identifier_name: string,
-
     pub const ErrorPosition = struct {
         line_start: usize,
         line_end: usize,
@@ -861,12 +856,10 @@ pub const Source = struct {
 
     pub fn initFile(file: fs.File, allocator: *std.mem.Allocator) !Source {
         var name = file.path.name;
-        var identifier_name = name.nonUniqueNameString(allocator) catch unreachable;
 
         var source = Source{
             .path = file.path,
             .key_path = fs.Path.init(file.path.text),
-            .identifier_name = identifier_name,
             .contents = file.contents,
         };
         source.path.namespace = "file";
@@ -875,12 +868,10 @@ pub const Source = struct {
 
     pub fn initRecycledFile(file: fs.File, allocator: *std.mem.Allocator) !Source {
         var name = file.path.name;
-        var identifier_name = name.nonUniqueNameString(allocator) catch unreachable;
 
         var source = Source{
             .path = file.path,
             .key_path = fs.Path.init(file.path.text),
-            .identifier_name = identifier_name,
             .contents = file.contents,
             .contents_is_recycled = true,
         };
@@ -891,7 +882,7 @@ pub const Source = struct {
 
     pub fn initPathString(pathString: string, contents: string) Source {
         var path = fs.Path.init(pathString);
-        return Source{ .key_path = path, .path = path, .identifier_name = path.name.base, .contents = contents };
+        return Source{ .key_path = path, .path = path, .contents = contents };
     }
 
     pub fn textForRange(self: *const Source, r: Range) string {

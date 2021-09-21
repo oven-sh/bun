@@ -839,3 +839,6 @@ test "tokenToString" {
 //         expect(v == 0x223C);
 //     }
 // }
+
+pub const id_start = @import("./js_lexer/unicode.zig").id_start;
+pub const id_continue = @import("./js_lexer/unicode.zig").id_continue;

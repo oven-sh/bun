@@ -95,6 +95,8 @@ async function main() {
     "/ts-fallback-rewrite-works.js",
     "/tsx-fallback-rewrite-works.js",
     "/lodash-regexp.js",
+    "/unicode-identifiers.js",
+    "/string-escapes.js",
   ];
   tests.reverse();
 

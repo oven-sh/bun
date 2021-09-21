@@ -1,0 +1,10 @@
+{
+  "name": "misctools",
+  "version": "1.0.0",
+  "main": "index.js",
+  "license": "MIT",
+  "devDependencies": {
+    "@unicode/unicode-13.0.0": "^1.2.1",
+    "@unicode/unicode-3.0.0": "^1.2.1"
+  }
+}

@@ -649,105 +649,111 @@ pub fn utf8ByteSequenceLength(first_byte: u8) u3 {
     };
 }
 
-pub const CodepointIterator = struct {
-    bytes: []const u8,
-    i: usize,
-    width: u3 = 0,
-    c: CodePoint = 0,
+pub fn NewCodePointIterator(comptime CodePointType: type, comptime zeroValue: comptime_int) type {
+    return struct {
+        const Iterator = @This();
+        bytes: []const u8,
+        i: usize,
+        width: u3 = 0,
+        c: CodePointType = 0,
 
-    inline fn nextCodepointSlice(it: *CodepointIterator) []const u8 {
-        @setRuntimeSafety(false);
-
-        const cp_len = utf8ByteSequenceLength(it.bytes[it.i]);
-        it.i += cp_len;
-
-        return if (!(it.i > it.bytes.len)) it.bytes[it.i - cp_len .. it.i] else "";
-    }
-
-    pub fn needsUTF8Decoding(slice: string) bool {
-        var it = CodepointIterator{ .bytes = slice, .i = 0 };
-
-        while (true) {
-            const part = it.nextCodepointSlice();
-            it.width = @intCast(u3, part.len);
+        inline fn nextCodepointSlice(it: *Iterator) []const u8 {
             @setRuntimeSafety(false);
-            switch (it.width) {
-                0 => return false,
-                1 => continue,
-                else => return true,
-            }
+
+            const cp_len = utf8ByteSequenceLength(it.bytes[it.i]);
+            it.i += cp_len;
+
+            return if (!(it.i > it.bytes.len)) it.bytes[it.i - cp_len .. it.i] else "";
         }
-    }
 
-    pub fn scanUntilQuotedValueOrEOF(iter: *CodepointIterator, comptime quote: CodePoint) usize {
-        @setRuntimeSafety(false);
+        pub fn needsUTF8Decoding(slice: string) bool {
+            var it = Iterator{ .bytes = slice, .i = 0 };
 
-        while (iter.c > -1) {
-            if (!switch (iter.nextCodepoint()) {
-                quote => false,
-                '\\' => brk: {
-                    if (iter.nextCodepoint() == quote) {
-                        continue;
-                    }
-                    break :brk true;
-                },
-                else => true,
-            }) {
-                return iter.i + 1;
+            while (true) {
+                const part = it.nextCodepointSlice();
+                it.width = @intCast(u3, part.len);
+                @setRuntimeSafety(false);
+                switch (it.width) {
+                    0 => return false,
+                    1 => continue,
+                    else => return true,
+                }
             }
         }
 
-        return iter.i;
-    }
+        pub fn scanUntilQuotedValueOrEOF(iter: *Iterator, comptime quote: CodePointType) usize {
+            @setRuntimeSafety(false);
 
-    pub fn nextCodepoint(it: *CodepointIterator) CodePoint {
-        const slice = it.nextCodepointSlice();
-        it.width = @intCast(u3, slice.len);
-        @setRuntimeSafety(false);
+            while (iter.c > -1) {
+                if (!switch (iter.nextCodepoint()) {
+                    quote => false,
+                    '\\' => brk: {
+                        if (iter.nextCodepoint() == quote) {
+                            continue;
+                        }
+                        break :brk true;
+                    },
+                    else => true,
+                }) {
+                    return iter.i + 1;
+                }
+            }
 
-        it.c = switch (it.width) {
-            0 => -1,
-            1 => @intCast(CodePoint, slice[0]),
-            2 => @intCast(CodePoint, std.unicode.utf8Decode2(slice) catch unreachable),
-            3 => @intCast(CodePoint, std.unicode.utf8Decode3(slice) catch unreachable),
-            4 => @intCast(CodePoint, std.unicode.utf8Decode4(slice) catch unreachable),
-            else => unreachable,
-        };
-
-        return it.c;
-    }
-
-    pub fn nextCodepointNoReturn(it: *CodepointIterator) void {
-        const slice = it.nextCodepointSlice();
-        it.width = @intCast(u3, slice.len);
-        @setRuntimeSafety(false);
-
-        it.c = switch (it.width) {
-            0 => -1,
-            1 => @intCast(CodePoint, slice[0]),
-            2 => @intCast(CodePoint, std.unicode.utf8Decode2(slice) catch unreachable),
-            3 => @intCast(CodePoint, std.unicode.utf8Decode3(slice) catch unreachable),
-            4 => @intCast(CodePoint, std.unicode.utf8Decode4(slice) catch unreachable),
-            else => unreachable,
-        };
-    }
-
-    /// Look ahead at the next n codepoints without advancing the iterator.
-    /// If fewer than n codepoints are available, then return the remainder of the string.
-    pub fn peek(it: *CodepointIterator, n: usize) []const u8 {
-        const original_i = it.i;
-        defer it.i = original_i;
-
-        var end_ix = original_i;
-        var found: usize = 0;
-        while (found < n) : (found += 1) {
-            const next_codepoint = it.nextCodepointSlice() orelse return it.bytes[original_i..];
-            end_ix += next_codepoint.len;
+            return iter.i;
         }
 
-        return it.bytes[original_i..end_ix];
-    }
-};
+        pub fn nextCodepoint(it: *Iterator) CodePointType {
+            const slice = it.nextCodepointSlice();
+            it.width = @intCast(u3, slice.len);
+            @setRuntimeSafety(false);
+
+            it.c = switch (it.width) {
+                0 => zeroValue,
+                1 => @intCast(CodePointType, slice[0]),
+                2 => @intCast(CodePointType, std.unicode.utf8Decode2(slice) catch unreachable),
+                3 => @intCast(CodePointType, std.unicode.utf8Decode3(slice) catch unreachable),
+                4 => @intCast(CodePointType, std.unicode.utf8Decode4(slice) catch unreachable),
+                else => unreachable,
+            };
+
+            return it.c;
+        }
+
+        pub fn nextCodepointNoReturn(it: *Iterator) void {
+            const slice = it.nextCodepointSlice();
+            it.width = @intCast(u3, slice.len);
+            @setRuntimeSafety(false);
+
+            it.c = switch (it.width) {
+                0 => zeroValue,
+                1 => @intCast(CodePointType, slice[0]),
+                2 => @intCast(CodePointType, std.unicode.utf8Decode2(slice) catch unreachable),
+                3 => @intCast(CodePointType, std.unicode.utf8Decode3(slice) catch unreachable),
+                4 => @intCast(CodePointType, std.unicode.utf8Decode4(slice) catch unreachable),
+                else => unreachable,
+            };
+        }
+
+        /// Look ahead at the next n codepoints without advancing the iterator.
+        /// If fewer than n codepoints are available, then return the remainder of the string.
+        pub fn peek(it: *Iterator, n: usize) []const u8 {
+            const original_i = it.i;
+            defer it.i = original_i;
+
+            var end_ix = original_i;
+            var found: usize = 0;
+            while (found < n) : (found += 1) {
+                const next_codepoint = it.nextCodepointSlice() orelse return it.bytes[original_i..];
+                end_ix += next_codepoint.len;
+            }
+
+            return it.bytes[original_i..end_ix];
+        }
+    };
+}
+
+pub const CodepointIterator = NewCodePointIterator(CodePoint, -1);
+pub const UnsignedCodepointIterator = NewCodePointIterator(u32, 0);
 
 test "join" {
     var string_list = &[_]string{ "abc", "def", "123", "hello" };

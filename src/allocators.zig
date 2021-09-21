@@ -132,29 +132,46 @@ const hasDeinit = std.meta.trait.hasFn("deinit")(ValueType);
 pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
     const count = _count * 2;
     const max_index = count - 1;
-    var list_type: type = undefined;
-    var list_count = count;
     const overflow_init_count = std.math.max(count / 8, 32);
     return struct {
         pub var backing_buf: [count]ValueType = undefined;
-        pub var backing_buf_used: u16 = 0;
+        const ChunkSize = 256;
+        const OverflowBlock = struct {
+            used: std.atomic.Atomic(u16) = std.atomic.Atomic(u16).init(0),
+            data: [ChunkSize]ValueType = undefined,
+            prev: ?*OverflowBlock = null,
+
+            pub fn append(this: *OverflowBlock, item: ValueType) !*ValueType {
+                const index = this.used.fetchAdd(1, .AcqRel);
+                if (index >= ChunkSize) return error.OutOfMemory;
+                this.data[index] = item;
+                return &this.data[index];
+            }
+        };
+
+        pub var used: u32 = 0;
         const Allocator = std.mem.Allocator;
         const Self = @This();
-        const OverflowListType = std.ArrayListUnmanaged(ValueType);
 
-        overflow_list: OverflowListType,
         allocator: *Allocator,
         mutex: Mutex = Mutex.init(),
+        head: *OverflowBlock = undefined,
+        tail: OverflowBlock = OverflowBlock{},
 
         pub var instance: Self = undefined;
         pub var loaded = false;
+
+        pub inline fn blockIndex(index: u31) usize {
+            return index / ChunkSize;
+        }
 
         pub fn init(allocator: *std.mem.Allocator) *Self {
             if (!loaded) {
                 instance = Self{
                     .allocator = allocator,
-                    .overflow_list = OverflowListType{},
+                    .tail = OverflowBlock{},
                 };
+                instance.head = &instance.tail;
                 loaded = true;
             }
 
@@ -162,121 +179,37 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
         }
 
         pub fn isOverflowing() bool {
-            return backing_buf_used >= @as(u16, count);
-        }
-
-        pub fn at(self: *const Self, index: IndexType) ?*ValueType {
-            if (index.index == NotFound.index or index.index == Unassigned.index) return null;
-
-            if (index.is_overflow) {
-                return &self.overflow_list.items[index.index];
-            } else {
-                return &backing_buf[index.index];
-            }
+            return used >= @as(u16, count);
         }
 
         pub fn exists(self: *Self, value: ValueType) bool {
             return isSliceInBuffer(value, backing_buf);
         }
 
-        pub fn append(self: *Self, value: ValueType) !IndexType {
+        fn appendOverflow(self: *Self, value: ValueType) !*ValueType {
+            used += 1;
+            return self.head.append(value) catch brk: {
+                var new_block = try self.allocator.create(OverflowBlock);
+                new_block.* = OverflowBlock{};
+                new_block.prev = self.head;
+                self.head = new_block;
+                break :brk self.head.append(value);
+            };
+        }
+
+        pub fn append(self: *Self, value: ValueType) !*ValueType {
             self.mutex.lock();
             defer self.mutex.unlock();
-            var result = IndexType{ .index = std.math.maxInt(u31), .is_overflow = backing_buf_used > max_index };
-            if (result.is_overflow) {
-                result.index = @intCast(u31, self.overflow_list.items.len);
-                try self.overflow_list.append(self.allocator, value);
+            if (used > max_index) {
+                return self.appendOverflow(value);
             } else {
-                result.index = backing_buf_used;
-                backing_buf[result.index] = value;
-                backing_buf_used += 1;
-                if (backing_buf_used >= max_index) {
-                    self.overflow_list = try @TypeOf(self.overflow_list).initCapacity(self.allocator, overflow_init_count);
-                }
+                const index = used;
+                backing_buf[index] = value;
+                used += 1;
+                return &backing_buf[index];
             }
-
-            return result;
         }
         pub const Pair = struct { index: IndexType, value: *ValueType };
-        pub fn appendGet(self: *Self, value: ValueType) !Pair {
-            self.mutex.lock();
-            defer self.mutex.unlock();
-
-            var result = IndexType{ .index = std.math.maxInt(u31), .is_overflow = backing_buf_used > max_index };
-            if (result.is_overflow) {
-                result.index = @intCast(u31, self.overflow_list.items.len);
-                try self.overflow_list.append(self.allocator, value);
-                return Pair{ .index = result, .value = &self.overflow_list.items[result.index] };
-            } else {
-                result.index = backing_buf_used;
-                backing_buf[result.index] = value;
-                backing_buf_used += 1;
-                if (backing_buf_used >= max_index) {
-                    self.overflow_list = try @TypeOf(self.overflow_list).initCapacity(self.allocator, overflow_init_count);
-                }
-                return Pair{ .index = result, .value = &backing_buf[result.index] };
-            }
-        }
-
-        pub fn update(self: *Self, result: *IndexType, value: ValueType) !*ValueType {
-            self.mutex.lock();
-            defer self.mutex.unlock();
-
-            if (result.index.index == NotFound.index or result.index.index == Unassigned.index) {
-                result.index.is_overflow = backing_buf_used > max_index;
-                if (result.index.is_overflow) {
-                    result.index.index = @intCast(u31, self.overflow_list.items.len);
-                } else {
-                    result.index.index = backing_buf_used;
-                    backing_buf_used += 1;
-                    if (backing_buf_used >= max_index) {
-                        self.overflow_list = try @TypeOf(self.overflow_list).initCapacity(self.allocator, overflow_init_count);
-                    }
-                }
-            }
-
-            if (result.index.is_overflow) {
-                if (self.overflow_list.items.len == result.index.index) {
-                    const real_index = self.overflow_list.items.len;
-                    try self.overflow_list.append(self.allocator, value);
-                } else {
-                    self.overflow_list.items[result.index.index] = value;
-                }
-
-                return &self.overflow_list.items[result.index.index];
-            } else {
-                backing_buf[result.index.index] = value;
-
-                return &backing_buf[result.index.index];
-            }
-        }
-
-        pub fn remove(self: *Self, index: IndexType) void {
-            @compileError("Not implemented yet.");
-            // switch (index) {
-            //     Unassigned.index => {
-            //         self.index.remove(_key);
-            //     },
-            //     NotFound.index => {
-            //         self.index.remove(_key);
-            //     },
-            //     0...max_index => {
-            //         if (hasDeinit(ValueType)) {
-            //             backing_buf[index].deinit();
-            //         }
-            //         backing_buf[index] = undefined;
-            //     },
-            //     else => {
-            //         const i = index - count;
-            //         if (hasDeinit(ValueType)) {
-            //             self.overflow_list.items[i].deinit();
-            //         }
-            //         self.overflow_list.items[index - count] = undefined;
-            //     },
-            // }
-
-            // return index;
-        }
     };
 }
 

@@ -152,7 +152,7 @@ pub const FileSystem = struct {
     }
 
     pub const DirEntry = struct {
-        pub const EntryMap = hash_map.StringHashMap(allocators.IndexType);
+        pub const EntryMap = hash_map.StringHashMap(*Entry);
         pub const EntryStore = allocators.BSSList(Entry, Preallocate.Counts.files);
         dir: string,
         fd: StoredFileDescriptorType = 0,
@@ -191,7 +191,7 @@ pub const FileSystem = struct {
             else
                 strings.StringOrTinyString.initLowerCase(entry.name);
 
-            const stored = try EntryStore.instance.appendGet(
+            var stored = try EntryStore.instance.append(
                 Entry{
                     .base_ = name,
                     .base_lowercase_ = name_lowercased,
@@ -208,9 +208,9 @@ pub const FileSystem = struct {
                 },
             );
 
-            const stored_name = stored.value.base();
+            const stored_name = stored.base();
 
-            try dir.data.put(stored.value.base_lowercase(), stored.index);
+            try dir.data.put(stored.base_lowercase(), stored);
             if (comptime FeatureFlags.verbose_fs) {
                 if (_kind == .dir) {
                     Output.prettyln("   + {s}/", .{stored_name});
@@ -250,7 +250,7 @@ pub const FileSystem = struct {
 
             var iter = d.data.iterator();
             while (iter.next()) |file_entry| {
-                EntryStore.instance.at(file_entry.value).?.deinit(d.data.allocator);
+                // EntryStore.instance.at(file_entry.value).?.deinit(d.data.allocator);
             }
 
             d.data.deinit();
@@ -262,8 +262,7 @@ pub const FileSystem = struct {
             std.debug.assert(scratch_lookup_buffer.len >= _query.len);
 
             const query = strings.copyLowercase(_query, &scratch_lookup_buffer);
-            const result_index = entry.data.get(query) orelse return null;
-            const result = EntryStore.instance.at(result_index) orelse return null;
+            const result = entry.data.get(query) orelse return null;
             const basename = result.base();
             if (!strings.eql(basename, _query)) {
                 return Entry.Lookup{ .entry = result, .diff_case = Entry.Lookup.DifferentCase{
@@ -284,8 +283,7 @@ pub const FileSystem = struct {
 
             const query_hashed = comptime DirEntry.EntryMap.getHash(&query);
 
-            const result_index = entry.data.getWithHash(&query, query_hashed) orelse return null;
-            const result = EntryStore.instance.at(result_index) orelse return null;
+            const result = entry.data.getWithHash(&query, query_hashed) orelse return null;
             const basename = result.base();
 
             if (!strings.eqlComptime(basename, comptime query[0..query_str.len])) {
@@ -310,8 +308,7 @@ pub const FileSystem = struct {
 
             const query_hashed = comptime DirEntry.EntryMap.getHash(&query);
 
-            const result_index = entry.data.getWithHash(&query, query_hashed) orelse return false;
-            return result_index.index != allocators.NotFound.index and result_index.index != allocators.Unassigned.index;
+            return entry.data.getWithHash(&query, query_hashed) != null;
         }
     };
 

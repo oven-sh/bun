@@ -61,9 +61,8 @@ pub fn getEntryPointsWithBuffer(this: *const Router, allocator: *std.mem.Allocat
             @boolToInt(children.len == 0),
         );
         if (children.len == 0) {
-            if (Fs.FileSystem.DirEntry.EntryStore.instance.at(this.routes.routes.items(.entry_index)[i])) |entry| {
-                str_len += entry.base().len + entry.dir.len;
-            }
+            const entry = this.routes.routes.items(.entry)[i];
+            str_len += entry.base().len + entry.dir.len;
         }
     }
 
@@ -76,18 +75,17 @@ pub fn getEntryPointsWithBuffer(this: *const Router, allocator: *std.mem.Allocat
     while (i < route_count) : (i += 1) {
         const children = this.routes.routes.items(.children)[i];
         if (children.len == 0) {
-            if (Fs.FileSystem.DirEntry.EntryStore.instance.at(this.routes.routes.items(.entry_index)[i])) |entry| {
-                if (comptime absolute) {
-                    var parts = [_]string{ entry.dir, entry.base() };
-                    entry_points[entry_point_i] = this.fs.absBuf(&parts, remain);
-                } else {
-                    var parts = [_]string{ "/", this.config.asset_prefix_path, this.fs.relativeTo(entry.dir), entry.base() };
-                    entry_points[entry_point_i] = this.fs.joinBuf(&parts, remain);
-                }
-
-                remain = remain[entry_points[entry_point_i].len..];
-                entry_point_i += 1;
+            const entry = this.routes.routes.items(.entry)[i];
+            if (comptime absolute) {
+                var parts = [_]string{ entry.dir, entry.base() };
+                entry_points[entry_point_i] = this.fs.absBuf(&parts, remain);
+            } else {
+                var parts = [_]string{ "/", this.config.asset_prefix_path, this.fs.relativeTo(entry.dir), entry.base() };
+                entry_points[entry_point_i] = this.fs.joinBuf(&parts, remain);
             }
+
+            remain = remain[entry_points[entry_point_i].len..];
+            entry_point_i += 1;
         }
     }
 
@@ -117,8 +115,7 @@ pub fn loadRoutes(
     if (root_dir_info.getEntriesConst()) |entries| {
         var iter = entries.data.iterator();
         outer: while (iter.next()) |entry_ptr| {
-            const entry_index = entry_ptr.value;
-            const entry = Fs.FileSystem.DirEntry.EntryStore.instance.at(entry_index) orelse continue;
+            const entry = entry_ptr.value;
             if (entry.base()[0] == '.') {
                 continue :outer;
             }
@@ -139,7 +136,7 @@ pub fn loadRoutes(
                             entry.base(),
                             Fs.PathName.init(entry.dir[this.config.dir.len..]).dirWithTrailingSlash(),
                             "",
-                            entry_index,
+                            entry,
                         );
 
                         route.parent = parent;
@@ -172,7 +169,7 @@ pub fn loadRoutes(
                                 // we extend the pointer length by one to get it's slash
                                 entry.dir.ptr[this.config.dir.len..entry.dir.len],
                                 extname,
-                                entry_index,
+                                entry,
                             );
                             route.parent = parent;
 
@@ -235,7 +232,7 @@ pub const Route = struct {
     hash: u32,
     children: Ptr = Ptr{},
     parent: u16 = top_level_parent,
-    entry_index: allocators.IndexType,
+    entry: *Fs.FileSystem.Entry,
 
     full_hash: u32,
 
@@ -244,7 +241,7 @@ pub const Route = struct {
     pub const List = std.MultiArrayList(Route);
     pub const Ptr = TinyPtr;
 
-    pub fn parse(base: string, dir: string, extname: string, entry_index: allocators.IndexType) Route {
+    pub fn parse(base: string, dir: string, extname: string, entry: *Fs.FileSystem.Entry) Route {
         const ensure_slash = if (dir.len > 0 and dir[dir.len - 1] != '/') "/" else "";
 
         var parts = [3]string{ dir, ensure_slash, base };
@@ -257,7 +254,7 @@ pub const Route = struct {
         return Route{
             .name = name,
             .path = base,
-            .entry_index = entry_index,
+            .entry = entry,
             .hash = @truncate(
                 u32,
                 std.hash.Wyhash.hash(
@@ -411,23 +408,22 @@ pub const RouteMap = struct {
                 this.params.shrinkRetainingCapacity(start_len);
                 return null;
             } else {
-                if (Fs.FileSystem.DirEntry.EntryStore.instance.at(head.entry_index)) |entry| {
-                    var parts = [_]string{ entry.dir, entry.base() };
-                    const file_path = Fs.FileSystem.instance.absBuf(&parts, this.matched_route_buf);
+                const entry = head.entry;
+                var parts = [_]string{ entry.dir, entry.base() };
+                const file_path = Fs.FileSystem.instance.absBuf(&parts, this.matched_route_buf);
 
-                    match_result = Match{
-                        .path = head.path,
-                        .name = Match.nameWithBasename(file_path, this.map.config.dir),
-                        .params = this.params,
-                        .hash = head.full_hash,
-                        .query_string = this.url_path.query_string,
-                        .pathname = this.url_path.pathname,
-                        .basename = entry.base(),
-                        .file_path = file_path,
-                    };
+                match_result = Match{
+                    .path = head.path,
+                    .name = Match.nameWithBasename(file_path, this.map.config.dir),
+                    .params = this.params,
+                    .hash = head.full_hash,
+                    .query_string = this.url_path.query_string,
+                    .pathname = this.url_path.pathname,
+                    .basename = entry.base(),
+                    .file_path = file_path,
+                };
 
-                    this.matched_route_buf[match_result.file_path.len] = 0;
-                }
+                this.matched_route_buf[match_result.file_path.len] = 0;
             }
 
             // Now that we know for sure the route will match, we append the param
@@ -500,7 +496,7 @@ pub const RouteMap = struct {
 
         if (path.len == 0) {
             if (this.index) |index| {
-                const entry = Fs.FileSystem.DirEntry.EntryStore.instance.at(routes_slice.items(.entry_index)[index]).?;
+                const entry = routes_slice.items(.entry)[index];
                 const parts = [_]string{ entry.dir, entry.base() };
 
                 return Match{
@@ -531,7 +527,7 @@ pub const RouteMap = struct {
                 const children = routes_slice.items(.hash)[route.children.offset .. route.children.offset + route.children.len];
                 for (children) |child_hash, i| {
                     if (child_hash == index_route_hash) {
-                        const entry = Fs.FileSystem.DirEntry.EntryStore.instance.at(routes_slice.items(.entry_index)[i + route.children.offset]).?;
+                        const entry = routes_slice.items(.entry)[i + route.children.offset];
                         const parts = [_]string{ entry.dir, entry.base() };
                         const file_path = Fs.FileSystem.instance.absBuf(&parts, file_path_buf);
                         return Match{
@@ -550,7 +546,7 @@ pub const RouteMap = struct {
                 // It's an exact route, there are no params
                 // /foo/bar => /foo/bar.js
             } else {
-                const entry = Fs.FileSystem.DirEntry.EntryStore.instance.at(route.entry_index).?;
+                const entry = route.entry;
                 const parts = [_]string{ entry.dir, entry.base() };
                 const file_path = Fs.FileSystem.instance.absBuf(&parts, file_path_buf);
                 return Match{

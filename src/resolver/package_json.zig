@@ -479,6 +479,11 @@ pub const PackageJSON = struct {
             .main_fields = MainFieldMap.init(r.allocator),
         };
 
+        // Note: we tried rewriting this to be fewer loops over all the properties (asProperty loops over each)
+        // The end result was: it's not faster! Sometimes, it's slower.
+        // It's hard to say why.
+        // Feels like a codegen issue.
+        // or that looping over every property doesn't really matter because most package.jsons are < 20 properties
         if (json.asProperty("version")) |version_json| {
             if (version_json.expr.asString(r.allocator)) |version_str| {
                 if (version_str.len > 0) {

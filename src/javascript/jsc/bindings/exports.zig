@@ -816,9 +816,44 @@ pub const ZigConsoleClient = struct {
 
     pub fn count(console: ZigConsoleClient.Type, global: *JSGlobalObject, chars: [*]const u8, len: usize) callconv(.C) void {}
     pub fn countReset(console: ZigConsoleClient.Type, global: *JSGlobalObject, chars: [*]const u8, len: usize) callconv(.C) void {}
-    pub fn time(console: ZigConsoleClient.Type, global: *JSGlobalObject, chars: [*]const u8, len: usize) callconv(.C) void {}
+
+    const PendingTimers = std.AutoHashMap(u64, ?std.time.Timer);
+    threadlocal var pending_time_logs: PendingTimers = undefined;
+    threadlocal var pending_time_logs_loaded = false;
+
+    pub fn time(console: ZigConsoleClient.Type, global: *JSGlobalObject, chars: [*]const u8, len: usize) callconv(.C) void {
+        const id = std.hash.Wyhash.hash(0, chars[0..len]);
+        if (!pending_time_logs_loaded) {
+            pending_time_logs = PendingTimers.init(default_allocator);
+            pending_time_logs_loaded = true;
+        }
+
+        var result = pending_time_logs.getOrPut(id) catch unreachable;
+
+        if (!result.found_existing or (result.found_existing and result.value_ptr.* == null)) {
+            result.value_ptr.* = std.time.Timer.start() catch unreachable;
+        }
+    }
+    pub fn timeEnd(console: ZigConsoleClient.Type, global: *JSGlobalObject, chars: [*]const u8, len: usize) callconv(.C) void {
+        if (!pending_time_logs_loaded) {
+            return;
+        }
+
+        const id = std.hash.Wyhash.hash(0, chars[0..len]);
+        var result = (pending_time_logs.fetchPut(id, null) catch null) orelse return;
+        const value: std.time.Timer = result.value orelse return;
+        // get the duration in microseconds
+        // then display it in milliseconds
+        Output.printElapsed(@intToFloat(f64, value.read() / std.time.ns_per_us) / std.time.us_per_ms);
+        switch (len) {
+            0 => Output.printErrorln("\n", .{}),
+            else => Output.printErrorln(" {s}", .{chars[0..len]}),
+        }
+
+        Output.flush();
+    }
+
     pub fn timeLog(console: ZigConsoleClient.Type, global: *JSGlobalObject, chars: [*]const u8, len: usize, args: *ScriptArguments) callconv(.C) void {}
-    pub fn timeEnd(console: ZigConsoleClient.Type, global: *JSGlobalObject, chars: [*]const u8, len: usize) callconv(.C) void {}
     pub fn profile(console: ZigConsoleClient.Type, global: *JSGlobalObject, chars: [*]const u8, len: usize) callconv(.C) void {}
     pub fn profileEnd(console: ZigConsoleClient.Type, global: *JSGlobalObject, chars: [*]const u8, len: usize) callconv(.C) void {}
     pub fn takeHeapSnapshot(console: ZigConsoleClient.Type, global: *JSGlobalObject, chars: [*]const u8, len: usize) callconv(.C) void {}

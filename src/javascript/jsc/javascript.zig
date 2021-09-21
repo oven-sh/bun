@@ -181,6 +181,71 @@ pub const Bun = struct {
         return ref;
     }
 
+    pub fn readFileAsBytes(
+        this: void,
+        ctx: js.JSContextRef,
+        function: js.JSObjectRef,
+        thisObject: js.JSObjectRef,
+        arguments: []const js.JSValueRef,
+        exception: js.ExceptionRef,
+    ) js.JSValueRef {
+        if (arguments.len != 1 or !JSValue.isString(JSValue.fromRef(arguments[0]))) {
+            JSError(getAllocator(ctx), "readFileBytes expects a file path as a string. e.g. Bun.readFile(\"public/index.html\")", .{}, ctx, exception);
+            return js.JSValueMakeUndefined(ctx);
+        }
+        var out = ZigString.Empty;
+        JSValue.toZigString(JSValue.fromRef(arguments[0]), &out, VirtualMachine.vm.global);
+        var out_slice = out.slice();
+
+        // The dots are kind of unnecessary. They'll be normalized.
+        if (out.len == 0 or @ptrToInt(out.ptr) == 0 or std.mem.eql(u8, out_slice, ".") or std.mem.eql(u8, out_slice, "..") or std.mem.eql(u8, out_slice, "../")) {
+            JSError(getAllocator(ctx), "readFileBytes expects a valid file path. e.g. Bun.readFile(\"public/index.html\")", .{}, ctx, exception);
+            return js.JSValueMakeUndefined(ctx);
+        }
+
+        var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+
+        var parts = [_]string{out_slice};
+        // This does the equivalent of Node's path.normalize(path.join(cwd, out_slice))
+        var path = VirtualMachine.vm.bundler.fs.absBuf(&parts, &buf);
+        buf[path.len] = 0;
+
+        const buf_z: [:0]const u8 = buf[0..path.len :0];
+        var file = std.fs.cwd().openFileZ(buf_z, .{ .read = true, .write = false }) catch |err| {
+            JSError(getAllocator(ctx), "Opening file {s} for path: \"{s}\"", .{ @errorName(err), path }, ctx, exception);
+            return js.JSValueMakeUndefined(ctx);
+        };
+
+        defer file.close();
+
+        const stat = file.stat() catch |err| {
+            JSError(getAllocator(ctx), "Getting file size {s} for \"{s}\"", .{ @errorName(err), path }, ctx, exception);
+            return js.JSValueMakeUndefined(ctx);
+        };
+
+        if (stat.kind != .File) {
+            JSError(getAllocator(ctx), "Can't read a {s} as a string (\"{s}\")", .{ @tagName(stat.kind), path }, ctx, exception);
+            return js.JSValueMakeUndefined(ctx);
+        }
+
+        var contents_buf = VirtualMachine.vm.allocator.alloc(u8, stat.size + 2) catch unreachable; // OOM
+        errdefer VirtualMachine.vm.allocator.free(contents_buf);
+        const contents_len = file.readAll(contents_buf) catch |err| {
+            JSError(getAllocator(ctx), "{s} reading file (\"{s}\")", .{ @errorName(err), path }, ctx, exception);
+            return js.JSValueMakeUndefined(ctx);
+        };
+
+        contents_buf[contents_len] = 0;
+
+        var marked_array_buffer = VirtualMachine.vm.allocator.create(MarkedArrayBuffer) catch unreachable;
+        marked_array_buffer.* = MarkedArrayBuffer.fromBytes(
+            contents_buf[0..contents_len],
+            VirtualMachine.vm.allocator,
+            js.JSTypedArrayType.kJSTypedArrayTypeUint8Array,
+        );
+
+        return marked_array_buffer.toJSObjectRef(ctx, exception);
+    }
 
     pub fn readFileAsString(
         this: void,
@@ -322,6 +387,13 @@ pub const Bun = struct {
                 .ts = d.ts{
                     .name = "readFile",
                     .@"return" = "string",
+                },
+            },
+            .readFileBytes = .{
+                .rfn = Bun.readFileAsBytes,
+                .ts = d.ts{
+                    .name = "readFile",
+                    .@"return" = "Uint8Array",
                 },
             },
             .getPublicPath = .{

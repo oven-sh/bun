@@ -1494,7 +1494,47 @@ pub const ArrayBuffer = struct {
     byte_len: u32,
 
     typed_array_type: js.JSTypedArrayType,
+
+    pub inline fn slice(this: *const ArrayBuffer) []u8 {
+        return this.ptr[this.offset .. this.offset + this.byte_len];
+    }
 };
+
+pub const MarkedArrayBuffer = struct {
+    buffer: ArrayBuffer,
+    allocator: *std.mem.Allocator,
+
+    pub fn fromBytes(bytes: []u8, allocator: *std.mem.Allocator, typed_array_type: js.JSTypedArrayType) MarkedArrayBuffer {
+        return MarkedArrayBuffer{
+            .buffer = ArrayBuffer{ .offset = 0, .len = @intCast(u32, bytes.len), .byte_len = @intCast(u32, bytes.len), .typed_array_type = typed_array_type, .ptr = bytes.ptr },
+            .allocator = allocator,
+        };
+    }
+
+    pub fn destroy(this: *MarkedArrayBuffer) void {
+        const content = this.*;
+        content.allocator.free(content.buffer.slice());
+        content.allocator.destroy(this);
+    }
+
+    pub fn init(allocator: *std.mem.Allocator, size: u32, typed_array_type: js.JSTypedArrayType) !*MarkedArrayBuffer {
+        const bytes = try allocator.alloc(u8, size);
+        var container = try allocator.create(MarkedArrayBuffer);
+        container.* = MarkedArrayBuffer.fromBytes(bytes, allocator, typed_array_type);
+        return container;
+    }
+
+    pub fn toJSObjectRef(this: *MarkedArrayBuffer, ctx: js.JSContextRef, exception: js.ExceptionRef) js.JSObjectRef {
+        return js.JSObjectMakeTypedArrayWithBytesNoCopy(ctx, this.buffer.typed_array_type, this.buffer.ptr, this.buffer.byte_len, MarkedArrayBuffer_deallocator, this, exception);
+    }
+};
+
+export fn MarkedArrayBuffer_deallocator(bytes_: *c_void, ctx_: *c_void) void {
+    var ctx = @ptrCast(*MarkedArrayBuffer, @alignCast(@alignOf(*MarkedArrayBuffer), ctx_));
+
+    if (comptime isDebug) std.debug.assert(ctx.buffer.ptr == @ptrCast([*]u8, bytes_));
+    ctx.destroy();
+}
 
 pub fn castObj(obj: js.JSObjectRef, comptime Type: type) *Type {
     return JSPrivateDataPtr.from(js.JSObjectGetPrivate(obj)).as(Type);

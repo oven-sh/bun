@@ -47,7 +47,11 @@ const ServerBundleGeneratorThread = struct {
         server_bundler.options.jsx.supports_fast_refresh = false;
         server_bundler.configureLinker();
         server_bundler.router = router;
-        try server_bundler.configureDefines();
+        server_bundler.configureDefines() catch |err| {
+            Output.prettyErrorln("<r><red>{s}<r> loading --define or .env values for node_modules.server.bun\n", .{@errorName(err)});
+            return err;
+        };
+
         _ = try bundler.ServeBundler.GenerateNodeModuleBundle.generate(
             &server_bundler,
             allocator_,
@@ -143,6 +147,12 @@ pub const BunCommand = struct {
                         this_bundler.router,
                     );
                     generated_server = true;
+
+                    if (log.msgs.items.len > 0) {
+                        try log.printForLogLevel(Output.errorWriter());
+                        log.* = logger.Log.init(allocator);
+                        Output.flush();
+                    }
                 }
             }
         }

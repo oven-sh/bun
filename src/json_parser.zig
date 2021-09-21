@@ -73,7 +73,7 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
                 return Expr.alloc(p.allocator, Type, t, loc);
             }
         }
-        pub fn parseExpr(p: *Parser) anyerror!Expr {
+        pub fn parseExpr(p: *Parser, comptime maybe_auto_quote: bool) anyerror!Expr {
             const loc = p.lexer.loc();
 
             switch (p.lexer.token) {
@@ -130,7 +130,7 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
                             }
                         }
 
-                        exprs.append(try p.parseExpr()) catch unreachable;
+                        exprs.append(try p.parseExpr(false)) catch unreachable;
                     }
 
                     if (p.lexer.has_newline_before) {
@@ -174,7 +174,7 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
                         try p.lexer.expect(.t_string_literal);
 
                         try p.lexer.expect(.t_colon);
-                        var value = try p.parseExpr();
+                        var value = try p.parseExpr(false);
                         properties.append(G.Property{ .key = key, .value = value }) catch unreachable;
                     }
 
@@ -188,7 +188,16 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
                     }, loc);
                 },
                 else => {
+                    if (comptime maybe_auto_quote) {
+                        p.lexer = try Lexer.initJSON(p.log, p.source, p.allocator);
+                        try p.lexer.parseStringLiteral(0);
+                        return p.parseExpr(false);
+                    }
+
                     try p.lexer.unexpected();
+                    if (comptime isDebug) {
+                        @breakpoint();
+                    }
                     return error.ParserError;
                 },
             }
@@ -211,6 +220,10 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
 }
 
 const JSONParser = JSONLikeParser(js_lexer.JSONOptions{});
+const DotEnvJSONParser = JSONLikeParser(js_lexer.JSONOptions{
+    .starts_with_string = true,
+    .allow_trailing_commas = true,
+});
 const TSConfigParser = JSONLikeParser(js_lexer.JSONOptions{ .allow_comments = true, .allow_trailing_commas = true });
 var empty_string = E.String{ .utf8 = "" };
 var empty_object = E.Object{};
@@ -239,13 +252,83 @@ pub fn ParseJSON(source: *const logger.Source, log: *logger.Log, allocator: *std
         else => {},
     }
 
-    return parser.parseExpr();
+    return try parser.parseExpr(false);
+}
+
+// threadlocal var env_json_auto_quote_buffer: MutableString = undefined;
+// threadlocal var env_json_auto_quote_buffer_loaded: bool = false;
+pub fn ParseEnvJSON(source: *const logger.Source, log: *logger.Log, allocator: *std.mem.Allocator) !Expr {
+    var parser = try DotEnvJSONParser.init(allocator, source, log);
+    switch (source.contents.len) {
+        // This is to be consisntent with how disabled JS files are handled
+        0 => {
+            return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_object_data };
+        },
+        // This is a fast pass I guess
+        2 => {
+            if (strings.eqlComptime(source.contents[0..1], "\"\"") or strings.eqlComptime(source.contents[0..1], "''")) {
+                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_string_data };
+            } else if (strings.eqlComptime(source.contents[0..1], "{}")) {
+                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_object_data };
+            } else if (strings.eqlComptime(source.contents[0..1], "[]")) {
+                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_array_data };
+            }
+        },
+        else => {},
+    }
+
+    switch (source.contents[0]) {
+        '{', '[', '0'...'9', '"', '\'' => {
+            return try parser.parseExpr(false);
+        },
+        else => {
+            switch (parser.lexer.token) {
+                .t_true => {
+                    return Expr{ .loc = logger.Loc{ .start = 0 }, .data = .{ .e_boolean = E.Boolean{ .value = true } } };
+                },
+                .t_false => {
+                    return Expr{ .loc = logger.Loc{ .start = 0 }, .data = .{ .e_boolean = E.Boolean{ .value = false } } };
+                },
+                .t_null => {
+                    return Expr{ .loc = logger.Loc{ .start = 0 }, .data = .{ .e_null = E.Null{} } };
+                },
+                .t_identifier => {
+                    if (strings.eqlComptime(parser.lexer.identifier, "undefined")) {
+                        return Expr{ .loc = logger.Loc{ .start = 0 }, .data = .{ .e_undefined = E.Undefined{} } };
+                    }
+
+                    return try parser.parseExpr(true);
+                },
+                else => {
+                    return try parser.parseExpr(true);
+                },
+            }
+        },
+    }
 }
 
 pub fn ParseTSConfig(source: *const logger.Source, log: *logger.Log, allocator: *std.mem.Allocator) !Expr {
+    switch (source.contents.len) {
+        // This is to be consisntent with how disabled JS files are handled
+        0 => {
+            return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_object_data };
+        },
+        // This is a fast pass I guess
+        2 => {
+            if (strings.eqlComptime(source.contents[0..1], "\"\"") or strings.eqlComptime(source.contents[0..1], "''")) {
+                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_string_data };
+            } else if (strings.eqlComptime(source.contents[0..1], "{}")) {
+                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_object_data };
+            } else if (strings.eqlComptime(source.contents[0..1], "[]")) {
+                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_array_data };
+            }
+        },
+        else => {},
+    }
+
     var parser = try TSConfigParser.init(allocator, source, log);
 
-    return parser.parseExpr();
+    return parser.parseExpr(false);
 }
 
 const duplicateKeyJson = "{ \"name\": \"valid\", \"name\": \"invalid\" }";

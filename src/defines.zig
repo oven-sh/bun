@@ -120,10 +120,9 @@ pub const DefineData = struct {
             var source = logger.Source{
                 .contents = entry.value_ptr.*,
                 .path = defines_path,
-                .identifier_name = "defines",
                 .key_path = fs.Path.initWithNamespace("defines", "internal"),
             };
-            var expr = try json_parser.ParseJSON(&source, _log, allocator);
+            var expr = try json_parser.ParseEnvJSON(&source, _log, allocator);
             var data: js_ast.Expr.Data = undefined;
             switch (expr.data) {
                 .e_missing => {

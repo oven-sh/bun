@@ -886,6 +886,9 @@ pub const ESModule = struct {
         // The resolved path corresponds to a directory, which is not a supported target for module imports.
         UnsupportedDirectoryImport,
 
+        // When a package path is explicitly set to null, that means it's not exported.
+        PackagePathDisabled,
+
         pub inline fn isUndefined(this: Status) bool {
             return switch (this) {
                 .Undefined, .UndefinedNoConditionsMatch => true,
@@ -1021,6 +1024,10 @@ pub const ESModule = struct {
             const result = r.resolveImportsExports(subpath, exports, package_url);
             if (result.status != .Null and result.status != .Undefined) {
                 return result;
+            }
+
+            if (result.status == .Null) {
+                return Resolution{ .status = .PackagePathDisabled, .debug = .{ .token = exports.first_token } };
             }
         }
 

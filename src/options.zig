@@ -1104,7 +1104,14 @@ pub const BundleOptions = struct {
                             opts.node_modules_bundle = node_module_bundle;
 
                             if (opts.origin.isAbsolute()) {
-                                opts.node_modules_bundle_url = try opts.origin.joinAlloc(allocator, "", "", node_module_bundle.bundle.import_from_name, "");
+                                opts.node_modules_bundle_url = try opts.origin.joinAlloc(
+                                    allocator,
+                                    "",
+                                    "",
+                                    node_module_bundle.bundle.import_from_name,
+                                    "",
+                                    "",
+                                );
                                 opts.node_modules_bundle_pretty_path = opts.node_modules_bundle_url[opts.node_modules_bundle_url.len - node_module_bundle.bundle.import_from_name.len - 1 ..];
                             } else {
                                 opts.node_modules_bundle_pretty_path = try allocator.dupe(u8, pretty_path);

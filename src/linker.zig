@@ -650,6 +650,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
                             dirname,
                             basename,
                             absolute_pathname.ext,
+                            source_path,
                         ));
                     }
                 },

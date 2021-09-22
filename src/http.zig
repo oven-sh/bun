@@ -273,10 +273,8 @@ pub const RequestContext = struct {
         defer this.done();
         try this.writeStatus(500);
         const route_name = if (route_index > -1) this.matched_route.?.name else this.url.pathname;
-        Output.prettyErrorln("<r><red>500<r> - <b>{s}<r> rendering <b>/{s}<r>", .{
-            @errorName(err),
-            route_name,
-        });
+        if (comptime fmt.len > 0) Output.prettyErrorln(fmt, args);
+        Output.flush();
         this.appendHeader("Content-Type", MimeType.html.value);
         var bb = std.ArrayList(u8).init(allocator);
         defer bb.deinit();
@@ -2250,6 +2248,37 @@ pub const RequestContext = struct {
         }
     }
 
+    fn handleAbsURL(ctx: *RequestContext, server: *Server) !void {
+        const extname = ctx.url.extname;
+        switch (extname.len) {
+            3 => {
+                if (!(strings.eqlComptime(extname, "css") or strings.eqlComptime(extname, "tsx") or strings.eqlComptime(extname, "jsx") or strings.eqlComptime(extname, "mjs"))) return try ctx.sendNotFound();
+            },
+            2 => {
+                if (!(strings.eqlComptime(extname, "js") or strings.eqlComptime(extname, "ts"))) return try ctx.sendNotFound();
+            },
+            4 => {
+                if (!(strings.eqlComptime(extname, "json") or strings.eqlComptime(extname, "yaml"))) return try ctx.sendNotFound();
+            },
+            else => {
+                return try ctx.sendNotFound();
+            },
+        }
+
+        switch (ctx.method) {
+            .GET, .HEAD => {
+                const result = try ctx.buildFile(
+                    ctx.url.path["abs:".len..],
+                    ctx.url.extname,
+                );
+                try @call(.{ .modifier = .always_inline }, RequestContext.renderServeResult, .{ ctx, result });
+            },
+            else => {
+                try ctx.sendNotFound();
+            },
+        }
+    }
+
     pub fn handleReservedRoutes(ctx: *RequestContext, server: *Server) !bool {
         if (strings.eqlComptime(ctx.url.extname, "bun") and ctx.bundler.options.node_modules_bundle != null) {
             try ctx.sendJSB();
@@ -2262,11 +2291,15 @@ pub const RequestContext = struct {
         }
 
         const isMaybePrefix = ctx.url.path.len > "bun:".len;
+
         if (isMaybePrefix and strings.eqlComptimeIgnoreLen(ctx.url.path[0.."bun:".len], "bun:")) {
             try ctx.handleBunURL(server);
             return true;
         } else if (isMaybePrefix and strings.eqlComptimeIgnoreLen(ctx.url.path[0.."src:".len], "src:")) {
             try ctx.handleSrcURL(server);
+            return true;
+        } else if (isMaybePrefix and strings.eqlComptimeIgnoreLen(ctx.url.path[0.."abs:".len], "abs:")) {
+            try ctx.handleAbsURL(server);
             return true;
         }
 

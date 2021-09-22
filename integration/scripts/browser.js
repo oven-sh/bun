@@ -20,6 +20,7 @@ const bunProcess = child_process.spawn(bunExec, bunFlags, {
   shell: false,
 });
 console.log("$", bunExec, bunFlags.join(" "));
+const isDebug = bunExec.endsWith("-debug");
 
 bunProcess.stderr.pipe(process.stderr);
 bunProcess.stdout.pipe(process.stdout);
@@ -32,12 +33,27 @@ process.on("beforeExit", () => {
 });
 
 function writeSnapshot(name, code) {
-  const file = path.join(
-    __dirname,
-    "../snapshots" + (DISABLE_HMR ? "-no-hmr" : ""),
-    name
+  let file = path.join(__dirname, "../snapshots", name);
+
+  if (!DISABLE_HMR) {
+    file =
+      file.substring(0, file.length - path.extname(file).length) +
+      ".hmr" +
+      path.extname(file);
+  }
+
+  if (!fs.existsSync(path.dirname(file))) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+  }
+
+  fs.writeFileSync(
+    isDebug
+      ? file.substring(0, file.length - path.extname(file).length) +
+          ".debug" +
+          path.extname(file)
+      : file,
+    code
   );
-  fs.writeFileSync(file, code);
 }
 
 async function main() {
@@ -97,6 +113,7 @@ async function main() {
     "/lodash-regexp.js",
     "/unicode-identifiers.js",
     "/string-escapes.js",
+    "/package-json-exports/index.js",
   ];
   tests.reverse();
 

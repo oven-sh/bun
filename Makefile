@@ -115,21 +115,24 @@ test-install:
 
 test-all: test-install test-with-hmr test-no-hmr
 
+copy-test-node-modules:
+	rm -rf integration/snippets/package-json-exports/node_modules
+	cp -r integration/snippets/package-json-exports/_node_modules_copy integration/snippets/package-json-exports/node_modules
 kill-bun:
 	-killall -9 bun bun-debug
 	
-test-with-hmr: kill-bun
+test-with-hmr: kill-bun copy-test-node-modules
 	BUN_BIN=$(RELEASE_BUN) node integration/scripts/browser.js
 
-test-no-hmr: kill-bun
+test-no-hmr: kill-bun copy-test-node-modules
 	-killall bun -9;
 	DISABLE_HMR="DISABLE_HMR" BUN_BIN=$(RELEASE_BUN) node integration/scripts/browser.js
 
-test-dev-with-hmr:
+test-dev-with-hmr: copy-test-node-modules
 	-killall bun-debug -9;
 	BUN_BIN=$(DEBUG_BUN) node integration/scripts/browser.js
 
-test-dev-no-hmr:
+test-dev-no-hmr: copy-test-node-modules
 	-killall bun-debug -9;
 	DISABLE_HMR="DISABLE_HMR" BUN_BIN=$(DEBUG_BUN) node integration/scripts/browser.js
 

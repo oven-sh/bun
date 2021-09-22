@@ -158,11 +158,17 @@ pub const URL = struct {
         try writer.print("{s}/{s}", .{ this.origin, normalized_path });
     }
 
-    pub fn joinAlloc(this: *const URL, allocator: *std.mem.Allocator, prefix: string, dirname: string, basename: string, extname: string) !string {
-        var out: [2048]u8 = undefined;
-        const normalized_path = joinNormalize(&out, prefix, dirname, basename, extname);
+    pub fn joinAlloc(this: *const URL, allocator: *std.mem.Allocator, prefix: string, dirname: string, basename: string, extname: string, absolute_path: string) !string {
+        const has_uplevels = std.mem.indexOf(u8, dirname, "../") != null;
 
-        return try std.fmt.allocPrint(allocator, "{s}/{s}", .{ this.origin, normalized_path });
+        if (has_uplevels) {
+            return try std.fmt.allocPrint(allocator, "{s}/abs:{s}", .{ this.origin, absolute_path });
+        } else {
+            var out: [2048]u8 = undefined;
+
+            const normalized_path = joinNormalize(&out, prefix, dirname, basename, extname);
+            return try std.fmt.allocPrint(allocator, "{s}/{s}", .{ this.origin, normalized_path });
+        }
     }
 
     pub fn parse(base_: string) URL {
@@ -1330,11 +1336,11 @@ test "URL - joinAlloc" {
     var url = URL.parse("http://localhost:3000");
 
     var absolute_url = try url.joinAlloc(default_allocator, "/_next/", "src/components", "button", ".js");
-    try expectString("http://localhost:3000/_next/src/components/button.js", absolute_url);
+    try expectString("http://localhost:3000/_next/src/components/button.js", absolute_url, "");
 
     absolute_url = try url.joinAlloc(default_allocator, "compiled-", "src/components", "button", ".js");
-    try expectString("http://localhost:3000/compiled-src/components/button.js", absolute_url);
+    try expectString("http://localhost:3000/compiled-src/components/button.js", absolute_url, "");
 
     absolute_url = try url.joinAlloc(default_allocator, "compiled-", "", "button", ".js");
-    try expectString("http://localhost:3000/compiled-button.js", absolute_url);
+    try expectString("http://localhost:3000/compiled-button.js", absolute_url, "");
 }

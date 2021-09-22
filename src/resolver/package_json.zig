@@ -9,6 +9,7 @@ const alloc = @import("../alloc.zig");
 const fs = @import("../fs.zig");
 const resolver = @import("./resolver.zig");
 const js_lexer = @import("../js_lexer.zig");
+const resolve_path = @import("./resolve_path.zig");
 // Assume they're not going to have hundreds of main fields or browser map
 // so use an array-backed hash table instead of bucketed
 const MainFieldMap = std.StringArrayHashMap(string);
@@ -627,39 +628,6 @@ pub const ExportsMap = struct {
     root: Entry,
     exports_range: logger.Range = logger.Range.None,
 
-    pub const Status = enum {
-        Undefined,
-        UndefinedNoConditionsMatch, // A more friendly error message for when no conditions are matched
-        Null,
-        Exact,
-        Inexact, // This means we may need to try CommonJS-style extension suffixes
-
-        // Module specifier is an invalid URL, package name or package subpath specifier.
-        InvalidModuleSpecifier,
-
-        // package.json configuration is invalid or contains an invalid configuration.
-        InvalidPackageConfiguration,
-
-        // Package exports or imports define a target module for the package that is an invalid type or string target.
-        InvalidPackageTarget,
-
-        // Package exports do not define or permit a target subpath in the package for the given module.
-        PackagePathNotExported,
-
-        // The package or module requested does not exist.
-        ModuleNotFound,
-
-        // The resolved path corresponds to a directory, which is not a supported target for module imports.
-        UnsupportedDirectoryImport,
-
-        pub inline fn isUndefined(this: Status) bool {
-            return switch (this) {
-                .Undefined, .UndefinedNoConditionsMatch => true,
-                else => false,
-            };
-        }
-    };
-
     pub fn parse(allocator: *std.mem.Allocator, source: *const logger.Source, log: *logger.Log, json: js_ast.Expr) ?ExportsMap {
         var visitor = Visitor{ .allocator = allocator, .source = source, .log = log };
 
@@ -760,7 +728,7 @@ pub const ExportsMap = struct {
                         }
                     }
 
-                    // this leaks, but it's fine.
+                    // this leaks a lil, but it's fine.
                     expansion_keys = expansion_keys[0..expansion_key_i];
 
                     // Let expansion_keys be the list of keys of matchObj ending in "/" or "*",
@@ -834,6 +802,10 @@ pub const ExportsMap = struct {
             };
         };
 
+        pub fn keysStartWithDot(this: *const Entry) bool {
+            return this.data == .map and this.data.map.list.len > 0 and strings.startsWithChar(this.data.map.list.items(.key), '.');
+        }
+
         pub fn valueForKey(this: *const Entry, key_: string) ?Entry {
             switch (this.data) {
                 .map => |map| {
@@ -854,3 +826,637 @@ pub const ExportsMap = struct {
         }
     };
 };
+
+pub const ESModule = struct {
+    pub const ConditionsMap = std.AutoArrayHashMap(string, void);
+
+    debug_logs: ?*resolver.DebugLogs = null,
+    conditions: ConditionsMap,
+    allocator: *std.mem.Allocator,
+
+    pub const Resolution = struct {
+        status: Status = Status.Undefined,
+        path: string = "",
+        debug: Debug = Debug{},
+
+        pub const Debug = struct {
+            // This is the range of the token to use for error messages
+            token: logger.Range = logger.Range.None,
+            // If the status is "UndefinedNoConditionsMatch", this is the set of
+            // conditions that didn't match. This information is used for error messages.
+            unmatched_conditions: []string = &[_]string{},
+        };
+    };
+
+    pub const Status = enum {
+        Undefined,
+        UndefinedNoConditionsMatch, // A more friendly error message for when no conditions are matched
+        Null,
+        Exact,
+        Inexact, // This means we may need to try CommonJS-style extension suffixes
+
+        // Module specifier is an invalid URL, package name or package subpath specifier.
+        InvalidModuleSpecifier,
+
+        // package.json configuration is invalid or contains an invalid configuration.
+        InvalidPackageConfiguration,
+
+        // Package exports or imports define a target module for the package that is an invalid type or string target.
+        InvalidPackageTarget,
+
+        // Package exports do not define or permit a target subpath in the package for the given module.
+        PackagePathNotExported,
+
+        // The package or module requested does not exist.
+        ModuleNotFound,
+
+        // The resolved path corresponds to a directory, which is not a supported target for module imports.
+        UnsupportedDirectoryImport,
+
+        pub inline fn isUndefined(this: Status) bool {
+            return switch (this) {
+                .Undefined, .UndefinedNoConditionsMatch => true,
+                else => false,
+            };
+        }
+    };
+
+    pub const Package = struct {
+        name: string,
+        subpath: string,
+
+        pub fn parse(specifier: string, subpath_buf: []u8) ?Package {
+            if (specifier.len == 0) return null;
+            var package = Package{ .name = "", .subpath = "" };
+
+            var slash = strings.indexOfCharNeg(specifier, '/');
+            if (!string.startsWithChar(specifier, '@')) {
+                slash = if (slash == -1) specifier.len else slash;
+                package.name = specifier[0..@intCast(usize, slash)];
+            } else {
+                if (slash == -1) return null;
+
+                const slash2 = strings.indexOfChar(specifier[@intCast(usize, slash) + 1 ..]) orelse
+                    specifier[@intCast(u32, slash + 1)..].len;
+                package.name = specifier[0 .. @intCast(usize, slash + 1) + slash2];
+            }
+
+            if (strings.startsWith(package.name, ".") or strings.containsAny(package.name, "\\%"))
+                return;
+
+            std.mem.copy(u8, subpath_buf[1..], package.subpath);
+            subpath_buf[0] = '.';
+            package.subpath = subpath_buf[0 .. package.subpath.len + 1];
+            return package;
+        }
+    };
+
+    const ReverseKind = enum { exact, pattern, prefix };
+    pub const ReverseResolution = struct {
+        subpath: string = "",
+        token: logger.Range = logger.Range.None,
+    };
+    const invalid_percent_chars = [_]string{
+        "%2f",
+        "%2F",
+        "%5c",
+        "%5C",
+    };
+
+    threadlocal var resolved_path_buf_percent: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+    pub fn resolve(r: *const ESModule, package_url: string, subpath: string, exports: ExportsMap.Entry) Resolution {
+        var result = r.resolveExports(package_url, subpath, exports);
+
+        if (result.status != .Exact and result.status != .Inexact) {
+            return result;
+        }
+
+        // If resolved contains any percent encodings of "/" or "\" ("%2f" and "%5C"
+        // respectively), then throw an Invalid Module Specifier error.
+        const PercentEncoding = @import("../query_string_map.zig").PercentEncoding;
+        var fbs = std.io.fixedBufferStream(&resolved_path_buf_percent);
+        var writer = fbs.writer();
+        const len = PercentEncoding.decode(@TypeOf(&writer), &writer, result.path) catch return Resolution{ .status = .InvalidModuleSpecifier, .path = result.path, .debug = result.debug };
+        const resolved_path = resolved_path_buf_percent[0..len];
+
+        var found: string = "";
+        if (strings.contains(resolved_path, invalid_percent_chars[0])) {
+            found = invalid_percent_chars[0];
+        } else if (strings.contains(resolved_path, invalid_percent_chars[1])) {
+            found = invalid_percent_chars[1];
+        } else if (strings.contains(resolved_path, invalid_percent_chars[2])) {
+            found = invalid_percent_chars[2];
+        } else if (strings.contains(resolved_path, invalid_percent_chars[3])) {
+            found = invalid_percent_chars[3];
+        }
+
+        if (found.len != 0) {
+            return Resolution{ .status = .InvalidModuleSpecifier, .path = result.path, .debug = result.debug };
+        }
+
+        // If resolved is a directory, throw an Unsupported Directory Import error.
+        if (strings.endsWithAnyComptime(resolved_path, "/\\")) {
+            return Resolution{ .status = .UnsupportedDirectoryImport, .path = result.path, .debug = result.debug };
+        }
+
+        result.path = resolved_path;
+        return result;
+    }
+
+    fn resolveExports(
+        r: *const ESModule,
+        package_url: string,
+        subpath: string,
+        exports: ExportsMap.Entry,
+    ) Resolution {
+        if (exports.kind == .invalid) {
+            if (r.debug_logs) |logs| {
+                logs.addNote("Invalid package configuration") catch unreachable;
+            }
+
+            return Resolution{ .status = .InvalidPackageConfiguration, .debug = .{ .token = exports.first_token } };
+        }
+
+        if (strings.eqlComptime(subpath, ".")) {
+            var main_export = ExportsMap.Entry{ .data = .{ .null = void{} } };
+            if (switch (exports.data) {
+                .string,
+                .array,
+                => true,
+                .array => !exports.keysStartWithDot(),
+            }) {
+                main_export = exports;
+            } else if (exports.data == .map) {
+                if (exports.valueForKey(".")) |value| {
+                    main_export = value;
+                }
+            }
+
+            if (main_export.data != .null) {
+                if (r.resolveTarget(package_url, main_export, "", false)) |result| {
+                    if (result.status != .Null and result.status != .Undefined) {
+                        return result;
+                    }
+                }
+            }
+        } else if (exports.data == .map and exports.keysStartWithDot()) {
+            if (r.resolveImportsExports(subpath, exports, package_url)) |result| {
+                if (result.status != .Null and result.status != .Undefined) {
+                    return result;
+                }
+            }
+        }
+
+        if (r.debug_logs) |logs| {
+            logs.addNoteFmt("The path \"{s}\" was not exported", .{subpath}) catch unreachable;
+        }
+
+        return Resolution{ .status = .PackagePathNotExported, .debug = .{ .token = exports.first_token } };
+    }
+
+    fn resolveImportsExports(
+        r: *const ESModule,
+        match_key: string,
+        match_obj: ExportsMap.Entry,
+        package_url: string,
+    ) Resolution {
+        if (r.debug_logs) |logs| {
+            logs.addNoteFmt("Checking object path map for \"{s}\"", .{match_key}) catch unreachable;
+        }
+
+        if (!strings.endsWithChar(match_key, '.')) {
+            if (match_obj.valueForKey(match_Key)) |target| {
+                if (r.debug_logs) |log| {
+                    log.addNoteFmt("Found \"{s}\"", .{match_key}) catch unreachable;
+                }
+
+                return r.resolveTarget(package_url, target, "", false);
+            }
+        }
+
+        if (match_obj.data == .map) {
+            const expansion_keys = match_obj.data.map.expansion_keys;
+            for (expansion_keys) |expansion| {
+                // If expansionKey ends in "*" and matchKey starts with but is not equal to
+                // the substring of expansionKey excluding the last "*" character
+                if (strings.endsWithChar(expansion.key, '*')) {
+                    const substr = expansion.key[0 .. expansion.key.len - 1];
+                    if (strings.startsWith(match_key, substr) and !strings.eql(match_key, substr)) {
+                        const target = expansion.value;
+                        const subpath = match_key[expansion.key.len - 1 ..];
+                        if (r.debug_logs) |log| {
+                            log.addNoteFmt("The key \"{s}\" matched with \"{s}\" left over", .{ expansion.key, subpath }) catch unreachable;
+                        }
+
+                        return r.resolveTarget(package_url, target, subpath, true);
+                    }
+                }
+
+                if (strings.startsWith(match_key, expansion.key)) {
+                    const target = expansion.value;
+                    const subpath = match_key[expansion.key.len..];
+                    if (r.debug_logs) |log| {
+                        log.addNoteFmt("The key \"{s}\" matched with \"{s}\" left over", .{ expansion.key, subpath }) catch unreachable;
+                    }
+
+                    var result = r.resolveTarget(package_url, target, subpath, false);
+                    result.status = if (result.status == .Exact)
+                        // Return the object { resolved, exact: false }.
+                        .Inexact
+                    else
+                        result.status;
+
+                    return result;
+                }
+
+                if (r.debug_logs) |log| {
+                    log.addNoteFmt("The key \"{s}\" did not match", .{expansion.key}) catch unreachable;
+                }
+            }
+        }
+
+        if (r.debug_logs) |log| {
+            log.addNoteFmt("No keys matched \"{s}\"", .{expansion.key}) catch unreachable;
+        }
+
+        return Resolution{
+            .status = .Null,
+            .debug = .{ .token = match_obj.first_token },
+        };
+    }
+
+    threadlocal var resolve_target_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+    fn resolveTarget(
+        r: *const ESModule,
+        package_url: string,
+        target: ExportsMap.Entry,
+        subpath: string,
+        comptime pattern: bool,
+    ) Resolution {
+        switch (target.data) {
+            .string => |str| {
+                if (r.debug_logs) |log| {
+                    log.addNoteFmt("Checking path \"{s}\" against target \"{s}\"", .{ subpath, str }) catch unreachable;
+                    log.increaseIndent() catch unreachable;
+                }
+                defer {
+                    if (r.debug_logs) |log| {
+                        log.decreaseIndent() catch unreachable;
+                    }
+                }
+
+                // If pattern is false, subpath has non-zero length and target
+                // does not end with "/", throw an Invalid Module Specifier error.
+                if (comptime !pattern) {
+                    if (subpath.len > 0 and !strings.endsWithChar(str, '/')) {
+                        if (r.debug_logs) |log| {
+                            log.addNoteFmt("The target \"{s}\" is invalid because it doesn't end with a \"/\"") catch unreachable;
+                        }
+
+                        return Resolution{ .path = str, .status = .InvalidModuleSpecifier, .debug = .{ .token = target.first_token } };
+                    }
+                }
+
+                if (!strings.startsWith(string, "./")) {
+                    if (r.debug_logs) |log| {
+                        log.addNoteFmt("The target \"{s}\" is invalid because it doesn't start with a \"./\"") catch unreachable;
+                    }
+
+                    return Resolution{ .path = str, .status = .InvalidPackageTarget, .debug = .{ .token = target.first_token } };
+                }
+
+                // If target split on "/" or "\" contains any ".", ".." or "node_modules"
+                // segments after the first segment, throw an Invalid Package Target error.
+                if (findInvalidSegment(str)) |invalid| {
+                    if (r.debug_logs) |log| {
+                        log.addNoteFmt("The target \"{s}\" is invalid because it contains an invalid segment \"{s}\"", .{ str, invalid }) catch unreachable;
+                    }
+
+                    return Resolution{ .path = str, .status = .InvalidPackageTarget, .debug = .{ .token = target.first_token } };
+                }
+
+                // Let resolvedTarget be the URL resolution of the concatenation of packageURL and target.
+                var parts = [_]string{ package_url, str };
+                const resolved_target = resolve_path.joinStringBuf(&resolve_target_buf, parts, .auto);
+
+                // If target split on "/" or "\" contains any ".", ".." or "node_modules"
+                // segments after the first segment, throw an Invalid Package Target error.
+                if (findInvalidSegment(resolved_target)) |invalid| {
+                    if (r.debug_logs) |log| {
+                        log.addNoteFmt("The target \"{s}\" is invalid because it contains an invalid segment \"{s}\"", .{ str, invalid }) catch unreachable;
+                    }
+
+                    return Resolution{ .path = str, .status = .InvalidModuleSpecifier, .debug = .{ .token = target.first_token } };
+                }
+
+                if (comptime pattern) {
+                    // Return the URL resolution of resolvedTarget with every instance of "*" replaced with subpath.
+                    const len = std.mem.replacementSize(u8, resolved_target, "*", subpath);
+                    _ = std.mem.replace(u8, resolved_target, "*", subpath, &resolve_target_buf);
+                    const result = resolve_target_buf[0..len];
+                    if (r.debug_logs) |log| {
+                        log.addNoteFmt("Subsituted \"{s}\" for \"*\" in \".{s}\" to get \".{s}\" ", .{ subpath, resolved_target, result }) catch unreachable;
+                    }
+
+                    return Resolution{ .path = result, .status = .Exact, .debug = .{ .token = target.first_token } };
+                } else {
+                    var parts2 = [_]string{ package_url, str, subpath };
+                    const result = resolve_path.joinStringBuf(&resolve_target_buf, parts2, .auto);
+                    if (r.debug_logs) |log| {
+                        log.addNoteFmt("Subsituted \"{s}\" for \"*\" in \".{s}\" to get \".{s}\" ", .{ subpath, resolved_target, result }) catch unreachable;
+                    }
+
+                    return Resolution{ .path = result, .status = .Exact, .debug = .{ .token = target.first_token } };
+                }
+            },
+            .map => |object| {
+                var did_find_map_entry = false;
+                var last_map_entry: ExportsMap.Entry.Data.Map.MapEntry = undefined;
+
+                const slice = object.list.slice();
+                const keys = slice.items(.key);
+                for (keys) |key, i| {
+                    if (strings.eqlComptime(key, "default") or r.conditions.contains(key)) {
+                        if (r.debug_logs) |log| {
+                            log.addNoteFmt("The key \"{s}\" matched", .{key}) catch unreachable;
+                        }
+
+                        var result = r.resolveTarget(package_url, target, subpath, pattern);
+                        if (result.status.isUndefined()) {
+                            did_find_map_entry = true;
+                            last_map_entry = slice.get(i);
+                            continue;
+                        }
+
+                        return result;
+                    }
+
+                    if (r.debug_logs) |log| {
+                        log.addNoteFmt("The key \"{s}\" did not match", .{key}) catch unreachable;
+                    }
+                }
+
+                if (r.debug_logs) |log| {
+                    log.addNoteFmt("No keys matched") catch unreachable;
+                }
+
+                var return_target = target;
+                // ALGORITHM DEVIATION: Provide a friendly error message if no conditions matched
+                if (keys.len > 0 and !target.keysStartWithDot()) {
+                    if (did_find_map_entry and
+                        last_map_entry.value.data == .map and
+                        last_map_entry.value.data.map.list.items.len > 0 and
+                        !last_map_entry.value.keysStartWithDot())
+                    {
+                        // If a top-level condition did match but no sub-condition matched,
+                        // complain about the sub-condition instead of the top-level condition.
+                        // This leads to a less confusing error message. For example:
+                        //
+                        //   "exports": {
+                        //     "node": {
+                        //       "require": "./dist/bwip-js-node.js"
+                        //     }
+                        //   },
+                        //
+                        // We want the warning to say this:
+                        //
+                        //   note: None of the conditions provided ("require") match any of the
+                        //         currently active conditions ("default", "import", "node")
+                        //   14 |       "node": {
+                        //      |               ^
+                        //
+                        // We don't want the warning to say this:
+                        //
+                        //   note: None of the conditions provided ("browser", "electron", "node")
+                        //         match any of the currently active conditions ("default", "import", "node")
+                        //   7 |   "exports": {
+                        //     |              ^
+                        //
+                        // More information: https://github.com/evanw/esbuild/issues/1484
+                        return_target = last_map_entry.value;
+                    }
+
+                    return Resolution{
+                        .path = "",
+                        .status = .UndefinedNoConditionsMatch,
+                        .debug = .{
+                            .token = target.first_token,
+                            .unmatched_conditions = return_target.data.map.list.items(.keys),
+                        },
+                    };
+                }
+
+                return Resolution{
+                    .path = "",
+                    .status = .UndefinedNoConditionsMatch,
+                    .debug = .{ .token = target.first_token },
+                };
+            },
+            .array => |array| {
+                if (array.len == 0) {
+                    if (r.debug_logs) |log| {
+                        log.addNoteFmt("The path \"{s}\" is an empty array", .{subpath}) catch unreachable;
+                    }
+
+                    return Resolution{ .path = "", .status = .Null, .debug = .{ .token = target.first_token } };
+                }
+
+                var last_exception = Status.Undefined;
+                var last_debug = Resolution.Debug{ .token = target.first_token };
+
+                for (array) |targetValue, i| {
+                    // Let resolved be the result, continuing the loop on any Invalid Package Target error.
+                    const result = r.resolveTarget(package_url, targetValue, subpath, pattern);
+                    if (result.status == .InvalidPackageTarget or result.status == .Null) {
+                        last_debug = result.debug;
+                        last_exception = result.status;
+                    }
+
+                    if (result.status.isUndefined()) {
+                        continue;
+                    }
+
+                    return result;
+                }
+
+                return Resolution{ .path = "", .status = last_exception, .debug = last_debug };
+            },
+            .null => {
+                if (r.debug_logs) |log| {
+                    log.addNoteFmt("The path \"{s}\" is null", .{subpath}) catch unreachable;
+                }
+
+                return Resolution{ .path = "", .status = .Null, .debug = .{ .token = target.first_token } };
+            },
+            else => {},
+        }
+
+        if (r.debug_logs) |logs| {
+            logs.addNoteFmt("Invalid package target for path \"{s}\"", .{subpath}) catch unreachable;
+        }
+
+        return Resolution{ .status = .InvalidPackageTarget, .debug = .{ .token = target.first_token } };
+    }
+
+    fn resolveExportsReverse(
+        r: *const ESModule,
+        query: string,
+        root: ExportsMap.Entry,
+    ) ?ReverseResolution {
+        if (root.data == .map and root.keysStartWithDot()) {
+            if (r.resolveImportsExportsReverse(query, root)) |res| {
+                return res;
+            }
+        }
+
+        return null;
+    }
+
+    fn resolveImportsExportsReverse(
+        r: *const ESModule,
+        query: string,
+        match_obj: ExportsMap.Entry,
+    ) ?ReverseResolution {
+        if (match_obj.data != .map) return null;
+        const map = match_obj.data.map;
+
+        if (!strings.endsWithChar(query, "*")) {
+            var slices = map.list.slice();
+            var keys = slices.items(.key);
+            var values = slices.items(.value);
+            for (keys) |key, i| {
+                if (r.resolveTargetReverse(query, key, values[i], .exact)) |result| {
+                    return result;
+                }
+            }
+        }
+
+        for (map.expansion_keys) |expansion| {
+            if (strings.endsWithChar(expansion.key, '*')) {
+                if (r.resolveTargetReverse(query, expansion.key, expansion.value, .pattern)) |result| {
+                    return result;
+                }
+            }
+
+            if (r.resolveTargetReverse(query, expansion.key, expansion.value, .reverse)) |result| {
+                return result;
+            }
+        }
+    }
+
+    threadlocal var resolve_target_reverse_prefix_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+    threadlocal var resolve_target_reverse_prefix_buf2: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+
+    fn resolveTargetReverse(
+        r: *const ESModule,
+        query: string,
+        key: string,
+        target: ExportsMap.Entry,
+        comptime kind: ReverseKind,
+    ) ?ReverseResolution {
+        switch (target.data) {
+            .string => |str| {
+                switch (comptime kind) {
+                    .exact => {
+                        if (strings.eql(query, str)) {
+                            return ReverseResolution{ .subpath = str, .token = target.first_token };
+                        }
+                    },
+                    .prefix => {
+                        if (strings.startsWith(query, str)) {
+                            return ReverseResolution{
+                                .subpath = std.fmt.bufPrint(&resolve_target_reverse_prefix_buf, "{s}{s}", .{ key, query[str.len..] }) catch unreachable,
+                                .token = target.first_token,
+                            };
+                        }
+                    },
+                    .pattern => {
+                        const key_without_trailing_star = std.mem.trimRight(u8, key, "*");
+
+                        const star = strings.indexOfChar(str, '*') orelse {
+                            // Handle the case of no "*"
+                            if (strings.eql(query, str)) {
+                                return ReverseResolution{ .subpath = key_without_trailing_star, .token = target.first_token };
+                            }
+                            return null;
+                        };
+
+                        // Only support tracing through a single "*"
+                        const prefix = str[0..star];
+                        const suffix = str[star + 1 ..];
+                        if (strings.startsWith(query, prefix) and !strings.containsChar(suffix, '*')) {
+                            const after_prefix = query[prefix.len..];
+                            if (strings.endsWith(after_prefix, suffix)) {
+                                const star_data = after_prefix[0 .. after_prefix.len - suffix.len];
+                                return ReverseResolution{
+                                    .subpath = std.fmt.bufPrint(
+                                        &resolve_target_reverse_prefix_buf2,
+                                        "{s}{s}",
+                                        .{
+                                            key_without_trailing_star,
+                                            star_data,
+                                        },
+                                    ) catch unreachable,
+                                    .token = target.first_token,
+                                };
+                            }
+                        }
+                    },
+                }
+            },
+            .map => |map| {
+                const slice = map.list.slice();
+                const keys = slice.items(.key);
+                for (keys) |map_key, i| {
+                    if (strings.eqlComptime(map_key, "default") or r.conditions.contains(map_key)) {
+                        if (r.resolveTargetReverse(query, key, slice.items(.value)[i], kind)) |result| {
+                            return result;
+                        }
+                    }
+                }
+            },
+
+            .array => |array| {
+                for (array) |target_value| {
+                    if (r.resolveTargetReverse(query, key, target_value, kind)) |result| {
+                        return result;
+                    }
+                }
+            },
+
+            else => {},
+        }
+
+        return null;
+    }
+};
+
+fn findInvalidSegment(path_: string) ?string {
+    var slash = strings.indexAnyComptime(path_, "/\\") orelse return "";
+    var path = path_[slash + 1 ..];
+
+    while (path.len > 0) {
+        var segment = path;
+        if (strings.indexAnyComptime(path, "/\\")) |new_slash| {
+            segment = path[0..new_slash];
+            path = path[new_slash + 1 ..];
+        } else {
+            path = "";
+        }
+
+        switch (segment.len) {
+            1 => {
+                if (strings.eqlComptimeIgnoreLen(segment, ".")) return segment;
+            },
+            2 => {
+                if (strings.eqlComptimeIgnoreLen(segment, "..")) return segment;
+            },
+            "node_modules".len => {
+                if (strings.eqlComptimeIgnoreLen(segment, "node_modules")) return segment;
+            },
+            else => {},
+        }
+    }
+
+    return null;
+}

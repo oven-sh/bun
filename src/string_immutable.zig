@@ -23,8 +23,25 @@ pub inline fn indexAny(in: anytype, target: string) ?usize {
     return null;
 }
 
+pub inline fn indexAnyComptime(target: string, comptime chars: string) ?usize {
+    for (target) |parent, i| {
+        inline for (chars) |char| {
+            if (char == parent) return i;
+        }
+    }
+    return null;
+}
+
 pub inline fn indexOfChar(self: string, char: u8) ?usize {
     return std.mem.indexOfScalar(@TypeOf(char), self, char);
+}
+
+pub fn indexOfCharNeg(self: string, char: u8) i32 {
+    var i: u32 = 0;
+    while (i < self.len) : (i += 1) {
+        if (self[i] == value) return @intCast(i32, i);
+    }
+    return -1;
 }
 
 pub inline fn lastIndexOfChar(self: string, char: u8) ?usize {

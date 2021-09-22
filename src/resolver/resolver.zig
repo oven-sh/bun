@@ -1184,12 +1184,6 @@ pub fn NewResolver(cache_files: bool) type {
 
                                     // The condition set is determined by the kind of import
 
-                                    // Resolve against the path "/", then join it with the absolute
-                                    // directory path. This is done because ESM package resolution uses
-                                    // URLs while our path resolution uses file system paths. We don't
-                                    // want problems due to Windows paths, which are very unlike URL
-                                    // paths. We also want to avoid any "%" characters in the absolute
-                                    // directory path accidentally being interpreted as URL escapes.
                                     const esmodule = ESModule{
                                         .conditions = switch (kind) {
                                             ast.ImportKind.stmt, ast.ImportKind.dynamic => r.opts.conditions.import,
@@ -1200,6 +1194,12 @@ pub fn NewResolver(cache_files: bool) type {
                                         .debug_logs = if (r.debug_logs) |*debug| debug else null,
                                     };
 
+                                    // Resolve against the path "/", then join it with the absolute
+                                    // directory path. This is done because ESM package resolution uses
+                                    // URLs while our path resolution uses file system paths. We don't
+                                    // want problems due to Windows paths, which are very unlike URL
+                                    // paths. We also want to avoid any "%" characters in the absolute
+                                    // directory path accidentally being interpreted as URL escapes.
                                     var esm_resolution = esmodule.resolve("/", esm.subpath, exports_map.root);
                                     defer Output.debug("ESM Resolution Status {s}: {s}\n", .{ abs_package_path, esm_resolution.status });
 
@@ -1214,7 +1214,7 @@ pub fn NewResolver(cache_files: bool) type {
 
                                         switch (esm_resolution.status) {
                                             .Exact => {
-                                                const resolved_dir_info = (r.dirInfoCached(abs_esm_path) catch null) orelse {
+                                                const resolved_dir_info = (r.dirInfoCached(std.fs.path.dirname(abs_esm_path).?) catch null) orelse {
                                                     esm_resolution.status = .ModuleNotFound;
                                                     return null;
                                                 };
@@ -1232,9 +1232,17 @@ pub fn NewResolver(cache_files: bool) type {
                                                     return null;
                                                 }
 
+                                                const absolute_out_path = brk: {
+                                                    if (entry_query.entry.abs_path.isEmpty()) {
+                                                        entry_query.entry.abs_path =
+                                                            PathString.init(r.fs.dirname_store.append(@TypeOf(abs_esm_path), abs_esm_path) catch unreachable);
+                                                    }
+                                                    break :brk entry_query.entry.abs_path.slice();
+                                                };
+
                                                 return MatchResult{
                                                     .path_pair = PathPair{
-                                                        .primary = Path.initWithNamespace(esm_resolution.path, "file"),
+                                                        .primary = Path.initWithNamespace(absolute_out_path, "file"),
                                                     },
                                                     .dirname_fd = entries.fd,
                                                     .file_fd = entry_query.entry.cache.fd,

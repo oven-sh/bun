@@ -686,6 +686,7 @@ pub const ExportsMap = struct {
                 .e_object => |e_obj| {
                     var map_data = Entry.Data.Map.List{};
                     map_data.ensureTotalCapacity(this.allocator, e_obj.*.properties.len) catch unreachable;
+                    map_data.len = map_data.capacity;
                     var expansion_keys = this.allocator.alloc(Entry.Data.Map.MapEntry, e_obj.*.properties.len) catch unreachable;
                     var expansion_key_i: usize = 0;
                     var map_data_slices = map_data.slice();
@@ -916,9 +917,9 @@ pub const ESModule = struct {
             if (strings.startsWith(package.name, ".") or strings.indexAnyComptime(package.name, "\\%") != null)
                 return null;
 
-            std.mem.copy(u8, subpath_buf[1..], package.subpath);
+            std.mem.copy(u8, subpath_buf[1..], specifier[package.name.len..]);
             subpath_buf[0] = '.';
-            package.subpath = subpath_buf[0 .. package.subpath.len + 1];
+            package.subpath = subpath_buf[0 .. specifier[package.name.len..].len + 1];
             return package;
         }
     };
@@ -948,7 +949,12 @@ pub const ESModule = struct {
         const PercentEncoding = @import("../query_string_map.zig").PercentEncoding;
         var fbs = std.io.fixedBufferStream(&resolved_path_buf_percent);
         var writer = fbs.writer();
-        const len = PercentEncoding.decode(@TypeOf(&writer), &writer, result.path) catch return Resolution{ .status = .InvalidModuleSpecifier, .path = result.path, .debug = result.debug };
+        const len = PercentEncoding.decode(@TypeOf(&writer), &writer, result.path) catch return Resolution{
+            .status = .InvalidModuleSpecifier,
+            .path = result.path,
+            .debug = result.debug,
+        };
+
         const resolved_path = resolved_path_buf_percent[0..len];
 
         var found: string = "";
@@ -1192,7 +1198,7 @@ pub const ESModule = struct {
                             log.addNoteFmt("The key \"{s}\" matched", .{key}) catch unreachable;
                         }
 
-                        var result = r.resolveTarget(package_url, target, subpath, pattern);
+                        var result = r.resolveTarget(package_url, slice.items(.value)[i], subpath, pattern);
                         if (result.status.isUndefined()) {
                             did_find_map_entry = true;
                             last_map_entry_i = i;

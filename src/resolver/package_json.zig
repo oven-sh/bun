@@ -82,6 +82,8 @@ pub const PackageJSON = struct {
     //
     browser_map: BrowserMap,
 
+    exports: ?ExportsMap = null,
+
     pub inline fn isAppPackage(this: *const PackageJSON) bool {
         return this.hash == 0xDEADBEEF;
     }
@@ -593,6 +595,12 @@ pub const PackageJSON = struct {
             }
         }
 
+        if (json.asProperty("exports")) |exports_prop| {
+            if (ExportsMap.parse(allocator, source, log, exports_prop)) |exports_map| {
+                package_json.exports = exports_map;
+            }
+        }
+
         // TODO: side effects
         // TODO: exports map
 
@@ -637,7 +645,10 @@ pub const ExportsMap = struct {
             return null;
         }
 
-        return ExportsMap{ .root = root, .exports_range = root.first_token };
+        return ExportsMap{
+            .root = root,
+            .exports_range = source.rangeOfString(json.loc),
+        };
     }
 
     pub const Visitor = struct {

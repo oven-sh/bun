@@ -1167,7 +1167,7 @@ pub fn NewPrinter(
                     const wrap = level.gte(.conditional);
                     if (wrap) {
                         p.print("(");
-                        flags.forbid_in = !flags.forbid_in;
+                        flags.forbid_in = false;
                     }
                     p.printExpr(e.test_, .conditional, flags);
                     p.printSpace();
@@ -1214,7 +1214,7 @@ pub fn NewPrinter(
                             .s_return => {
                                 if (e.body.stmts[0].getReturn().value) |val| {
                                     p.arrow_expr_start = p.writer.written;
-                                    p.printExpr(val, .comma, ExprFlag.None());
+                                    p.printExpr(val, .comma, ExprFlag{ .forbid_in = true });
                                     wasPrinted = true;
                                 }
                             },

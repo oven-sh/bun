@@ -1507,7 +1507,10 @@ fn notimpl() noreturn {
     Global.panic("Not implemented yet!!", .{});
 }
 
-const ExprBindingTuple = struct { expr: ?ExprNodeIndex = null, binding: ?Binding = null, override_expr: ?ExprNodeIndex = null };
+const ExprBindingTuple = struct {
+    expr: ?ExprNodeIndex = null,
+    binding: ?Binding = null,
+};
 
 const TempRef = struct {
     ref: Ref,
@@ -3842,13 +3845,13 @@ pub fn NewParser(
 
                     // p.markSyntaxFeature(Destructing)
                     var items = List(js_ast.ArrayBinding).initCapacity(p.allocator, ex.items.len) catch unreachable;
-                    var is_spread = true;
+                    var is_spread = false;
                     for (ex.items) |_, i| {
                         var item = ex.items[i];
                         var _expr = item;
-                        if (@as(Expr.Tag, item.data) == .e_spread) {
+                        if (item.data == .e_spread) {
                             is_spread = true;
-                            item = item.getSpread().value;
+                            item = item.data.e_spread.value;
                         }
                         const res = p.convertExprToBindingAndInitializer(&item, invalid_loc, is_spread);
 
@@ -3858,7 +3861,7 @@ pub fn NewParser(
                             //      Promise.all(promises).then(([, len]) => true);
                             //                                   ^ Binding is missing there
                             .binding = res.binding orelse p.b(B.Missing{}, item.loc),
-                            .default_value = res.override_expr,
+                            .default_value = res.expr,
                         });
                     }
 

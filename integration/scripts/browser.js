@@ -114,6 +114,7 @@ async function main() {
     "/unicode-identifiers.js",
     "/string-escapes.js",
     "/package-json-exports/index.js",
+    "/array-args-with-default-values.js",
   ];
   tests.reverse();
 

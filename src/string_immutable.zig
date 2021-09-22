@@ -206,6 +206,10 @@ pub inline fn endsWith(self: string, str: string) bool {
     return str.len == 0 or @call(.{ .modifier = .always_inline }, std.mem.endsWith, .{ u8, self, str });
 }
 
+pub inline fn startsWithChar(self: string, char: u8) bool {
+    return self.len > 0 and self[0] == char;
+}
+
 pub inline fn endsWithChar(self: string, char: u8) bool {
     return self.len == 0 or self[self.len - 1] == char;
 }
@@ -754,6 +758,15 @@ pub fn NewCodePointIterator(comptime CodePointType: type, comptime zeroValue: co
 
 pub const CodepointIterator = NewCodePointIterator(CodePoint, -1);
 pub const UnsignedCodepointIterator = NewCodePointIterator(u32, 0);
+
+pub fn NewLengthSorter(comptime Type: type, comptime field: string) type {
+    return struct {
+        const LengthSorter = @This();
+        pub fn lessThan(context: LengthSorter, lhs: Type, rhs: Type) bool {
+            return @field(lhs, field).len < @field(rhs, field).len;
+        }
+    };
+}
 
 test "join" {
     var string_list = &[_]string{ "abc", "def", "123", "hello" };

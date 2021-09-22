@@ -751,6 +751,30 @@ pub const Log = struct {
         });
     }
 
+    pub fn addRangeWarningFmtWithNote(
+        log: *Log,
+        source: ?*const Source,
+        r: Range,
+        allocator: *std.mem.Allocator,
+        comptime fmt: string,
+        args: anytype,
+        comptime note_fmt: string,
+        note_args: anytype,
+        note_range: logger.Range,
+    ) !void {
+        if (!Kind.shouldPrint(.warn, log.level)) return;
+        log.warnings += 1;
+
+        var notes = try allocator.alloc(Data, 1);
+        notes[0] = rangeData(source, note_range, std.fmt.allocPrint(allocator, note_fmt, note_args) catch unreachable);
+
+        try log.addMsg(Msg{
+            .kind = .warn,
+            .data = rangeData(source, r, std.fmt.allocPrint(allocator, fmt, args) catch unreachable),
+            .notes = notes,
+        });
+    }
+
     pub fn addWarning(log: *Log, source: ?*const Source, l: Loc, text: string) !void {
         if (!Kind.shouldPrint(.warn, log.level)) return;
         log.warnings += 1;

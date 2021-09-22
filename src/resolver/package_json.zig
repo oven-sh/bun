@@ -8,7 +8,7 @@ const js_ast = @import("../js_ast.zig");
 const alloc = @import("../alloc.zig");
 const fs = @import("../fs.zig");
 const resolver = @import("./resolver.zig");
-
+const js_lexer = @import("../js_lexer.zig");
 // Assume they're not going to have hundreds of main fields or browser map
 // so use an array-backed hash table instead of bucketed
 const MainFieldMap = std.StringArrayHashMap(string);
@@ -621,4 +621,236 @@ pub const PackageJSON = struct {
 
         return @truncate(u32, hasher.final());
     }
+};
+
+pub const ExportsMap = struct {
+    root: Entry,
+    exports_range: logger.Range = logger.Range.None,
+
+    pub const Status = enum {
+        Undefined,
+        UndefinedNoConditionsMatch, // A more friendly error message for when no conditions are matched
+        Null,
+        Exact,
+        Inexact, // This means we may need to try CommonJS-style extension suffixes
+
+        // Module specifier is an invalid URL, package name or package subpath specifier.
+        InvalidModuleSpecifier,
+
+        // package.json configuration is invalid or contains an invalid configuration.
+        InvalidPackageConfiguration,
+
+        // Package exports or imports define a target module for the package that is an invalid type or string target.
+        InvalidPackageTarget,
+
+        // Package exports do not define or permit a target subpath in the package for the given module.
+        PackagePathNotExported,
+
+        // The package or module requested does not exist.
+        ModuleNotFound,
+
+        // The resolved path corresponds to a directory, which is not a supported target for module imports.
+        UnsupportedDirectoryImport,
+
+        pub inline fn isUndefined(this: Status) bool {
+            return switch (this) {
+                .Undefined, .UndefinedNoConditionsMatch => true,
+                else => false,
+            };
+        }
+    };
+
+    pub fn parse(allocator: *std.mem.Allocator, source: *const logger.Source, log: *logger.Log, json: js_ast.Expr) ?ExportsMap {
+        var visitor = Visitor{ .allocator = allocator, .source = source, .log = log };
+
+        const root = visitor.visit(json);
+
+        if (root.data == .null) {
+            return null;
+        }
+
+        return ExportsMap{ .root = root, .exports_range = root.first_token };
+    }
+
+    pub const Visitor = struct {
+        allocator: *std.mem.Allocator,
+        source: *const logger.Source,
+        log: *logger.Log,
+
+        pub fn visit(this: Visitor, expr: js_ast.Expr) Entry {
+            var first_token: logger.Range = logger.Range.None;
+
+            switch (expr.data) {
+                .e_null => {
+                    return Entry{ .first_token = js_lexer.rangeOfIdentifier(this.source, expr.loc), .data = .{ .@"null" = void{} } };
+                },
+                .e_string => |str| {
+                    return Entry{
+                        .data = .{
+                            .string = str.string(this.allocator) catch unreachable,
+                        },
+                        .first_token = this.source.rangeOfString(this.source, expr.loc),
+                    };
+                },
+                .e_array => |e_array| {
+                    var array = this.allocator.alloc(Entry, array.items.len) catch unreachable;
+                    for (e_array.items) |item, i| {
+                        array[i] = this.visit(item);
+                    }
+                    return Entry{
+                        .data = .{
+                            .array = array,
+                        },
+                        .first_token = logger.Range{ .loc = expr.loc, .len = 1 },
+                    };
+                },
+                .e_object => |e_obj| {
+                    var map_data = Entry.Data.Map.List{};
+                    map_data.ensureTotalCapacity(this.allocator, e_obj.*.properties.len) catch unreachable;
+                    var expansion_keys = this.allocator.alloc(string, e_obj.*.properties.len) catch unreachable;
+                    var expansion_key_i: usize = 0;
+                    var map_data_slices = map_data.slice();
+                    var map_data_keys = map_data_slices.items(.key);
+                    var map_data_ranges = map_data_slices.items(.key_range);
+                    var map_data_entries = map_data_slices.items(.value);
+                    var is_conditional_sugar = false;
+                    first_token.loc = expr.loc;
+                    first_token.len = 1;
+                    for (e_obj.properties) |prop, i| {
+                        const key: string = prop.key.?.data.e_string.string(this.allocator) catch unreachable;
+                        const key_range: logger.Range = this.source.rangeOfString(property.key.?.loc);
+
+                        // If exports is an Object with both a key starting with "." and a key
+                        // not starting with ".", throw an Invalid Package Configuration error.
+                        var cur_is_conditional_sugar = !strings.startsWithChar(key, '.');
+                        if (i == 0) {
+                            is_conditional_sugar = cur_is_conditional_sugar;
+                        } else if (is_conditional_sugar != cur_is_conditional_sugar) {
+                            const prev_key_range = map_data_ranges[i - 1];
+                            const prev_key = map_data_keys[i - 1];
+                            this.log.addRangeWarningFmtWithNote(
+                                this.source,
+                                key_range,
+                                this.allocator,
+                                "This object cannot contain keys that both start with \".\" and don't start with \".\"",
+                                .{},
+                                "The previous key \"{s}\" is incompatible with the current key \"{s}\"",
+                                .{ prev_key, key },
+                                prev_key_range,
+                            ) catch unreachable;
+                            map_data.deinit(this.allocator);
+                            this.allocator.free(expansion_keys);
+                            return Entry{
+                                .data = .{ .invalid = void{} },
+                                .first_token = first_token,
+                            };
+                        }
+
+                        map_data_keys[i] = key;
+                        map_data_ranges[i] = key_range;
+                        map_data_entries[i] = this.visit(prop.value.?);
+
+                        if (strings.endsWithAny(key, "/*")) {
+                            expansion_keys[expansion_key_i] = Entry.Data.Map.MapEntry{
+                                .value = map_data_entries[i],
+                                .key = key,
+                                .key_range = key_range,
+                            };
+                            expansion_key_i += 1;
+                        }
+                    }
+
+                    // this leaks, but it's fine.
+                    expansion_keys = expansion_keys[0..expansion_key_i];
+
+                    // Let expansion_keys be the list of keys of matchObj ending in "/" or "*",
+                    // sorted by length descending.
+                    const LengthSorter: type = strings.NewLengthSorter(Entry.Data.Map.MapEntry, "key");
+                    var sorter = LengthSorter{};
+                    std.sort.sort(Entry.Data.Map.MapEntry, expansion_keys, sorter, LengthSorter.lessThan);
+
+                    return Entry{
+                        .data = .{
+                            .map = Entry.Data.Map{
+                                .list = map_data,
+                                .expansion_keys = expansion_keys,
+                            },
+                        },
+                        .first_token = first_token,
+                    };
+                },
+                .e_boolean => {
+                    first_token = js_lexer.rangeOfIdentifier(this.source, expr.loc);
+                },
+                .e_number => {
+                    // TODO: range of number
+                    first_token.loc = expr.loc;
+                    first_token.len = 1;
+                },
+                else => {
+                    first_token.loc = expr.loc;
+                },
+            }
+
+            this.log.addRangeWarning(this.source, first_token, "This value must be a string, an object, an array, or null") catch unreachable;
+            return Entry{
+                .data = .{ .invalid = void{} },
+                .first_token = first_token,
+            };
+        }
+    };
+
+    pub const Entry = struct {
+        first_token: logger.Range,
+        data: Data,
+
+        pub const Data = union(Tag) {
+            invalid: void,
+            null: void,
+            boolean: bool,
+            string: string,
+            array: []const Entry,
+            map: Map,
+
+            pub const Tag = enum {
+                null,
+                string,
+                array,
+                map,
+                invalid,
+            };
+
+            pub const Map = struct {
+                // This is not a std.ArrayHashMap because we also store the key_range which is a little weird
+                pub const List = std.MultiArrayList(MapEntry);
+                expansion_keys: []MapEntry,
+                list: List,
+
+                pub const MapEntry = struct {
+                    key: string,
+                    key_range: logger.Range,
+                    value: Entry,
+                };
+            };
+        };
+
+        pub fn valueForKey(this: *const Entry, key_: string) ?Entry {
+            switch (this.data) {
+                .map => |map| {
+                    var slice = this.data.map.list.slice();
+                    const keys = slice.items(.key);
+                    for (keys) |key, i| {
+                        if (strings.eql(key, key_)) {
+                            return slice.items(.value)[i];
+                        }
+                    }
+
+                    return null;
+                },
+                else => {
+                    return null;
+                },
+            }
+        }
+    };
 };

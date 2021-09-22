@@ -750,7 +750,7 @@ pub const ExportsMap = struct {
                         map_data_ranges[i] = key_range;
                         map_data_entries[i] = this.visit(prop.value.?);
 
-                        if (strings.endsWithAny(key, "/*")) {
+                        if (strings.endsWithAnyComptime(key, "/*")) {
                             expansion_keys[expansion_key_i] = Entry.Data.Map.MapEntry{
                                 .value = map_data_entries[i],
                                 .key = key,

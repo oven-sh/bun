@@ -252,7 +252,7 @@ pub fn quotedAlloc(allocator: *std.mem.Allocator, self: string) !string {
 }
 
 pub fn endsWithAnyComptime(self: string, comptime str: string) bool {
-    if (str.len < 10) {
+    if (comptime str.len < 10) {
         const last = self[self.len - 1];
         inline while (str) |char| {
             if (char == last) {

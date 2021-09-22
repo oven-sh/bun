@@ -1730,6 +1730,7 @@ pub const ScanPassResult = struct {
     named_imports: js_ast.Ast.NamedImports,
     used_symbols: ParsePassSymbolUsageMap,
     import_records_to_keep: List(u32),
+    approximate_newline_count: usize = 0,
 
     pub fn init(allocator: *std.mem.Allocator) ScanPassResult {
         return .{
@@ -1737,6 +1738,7 @@ pub const ScanPassResult = struct {
             .named_imports = js_ast.Ast.NamedImports.init(allocator),
             .used_symbols = ParsePassSymbolUsageMap.init(allocator),
             .import_records_to_keep = List(u32).init(allocator),
+            .approximate_newline_count = 0,
         };
     }
 
@@ -1744,6 +1746,7 @@ pub const ScanPassResult = struct {
         scan_pass.named_imports.clearRetainingCapacity();
         scan_pass.import_records.shrinkRetainingCapacity(0);
         scan_pass.used_symbols.clearRetainingCapacity();
+        scan_pass.approximate_newline_count = 0;
     }
 };
 
@@ -1871,6 +1874,8 @@ pub const Parser = struct {
                 p.options.jsx.classic_import_source,
             );
         }
+
+        scan_pass.approximate_newline_count = p.lexer.approximate_newline_count;
     }
 
     pub fn parse(self: *Parser) !js_ast.Result {
@@ -3919,7 +3924,6 @@ pub fn NewParser(
         fn convertExprToBindingAndInitializer(p: *P, _expr: *ExprNodeIndex, invalid_log: *LocList, is_spread: bool) ExprBindingTuple {
             var initializer: ?ExprNodeIndex = null;
             var expr = _expr;
-            var override: ?ExprNodeIndex = null;
             // zig syntax is sometimes painful
             switch (expr.*.data) {
                 .e_binary => |bin| {
@@ -4234,7 +4238,7 @@ pub fn NewParser(
                 try p.lexer.next();
             }
             if (args.items.len > 0) {
-                func.args = args.toOwnedSlice();
+                func.args = args.items;
             }
 
             // Reserve the special name "arguments" in this scope. This ensures that it
@@ -4293,7 +4297,7 @@ pub fn NewParser(
                 try decorators.append(try p.parseExprWithFlags(.new, Expr.EFlags.ts_decorator));
             }
 
-            return decorators.toOwnedSlice();
+            return decorators.items;
         }
 
         pub const TypeScript = struct {
@@ -5708,10 +5712,10 @@ pub fn NewParser(
                                 },
                             }
                         }
-                        try cases.append(js_ast.Case{ .value = value, .body = body.toOwnedSlice(), .loc = logger.Loc.Empty });
+                        try cases.append(js_ast.Case{ .value = value, .body = body.items, .loc = logger.Loc.Empty });
                     }
                     try p.lexer.expect(.t_close_brace);
-                    return p.s(S.Switch{ .test_ = test_, .body_loc = body_loc, .cases = cases.toOwnedSlice() }, loc);
+                    return p.s(S.Switch{ .test_ = test_, .body_loc = body_loc, .cases = cases.items }, loc);
                 },
                 .t_try => {
                     try p.lexer.next();
@@ -6361,7 +6365,7 @@ pub fn NewParser(
                                                     for (local.decls) |decl| {
                                                         try extractDeclsForBinding(decl.binding, &_decls);
                                                     }
-                                                    decls = _decls.toOwnedSlice();
+                                                    decls = _decls.items;
                                                 },
                                                 else => {},
                                             }
@@ -6548,7 +6552,7 @@ pub fn NewParser(
             }
 
             return p.s(
-                S.Namespace{ .name = name, .arg = arg_ref orelse Ref.None, .stmts = stmts.toOwnedSlice(), .is_export = opts.is_export },
+                S.Namespace{ .name = name, .arg = arg_ref orelse Ref.None, .stmts = stmts.items, .is_export = opts.is_export },
                 loc,
             );
         }
@@ -6724,7 +6728,7 @@ pub fn NewParser(
             }
 
             try p.lexer.expect(.t_close_brace);
-            return ImportClause{ .items = items.toOwnedSlice(), .is_single_line = is_single_line };
+            return ImportClause{ .items = items.items, .is_single_line = is_single_line };
         }
 
         fn forbidInitializers(p: *P, decls: []G.Decl, loop_type: string, is_var: bool) !void {
@@ -6880,7 +6884,7 @@ pub fn NewParser(
                     }
                     try p.lexer.expect(.t_close_bracket);
                     return p.b(B.Array{
-                        .items = items.toOwnedSlice(),
+                        .items = items.items,
                         .has_spread = has_spread,
                         .is_single_line = is_single_line,
                     }, loc);
@@ -6926,7 +6930,7 @@ pub fn NewParser(
                     try p.lexer.expect(.t_close_brace);
 
                     return p.b(B.Object{
-                        .properties = properties.toOwnedSlice(),
+                        .properties = properties.items,
                         .is_single_line = is_single_line,
                     }, loc);
                 },
@@ -13956,7 +13960,7 @@ pub fn NewParser(
                 // Eat the comma token
                 try p.lexer.next();
             }
-            var items = if (items_list.capacity > 0) items_list.toOwnedSlice() else &([_]Expr{});
+            var items = items_list.items;
 
             // The parenthetical construct must end with a close parenthesis
             try p.lexer.expect(.t_close_paren);
@@ -13993,10 +13997,11 @@ pub fn NewParser(
                         else => {},
                     }
 
-                    const tuple = p.convertExprToBindingAndInitializer(&items[i], &invalidLog, is_spread);
+                    var item = items[i];
+                    const tuple = p.convertExprToBindingAndInitializer(&item, &invalidLog, is_spread);
                     // double allocations
                     args.append(G.Arg{
-                        .binding = tuple.binding orelse Binding{ .data = Prefill.Data.BMissing, .loc = items[i].loc },
+                        .binding = tuple.binding orelse Binding{ .data = Prefill.Data.BMissing, .loc = item.loc },
                         .default = tuple.expr,
                     }) catch unreachable;
                 }

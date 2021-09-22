@@ -26,6 +26,7 @@ const fs = @import("../fs.zig");
 const Router = @import("../router.zig");
 
 var wait_group: sync.WaitGroup = undefined;
+var estimated_input_lines_of_code_: usize = undefined;
 const ServerBundleGeneratorThread = struct {
     inline fn _generate(
         logs: *logger.Log,
@@ -51,13 +52,14 @@ const ServerBundleGeneratorThread = struct {
             Output.prettyErrorln("<r><red>{s}<r> loading --define or .env values for node_modules.server.bun\n", .{@errorName(err)});
             return err;
         };
-
+        var estimated_input_lines_of_code: usize = 0;
         _ = try bundler.ServeBundler.GenerateNodeModuleBundle.generate(
             &server_bundler,
             allocator_,
             server_conf,
             route_conf_,
             _filepath,
+            &estimated_input_lines_of_code,
         );
         std.mem.doNotOptimizeAway(&server_bundler);
     }
@@ -95,6 +97,7 @@ pub const BunCommand = struct {
     ) !void {
         var allocator = ctx.allocator;
         var log = ctx.log;
+        estimated_input_lines_of_code_ = 0;
 
         var this_bundler = try bundler.ServeBundler.init(allocator, log, ctx.args, null, null);
         this_bundler.configureLinker();
@@ -164,6 +167,7 @@ pub const BunCommand = struct {
         }
 
         {
+
             // Always generate the client-only bundle
             // we can revisit this decision if people ask
             var node_modules_ = try bundler.ServeBundler.GenerateNodeModuleBundle.generate(
@@ -172,8 +176,10 @@ pub const BunCommand = struct {
                 loaded_framework,
                 loaded_route_config,
                 filepath,
+                &estimated_input_lines_of_code_,
             );
 
+            const estimated_input_lines_of_code = estimated_input_lines_of_code_;
             if (server_bundler_generator_thread) |thread| {
                 wait_group.wait();
             }
@@ -189,6 +195,27 @@ pub const BunCommand = struct {
                         bundle.printSummary();
                     }
                     const indent = comptime " ";
+
+                    switch (estimated_input_lines_of_code) {
+                        0...99999 => {
+                            if (generated_server) {
+                                Output.prettyln(indent ++ "<d>{d:<5} LOC parsed x2", .{estimated_input_lines_of_code});
+                            } else {
+                                Output.prettyln(indent ++ "<d>{d:<5} LOC parsed", .{estimated_input_lines_of_code});
+                            }
+                        },
+                        else => {
+                            const formatted_loc: f32 = @floatCast(f32, @intToFloat(f128, estimated_input_lines_of_code) / 1000);
+                            if (generated_server) {
+                                Output.prettyln(indent ++ "<d>{d:<5.2}k LOC parsed x2", .{formatted_loc});
+                            } else {
+                                Output.prettyln(indent ++ "<d>{d:<5.2}k LOC parsed", .{
+                                    formatted_loc,
+                                });
+                            }
+                        },
+                    }
+
                     Output.prettyln(indent ++ "<d>{d:6}ms elapsed", .{@intCast(u32, elapsed)});
 
                     if (generated_server) {
@@ -196,6 +223,8 @@ pub const BunCommand = struct {
                     } else {
                         Output.prettyln(indent ++ "<r>Saved to ./{s}", .{filepath});
                     }
+
+                    Output.flush();
 
                     try log.printForLogLevel(Output.errorWriter());
                 }

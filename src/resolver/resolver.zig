@@ -1201,7 +1201,6 @@ pub fn NewResolver(cache_files: bool) type {
                                     // paths. We also want to avoid any "%" characters in the absolute
                                     // directory path accidentally being interpreted as URL escapes.
                                     var esm_resolution = esmodule.resolve("/", esm.subpath, exports_map.root);
-                                    defer Output.debug("ESM Resolution Status {s}: {s}\n", .{ abs_package_path, esm_resolution.status });
 
                                     if ((esm_resolution.status == .Inexact or esm_resolution.status == .Exact) and strings.startsWith(esm_resolution.path, "/")) {
                                         const abs_esm_path: string = brk: {

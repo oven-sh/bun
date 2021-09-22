@@ -431,6 +431,8 @@ pub fn NewBundler(cache_files: bool) type {
                         while (generator.queue.next()) |item| {
                             try generator.processFile(worker, item);
                         }
+
+                        generator.estimated_input_lines_of_code = worker.data.estimated_input_lines_of_code;
                         return;
                     }
 
@@ -475,6 +477,7 @@ pub fn NewBundler(cache_files: bool) type {
                         shared_buffer: MutableString = undefined,
                         scan_pass_result: js_parser.ScanPassResult = undefined,
                         log: *logger.Log,
+                        estimated_input_lines_of_code: usize = 0,
 
                         pub fn deinit(this: *WorkerData, allocator: *std.mem.Allocator) void {
                             this.shared_buffer.deinit();
@@ -530,6 +533,7 @@ pub fn NewBundler(cache_files: bool) type {
                         this.data = this.generator.allocator.create(WorkerData) catch unreachable;
                         this.data.* = WorkerData{
                             .log = this.generator.allocator.create(logger.Log) catch unreachable,
+                            .estimated_input_lines_of_code = 0,
                         };
                         this.data.log.* = logger.Log.init(this.generator.allocator);
                         this.data.shared_buffer = try MutableString.init(this.generator.allocator, 0);
@@ -539,6 +543,7 @@ pub fn NewBundler(cache_files: bool) type {
                             {
                                 this.generator.log_lock.lock();
                                 this.data.log.appendTo(this.generator.log) catch {};
+                                this.generator.estimated_input_lines_of_code += this.data.estimated_input_lines_of_code;
                                 this.generator.log_lock.unlock();
                             }
 
@@ -576,6 +581,7 @@ pub fn NewBundler(cache_files: bool) type {
             tmpfile_byte_offset: u32 = 0,
             code_end_byte_offset: u32 = 0,
             has_jsx: bool = false,
+            estimated_input_lines_of_code: usize = 0,
 
             work_waiter: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
             list_lock: Lock = Lock.init(),
@@ -666,6 +672,7 @@ pub fn NewBundler(cache_files: bool) type {
                 framework_config: ?Api.LoadedFramework,
                 route_config: ?Api.LoadedRouteConfig,
                 destination: [*:0]const u8,
+                estimated_input_lines_of_code: *usize,
             ) !?Api.JavascriptBundleContainer {
                 var tmpdir: std.fs.Dir = try bundler.fs.fs.openTmpDir();
                 var tmpname_buf: [64]u8 = undefined;
@@ -694,6 +701,7 @@ pub fn NewBundler(cache_files: bool) type {
                     .header_string_buffer = try MutableString.init(allocator, "dist/index.js".len),
                     .allocator = allocator,
                     .queue = queue,
+                    .estimated_input_lines_of_code = 0,
                     // .resolve_queue = queue,
                     .bundler = bundler,
                     .tmpfile = tmpfile,
@@ -834,6 +842,7 @@ pub fn NewBundler(cache_files: bool) type {
 
                 try this.pool.start(this);
                 try this.pool.wait(this);
+                estimated_input_lines_of_code.* = generator.estimated_input_lines_of_code;
 
                 // if (comptime !isRelease) {
                 //     this.queue.checkDuplicatesSlow();
@@ -1023,7 +1032,6 @@ pub fn NewBundler(cache_files: bool) type {
                     0000010 | 0000100 | 0000001 | 0001000 | 0000040 | 0000004 | 0000002 | 0000400 | 0000200 | 0000020,
                 );
                 try std.os.renameatZ(tmpdir.fd, tmpname, top_dir.fd, destination);
-
                 // Print any errors at the end
                 // try this.log.print(Output.errorWriter());
                 return javascript_bundle_container;
@@ -1275,6 +1283,9 @@ pub fn NewBundler(cache_files: bool) type {
                         };
                     };
 
+                    var approximate_newline_count: usize = 0;
+                    defer worker.data.estimated_input_lines_of_code += approximate_newline_count;
+
                     // Handle empty files
                     // We can't just ignore them. Sometimes code will try to import it. Often because of TypeScript types.
                     // So we just say it's an empty object. Empty object mimicks what "browser": false does as well.
@@ -1313,6 +1324,7 @@ pub fn NewBundler(cache_files: bool) type {
                                     log,
                                     &source,
                                 )) orelse return;
+                                approximate_newline_count = ast.approximate_newline_count;
                                 if (ast.import_records.len > 0) {
                                     for (ast.import_records) |*import_record, record_id| {
 
@@ -1553,7 +1565,6 @@ pub fn NewBundler(cache_files: bool) type {
 
                                 // It should only have one part.
                                 ast.parts = ast.parts[ast.parts.len - 1 ..];
-
                                 const write_result =
                                     try js_printer.printCommonJSThreaded(
                                     @TypeOf(writer),
@@ -1631,6 +1642,7 @@ pub fn NewBundler(cache_files: bool) type {
                                 log,
                                 &source,
                             );
+                            worker.data.estimated_input_lines_of_code += scan_pass_result.approximate_newline_count;
 
                             {
                                 for (scan_pass_result.import_records.items) |*import_record, i| {

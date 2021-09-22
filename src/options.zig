@@ -459,13 +459,13 @@ pub const Platform = enum {
     };
 
     pub const default_conditions_strings = .{
-        .browser = @as("browser", string),
-        .import = @as("import", string),
-        .require = @as("require", string),
-        .node = @as("node", string),
-        .default = @as("default", string),
-        .bun = @as("bun", string),
-        .bun_macro = @as("bun_macro", string),
+        .browser = @as(string, "browser"),
+        .import = @as(string, "import"),
+        .require = @as(string, "require"),
+        .node = @as(string, "node"),
+        .default = @as(string, "default"),
+        .bun = @as(string, "bun"),
+        .bun_macro = @as(string, "bun_macro"),
     };
 
     pub const DefaultConditions: std.EnumArray(Platform, []const string) = brk: {
@@ -487,7 +487,7 @@ pub const Platform = enum {
         // If you want to enable tree shaking when targeting node, you will have to
         // configure the main fields to be "module" and then "main". Keep in mind
         // that some packages may break if you do this.
-        array.set(Platform.node, [_]string{default_conditions_strings.node});
+        array.set(Platform.node, &[_]string{default_conditions_strings.node});
 
         // Note that this means if a package specifies "main", "module", and
         // "browser" then "browser" will win out over "module". This is the
@@ -502,7 +502,7 @@ pub const Platform = enum {
         array.set(Platform.browser, &listc);
         array.set(
             Platform.bun,
-            [_]string{
+            &[_]string{
                 default_conditions_strings.bun,
                 default_conditions_strings.browser,
             },

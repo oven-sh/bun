@@ -39,7 +39,7 @@ pub inline fn indexOfChar(self: string, char: u8) ?usize {
 pub fn indexOfCharNeg(self: string, char: u8) i32 {
     var i: u32 = 0;
     while (i < self.len) : (i += 1) {
-        if (self[i] == value) return @intCast(i32, i);
+        if (self[i] == char) return @intCast(i32, i);
     }
     return -1;
 }
@@ -271,7 +271,7 @@ pub fn quotedAlloc(allocator: *std.mem.Allocator, self: string) !string {
 pub fn endsWithAnyComptime(self: string, comptime str: string) bool {
     if (comptime str.len < 10) {
         const last = self[self.len - 1];
-        inline while (str) |char| {
+        inline for (str) |char| {
             if (char == last) {
                 return true;
             }

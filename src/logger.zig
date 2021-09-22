@@ -760,7 +760,7 @@ pub const Log = struct {
         args: anytype,
         comptime note_fmt: string,
         note_args: anytype,
-        note_range: logger.Range,
+        note_range: Range,
     ) !void {
         if (!Kind.shouldPrint(.warn, log.level)) return;
         log.warnings += 1;

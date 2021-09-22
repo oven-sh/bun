@@ -596,7 +596,7 @@ pub const PackageJSON = struct {
         }
 
         if (json.asProperty("exports")) |exports_prop| {
-            if (ExportsMap.parse(allocator, source, log, exports_prop)) |exports_map| {
+            if (ExportsMap.parse(r.allocator, &json_source, r.log, exports_prop.expr)) |exports_map| {
                 package_json.exports = exports_map;
             }
         }
@@ -641,7 +641,7 @@ pub const ExportsMap = struct {
 
         const root = visitor.visit(json);
 
-        if (root.data == .null) {
+        if (root.data == .@"null") {
             return null;
         }
 
@@ -668,11 +668,11 @@ pub const ExportsMap = struct {
                         .data = .{
                             .string = str.string(this.allocator) catch unreachable,
                         },
-                        .first_token = this.source.rangeOfString(this.source, expr.loc),
+                        .first_token = this.source.rangeOfString(expr.loc),
                     };
                 },
                 .e_array => |e_array| {
-                    var array = this.allocator.alloc(Entry, array.items.len) catch unreachable;
+                    var array = this.allocator.alloc(Entry, e_array.items.len) catch unreachable;
                     for (e_array.items) |item, i| {
                         array[i] = this.visit(item);
                     }
@@ -686,7 +686,7 @@ pub const ExportsMap = struct {
                 .e_object => |e_obj| {
                     var map_data = Entry.Data.Map.List{};
                     map_data.ensureTotalCapacity(this.allocator, e_obj.*.properties.len) catch unreachable;
-                    var expansion_keys = this.allocator.alloc(string, e_obj.*.properties.len) catch unreachable;
+                    var expansion_keys = this.allocator.alloc(Entry.Data.Map.MapEntry, e_obj.*.properties.len) catch unreachable;
                     var expansion_key_i: usize = 0;
                     var map_data_slices = map_data.slice();
                     var map_data_keys = map_data_slices.items(.key);
@@ -697,7 +697,7 @@ pub const ExportsMap = struct {
                     first_token.len = 1;
                     for (e_obj.properties) |prop, i| {
                         const key: string = prop.key.?.data.e_string.string(this.allocator) catch unreachable;
-                        const key_range: logger.Range = this.source.rangeOfString(property.key.?.loc);
+                        const key_range: logger.Range = this.source.rangeOfString(prop.key.?.loc);
 
                         // If exports is an Object with both a key starting with "." and a key
                         // not starting with ".", throw an Invalid Package Configuration error.
@@ -785,15 +785,16 @@ pub const ExportsMap = struct {
 
         pub const Data = union(Tag) {
             invalid: void,
-            null: void,
+            @"null": void,
             boolean: bool,
-            string: string,
+            @"string": string,
             array: []const Entry,
             map: Map,
 
             pub const Tag = enum {
-                null,
+                @"null",
                 string,
+                boolean,
                 array,
                 map,
                 invalid,
@@ -814,7 +815,7 @@ pub const ExportsMap = struct {
         };
 
         pub fn keysStartWithDot(this: *const Entry) bool {
-            return this.data == .map and this.data.map.list.len > 0 and strings.startsWithChar(this.data.map.list.items(.key), '.');
+            return this.data == .map and this.data.map.list.len > 0 and strings.startsWithChar(this.data.map.list.items(.key)[0], '.');
         }
 
         pub fn valueForKey(this: *const Entry, key_: string) ?Entry {
@@ -839,7 +840,7 @@ pub const ExportsMap = struct {
 };
 
 pub const ESModule = struct {
-    pub const ConditionsMap = std.AutoArrayHashMap(string, void);
+    pub const ConditionsMap = std.StringArrayHashMap(void);
 
     debug_logs: ?*resolver.DebugLogs = null,
     conditions: ConditionsMap,
@@ -901,19 +902,19 @@ pub const ESModule = struct {
             var package = Package{ .name = "", .subpath = "" };
 
             var slash = strings.indexOfCharNeg(specifier, '/');
-            if (!string.startsWithChar(specifier, '@')) {
-                slash = if (slash == -1) specifier.len else slash;
+            if (!strings.startsWithChar(specifier, '@')) {
+                slash = if (slash == -1) @intCast(i32, specifier.len) else slash;
                 package.name = specifier[0..@intCast(usize, slash)];
             } else {
                 if (slash == -1) return null;
 
-                const slash2 = strings.indexOfChar(specifier[@intCast(usize, slash) + 1 ..]) orelse
+                const slash2 = strings.indexOfChar(specifier[@intCast(usize, slash) + 1 ..], '/') orelse
                     specifier[@intCast(u32, slash + 1)..].len;
                 package.name = specifier[0 .. @intCast(usize, slash + 1) + slash2];
             }
 
-            if (strings.startsWith(package.name, ".") or strings.containsAny(package.name, "\\%"))
-                return;
+            if (strings.startsWith(package.name, ".") or strings.indexAnyComptime(package.name, "\\%") != null)
+                return null;
 
             std.mem.copy(u8, subpath_buf[1..], package.subpath);
             subpath_buf[0] = '.';
@@ -980,7 +981,7 @@ pub const ESModule = struct {
         subpath: string,
         exports: ExportsMap.Entry,
     ) Resolution {
-        if (exports.kind == .invalid) {
+        if (exports.data == .invalid) {
             if (r.debug_logs) |logs| {
                 logs.addNote("Invalid package configuration") catch unreachable;
             }
@@ -989,12 +990,13 @@ pub const ESModule = struct {
         }
 
         if (strings.eqlComptime(subpath, ".")) {
-            var main_export = ExportsMap.Entry{ .data = .{ .null = void{} } };
+            var main_export = ExportsMap.Entry{ .data = .{ .@"null" = void{} }, .first_token = logger.Range.None };
             if (switch (exports.data) {
                 .string,
                 .array,
                 => true,
-                .array => !exports.keysStartWithDot(),
+                .map => !exports.keysStartWithDot(),
+                else => false,
             }) {
                 main_export = exports;
             } else if (exports.data == .map) {
@@ -1003,18 +1005,16 @@ pub const ESModule = struct {
                 }
             }
 
-            if (main_export.data != .null) {
-                if (r.resolveTarget(package_url, main_export, "", false)) |result| {
-                    if (result.status != .Null and result.status != .Undefined) {
-                        return result;
-                    }
-                }
-            }
-        } else if (exports.data == .map and exports.keysStartWithDot()) {
-            if (r.resolveImportsExports(subpath, exports, package_url)) |result| {
+            if (main_export.data != .@"null") {
+                const result = r.resolveTarget(package_url, main_export, "", false);
                 if (result.status != .Null and result.status != .Undefined) {
                     return result;
                 }
+            }
+        } else if (exports.data == .map and exports.keysStartWithDot()) {
+            const result = r.resolveImportsExports(subpath, exports, package_url);
+            if (result.status != .Null and result.status != .Undefined) {
+                return result;
             }
         }
 
@@ -1036,7 +1036,7 @@ pub const ESModule = struct {
         }
 
         if (!strings.endsWithChar(match_key, '.')) {
-            if (match_obj.valueForKey(match_Key)) |target| {
+            if (match_obj.valueForKey(match_key)) |target| {
                 if (r.debug_logs) |log| {
                     log.addNoteFmt("Found \"{s}\"", .{match_key}) catch unreachable;
                 }
@@ -1087,7 +1087,7 @@ pub const ESModule = struct {
         }
 
         if (r.debug_logs) |log| {
-            log.addNoteFmt("No keys matched \"{s}\"", .{expansion.key}) catch unreachable;
+            log.addNoteFmt("No keys matched \"{s}\"", .{match_key}) catch unreachable;
         }
 
         return Resolution{
@@ -1121,16 +1121,16 @@ pub const ESModule = struct {
                 if (comptime !pattern) {
                     if (subpath.len > 0 and !strings.endsWithChar(str, '/')) {
                         if (r.debug_logs) |log| {
-                            log.addNoteFmt("The target \"{s}\" is invalid because it doesn't end with a \"/\"") catch unreachable;
+                            log.addNoteFmt("The target \"{s}\" is invalid because it doesn't end with a \"/\"", .{str}) catch unreachable;
                         }
 
                         return Resolution{ .path = str, .status = .InvalidModuleSpecifier, .debug = .{ .token = target.first_token } };
                     }
                 }
 
-                if (!strings.startsWith(string, "./")) {
+                if (!strings.startsWith(str, "./")) {
                     if (r.debug_logs) |log| {
-                        log.addNoteFmt("The target \"{s}\" is invalid because it doesn't start with a \"./\"") catch unreachable;
+                        log.addNoteFmt("The target \"{s}\" is invalid because it doesn't start with a \"./\"", .{str}) catch unreachable;
                     }
 
                     return Resolution{ .path = str, .status = .InvalidPackageTarget, .debug = .{ .token = target.first_token } };
@@ -1174,7 +1174,7 @@ pub const ESModule = struct {
                     var parts2 = [_]string{ package_url, str, subpath };
                     const result = resolve_path.joinStringBuf(&resolve_target_buf, parts2, .auto);
                     if (r.debug_logs) |log| {
-                        log.addNoteFmt("Subsituted \"{s}\" for \"*\" in \".{s}\" to get \".{s}\" ", .{ subpath, resolved_target, result }) catch unreachable;
+                        log.addNoteFmt("Substituted \"{s}\" for \"*\" in \".{s}\" to get \".{s}\" ", .{ subpath, resolved_target, result }) catch unreachable;
                     }
 
                     return Resolution{ .path = result, .status = .Exact, .debug = .{ .token = target.first_token } };
@@ -1182,7 +1182,7 @@ pub const ESModule = struct {
             },
             .map => |object| {
                 var did_find_map_entry = false;
-                var last_map_entry: ExportsMap.Entry.Data.Map.MapEntry = undefined;
+                var last_map_entry_i: usize = 0;
 
                 const slice = object.list.slice();
                 const keys = slice.items(.key);
@@ -1195,7 +1195,7 @@ pub const ESModule = struct {
                         var result = r.resolveTarget(package_url, target, subpath, pattern);
                         if (result.status.isUndefined()) {
                             did_find_map_entry = true;
-                            last_map_entry = slice.get(i);
+                            last_map_entry_i = i;
                             continue;
                         }
 
@@ -1208,15 +1208,21 @@ pub const ESModule = struct {
                 }
 
                 if (r.debug_logs) |log| {
-                    log.addNoteFmt("No keys matched") catch unreachable;
+                    log.addNoteFmt("No keys matched", .{}) catch unreachable;
                 }
 
                 var return_target = target;
                 // ALGORITHM DEVIATION: Provide a friendly error message if no conditions matched
                 if (keys.len > 0 and !target.keysStartWithDot()) {
+                    var last_map_entry = ExportsMap.Entry.Data.Map.MapEntry{
+                        .key = keys[last_map_entry_i],
+                        .value = slice.items(.value)[last_map_entry_i],
+                        // key_range is unused, so we don't need to pull up the array for it.
+                        .key_range = undefined,
+                    };
                     if (did_find_map_entry and
                         last_map_entry.value.data == .map and
-                        last_map_entry.value.data.map.list.items.len > 0 and
+                        last_map_entry.value.data.map.list.len > 0 and
                         !last_map_entry.value.keysStartWithDot())
                     {
                         // If a top-level condition did match but no sub-condition matched,
@@ -1252,7 +1258,7 @@ pub const ESModule = struct {
                         .status = .UndefinedNoConditionsMatch,
                         .debug = .{
                             .token = target.first_token,
-                            .unmatched_conditions = return_target.data.map.list.items(.keys),
+                            .unmatched_conditions = return_target.data.map.list.items(.key),
                         },
                     };
                 }
@@ -1292,7 +1298,7 @@ pub const ESModule = struct {
 
                 return Resolution{ .path = "", .status = last_exception, .debug = last_debug };
             },
-            .null => {
+            .@"null" => {
                 if (r.debug_logs) |log| {
                     log.addNoteFmt("The path \"{s}\" is null", .{subpath}) catch unreachable;
                 }

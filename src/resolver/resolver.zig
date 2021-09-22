@@ -1197,7 +1197,7 @@ pub fn NewResolver(cache_files: bool) type {
                                             else => r.opts.conditions.default,
                                         },
                                         .allocator = r.allocator,
-                                        .debug_logs = &r.debug_logs,
+                                        .debug_logs = if (r.debug_logs) |*debug| debug else null,
                                     };
 
                                     var esm_resolution = esmodule.resolve("/", esm.subpath, exports_map.root);

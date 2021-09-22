@@ -11,6 +11,7 @@ const defines = @import("./defines.zig");
 const resolve_path = @import("./resolver/resolve_path.zig");
 const NodeModuleBundle = @import("./node_module_bundle.zig").NodeModuleBundle;
 const URL = @import("./query_string_map.zig").URL;
+const ConditionsMap = @import("./resolver/package_json.zig").ESModule.ConditionsMap;
 usingnamespace @import("global.zig");
 
 const DotEnv = @import("./env_loader.zig");
@@ -456,6 +457,67 @@ pub const Platform = enum {
 
         break :brk array;
     };
+
+    pub const default_conditions_strings = .{
+        .browser = @as("browser", string),
+        .import = @as("import", string),
+        .require = @as("require", string),
+        .node = @as("node", string),
+        .default = @as("default", string),
+        .bun = @as("bun", string),
+        .bun_macro = @as("bun_macro", string),
+    };
+
+    pub const DefaultConditions: std.EnumArray(Platform, []const string) = brk: {
+        var array = std.EnumArray(Platform, []const string).initUndefined();
+
+        // Note that this means if a package specifies "module" and "main", the ES6
+        // module will not be selected. This means tree shaking will not work when
+        // targeting node environments.
+        //
+        // This is unfortunately necessary for compatibility. Some packages
+        // incorrectly treat the "module" field as "code for the browser". It
+        // actually means "code for ES6 environments" which includes both node
+        // and the browser.
+        //
+        // For example, the package "@firebase/app" prints a warning on startup about
+        // the bundler incorrectly using code meant for the browser if the bundler
+        // selects the "module" field instead of the "main" field.
+        //
+        // If you want to enable tree shaking when targeting node, you will have to
+        // configure the main fields to be "module" and then "main". Keep in mind
+        // that some packages may break if you do this.
+        array.set(Platform.node, [_]string{default_conditions_strings.node});
+
+        // Note that this means if a package specifies "main", "module", and
+        // "browser" then "browser" will win out over "module". This is the
+        // same behavior as webpack: https://github.com/webpack/webpack/issues/4674.
+        //
+        // This is deliberate because the presence of the "browser" field is a
+        // good signal that the "module" field may have non-browser stuff in it,
+        // which will crash or fail to be bundled when targeting the browser.
+        var listc = [_]string{
+            default_conditions_strings.browser,
+        };
+        array.set(Platform.browser, &listc);
+        array.set(
+            Platform.bun,
+            [_]string{
+                default_conditions_strings.bun,
+                default_conditions_strings.browser,
+            },
+        );
+        // array.set(Platform.bun_macro, [_]string{ default_conditions_strings.bun_macro, default_conditions_strings.browser, default_conditions_strings.default, },);
+
+        // Original comment:
+        // The neutral platform is for people that don't want esbuild to try to
+        // pick good defaults for their platform. In that case, the list of main
+        // fields is empty by default. You must explicitly configure it yourself.
+
+        array.set(Platform.neutral, &listc);
+
+        break :brk array;
+    };
 };
 
 pub const Loader = enum(u3) {
@@ -524,6 +586,39 @@ pub const defaultLoaders = std.ComptimeStringMap(Loader, .{
     .{ ".ts", Loader.ts },
     .{ ".tsx", Loader.tsx },
 });
+
+pub const ESMConditions = struct {
+    default: ConditionsMap = undefined,
+    import: ConditionsMap = undefined,
+    require: ConditionsMap = undefined,
+
+    pub fn init(allocator: *std.mem.Allocator, defaults: []const string) !ESMConditions {
+        var default_condition_amp = ConditionsMap.init(allocator);
+
+        var import_condition_map = ConditionsMap.init(allocator);
+        var require_condition_map = ConditionsMap.init(allocator);
+
+        try default_condition_amp.ensureTotalCapacity(defaults.len + 1);
+        try import_condition_map.ensureTotalCapacity(defaults.len + 1);
+        try require_condition_map.ensureTotalCapacity(defaults.len + 1);
+
+        import_condition_map.putAssumeCapacityNoClobber(Platform.default_conditions_strings.import, void{});
+        require_condition_map.putAssumeCapacityNoClobber(Platform.default_conditions_strings.require, void{});
+        default_condition_amp.putAssumeCapacityNoClobber(Platform.default_conditions_strings.default, void{});
+
+        for (defaults) |default| {
+            default_condition_amp.putAssumeCapacityNoClobber(default, void{});
+            import_condition_map.putAssumeCapacityNoClobber(default, void{});
+            require_condition_map.putAssumeCapacityNoClobber(default, void{});
+        }
+
+        return ESMConditions{
+            .default = default_condition_amp,
+            .import = import_condition_map,
+            .require = require_condition_map,
+        };
+    }
+};
 
 pub const JSX = struct {
     pub const Pragma = struct {
@@ -827,6 +922,8 @@ pub const BundleOptions = struct {
     transform_options: Api.TransformOptions,
     polyfill_node_globals: bool = true,
 
+    conditions: ESMConditions = undefined,
+
     pub inline fn cssImportBehavior(this: *const BundleOptions) Api.CssInJsBehavior {
         switch (this.platform) {
             .neutral, .browser => {
@@ -934,6 +1031,8 @@ pub const BundleOptions = struct {
             opts.platform = Platform.from(plat);
             opts.main_fields = Platform.DefaultMainFields.get(opts.platform);
         }
+
+        opts.conditions = try ESMConditions.init(allocator, Platform.DefaultConditions.get(opts.platform));
 
         if (transform.serve orelse false) {
             // When we're serving, we need some kind of URL.

@@ -8,6 +8,7 @@ const cache = @import("../cache.zig");
 const sync = @import("../sync.zig");
 const TSConfigJSON = @import("./tsconfig_json.zig").TSConfigJSON;
 const PackageJSON = @import("./package_json.zig").PackageJSON;
+const ESModule = @import("./package_json.zig").ESModule;
 const BrowserMap = @import("./package_json.zig").BrowserMap;
 
 usingnamespace @import("./data_url.zig");
@@ -1119,6 +1120,9 @@ pub fn NewResolver(cache_files: bool) type {
             return res;
         }
 
+        threadlocal var esm_subpath_buf: [512]u8 = undefined;
+        threadlocal var esm_absolute_package_path: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        threadlocal var esm_absolute_package_path_joined: [std.fs.MAX_PATH_BYTES]u8 = undefined;
         inline fn _loadNodeModules(r: *ThisResolver, import_path: string, kind: ast.ImportKind, _dir_info: *DirInfo) ?MatchResult {
             var dir_info = _dir_info;
             if (r.debug_logs) |*debug| {
@@ -1155,6 +1159,8 @@ pub fn NewResolver(cache_files: bool) type {
                 }
             }
 
+            const esm_ = ESModule.Package.parse(import_path, &esm_subpath_buf);
+
             // Then check for the package in any enclosing "node_modules" directories
             while (true) {
                 // Skip directories that are themselves called "node_modules", since we
@@ -1166,7 +1172,95 @@ pub fn NewResolver(cache_files: bool) type {
                         debug.addNoteFmt("Checking for a package in the directory \"{s}\"", .{abs_path}) catch {};
                     }
 
-                    // TODO: esm "exports" field goes here!!! Here!!
+                    if (esm_) |esm| {
+                        const abs_package_path = brk: {
+                            var parts = [_]string{ dir_info.abs_path, "node_modules", esm.name };
+                            break :brk r.fs.absBuf(&parts, &esm_absolute_package_path);
+                        };
+
+                        if (r.dirInfoCached(abs_package_path) catch null) |pkg_dir_info| {
+                            if (pkg_dir_info.package_json) |package_json| {
+                                if (package_json.exports) |exports_map| {
+
+                                    // The condition set is determined by the kind of import
+
+                                    // Resolve against the path "/", then join it with the absolute
+                                    // directory path. This is done because ESM package resolution uses
+                                    // URLs while our path resolution uses file system paths. We don't
+                                    // want problems due to Windows paths, which are very unlike URL
+                                    // paths. We also want to avoid any "%" characters in the absolute
+                                    // directory path accidentally being interpreted as URL escapes.
+                                    const esmodule = ESModule{
+                                        .conditions = switch (kind) {
+                                            ast.ImportKind.stmt, ast.ImportKind.dynamic => r.opts.conditions.import,
+                                            ast.ImportKind.require, ast.ImportKind.require_resolve => r.opts.conditions.require,
+                                            else => r.opts.conditions.default,
+                                        },
+                                        .allocator = r.allocator,
+                                        .debug_logs = &r.debug_logs,
+                                    };
+
+                                    var esm_resolution = esmodule.resolve("/", esm.subpath, exports_map.root);
+                                    defer Output.debug("ESM Resolution Status {s}: {s}\n", .{ abs_package_path, esm_resolution.status });
+
+                                    if ((esm_resolution.status == .Inexact or esm_resolution.status == .Exact) and strings.startsWith(esm_resolution.path, "/")) {
+                                        const abs_esm_path: string = brk: {
+                                            var parts = [_]string{
+                                                abs_package_path,
+                                                esm_resolution.path[1..],
+                                            };
+                                            break :brk r.fs.absBuf(&parts, &esm_absolute_package_path_joined);
+                                        };
+
+                                        switch (esm_resolution.status) {
+                                            .Exact => {
+                                                const resolved_dir_info = (r.dirInfoCached(abs_esm_path) catch null) orelse {
+                                                    esm_resolution.status = .ModuleNotFound;
+                                                    return null;
+                                                };
+                                                const entries = resolved_dir_info.getEntries() orelse {
+                                                    esm_resolution.status = .ModuleNotFound;
+                                                    return null;
+                                                };
+                                                const entry_query = entries.get(std.fs.path.basename(abs_esm_path)) orelse {
+                                                    esm_resolution.status = .ModuleNotFound;
+                                                    return null;
+                                                };
+
+                                                if (entry_query.entry.kind(&r.fs.fs) == .dir) {
+                                                    esm_resolution.status = .UnsupportedDirectoryImport;
+                                                    return null;
+                                                }
+
+                                                return MatchResult{
+                                                    .path_pair = PathPair{
+                                                        .primary = Path.initWithNamespace(esm_resolution.path, "file"),
+                                                    },
+                                                    .dirname_fd = entries.fd,
+                                                    .file_fd = entry_query.entry.cache.fd,
+                                                    .dir_info = resolved_dir_info,
+                                                    .diff_case = entry_query.diff_case,
+                                                    .is_node_module = true,
+                                                    .package_json = package_json,
+                                                };
+                                            },
+                                            .Inexact => {
+                                                // If this was resolved against an expansion key ending in a "/"
+                                                // instead of a "*", we need to try CommonJS-style implicit
+                                                // extension and/or directory detection.
+                                                if (r.loadAsFileOrDirectory(abs_esm_path, kind)) |res| {
+                                                    return res;
+                                                }
+                                                esm_resolution.status = .ModuleNotFound;
+                                                return null;
+                                            },
+                                            else => unreachable,
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
 
                     if (r.loadAsFileOrDirectory(abs_path, kind)) |res| {
                         return res;

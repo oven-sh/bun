@@ -192,14 +192,16 @@ const ImportVariant = enum {
             variant = variant.hasStar();
         }
 
-        if (!record.contains_default_alias) {
-            if (s_import.default_name) |default_name| {
-                if (default_name.ref != null) {
-                    variant = variant.hasDefault();
+        if (!record.was_originally_bare_import) {
+            if (!record.contains_default_alias) {
+                if (s_import.default_name) |default_name| {
+                    if (default_name.ref != null) {
+                        variant = variant.hasDefault();
+                    }
                 }
+            } else {
+                variant = variant.hasDefault();
             }
-        } else {
-            variant = variant.hasDefault();
         }
 
         if (s_import.items.len > 0) {
@@ -3275,8 +3277,11 @@ pub fn NewPrinter(
             }
 
             switch (ImportVariant.determine(&record, p.symbols.get(s.namespace_ref).?, s)) {
-                // we treat path_only the same as import_star because we may have property accesses using it.
-                .path_only, .import_star => {
+                .path_only => {
+                    p.printLoadFromBundle(s.import_record_index);
+                    p.printSemicolonAfterStatement();
+                },
+                .import_star => {
                     p.print("var ");
                     p.printSymbol(s.namespace_ref);
                     p.print(" = ");

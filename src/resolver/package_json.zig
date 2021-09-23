@@ -55,6 +55,8 @@ pub const PackageJSON = struct {
     version: string = "",
     hash: u32 = 0xDEADBEEF,
 
+    always_bundle: []string = &.{},
+
     // Present if the "browser" field is present. This field is intended to be
     // used by bundlers and lets you redirect the paths of certain 3rd-party
     // modules that don't work in the browser to other modules that shim that
@@ -524,6 +526,27 @@ pub const PackageJSON = struct {
                 }
             } else {
                 r.log.addWarning(&json_source, type_json.loc, "The value for \"type\" must be a string") catch unreachable;
+            }
+        }
+
+        if (json.asProperty("bun")) |bun_json| {
+            if (bun_json.expr.asProperty("alwaysBundle")) |bundle_| {
+                if (bundle_.expr.data == .e_array) {
+                    var always_bundle_count: u16 = 0;
+                    const array = bundle_.expr.data.e_array.items;
+                    for (array) |item| {
+                        always_bundle_count += @intCast(u16, @boolToInt(item.data == .e_string and item.data.e_string.utf8.len > 0));
+                    }
+                    package_json.always_bundle = r.allocator.alloc(string, always_bundle_count) catch unreachable;
+
+                    var i: u16 = 0;
+                    for (array) |item| {
+                        if (!(item.data == .e_string and item.data.e_string.utf8.len > 0)) continue;
+                        package_json.always_bundle[i] = item.asString(r.allocator).?;
+                        i += 1;
+                    }
+                    // for (var i = 0; i < bundle_.expr.data.e_array.len; i++) {
+                }
             }
         }
 

@@ -264,9 +264,10 @@ pub fn NewLinker(comptime BundlerType: type) type {
                                             const node_module_root = std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str;
                                             if (strings.lastIndexOf(package_base_dir, node_module_root)) |last_node_modules| {
                                                 if (node_modules_bundle.getPackageIDByName(package_json.name)) |possible_pkg_ids| {
+                                                    const packages = node_modules_bundle.bundle.packages;
                                                     const pkg_id: u32 = brk: {
                                                         for (possible_pkg_ids) |pkg_id| {
-                                                            const pkg = node_modules_bundle.bundle.packages[pkg_id];
+                                                            const pkg = packages[pkg_id];
                                                             if (pkg.hash == package_json.hash) {
                                                                 break :brk pkg_id;
                                                             }
@@ -280,7 +281,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
                                                             .{
                                                                 package_json.name,
                                                                 package_json.name,
-                                                                node_modules_bundle.str(node_modules_bundle.bundle.packages[possible_pkg_ids[0]].version),
+                                                                node_modules_bundle.str(packages[possible_pkg_ids[0]].version),
                                                                 package_json.name,
                                                                 package_json.version,
                                                             },
@@ -288,7 +289,7 @@ pub fn NewLinker(comptime BundlerType: type) type {
                                                         break :bundled;
                                                     };
 
-                                                    const package = &node_modules_bundle.bundle.packages[pkg_id];
+                                                    const package = &packages[pkg_id];
 
                                                     if (comptime isDebug) {
                                                         std.debug.assert(strings.eql(node_modules_bundle.str(package.name), package_json.name));

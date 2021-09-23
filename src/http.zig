@@ -2252,13 +2252,13 @@ pub const RequestContext = struct {
         const extname = ctx.url.extname;
         switch (extname.len) {
             3 => {
-                if (!(strings.eqlComptime(extname, "css") or strings.eqlComptime(extname, "tsx") or strings.eqlComptime(extname, "jsx") or strings.eqlComptime(extname, "mjs"))) return try ctx.sendNotFound();
+                if (!(strings.eqlComptimeIgnoreLen(extname, "css") or strings.eqlComptimeIgnoreLen(extname, "tsx") or strings.eqlComptimeIgnoreLen(extname, "jsx") or strings.eqlComptime(extname, "mjs"))) return try ctx.sendNotFound();
             },
             2 => {
-                if (!(strings.eqlComptime(extname, "js") or strings.eqlComptime(extname, "ts"))) return try ctx.sendNotFound();
+                if (!(strings.eqlComptimeIgnoreLen(extname, "js") or strings.eqlComptimeIgnoreLen(extname, "ts"))) return try ctx.sendNotFound();
             },
             4 => {
-                if (!(strings.eqlComptime(extname, "json") or strings.eqlComptime(extname, "yaml"))) return try ctx.sendNotFound();
+                if (!(strings.eqlComptimeIgnoreLen(extname, "json") or strings.eqlComptimeIgnoreLen(extname, "yaml"))) return try ctx.sendNotFound();
             },
             else => {
                 return try ctx.sendNotFound();

@@ -432,7 +432,7 @@ The `.bun` file contains:
 
 Here are some of the questions `.bun` files answer:
 
-- what byte ranges of the `.bun` correspond to which module's source code?
+- when I import `react/index.js`, where in the `.bun` is the code for that? (not resolving, just the code)
 - what modules of a package are used?
 - what framework is used? (e.g. Next.js)
 - where is the routes directory?

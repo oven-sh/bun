@@ -231,6 +231,8 @@ pub const Runtime = struct {
         __HMRModule: ?GeneratedSymbol = null,
         __HMRClient: ?GeneratedSymbol = null,
         __FastRefreshModule: ?GeneratedSymbol = null,
+        __exportValue: ?GeneratedSymbol = null,
+        __exportDefault: ?GeneratedSymbol = null,
 
         pub const all = [_][]const u8{
             "__name",
@@ -245,6 +247,8 @@ pub const Runtime = struct {
             "__HMRModule",
             "__HMRClient",
             "__FastRefreshModule",
+            "__exportValue",
+            "__exportDefault",
         };
         pub const Name = "<RUNTIME";
 
@@ -323,7 +327,16 @@ pub const Runtime = struct {
                                 return Entry{ .key = 11, .value = val.ref };
                             }
                         },
-
+                        12 => {
+                            if (@field(this.runtime_imports, all[12])) |val| {
+                                return Entry{ .key = 12, .value = val.ref };
+                            }
+                        },
+                        13 => {
+                            if (@field(this.runtime_imports, all[13])) |val| {
+                                return Entry{ .key = 13, .value = val.ref };
+                            }
+                        },
                         else => {
                             return null;
                         },
@@ -380,6 +393,8 @@ pub const Runtime = struct {
                 9 => (@field(imports, all[9]) orelse return null).ref,
                 10 => (@field(imports, all[10]) orelse return null).ref,
                 11 => (@field(imports, all[11]) orelse return null).ref,
+                12 => (@field(imports, all[12]) orelse return null).ref,
+                13 => (@field(imports, all[13]) orelse return null).ref,
                 else => null,
             };
         }

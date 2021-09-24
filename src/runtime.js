@@ -155,10 +155,35 @@ export var __name = (target, name) => {
   return target;
 };
 
-// Used to implement ES6 exports to CommonJS
+// ESM export -> CJS export
+// except, writable incase something re-exports
 export var __export = (target, all) => {
   for (var name in all)
-    __defProp(target, name, { get: all[name], enumerable: true });
+    __defProp(target, name, {
+      get: all[name],
+      enumerable: true,
+      configurable: true,
+      set: (newValue) => (all[name] = () => newValue),
+    });
+};
+
+export var __exportValue = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, {
+      get: () => all[name],
+      set: (newValue) => (all[name] = newValue),
+      enumerable: true,
+      configurable: true,
+    });
+};
+
+export var __exportDefault = (target, value) => {
+  __defProp(target, "default", {
+    get: () => value,
+    set: (newValue) => (value = newValue),
+    enumerable: true,
+    configurable: true,
+  });
 };
 
 export var __reExport = (target, module, desc) => {

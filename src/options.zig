@@ -466,6 +466,7 @@ pub const Platform = enum {
         .default = @as(string, "default"),
         .bun = @as(string, "bun"),
         .bun_macro = @as(string, "bun_macro"),
+        .module = @as(string, "module"), // used in tslib
     };
 
     pub const DefaultConditions: std.EnumArray(Platform, []const string) = brk: {
@@ -498,12 +499,14 @@ pub const Platform = enum {
         // which will crash or fail to be bundled when targeting the browser.
         var listc = [_]string{
             default_conditions_strings.browser,
+            default_conditions_strings.module,
         };
         array.set(Platform.browser, &listc);
         array.set(
             Platform.bun,
             &[_]string{
                 default_conditions_strings.bun,
+                default_conditions_strings.module,
                 default_conditions_strings.browser,
             },
         );

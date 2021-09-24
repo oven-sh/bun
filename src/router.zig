@@ -713,7 +713,7 @@ pub fn match(app: *Router, server: anytype, comptime RequestContextType: type, c
         };
     }
 
-    if (!ctx.controlled) {
+    if (!ctx.controlled and !ctx.has_called_done) {
         try ctx.handleRequest();
     }
 }

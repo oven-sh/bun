@@ -115,6 +115,8 @@ async function main() {
     "/string-escapes.js",
     "/package-json-exports/index.js",
     "/array-args-with-default-values.js",
+    "/forbid-in-is-correct.js",
+    "/code-simplification-neql-define.js",
   ];
   tests.reverse();
 

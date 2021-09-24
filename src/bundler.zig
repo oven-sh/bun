@@ -1302,7 +1302,9 @@ pub fn NewBundler(cache_files: bool) type {
                 js_ast.Symbol{ .original_name = "exports" },
                 js_ast.Symbol{ .original_name = "module" },
                 js_ast.Symbol{ .original_name = "CONGRATS_YOU_FOUND_A_BUG" },
+                js_ast.Symbol{ .original_name = "$$bun_runtime_json_parse" },
             };
+            const json_parse_string = "parse";
             var json_ast_symbols_list = std.mem.span(&json_ast_symbols);
             threadlocal var override_file_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 
@@ -1356,6 +1358,10 @@ pub fn NewBundler(cache_files: bool) type {
                     },
                 );
             }
+            threadlocal var json_e_string: js_ast.E.String = undefined;
+            threadlocal var json_e_call: js_ast.E.Call = undefined;
+            threadlocal var json_e_identifier: js_ast.E.Identifier = undefined;
+            threadlocal var json_call_args: [1]js_ast.Expr = undefined;
             pub fn processFile(this: *GenerateNodeModuleBundle, worker: *ThreadPool.Worker, _resolve: _resolver.Result) !void {
                 const resolve = _resolve;
                 if (resolve.is_external) return;
@@ -1588,8 +1594,24 @@ pub fn NewBundler(cache_files: bool) type {
                                 }
                             },
                             .json => {
-                                var expr = json_parser.ParseJSON(&source, worker.data.log, worker.allocator) catch return;
-                                if (expr.data != .e_missing) {
+                                // parse the JSON _only_ to catch errors at build time.
+                                const parsed_expr = json_parser.ParseJSON(&source, worker.data.log, worker.allocator) catch return;
+
+                                if (parsed_expr.data != .e_missing) {
+
+                                    // Then, we store it as a UTF8 string at runtime
+                                    // This is because JavaScript engines are much faster at parsing JSON strings than object literals
+                                    json_e_string = js_ast.E.String{ .utf8 = source.contents, .prefer_template = true };
+                                    var json_string_expr = js_ast.Expr{ .data = .{ .e_string = &json_e_string }, .loc = logger.Loc{ .start = 0 } };
+                                    json_call_args[0] = json_string_expr;
+                                    json_e_identifier = js_ast.E.Identifier{ .ref = Ref{ .source_index = 0, .inner_index = @intCast(Ref.Int, json_ast_symbols_list.len - 1) } };
+
+                                    json_e_call = js_ast.E.Call{
+                                        .target = js_ast.Expr{ .data = .{ .e_identifier = &json_e_identifier }, .loc = logger.Loc{ .start = 0 } },
+                                        .args = std.mem.span(&json_call_args),
+                                    };
+                                    const expr = js_ast.Expr{ .data = .{ .e_call = &json_e_call }, .loc = logger.Loc{ .start = 0 } };
+
                                     var stmt = js_ast.Stmt.alloc(worker.allocator, js_ast.S.ExportDefault, js_ast.S.ExportDefault{
                                         .value = js_ast.StmtOrExpr{ .expr = expr },
                                         .default_name = js_ast.LocRef{ .loc = logger.Loc{}, .ref = Ref{} },

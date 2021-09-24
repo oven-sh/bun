@@ -589,6 +589,9 @@ pub fn NewBundler(cache_files: bool) type {
             dynamic_import_file_size_store: U32Map,
             dynamic_import_file_size_store_lock: Lock,
 
+            always_bundled_package_hashes: []u32 = &[_]u32{},
+            always_bundled_package_jsons: []*const PackageJSON = &.{},
+
             const U32Map = std.AutoHashMap(u32, u32);
             pub const current_version: u32 = 1;
             const dist_index_js_string_pointer = Api.StringPointer{ .length = "dist/index.js".len };
@@ -705,6 +708,7 @@ pub fn NewBundler(cache_files: bool) type {
                     // .resolve_queue = queue,
                     .bundler = bundler,
                     .tmpfile = tmpfile,
+
                     .dynamic_import_file_size_store = U32Map.init(allocator),
                     .dynamic_import_file_size_store_lock = Lock.init(),
                     .log = bundler.log,
@@ -735,6 +739,66 @@ pub fn NewBundler(cache_files: bool) type {
                 if (bundler.log.level == .verbose) {
                     bundler.resolver.debug_logs = try DebugLogs.init(allocator);
                 }
+
+                always_bundled: {
+                    const root_package_json_resolved: _resolver.Result = bundler.resolver.resolve(bundler.fs.top_level_dir, "./package.json", .stmt) catch |err| {
+                        generator.log.addWarning(null, logger.Loc.Empty, "Please run `bun bun` from a directory containing a package.json.") catch unreachable;
+                        break :always_bundled;
+                    };
+                    const root_package_json = root_package_json_resolved.package_json orelse brk: {
+                        const read_dir = (bundler.resolver.readDirInfo(bundler.fs.top_level_dir) catch unreachable).?;
+                        break :brk read_dir.package_json.?;
+                    };
+                    if (root_package_json.always_bundle.len > 0) {
+                        var always_bundled_package_jsons = bundler.allocator.alloc(*PackageJSON, root_package_json.always_bundle.len) catch unreachable;
+                        var always_bundled_package_hashes = bundler.allocator.alloc(u32, root_package_json.always_bundle.len) catch unreachable;
+                        var i: u16 = 0;
+
+                        inner: for (root_package_json.always_bundle) |name| {
+                            std.mem.copy(u8, &tmp_buildfile_buf, name);
+                            std.mem.copy(u8, tmp_buildfile_buf[name.len..], "/package.json");
+                            const package_json_import = tmp_buildfile_buf[0 .. name.len + "/package.json".len];
+                            const result = bundler.resolver.resolve(bundler.fs.top_level_dir, package_json_import, .stmt) catch |err| {
+                                generator.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{s} resolving always bundled module \"{s}\"", .{ @errorName(err), name }) catch unreachable;
+                                continue :inner;
+                            };
+
+                            var package_json: *PackageJSON = result.package_json orelse brk: {
+                                const read_dir = (bundler.resolver.readDirInfo(package_json_import) catch unreachable).?;
+                                if (read_dir.package_json == null) {
+                                    generator.log.addWarningFmt(null, logger.Loc.Empty, bundler.allocator, "{s} missing package.json. It will not be bundled", .{name}) catch unreachable;
+                                    continue :inner;
+                                }
+                                break :brk read_dir.package_json.?;
+                            };
+
+                            package_json.source.key_path = result.path_pair.primary;
+
+                            // if (!strings.contains(result.path_pair.primary.text, package_json.name)) {
+                            //     generator.log.addErrorFmt(
+                            //         null,
+                            //         logger.Loc.Empty,
+                            //         bundler.allocator,
+                            //         "Bundling \"{s}\" is not supported because the package isn.\n To fix this, move the package's code to a directory containing the name.\n Location: \"{s}\"",
+                            //         .{
+                            //             name,
+                            //             name,
+                            //             result.path_pair.primary.text,
+                            //         },
+                            //     ) catch unreachable;
+                            //     continue :inner;
+                            // }
+
+                            always_bundled_package_jsons[i] = package_json;
+                            always_bundled_package_hashes[i] = package_json.hash;
+                            i += 1;
+                        }
+                        generator.always_bundled_package_hashes = always_bundled_package_hashes[0..i];
+                        generator.always_bundled_package_jsons = always_bundled_package_jsons[0..i];
+                    }
+                }
+                if (generator.log.errors > 0) return error.BundleFailed;
+
                 const include_refresh_runtime =
                     !this.bundler.options.production and
                     this.bundler.options.jsx.supports_fast_refresh and
@@ -1089,7 +1153,17 @@ pub fn NewBundler(cache_files: bool) type {
                 package: *const PackageJSON,
                 module_id: u32,
 
-                pub fn get(this: *GenerateNodeModuleBundle, resolve_result: *const _resolver.Result) ?BundledModuleData {
+                pub fn getForceBundle(this: *GenerateNodeModuleBundle, resolve_result: *const _resolver.Result) ?BundledModuleData {
+                    return _get(this, resolve_result, true, false);
+                }
+
+                pub fn getForceBundleForMain(this: *GenerateNodeModuleBundle, resolve_result: *const _resolver.Result) ?BundledModuleData {
+                    return _get(this, resolve_result, true, true);
+                }
+
+                threadlocal var normalized_package_path: [512]u8 = undefined;
+                threadlocal var normalized_package_path2: [512]u8 = undefined;
+                inline fn _get(this: *GenerateNodeModuleBundle, resolve_result: *const _resolver.Result, comptime force: bool, comptime is_main: bool) ?BundledModuleData {
                     const path = resolve_result.pathConst() orelse return null;
                     if (strings.eqlComptime(path.namespace, "node")) {
                         const _import_path = path.text["/bun-vfs/node_modules/".len..][resolve_result.package_json.?.name.len + 1 ..];
@@ -1101,22 +1175,106 @@ pub fn NewBundler(cache_files: bool) type {
                         };
                     }
 
-                    var base_path = path.text;
+                    var import_path = path.text;
+                    var package_path = path.text;
+                    var file_path = path.text;
 
-                    const package_json: *const PackageJSON = this.bundler.resolver.rootNodeModulePackageJSON(
+                    if (resolve_result.package_json) |pkg| {
+                        if (std.mem.indexOfScalar(u32, this.always_bundled_package_hashes, pkg.hash) != null) {
+                            const key_path_source_dir = pkg.source.key_path.sourceDir();
+                            const default_source_dir = pkg.source.path.sourceDir();
+                            if (strings.startsWith(path.text, key_path_source_dir)) {
+                                import_path = path.text[key_path_source_dir.len..];
+                            } else if (strings.startsWith(path.text, default_source_dir)) {
+                                import_path = path.text[default_source_dir.len..];
+                            } else if (strings.startsWith(path.pretty, pkg.name)) {
+                                import_path = path.pretty[pkg.name.len + 1 ..];
+                            }
+
+                            var buf_to_use: []u8 = if (is_main) &normalized_package_path2 else &normalized_package_path;
+
+                            std.mem.copy(u8, buf_to_use, pkg.name);
+                            buf_to_use[pkg.name.len] = '/';
+                            std.mem.copy(u8, buf_to_use[pkg.name.len + 1 ..], import_path);
+                            package_path = buf_to_use[0 .. pkg.name.len + import_path.len + 1];
+                            return BundledModuleData{
+                                .import_path = import_path,
+                                .package_path = package_path,
+                                .package = pkg,
+                                .module_id = pkg.hashModule(package_path),
+                            };
+                        }
+                    }
+
+                    const root: _resolver.RootPathPair = this.bundler.resolver.rootNodeModulePackageJSON(
                         resolve_result,
-                        &base_path,
                     ) orelse return null;
-                    const package_base_path = package_json.source.path.sourceDir();
-                    const import_path = base_path[package_base_path.len..];
-                    const package_path = base_path[package_base_path.len - package_json.name.len - 1 ..];
 
-                    return BundledModuleData{
-                        .import_path = import_path,
-                        .package_path = package_path,
-                        .package = package_json,
-                        .module_id = package_json.hashModule(package_path),
-                    };
+                    var base_path = root.base_path;
+                    const package_json = root.package_json;
+
+                    // Easymode: the file path doesn't need to be remapped.
+                    if (strings.startsWith(file_path, base_path)) {
+                        import_path = std.mem.trimLeft(u8, path.text[base_path.len..], "/");
+                        package_path = std.mem.trim(u8, path.text[base_path.len - package_json.name.len - 1 ..], "/");
+                        std.debug.assert(import_path.len > 0);
+                        return BundledModuleData{
+                            .import_path = import_path,
+                            .package_path = package_path,
+                            .package = package_json,
+                            .module_id = package_json.hashModule(package_path),
+                        };
+                    }
+
+                    if (std.mem.lastIndexOf(u8, file_path, package_json.name)) |i| {
+                        package_path = file_path[i..];
+                        import_path = package_path[package_json.name.len + 1 ..];
+                        std.debug.assert(import_path.len > 0);
+                        return BundledModuleData{
+                            .import_path = import_path,
+                            .package_path = package_path,
+                            .package = package_json,
+                            .module_id = package_json.hashModule(package_path),
+                        };
+                    }
+
+                    if (comptime force) {
+                        if (std.mem.indexOfScalar(u32, this.always_bundled_package_hashes, root.package_json.hash)) |pkg_json_i| {
+                            const pkg_json = this.always_bundled_package_jsons[pkg_json_i];
+                            base_path = pkg_json.source.key_path.sourceDir();
+
+                            if (strings.startsWith(file_path, base_path)) {
+                                import_path = std.mem.trimLeft(u8, path.text[base_path.len..], "/");
+                                package_path = std.mem.trim(u8, path.text[base_path.len - package_json.name.len - 1 ..], "/");
+                                std.debug.assert(import_path.len > 0);
+                                return BundledModuleData{
+                                    .import_path = import_path,
+                                    .package_path = package_path,
+                                    .package = package_json,
+                                    .module_id = package_json.hashModule(package_path),
+                                };
+                            }
+
+                            if (std.mem.lastIndexOf(u8, file_path, package_json.name)) |i| {
+                                package_path = file_path[i..];
+                                import_path = package_path[package_json.name.len + 1 ..];
+                                std.debug.assert(import_path.len > 0);
+                                return BundledModuleData{
+                                    .import_path = import_path,
+                                    .package_path = package_path,
+                                    .package = package_json,
+                                    .module_id = package_json.hashModule(package_path),
+                                };
+                            }
+                        }
+                        unreachable;
+                    }
+
+                    return null;
+                }
+
+                pub fn get(this: *GenerateNodeModuleBundle, resolve_result: *const _resolver.Result) ?BundledModuleData {
+                    return _get(this, resolve_result, false, false);
                 }
             };
 
@@ -1205,7 +1363,12 @@ pub fn NewBundler(cache_files: bool) type {
                 var shared_buffer = &worker.data.shared_buffer;
                 var scan_pass_result = &worker.data.scan_pass_result;
 
-                const is_from_node_modules = resolve.isLikelyNodeModule();
+                const is_from_node_modules = resolve.isLikelyNodeModule() or brk: {
+                    if (resolve.package_json) |pkg| {
+                        break :brk std.mem.indexOfScalar(u32, this.always_bundled_package_hashes, pkg.hash) != null;
+                    }
+                    break :brk false;
+                };
                 var file_path = (resolve.pathConst() orelse unreachable).*;
                 const source_dir = file_path.sourceDir();
                 const loader = this.bundler.options.loader(file_path.name.ext);
@@ -1220,7 +1383,7 @@ pub fn NewBundler(cache_files: bool) type {
                     var written: usize = undefined;
                     var code_offset: u32 = 0;
 
-                    const module_data = BundledModuleData.get(this, &resolve) orelse {
+                    const module_data = BundledModuleData.getForceBundleForMain(this, &resolve) orelse {
                         const fake_path = logger.Source.initPathString(file_path.text, "");
                         log.addResolveError(
                             &fake_path,
@@ -1360,7 +1523,7 @@ pub fn NewBundler(cache_files: bool) type {
 
                                             const resolved_import: *const _resolver.Result = _resolved_import;
 
-                                            const _module_data = BundledModuleData.get(this, resolved_import) orelse unreachable;
+                                            const _module_data = BundledModuleData.getForceBundle(this, resolved_import) orelse unreachable;
                                             import_record.module_id = _module_data.module_id;
                                             std.debug.assert(import_record.module_id != 0);
                                             import_record.is_bundled = true;

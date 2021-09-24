@@ -590,6 +590,7 @@ pub const defaultLoaders = std.ComptimeStringMap(Loader, .{
     .{ ".tsx", Loader.tsx },
 });
 
+// https://webpack.js.org/guides/package-exports/#reference-syntax
 pub const ESMConditions = struct {
     default: ConditionsMap = undefined,
     import: ConditionsMap = undefined,

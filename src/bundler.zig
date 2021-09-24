@@ -123,6 +123,8 @@ pub const Bundler = struct {
     // must be pointer array because we can't we don't want the source to point to invalid memory if the array size is reallocated
     virtual_modules: std.ArrayList(*ClientEntryPoint),
 
+    macro_context: ?*js_ast.Macro.MacroContext = null,
+
     pub const isCacheEnabled = cache_files;
 
     pub fn clone(this: *ThisBundler, allocator: *std.mem.Allocator, to: *ThisBundler) !void {
@@ -2412,6 +2414,13 @@ pub const Bundler = struct {
                     bundler.options.jsx.supports_fast_refresh;
                 opts.filepath_hash_for_hmr = file_hash orelse 0;
                 opts.warn_about_unbundled_modules = bundler.options.platform != .bun;
+
+                if (bundler.macro_context == null) {
+                    bundler.macro_context = js_ast.Macro.MacroContext.init(bundler);
+                }
+
+                opts.macro_context = &bundler.macro_context.?;
+
                 const value = (bundler.resolver.caches.js.parse(
                     allocator,
                     opts,
@@ -3317,3 +3326,72 @@ pub const ResolveQueue = std.fifo.LinearFifo(
     _resolver.Result,
     std.fifo.LinearFifoBufferType.Dynamic,
 );
+
+// This is not very fast.
+// The idea is: we want to generate a unique entry point per macro function export that registers the macro
+// Registering the macro happens in VirtualMachine
+// We "register" it which just marks the JSValue as protected.
+// This is mostly a workaround for being unable to call ESM exported functions from C++.
+// When that is resolved, we should remove this.
+pub const MacroEntryPoint = struct {
+    code_buffer: [std.fs.MAX_PATH_BYTES * 2 + 500]u8 = undefined,
+    output_code_buffer: [std.fs.MAX_PATH_BYTES * 8 + 500]u8 = undefined,
+    source: logger.Source = undefined,
+
+    pub fn generateID(entry_path: string, function_name: string, buf: []u8, len: *u32) i32 {
+        var hasher = std.hash.Wyhash.init(0);
+        hasher.update(js_ast.Macro.namespaceWithColon);
+        hasher.update(entry_path);
+        hasher.update(function_name);
+        const truncated_u32 = @truncate(u32, hasher.final());
+
+        const specifier = std.fmt.bufPrint(buf, js_ast.Macro.namespaceWithColon ++ "//{x}.js", .{truncated_u32}) catch unreachable;
+        len.* = @truncate(u32, specifier.len);
+
+        return generateIDFromSpecifier(specifier);
+    }
+
+    pub fn generateIDFromSpecifier(specifier: string) i32 {
+        return @bitCast(i32, @truncate(u32, std.hash.Wyhash.hash(0, specifier)));
+    }
+
+    pub fn generate(
+        entry: *MacroEntryPoint,
+        bundler: *Bundler,
+        import_path: Fs.PathName,
+        function_name: string,
+        macro_id: i32,
+        macro_label_: string,
+    ) !void {
+        const dir_to_use: string = import_path.dirWithTrailingSlash();
+        std.mem.copy(u8, entry.code_buffer[0..macro_label_.len], macro_label_);
+        const macro_label = entry.code_buffer[0..macro_label_.len];
+
+        const code = try std.fmt.bufPrint(
+            entry.code_buffer[macro_label.len..],
+            \\//Auto-generated file
+            \\import * as Macros from '{s}{s}';
+            \\
+            \\if (!('{s}' in Macros)) {{
+            \\  throw new Error("Macro '{s}' not found in '{s}{s}'");
+            \\}}
+            \\
+            \\Bun.registerMacro({d}, Macros['{s}']);
+        ,
+            .{
+                dir_to_use,
+                import_path.filename,
+                function_name,
+                function_name,
+                dir_to_use,
+                import_path.filename,
+                macro_id,
+                function_name,
+            },
+        );
+
+        entry.source = logger.Source.initPathString(macro_label, code);
+        entry.source.path.text = macro_label;
+        entry.source.path.namespace = js_ast.Macro.namespace;
+    }
+};

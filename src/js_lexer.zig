@@ -84,6 +84,8 @@ pub const Lexer = struct {
     string_literal: JavascriptString,
     string_literal_is_ascii: bool = false,
 
+    is_ascii_only: bool = true,
+
     pub fn clone(self: *const LexerType) LexerType {
         return LexerType{
             .log = self.log,
@@ -117,6 +119,7 @@ pub const Lexer = struct {
             .string_literal_slice = self.string_literal_slice,
             .string_literal = self.string_literal,
             .string_literal_is_ascii = self.string_literal_is_ascii,
+            .is_ascii_only = self.is_ascii_only,
         };
     }
 
@@ -210,6 +213,7 @@ pub const Lexer = struct {
     pub fn decodeEscapeSequences(lexer: *LexerType, start: usize, text: string, comptime BufType: type, buf_: *BufType) !void {
         var buf = buf_.*;
         defer buf_.* = buf;
+        lexer.is_ascii_only = false;
 
         var iter = CodepointIterator{ .bytes = text[start..], .i = 0 };
         const start_length = buf.items.len;
@@ -649,6 +653,7 @@ pub const Lexer = struct {
             try lexer.decodeEscapeSequences(0, lexer.string_literal_slice, @TypeOf(lexer.string_literal_buffer), &lexer.string_literal_buffer);
             lexer.string_literal = lexer.string_literal_buffer.items;
         }
+        lexer.is_ascii_only = lexer.is_ascii_only and lexer.string_literal_is_ascii;
 
         if (comptime !FeatureFlags.allow_json_single_quotes) {
             if (quote == '\'' and lexer.json_options != null) {

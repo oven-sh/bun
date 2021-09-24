@@ -1595,22 +1595,27 @@ pub fn NewBundler(cache_files: bool) type {
                             },
                             .json => {
                                 // parse the JSON _only_ to catch errors at build time.
-                                const parsed_expr = json_parser.ParseJSON(&source, worker.data.log, worker.allocator) catch return;
+                                const json_parse_result = json_parser.ParseJSONForBundling(&source, worker.data.log, worker.allocator) catch return;
 
-                                if (parsed_expr.data != .e_missing) {
+                                if (json_parse_result.tag != .empty) {
+                                    const expr = brk: {
+                                        // If it's an ascii string, we just print it out with a big old JSON.parse()
+                                        if (json_parse_result.tag == .ascii) {
+                                            json_e_string = js_ast.E.String{ .utf8 = source.contents, .prefer_template = true };
+                                            var json_string_expr = js_ast.Expr{ .data = .{ .e_string = &json_e_string }, .loc = logger.Loc{ .start = 0 } };
+                                            json_call_args[0] = json_string_expr;
+                                            json_e_identifier = js_ast.E.Identifier{ .ref = Ref{ .source_index = 0, .inner_index = @intCast(Ref.Int, json_ast_symbols_list.len - 1) } };
 
-                                    // Then, we store it as a UTF8 string at runtime
-                                    // This is because JavaScript engines are much faster at parsing JSON strings than object literals
-                                    json_e_string = js_ast.E.String{ .utf8 = source.contents, .prefer_template = true };
-                                    var json_string_expr = js_ast.Expr{ .data = .{ .e_string = &json_e_string }, .loc = logger.Loc{ .start = 0 } };
-                                    json_call_args[0] = json_string_expr;
-                                    json_e_identifier = js_ast.E.Identifier{ .ref = Ref{ .source_index = 0, .inner_index = @intCast(Ref.Int, json_ast_symbols_list.len - 1) } };
-
-                                    json_e_call = js_ast.E.Call{
-                                        .target = js_ast.Expr{ .data = .{ .e_identifier = &json_e_identifier }, .loc = logger.Loc{ .start = 0 } },
-                                        .args = std.mem.span(&json_call_args),
+                                            json_e_call = js_ast.E.Call{
+                                                .target = js_ast.Expr{ .data = .{ .e_identifier = &json_e_identifier }, .loc = logger.Loc{ .start = 0 } },
+                                                .args = std.mem.span(&json_call_args),
+                                            };
+                                            break :brk js_ast.Expr{ .data = .{ .e_call = &json_e_call }, .loc = logger.Loc{ .start = 0 } };
+                                            // If we're going to have to convert it to a UTF16, just make it an object actually
+                                        } else {
+                                            break :brk json_parse_result.expr;
+                                        }
                                     };
-                                    const expr = js_ast.Expr{ .data = .{ .e_call = &json_e_call }, .loc = logger.Loc{ .start = 0 } };
 
                                     var stmt = js_ast.Stmt.alloc(worker.allocator, js_ast.S.ExportDefault, js_ast.S.ExportDefault{
                                         .value = js_ast.StmtOrExpr{ .expr = expr },

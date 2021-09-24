@@ -255,6 +255,44 @@ pub fn ParseJSON(source: *const logger.Source, log: *logger.Log, allocator: *std
     return try parser.parseExpr(false);
 }
 
+pub const JSONParseResult = struct {
+    expr: Expr,
+    tag: Tag,
+
+    pub const Tag = enum {
+        expr,
+        ascii,
+        empty,
+    };
+};
+
+pub fn ParseJSONForBundling(source: *const logger.Source, log: *logger.Log, allocator: *std.mem.Allocator) !JSONParseResult {
+    var parser = try JSONParser.init(allocator, source, log);
+    switch (source.contents.len) {
+        // This is to be consisntent with how disabled JS files are handled
+        0 => {
+            return JSONParseResult{ .expr = Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_object_data }, .tag = .empty };
+        },
+        // This is a fast pass I guess
+        2 => {
+            if (strings.eqlComptime(source.contents[0..1], "\"\"") or strings.eqlComptime(source.contents[0..1], "''")) {
+                return JSONParseResult{ .expr = Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_string_data }, .tag = .expr };
+            } else if (strings.eqlComptime(source.contents[0..1], "{}")) {
+                return JSONParseResult{ .expr = Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_object_data }, .tag = .expr };
+            } else if (strings.eqlComptime(source.contents[0..1], "[]")) {
+                return JSONParseResult{ .expr = Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_array_data }, .tag = .expr };
+            }
+        },
+        else => {},
+    }
+
+    const result = try parser.parseExpr(false);
+    return JSONParseResult{
+        .tag = if (parser.lexer.is_ascii_only) JSONParseResult.Tag.ascii else JSONParseResult.Tag.expr,
+        .expr = result,
+    };
+}
+
 // threadlocal var env_json_auto_quote_buffer: MutableString = undefined;
 // threadlocal var env_json_auto_quote_buffer_loaded: bool = false;
 pub fn ParseEnvJSON(source: *const logger.Source, log: *logger.Log, allocator: *std.mem.Allocator) !Expr {

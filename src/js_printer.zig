@@ -2485,7 +2485,7 @@ pub fn NewPrinter(
                             // Object.assign(__export, {prop1, prop2, prop3});
                             else => {
                                 if (comptime is_inside_bundle) {
-                                    p.printSymbol(p.options.runtime_imports.__exportValue.?.ref);
+                                    p.printSymbol(p.options.runtime_imports.__export.?.ref);
                                 } else {
                                     p.print("Object.assign");
                                 }
@@ -2497,8 +2497,12 @@ pub fn NewPrinter(
                                 for (s.items) |item, i| {
                                     const name = p.renamer.nameForSymbol(item.name.ref.?);
                                     p.printClauseAlias(item.alias);
-
-                                    if (!strings.eql(name, item.alias)) {
+                                    if (comptime is_inside_bundle) {
+                                        p.print(":");
+                                        p.printSpace();
+                                        p.print("() => ");
+                                        p.printIdentifier(name);
+                                    } else if (!strings.eql(name, item.alias)) {
                                         p.print(":");
                                         p.printSpace();
                                         p.printIdentifier(name);

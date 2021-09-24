@@ -54,9 +54,24 @@ export var __commonJS = (cb, name) => {
     cb(mod, mod.exports);
 
     const kind = typeof mod.exports;
-
-    // If it's a default-only export, don't crash if they call .default on the module
     if (
+      (kind === "function" || kind === "object") &&
+      "__esModule" in mod.exports &&
+      !mod.exports[tagSymbol]
+    ) {
+      if (!("default" in mod.exports)) {
+        Object.defineProperty(mod.exports, "default", {
+          get() {
+            return mod.exports;
+          },
+          set(v) {
+            mod.exports = v;
+          },
+          enumerable: true,
+          configurable: true,
+        });
+      }
+    } else if (
       kind === "object" &&
       "default" in mod.exports &&
       !mod.exports[tagSymbol] &&
@@ -72,6 +87,9 @@ export var __commonJS = (cb, name) => {
         Object.defineProperty(mod.exports, "default", {
           get() {
             return mod.exports;
+          },
+          set(v) {
+            mod.exports = v;
           },
           enumerable: true,
           configurable: true,
@@ -168,13 +186,14 @@ export var __export = (target, all) => {
 };
 
 export var __exportValue = (target, all) => {
-  for (var name in all)
+  for (var name in all) {
     __defProp(target, name, {
       get: () => all[name],
       set: (newValue) => (all[name] = newValue),
       enumerable: true,
       configurable: true,
     });
+  }
 };
 
 export var __exportDefault = (target, value) => {

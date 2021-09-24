@@ -12453,6 +12453,7 @@ pub fn NewParser(
                             switch (s2.data) {
                                 .s_function => |func| {
                                     var name: string = "";
+                                    const had_name = func.func.name != null;
                                     if (func.func.name) |func_loc| {
                                         name = p.loadNameFromRef(func_loc.ref.?);
                                     } else {
@@ -12465,7 +12466,15 @@ pub fn NewParser(
                                     if (p.options.enable_bundling) {
                                         var export_default_args = p.allocator.alloc(Expr, 2) catch unreachable;
                                         export_default_args[0] = p.e(E.Identifier{ .ref = p.exports_ref }, s2.loc);
-                                        export_default_args[1] = p.e(E.Function{ .func = func.func }, s2.loc);
+
+                                        if (had_name) {
+                                            export_default_args[1] = p.e(E.Identifier{ .ref = func.func.name.?.ref.? }, s2.loc);
+                                            stmts.ensureUnusedCapacity(2) catch unreachable;
+
+                                            stmts.appendAssumeCapacity(s2);
+                                        } else {
+                                            export_default_args[1] = p.e(E.Function{ .func = func.func }, s2.loc);
+                                        }
 
                                         stmts.append(p.s(S.SExpr{ .value = p.callRuntime(s2.loc, "__exportDefault", export_default_args) }, s2.loc)) catch unreachable;
                                         return;
@@ -12481,10 +12490,26 @@ pub fn NewParser(
                                 },
                                 .s_class => |class| {
                                     var shadow_ref = p.visitClass(s2.loc, &class.class);
+
                                     if (p.options.enable_bundling) {
                                         var export_default_args = p.allocator.alloc(Expr, 2) catch unreachable;
                                         export_default_args[0] = p.e(E.Identifier{ .ref = p.exports_ref }, s2.loc);
-                                        export_default_args[1] = p.e(class.class, s2.loc);
+
+                                        const class_name_ref = brk: {
+                                            if (class.class.class_name) |class_name_ref| {
+                                                if (class_name_ref.ref) |ref| {
+                                                    break :brk ref;
+                                                }
+                                            }
+                                            break :brk null;
+                                        };
+                                        if (class_name_ref) |ref| {
+                                            stmts.ensureUnusedCapacity(2) catch unreachable;
+                                            stmts.appendAssumeCapacity(s2);
+                                            export_default_args[1] = p.e(E.Identifier{ .ref = ref }, s2.loc);
+                                        } else {
+                                            export_default_args[1] = p.e(class.class, s2.loc);
+                                        }
 
                                         stmts.append(p.s(S.SExpr{ .value = p.callRuntime(s2.loc, "__exportDefault", export_default_args) }, s2.loc)) catch unreachable;
                                         return;

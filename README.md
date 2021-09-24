@@ -426,13 +426,13 @@ Run `bun bun ./path-to.js` to generate a `node_modules.bun` file containing all 
 
 The `.bun` file contains:
 
-- source code
-- source code metadata
-- project metadata & configuration
+- all the bundled source code
+- all the bundled source code metadata (what byte ranges of the `.bun` correspond to which module's source code? what modules were used in a package?)
+- project metadata & configuration (what framework? where is the routes folder?)
 
 All in one file.
 
-It's a little like a build cache, but it can be reused. Eventually, I hope people will check it into version control so their coworkers don't have to run `npm install` as often.
+It's a little like a build cache, but designed for reuse. I hope people will eventually check it into version control so their coworkers don't have to run `npm install` as often.
 
 To see the schema inside, have a look at [`JavascriptBundleContainer`](./src/api/schema.d.ts#:~:text=export%20interface-,JavascriptBundleContainer,-%7B). You can find JavaScript bindings to read the metadata in [src/api/schema.js](./src/api/schema.js). This is not really an API yet. It's missing the part where it gets the binary data from the bottom of the file. Someday, I want this to be usable by other tools too.
 

@@ -814,7 +814,7 @@ pub const SideEffects = enum(u2) {
                 // "foo() ? bar() : 2" => "foo() && bar()"
                 if (__if__.no.isEmpty()) {
                     return Expr.joinWithLeftAssociativeOp(
-                        .bin_logical_or,
+                        .bin_logical_and,
                         __if__.test_,
                         __if__.yes,
                         p.allocator,

@@ -166,7 +166,7 @@ pub const Linker = struct {
     }
 
     pub inline fn nodeModuleBundleImportPath(this: *const ThisLinker) string {
-        if (this.options.platform == .bun) return "/node_modules.server.bun";
+        if (this.options.platform.isBun()) return "/node_modules.server.bun";
 
         return if (this.options.node_modules_bundle_url.len > 0)
             this.options.node_modules_bundle_url
@@ -197,7 +197,7 @@ pub const Linker = struct {
         comptime ignore_runtime: bool,
     ) !void {
         var needs_runtime = result.ast.uses_exports_ref or result.ast.uses_module_ref or result.ast.runtime_imports.hasAny();
-        const source_dir = if (file_path.is_symlink and file_path.pretty.len > 0 and import_path_format == .absolute_url and linker.options.platform != .bun)
+        const source_dir = if (file_path.is_symlink and file_path.pretty.len > 0 and import_path_format == .absolute_url and linker.options.platform.isNotBun())
             Fs.PathName.init(file_path.pretty).dirWithTrailingSlash()
         else
             file_path.sourceDir();
@@ -644,7 +644,7 @@ pub const Linker = struct {
 
         import_record.path = try linker.generateImportPath(
             source_dir,
-            if (path.is_symlink and import_path_format == .absolute_url and linker.options.platform != .bun) path.pretty else path.text,
+            if (path.is_symlink and import_path_format == .absolute_url and linker.options.platform.isNotBun()) path.pretty else path.text,
             if (resolve_result.package_json) |package_json| package_json.version else "",
             Bundler.isCacheEnabled and loader == .file,
             path.namespace,

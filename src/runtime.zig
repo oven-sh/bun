@@ -205,6 +205,7 @@ pub const Runtime = struct {
         hot_module_reloading: bool = false,
         hot_module_reloading_entry: bool = false,
         keep_names_for_arrow_functions: bool = true,
+        is_macro_runtime: bool = false,
     };
 
     pub const Names = struct {

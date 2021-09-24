@@ -123,7 +123,7 @@ pub const Bundler = struct {
     // must be pointer array because we can't we don't want the source to point to invalid memory if the array size is reallocated
     virtual_modules: std.ArrayList(*ClientEntryPoint),
 
-    macro_context: ?*js_ast.Macro.MacroContext = null,
+    macro_context: ?js_ast.Macro.MacroContext = null,
 
     pub const isCacheEnabled = cache_files;
 
@@ -826,7 +826,7 @@ pub const Bundler = struct {
             } else {}
 
             for (bundler.options.entry_points) |entry_point| {
-                if (bundler.options.platform == .bun) continue;
+                if (bundler.options.platform.isBun()) continue;
                 defer this.bundler.resetStore();
 
                 const entry_point_path = bundler.normalizeEntryPointPath(entry_point);
@@ -846,7 +846,7 @@ pub const Bundler = struct {
                             bundler.options.framework.?.override_modules_hashes[i] = std.hash.Wyhash.hash(0, key);
                         }
                     }
-                    if (bundler.options.platform == .bun) {
+                    if (bundler.options.platform.isBun()) {
                         if (framework.server.isEnabled()) {
                             const resolved = try bundler.linker.resolver.resolve(
                                 bundler.fs.top_level_dir,
@@ -1047,7 +1047,7 @@ pub const Bundler = struct {
 
             const basename = std.fs.path.basename(std.mem.span(destination));
             const extname = std.fs.path.extension(basename);
-            javascript_bundle.import_from_name = if (bundler.options.platform == .bun)
+            javascript_bundle.import_from_name = if (bundler.options.platform.isBun())
                 "/node_modules.server.bun"
             else
                 try std.fmt.allocPrint(
@@ -2406,20 +2406,21 @@ pub const Bundler = struct {
                 // or you're running in SSR
                 // or the file is a node_module
                 opts.features.hot_module_reloading = bundler.options.hot_module_reloading and
-                    bundler.options.platform != .bun and
+                    bundler.options.platform.isNotBun() and
                     (!opts.can_import_from_bundle or
                     (opts.can_import_from_bundle and !path.isNodeModule()));
                 opts.features.react_fast_refresh = opts.features.hot_module_reloading and
                     jsx.parse and
                     bundler.options.jsx.supports_fast_refresh;
                 opts.filepath_hash_for_hmr = file_hash orelse 0;
-                opts.warn_about_unbundled_modules = bundler.options.platform != .bun;
+                opts.warn_about_unbundled_modules = bundler.options.platform.isNotBun();
 
                 if (bundler.macro_context == null) {
                     bundler.macro_context = js_ast.Macro.MacroContext.init(bundler);
                 }
 
                 opts.macro_context = &bundler.macro_context.?;
+                opts.features.is_macro_runtime = bundler.options.platform == .bun_macro;
 
                 const value = (bundler.resolver.caches.js.parse(
                     allocator,

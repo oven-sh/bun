@@ -1539,6 +1539,7 @@ export fn MarkedArrayBuffer_deallocator(bytes_: *c_void, ctx_: *c_void) void {
 pub fn castObj(obj: js.JSObjectRef, comptime Type: type) *Type {
     return JSPrivateDataPtr.from(js.JSObjectGetPrivate(obj)).as(Type);
 }
+const JSExpr = @import("../../js_ast.zig").Macro.JSExpr;
 
 pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     ResolveError,
@@ -1549,6 +1550,7 @@ pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     Headers,
     Body,
     Router,
+    JSExpr,
 });
 
 pub inline fn GetJSPrivateData(comptime Type: type, ref: js.JSObjectRef) ?*Type {

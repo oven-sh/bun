@@ -4,6 +4,7 @@ const Fs = @import("../../fs.zig");
 const Resolver = @import("../../resolver/resolver.zig");
 const ast = @import("../../import_record.zig");
 const NodeModuleBundle = @import("../../node_module_bundle.zig").NodeModuleBundle;
+const MacroEntryPoint = @import("../../bundler.zig").MacroEntryPoint;
 const logger = @import("../../logger.zig");
 const Api = @import("../../api/schema.zig").Api;
 const options = @import("../../options.zig");
@@ -11,6 +12,7 @@ const Bundler = @import("../../bundler.zig").Bundler;
 const ServerEntryPoint = @import("../../bundler.zig").ServerEntryPoint;
 const js_printer = @import("../../js_printer.zig");
 const js_parser = @import("../../js_parser.zig");
+const js_ast = @import("../../js_ast.zig");
 const hash_map = @import("../../hash_map.zig");
 const http = @import("../../http.zig");
 const ImportKind = ast.ImportKind;
@@ -85,6 +87,41 @@ pub const Bun = struct {
             ZigString.fromStringPointer(css_imports_list[i], css_imports_buf.items, &css_imports_list_strings[i]);
         }
         return css_imports_list_strings[0..tail];
+    }
+
+    pub fn registerMacro(
+        this: void,
+        ctx: js.JSContextRef,
+        function: js.JSObjectRef,
+        thisObject: js.JSObjectRef,
+        arguments: []const js.JSValueRef,
+        exception: js.ExceptionRef,
+    ) js.JSValueRef {
+        if (arguments.len != 2 or !js.JSValueIsNumber(ctx, arguments[0])) {
+            JSError(getAllocator(ctx), "Internal error registering macros: invalid args", .{}, ctx, exception);
+            return js.JSValueMakeUndefined(ctx);
+        }
+        // TODO: make this faster
+        const id = @truncate(i32, @floatToInt(i64, js.JSValueToNumber(ctx, arguments[0], exception)));
+        if (id == -1 or id == 0) {
+            JSError(getAllocator(ctx), "Internal error registering macros: invalid id", .{}, ctx, exception);
+            return js.JSValueMakeUndefined(ctx);
+        }
+
+        if (!js.JSValueIsObject(ctx, arguments[1]) or !js.JSObjectIsFunction(ctx, arguments[1])) {
+            JSError(getAllocator(ctx), "Macro must be a function. Received: {s}", .{@tagName(js.JSValueGetType(ctx, arguments[1]))}, ctx, exception);
+            return js.JSValueMakeUndefined(ctx);
+        }
+
+        var get_or_put_result = VirtualMachine.vm.macros.getOrPut(id) catch unreachable;
+        if (get_or_put_result.found_existing) {
+            js.JSValueUnprotect(ctx, get_or_put_result.value_ptr.*);
+        }
+
+        js.JSValueProtect(ctx, arguments[1]);
+        get_or_put_result.value_ptr.* = arguments[1];
+
+        return js.JSValueMakeUndefined(ctx);
     }
 
     pub fn getCWD(
@@ -403,6 +440,13 @@ pub const Bun = struct {
                     .@"return" = "string",
                 },
             },
+            .registerMacro = .{
+                .rfn = Bun.registerMacro,
+                .ts = d.ts{
+                    .name = "registerMacro",
+                    .@"return" = "undefined",
+                },
+            },
         },
         .{
             .main = .{
@@ -462,8 +506,25 @@ pub const VirtualMachine = struct {
     transpiled_count: usize = 0,
     resolved_count: usize = 0,
     had_errors: bool = false,
-    pub var vm_loaded = false;
-    pub var vm: *VirtualMachine = undefined;
+
+    macros: MacroMap,
+    macro_entry_points: std.AutoArrayHashMap(i32, *MacroEntryPoint),
+    macro_mode: bool = false,
+
+    pub const MacroMap = std.AutoArrayHashMap(i32, js.JSObjectRef);
+
+    pub threadlocal var vm_loaded = false;
+    pub threadlocal var vm: *VirtualMachine = undefined;
+
+    pub fn enableMacroMode(this: *VirtualMachine) void {
+        this.bundler.options.platform = .bun_macro;
+        this.macro_mode = true;
+    }
+
+    pub fn disableMacroMode(this: *VirtualMachine) void {
+        this.bundler.options.platform = .bun;
+        this.macro_mode = false;
+    }
 
     pub fn init(
         allocator: *std.mem.Allocator,
@@ -502,6 +563,9 @@ pub const VirtualMachine = struct {
             .log = log,
             .flush_list = std.ArrayList(string).init(allocator),
             .blobs = try Blob.Group.init(allocator),
+
+            .macros = MacroMap.init(allocator),
+            .macro_entry_points = @TypeOf(VirtualMachine.vm.macro_entry_points).init(allocator),
         };
 
         VirtualMachine.vm.bundler.configureLinker();
@@ -771,10 +835,16 @@ pub const VirtualMachine = struct {
             ret.result = null;
             ret.path = vm.entry_point.source.path.text;
             return;
+        } else if (specifier.len > js_ast.Macro.namespaceWithColon.len and strings.eqlComptimeIgnoreLen(specifier[0..js_ast.Macro.namespaceWithColon.len], js_ast.Macro.namespaceWithColon)) {
+            ret.result = null;
+            ret.path = specifier;
+            return;
         }
 
+        const is_special_source = strings.eqlComptime(source, main_file_name) or js_ast.Macro.isMacroPath(source);
+
         const result = try vm.bundler.resolver.resolve(
-            if (!strings.eqlComptime(source, main_file_name)) Fs.PathName.init(source).dirWithTrailingSlash() else VirtualMachine.vm.bundler.fs.top_level_dir,
+            if (!is_special_source) Fs.PathName.init(source).dirWithTrailingSlash() else VirtualMachine.vm.bundler.fs.top_level_dir,
             specifier,
             .stmt,
         );
@@ -1040,6 +1110,46 @@ pub const VirtualMachine = struct {
         }
 
         promise = JSModuleLoader.loadAndEvaluateModule(this.global, ZigString.init(std.mem.span(main_file_name)));
+
+        this.global.vm().drainMicrotasks();
+
+        while (promise.status(this.global.vm()) == JSPromise.Status.Pending) {
+            this.global.vm().drainMicrotasks();
+        }
+
+        return promise;
+    }
+
+    pub fn loadMacroEntryPoint(this: *VirtualMachine, entry_path: string, function_name: string, specifier: string, hash: i32) !*JSInternalPromise {
+        var entry_point_entry = try this.macro_entry_points.getOrPut(hash);
+
+        if (!entry_point_entry.found_existing) {
+            var macro_entry_pointer: *MacroEntryPoint = this.allocator.create(MacroEntryPoint) catch unreachable;
+            entry_point_entry.value_ptr.* = macro_entry_pointer;
+            try macro_entry_pointer.generate(&this.bundler, Fs.PathName.init(entry_path), function_name, hash, specifier);
+        }
+        var entry_point = entry_point_entry.value_ptr.*;
+
+        var promise: *JSInternalPromise = undefined;
+        // We first import the node_modules bundle. This prevents any potential TDZ issues.
+        // The contents of the node_modules bundle are lazy, so hopefully this should be pretty quick.
+        if (this.node_modules != null) {
+            promise = JSModuleLoader.loadAndEvaluateModule(this.global, ZigString.init(std.mem.span(bun_file_import_path)));
+
+            this.global.vm().drainMicrotasks();
+
+            while (promise.status(this.global.vm()) == JSPromise.Status.Pending) {
+                this.global.vm().drainMicrotasks();
+            }
+
+            if (promise.status(this.global.vm()) == JSPromise.Status.Rejected) {
+                return promise;
+            }
+
+            _ = promise.result(this.global.vm());
+        }
+
+        promise = JSModuleLoader.loadAndEvaluateModule(this.global, ZigString.init(entry_point.source.path.text));
 
         this.global.vm().drainMicrotasks();
 

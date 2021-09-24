@@ -20,6 +20,7 @@ const ScopeOrderList = std.ArrayListUnmanaged(?ScopeOrder);
 
 const JSXFactoryName = "JSX";
 const JSXAutomaticName = "jsx_module";
+const MacroRefs = std.AutoArrayHashMap(Ref, u32);
 
 pub fn ExpressionTransposer(
     comptime Kontext: type,
@@ -1773,6 +1774,8 @@ pub const Parser = struct {
         filepath_hash_for_hmr: u32 = 0,
         features: RuntimeFeatures = RuntimeFeatures{},
 
+        macro_context: *js_ast.Macro.MacroContext = undefined,
+
         warn_about_unbundled_modules: bool = true,
 
         // Used when bundling node_modules
@@ -1881,6 +1884,9 @@ pub const Parser = struct {
     }
 
     pub fn parse(self: *Parser) !js_ast.Result {
+        if (self.options.ts and self.options.features.is_macro_runtime) return try self._parse(TSParserMacro);
+        if (!self.options.ts and self.options.features.is_macro_runtime) return try self._parse(JSParserMacro);
+
         if (self.options.ts and self.options.jsx.parse) {
             if (self.options.features.react_fast_refresh) {
                 return try self._parse(TSXParserFastRefresh);
@@ -2556,8 +2562,8 @@ pub const Prefill = struct {
         pub var ColumnNumber = [_]u8{ 'c', 'o', 'l', 'u', 'm', 'n', 'N', 'u', 'm', 'b', 'e', 'r' };
     };
     pub const Value = struct {
-        pub var EThis = E.This{};
-        pub var Zero = E.Number{ .value = 0.0 };
+        pub const EThis = E.This{};
+        pub const Zero = E.Number{ .value = 0.0 };
     };
     pub const String = struct {
         pub var Key = E.String{ .utf8 = &Prefill.StringLiteral.Key };
@@ -2579,8 +2585,8 @@ pub const Prefill = struct {
         pub var Filename = Expr.Data{ .e_string = &Prefill.String.Filename };
         pub var LineNumber = Expr.Data{ .e_string = &Prefill.String.LineNumber };
         pub var ColumnNumber = Expr.Data{ .e_string = &Prefill.String.ColumnNumber };
-        pub var This = Expr.Data{ .e_this = E.This{} };
-        pub var Zero = Expr.Data{ .e_number = &Value.Zero };
+        pub const This = Expr.Data{ .e_this = E.This{} };
+        pub const Zero = Expr.Data{ .e_number = Value.Zero };
     };
     pub const Runtime = struct {
         pub var JSXFilename = "__jsxFilename";
@@ -2603,9 +2609,15 @@ pub const ImportOrRequireScanResults = struct {
     import_records: List(ImportRecord),
 };
 
+const JSXTransformType = enum {
+    none,
+    react,
+    macro,
+};
+
 const ParserFeatures = struct {
     typescript: bool = false,
-    jsx: bool = false,
+    jsx: JSXTransformType = JSXTransformType.none,
     scan_only: bool = false,
 
     // *** How React Fast Refresh works ***
@@ -2667,7 +2679,7 @@ pub fn NewParser(
     comptime js_parser_features: ParserFeatures,
 ) type {
     const is_typescript_enabled = js_parser_features.typescript;
-    const is_jsx_enabled = js_parser_features.jsx;
+    const is_jsx_enabled = js_parser_features.jsx != .none;
     const only_scan_imports_and_do_not_visit = js_parser_features.scan_only;
     const is_react_fast_refresh_enabled = js_parser_features.react_fast_refresh;
 
@@ -2679,6 +2691,8 @@ pub fn NewParser(
     // public only because of Binding.ToExpr
     return struct {
         const P = @This();
+        pub const jsx_transform_type: JSXTransformType = js_parser_features.jsx;
+        macro_refs: MacroRefs = undefined,
         allocator: *std.mem.Allocator,
         options: Parser.Options,
         log: *logger.Log,
@@ -3579,22 +3593,28 @@ pub fn NewParser(
                 p.recordUsage(p.runtime_imports.__HMRClient.?.ref);
             }
 
-            if (is_jsx_enabled) {
-                if (p.options.jsx.development) {
-                    p.jsx_filename = p.declareGeneratedSymbol(.other, "jsxFilename") catch unreachable;
-                }
-                p.jsx_fragment = p.declareGeneratedSymbol(.other, "Fragment") catch unreachable;
-                p.jsx_runtime = p.declareGeneratedSymbol(.other, "jsx") catch unreachable;
-                p.jsxs_runtime = p.declareGeneratedSymbol(.other, "jsxs") catch unreachable;
-                p.jsx_factory = p.declareGeneratedSymbol(.other, "Factory") catch unreachable;
+            switch (comptime jsx_transform_type) {
+                .react => {
+                    if (p.options.jsx.development) {
+                        p.jsx_filename = p.declareGeneratedSymbol(.other, "jsxFilename") catch unreachable;
+                    }
+                    p.jsx_fragment = p.declareGeneratedSymbol(.other, "Fragment") catch unreachable;
+                    p.jsx_runtime = p.declareGeneratedSymbol(.other, "jsx") catch unreachable;
+                    p.jsxs_runtime = p.declareGeneratedSymbol(.other, "jsxs") catch unreachable;
+                    p.jsx_factory = p.declareGeneratedSymbol(.other, "Factory") catch unreachable;
 
-                if (p.options.jsx.factory.len > 1 or FeatureFlags.jsx_runtime_is_cjs) {
-                    p.jsx_classic = p.declareGeneratedSymbol(.other, "ClassicImportSource") catch unreachable;
-                }
+                    if (p.options.jsx.factory.len > 1 or FeatureFlags.jsx_runtime_is_cjs) {
+                        p.jsx_classic = p.declareGeneratedSymbol(.other, "ClassicImportSource") catch unreachable;
+                    }
 
-                if (p.options.jsx.import_source.len > 0) {
-                    p.jsx_automatic = p.declareGeneratedSymbol(.other, "ImportSource") catch unreachable;
-                }
+                    if (p.options.jsx.import_source.len > 0) {
+                        p.jsx_automatic = p.declareGeneratedSymbol(.other, "ImportSource") catch unreachable;
+                    }
+                },
+                .macro => {
+                    p.jsx_fragment = p.declareGeneratedSymbol(.other, "Fragment") catch unreachable;
+                },
+                else => {},
             }
         }
 
@@ -6109,6 +6129,15 @@ pub fn NewParser(
                     p.import_records.items[stmt.import_record_index].was_originally_bare_import = was_originally_bare_import;
                     try p.lexer.expectOrInsertSemicolon();
 
+                    const is_macro = FeatureFlags.is_macro_enabled and js_ast.Macro.isMacroPath(path.text);
+
+                    if (is_macro) {
+                        p.import_records.items[stmt.import_record_index].path.namespace = js_ast.Macro.namespace;
+                        if (comptime only_scan_imports_and_do_not_visit) {
+                            p.import_records.items[stmt.import_record_index].path.is_disabled = true;
+                        }
+                    }
+
                     if (stmt.star_name_loc) |star| {
                         const name = p.loadNameFromRef(stmt.namespace_ref);
                         stmt.namespace_ref = try p.declareSymbol(.import, star, name);
@@ -6117,6 +6146,17 @@ pub fn NewParser(
                                 .ref = stmt.namespace_ref,
                                 .import_record_index = stmt.import_record_index,
                             }) catch unreachable;
+                        }
+
+                        if (is_macro) {
+                            p.log.addErrorFmt(
+                                p.source,
+                                star,
+                                p.allocator,
+                                "Macro cannot be a * import, must be default or an {{item}}",
+                                .{},
+                            ) catch unreachable;
+                            return error.SyntaxError;
                         }
                     } else {
                         var path_name = fs.PathName.init(strings.append(p.allocator, "import_", path.text) catch unreachable);
@@ -6140,6 +6180,10 @@ pub fn NewParser(
                                 .import_record_index = stmt.import_record_index,
                             }) catch unreachable;
                         }
+
+                        if (is_macro) {
+                            try p.macro_refs.put(ref, stmt.import_record_index);
+                        }
                     }
 
                     if (stmt.items.len > 0) {
@@ -6157,6 +6201,10 @@ pub fn NewParser(
                                     .ref = ref,
                                     .import_record_index = stmt.import_record_index,
                                 }) catch unreachable;
+                            }
+
+                            if (is_macro) {
+                                try p.macro_refs.put(ref, stmt.import_record_index);
                             }
                         }
                     }
@@ -10860,216 +10908,289 @@ pub fn NewParser(
                     p.panic("Unexpected private identifier. This is an internal error - not your fault.", .{});
                 },
                 .e_jsx_element => |e_| {
-                    const tag: Expr = tagger: {
-                        if (e_.tag) |_tag| {
-                            break :tagger p.visitExpr(_tag);
-                        } else {
-                            break :tagger p.jsxStringsToMemberExpression(expr.loc, p.jsx_fragment.ref);
-                        }
-                    };
+                    switch (comptime jsx_transform_type) {
+                        .macro => {
+                            const IdentifierOrNodeType = union(Tag) {
+                                identifier: Expr,
+                                expression: Expr.Tag,
+                                pub const Tag = enum { identifier, expression };
+                            };
+                            const tag: IdentifierOrNodeType = tagger: {
+                                if (e_.tag) |_tag| {
+                                    switch (_tag.data) {
+                                        .e_string => |str| {
+                                            if (Expr.Tag.find(str.utf8)) |tagname| {
+                                                break :tagger IdentifierOrNodeType{ .expression = tagname };
+                                            }
 
-                    for (e_.properties) |property, i| {
-                        if (property.kind != .spread) {
-                            e_.properties[i].key = p.visitExpr(e_.properties[i].key.?);
-                        }
-
-                        if (property.value != null) {
-                            e_.properties[i].value = p.visitExpr(e_.properties[i].value.?);
-                        }
-
-                        if (property.initializer != null) {
-                            e_.properties[i].initializer = p.visitExpr(e_.properties[i].initializer.?);
-                        }
-                    }
-
-                    const runtime = if (p.options.jsx.runtime == .automatic and !e_.flags.is_key_before_rest) options.JSX.Runtime.automatic else options.JSX.Runtime.classic;
-                    var children_count = e_.children.len;
-
-                    const is_childless_tag = FeatureFlags.react_specific_warnings and children_count > 0 and tag.data == .e_string and tag.data.e_string.isUTF8() and js_lexer.ChildlessJSXTags.has(tag.data.e_string.utf8);
-
-                    children_count = if (is_childless_tag) 0 else children_count;
-
-                    if (children_count != e_.children.len) {
-                        // Error: meta is a void element tag and must neither have `children` nor use `dangerouslySetInnerHTML`.
-                        // ^ from react-dom
-                        p.log.addWarningFmt(p.source, tag.loc, p.allocator, "<{s} /> is a void element and must not have \"children\"", .{tag.data.e_string.utf8}) catch {};
-                    }
-
-                    // TODO: maybe we should split these into two different AST Nodes
-                    // That would reduce the amount of allocations a little
-                    switch (runtime) {
-                        .classic => {
-                            // Arguments to createElement()
-                            const args = p.allocator.alloc(Expr, 2 + children_count) catch unreachable;
-                            // There are at least two args:
-                            // - name of the tag
-                            // - props
-                            var i: usize = 1;
-                            args[0] = tag;
-                            if (e_.properties.len > 0) {
-                                for (e_.properties) |prop, prop_i| {
-                                    if (prop.key) |key| {
-                                        e_.properties[prop_i].key = p.visitExpr(key);
-                                    }
-
-                                    if (prop.value) |val| {
-                                        e_.properties[prop_i].value = p.visitExpr(val);
-                                    }
-                                }
-
-                                if (e_.key) |key| {
-                                    var props = p.allocator.alloc(G.Property, e_.properties.len + 1) catch unreachable;
-                                    std.mem.copy(G.Property, props, e_.properties);
-                                    props[props.len - 1] = G.Property{ .key = Expr{ .loc = key.loc, .data = keyExprData }, .value = key };
-                                    args[1] = p.e(E.Object{ .properties = props }, expr.loc);
-                                } else {
-                                    args[1] = p.e(E.Object{ .properties = e_.properties }, expr.loc);
-                                }
-                                i = 2;
-                            } else {
-                                args[1] = p.e(E.Null{}, expr.loc);
-                                i = 2;
-                            }
-
-                            for (e_.children[0..children_count]) |child| {
-                                args[i] = p.visitExpr(child);
-                                i += @intCast(usize, @boolToInt(args[i].data != .e_missing));
-                            }
-
-                            // Call createElement()
-                            return p.e(E.Call{
-                                .target = p.jsxStringsToMemberExpression(expr.loc, p.jsx_factory.ref),
-                                .args = args[0..i],
-                                // Enable tree shaking
-                                .can_be_unwrapped_if_unused = !p.options.ignore_dce_annotations,
-                            }, expr.loc);
-                        },
-                        // function jsxDEV(type, config, maybeKey, source, self) {
-                        .automatic => {
-                            // Either:
-                            // jsxDEV(type, arguments, key, isStaticChildren, source, self)
-                            // jsx(type, arguments, key)
-                            const args = p.allocator.alloc(Expr, if (p.options.jsx.development) @as(usize, 6) else @as(usize, 4)) catch unreachable;
-                            args[0] = tag;
-                            var props = List(G.Property).fromOwnedSlice(p.allocator, e_.properties);
-                            // arguments needs to be like
-                            // {
-                            //    ...props,
-                            //    children: [el1, el2]
-                            // }
-
-                            const is_static_jsx = e_.children.len == 0 or e_.children.len > 1 or e_.children[0].data != .e_array;
-
-                            // if (p.options.jsx.development) {
-                            switch (children_count) {
-                                0 => {},
-                                1 => {
-                                    // static jsx must always be an array
-                                    if (is_static_jsx) {
-                                        const children_key = Expr{ .data = jsxChildrenKeyData, .loc = expr.loc };
-                                        e_.children[0] = p.visitExpr(e_.children[0]);
-                                        props.append(G.Property{
-                                            .key = children_key,
-                                            .value = p.e(E.Array{
-                                                .items = e_.children[0..children_count],
-                                                .is_single_line = e_.children.len < 2,
-                                            }, expr.loc),
-                                        }) catch unreachable;
-                                    } else {
-                                        const children_key = Expr{ .data = jsxChildrenKeyData, .loc = expr.loc };
-                                        props.append(G.Property{
-                                            .key = children_key,
-                                            .value = p.visitExpr(e_.children[0]),
-                                        }) catch unreachable;
-                                    }
-                                },
-                                else => {
-                                    for (e_.children[0..children_count]) |child, i| {
-                                        e_.children[i] = p.visitExpr(child);
-                                    }
-                                    const children_key = Expr{ .data = jsxChildrenKeyData, .loc = expr.loc };
-                                    props.append(G.Property{
-                                        .key = children_key,
-                                        .value = p.e(E.Array{
-                                            .items = e_.children[0..children_count],
-                                            .is_single_line = e_.children.len < 2,
-                                        }, expr.loc),
-                                    }) catch unreachable;
-                                },
-                            }
-
-                            args[1] = p.e(E.Object{
-                                .properties = props.toOwnedSlice(),
-                            }, expr.loc);
-
-                            if (e_.key) |key| {
-                                args[2] = key;
-                            } else {
-                                // if (maybeKey !== undefined)
-                                args[2] = Expr{
-                                    .loc = expr.loc,
-                                    .data = .{
-                                        .e_undefined = E.Undefined{},
-                                    },
-                                };
-                            }
-
-                            if (p.options.jsx.development) {
-                                // is the return type of the first child an array?
-                                // It's dynamic
-                                // Else, it's static
-                                args[3] = Expr{
-                                    .loc = expr.loc,
-                                    .data = .{
-                                        .e_boolean = .{
-                                            .value = is_static_jsx,
+                                            p.log.addErrorFmt(
+                                                p.source,
+                                                expr.loc,
+                                                p.allocator,
+                                                "Invalid expression tag: \"<{s}>\". Valid tags are:\n" ++ Expr.Tag.valid_names_list ++ "\n",
+                                                .{str.utf8},
+                                            ) catch unreachable;
+                                            break :tagger IdentifierOrNodeType{ .identifier = p.visitExpr(_tag) };
                                         },
-                                    },
-                                };
+                                        else => {
+                                            break :tagger IdentifierOrNodeType{ .identifier = p.visitExpr(_tag) };
+                                        },
+                                    }
+                                } else {
+                                    break :tagger IdentifierOrNodeType{ .expression = Expr.Tag.e_array };
+                                }
+                            };
 
-                                var source = p.allocator.alloc(G.Property, 2) catch unreachable;
-                                p.recordUsage(p.jsx_filename.ref);
-                                source[0] = G.Property{
-                                    .key = Expr{ .loc = expr.loc, .data = Prefill.Data.Filename },
-                                    .value = p.e(E.Identifier{ .ref = p.jsx_filename.ref }, expr.loc),
-                                };
+                            for (e_.properties) |property, i| {
+                                if (property.kind != .spread) {
+                                    e_.properties[i].key = p.visitExpr(e_.properties[i].key.?);
+                                }
 
-                                source[1] = G.Property{
-                                    .key = Expr{ .loc = expr.loc, .data = Prefill.Data.LineNumber },
-                                    .value = p.e(E.Number{ .value = @intToFloat(f64, expr.loc.start) }, expr.loc),
-                                };
+                                if (property.value != null) {
+                                    e_.properties[i].value = p.visitExpr(e_.properties[i].value.?);
+                                }
 
-                                // Officially, they ask for columnNumber. But I don't see any usages of it in the code!
-                                // source[2] = G.Property{
-                                //     .key = Expr{ .loc = expr.loc, .data = Prefill.Data.ColumnNumber },
-                                //     .value = p.e(E.Number{ .value = @intToFloat(f64, expr.loc.start) }, expr.loc),
-                                // };
-
-                                args[4] = p.e(E.Object{
-                                    .properties = source,
-                                }, expr.loc);
-                                args[5] = Expr{ .data = Prefill.Data.This, .loc = expr.loc };
+                                if (property.initializer != null) {
+                                    e_.properties[i].initializer = p.visitExpr(e_.properties[i].initializer.?);
+                                }
                             }
 
-                            return p.e(E.Call{
-                                .target = p.jsxStringsToMemberExpressionAutomatic(expr.loc, is_static_jsx),
-                                .args = args,
-                                // Enable tree shaking
-                                .can_be_unwrapped_if_unused = !p.options.ignore_dce_annotations,
-                                .was_jsx_element = true,
-                            }, expr.loc);
+                            return p.e(E.Missing{}, expr.loc);
+                        },
+                        .react => {
+                            const tag: Expr = tagger: {
+                                if (e_.tag) |_tag| {
+                                    break :tagger p.visitExpr(_tag);
+                                } else {
+                                    break :tagger p.jsxStringsToMemberExpression(expr.loc, p.jsx_fragment.ref);
+                                }
+                            };
+
+                            for (e_.properties) |property, i| {
+                                if (property.kind != .spread) {
+                                    e_.properties[i].key = p.visitExpr(e_.properties[i].key.?);
+                                }
+
+                                if (property.value != null) {
+                                    e_.properties[i].value = p.visitExpr(e_.properties[i].value.?);
+                                }
+
+                                if (property.initializer != null) {
+                                    e_.properties[i].initializer = p.visitExpr(e_.properties[i].initializer.?);
+                                }
+                            }
+
+                            const runtime = if (p.options.jsx.runtime == .automatic and !e_.flags.is_key_before_rest) options.JSX.Runtime.automatic else options.JSX.Runtime.classic;
+                            var children_count = e_.children.len;
+
+                            const is_childless_tag = FeatureFlags.react_specific_warnings and children_count > 0 and tag.data == .e_string and tag.data.e_string.isUTF8() and js_lexer.ChildlessJSXTags.has(tag.data.e_string.utf8);
+
+                            children_count = if (is_childless_tag) 0 else children_count;
+
+                            if (children_count != e_.children.len) {
+                                // Error: meta is a void element tag and must neither have `children` nor use `dangerouslySetInnerHTML`.
+                                // ^ from react-dom
+                                p.log.addWarningFmt(p.source, tag.loc, p.allocator, "<{s} /> is a void element and must not have \"children\"", .{tag.data.e_string.utf8}) catch {};
+                            }
+
+                            // TODO: maybe we should split these into two different AST Nodes
+                            // That would reduce the amount of allocations a little
+                            switch (runtime) {
+                                .classic => {
+                                    // Arguments to createElement()
+                                    const args = p.allocator.alloc(Expr, 2 + children_count) catch unreachable;
+                                    // There are at least two args:
+                                    // - name of the tag
+                                    // - props
+                                    var i: usize = 1;
+                                    args[0] = tag;
+                                    if (e_.properties.len > 0) {
+                                        for (e_.properties) |prop, prop_i| {
+                                            if (prop.key) |key| {
+                                                e_.properties[prop_i].key = p.visitExpr(key);
+                                            }
+
+                                            if (prop.value) |val| {
+                                                e_.properties[prop_i].value = p.visitExpr(val);
+                                            }
+                                        }
+
+                                        if (e_.key) |key| {
+                                            var props = p.allocator.alloc(G.Property, e_.properties.len + 1) catch unreachable;
+                                            std.mem.copy(G.Property, props, e_.properties);
+                                            props[props.len - 1] = G.Property{ .key = Expr{ .loc = key.loc, .data = keyExprData }, .value = key };
+                                            args[1] = p.e(E.Object{ .properties = props }, expr.loc);
+                                        } else {
+                                            args[1] = p.e(E.Object{ .properties = e_.properties }, expr.loc);
+                                        }
+                                        i = 2;
+                                    } else {
+                                        args[1] = p.e(E.Null{}, expr.loc);
+                                        i = 2;
+                                    }
+
+                                    for (e_.children[0..children_count]) |child| {
+                                        args[i] = p.visitExpr(child);
+                                        i += @intCast(usize, @boolToInt(args[i].data != .e_missing));
+                                    }
+
+                                    // Call createElement()
+                                    return p.e(E.Call{
+                                        .target = p.jsxStringsToMemberExpression(expr.loc, p.jsx_factory.ref),
+                                        .args = args[0..i],
+                                        // Enable tree shaking
+                                        .can_be_unwrapped_if_unused = !p.options.ignore_dce_annotations,
+                                    }, expr.loc);
+                                },
+                                // function jsxDEV(type, config, maybeKey, source, self) {
+                                .automatic => {
+                                    // Either:
+                                    // jsxDEV(type, arguments, key, isStaticChildren, source, self)
+                                    // jsx(type, arguments, key)
+                                    const args = p.allocator.alloc(Expr, if (p.options.jsx.development) @as(usize, 6) else @as(usize, 4)) catch unreachable;
+                                    args[0] = tag;
+                                    var props = List(G.Property).fromOwnedSlice(p.allocator, e_.properties);
+                                    // arguments needs to be like
+                                    // {
+                                    //    ...props,
+                                    //    children: [el1, el2]
+                                    // }
+
+                                    const is_static_jsx = e_.children.len == 0 or e_.children.len > 1 or e_.children[0].data != .e_array;
+
+                                    // if (p.options.jsx.development) {
+                                    switch (children_count) {
+                                        0 => {},
+                                        1 => {
+                                            // static jsx must always be an array
+                                            if (is_static_jsx) {
+                                                const children_key = Expr{ .data = jsxChildrenKeyData, .loc = expr.loc };
+                                                e_.children[0] = p.visitExpr(e_.children[0]);
+                                                props.append(G.Property{
+                                                    .key = children_key,
+                                                    .value = p.e(E.Array{
+                                                        .items = e_.children[0..children_count],
+                                                        .is_single_line = e_.children.len < 2,
+                                                    }, expr.loc),
+                                                }) catch unreachable;
+                                            } else {
+                                                const children_key = Expr{ .data = jsxChildrenKeyData, .loc = expr.loc };
+                                                props.append(G.Property{
+                                                    .key = children_key,
+                                                    .value = p.visitExpr(e_.children[0]),
+                                                }) catch unreachable;
+                                            }
+                                        },
+                                        else => {
+                                            for (e_.children[0..children_count]) |child, i| {
+                                                e_.children[i] = p.visitExpr(child);
+                                            }
+                                            const children_key = Expr{ .data = jsxChildrenKeyData, .loc = expr.loc };
+                                            props.append(G.Property{
+                                                .key = children_key,
+                                                .value = p.e(E.Array{
+                                                    .items = e_.children[0..children_count],
+                                                    .is_single_line = e_.children.len < 2,
+                                                }, expr.loc),
+                                            }) catch unreachable;
+                                        },
+                                    }
+
+                                    args[1] = p.e(E.Object{
+                                        .properties = props.toOwnedSlice(),
+                                    }, expr.loc);
+
+                                    if (e_.key) |key| {
+                                        args[2] = key;
+                                    } else {
+                                        // if (maybeKey !== undefined)
+                                        args[2] = Expr{
+                                            .loc = expr.loc,
+                                            .data = .{
+                                                .e_undefined = E.Undefined{},
+                                            },
+                                        };
+                                    }
+
+                                    if (p.options.jsx.development) {
+                                        // is the return type of the first child an array?
+                                        // It's dynamic
+                                        // Else, it's static
+                                        args[3] = Expr{
+                                            .loc = expr.loc,
+                                            .data = .{
+                                                .e_boolean = .{
+                                                    .value = is_static_jsx,
+                                                },
+                                            },
+                                        };
+
+                                        var source = p.allocator.alloc(G.Property, 2) catch unreachable;
+                                        p.recordUsage(p.jsx_filename.ref);
+                                        source[0] = G.Property{
+                                            .key = Expr{ .loc = expr.loc, .data = Prefill.Data.Filename },
+                                            .value = p.e(E.Identifier{ .ref = p.jsx_filename.ref }, expr.loc),
+                                        };
+
+                                        source[1] = G.Property{
+                                            .key = Expr{ .loc = expr.loc, .data = Prefill.Data.LineNumber },
+                                            .value = p.e(E.Number{ .value = @intToFloat(f64, expr.loc.start) }, expr.loc),
+                                        };
+
+                                        // Officially, they ask for columnNumber. But I don't see any usages of it in the code!
+                                        // source[2] = G.Property{
+                                        //     .key = Expr{ .loc = expr.loc, .data = Prefill.Data.ColumnNumber },
+                                        //     .value = p.e(E.Number{ .value = @intToFloat(f64, expr.loc.start) }, expr.loc),
+                                        // };
+
+                                        args[4] = p.e(E.Object{
+                                            .properties = source,
+                                        }, expr.loc);
+                                        args[5] = Expr{ .data = Prefill.Data.This, .loc = expr.loc };
+                                    }
+
+                                    return p.e(E.Call{
+                                        .target = p.jsxStringsToMemberExpressionAutomatic(expr.loc, is_static_jsx),
+                                        .args = args,
+                                        // Enable tree shaking
+                                        .can_be_unwrapped_if_unused = !p.options.ignore_dce_annotations,
+                                        .was_jsx_element = true,
+                                    }, expr.loc);
+                                },
+                                else => unreachable,
+                            }
                         },
                         else => unreachable,
                     }
                 },
 
                 .e_template => |e_| {
-                    if (e_.tag) |tag| {
-                        e_.tag = p.visitExpr(tag);
-                    }
-
                     for (e_.parts) |*part| {
                         part.value = p.visitExpr(part.value);
+                    }
+
+                    if (e_.tag) |tag| {
+                        e_.tag = p.visitExpr(tag);
+
+                        if (comptime FeatureFlags.is_macro_enabled and jsx_transform_type != .macro) {
+                            if (e_.tag.?.data == .e_import_identifier) {
+                                const ref = e_.tag.?.data.e_import_identifier.ref;
+                                if (p.macro_refs.get(ref)) |import_record_id| {
+                                    const name = p.symbols.items[ref.inner_index].original_name;
+                                    const record = &p.import_records.items[import_record_id];
+                                    return p.options.macro_context.call(
+                                        record.path.text,
+                                        p.source.path.sourceDir(),
+                                        p.log,
+                                        p.source,
+                                        record.range,
+                                        expr,
+                                        &.{},
+                                        name,
+                                    ) catch return expr;
+                                }
+                            }
+                        }
                     }
                 },
 
@@ -11818,6 +11939,7 @@ pub fn NewParser(
                     e_.target = p.visitExprInOut(e_.target, ExprIn{
                         .has_chain_parent = (e_.optional_chain orelse js_ast.OptionalChain.start) == .ccontinue,
                     });
+
                     // TODO: wan about import namespace call
                     var has_spread = false;
                     for (e_.args) |*arg| {
@@ -11834,6 +11956,26 @@ pub fn NewParser(
                         } else if (p.options.warn_about_unbundled_modules) {
                             const r = js_lexer.rangeOfIdentifier(p.source, e_.target.loc);
                             p.log.addRangeDebug(p.source, r, "This call to \"require\" will not be bundled because it has multiple arguments") catch unreachable;
+                        }
+                    }
+
+                    if (comptime FeatureFlags.is_macro_enabled and jsx_transform_type != .macro) {
+                        if (e_.target.data == .e_import_identifier) {
+                            const ref = e_.target.data.e_import_identifier.ref;
+                            if (p.macro_refs.get(ref)) |import_record_id| {
+                                const name = p.symbols.items[ref.inner_index].original_name;
+                                const record = &p.import_records.items[import_record_id];
+                                return p.options.macro_context.call(
+                                    record.path.text,
+                                    p.source.path.sourceDir(),
+                                    p.log,
+                                    p.source,
+                                    record.range,
+                                    expr,
+                                    &.{},
+                                    name,
+                                ) catch return expr;
+                            }
                         }
                     }
 
@@ -15090,18 +15232,26 @@ pub fn NewParser(
 // '../../build/macos-x86_64/bun node_modules/react-dom/cjs/react-dom.development.js --resolve=disable' ran
 // 1.02 ± 0.07 times faster than '../../bun.before-comptime-js-parser node_modules/react-dom/cjs/react-dom.development.js --resolve=disable'
 const JavaScriptParser = NewParser(.{});
-const JSXParser = NewParser(.{ .jsx = true });
-const TSXParser = NewParser(.{ .jsx = true, .typescript = true });
+const JSXParser = NewParser(.{ .jsx = .react });
+const TSXParser = NewParser(.{ .jsx = .react, .typescript = true });
 const TypeScriptParser = NewParser(.{ .typescript = true });
 
+const JSParserMacro = NewParser(.{
+    .jsx = .macro,
+});
+const TSParserMacro = NewParser(.{
+    .jsx = .react,
+    .typescript = true,
+});
+
 const JavaScriptParserFastRefresh = NewParser(.{ .react_fast_refresh = true });
-const JSXParserFastRefresh = NewParser(.{ .jsx = true, .react_fast_refresh = true });
-const TSXParserFastRefresh = NewParser(.{ .jsx = true, .typescript = true, .react_fast_refresh = true });
+const JSXParserFastRefresh = NewParser(.{ .jsx = .react, .react_fast_refresh = true });
+const TSXParserFastRefresh = NewParser(.{ .jsx = .react, .typescript = true, .react_fast_refresh = true });
 const TypeScriptParserFastRefresh = NewParser(.{ .typescript = true, .react_fast_refresh = true });
 
 const JavaScriptImportScanner = NewParser(.{ .scan_only = true });
-const JSXImportScanner = NewParser(.{ .jsx = true, .scan_only = true });
-const TSXImportScanner = NewParser(.{ .jsx = true, .typescript = true, .scan_only = true });
+const JSXImportScanner = NewParser(.{ .jsx = .react, .scan_only = true });
+const TSXImportScanner = NewParser(.{ .jsx = .react, .typescript = true, .scan_only = true });
 const TypeScriptImportScanner = NewParser(.{ .typescript = true, .scan_only = true });
 
 // The "await" and "yield" expressions are never allowed in argument lists but

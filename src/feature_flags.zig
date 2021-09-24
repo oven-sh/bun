@@ -67,3 +67,5 @@ pub const CSSInJSImportBehavior = enum {
 // having issues compiling WebKit with this enabled
 pub const remote_inspector = false;
 pub const auto_import_buffer = false;
+
+pub const is_macro_enabled = env.isDebug;

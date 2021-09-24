@@ -338,18 +338,33 @@ pub const Platform = enum {
     neutral,
     browser,
     bun,
+    bun_macro,
     node,
+
+    pub inline fn isBun(this: Platform) bool {
+        return switch (this) {
+            .bun_macro, .bun => true,
+            else => false,
+        };
+    }
+
+    pub inline fn isNotBun(this: Platform) bool {
+        return switch (this) {
+            .bun_macro, .bun => false,
+            else => true,
+        };
+    }
 
     pub inline fn isClient(this: Platform) bool {
         return switch (this) {
-            .bun => false,
+            .bun_macro, .bun => false,
             else => true,
         };
     }
 
     pub inline fn supportsBrowserField(this: Platform) bool {
         return switch (this) {
-            .neutral, .browser, .bun => true,
+            .bun_macro, .neutral, .browser, .bun => true,
             else => false,
         };
     }
@@ -360,7 +375,7 @@ pub const Platform = enum {
     pub inline fn processBrowserDefineValue(this: Platform) ?string {
         return switch (this) {
             .browser => browser_define_value_true,
-            .bun, .node => browser_define_value_false,
+            .bun_macro, .bun, .node => browser_define_value_false,
             else => null,
         };
     }

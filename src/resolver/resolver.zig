@@ -609,8 +609,9 @@ pub const Resolver = struct {
         {
             if (r.debug_logs) |*debug| {
                 try debug.addNote("Marking this path as implicitly external");
+                r.flushDebugLogs(.success) catch {};
             }
-            r.flushDebugLogs(.success) catch {};
+
             return Result{
                 .import_kind = kind,
                 .path_pair = PathPair{
@@ -628,16 +629,18 @@ pub const Resolver = struct {
             if (data_url.decode_mime_type() != .Unsupported) {
                 if (r.debug_logs) |*debug| {
                     debug.addNote("Putting this path in the \"dataurl\" namespace") catch {};
+                    r.flushDebugLogs(.success) catch {};
                 }
-                r.flushDebugLogs(.success) catch {};
+
                 return Result{ .path_pair = PathPair{ .primary = Path.initWithNamespace(import_path, "dataurl") } };
             }
 
             // "background: url(data:image/png;base64,iVBORw0KGgo=);"
             if (r.debug_logs) |*debug| {
                 debug.addNote("Marking this \"dataurl\" as external") catch {};
+                r.flushDebugLogs(.success) catch {};
             }
-            r.flushDebugLogs(.success) catch {};
+
             return Result{
                 .path_pair = PathPair{ .primary = Path.initWithNamespace(import_path, "dataurl") },
                 .is_external = true,
@@ -649,8 +652,9 @@ pub const Resolver = struct {
         if (source_dir.len == 0) {
             if (r.debug_logs) |*debug| {
                 debug.addNote("Cannot resolve this path without a directory") catch {};
+                r.flushDebugLogs(.fail) catch {};
             }
-            r.flushDebugLogs(.fail) catch {};
+
             return error.MissingResolveDir;
         }
 

@@ -411,6 +411,64 @@ For developing frameworks, you can also do `bun bun --use ./relative-path-to-fra
 
 If you're interested in adding a framework integration, please reach out. There's a lot here and it's not entirely documented yet.
 
+#### Reference
+
+### `bun bun`
+
+Run `bun bun ./path-to.js` to generate a `node_modules.bun` file containing all imported dependencies (recursively).
+
+**Why bundle?**
+
+- For browsers, loading entire apps without bundling dependencies is typically slow. With a fast bundler & transpiler, the bottleneck eventually becomes the web browser's ability to run many network requests concurrently. There are many workarounds for this. `<link rel="modulepreload">`, HTTP/3, etc but none are more effective than bundling. If you have reproducible evidence to the contrary, feel free to submit an issue. It would be better if bundling wasn't necessary.
+- On the server, bundling reduces the number of filesystem lookups to load JavaScript. While filesystem lookups are faster than HTTP requests, there's still overhead.
+
+**What is .bun?**
+
+The `.bun` file contains:
+
+- source code
+- source code metadata
+- project metadata & configuration
+
+All in one file.
+
+It's a little like a build cache, but it can be reused. Eventually, I hope people will check it into version control so their coworkers don't have to run `npm install` as often.
+
+To see the schema inside, have a look at [`JavascriptBundleContainer`](./src/api/schema.d.ts). You can find JavaScript bindings to read the metadata in [src/api/schema.js](./src/api/schema.js). This is not really an API yet. It's missing the part where it gets the binary data from the bottom of the file. Someday, I want this to be usable by other tools too.
+
+**Where is the code?**
+
+`.bun` files are marked as executable.
+
+To print out the code, run `./node_modules.bun` in your terminal or run `bun ./path-to-node_modules.bun`.
+
+This works because every `.bun` file starts with this:
+
+```bash
+#!/usr/bin/env bun
+```
+
+To deploy to production with Bun, you'll want to get the code from the `.bun` file and stick that somewhere your web server can find it (or if you're using Vercel or a Rails app, in a `public` folder).
+
+Note that `.bun` is a binary file format, so just opening it in VSCode or vim might render strangely.
+
+**Advanced**
+
+By default, `bun bun` only bundles external dependencies that are `import`ed or `require`d in either app code or another external dependency. An "external depenendency" is defined as, "A JavaScript-like file that has `/node_modules/` in the resolved file path and a corresponding `package.json`".
+
+To force bun to bundle packages which are not located in a `node_modules` folder (i.e. the final, resolved path following all symlinks), add a `bun` section to the root project's `package.json` with `alwaysBundle` set to an array of package names to always bundle. Here's an example:
+
+```json
+{
+  "name": "my-package-name-in-here",
+  "bun": {
+    "alwaysBundle": ["@mybigcompany/my-workspace-package"]
+  }
+}
+```
+
+Bundled dependencies are not eligible for Hot Module Reloading. The code is served to browsers & Bun.js verbatim. But, in the future, it may be sectioned off into only parts of the bundle being used. That's possible in the current version of the `.bun` file (so long as you know which files are necessary), but it's not implemented yet. Longer-term, it will include `import` and `export` of each module inside.
+
 # Credits
 
 - While written in Zig instead of Go, Bun's JS transpiler, CSS lexer, and node module resolver source code is based off of @evanw's esbuild project. @evanw did a fantastic job with esbuild.

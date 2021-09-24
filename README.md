@@ -411,7 +411,7 @@ For developing frameworks, you can also do `bun bun --use ./relative-path-to-fra
 
 If you're interested in adding a framework integration, please reach out. There's a lot here and it's not entirely documented yet.
 
-#### Reference
+# Reference
 
 ### `bun bun`
 
@@ -434,13 +434,19 @@ All in one file.
 
 It's a little like a build cache, but it can be reused. Eventually, I hope people will check it into version control so their coworkers don't have to run `npm install` as often.
 
-To see the schema inside, have a look at [`JavascriptBundleContainer`](./src/api/schema.d.ts). You can find JavaScript bindings to read the metadata in [src/api/schema.js](./src/api/schema.js). This is not really an API yet. It's missing the part where it gets the binary data from the bottom of the file. Someday, I want this to be usable by other tools too.
+To see the schema inside, have a look at [`JavascriptBundleContainer`](./src/api/schema.d.ts#:~:text=export%20interface-,JavascriptBundleContainer,-%7B). You can find JavaScript bindings to read the metadata in [src/api/schema.js](./src/api/schema.js). This is not really an API yet. It's missing the part where it gets the binary data from the bottom of the file. Someday, I want this to be usable by other tools too.
 
 **Where is the code?**
 
 `.bun` files are marked as executable.
 
 To print out the code, run `./node_modules.bun` in your terminal or run `bun ./path-to-node_modules.bun`.
+
+Here is a copy-pastable example:
+
+```bash
+./node_modules.bun > node_modules.js
+```
 
 This works because every `.bun` file starts with this:
 

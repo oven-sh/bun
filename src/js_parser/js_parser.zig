@@ -11632,22 +11632,18 @@ pub fn NewParser(
                             e_.no = p.visitExpr(e_.no);
                             p.is_control_flow_dead = old;
 
-                            // we diverge from esbuild here a little
-                            // esbuild rewrites something like "(a, true) ? b : c" => "a, b"
-                            // we don't do that, since the goal isn't minifying
-                            // though there are some cases where _not_ doing this potentially
-                            // leads to unnecessary imports
-                            if (side_effects.side_effects == .no_side_effects) {
-
-                                // "(1 ? fn : 2)()" => "fn()"
-                                // "(1 ? this.fn : 2)" => "this.fn"
-                                // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
-                                if (is_call_target and e_.yes.hasValueForThisInCall()) {
-                                    return p.e(E.Number{ .value = 0 }, e_.test_.loc).joinWithComma(e_.yes, p.allocator);
-                                }
-
-                                return e_.yes;
+                            if (side_effects.side_effects == .could_have_side_effects) {
+                                return Expr.joinWithComma(SideEffects.simpifyUnusedExpr(p, e_.test_) orelse p.e(E.Missing{}, e_.test_.loc), e_.yes, p.allocator);
                             }
+
+                            // "(1 ? fn : 2)()" => "fn()"
+                            // "(1 ? this.fn : 2)" => "this.fn"
+                            // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
+                            if (is_call_target and e_.yes.hasValueForThisInCall()) {
+                                return p.e(E.Number{ .value = 0 }, e_.test_.loc).joinWithComma(e_.yes, p.allocator);
+                            }
+
+                            return e_.yes;
                         } else {
                             // "false ? dead : live"
                             const old = p.is_control_flow_dead;
@@ -11656,17 +11652,18 @@ pub fn NewParser(
                             p.is_control_flow_dead = old;
                             e_.no = p.visitExpr(e_.no);
 
-                            if (side_effects.side_effects == .no_side_effects) {
-
-                                // "(1 ? fn : 2)()" => "fn()"
-                                // "(1 ? this.fn : 2)" => "this.fn"
-                                // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
-                                if (is_call_target and e_.no.hasValueForThisInCall()) {
-                                    return p.e(E.Number{ .value = 0 }, e_.test_.loc).joinWithComma(e_.no, p.allocator);
-                                }
-
-                                return e_.no;
+                            // "(a, false) ? b : c" => "a, c"
+                            if (side_effects.side_effects == .could_have_side_effects) {
+                                return Expr.joinWithComma(SideEffects.simpifyUnusedExpr(p, e_.test_) orelse p.e(E.Missing{}, e_.test_.loc), e_.no, p.allocator);
                             }
+
+                            // "(1 ? fn : 2)()" => "fn()"
+                            // "(1 ? this.fn : 2)" => "this.fn"
+                            // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
+                            if (is_call_target and e_.no.hasValueForThisInCall()) {
+                                return p.e(E.Number{ .value = 0 }, e_.test_.loc).joinWithComma(e_.no, p.allocator);
+                            }
+                            return e_.no;
                         }
                     }
                 },

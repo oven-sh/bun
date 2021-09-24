@@ -234,14 +234,17 @@ pub const DebugLogs = struct {
     }
 
     pub fn increaseIndent(d: *DebugLogs) !void {
+        @setCold(true);
         try d.indent.append(" ");
     }
 
     pub fn decreaseIndent(d: *DebugLogs) !void {
+        @setCold(true);
         d.indent.list.shrinkRetainingCapacity(d.indent.list.items.len - 1);
     }
 
     pub fn addNote(d: *DebugLogs, _text: string) !void {
+        @setCold(true);
         var text = _text;
         const len = d.indent.len();
         if (len > 0) {
@@ -255,6 +258,7 @@ pub const DebugLogs = struct {
     }
 
     pub fn addNoteFmt(d: *DebugLogs, comptime fmt: string, args: anytype) !void {
+        @setCold(true);
         return try d.addNote(try std.fmt.allocPrint(d.notes.allocator, fmt, args));
     }
 };

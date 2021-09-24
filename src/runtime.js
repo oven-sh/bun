@@ -62,14 +62,22 @@ export var __commonJS = (cb, name) => {
       !mod.exports[tagSymbol] &&
       Object.keys(mod.exports).length === 1
     ) {
-      mod.exports = mod.exports.default;
-      Object.defineProperty(mod.exports, "default", {
-        get() {
-          return mod.exports;
-        },
-        enumerable: true,
-        configurable: true,
-      });
+      // if mod.exports.default === true this won't work because we can't define a property on a boolean
+      if (
+        typeof mod.exports.default === "object" ||
+        typeof mod.exports.default === "function"
+      ) {
+        mod.exports = mod.exports.default;
+
+        Object.defineProperty(mod.exports, "default", {
+          get() {
+            return mod.exports;
+          },
+          enumerable: true,
+          configurable: true,
+        });
+      }
+
       // If it's a namespace export without .default, pretend .default is the same as mod.exports
     } else if (
       (kind === "function" || kind === "object") &&

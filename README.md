@@ -422,7 +422,7 @@ Run `bun bun ./path-to.js` to generate a `node_modules.bun` file containing all 
 - For browsers, loading entire apps without bundling dependencies is typically slow. With a fast bundler & transpiler, the bottleneck eventually becomes the web browser's ability to run many network requests concurrently. There are many workarounds for this. `<link rel="modulepreload">`, HTTP/3, etc but none are more effective than bundling. If you have reproducible evidence to the contrary, feel free to submit an issue. It would be better if bundling wasn't necessary.
 - On the server, bundling reduces the number of filesystem lookups to load JavaScript. While filesystem lookups are faster than HTTP requests, there's still overhead.
 
-**What is .bun?**
+**What is `.bun`?**
 
 The `.bun` file contains:
 

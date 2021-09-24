@@ -252,85 +252,50 @@ pub fn NewLinker(comptime BundlerType: type) type {
                             if (loader.isJavaScriptLikeOrJSON()) {
                                 bundled: {
                                     if (linker.options.node_modules_bundle) |node_modules_bundle| {
-                                        const package_json_ = resolved_import.package_json orelse brk: {
-                                            if (resolved_import.isLikelyNodeModule()) {
-                                                break :brk linker.resolver.packageJSONForResolvedNodeModule(resolved_import);
+                                        const package_json = resolved_import.package_json orelse break :bundled;
+                                        const package_base_dir = package_json.source.path.sourceDir();
+                                        if (node_modules_bundle.getPackageIDByHash(package_json.hash)) |pkg_id| {
+                                            const package = node_modules_bundle.bundle.packages[pkg_id];
+
+                                            if (comptime isDebug) {
+                                                std.debug.assert(strings.eql(node_modules_bundle.str(package.name), package_json.name));
+                                                std.debug.assert(strings.eql(node_modules_bundle.str(package.version), package_json.version));
                                             }
 
-                                            break :bundled;
-                                        };
-                                        if (package_json_) |package_json| {
-                                            const package_base_dir = package_json.source.path.sourceDir();
-                                            const node_module_root = std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str;
-                                            if (strings.lastIndexOf(package_base_dir, node_module_root)) |last_node_modules| {
-                                                if (node_modules_bundle.getPackageIDByName(package_json.name)) |possible_pkg_ids| {
-                                                    const packages = node_modules_bundle.bundle.packages;
-                                                    const pkg_id: u32 = brk: {
-                                                        for (possible_pkg_ids) |pkg_id| {
-                                                            const pkg = packages[pkg_id];
-                                                            if (pkg.hash == package_json.hash) {
-                                                                break :brk pkg_id;
-                                                            }
-                                                        }
+                                            const package_relative_path = linker.fs.relative(
+                                                package_base_dir,
+                                                if (!strings.eqlComptime(path.namespace, "node")) path.pretty else path.text,
+                                            );
 
-                                                        linker.log.addRangeWarningFmt(
-                                                            &result.source,
-                                                            import_record.range,
-                                                            linker.allocator,
-                                                            "Multiple versions of \"{s}\".\n    {s}@{s}\n    {s}@{s}",
-                                                            .{
-                                                                package_json.name,
-                                                                package_json.name,
-                                                                node_modules_bundle.str(packages[possible_pkg_ids[0]].version),
-                                                                package_json.name,
-                                                                package_json.version,
-                                                            },
-                                                        ) catch {};
-                                                        break :bundled;
-                                                    };
+                                            const found_module = node_modules_bundle.findModuleInPackage(&package, package_relative_path) orelse {
+                                                // linker.log.addErrorFmt(
+                                                //     null,
+                                                //     logger.Loc.Empty,
+                                                //     linker.allocator,
+                                                //     "New dependency import: \"{s}/{s}\"\nPlease run `bun bun` to update the .bun.",
+                                                //     .{
+                                                //         package_json.name,
+                                                //         package_relative_path,
+                                                //     },
+                                                // ) catch {};
+                                                break :bundled;
+                                            };
 
-                                                    const package = &packages[pkg_id];
-
-                                                    if (comptime isDebug) {
-                                                        std.debug.assert(strings.eql(node_modules_bundle.str(package.name), package_json.name));
-                                                    }
-
-                                                    const package_relative_path = linker.fs.relative(
-                                                        package_base_dir,
-                                                        if (!strings.eqlComptime(path.namespace, "node")) path.pretty else path.text,
-                                                    );
-
-                                                    const found_module = node_modules_bundle.findModuleInPackage(package, package_relative_path) orelse {
-                                                        // linker.log.addErrorFmt(
-                                                        //     null,
-                                                        //     logger.Loc.Empty,
-                                                        //     linker.allocator,
-                                                        //     "New dependency import: \"{s}/{s}\"\nPlease run `bun bun` to update the .bun.",
-                                                        //     .{
-                                                        //         package_json.name,
-                                                        //         package_relative_path,
-                                                        //     },
-                                                        // ) catch {};
-                                                        break :bundled;
-                                                    };
-
-                                                    if (comptime isDebug) {
-                                                        const module_path = node_modules_bundle.str(found_module.path);
-                                                        std.debug.assert(
-                                                            strings.eql(
-                                                                module_path,
-                                                                package_relative_path,
-                                                            ),
-                                                        );
-                                                    }
-
-                                                    import_record.is_bundled = true;
-                                                    import_record.path.text = linker.nodeModuleBundleImportPath();
-                                                    import_record.module_id = found_module.id;
-                                                    needs_bundle = true;
-                                                    continue;
-                                                }
+                                            if (comptime isDebug) {
+                                                const module_path = node_modules_bundle.str(found_module.path);
+                                                std.debug.assert(
+                                                    strings.eql(
+                                                        module_path,
+                                                        package_relative_path,
+                                                    ),
+                                                );
                                             }
+
+                                            import_record.is_bundled = true;
+                                            import_record.path.text = linker.nodeModuleBundleImportPath();
+                                            import_record.module_id = found_module.id;
+                                            needs_bundle = true;
+                                            continue;
                                         }
                                     }
                                 }

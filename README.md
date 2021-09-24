@@ -427,8 +427,19 @@ Run `bun bun ./path-to.js` to generate a `node_modules.bun` file containing all 
 The `.bun` file contains:
 
 - all the bundled source code
-- all the bundled source code metadata (what byte ranges of the `.bun` correspond to which module's source code? what modules were used in a package?)
-- project metadata & configuration (what framework? where is the routes folder?)
+- all the bundled source code metadata
+- project metadata & configuration
+
+Here are some of the questions `.bun` files answer:
+
+- what byte ranges of the `.bun` correspond to which module's source code?
+- what modules of a package are used?
+- what framework is used? (e.g. Next.js)
+- where is the routes directory?
+- how big is each imported dependency?
+- what is the hash of the bundle's contents? (for etags)
+- what is the name & version of every npm package exported in this bundle?
+- what modules from which packages are used in this project? ("project" defined as all the entry points used to generate the .bun)
 
 All in one file.
 

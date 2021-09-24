@@ -445,6 +445,8 @@ All in one file.
 
 It's a little like a build cache, but designed for reuse. I hope people will eventually check it into version control so their coworkers don't have to run `npm install` as often.
 
+##### Position-independent code
+
 From a design perspective, the most important part of the `.bun` file is how the code is organized. Each module is exported by a hash like this:
 
 ```js

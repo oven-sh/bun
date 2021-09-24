@@ -445,6 +445,18 @@ All in one file.
 
 It's a little like a build cache, but designed for reuse. I hope people will eventually check it into version control so their coworkers don't have to run `npm install` as often.
 
+From a design perspective, the most important part of the `.bun` file is how the code is organized. Each module is exported by a hash like this:
+
+```js
+// preact/dist/preact.module.js
+export var $eb6819b = $$m({
+  "preact/dist/preact.module.js": (module, exports) => {
+    var n, l, u, i, t, o, r, f, e = {}, c = [], s = /acit|ex(?:s|g|n|p|$)|rph|grid|ows|mnc|ntw|ine[ch]|zoo|^ord|itera/i;
+    // ... rest of code
+```
+
+This makes bundled modules [position-independent](https://en.wikipedia.org/wiki/Position-independent_code). In theory, one could import only the exact modules in-use without reparsing code and without generating a new bundle. One bundle can dynamically become many bundles comprising only the modules in use on the webpage. Thanks to the metadata with the byte offsets, a web server can send each module to browsers [zero-copy](https://en.wikipedia.org/wiki/Zero-copy) using [sendfile](https://man7.org/linux/man-pages/man2/sendfile.2.html). Bun itself is not quite this smart yet, but these optimizations would be useful in production and potentially very useful for React Server Components.
+
 To see the schema inside, have a look at [`JavascriptBundleContainer`](./src/api/schema.d.ts#:~:text=export%20interface-,JavascriptBundleContainer,-%7B). You can find JavaScript bindings to read the metadata in [src/api/schema.js](./src/api/schema.js). This is not really an API yet. It's missing the part where it gets the binary data from the bottom of the file. Someday, I want this to be usable by other tools too.
 
 **Where is the code?**
@@ -484,7 +496,23 @@ To force bun to bundle packages which are not located in a `node_modules` folder
 }
 ```
 
-Bundled dependencies are not eligible for Hot Module Reloading. The code is served to browsers & Bun.js verbatim. But, in the future, it may be sectioned off into only parts of the bundle being used. That's possible in the current version of the `.bun` file (so long as you know which files are necessary), but it's not implemented yet. Longer-term, it will include `import` and `export` of each module inside.
+Bundled dependencies are not eligible for Hot Module Reloading. The code is served to browsers & Bun.js verbatim. But, in the future, it may be sectioned off into only parts of the bundle being used. That's possible in the current version of the `.bun` file (so long as you know which files are necessary), but it's not implemented yet. Longer-term, it will include all `import` and `export` of each module inside.
+
+**What is the module ID hash?**
+
+The `$eb6819b` hash used here:
+
+```js
+export var $eb6819b = $$m({
+```
+
+Is generated like this:
+
+1. Murmur3 32 bit hash of `package.name@package.version`. This is the hash uniquely identifying the npm package.
+2. Wyhash 64 of the `package.hash` + `package_path`. `package_path` means "relative to the root of the npm package, where is the module imported?". For example, if you imported `react/jsx-dev-runtime.js`, the `package_path` is `jsx-dev-runtime.js`. `react-dom/cjs/react-dom.development.js` would be `cjs/react-dom.development.js`
+3. Truncate the hash generated above to a `u32`
+
+The implementation details of this module ID hash will vary between versions of Bun. The important part is the metadata contains the module IDs, the package paths, and the package hashes so it shouldn't really matter in practice if other tooling wants to make use of any of this.
 
 # Credits
 

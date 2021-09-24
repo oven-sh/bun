@@ -15,8 +15,10 @@ parent: Index = allocators.NotFound,
 // A pointer to the enclosing dirInfo with a valid "browser" field in
 // package.json. We need this to remap paths after they have been resolved.
 enclosing_browser_scope: Index = allocators.NotFound,
-enclosing_package_json: ?*const PackageJSON = null,
+package_json_for_browser_field: ?*const PackageJSON = null,
 enclosing_tsconfig_json: ?*const TSConfigJSON = null,
+
+enclosing_package_json: ?*PackageJSON = null,
 
 abs_path: string = "",
 entries: Index = undefined,

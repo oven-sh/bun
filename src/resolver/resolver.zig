@@ -675,7 +675,7 @@ pub fn NewResolver(cache_files: bool) type {
             var iter = result.path_pair.iter();
             while (iter.next()) |path| {
                 var dir: *DirInfo = (r.readDirInfo(path.name.dir) catch continue) orelse continue;
-                result.package_json = result.package_json orelse dir.package_json;
+                result.package_json = result.package_json orelse dir.enclosing_package_json;
 
                 if (dir.getEntries()) |entries| {
                     if (entries.get(path.name.filename)) |query| {
@@ -988,6 +988,7 @@ pub fn NewResolver(cache_files: bool) type {
                     result.file_fd = res.file_fd;
                     result.package_json = res.package_json;
                     result.diff_case = res.diff_case;
+                    result.is_from_node_modules = result.is_from_node_modules or res.is_node_module;
 
                     if (res.path_pair.primary.is_disabled and res.path_pair.secondary == null) {
                         return result;
@@ -1011,6 +1012,7 @@ pub fn NewResolver(cache_files: bool) type {
                                         result.file_fd = remapped.file_fd;
                                         result.package_json = remapped.package_json;
                                         result.diff_case = remapped.diff_case;
+                                        result.is_from_node_modules = result.is_from_node_modules or remapped.is_node_module;
                                         return result;
                                     }
                                 }
@@ -1066,8 +1068,7 @@ pub fn NewResolver(cache_files: bool) type {
         pub fn rootNodeModulePackageJSON(
             r: *ThisResolver,
             result: *const Result,
-            base_path: *string,
-        ) ?*const PackageJSON {
+        ) ?RootPathPair {
             const path = (result.pathConst() orelse return null);
             var absolute = path.text;
             // /foo/node_modules/@babel/standalone/index.js
@@ -1103,27 +1104,26 @@ pub fn NewResolver(cache_files: bool) type {
             // That can cause filesystem lookups in parent directories and it requires a lock
             if (result.package_json) |pkg| {
                 if (strings.eql(slice, pkg.source.path.name.dirWithTrailingSlash())) {
-                    base_path.* = absolute;
-                    return pkg;
+                    return RootPathPair{
+                        .package_json = pkg,
+                        .base_path = slice,
+                    };
                 }
             }
 
-            const dir_info = (r.dirInfoCached(slice) catch null) orelse return null;
-            base_path.* = absolute;
-            return dir_info.package_json;
-        }
-
-        pub fn loadNodeModules(r: *ThisResolver, import_path: string, kind: ast.ImportKind, _dir_info: *DirInfo) ?MatchResult {
-            var res = _loadNodeModules(r, import_path, kind, _dir_info) orelse return null;
-            res.is_node_module = true;
-
-            return res;
+            {
+                var dir_info = (r.dirInfoCached(slice) catch null) orelse return null;
+                return RootPathPair{
+                    .base_path = slice,
+                    .package_json = dir_info.package_json.?,
+                };
+            }
         }
 
         threadlocal var esm_subpath_buf: [512]u8 = undefined;
         threadlocal var esm_absolute_package_path: [std.fs.MAX_PATH_BYTES]u8 = undefined;
         threadlocal var esm_absolute_package_path_joined: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-        inline fn _loadNodeModules(r: *ThisResolver, import_path: string, kind: ast.ImportKind, _dir_info: *DirInfo) ?MatchResult {
+        pub fn loadNodeModules(r: *ThisResolver, import_path: string, kind: ast.ImportKind, _dir_info: *DirInfo) ?MatchResult {
             var dir_info = _dir_info;
             if (r.debug_logs) |*debug| {
                 debug.addNoteFmt("Searching for {s} in \"node_modules\" directories starting from \"{s}\"", .{ import_path, dir_info.abs_path }) catch {};
@@ -1248,15 +1248,17 @@ pub fn NewResolver(cache_files: bool) type {
                                                     .dir_info = resolved_dir_info,
                                                     .diff_case = entry_query.diff_case,
                                                     .is_node_module = true,
-                                                    .package_json = package_json,
+                                                    .package_json = resolved_dir_info.package_json orelse package_json,
                                                 };
                                             },
                                             .Inexact => {
                                                 // If this was resolved against an expansion key ending in a "/"
                                                 // instead of a "*", we need to try CommonJS-style implicit
                                                 // extension and/or directory detection.
-                                                if (r.loadAsFileOrDirectory(abs_esm_path, kind)) |res| {
-                                                    return res;
+                                                if (r.loadAsFileOrDirectory(abs_esm_path, kind)) |*res| {
+                                                    res.is_node_module = true;
+                                                    res.package_json = res.package_json orelse package_json;
+                                                    return res.*;
                                                 }
                                                 esm_resolution.status = .ModuleNotFound;
                                                 return null;
@@ -2466,8 +2468,9 @@ pub fn NewResolver(cache_files: bool) type {
 
                 // Propagate the browser scope into child directories
                 info.enclosing_browser_scope = parent.?.enclosing_browser_scope;
-                info.enclosing_package_json = parent.?.enclosing_package_json;
+                info.package_json_for_browser_field = parent.?.package_json_for_browser_field;
                 info.enclosing_tsconfig_json = parent.?.enclosing_tsconfig_json;
+                info.enclosing_package_json = parent.?.package_json orelse parent.?.enclosing_package_json;
 
                 // Make sure "absRealPath" is the real path of the directory (resolving any symlinks)
                 if (!r.opts.preserve_symlinks) {
@@ -2507,8 +2510,9 @@ pub fn NewResolver(cache_files: bool) type {
                     if (info.package_json) |pkg| {
                         if (pkg.browser_map.count() > 0) {
                             info.enclosing_browser_scope = result.index;
-                            info.enclosing_package_json = pkg;
+                            info.package_json_for_browser_field = pkg;
                         }
+                        info.enclosing_package_json = pkg;
 
                         if (r.debug_logs) |*logs| {
                             logs.addNoteFmt("Resolved package.json in \"{s}\"", .{
@@ -2572,7 +2576,7 @@ pub const ResolverUncached = NewResolver(
     false,
 );
 
-const Dirname = struct {
+pub const Dirname = struct {
     pub fn dirname(path: string) string {
         if (path.len == 0)
             return "/";
@@ -2611,3 +2615,8 @@ test "murmur" {
         std.hash.murmur.Murmur3_32.hash(str2),
     );
 }
+
+pub const RootPathPair = struct {
+    base_path: string,
+    package_json: *const PackageJSON,
+};

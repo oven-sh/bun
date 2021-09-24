@@ -2313,6 +2313,7 @@ pub fn NewPrinter(
 
                     switch (s.value) {
                         .expr => |expr| {
+                            // this is still necessary for JSON
                             if (is_inside_bundle) {
                                 p.printModuleExportSymbol();
                                 p.print(".default = ");
@@ -2483,7 +2484,12 @@ pub fn NewPrinter(
 
                             // Object.assign(__export, {prop1, prop2, prop3});
                             else => {
-                                p.print("Object.assign");
+                                if (comptime is_inside_bundle) {
+                                    p.printSymbol(p.options.runtime_imports.__exportValue.?.ref);
+                                } else {
+                                    p.print("Object.assign");
+                                }
+
                                 p.print("(");
                                 p.printModuleExportSymbol();
                                 p.print(", {");

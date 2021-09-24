@@ -682,6 +682,8 @@ const StaticSymbolName = struct {
 
         pub const @"$$m" = NewStaticSymbol("$$m");
 
+        pub const __exportValue = NewStaticSymbol("__exportValue");
+        pub const __exportDefault = NewStaticSymbol("__exportDefault");
         pub const hmr = NewStaticSymbol("hmr");
     };
 };
@@ -3555,7 +3557,9 @@ pub fn NewParser(
 
                 p.runtime_imports.@"$$lzy" = try p.declareGeneratedSymbol(.other, "$$lzy");
 
-                p.runtime_imports.__export = GeneratedSymbol{ .ref = p.exports_ref, .primary = Ref.None, .backup = Ref.None };
+                p.runtime_imports.__export = try p.declareGeneratedSymbol(.other, "__export");
+                p.runtime_imports.__exportValue = try p.declareGeneratedSymbol(.other, "__exportValue");
+                p.runtime_imports.__exportDefault = try p.declareGeneratedSymbol(.other, "__exportDefault");
             }
 
             if (p.options.features.hot_module_reloading) {
@@ -3625,6 +3629,9 @@ pub fn NewParser(
             p.resolveGeneratedSymbol(&p.runtime_imports.__reExport.?);
             p.resolveGeneratedSymbol(&p.runtime_imports.@"$$m".?);
             p.resolveGeneratedSymbol(&p.runtime_imports.@"$$lzy".?);
+            p.resolveGeneratedSymbol(&p.runtime_imports.__export.?);
+            p.resolveGeneratedSymbol(&p.runtime_imports.__exportValue.?);
+            p.resolveGeneratedSymbol(&p.runtime_imports.__exportDefault.?);
         }
 
         pub fn resolveHMRSymbols(p: *P) void {
@@ -12431,6 +12438,15 @@ pub fn NewParser(
                                     else => {},
                                 }
                             }
+
+                            // When bundling, replace ExportDefault with __exportDefault(exportsRef, expr);
+                            if (p.options.enable_bundling) {
+                                var export_default_args = p.allocator.alloc(Expr, 2) catch unreachable;
+                                export_default_args[0] = p.e(E.Identifier{ .ref = p.exports_ref }, expr.loc);
+                                export_default_args[1] = expr;
+                                stmts.append(p.s(S.SExpr{ .value = p.callRuntime(expr.loc, "__exportDefault", export_default_args) }, expr.loc)) catch unreachable;
+                                return;
+                            }
                         },
 
                         .stmt => |s2| {
@@ -12445,6 +12461,16 @@ pub fn NewParser(
                                     }
 
                                     func.func = p.visitFunc(func.func, func.func.open_parens_loc);
+
+                                    if (p.options.enable_bundling) {
+                                        var export_default_args = p.allocator.alloc(Expr, 2) catch unreachable;
+                                        export_default_args[0] = p.e(E.Identifier{ .ref = p.exports_ref }, s2.loc);
+                                        export_default_args[1] = p.e(E.Function{ .func = func.func }, s2.loc);
+
+                                        stmts.append(p.s(S.SExpr{ .value = p.callRuntime(s2.loc, "__exportDefault", export_default_args) }, s2.loc)) catch unreachable;
+                                        return;
+                                    }
+
                                     stmts.append(stmt.*) catch unreachable;
 
                                     // if (func.func.name != null and func.func.name.?.ref != null) {
@@ -12455,7 +12481,16 @@ pub fn NewParser(
                                 },
                                 .s_class => |class| {
                                     var shadow_ref = p.visitClass(s2.loc, &class.class);
-                                    stmts.appendSlice(p.lowerClass(js_ast.StmtOrExpr{ .stmt = stmt.* }, shadow_ref)) catch unreachable;
+                                    if (p.options.enable_bundling) {
+                                        var export_default_args = p.allocator.alloc(Expr, 2) catch unreachable;
+                                        export_default_args[0] = p.e(E.Identifier{ .ref = p.exports_ref }, s2.loc);
+                                        export_default_args[1] = p.e(class.class, s2.loc);
+
+                                        stmts.append(p.s(S.SExpr{ .value = p.callRuntime(s2.loc, "__exportDefault", export_default_args) }, s2.loc)) catch unreachable;
+                                        return;
+                                    }
+
+                                    stmts.append(stmt.*) catch unreachable;
                                     return;
                                 },
                                 else => {},
@@ -12464,6 +12499,14 @@ pub fn NewParser(
                     }
                 },
                 .s_export_equals => |data| {
+                    if (p.options.enable_bundling) {
+                        var export_default_args = p.allocator.alloc(Expr, 2) catch unreachable;
+                        export_default_args[0] = p.e(E.Identifier{ .ref = p.exports_ref }, stmt.loc);
+                        export_default_args[1] = data.value;
+
+                        stmts.append(p.s(S.SExpr{ .value = p.callRuntime(stmt.loc, "__exportDefault", export_default_args) }, stmt.loc)) catch unreachable;
+                        return;
+                    }
 
                     // "module.exports = value"
                     stmts.append(

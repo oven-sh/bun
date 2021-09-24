@@ -28,7 +28,7 @@ export default __cJS2eSM(function(module, exports) {
     return testDone(import.meta.url);
   };
   Object.defineProperty(module.exports,"test",{get: () => test, enumerable: true, configurable: true});
-  let foo, bar;
+  var foo, bar;
   Object.defineProperties(module.exports,{'foo': {get: () => foo, set: ($_newValue) => {foo = $_newValue;}, enumerable: true, configurable: true},
 'bar': {get: () => bar, set: ($_newValue) => {bar = $_newValue;}, enumerable: true, configurable: true}});
 }, "cjs-transform-shouldnt-have-static-imports-in-cjs-function.js");

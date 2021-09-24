@@ -13,7 +13,7 @@ import * as $d2a171d2 from "http://localhost:8080/package-json-exports/node_modu
 var InexactFile = require($d2a171d2);
 import * as $522c6d1f from "http://localhost:8080/package-json-exports/node_modules/inexact/browser/foo.js";
 var ExactFile = require($522c6d1f);
-Bun.activate(true);
+Bun.activate(false);
 
 var hmr = new HMR(1953708113, "package-json-exports/index.js"), exports = hmr.exports;
 (hmr._load = function() {

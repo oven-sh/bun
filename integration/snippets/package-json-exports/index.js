@@ -7,6 +7,5 @@ export async function test() {
   console.assert(InexactFile.target === "browser");
   console.assert(ExactFile.target === "browser");
 
-  console.assert(failed);
   return testDone(import.meta.url);
 }

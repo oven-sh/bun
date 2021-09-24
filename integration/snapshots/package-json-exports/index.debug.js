@@ -7,7 +7,7 @@ import * as $d2a171d2 from "http://localhost:8080/package-json-exports/node_modu
 var InexactFile = require($d2a171d2);
 import * as $522c6d1f from "http://localhost:8080/package-json-exports/node_modules/inexact/browser/foo.js";
 var ExactFile = require($522c6d1f);
-export function test() {
+export async function test() {
   console.assert(InexactRoot.target === "browser");
 
   console.assert(InexactFile.target === "browser");

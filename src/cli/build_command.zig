@@ -33,7 +33,7 @@ pub const BuildCommand = struct {
                 );
             },
             .lazy => {
-                result = try bundler.ServeBundler.bundle(
+                result = try bundler.Bundler.bundle(
                     ctx.allocator,
                     ctx.log,
                     ctx.args,

@@ -38,7 +38,7 @@ const ServerBundleGeneratorThread = struct {
         route_conf_: ?Api.LoadedRouteConfig,
         router: ?Router,
     ) !void {
-        var server_bundler = try bundler.ServeBundler.init(
+        var server_bundler = try bundler.Bundler.init(
             allocator_,
             logs,
             try configureTransformOptionsForBun(allocator_, transform_args),
@@ -53,7 +53,7 @@ const ServerBundleGeneratorThread = struct {
             return err;
         };
         var estimated_input_lines_of_code: usize = 0;
-        _ = try bundler.ServeBundler.GenerateNodeModuleBundle.generate(
+        _ = try bundler.Bundler.GenerateNodeModuleBundle.generate(
             &server_bundler,
             allocator_,
             server_conf,
@@ -99,7 +99,7 @@ pub const BunCommand = struct {
         var log = ctx.log;
         estimated_input_lines_of_code_ = 0;
 
-        var this_bundler = try bundler.ServeBundler.init(allocator, log, ctx.args, null, null);
+        var this_bundler = try bundler.Bundler.init(allocator, log, ctx.args, null, null);
         this_bundler.configureLinker();
         var filepath: [*:0]const u8 = "node_modules.bun";
         var server_bundle_filepath: [*:0]const u8 = "node_modules.server.bun";
@@ -170,7 +170,7 @@ pub const BunCommand = struct {
 
             // Always generate the client-only bundle
             // we can revisit this decision if people ask
-            var node_modules_ = try bundler.ServeBundler.GenerateNodeModuleBundle.generate(
+            var node_modules_ = try bundler.Bundler.GenerateNodeModuleBundle.generate(
                 &this_bundler,
                 allocator,
                 loaded_framework,

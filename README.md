@@ -447,7 +447,7 @@ It's a little like a build cache, but designed for reuse. I hope people will eve
 
 ##### Position-independent code
 
-From a design perspective, the most important part of the `.bun` file is how the code is organized. Each module is exported by a hash like this:
+From a design perspective, the most important part of `.bun` files are how the code is organized. Each module is exported by a hash like this:
 
 ```js
 // preact/dist/preact.module.js

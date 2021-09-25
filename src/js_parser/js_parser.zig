@@ -10980,6 +10980,10 @@ pub fn NewParser(
                                 }
                             }
 
+                            if (e_.key) |key| {
+                                e_.key = p.visitExpr(key);
+                            }
+
                             const runtime = if (p.options.jsx.runtime == .automatic and !e_.flags.is_key_before_rest) options.JSX.Runtime.automatic else options.JSX.Runtime.classic;
                             var children_count = e_.children.len;
 
@@ -11005,16 +11009,6 @@ pub fn NewParser(
                                     var i: usize = 1;
                                     args[0] = tag;
                                     if (e_.properties.len > 0) {
-                                        for (e_.properties) |prop, prop_i| {
-                                            if (prop.key) |key| {
-                                                e_.properties[prop_i].key = p.visitExpr(key);
-                                            }
-
-                                            if (prop.value) |val| {
-                                                e_.properties[prop_i].value = p.visitExpr(val);
-                                            }
-                                        }
-
                                         if (e_.key) |key| {
                                             var props = p.allocator.alloc(G.Property, e_.properties.len + 1) catch unreachable;
                                             std.mem.copy(G.Property, props, e_.properties);

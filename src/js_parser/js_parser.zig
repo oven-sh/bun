@@ -1997,34 +1997,39 @@ pub const Parser = struct {
 
         // Auto-import JSX
         if (p.options.jsx.parse) {
-            const jsx_symbol: *const Symbol = &p.symbols.items[p.jsx_runtime.ref.inner_index];
-            const jsx_static_symbol: *const Symbol = &p.symbols.items[p.jsxs_runtime.ref.inner_index];
-            const jsx_fragment_symbol: *const Symbol = &p.symbols.items[p.jsx_fragment.ref.inner_index];
-            const jsx_factory_symbol: *const Symbol = &p.symbols.items[p.jsx_factory.ref.inner_index];
-            const jsx_filename_symbol: *const Symbol = &p.symbols.items[p.jsx_filename.ref.inner_index];
+            const jsx_filename_symbol = p.symbols.items[p.jsx_filename.ref.inner_index];
 
-            // Currently, React (and most node_modules) ship a CJS version or a UMD version
-            // but we should assume that it'll pretty much always be CJS
-            // Given that, we can't directly call import {jsxDEV} from 'react';
-            // Instead, we must call require("react").default.jsxDEV
-            // So a jsx_symbol usage means a jsx_factory_symbol usage
-            // This is kind of a broken way of doing it because it wouldn't work if it was more than one level deep
-            if (FeatureFlags.jsx_runtime_is_cjs) {
-                if (jsx_symbol.use_count_estimate > 0 or jsx_static_symbol.use_count_estimate > 0) {
-                    p.recordUsage(p.jsx_automatic.ref);
-                }
+            {
+                const jsx_symbol = p.symbols.items[p.jsx_runtime.ref.inner_index];
+                const jsx_static_symbol = p.symbols.items[p.jsxs_runtime.ref.inner_index];
+                const jsx_fragment_symbol = p.symbols.items[p.jsx_fragment.ref.inner_index];
+                const jsx_factory_symbol = p.symbols.items[p.jsx_factory.ref.inner_index];
 
-                if (jsx_fragment_symbol.use_count_estimate > 0) {
-                    p.recordUsage(p.jsx_classic.ref);
-                }
+                // Currently, React (and most node_modules) ship a CJS version or a UMD version
+                // but we should assume that it'll pretty much always be CJS
+                // Given that, we can't directly call import {jsxDEV} from 'react';
+                // Instead, we must call require("react").default.jsxDEV
+                // So a jsx_symbol usage means a jsx_factory_symbol usage
+                // This is kind of a broken way of doing it because it wouldn't work if it was more than one level deep
+                if (FeatureFlags.jsx_runtime_is_cjs) {
+                    if (jsx_symbol.use_count_estimate > 0 or jsx_static_symbol.use_count_estimate > 0) {
+                        p.recordUsage(p.jsx_automatic.ref);
+                    }
 
-                if (jsx_factory_symbol.use_count_estimate > 0) {
-                    p.recordUsage(p.jsx_classic.ref);
+                    if (jsx_fragment_symbol.use_count_estimate > 0) {
+                        p.recordUsage(p.jsx_classic.ref);
+                    }
+
+                    if (jsx_factory_symbol.use_count_estimate > 0) {
+                        p.recordUsage(p.jsx_classic.ref);
+                    }
                 }
             }
 
-            const jsx_classic_symbol: *const Symbol = &p.symbols.items[p.jsx_classic.ref.inner_index];
-            const jsx_automatic_symbol: *const Symbol = &p.symbols.items[p.jsx_automatic.ref.inner_index];
+            p.resolveStaticJSXSymbols();
+
+            const jsx_classic_symbol = p.symbols.items[p.jsx_classic.ref.inner_index];
+            const jsx_automatic_symbol = p.symbols.items[p.jsx_automatic.ref.inner_index];
 
             // JSX auto-imports
             // The classic runtime is a different import than the main import
@@ -2033,7 +2038,14 @@ pub const Parser = struct {
             // 2. If you use a React.Fragment
             // So we have to support both.
             if (jsx_classic_symbol.use_count_estimate > 0 or jsx_automatic_symbol.use_count_estimate > 0) {
-                p.resolveStaticJSXSymbols();
+                // These must unfortunately be copied
+                // p.symbols may grow during this scope
+                // if it grows, the previous pointers are invalidated
+                const jsx_symbol = p.symbols.items[p.jsx_runtime.ref.inner_index];
+                const jsx_static_symbol = p.symbols.items[p.jsxs_runtime.ref.inner_index];
+                const jsx_fragment_symbol = p.symbols.items[p.jsx_fragment.ref.inner_index];
+                const jsx_factory_symbol = p.symbols.items[p.jsx_factory.ref.inner_index];
+
                 const classic_namespace_ref = p.jsx_classic.ref;
                 const automatic_namespace_ref = p.jsx_automatic.ref;
 
@@ -2045,9 +2057,11 @@ pub const Parser = struct {
                     @intCast(u32, @boolToInt(jsx_filename_symbol.use_count_estimate > 0));
 
                 const imports_count =
-                    @intCast(u32, @boolToInt(std.math.max(jsx_symbol.use_count_estimate, jsx_static_symbol.use_count_estimate) > 0)) +
-                    @intCast(u32, std.math.max(jsx_factory_symbol.use_count_estimate, jsx_fragment_symbol.use_count_estimate)) +
-                    @intCast(u32, @boolToInt(p.options.features.react_fast_refresh));
+                    @intCast(u32, @boolToInt(jsx_symbol.use_count_estimate > 0)) +
+                    @intCast(u32, @boolToInt(jsx_classic_symbol.use_count_estimate > 0)) +
+                    @intCast(u32, @boolToInt(jsx_fragment_symbol.use_count_estimate > 0)) +
+                    @intCast(u32, @boolToInt(p.options.features.react_fast_refresh)) +
+                    @intCast(u32, @boolToInt(jsx_static_symbol.use_count_estimate > 0));
                 const stmts_count = imports_count + 1;
                 const symbols_count: u32 = imports_count + decls_count;
                 const loc = logger.Loc{ .start = 0 };
@@ -2183,9 +2197,10 @@ pub const Parser = struct {
                         if (p.options.can_import_from_bundle or p.options.enable_bundling) {
                             break :brk classic_identifier;
                         } else {
+                            const require_call_args_start = require_call_args_i;
                             require_call_args_base[require_call_args_i] = classic_identifier;
                             require_call_args_i += 1;
-                            break :brk p.callUnbundledRequire(require_call_args_base[0..require_call_args_i]);
+                            break :brk p.callUnbundledRequire(require_call_args_base[require_call_args_start..][0..1]);
                         }
                     };
 
@@ -15161,6 +15176,7 @@ pub fn NewParser(
                 .stmt_expr_value = nullExprData,
                 .expr_list = List(Expr).init(allocator),
                 .loop_body = nullStmtData,
+                .macro_refs = MacroRefs.init(allocator),
                 .injected_define_symbols = @TypeOf(this.injected_define_symbols).init(allocator),
                 .emitted_namespace_vars = @TypeOf(this.emitted_namespace_vars).init(allocator),
                 .is_exported_inside_namespace = @TypeOf(this.is_exported_inside_namespace).init(allocator),

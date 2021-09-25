@@ -985,7 +985,7 @@ pub const E = struct {
     ///         lineNumber: number | null,
     ///      }```
     /// - `children`:
-    ///     - static children? the function is React.jsxsDEV, "jsxs" instead of "jsx"
+    ///     - static the function is React.jsxsDEV, "jsxs" instead of "jsx"
     ///     - one child? the function is React.jsxDEV,
     ///     - no children? the function is React.jsxDEV and children is an empty array.
     /// `isStaticChildren`: https://github.com/facebook/react/blob/4ca62cac45c288878d2532e5056981d177f9fdac/packages/react/src/jsx/ReactJSXElementValidator.js#L369-L384 
@@ -1060,6 +1060,8 @@ pub const E = struct {
         value: JavascriptString = &([_]u16{}),
         utf8: string = &([_]u8{}),
         prefer_template: bool = false,
+
+        pub var empty = String{};
 
         pub fn clone(str: *const String, allocator: *std.mem.Allocator) !String {
             if (str.isUTF8()) {
@@ -4204,8 +4206,15 @@ pub const Macro = struct {
         }
     };
 
+    pub const MacroResult = struct {
+        import_statements: []S.Import = &[_]S.Import{},
+        replacement: Expr,
+    };
+
     pub const JSExpr = struct {
         expr: Expr,
+        import_statements: []S.Import = &[_]S.Import{},
+
         pub const Class = JSCBase.NewClass(
             JSExpr,
             .{
@@ -4236,6 +4245,476 @@ pub const Macro = struct {
             },
         );
 
+        pub const JSNode = struct {
+            loc: logger.Loc,
+            data: Data,
+
+            pub fn toExpr(this: JSNode) Expr {
+                switch (this.data) {
+                    .e_array => |value| {
+                        return Expr{ .loc = this.loc, .data = .{ .e_array = value } };
+                    },
+                    .e_unary => |value| {
+                        return Expr{ .loc = this.loc, .data = .{ .e_unary = value } };
+                    },
+                    .e_binary => |value| {
+                        return Expr{ .loc = this.loc, .data = .{ .e_binary = value } };
+                    },
+                    .e_function => |value| {
+                        return Expr{ .loc = this.loc, .data = .{ .e_function = value } };
+                    },
+                    .e_new_target => |value| {
+                        return Expr{ .loc = this.loc, .data = .{ .e_new_target = value } };
+                    },
+                    .e_import_meta => |value| {
+                        return Expr{ .loc = this.loc, .data = .{ .e_import_meta = value } };
+                    },
+                    .e_call => |value| {
+                        return Expr{ .loc = this.loc, .data = .{ .e_call = value } };
+                    },
+                    .e_dot => |value| {
+                        return Expr{ .loc = this.loc, .data = .{ .e_dot = value } };
+                    },
+                    .e_index => |value| {
+                        return Expr{ .loc = this.loc, .data = .{ .e_index = value } };
+                    },
+                    .e_arrow => |value| {
+                        return Expr{ .loc = this.loc, .data = .{ .e_arrow = value } };
+                    },
+                    .e_identifier => |value| {
+                        return Expr{ .loc = this.loc, .data = .{ .e_identifier = value } };
+                    },
+                    .e_import_identifier => |value| {
+                        return Expr{ .loc = this.loc, .data = .{ .e_import_identifier = value } };
+                    },
+                    .e_private_identifier => |value| {
+                        return Expr{ .loc = this.loc, .data = .{ .e_private_identifier = value } };
+                    },
+                    .e_jsx_element => |value| {
+                        return Expr{ .loc = this.loc, .data = .{ .e_jsx_element = value } };
+                    },
+                    .e_big_int => |value| {
+                        return Expr{ .loc = this.loc, .data = .{ .e_big_int = value } };
+                    },
+                    .e_object => |value| {
+                        return Expr{ .loc = this.loc, .data = .{ .e_object = value } };
+                    },
+                    .e_spread => |value| {
+                        return Expr{ .loc = this.loc, .data = .{ .e_spread = value } };
+                    },
+                    .e_string => |value| {
+                        return Expr{ .loc = this.loc, .data = .{ .e_string = value } };
+                    },
+                    .e_template_part => |value| {
+                        return Expr{ .loc = this.loc, .data = .{ .e_template_part = value } };
+                    },
+                    .e_template => |value| {
+                        return Expr{ .loc = this.loc, .data = .{ .e_template = value } };
+                    },
+                    .e_reg_exp => |value| {
+                        return Expr{ .loc = this.loc, .data = .{ .e_reg_exp = value } };
+                    },
+                    .e_await => |value| {
+                        return Expr{ .loc = this.loc, .data = .{ .e_await = value } };
+                    },
+                    .e_yield => |value| {
+                        return Expr{ .loc = this.loc, .data = .{ .e_yield = value } };
+                    },
+                    .e_if => |value| {
+                        return Expr{ .loc = this.loc, .data = .{ .e_if = value } };
+                    },
+                    .e_require_or_require_resolve => |value| {
+                        return Expr{ .loc = this.loc, .data = .{ .e_require_or_require_resolve = value } };
+                    },
+                    .e_import => |value| {
+                        return Expr{ .loc = this.loc, .data = .{ .e_import = value } };
+                    },
+                    .e_this => |value| {
+                        return Expr{ .loc = this.loc, .data = .{ .e_this = value } };
+                    },
+                    .e_class => |value| {
+                        return Expr{ .loc = this.loc, .data = .{ .e_class = value } };
+                    },
+                    .e_require => |value| {
+                        return Expr{ .loc = this.loc, .data = .{ .e_require = value } };
+                    },
+                    .e_missing => |value| {
+                        return Expr{ .loc = this.loc, .data = .{ .e_missing = value } };
+                    },
+                    .e_boolean => |value| {
+                        return Expr{ .loc = this.loc, .data = .{ .e_boolean = value } };
+                    },
+                    .e_super => |value| {
+                        return Expr{ .loc = this.loc, .data = .{ .e_super = value } };
+                    },
+                    .e_null => |value| {
+                        return Expr{ .loc = this.loc, .data = .{ .e_null = value } };
+                    },
+                    .e_number => |value| {
+                        return Expr{ .loc = this.loc, .data = .{ .e_number = value } };
+                    },
+                    .e_undefined => |value| {
+                        return Expr{ .loc = this.loc, .data = .{ .e_undefined = value } };
+                    },
+                    wip, .s_import => {
+                        return Expr{ .loc = this.loc, .data = .{ .e_missing = .{} } };
+                    },
+                }
+            }
+
+            pub const Data = union(Tag) {
+                e_array: *E.Array,
+                e_unary: *E.Unary,
+                e_binary: *E.Binary,
+                e_function: *E.Function,
+                e_new_target: *E.NewTarget,
+                e_import_meta: *E.ImportMeta,
+                e_call: *E.Call,
+                e_dot: *E.Dot,
+                e_index: *E.Index,
+                e_arrow: *E.Arrow,
+                e_identifier: *E.Identifier,
+                e_import_identifier: *E.ImportIdentifier,
+                e_private_identifier: *E.PrivateIdentifier,
+                e_jsx_element: *E.JsxElement,
+
+                e_big_int: *E.BigInt,
+                e_object: *E.Object,
+                e_spread: *E.Spread,
+                e_string: *E.String,
+                e_template_part: *E.TemplatePart,
+                e_template: *E.Template,
+                e_reg_exp: *E.RegExp,
+                e_await: *E.Await,
+                e_yield: *E.Yield,
+                e_if: *E.If,
+                e_require_or_require_resolve: *E.RequireOrRequireResolve,
+                e_import: *E.Import,
+                e_this: *E.This,
+                e_class: *E.Class,
+                e_require: *E.Require,
+
+                s_import: *S.Import,
+
+                e_missing: E.Missing,
+                e_boolean: E.Boolean,
+                e_super: E.Super,
+                e_null: E.Null,
+                e_number: E.Number,
+                e_undefined: E.Undefined,
+            };
+            pub const Tag = enum(u8) {
+                e_array,
+                e_unary,
+                e_binary,
+                e_boolean,
+                e_super,
+                e_null,
+                e_undefined,
+                e_function,
+                e_new_target,
+                e_import_meta,
+                e_call,
+                e_dot,
+                e_index,
+                e_arrow,
+                e_identifier,
+                e_import_identifier,
+                e_private_identifier,
+                e_jsx_element,
+                e_missing,
+                e_number,
+                e_big_int,
+                e_object,
+                e_spread,
+                e_string,
+                e_template_part,
+                e_template,
+                e_reg_exp,
+                e_await,
+                e_yield,
+                e_if,
+                e_require_or_require_resolve,
+                e_import,
+                e_this,
+                e_class,
+                e_require,
+                s_import,
+
+                wip,
+
+                pub const as_expr_tag: std.EnumArray(Tag, Expr.Tag) = brk: {
+                    var list = std.EnumArray(Tag, Expr.Tag).initFill(Expr.Tag.e_missing);
+                    list.set(Tag.e_array, Expr.Tag.e_array);
+                    list.set(Tag.e_unary, Expr.Tag.e_unary);
+                    list.set(Tag.e_binary, Expr.Tag.e_binary);
+                    list.set(Tag.e_boolean, Expr.Tag.e_boolean);
+                    list.set(Tag.e_super, Expr.Tag.e_super);
+                    list.set(Tag.e_null, Expr.Tag.e_null);
+                    list.set(Tag.e_undefined, Expr.Tag.e_undefined);
+                    list.set(Tag.e_function, Expr.Tag.e_function);
+                    list.set(Tag.e_new_target, Expr.Tag.e_new_target);
+                    list.set(Tag.e_import_meta, Expr.Tag.e_import_meta);
+                    list.set(Tag.e_call, Expr.Tag.e_call);
+                    list.set(Tag.e_dot, Expr.Tag.e_dot);
+                    list.set(Tag.e_index, Expr.Tag.e_index);
+                    list.set(Tag.e_arrow, Expr.Tag.e_arrow);
+                    list.set(Tag.e_identifier, Expr.Tag.e_identifier);
+                    list.set(Tag.e_import_identifier, Expr.Tag.e_import_identifier);
+                    list.set(Tag.e_private_identifier, Expr.Tag.e_private_identifier);
+                    list.set(Tag.e_jsx_element, Expr.Tag.e_jsx_element);
+                    list.set(Tag.e_missing, Expr.Tag.e_missing);
+                    list.set(Tag.e_number, Expr.Tag.e_number);
+                    list.set(Tag.e_big_int, Expr.Tag.e_big_int);
+                    list.set(Tag.e_object, Expr.Tag.e_object);
+                    list.set(Tag.e_spread, Expr.Tag.e_spread);
+                    list.set(Tag.e_string, Expr.Tag.e_string);
+                    list.set(Tag.e_template_part, Expr.Tag.e_template_part);
+                    list.set(Tag.e_template, Expr.Tag.e_template);
+                    list.set(Tag.e_reg_exp, Expr.Tag.e_reg_exp);
+                    list.set(Tag.e_await, Expr.Tag.e_await);
+                    list.set(Tag.e_yield, Expr.Tag.e_yield);
+                    list.set(Tag.e_if, Expr.Tag.e_if);
+                    list.set(Tag.e_require_or_require_resolve, Expr.Tag.e_require_or_require_resolve);
+                    list.set(Tag.e_import, Expr.Tag.e_import);
+                    list.set(Tag.e_this, Expr.Tag.e_this);
+                    list.set(Tag.e_class, Expr.Tag.e_class);
+                    list.set(Tag.e_require, Expr.Tag.e_require);
+                    break :brk list;
+                };
+            };
+
+            pub const max_tag: u8 = brk: {
+                const Enum: std.builtin.TypeInfo.Enum = @typeInfo(Tag).Enum;
+                var max_value: u8 = 0;
+                for (Enum.fields) |field| {
+                    max_value = std.math.max(@as(u8, field.value), max_value);
+                }
+                break :brk max_value;
+            };
+
+            pub const min_tag: u8 = brk: {
+                const Enum: std.builtin.TypeInfo.Enum = @typeInfo(Tag).Enum;
+                var min: u8 = 255;
+                for (Enum.fields) |field| {
+                    min = std.math.min(@as(u8, field.value), min);
+                }
+                break :brk min;
+            };
+        };
+
+        pub const Writer = struct {
+            log: *logger.Log,
+            exception: JSCBase.ExceptionValueRef = null,
+            ctx: js.JSContextRef,
+            errored: bool = false,
+            allocator: *std.mem.Allocator,
+            loc: logger.Loc,
+
+            pub const TagOrJSNode = union(TagOrNodeType) {
+                tag: JSNode.Tag,
+                node: JSNode,
+                invalid: void,
+
+                pub const TagOrNodeType = enum {
+                    tag,
+                    node,
+                    invalid,
+                };
+
+                pub fn fromJSValueRef(writer: *Writer, ctx: js.JSContextRef, value: js.JSValueRef) TagOrJSNode {
+                    switch (js.JSValueGetType(ctx, value)) {
+                        js.JSType.kJSTypeNumber => {
+                            const tag_int = @floatToInt(u8, JSC.JSValue.fromRef(first_arg).asNumber());
+                            if (tag_int < JSNode.min_tag or tag_int > JSNode.max_tag) {
+                                throwTypeError(ctx, "Node type has invalid value", writer.exception);
+                                writer.errored = true;
+                                return TagOrJSNode{ .invalid = .{} };
+                            }
+                            return TagOrJSNode{ .tag = @intToEnum(JSNode.Tag, tag) };
+                        },
+                        js.JSType.kJSTypeObject => {
+                            if (JSCBase.GetJSPrivateData(JSNode, value)) |node| {
+                                return TagOrJSNode{ .node = node.* };
+                            }
+
+                            return TagOrJSNode{ .invalid = .{} };
+                        },
+                        else => {
+                            throwTypeError(writer.ctx, "Invalid Bun AST", writer.exception);
+                            return TagOrJSNode{ .invalid = .{} };
+                        },
+                    }
+                }
+            };
+
+            fn writeFromJSWithTagInExpr(writer: *Writer, tag: JSNode.Tag, expr: *Expr, args: []const js.JSValueRef) ?u32 {
+                switch (tag) {
+                    e_array => {
+                        var items = std.ArrayList(Expr).init(writer.allocator);
+                        // var e_array: E.Array = E.Array{ .items = writer.allocator.alloc(E.Array, args.len) catch return false };
+                        var i: u32 = 0;
+                        while (i < args.len) {
+                            switch (TagOrJSNode.fromJSValueRef(writer, writer.ctx, args[i])) {
+                                TagOrJSNode.tag => |tag_| {
+                                    items.ensureUnusedCapacity(1) catch return null;
+                                    items.expandToCapacity();
+                                    i += 1;
+                                    i += writer.writeFromJSWithTagInExpr(tag_, &items[i], args[i..]) orelse return null;
+                                },
+                                TagOrJSNode.node => |node_| {
+                                    const node: JSNode = node_;
+                                    switch (node.data) {
+                                        JSNode.Tag.s_import => |import| {
+                                            return null;
+                                        },
+                                        else => {
+                                            items.append(node.toExpr()) catch return null;
+                                            i += 1;
+                                        },
+                                    }
+                                },
+                                TagOrJSNode.invalid => {
+                                    return null;
+                                },
+                            }
+                        }
+                        expr.* = Expr.alloc(writer.allocator, E.Array, E.Array{ .items = items.items }, writer.loc);
+                        return i;
+                    },
+                    e_boolean => {
+                        expr.* = Expr{ .loc = writer.loc, .data = .{ .e_boolean = JSC.JSValue.toBoolean(JSValue.fromRef(args[0])) } };
+                        return 1;
+                    },
+                    e_null => {
+                        expr.* = Expr{ .loc = writer.loc, .data = .{ .e_null = E.Null{} } };
+                        return 0;
+                    },
+                    e_undefined => {
+                        expr.* = Expr{ .loc = writer.loc, .data = .{ .e_null = E.Undefined{} } };
+                        return 0;
+                    },
+                    e_number => {
+                        expr.* = Expr{ .loc = writer.loc, .data = .{ .e_number = JSC.JSValue.asNumber(JSValue.fromRef(args[0])) } };
+                        return 1;
+                    },
+                    e_string => {
+                        var wtf_string = JSC.JSValue.toWTFString(JSValue.fromRef(args[0]), JavaScript.VirtualMachine.vm.global);
+                        if (wtf_string.isEmpty()) {
+                            expr.* = Expr{
+                                .loc = writer.loc,
+                                .data = .{
+                                    .e_string = &E.String.empty,
+                                },
+                            };
+                        } else if (wtf_string.is8Bit()) {
+                            expr.* = Expr.alloc(writer.allocator, E.String, E.String{ .utf8 = wtf_string.characters8()[0..wtf_string.length()] }, writer.loc);
+                        } else if (wtf_string.is16Bit()) {
+                            expr.* = Expr.alloc(writer.allocator, E.String, E.String{ .value = wtf_string.characters16()[0..wtf_string.length()] }, writer.loc);
+                        } else {
+                            unreachable;
+                        }
+                        return 1;
+                    },
+                    e_reg_exp => {
+                        var jsstring = js.JSValueToStringCopy(writer.ctx, args[0], writer.exception);
+                        const len = js.JSStringGetLength(jsstring);
+                        var str = try writer.allocator.alloc(u8, len + 1);
+                        const outlen = js.JSStringGetUTF8CString(jsstring, str, len + 1);
+                        expr.* = Expr.alloc(writer.allocator, E.RegExp, E.RegExp{ .value = str[0..outlen] }, writer.loc);
+                        return 1;
+                    },
+                    e_object => {
+                        var i: u32 = 0;
+
+                        const len = @truncate(u16, JSC.JSValue.fromRef(args[0]).toInt32());
+                    },
+
+                    e_call => {},
+
+                    e_dot => {},
+                    e_index => {},
+                    e_identifier => {},
+                    e_import_identifier => {},
+
+                    e_big_int => {},
+                    e_object => {},
+                    e_spread => {},
+
+                    e_template_part => {},
+                    e_template => {},
+
+                    e_await => {},
+                    e_yield => {},
+                    e_if => {},
+                    e_import => {},
+                    e_this => {},
+                    e_class => {},
+                    s_import => {},
+                }
+            }
+
+            fn writeFromJSWithTag(writer: *Writer, tag: JSNode.Tag, node: *JSNode, args: []const js.JSValueRef) bool {
+                switch (tag) {
+                    e_array => {
+                        var e_array: E.Array = E.Array{ .items = writer.allocator.alloc(E.Array, args.len) catch return false };
+
+                        var i: u32 = 0;
+                        while (i < args.len) : (i += 1) {}
+                    },
+                    e_boolean => {},
+                    e_null => {},
+                    e_undefined => {},
+                    e_call => {},
+                    e_dot => {},
+                    e_index => {},
+                    e_identifier => {},
+                    e_import_identifier => {},
+                    e_number => {},
+                    e_big_int => {},
+                    e_object => {},
+                    e_spread => {},
+                    e_string => {},
+                    e_template_part => {},
+                    e_template => {},
+                    e_reg_exp => {},
+                    e_await => {},
+                    e_yield => {},
+                    e_if => {},
+                    e_import => {},
+                    e_this => {},
+                    e_class => {},
+                    s_import => {},
+                }
+            }
+
+            pub fn writeFromJS(writer: *Writer, node: *JSNode, args: []const js.JSValueRef) bool {
+                if (writer.errored) return false;
+                const first_arg = args[0];
+
+                switch (js.JSValueGetType(ctx, first_arg)) {
+                    js.JSType.kJSTypeNumber => {
+                        const value = @floatToInt(u8, JSC.JSValue.fromRef(first_arg).asNumber());
+                        const tag = std.meta.intToEnum(JSNode.Tag, value) catch {
+                            throwTypeError(ctx, "Node type has invalid value", writer.exception);
+                            writer.errored = true;
+                            return false;
+                        };
+                        if (writer.writeFromJSWithTag(writer, tag, node, args[1..])) {
+                            return true;
+                        }
+
+                        return false;
+                    },
+                    js.JSType.kJSTypeObject => {},
+                    else => {
+                        throwTypeError(writer.ctx, "Invalid Bun AST", writer.exception);
+                        return false;
+                    },
+                }
+            }
+        };
+
         // pub fn isInstanceOf(
         //     ctx: js.JSContextRef,
         //     obj: js.JSObjectRef,
@@ -4244,6 +4723,24 @@ pub const Macro = struct {
         // ) bool {
         //     js.JSValueToNumber(ctx, value, exception);
         // }
+
+        fn throwTypeError(ctx: js.JSContextRef, comptime msg: string, exception: js.ExceptionRef) void {
+            JSCBase.JSError(JSCBase.getAllocator(ctx), msg, .{}, ctx, exception);
+        }
+
+        pub fn createFromJavaScript(
+            this: *JSExpr,
+            ctx: js.JSContextRef,
+            function: js.JSObjectRef,
+            thisObject: js.JSObjectRef,
+            arguments: []const js.JSValueRef,
+            exception: js.ExceptionRef,
+        ) js.JSObjectRef {
+            if (arguments.len != 3 or !js.JSValueIsNumber(ctx, arguments[0]) or !js.JSValueIsObject(ctx, arguments[1]) or !js.JSValueIsArray(ctx, arguments[2])) {
+                this.throwTypeError(ctx, "Invalid arguments for JSExpr", exception);
+                return null;
+            }
+        }
 
         pub fn toString(
             this: *JSExpr,

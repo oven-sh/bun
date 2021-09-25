@@ -985,7 +985,7 @@ pub const E = struct {
     ///         lineNumber: number | null,
     ///      }```
     /// - `children`:
-    ///     - multiple children? the function is React.jsxsDEV, "jsxs" instead of "jsx"
+    ///     - static children? the function is React.jsxsDEV, "jsxs" instead of "jsx"
     ///     - one child? the function is React.jsxDEV,
     ///     - no children? the function is React.jsxDEV and children is an empty array.
     /// `isStaticChildren`: https://github.com/facebook/react/blob/4ca62cac45c288878d2532e5056981d177f9fdac/packages/react/src/jsx/ReactJSXElementValidator.js#L369-L384 

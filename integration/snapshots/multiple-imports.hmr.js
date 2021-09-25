@@ -10,7 +10,7 @@ __HMRModule as HMR
 import * as JSX from "http://localhost:8080/node_modules/react/jsx-dev-runtime.js";
 import * as $bbcd215f from "http://localhost:8080/node_modules/react/index.js";
 var JSXClassic = require($bbcd215f);
-var jsx = require(JSX).jsxDEV, fileName = "multiple-imports.js", JSXFrag = require(JSX, JSXClassic).Fragment;
+var jsx = require(JSX).jsxDEV, fileName = "multiple-imports.js", JSXFrag = require(JSXClassic).Fragment;
 
 var { default: React} = require($bbcd215f);
 var { default: React2} = require($bbcd215f);

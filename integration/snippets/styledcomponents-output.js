@@ -36,7 +36,7 @@ export function test() {
   document.body.appendChild(reactEl);
   ReactDOM.render(
     <ErrorScreenRoot id="error-el">
-      This is an error! Look for the string
+      The react child should have this text
     </ErrorScreenRoot>,
     reactEl
   );
@@ -49,10 +49,11 @@ export function test() {
   );
   console.assert(
     document.querySelector("#error-el").textContent ===
-      "This is an error! Look for the string"
+      "The react child should have this text"
   );
 
   ReactDOM.unmountComponentAtNode(reactEl);
   reactEl.remove();
+  style.remove();
   testDone(import.meta.url);
 }

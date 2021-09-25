@@ -7,6 +7,12 @@
   </head>
   <body>
     <script type="module">
+      globalThis.console.assert = (condition, ...content) => {
+        if (!condition) {
+          throw new Error(content.join(" "));
+          
+        }
+      };
       globalThis.getModuleScriptSrc = async (name) => {
         const response = await fetch(name, {
           cache: "force-cache",

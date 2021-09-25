@@ -118,6 +118,7 @@ async function main() {
     "/forbid-in-is-correct.js",
     "/code-simplification-neql-define.js",
     "/spread_with_key.tsx",
+    "/styledcomponents-output.js",
   ];
   tests.reverse();
 

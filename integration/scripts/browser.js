@@ -117,6 +117,7 @@ async function main() {
     "/array-args-with-default-values.js",
     "/forbid-in-is-correct.js",
     "/code-simplification-neql-define.js",
+    "/spread_with_key.tsx",
   ];
   tests.reverse();
 

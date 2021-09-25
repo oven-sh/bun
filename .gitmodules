@@ -3,7 +3,7 @@
 # 	url = https://github.com/Hejsil/zig-clap
 [submodule "src/deps/picohttpparser"]
 	path = src/deps/picohttpparser
-	url = https://github.com/h2o/picohttpparser/
+	url = https://github.com/h2o/picohttpparser.git
 	ignore = dirty
 [submodule "src/javascript/jsc/WebKit"]
 	path = src/javascript/jsc/WebKit
@@ -11,5 +11,5 @@
 	ignore = dirty
 [submodule "src/deps/mimalloc"]
 	path = src/deps/mimalloc
-	url = https://github.com/microsoft/mimalloc
+	url = https://github.com/microsoft/mimalloc.git
 	ignore = dirty

@@ -547,7 +547,7 @@ pub const Lexer = struct {
                     }
 
                     switch (lexer.code_point) {
-                        't', 'r', 'n', '`', '\'', '0', '"', 0x2028, 0x2029 => {
+                        'f', 't', 'r', 'n', '`', '\'', '0', '"', 0x2028, 0x2029 => {
                             try lexer.step();
                             continue :stringLiteral;
                         },

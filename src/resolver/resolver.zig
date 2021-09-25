@@ -1011,7 +1011,7 @@ pub const Resolver = struct {
                                 result.path_pair.primary.is_disabled = true;
                                 result.path_pair.primary = Fs.Path.initWithNamespace(remap, "file");
                             } else {
-                                if (r.resolveWithoutRemapping(base_dir_info, remap, kind)) |remapped| {
+                                if (r.resolveWithoutRemapping(browser_scope, remap, kind)) |remapped| {
                                     result.path_pair = remapped.path_pair;
                                     result.dirname_fd = remapped.dirname_fd;
                                     result.file_fd = remapped.file_fd;

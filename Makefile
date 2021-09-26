@@ -4,13 +4,13 @@ ARCH_NAME_DENORAMLZIED_2 := $(shell tr '[_]' '[--]' <<< $(ARCH_NAME_DENORAMLZIED
 ARCH_NAME_DENORAMLZIED_3 := $(shell sed s/x86-64/x64/ <<< $(ARCH_NAME_DENORAMLZIED_2))
 ARCH_NAME := $(shell sed s/arm64/aarch64/ <<< $(ARCH_NAME_DENORAMLZIED_3))
 TRIPLET := $(OS_NAME)-$(ARCH_NAME)
-PACKAGE_DIR := packages/bun-cli-$(TRIPLET)
-DEBUG_PACKAGE_DIR := packages/debug-bun-cli-$(TRIPLET)
+PACKAGES_REALPATH := $(shell realpath packages)
+PACKAGE_DIR := $(PACKAGES_REALPATH)/bun-cli-$(TRIPLET)
+DEBUG_PACKAGE_DIR := $(PACKAGES_REALPATH)/debug-bun-cli-$(TRIPLET)
 BIN_DIR := $(PACKAGE_DIR)/bin
-RELEASE_BUN := $(shell realpath $(PACKAGE_DIR)/bin/bun)
+RELEASE_BUN := $(PACKAGE_DIR)/bin/bun
 DEBUG_BIN := $(DEBUG_PACKAGE_DIR)/bin
-DEBUG_BIN_REALPATH := $(shell realpath $(DEBUG_PACKAGE_DIR)/bin)
-DEBUG_BUN := $(shell realpath $(DEBUG_BIN)/bun-debug)
+DEBUG_BUN := $(DEBUG_BIN)/bun-debug
 BUILD_ID := $(shell cat ./build-id)
 PACKAGE_JSON_VERSION := 0.0.$(BUILD_ID)
 BUN_BUILD_TAG := bun-v$(PACKAGE_JSON_VERSION)
@@ -19,7 +19,17 @@ CXX := clang++
 
 bun: vendor build-obj bun-link-lld-release
 
-vendor: api node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp jsc
+vendor: require init-submodules api node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp jsc
+
+require:
+	@echo "Checking if the required utilities are available..."
+	@realpath --version >/dev/null 2>&1 || (echo "ERROR: realpath is required."; exit 1)
+	@cmake --version >/dev/null 2>&1 || (echo "ERROR: cmake is required."; exit 1)
+	@esbuild --version >/dev/null 2>&1 || (echo "ERROR: esbuild is required."; exit 1)
+	@npm --version >/dev/null 2>&1 || (echo "ERROR: npm is required."; exit 1)
+
+init-submodules:
+	git submodule update --init --recursive --progress --depth=1
 
 build-obj: 
 	zig build obj -Drelease-fast
@@ -257,4 +267,3 @@ sizegen:
 
 picohttp:
 	 $(CC) -O3 -g -c src/deps/picohttpparser.c -Isrc/deps -o src/deps/picohttpparser.o; cd ../../	
-

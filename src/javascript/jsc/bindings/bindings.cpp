@@ -10,6 +10,7 @@
 #include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/IteratorOperations.h>
 #include <JavaScriptCore/JSArray.h>
+#include <JavaScriptCore/JSArrayInlines.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSCallbackObject.h>
 #include <JavaScriptCore/JSClassRef.h>
@@ -49,6 +50,12 @@ JSC__JSValue JSC__JSValue__createEmptyObject(JSC__JSGlobalObject *globalObject,
                                              size_t initialCapacity) {
   return JSC::JSValue::encode(
     JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), initialCapacity));
+}
+
+uint32_t JSC__JSValue__getLengthOfArray(JSC__JSValue value, JSC__JSGlobalObject *globalObject) {
+  JSC::JSValue jsValue = JSC::JSValue::decode(value);
+  JSC::JSObject *object = jsValue.toObject(globalObject);
+  return JSC::toLength(globalObject, object);
 }
 
 void JSC__JSObject__putRecord(JSC__JSObject *object, JSC__JSGlobalObject *global, ZigString *key,
@@ -220,9 +227,9 @@ JSC__JSValue JSC__Exception__value(JSC__Exception *arg0) {
 // JSC__PropertyNameArray__next(JSC__PropertyNameArray* arg0, size_t arg1);
 // CPP_DECL void JSC__PropertyNameArray__release(JSC__PropertyNameArray* arg0);
 size_t JSC__JSObject__getArrayLength(JSC__JSObject *arg0) { return arg0->getArrayLength(); }
-JSC__JSValue JSC__JSObject__getIndex(JSC__JSObject *arg0, JSC__JSGlobalObject *arg1,
+JSC__JSValue JSC__JSObject__getIndex(JSC__JSValue jsValue, JSC__JSGlobalObject *arg1,
                                      uint32_t arg3) {
-  return JSC::JSValue::encode(arg0->getIndex(arg1, arg3));
+  return JSC::JSValue::encode(JSC::JSValue::decode(jsValue).toObject(arg1)->getIndex(arg1, arg3));
 }
 JSC__JSValue JSC__JSObject__getDirect(JSC__JSObject *arg0, JSC__JSGlobalObject *arg1,
                                       ZigString arg2) {

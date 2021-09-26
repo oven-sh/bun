@@ -22,6 +22,9 @@ const JSXFactoryName = "JSX";
 const JSXAutomaticName = "jsx_module";
 const MacroRefs = std.AutoArrayHashMap(Ref, u32);
 
+const BunJSX = struct {
+    pub threadlocal var bun_jsx_identifier: E.Identifier = undefined;
+};
 pub fn ExpressionTransposer(
     comptime Kontext: type,
     visitor: fn (ptr: *Kontext, arg: Expr, state: anytype) Expr,
@@ -87,6 +90,12 @@ pub const ImportScanner = struct {
             switch (stmt.data) {
                 .s_import => |st| {
                     var record: *ImportRecord = &p.import_records.items[st.import_record_index];
+
+                    if (strings.eqlComptime(record.path.namespace, "macro")) {
+                        record.is_unused = true;
+                        record.path.is_disabled = true;
+                        continue;
+                    }
 
                     // The official TypeScript compiler always removes unused imported
                     // symbols. However, we deliberately deviate from the official
@@ -1996,7 +2005,7 @@ pub const Parser = struct {
         }
 
         // Auto-import JSX
-        if (p.options.jsx.parse) {
+        if (ParserType.jsx_transform_type == .react) {
             const jsx_filename_symbol = p.symbols.items[p.jsx_filename.ref.inner_index];
 
             {
@@ -2693,8 +2702,9 @@ const ImportItemForNamespaceMap = std.StringArrayHashMap(LocRef);
 pub fn NewParser(
     comptime js_parser_features: ParserFeatures,
 ) type {
+    const js_parser_jsx = if (FeatureFlags.force_macro) JSXTransformType.macro else js_parser_features.jsx;
     const is_typescript_enabled = js_parser_features.typescript;
-    const is_jsx_enabled = js_parser_features.jsx != .none;
+    const is_jsx_enabled = js_parser_jsx != .none;
     const only_scan_imports_and_do_not_visit = js_parser_features.scan_only;
     const is_react_fast_refresh_enabled = js_parser_features.react_fast_refresh;
 
@@ -2706,7 +2716,7 @@ pub fn NewParser(
     // public only because of Binding.ToExpr
     return struct {
         const P = @This();
-        pub const jsx_transform_type: JSXTransformType = js_parser_features.jsx;
+        pub const jsx_transform_type: JSXTransformType = js_parser_jsx;
         macro_refs: MacroRefs = undefined,
         allocator: *std.mem.Allocator,
         options: Parser.Options,
@@ -2795,6 +2805,8 @@ pub fn NewParser(
         jsx_classic: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
         // only applicable when is_react_fast_refresh_enabled
         jsx_refresh_runtime: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
+
+        bun_jsx_ref: Ref = Ref.None,
 
         // Imports (both ES6 and CommonJS) are tracked at the top level
         import_records: ImportRecordList,
@@ -3627,6 +3639,8 @@ pub fn NewParser(
                     }
                 },
                 .macro => {
+                    p.bun_jsx_ref = p.declareSymbol(.other, logger.Loc.Empty, "bunJSX") catch unreachable;
+                    BunJSX.bun_jsx_identifier = E.Identifier{ .ref = p.bun_jsx_ref, .can_be_removed_if_unused = true };
                     p.jsx_fragment = p.declareGeneratedSymbol(.other, "Fragment") catch unreachable;
                 },
                 else => {},
@@ -10733,7 +10747,8 @@ pub fn NewParser(
             });
         }
 
-        fn visitExpr(p: *P, expr: Expr) Expr {
+        // public for JSNode.JSXWriter usage
+        pub fn visitExpr(p: *P, expr: Expr) Expr {
             if (only_scan_imports_and_do_not_visit) {
                 @compileError("only_scan_imports_and_do_not_visit must not run this.");
             }
@@ -10925,52 +10940,9 @@ pub fn NewParser(
                 .e_jsx_element => |e_| {
                     switch (comptime jsx_transform_type) {
                         .macro => {
-                            const IdentifierOrNodeType = union(Tag) {
-                                identifier: Expr,
-                                expression: Expr.Tag,
-                                pub const Tag = enum { identifier, expression };
-                            };
-                            const tag: IdentifierOrNodeType = tagger: {
-                                if (e_.tag) |_tag| {
-                                    switch (_tag.data) {
-                                        .e_string => |str| {
-                                            if (Expr.Tag.find(str.utf8)) |tagname| {
-                                                break :tagger IdentifierOrNodeType{ .expression = tagname };
-                                            }
-
-                                            p.log.addErrorFmt(
-                                                p.source,
-                                                expr.loc,
-                                                p.allocator,
-                                                "Invalid expression tag: \"<{s}>\". Valid tags are:\n" ++ Expr.Tag.valid_names_list ++ "\n",
-                                                .{str.utf8},
-                                            ) catch unreachable;
-                                            break :tagger IdentifierOrNodeType{ .identifier = p.visitExpr(_tag) };
-                                        },
-                                        else => {
-                                            break :tagger IdentifierOrNodeType{ .identifier = p.visitExpr(_tag) };
-                                        },
-                                    }
-                                } else {
-                                    break :tagger IdentifierOrNodeType{ .expression = Expr.Tag.e_array };
-                                }
-                            };
-
-                            for (e_.properties) |property, i| {
-                                if (property.kind != .spread) {
-                                    e_.properties[i].key = p.visitExpr(e_.properties[i].key.?);
-                                }
-
-                                if (property.value != null) {
-                                    e_.properties[i].value = p.visitExpr(e_.properties[i].value.?);
-                                }
-
-                                if (property.initializer != null) {
-                                    e_.properties[i].initializer = p.visitExpr(e_.properties[i].initializer.?);
-                                }
-                            }
-
-                            return p.e(E.Missing{}, expr.loc);
+                            const WriterType = js_ast.Macro.JSNode.NewJSXWriter(P);
+                            var writer = WriterType.initWriter(p, &BunJSX.bun_jsx_identifier);
+                            return writer.writeFunctionCall(e_.*);
                         },
                         .react => {
                             const tag: Expr = tagger: {
@@ -12571,7 +12543,7 @@ pub fn NewParser(
                             data.value.expr = p.visitExpr(expr);
 
                             // // Optionally preserve the name
-                            data.value.expr = p.maybeKeepExprSymbolName(expr, "default", was_anonymous_named_expr);
+                            data.value.expr = p.maybeKeepExprSymbolName(data.value.expr, "default", was_anonymous_named_expr);
 
                             // Discard type-only export default statements
                             if (is_typescript_enabled) {
@@ -12594,7 +12566,7 @@ pub fn NewParser(
                             if (p.options.enable_bundling) {
                                 var export_default_args = p.allocator.alloc(Expr, 2) catch unreachable;
                                 export_default_args[0] = p.e(E.Identifier{ .ref = p.exports_ref }, expr.loc);
-                                export_default_args[1] = expr;
+                                export_default_args[1] = data.value.expr;
                                 stmts.append(p.s(S.SExpr{ .value = p.callRuntime(expr.loc, "__exportDefault", export_default_args) }, expr.loc)) catch unreachable;
                                 return;
                             }
@@ -15250,7 +15222,7 @@ const JSParserMacro = NewParser(.{
     .jsx = .macro,
 });
 const TSParserMacro = NewParser(.{
-    .jsx = .react,
+    .jsx = .macro,
     .typescript = true,
 });
 

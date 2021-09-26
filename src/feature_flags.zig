@@ -69,3 +69,5 @@ pub const remote_inspector = false;
 pub const auto_import_buffer = false;
 
 pub const is_macro_enabled = env.isDebug;
+
+pub const force_macro = false;

@@ -36,6 +36,7 @@ pub const GlobalClasses = [_]type{
     ResolveError.Class,
     Bun.Class,
     Fetch.Class,
+    js_ast.Macro.JSNode.BunJSXCallbackFunction,
 };
 const Blob = @import("../../blob.zig");
 
@@ -723,6 +724,19 @@ pub const VirtualMachine = struct {
                 .hash = 0,
                 .bytecodecache_fd = 0,
             };
+        } else if (_specifier.len > js_ast.Macro.namespaceWithColon.len and
+            strings.eqlComptimeIgnoreLen(_specifier[0..js_ast.Macro.namespaceWithColon.len], js_ast.Macro.namespaceWithColon))
+        {
+            if (vm.macro_entry_points.get(MacroEntryPoint.generateIDFromSpecifier(_specifier))) |entry| {
+                return ResolvedSource{
+                    .allocator = null,
+                    .source_code = ZigString.init(entry.source.contents),
+                    .specifier = ZigString.init(_specifier),
+                    .source_url = ZigString.init(_specifier),
+                    .hash = 0,
+                    .bytecodecache_fd = 0,
+                };
+            }
         }
 
         const specifier = normalizeSpecifier(_specifier);
@@ -752,6 +766,7 @@ pub const VirtualMachine = struct {
                 vm.bundler.log = log;
                 vm.bundler.linker.log = log;
                 vm.bundler.resolver.log = log;
+
                 defer {
                     vm.bundler.log = old;
                     vm.bundler.linker.log = old;

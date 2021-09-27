@@ -80,17 +80,21 @@ using JSObject = JSC::JSObject;
 using JSNonFinalObject = JSC::JSNonFinalObject;
 namespace JSCastingHelpers = JSC::JSCastingHelpers;
 
+bool has_loaded_jsc = false;
+
 extern "C" JSC__JSGlobalObject *Zig__GlobalObject__create(JSClassRef *globalObjectClass, int count,
                                                           void *console_client) {
-  JSC::Options::useSourceProviderCache() = true;
-  JSC::Options::useUnlinkedCodeBlockJettisoning() = false;
-  // JSC::Options::useTopLevelAwait() = true;
-  JSC::Options::exposeInternalModuleLoader() = true;
 
-  std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
-  WTF::initializeMainThread();
-  JSC::initialize();
-
+  if (!has_loaded_jsc) {
+    JSC::Options::useSourceProviderCache() = true;
+    JSC::Options::useUnlinkedCodeBlockJettisoning() = false;
+    // JSC::Options::useTopLevelAwait() = true;
+    JSC::Options::exposeInternalModuleLoader() = true;
+    std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
+    WTF::initializeMainThread();
+    JSC::initialize();
+    has_loaded_jsc = true;
+  }
 
   // JSC::Options::useCodeCache() = false;
 
@@ -104,7 +108,7 @@ extern "C" JSC__JSGlobalObject *Zig__GlobalObject__create(JSClassRef *globalObje
 
   JSC::JSLockHolder locker(vm);
   Zig::GlobalObject *globalObject =
-  Zig::GlobalObject::create(vm, Zig::GlobalObject::createStructure(vm, JSC::jsNull()));
+    Zig::GlobalObject::create(vm, Zig::GlobalObject::createStructure(vm, JSC::jsNull()));
   globalObject->setConsole(globalObject);
 
   if (count > 0) { globalObject->installAPIGlobals(globalObjectClass, count); }

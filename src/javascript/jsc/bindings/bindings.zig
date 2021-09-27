@@ -1085,13 +1085,17 @@ pub const JSArrayIterator = struct {
     len: u32 = 0,
     array: JSValue,
     global: *JSGlobalObject,
-    
+
     pub fn init(value: JSValue, global: *JSGlobalObject) JSArrayIterator {
-        return .{ .array = value, .global = global, .len = value.getLengthOfArray(global) };
+        return .{
+            .array = value,
+            .global = global,
+            .len = value.getLengthOfArray(global),
+        };
     }
 
     pub fn next(this: *JSArrayIterator) ?JSValue {
-        if (this.i >= this.len) {
+        if (!(this.i < this.len)) {
             return null;
         }
         const i = this.i;

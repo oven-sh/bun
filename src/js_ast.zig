@@ -1200,6 +1200,7 @@ pub const E = struct {
         pub var empty = RegExp{ .value = "" };
 
         pub fn pattern(this: RegExp) string {
+
             // rewind until we reach the /foo/gim
             //                               ^
             // should only ever be a single character
@@ -1210,10 +1211,10 @@ pub const E = struct {
                     i -= 1;
                 }
 
-                return this.value[0..i];
+                return std.mem.trim(u8, this.value[0..i], "/");
             }
 
-            return this.value;
+            return std.mem.trim(u8, this.value, "/");
         }
 
         pub fn flags(this: RegExp) string {
@@ -4155,6 +4156,10 @@ pub const Macro = struct {
                     .get = JSBindings.getCallArgs,
                     .ro = true,
                 },
+                .properties = .{
+                    .get = JSBindings.getProperties,
+                    .ro = true,
+                },
             },
         );
 
@@ -4192,6 +4197,32 @@ pub const Macro = struct {
                     else => {
                         Output.prettyErrorln("are you for real? {d} args to your call expression? that has to be a bug.\n", .{args.len});
                         Output.flush();
+                        return js.JSObjectMakeArray(ctx, 0, null, exception);
+                    },
+                }
+            }
+
+            pub fn getProperties(
+                this: *JSNode,
+                ctx: js.JSContextRef,
+                thisObject: js.JSValueRef,
+                prop: js.JSStringRef,
+                exception: js.ExceptionRef,
+            ) js.JSObjectRef {
+                const args = if (this.data == .e_object) this.data.e_object.properties else &[_]G.Property{};
+
+                switch (args.len) {
+                    0 => return js.JSObjectMakeArray(ctx, 0, null, exception),
+                    1...255 => {
+                        var slice = temporary_call_args_array[0..args.len];
+                        for (slice) |_, i| {
+                            var node = JSCBase.getAllocator(ctx).create(JSNode) catch unreachable;
+                            node.* = JSNode{ .data = .{ .g_property = &args[i] }, .loc = this.loc };
+                            slice[i] = JSNode.Class.make(ctx, node);
+                        }
+                        return js.JSObjectMakeArray(ctx, args.len, slice.ptr, exception);
+                    },
+                    else => {
                         return js.JSObjectMakeArray(ctx, 0, null, exception);
                     },
                 }
@@ -5867,33 +5898,72 @@ pub const Macro = struct {
                 switch (tag) {
                     .e_array => {
                         // var e_array: E.Array = E.Array{ .items = writer.allocator.alloc(E.Array, args.len) catch return false };
-                        const count = (writer.nextJSValue() orelse return false).toU16();
+                        var count = (writer.nextJSValue() orelse return false).toU16();
                         var i: u16 = 0;
-                        var items = writer.allocator.alloc(ExprNodeIndex, count) catch return false;
+                        var items = ExprList.initCapacity(writer.allocator, count) catch unreachable;
 
-                        while (i < items.len) : (i += 1) {
-                            switch (TagOrJSNode.fromJSValue(writer, writer.eatArg() orelse return false)) {
-                                TagOrJSNode.tag => |tag_| {
-                                    if (!writer.writeFromJSWithTagInExpr(tag_, &items[i])) return false;
-                                    i += 1;
-                                },
-                                TagOrJSNode.node => |node_| {
-                                    const node: JSNode = node_;
-                                    switch (node.data) {
-                                        JSNode.Tag.s_import => |import| {
+                        while (i < count) {
+                            var nextArg = writer.eatArg() orelse return false;
+                            if (js.JSValueIsArray(writer.ctx, nextArg.asRef())) {
+                                const extras = nextArg.getLengthOfArray(JavaScript.VirtualMachine.vm.global);
+                                count += @truncate(u16, extras) - 1;
+                                items.ensureUnusedCapacity(extras) catch unreachable;
+                                items.expandToCapacity();
+                                var new_writer = writer.*;
+                                new_writer.args_i = 0;
+                                new_writer.args_len = extras;
+                                new_writer.args_value = nextArg;
+
+                                while (new_writer.nextJSValue()) |value| {
+                                    defer i += 1;
+                                    switch (TagOrJSNode.fromJSValue(&new_writer, value)) {
+                                        TagOrJSNode.tag => |tag_| {
+                                            if (!new_writer.writeFromJSWithTagInExpr(
+                                                tag_,
+                                                &items.items[i],
+                                            )) return false;
+                                        },
+                                        TagOrJSNode.node => |node_| {
+                                            const node: JSNode = node_;
+                                            switch (node.data) {
+                                                JSNode.Tag.s_import => |import| {
+                                                    return false;
+                                                },
+                                                else => {
+                                                    items.items[i] = node.toExpr();
+                                                },
+                                            }
+                                        },
+                                        TagOrJSNode.invalid => {
                                             return false;
                                         },
-                                        else => {
-                                            items[i] = node.toExpr();
-                                        },
                                     }
-                                },
-                                TagOrJSNode.invalid => {
-                                    return false;
-                                },
+                                }
+                            } else {
+                                defer i += 1;
+
+                                switch (TagOrJSNode.fromJSValue(writer, nextArg)) {
+                                    TagOrJSNode.tag => |tag_| {
+                                        if (!writer.writeFromJSWithTagInExpr(tag_, &items.items[i])) return false;
+                                    },
+                                    TagOrJSNode.node => |node_| {
+                                        const node: JSNode = node_;
+                                        switch (node.data) {
+                                            JSNode.Tag.s_import => |import| {
+                                                return false;
+                                            },
+                                            else => {
+                                                items.items[i] = node.toExpr();
+                                            },
+                                        }
+                                    },
+                                    TagOrJSNode.invalid => {
+                                        return false;
+                                    },
+                                }
                             }
                         }
-                        expr.* = Expr.alloc(writer.allocator, E.Array, E.Array{ .items = items }, writer.loc);
+                        expr.* = Expr.alloc(writer.allocator, E.Array, E.Array{ .items = items.items[0..i] }, writer.loc);
                         return true;
                     },
                     .e_boolean => {
@@ -6134,7 +6204,9 @@ pub const Macro = struct {
             if (writer.writeFromJS()) |node| {
                 var ptr = writer.allocator.create(JSNode) catch unreachable;
                 ptr.* = node;
-                return JSNode.Class.make(ctx, ptr);
+                var result = JSNode.Class.make(ctx, ptr);
+                js.JSValueProtect(ctx, result);
+                return result;
             }
 
             return null;
@@ -6220,6 +6292,8 @@ pub const Macro = struct {
 
             var macro_callback = macro.vm.macros.get(id) orelse return caller;
             var result = js.JSObjectCallAsFunctionReturnValue(macro.vm.global.ref(), macro_callback, null, args.len + 1, &args_buf);
+            js.JSValueProtect(macro.vm.global.ref(), result.asRef());
+            defer js.JSValueUnprotect(macro.vm.global.ref(), result.asRef());
             var promise = JSC.JSPromise.resolvedPromise(macro.vm.global, result);
             macro.vm.global.vm().drainMicrotasks();
 

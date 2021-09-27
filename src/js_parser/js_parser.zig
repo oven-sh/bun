@@ -1855,9 +1855,10 @@ pub const Parser = struct {
                     // - import 'foo';
                     // - import("foo")
                     // - require("foo")
-                    import_record.is_unused = import_record.kind == .stmt and
+                    import_record.is_unused = import_record.is_unused or
+                        (import_record.kind == .stmt and
                         !import_record.was_originally_bare_import and
-                        !import_record.calls_run_time_re_export_fn;
+                        !import_record.calls_run_time_re_export_fn);
                 }
 
                 var iter = scan_pass.used_symbols.iterator();
@@ -6168,6 +6169,7 @@ pub fn NewParser(
                         p.import_records.items[stmt.import_record_index].path.namespace = js_ast.Macro.namespace;
                         if (comptime only_scan_imports_and_do_not_visit) {
                             p.import_records.items[stmt.import_record_index].path.is_disabled = true;
+                            p.import_records.items[stmt.import_record_index].is_internal = true;
                         }
                     }
 
@@ -6175,10 +6177,12 @@ pub fn NewParser(
                         const name = p.loadNameFromRef(stmt.namespace_ref);
                         stmt.namespace_ref = try p.declareSymbol(.import, star, name);
                         if (comptime ParsePassSymbolUsageType != void) {
-                            p.parse_pass_symbol_uses.put(name, .{
-                                .ref = stmt.namespace_ref,
-                                .import_record_index = stmt.import_record_index,
-                            }) catch unreachable;
+                            if (!is_macro) {
+                                p.parse_pass_symbol_uses.put(name, .{
+                                    .ref = stmt.namespace_ref,
+                                    .import_record_index = stmt.import_record_index,
+                                }) catch unreachable;
+                            }
                         }
 
                         if (is_macro) {
@@ -6208,10 +6212,12 @@ pub fn NewParser(
                         try p.is_import_item.put(ref, true);
                         name_loc.ref = ref;
                         if (comptime ParsePassSymbolUsageType != void) {
-                            p.parse_pass_symbol_uses.put(name, .{
-                                .ref = ref,
-                                .import_record_index = stmt.import_record_index,
-                            }) catch unreachable;
+                            if (!is_macro) {
+                                p.parse_pass_symbol_uses.put(name, .{
+                                    .ref = ref,
+                                    .import_record_index = stmt.import_record_index,
+                                }) catch unreachable;
+                            }
                         }
 
                         if (is_macro) {
@@ -6230,10 +6236,12 @@ pub fn NewParser(
                             item_refs.putAssumeCapacity(item.alias, LocRef{ .loc = item.name.loc, .ref = ref });
 
                             if (comptime ParsePassSymbolUsageType != void) {
-                                p.parse_pass_symbol_uses.put(name, .{
-                                    .ref = ref,
-                                    .import_record_index = stmt.import_record_index,
-                                }) catch unreachable;
+                                if (!is_macro) {
+                                    p.parse_pass_symbol_uses.put(name, .{
+                                        .ref = ref,
+                                        .import_record_index = stmt.import_record_index,
+                                    }) catch unreachable;
+                                }
                             }
 
                             if (is_macro) {

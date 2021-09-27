@@ -333,7 +333,7 @@ pub const Fetch = struct {
     const JSType = js.JSType;
 
     const fetch_error_no_args = "fetch() expects a string but received no arguments.";
-    const fetch_error_blank_url = "fetch() URL must not be blank string.";
+    const fetch_error_blank_url = "fetch() URL must not be a blank string.";
     const JSTypeErrorEnum = std.enums.EnumArray(JSType, string);
     const fetch_type_error_names: JSTypeErrorEnum = brk: {
         var errors = JSTypeErrorEnum.initUndefined();

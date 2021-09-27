@@ -116,6 +116,14 @@ pub const Response = struct {
     headers: []const Header,
     bytes_read: c_int = 0,
 
+    pub fn format(self: Response, comptime layout: []const u8, opts: fmt.FormatOptions, writer: anytype) !void {
+        try fmt.format(writer, "< {d} {s}\n", .{ self.status_code, self.status });
+        for (self.headers) |header| {
+            _ = try writer.write("< \t");
+            try fmt.format(writer, "{s}\n", .{header});
+        }
+    }
+
     pub fn parseParts(buf: []const u8, src: []Header, offset: ?*usize) !Response {
         var minor_version: c_int = undefined;
         var status_code: c_int = undefined;

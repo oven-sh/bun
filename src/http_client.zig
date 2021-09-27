@@ -85,6 +85,8 @@ const content_length_header_hash = hashHeaderName("Content-Length");
 const connection_header = picohttp.Header{ .name = "Connection", .value = "close" };
 const accept_header = picohttp.Header{ .name = "Accept", .value = "*/*" };
 const accept_header_hash = hashHeaderName("Accept");
+const user_agent_header = picohttp.Header{ .name = "User-Agent", .value = "Bun.js " ++ Global.package_json_version };
+const user_agent_header_hash = hashHeaderName("User-Agent");
 
 pub fn headerStr(this: *const HTTPClient, ptr: Api.StringPointer) string {
     return this.header_buf[ptr.offset..][0..ptr.length];
@@ -96,6 +98,7 @@ pub fn buildRequest(this: *const HTTPClient, body_len: usize) picohttp.Request {
     var header_names = header_entries.items(.name);
     var header_values = header_entries.items(.value);
 
+    var override_user_agent = false;
     for (header_names) |head, i| {
         const name = this.headerStr(head);
         // Hash it as lowercase
@@ -108,11 +111,11 @@ pub fn buildRequest(this: *const HTTPClient, body_len: usize) picohttp.Request {
             connection_header_hash,
             content_length_header_hash,
             accept_header_hash,
-            => {
-                continue;
-            },
+            => continue,
             else => {},
         }
+
+        override_user_agent = override_user_agent or hash == user_agent_header_hash;
 
         request_headers_buf[header_count] = picohttp.Header{
             .name = name,
@@ -135,8 +138,14 @@ pub fn buildRequest(this: *const HTTPClient, body_len: usize) picohttp.Request {
         header_count += 1;
     }
 
-    request_headers_buf[header_count] = connection_header;
-    header_count += 1;
+    // request_headers_buf[header_count] = connection_header;
+    // header_count += 1;
+
+    if (!override_user_agent) {
+        request_headers_buf[header_count] = user_agent_header;
+        header_count += 1;
+    }
+
     request_headers_buf[header_count] = accept_header;
     header_count += 1;
 
@@ -360,6 +369,10 @@ pub fn sendHTTPS(this: *HTTPClient, body_str: []const u8, body_out_str: *Mutable
     body_out_str.reset();
     var content_length: u32 = 0;
     for (response.headers) |header| {
+        if (this.verbose) {
+            Output.prettyErrorln("Response: {s}", .{response});
+        }
+
         switch (hashHeaderName(header.name)) {
             content_length_header_hash => {
                 content_length = std.fmt.parseInt(u32, header.value, 10) catch 0;

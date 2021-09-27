@@ -179,6 +179,74 @@ pub const Bun = struct {
         return ZigString.init(VirtualMachine.vm.bundler.options.routes.dir).toValue(VirtualMachine.vm.global).asRef();
     }
 
+    pub fn getFilePath(ctx: js.JSContextRef, arguments: []const js.JSValueRef, buf: []u8, exception: js.ExceptionRef) ?string {
+        if (arguments.len != 1) {
+            JSError(getAllocator(ctx), "Expected a file path as a string or an array of strings to be part of a file path.", .{}, ctx, exception);
+            return null;
+        }
+
+        const value = arguments[0];
+        if (js.JSValueIsString(ctx, value)) {
+            var out = ZigString.Empty;
+            JSValue.toZigString(JSValue.fromRef(value), &out, VirtualMachine.vm.global);
+            var out_slice = out.slice();
+
+            // The dots are kind of unnecessary. They'll be normalized.
+            if (out.len == 0 or @ptrToInt(out.ptr) == 0 or std.mem.eql(u8, out_slice, ".") or std.mem.eql(u8, out_slice, "..") or std.mem.eql(u8, out_slice, "../")) {
+                JSError(getAllocator(ctx), "Expected a file path as a string or an array of strings to be part of a file path.", .{}, ctx, exception);
+                return null;
+            }
+
+            var parts = [_]string{out_slice};
+            // This does the equivalent of Node's path.normalize(path.join(cwd, out_slice))
+            var res = VirtualMachine.vm.bundler.fs.absBuf(&parts, buf);
+
+            return res;
+        } else if (js.JSValueIsArray(ctx, value)) {
+            var temp_strings_list: [32]string = undefined;
+            var temp_strings_list_len: u8 = 0;
+            defer {
+                for (temp_strings_list[0..temp_strings_list_len]) |_, i| {
+                    temp_strings_list[i] = "";
+                }
+            }
+
+            var iter = JSValue.fromRef(value).arrayIterator(VirtualMachine.vm.global);
+            while (iter.next()) |item| {
+                if (temp_strings_list_len >= temp_strings_list.len) {
+                    break;
+                }
+
+                if (!item.isString()) {
+                    JSError(getAllocator(ctx), "Expected a file path as a string or an array of strings to be part of a file path.", .{}, ctx, exception);
+                    return null;
+                }
+
+                var out = ZigString.Empty;
+                JSValue.toZigString(item, &out, VirtualMachine.vm.global);
+                const out_slice = out.slice();
+
+                temp_strings_list[temp_strings_list_len] = out_slice;
+                // The dots are kind of unnecessary. They'll be normalized.
+                if (out.len == 0 or @ptrToInt(out.ptr) == 0 or std.mem.eql(u8, out_slice, ".") or std.mem.eql(u8, out_slice, "..") or std.mem.eql(u8, out_slice, "../")) {
+                    JSError(getAllocator(ctx), "Expected a file path as a string or an array of strings to be part of a file path.", .{}, ctx, exception);
+                    return null;
+                }
+                temp_strings_list_len += 1;
+            }
+
+            if (temp_strings_list_len == 0) {
+                JSError(getAllocator(ctx), "Expected a file path as a string or an array of strings to be part of a file path.", .{}, ctx, exception);
+                return null;
+            }
+
+            return VirtualMachine.vm.bundler.fs.absBuf(temp_strings_list[0..temp_strings_list_len], buf);
+        } else {
+            JSError(getAllocator(ctx), "Expected a file path as a string or an array of strings to be part of a file path.", .{}, ctx, exception);
+            return null;
+        }
+    }
+
     pub fn getImportedStyles(
         this: void,
         ctx: js.JSContextRef,
@@ -196,59 +264,52 @@ pub const Bun = struct {
         return JSValue.createStringArray(VirtualMachine.vm.global, styles.ptr, styles.len).asRef();
     }
 
-    pub fn getRouteFiles(
-        this: void,
+    pub fn readFileAsStringCallback(
         ctx: js.JSContextRef,
-        function: js.JSObjectRef,
-        thisObject: js.JSObjectRef,
-        arguments: []const js.JSValueRef,
+        buf_z: [:0]const u8,
         exception: js.ExceptionRef,
     ) js.JSValueRef {
-        if (VirtualMachine.vm.bundler.router == null) return js.JSValueMakeNull(ctx);
+        const path = buf_z.ptr[0..buf_z.len];
+        var file = std.fs.cwd().openFileZ(buf_z, .{ .read = true, .write = false }) catch |err| {
+            JSError(getAllocator(ctx), "Opening file {s} for path: \"{s}\"", .{ @errorName(err), path }, ctx, exception);
+            return js.JSValueMakeUndefined(ctx);
+        };
 
-        const router = &(VirtualMachine.vm.bundler.router orelse unreachable);
-        const list = router.getEntryPointsWithBuffer(VirtualMachine.vm.allocator, false) catch unreachable;
-        VirtualMachine.vm.flush_list.append(list.buffer) catch {};
-        defer VirtualMachine.vm.allocator.free(list.entry_points);
+        defer file.close();
 
-        for (routes_list_strings[0..std.math.min(list.entry_points.len, routes_list_strings.len)]) |_, i| {
-            routes_list_strings[i] = ZigString.init(list.entry_points[i]);
+        const stat = file.stat() catch |err| {
+            JSError(getAllocator(ctx), "Getting file size {s} for \"{s}\"", .{ @errorName(err), path }, ctx, exception);
+            return js.JSValueMakeUndefined(ctx);
+        };
+
+        if (stat.kind != .File) {
+            JSError(getAllocator(ctx), "Can't read a {s} as a string (\"{s}\")", .{ @tagName(stat.kind), path }, ctx, exception);
+            return js.JSValueMakeUndefined(ctx);
         }
 
-        const ref = JSValue.createStringArray(VirtualMachine.vm.global, &routes_list_strings, list.entry_points.len).asRef();
-        return ref;
+        var contents_buf = VirtualMachine.vm.allocator.alloc(u8, stat.size + 2) catch unreachable; // OOM
+        defer VirtualMachine.vm.allocator.free(contents_buf);
+        const contents_len = file.readAll(contents_buf) catch |err| {
+            JSError(getAllocator(ctx), "{s} reading file (\"{s}\")", .{ @errorName(err), path }, ctx, exception);
+            return js.JSValueMakeUndefined(ctx);
+        };
+
+        contents_buf[contents_len] = 0;
+
+        // Very slow to do it this way. We're copying the string twice.
+        // But it's important that this string is garbage collected instead of manually managed.
+        // We can't really recycle this one.
+        // TODO: use external string
+        return js.JSValueMakeString(ctx, js.JSStringCreateWithUTF8CString(contents_buf.ptr));
     }
 
-    pub fn readFileAsBytes(
-        this: void,
+    pub fn readFileAsBytesCallback(
         ctx: js.JSContextRef,
-        function: js.JSObjectRef,
-        thisObject: js.JSObjectRef,
-        arguments: []const js.JSValueRef,
+        buf_z: [:0]const u8,
         exception: js.ExceptionRef,
     ) js.JSValueRef {
-        if (arguments.len != 1 or !JSValue.isString(JSValue.fromRef(arguments[0]))) {
-            JSError(getAllocator(ctx), "readFileBytes expects a file path as a string. e.g. Bun.readFile(\"public/index.html\")", .{}, ctx, exception);
-            return js.JSValueMakeUndefined(ctx);
-        }
-        var out = ZigString.Empty;
-        JSValue.toZigString(JSValue.fromRef(arguments[0]), &out, VirtualMachine.vm.global);
-        var out_slice = out.slice();
+        const path = buf_z.ptr[0..buf_z.len];
 
-        // The dots are kind of unnecessary. They'll be normalized.
-        if (out.len == 0 or @ptrToInt(out.ptr) == 0 or std.mem.eql(u8, out_slice, ".") or std.mem.eql(u8, out_slice, "..") or std.mem.eql(u8, out_slice, "../")) {
-            JSError(getAllocator(ctx), "readFileBytes expects a valid file path. e.g. Bun.readFile(\"public/index.html\")", .{}, ctx, exception);
-            return js.JSValueMakeUndefined(ctx);
-        }
-
-        var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-
-        var parts = [_]string{out_slice};
-        // This does the equivalent of Node's path.normalize(path.join(cwd, out_slice))
-        var path = VirtualMachine.vm.bundler.fs.absBuf(&parts, &buf);
-        buf[path.len] = 0;
-
-        const buf_z: [:0]const u8 = buf[0..path.len :0];
         var file = std.fs.cwd().openFileZ(buf_z, .{ .read = true, .write = false }) catch |err| {
             JSError(getAllocator(ctx), "Opening file {s} for path: \"{s}\"", .{ @errorName(err), path }, ctx, exception);
             return js.JSValueMakeUndefined(ctx);
@@ -285,6 +346,46 @@ pub const Bun = struct {
         return marked_array_buffer.toJSObjectRef(ctx, exception);
     }
 
+    pub fn getRouteFiles(
+        this: void,
+        ctx: js.JSContextRef,
+        function: js.JSObjectRef,
+        thisObject: js.JSObjectRef,
+        arguments: []const js.JSValueRef,
+        exception: js.ExceptionRef,
+    ) js.JSValueRef {
+        if (VirtualMachine.vm.bundler.router == null) return js.JSValueMakeNull(ctx);
+
+        const router = &(VirtualMachine.vm.bundler.router orelse unreachable);
+        const list = router.getEntryPointsWithBuffer(VirtualMachine.vm.allocator, false) catch unreachable;
+        VirtualMachine.vm.flush_list.append(list.buffer) catch {};
+        defer VirtualMachine.vm.allocator.free(list.entry_points);
+
+        for (routes_list_strings[0..std.math.min(list.entry_points.len, routes_list_strings.len)]) |_, i| {
+            routes_list_strings[i] = ZigString.init(list.entry_points[i]);
+        }
+
+        const ref = JSValue.createStringArray(VirtualMachine.vm.global, &routes_list_strings, list.entry_points.len).asRef();
+        return ref;
+    }
+
+    pub fn readFileAsBytes(
+        this: void,
+        ctx: js.JSContextRef,
+        function: js.JSObjectRef,
+        thisObject: js.JSObjectRef,
+        arguments: []const js.JSValueRef,
+        exception: js.ExceptionRef,
+    ) js.JSValueRef {
+        var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        const path = getFilePath(ctx, arguments, &buf, exception) orelse return null;
+        buf[path.len] = 0;
+
+        const buf_z: [:0]const u8 = buf[0..path.len :0];
+        const result = readFileAsBytesCallback(ctx, buf_z, exception);
+        return result;
+    }
+
     pub fn readFileAsString(
         this: void,
         ctx: js.JSContextRef,
@@ -293,59 +394,13 @@ pub const Bun = struct {
         arguments: []const js.JSValueRef,
         exception: js.ExceptionRef,
     ) js.JSValueRef {
-        if (arguments.len != 1 or !JSValue.isString(JSValue.fromRef(arguments[0]))) {
-            JSError(getAllocator(ctx), "readFile expects a file path as a string. e.g. Bun.readFile(\"public/index.html\")", .{}, ctx, exception);
-            return js.JSValueMakeUndefined(ctx);
-        }
-        var out = ZigString.Empty;
-        JSValue.toZigString(JSValue.fromRef(arguments[0]), &out, VirtualMachine.vm.global);
-        var out_slice = out.slice();
-
-        // The dots are kind of unnecessary. They'll be normalized.
-        if (out.len == 0 or @ptrToInt(out.ptr) == 0 or std.mem.eql(u8, out_slice, ".") or std.mem.eql(u8, out_slice, "..") or std.mem.eql(u8, out_slice, "../")) {
-            JSError(getAllocator(ctx), "readFile expects a valid file path. e.g. Bun.readFile(\"public/index.html\")", .{}, ctx, exception);
-            return js.JSValueMakeUndefined(ctx);
-        }
-
         var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-
-        var parts = [_]string{out_slice};
-        // This does the equivalent of Node's path.normalize(path.join(cwd, out_slice))
-        var path = VirtualMachine.vm.bundler.fs.absBuf(&parts, &buf);
+        const path = getFilePath(ctx, arguments, &buf, exception) orelse return null;
         buf[path.len] = 0;
 
         const buf_z: [:0]const u8 = buf[0..path.len :0];
-        var file = std.fs.cwd().openFileZ(buf_z, .{ .read = true, .write = false }) catch |err| {
-            JSError(getAllocator(ctx), "Opening file {s} for path: \"{s}\"", .{ @errorName(err), path }, ctx, exception);
-            return js.JSValueMakeUndefined(ctx);
-        };
-
-        defer file.close();
-
-        const stat = file.stat() catch |err| {
-            JSError(getAllocator(ctx), "Getting file size {s} for \"{s}\"", .{ @errorName(err), path }, ctx, exception);
-            return js.JSValueMakeUndefined(ctx);
-        };
-
-        if (stat.kind != .File) {
-            JSError(getAllocator(ctx), "Can't read a {s} as a string (\"{s}\")", .{ @tagName(stat.kind), path }, ctx, exception);
-            return js.JSValueMakeUndefined(ctx);
-        }
-
-        var contents_buf = VirtualMachine.vm.allocator.alloc(u8, stat.size + 2) catch unreachable; // OOM
-        defer VirtualMachine.vm.allocator.free(contents_buf);
-        const contents_len = file.readAll(contents_buf) catch |err| {
-            JSError(getAllocator(ctx), "{s} reading file (\"{s}\")", .{ @errorName(err), path }, ctx, exception);
-            return js.JSValueMakeUndefined(ctx);
-        };
-
-        contents_buf[contents_len] = 0;
-
-        // Very slow to do it this way. We're copying the string twice.
-        // But it's important that this string is garbage collected instead of manually managed.
-        // We can't really recycle this one.
-        // TODO: use external string
-        return js.JSValueMakeString(ctx, js.JSStringCreateWithUTF8CString(contents_buf.ptr));
+        const result = readFileAsStringCallback(ctx, buf_z, exception);
+        return result;
     }
 
     pub fn getPublicPath(to: string, comptime Writer: type, writer: Writer) void {
@@ -650,17 +705,14 @@ pub const VirtualMachine = struct {
                     &vm.bundler.fs.fs,
                 ) orelse 0),
             };
-        } else if (strings.eqlComptime(_specifier, Runtime.Runtime.Imports.Name)) {
+        } else if (vm.node_modules == null and strings.eqlComptime(_specifier, Runtime.Runtime.Imports.Name)) {
             return ResolvedSource{
                 .allocator = null,
                 .source_code = ZigString.init(Runtime.Runtime.sourceContent()),
                 .specifier = ZigString.init(Runtime.Runtime.Imports.Name),
                 .source_url = ZigString.init(Runtime.Runtime.Imports.Name),
                 .hash = Runtime.Runtime.versionHash(),
-                .bytecodecache_fd = std.math.lossyCast(
-                    u64,
-                    Runtime.Runtime.byteCodeCacheFile(&vm.bundler.fs.fs) orelse 0,
-                ),
+                .bytecodecache_fd = 0,
             };
             // This is all complicated because the imports have to be linked and we want to run the printer on it
             // so it consistently handles bundled imports
@@ -840,7 +892,7 @@ pub const VirtualMachine = struct {
         std.debug.assert(VirtualMachine.vm_loaded);
         std.debug.assert(VirtualMachine.vm.global == global);
 
-        if (vm.node_modules == null and strings.eqlComptime(specifier, Runtime.Runtime.Imports.Name)) {
+        if (vm.node_modules == null and strings.eqlComptime(std.fs.path.basename(specifier), Runtime.Runtime.Imports.alt_name)) {
             ret.path = Runtime.Runtime.Imports.Name;
             return;
         } else if (vm.node_modules != null and strings.eql(specifier, bun_file_import_path)) {

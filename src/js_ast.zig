@@ -5906,7 +5906,7 @@ pub const Macro = struct {
                             var nextArg = writer.eatArg() orelse return false;
                             if (js.JSValueIsArray(writer.ctx, nextArg.asRef())) {
                                 const extras = nextArg.getLengthOfArray(JavaScript.VirtualMachine.vm.global);
-                                count += @truncate(u16, extras) - 1;
+                                count += std.math.max(@truncate(u16, extras), 1) - 1;
                                 items.ensureUnusedCapacity(extras) catch unreachable;
                                 items.expandToCapacity();
                                 var new_writer = writer.*;

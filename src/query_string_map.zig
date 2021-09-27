@@ -199,6 +199,7 @@ pub const URL = struct {
         }
 
         url.origin = base[0..offset];
+        var hash_offset: u32 = std.math.maxInt(u32);
 
         if (offset > base.len) {
             return url;
@@ -221,6 +222,7 @@ pub const URL = struct {
 
         if (strings.indexOfChar(base[offset..], '#')) |hash| {
             offset += @intCast(u31, hash);
+            hash_offset = offset;
             if (can_update_path) {
                 url.path = base[path_offset..][0..hash];
             }
@@ -233,9 +235,12 @@ pub const URL = struct {
 
         if (base.len > path_offset and base[path_offset] == '/' and offset > 0) {
             if (url.search.len > 0) {
-                url.pathname = base[path_offset..std.math.min(offset + url.search.len, base.len)];
-            } else {
-                url.pathname = base[path_offset..std.math.min(offset, base.len)];
+                url.pathname = base[path_offset..std.math.min(
+                    std.math.min(offset + url.search.len, base.len),
+                    hash_offset,
+                )];
+            } else if (hash_offset < std.math.maxInt(u32)) {
+                url.pathname = base[path_offset..hash_offset];
             }
 
             url.origin = base[0..path_offset];
@@ -244,7 +249,10 @@ pub const URL = struct {
         if (url.path.len > 1) {
             const trimmed = std.mem.trim(u8, url.path, "/");
             if (trimmed.len > 1) {
-                url.path = url.path[std.math.max(@ptrToInt(trimmed.ptr) - @ptrToInt(url.path.ptr), 1) - 1 ..];
+                url.path = url.path[std.math.min(
+                    std.math.max(@ptrToInt(trimmed.ptr) - @ptrToInt(url.path.ptr), 1) - 1,
+                    hash_offset,
+                )..];
             } else {
                 url.path = "/";
             }
@@ -1227,7 +1235,9 @@ test "QueryStringMap Iterator" {
 }
 
 test "URL - parse" {
-    var url = URL.parse("https://url.spec.whatwg.org/foo#include-credentials");
+    var url: URL = undefined;
+
+    url = URL.parse("https://url.spec.whatwg.org/foo#include-credentials");
     try expectString("https", url.protocol);
     try expectString("url.spec.whatwg.org", url.host);
     try expectString("/foo", url.pathname);
@@ -1303,8 +1313,9 @@ test "URL - parse" {
     try expectString("example.com:8080", url.host);
     try expectString("example.com", url.hostname);
     try expectString("8080", url.port);
-    try expectString("/////hi?wow", url.pathname);
     try expectString("/hi", url.path);
+    try expectString("/////hi?wow", url.pathname);
+
     try expectString("#include-credentials", url.hash);
     try expectString("?wow", url.search);
 
@@ -1330,17 +1341,33 @@ test "URL - parse" {
     try expectString("3000", url.port);
     try expectString("/", url.path);
     try expectString("/", url.pathname);
+
+    url = URL.parse("https://covid19.who.int/WHO-COVID-19-global-data.csv");
+    try expectString("https", url.protocol);
+    try expectString("", url.username);
+    try expectString("", url.password);
+    try expectString("covid19.who.int", url.host);
+    try expectString("covid19.who.int", url.hostname);
+    // try expectString("443", url.port);
+    try expectString("/WHO-COVID-19-global-data.csv", url.path);
+    try expectString("/WHO-COVID-19-global-data.csv", url.pathname);
 }
 
 test "URL - joinAlloc" {
     var url = URL.parse("http://localhost:3000");
 
-    var absolute_url = try url.joinAlloc(default_allocator, "/_next/", "src/components", "button", ".js");
-    try expectString("http://localhost:3000/_next/src/components/button.js", absolute_url, "");
+    var absolute_url = try url.joinAlloc(default_allocator, "/_next/", "src/components", "button", ".js", "");
+    try expectString(
+        "http://localhost:3000/_next/src/components/button.js",
+        absolute_url,
+    );
 
-    absolute_url = try url.joinAlloc(default_allocator, "compiled-", "src/components", "button", ".js");
-    try expectString("http://localhost:3000/compiled-src/components/button.js", absolute_url, "");
+    absolute_url = try url.joinAlloc(default_allocator, "compiled-", "src/components", "button", ".js", "");
+    try expectString(
+        "http://localhost:3000/compiled-src/components/button.js",
+        absolute_url,
+    );
 
-    absolute_url = try url.joinAlloc(default_allocator, "compiled-", "", "button", ".js");
-    try expectString("http://localhost:3000/compiled-button.js", absolute_url, "");
+    absolute_url = try url.joinAlloc(default_allocator, "compiled-", "", "button", ".js", "");
+    try expectString("http://localhost:3000/compiled-button.js", absolute_url);
 }

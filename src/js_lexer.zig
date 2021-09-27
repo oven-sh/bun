@@ -76,6 +76,7 @@ pub const Lexer = struct {
     number: f64 = 0.0,
     rescan_close_brace_as_template_token: bool = false,
     prev_error_loc: logger.Loc = logger.Loc.Empty,
+    regex_flags_start: ?u16 = null,
     allocator: *std.mem.Allocator,
     /// In JavaScript, strings are stored as UTF-16, but nearly every string is ascii.
     /// This means, usually, we can skip UTF8 -> UTF16 conversions.
@@ -108,6 +109,7 @@ pub const Lexer = struct {
             .all_original_comments = self.all_original_comments,
             .code_point = self.code_point,
             .identifier = self.identifier,
+            .regex_flags_start = self.regex_flags_start,
             .jsx_factory_pragma_comment = self.jsx_factory_pragma_comment,
             .jsx_fragment_pragma_comment = self.jsx_fragment_pragma_comment,
             .source_mapping_url = self.source_mapping_url,
@@ -1756,13 +1758,21 @@ pub const Lexer = struct {
     }
 
     pub fn scanRegExp(lexer: *LexerType) !void {
+        lexer.regex_flags_start = null;
         while (true) {
             switch (lexer.code_point) {
                 '/' => {
                     try lexer.step();
+
+                    var has_set_flags_start = false;
                     while (isIdentifierContinue(lexer.code_point)) {
                         switch (lexer.code_point) {
                             'g', 'i', 'm', 's', 'u', 'y' => {
+                                if (!has_set_flags_start) {
+                                    lexer.regex_flags_start = @truncate(u16, lexer.end - lexer.start);
+                                    has_set_flags_start = true;
+                                }
+
                                 try lexer.step();
                             },
                             else => {

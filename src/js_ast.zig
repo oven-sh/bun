@@ -985,7 +985,7 @@ pub const E = struct {
     ///         lineNumber: number | null,
     ///      }```
     /// - `children`:
-    ///     - multiple children? the function is React.jsxsDEV, "jsxs" instead of "jsx"
+    ///     - static the function is React.jsxsDEV, "jsxs" instead of "jsx"
     ///     - one child? the function is React.jsxDEV,
     ///     - no children? the function is React.jsxDEV and children is an empty array.
     /// `isStaticChildren`: https://github.com/facebook/react/blob/4ca62cac45c288878d2532e5056981d177f9fdac/packages/react/src/jsx/ReactJSXElementValidator.js#L369-L384 
@@ -1034,6 +1034,7 @@ pub const E = struct {
 
     pub const Number = struct {
         value: f64,
+
         pub fn jsonStringify(self: *const Number, opts: anytype, o: anytype) !void {
             return try std.json.stringify(self.value, opts, o);
         }
@@ -1041,6 +1042,8 @@ pub const E = struct {
 
     pub const BigInt = struct {
         value: string,
+
+        pub var empty = BigInt{ .value = "" };
 
         pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
             return try std.json.stringify(self.value, opts, o);
@@ -1057,9 +1060,15 @@ pub const E = struct {
     pub const Spread = struct { value: ExprNodeIndex };
 
     pub const String = struct {
-        value: JavascriptString = &([_]u16{}),
+        value: []const u16 = &.{},
         utf8: string = &([_]u8{}),
         prefer_template: bool = false,
+
+        pub var empty = String{};
+        pub var @"true" = String{ .utf8 = "true" };
+        pub var @"false" = String{ .utf8 = "false" };
+        pub var @"null" = String{ .utf8 = "null" };
+        pub var @"undefined" = String{ .utf8 = "undefined" };
 
         pub fn clone(str: *const String, allocator: *std.mem.Allocator) !String {
             if (str.isUTF8()) {
@@ -1100,7 +1109,7 @@ pub const E = struct {
                     string => {
                         return strings.eql(s.utf8, other);
                     },
-                    JavascriptString => {
+                    []u16, []const u16 => {
                         return strings.utf16EqlString(other, s.utf8);
                     },
                     else => {
@@ -1119,7 +1128,7 @@ pub const E = struct {
                     string => {
                         return strings.utf16EqlString(s.value, other);
                     },
-                    JavascriptString => {
+                    []u16, []const u16 => {
                         return std.mem.eql(u16, other.value, s.value);
                     },
                     else => {
@@ -1145,7 +1154,7 @@ pub const E = struct {
                 return std.hash.Wyhash.hash(0, s.utf8);
             } else {
                 // hash utf-16
-                return std.hash.Wyhash.hash(0, @ptrCast([*]u8, s.value.ptr)[0 .. s.value.len * 2]);
+                return std.hash.Wyhash.hash(0, @ptrCast([*]const u8, s.value.ptr)[0 .. s.value.len * 2]);
             }
         }
 
@@ -1179,6 +1188,46 @@ pub const E = struct {
 
     pub const RegExp = struct {
         value: string,
+
+        // This exists for JavaScript bindings
+        // The RegExp constructor expects flags as a second argument.
+        // We want to avoid re-lexing the flags, so we store them here.
+        // This is the index of the first character in a flag, not the "/"
+        // /foo/gim
+        //      ^
+        flags_offset: ?u16 = null,
+
+        pub var empty = RegExp{ .value = "" };
+
+        pub fn pattern(this: RegExp) string {
+
+            // rewind until we reach the /foo/gim
+            //                               ^
+            // should only ever be a single character
+            // but we're being cautious
+            if (this.flags_offset) |i_| {
+                var i = i_;
+                while (i > 0 and this.value[i] != '/') {
+                    i -= 1;
+                }
+
+                return std.mem.trim(u8, this.value[0..i], "/");
+            }
+
+            return std.mem.trim(u8, this.value, "/");
+        }
+
+        pub fn flags(this: RegExp) string {
+            // rewind until we reach the /foo/gim
+            //                               ^
+            // should only ever be a single character
+            // but we're being cautious
+            if (this.flags_offset) |i| {
+                return this.value[i..];
+            }
+
+            return "";
+        }
 
         pub fn jsonStringify(self: *const RegExp, opts: anytype, o: anytype) !void {
             return try std.json.stringify(self.value, opts, o);
@@ -2544,160 +2593,8 @@ pub const Expr = struct {
         e_class,
         e_require,
 
-        pub inline fn toPublicValue(this: Tag) u16 {
-            return @intCast(u16, @enumToInt(this)) + 16;
-        }
-
-        pub inline fn fromPublicValue(comptime ValueType: type, value: ValueType) ?Tag {
-            if (value < 16 or value > @enumToInt(Tag.e_require)) return null;
-
-            switch (comptime ValueType) {
-                f64 => {
-                    return @intToEnum(@floatToInt(u16, value - 16), Tag);
-                },
-                else => {
-                    return @intToEnum(@intCast(u6, @intCast(u16, value) - 16), Tag);
-                },
-            }
-        }
-
-        pub const names_strings = [_]string{
-            "<array>",
-            "<unary>",
-            "<binary>",
-            "<boolean>",
-            "<super>",
-            "<null>",
-            "<void>",
-            "<new>",
-            "<function>",
-            "<ntarget>",
-            "<import>",
-            "<call>",
-            "<dot>",
-            "<index>",
-            "<arrow>",
-            "<id>",
-            "<importid>",
-            "<private>",
-            "<jsx>",
-            "<missing>",
-            "<number>",
-            "<bigint>",
-            "<object>",
-            "<spread>",
-            "<string>",
-            "<tpart>",
-            "<template>",
-            "<regexp>",
-            "<await>",
-            "<yield>",
-            "<if>",
-            "<resolve>",
-            "<import>",
-            "<this>",
-            "<class>",
-            "<require>",
-        };
-        pub const valid_names_list: string = brk: {
-            var names_list = names_strings[0];
-            for (names_strings[1..]) |name_str, i| {
-                names_list = names_list ++ "\n  " ++ name_str;
-            }
-            break :brk "  " ++ names_list;
-        };
-
-        pub const TagName = std.EnumArray(Tag, string);
-
-        pub const names: TagName = brk: {
-            var array = TagName.initUndefined();
-            array.set(.e_array, names_strings[0]);
-            array.set(.e_unary, names_strings[1]);
-            array.set(.e_binary, names_strings[2]);
-            array.set(.e_boolean, names_strings[3]);
-            array.set(.e_super, names_strings[4]);
-            array.set(.e_null, names_strings[5]);
-            array.set(.e_undefined, names_strings[6]);
-            array.set(.e_new, names_strings[7]);
-            array.set(.e_function, names_strings[8]);
-            array.set(.e_new_target, names_strings[9]);
-            array.set(.e_import_meta, names_strings[10]);
-            array.set(.e_call, names_strings[11]);
-            array.set(.e_dot, names_strings[12]);
-            array.set(.e_index, names_strings[13]);
-            array.set(.e_arrow, names_strings[14]);
-            array.set(.e_identifier, names_strings[15]);
-            array.set(.e_import_identifier, names_strings[16]);
-            array.set(.e_private_identifier, names_strings[17]);
-            array.set(.e_jsx_element, names_strings[18]);
-            array.set(.e_missing, names_strings[19]);
-            array.set(.e_number, names_strings[20]);
-            array.set(.e_big_int, names_strings[21]);
-            array.set(.e_object, names_strings[22]);
-            array.set(.e_spread, names_strings[23]);
-            array.set(.e_string, names_strings[24]);
-            array.set(.e_template_part, names_strings[25]);
-            array.set(.e_template, names_strings[26]);
-            array.set(.e_reg_exp, names_strings[27]);
-            array.set(.e_await, names_strings[28]);
-            array.set(.e_yield, names_strings[29]);
-            array.set(.e_if, names_strings[30]);
-            array.set(.e_require_or_require_resolve, names_strings[31]);
-            array.set(.e_import, names_strings[32]);
-            array.set(.e_this, names_strings[33]);
-            array.set(.e_class, names_strings[34]);
-            array.set(.e_require, names_strings[35]);
-            break :brk array;
-        };
-        pub const TagExactSizeMatcher = strings.ExactSizeMatcher(8);
-        pub fn find(name_: string) ?Tag {
-            return switch (TagExactSizeMatcher.match(name_)) {
-                TagExactSizeMatcher.case("array") => Tag.e_array,
-                TagExactSizeMatcher.case("unary") => Tag.e_unary,
-                TagExactSizeMatcher.case("binary") => Tag.e_binary,
-                TagExactSizeMatcher.case("boolean") => Tag.e_boolean,
-                TagExactSizeMatcher.case("true") => Tag.e_boolean,
-                TagExactSizeMatcher.case("false") => Tag.e_boolean,
-                TagExactSizeMatcher.case("super") => Tag.e_super,
-                TagExactSizeMatcher.case("null") => Tag.e_null,
-                TagExactSizeMatcher.case("void") => Tag.e_undefined,
-                TagExactSizeMatcher.case("new") => Tag.e_new,
-                TagExactSizeMatcher.case("function") => Tag.e_function,
-                TagExactSizeMatcher.case("ntarget") => Tag.e_new_target,
-                TagExactSizeMatcher.case("imeta") => Tag.e_import_meta,
-                TagExactSizeMatcher.case("call") => Tag.e_call,
-                TagExactSizeMatcher.case("dot") => Tag.e_dot,
-                TagExactSizeMatcher.case("index") => Tag.e_index,
-                TagExactSizeMatcher.case("arrow") => Tag.e_arrow,
-                TagExactSizeMatcher.case("id") => Tag.e_identifier,
-                TagExactSizeMatcher.case("importid") => Tag.e_import_identifier,
-                TagExactSizeMatcher.case("jsx") => Tag.e_jsx_element,
-                TagExactSizeMatcher.case("missing") => Tag.e_missing,
-                TagExactSizeMatcher.case("number") => Tag.e_number,
-                TagExactSizeMatcher.case("bigint") => Tag.e_big_int,
-                TagExactSizeMatcher.case("object") => Tag.e_object,
-                TagExactSizeMatcher.case("spread") => Tag.e_spread,
-                TagExactSizeMatcher.case("string") => Tag.e_string,
-                TagExactSizeMatcher.case("tpart") => Tag.e_template_part,
-                TagExactSizeMatcher.case("template") => Tag.e_template,
-                TagExactSizeMatcher.case("regexp") => Tag.e_reg_exp,
-                TagExactSizeMatcher.case("await") => Tag.e_await,
-                TagExactSizeMatcher.case("yield") => Tag.e_yield,
-                TagExactSizeMatcher.case("if") => Tag.e_if,
-                TagExactSizeMatcher.case("import") => Tag.e_import,
-                TagExactSizeMatcher.case("this") => Tag.e_this,
-                TagExactSizeMatcher.case("class") => Tag.e_class,
-                TagExactSizeMatcher.case("require") => Tag.e_require,
-                else => null,
-            };
-        }
-
-        pub inline fn name(this: Tag) string {
-            return names.get(this);
-        }
-
         pub fn jsonStringify(self: @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(self.name(), opts, o);
+            return try std.json.stringify(@tagName(self), opts, o);
         }
 
         pub fn isArray(self: Tag) bool {
@@ -3352,7 +3249,7 @@ pub const S = struct {
     pub const Comment = struct { text: string };
 
     pub const Directive = struct {
-        value: JavascriptString,
+        value: []const u16,
     };
 
     pub const ExportClause = struct { items: []ClauseItem, is_single_line: bool = false };
@@ -4204,37 +4101,2011 @@ pub const Macro = struct {
         }
     };
 
-    pub const JSExpr = struct {
-        expr: Expr,
+    pub const MacroResult = struct {
+        import_statements: []S.Import = &[_]S.Import{},
+        replacement: Expr,
+    };
+
+    pub const JSNode = struct {
+        loc: logger.Loc,
+        data: Data,
         pub const Class = JSCBase.NewClass(
-            JSExpr,
+            JSNode,
             .{
-                .name = "JSExpr",
+                .name = "JSNode",
                 .read_only = true,
             },
             .{
                 .toString = .{
-                    .rfn = toString,
+                    .rfn = JSBindings.toString,
                 },
+
+                // .getAt = .{
+                //     .rfn = JSBindings.getAt,
+                // },
+                // .valueAt = .{
+                //     .rfn = JSBindings.valueAt,
+                // },
                 // .toNumber = .{
                 //     .rfn = toNumber,
                 // },
+                .get = .{
+                    .rfn = JSBindings.get,
+                    .ro = true,
+                },
             },
             .{
                 .tag = .{
-                    .get = getTag,
+                    .get = JSBindings.getTag,
                     .ro = true,
                 },
+
                 .tagName = .{
-                    .get = getTagName,
+                    .get = JSBindings.getTagName,
                     .ro = true,
                 },
                 .position = .{
-                    .get = getPosition,
+                    .get = JSBindings.getPosition,
+                    .ro = true,
+                },
+                .value = .{
+                    .get = JSBindings.getValue,
+                    .ro = true,
+                },
+                .arguments = .{
+                    .get = JSBindings.getCallArgs,
+                    .ro = true,
+                },
+                .properties = .{
+                    .get = JSBindings.getProperties,
                     .ro = true,
                 },
             },
         );
+
+        pub fn makeFromExpr(allocator: *std.mem.Allocator, expr: Expr) js.JSObjectRef {
+            var ptr = allocator.create(JSNode) catch unreachable;
+            ptr.* = JSNode.initExpr(expr);
+            // If we look at JSObjectMake, we can see that all it does with the ctx value is lookup what the global object is
+            // so it's safe to just avoid that and do it here like this:
+            return JSNode.Class.make(JavaScript.VirtualMachine.vm.global.ref(), ptr);
+        }
+        pub const JSBindings = struct {
+            const getAllocator = JSCBase.getAllocator;
+
+            threadlocal var temporary_call_args_array: [256]js.JSValueRef = undefined;
+            pub fn getCallArgs(
+                this: *JSNode,
+                ctx: js.JSContextRef,
+                thisObject: js.JSValueRef,
+                prop: js.JSStringRef,
+                exception: js.ExceptionRef,
+            ) js.JSObjectRef {
+                const args = this.data.callArgs();
+
+                switch (args.len) {
+                    0 => return js.JSObjectMakeArray(ctx, 0, null, exception),
+                    1...255 => {
+                        var slice = temporary_call_args_array[0..args.len];
+                        for (slice) |_, i| {
+                            var node = JSCBase.getAllocator(ctx).create(JSNode) catch unreachable;
+                            node.* = JSNode.initExpr(args[i]);
+                            slice[i] = JSNode.Class.make(ctx, node);
+                        }
+                        return js.JSObjectMakeArray(ctx, args.len, slice.ptr, exception);
+                    },
+                    else => {
+                        Output.prettyErrorln("are you for real? {d} args to your call expression? that has to be a bug.\n", .{args.len});
+                        Output.flush();
+                        return js.JSObjectMakeArray(ctx, 0, null, exception);
+                    },
+                }
+            }
+
+            pub fn getProperties(
+                this: *JSNode,
+                ctx: js.JSContextRef,
+                thisObject: js.JSValueRef,
+                prop: js.JSStringRef,
+                exception: js.ExceptionRef,
+            ) js.JSObjectRef {
+                const args = if (this.data == .e_object) this.data.e_object.properties else &[_]G.Property{};
+
+                switch (args.len) {
+                    0 => return js.JSObjectMakeArray(ctx, 0, null, exception),
+                    1...255 => {
+                        var slice = temporary_call_args_array[0..args.len];
+                        for (slice) |_, i| {
+                            var node = JSCBase.getAllocator(ctx).create(JSNode) catch unreachable;
+                            node.* = JSNode{ .data = .{ .g_property = &args[i] }, .loc = this.loc };
+                            slice[i] = JSNode.Class.make(ctx, node);
+                        }
+                        return js.JSObjectMakeArray(ctx, args.len, slice.ptr, exception);
+                    },
+                    else => {
+                        return js.JSObjectMakeArray(ctx, 0, null, exception);
+                    },
+                }
+            }
+
+            fn toNumberValue(this: *JSNode, number: E.Number) js.JSValueRef {
+                return JSC.JSValue.jsNumberFromDouble(number.value).asRef();
+            }
+
+            fn toStringValue(this: *JSNode, ctx: js.JSContextRef, str: E.String) js.JSObjectRef {
+                if (str.isBlank()) {
+                    return JSC.ZigString.init("").toValue(JavaScript.VirtualMachine.vm.global).asRef();
+                }
+
+                if (str.isUTF8()) {
+                    return JSC.ZigString.init(str.utf8).toValue(JavaScript.VirtualMachine.vm.global).asRef();
+                } else {
+                    return js.JSValueMakeString(ctx, js.JSStringCreateWithCharactersNoCopy(str.value.ptr, str.value.len));
+                }
+            }
+
+            threadlocal var regex_value_array: [2]js.JSValueRef = undefined;
+
+            fn toRegexValue(this: *JSNode, ctx: js.JSContextRef, regex: *E.RegExp, exception: js.ExceptionRef) js.JSObjectRef {
+                if (regex.value.len == 0) {
+                    return js.JSObjectMakeRegExp(ctx, 0, null, exception);
+                }
+
+                regex_value_array[0] = JSC.ZigString.init(regex.pattern()).toValue(JavaScript.VirtualMachine.vm.global).asRef();
+                regex_value_array[1] = JSC.ZigString.init(regex.flags()).toValue(JavaScript.VirtualMachine.vm.global).asRef();
+
+                return js.JSObjectMakeRegExp(ctx, 2, &regex_value_array, exception);
+            }
+
+            fn toArrayValue(this: *JSNode, ctx: js.JSContextRef, array: E.Array, exception: js.ExceptionRef) js.JSObjectRef {
+                if (array.items.len == 0) {
+                    return js.JSObjectMakeArray(ctx, 0, null, exception);
+                }
+
+                for (array.items) |expr, i| {
+                    var node = JSCBase.getAllocator(ctx).create(JSNode) catch unreachable;
+                    node.* = JSNode.initExpr(expr);
+                    temporary_call_args_array[i] = JSNode.Class.make(ctx, node);
+                }
+
+                return js.JSObjectMakeArray(ctx, array.items.len, &temporary_call_args_array, exception);
+            }
+
+            fn toArrayPrimitive(this: *JSNode, ctx: js.JSContextRef, array: E.Array, exception: js.ExceptionRef) js.JSObjectRef {
+                if (array.items.len == 0) {
+                    return js.JSObjectMakeArray(ctx, 0, null, exception);
+                }
+
+                var node: JSNode = undefined;
+                for (array.items) |expr, i| {
+                    node = JSNode.initExpr(expr);
+                    temporary_call_args_array[i] = toPrimitive(&node, ctx, exception);
+                }
+
+                return js.JSObjectMakeArray(ctx, array.items.len, temporary_call_args_array[0..array.items.len].ptr, exception);
+            }
+
+            fn toObjectValue(this: *JSNode, ctx: js.JSContextRef, obj: E.Object, exception: js.ExceptionRef) js.JSObjectRef {
+                if (obj.properties.len == 0) {
+                    return js.JSObjectMakeArray(ctx, 0, null, exception);
+                }
+
+                var object_properties_array: [64]js.JSObjectRef = undefined;
+
+                var did_allocate = false;
+                var properties_list = if (obj.properties.len < object_properties_array.len)
+                    object_properties_array[0..obj.properties.len]
+                else brk: {
+                    did_allocate = true;
+                    break :brk getAllocator(ctx).alloc(js.JSObjectRef, obj.properties.len) catch unreachable;
+                };
+
+                defer if (did_allocate) getAllocator(ctx).free(properties_list);
+
+                for (obj.properties) |_, i| {
+                    var node = JSCBase.getAllocator(ctx).create(JSNode) catch unreachable;
+                    node.* = JSNode{
+                        .data = .{
+                            .g_property = &obj.properties[i],
+                        },
+                        .loc = this.loc,
+                    };
+                    properties_list[i] = JSNode.Class.make(ctx, node);
+                }
+
+                return js.JSObjectMakeArray(ctx, properties_list.len, properties_list.ptr, exception);
+            }
+
+            fn toObjectPrimitive(this: *JSNode, ctx: js.JSContextRef, obj: E.Object, exception: js.ExceptionRef) js.JSObjectRef {
+                return toObjectValue(this, ctx, obj, exception);
+            }
+
+            fn toPropertyPrimitive(this: *JSNode, ctx: js.JSContextRef, prop: G.Property, exception: js.ExceptionRef) js.JSObjectRef {
+                var entries: [3]js.JSValueRef = undefined;
+
+                entries[0] = js.JSValueMakeUndefined(ctx);
+                entries[1] = entries[0];
+                entries[2] = entries[0];
+
+                var other: JSNode = undefined;
+
+                if (prop.key) |key| {
+                    other = JSNode.initExpr(key);
+                    entries[0] = toPrimitive(
+                        &other,
+                        ctx,
+                        exception,
+                    ) orelse js.JSValueMakeUndefined(ctx);
+                }
+
+                if (prop.value) |value| {
+                    other = JSNode.initExpr(value);
+                    entries[1] = toPrimitive(
+                        &other,
+                        ctx,
+                        exception,
+                    ) orelse js.JSValueMakeUndefined(ctx);
+                }
+
+                if (prop.initializer) |value| {
+                    other = JSNode.initExpr(value);
+                    entries[2] = toPrimitive(
+                        &other,
+                        ctx,
+                        exception,
+                    ) orelse js.JSValueMakeUndefined(ctx);
+                }
+
+                const out = js.JSObjectMakeArray(ctx, 3, &entries, exception);
+                return out;
+            }
+
+            pub fn toString(
+                this: *JSNode,
+                ctx: js.JSContextRef,
+                function: js.JSObjectRef,
+                thisObject: js.JSObjectRef,
+                arguments: []const js.JSValueRef,
+                exception: js.ExceptionRef,
+            ) js.JSObjectRef {
+                switch (this.data) {
+                    .e_string => |str| {
+                        return toStringValue(this, ctx, str.*);
+                    },
+                    .e_template => |template| {
+                        const str = template.head;
+
+                        if (str.isBlank()) {
+                            return JSC.ZigString.init("").toValue(JavaScript.VirtualMachine.vm.global).asRef();
+                        }
+
+                        if (str.isUTF8()) {
+                            return JSC.ZigString.init(str.utf8).toValue(JavaScript.VirtualMachine.vm.global).asRef();
+                        } else {
+                            return js.JSValueMakeString(ctx, js.JSStringCreateWithCharactersNoCopy(str.value.ptr, str.value.len));
+                        }
+                    },
+                    // .e_number => |number| {
+
+                    // },
+                    else => {
+                        return JSC.ZigString.init("").toValue(JavaScript.VirtualMachine.vm.global).asRef();
+                    },
+                }
+            }
+
+            fn toPrimitive(
+                this: *JSNode,
+                ctx: js.JSContextRef,
+                exception: js.ExceptionRef,
+            ) js.JSValueRef {
+                return @call(.{ .modifier = .always_inline }, toPrimitiveAllowRecursion, .{ this, ctx, exception, false });
+            }
+
+            fn toPrimitiveWithRecursion(
+                this: *JSNode,
+                ctx: js.JSContextRef,
+                exception: js.ExceptionRef,
+            ) js.JSValueRef {
+                return @call(.{ .modifier = .always_inline }, toPrimitiveAllowRecursion, .{ this, ctx, exception, true });
+            }
+
+            fn toPrimitiveAllowRecursion(this: *JSNode, ctx: js.JSContextRef, exception: js.ExceptionRef, comptime allow_recursion: bool) js.JSValueRef {
+                switch (this.data) {
+                    .e_string => |str| {
+                        return JSBindings.toStringValue(this, ctx, str.*);
+                    },
+                    .e_template => |template| {
+                        return JSBindings.toStringValue(this, ctx, template.head);
+                        // return JSBindings.toTemplatePrimitive(this, ctx, template.*);
+                    },
+                    .e_number => |number| {
+                        return JSBindings.toNumberValue(this, number);
+                    },
+                    .e_reg_exp => |regex| {
+                        return JSBindings.toRegexValue(this, ctx, regex, exception);
+                    },
+                    .e_object => |object| {
+                        if (comptime !allow_recursion) return js.JSValueMakeUndefined(ctx);
+                        return JSBindings.toObjectPrimitive(this, ctx, object.*, exception);
+                    },
+                    .e_array => |array| {
+                        if (comptime !allow_recursion) return js.JSValueMakeUndefined(ctx);
+                        return JSBindings.toArrayPrimitive(this, ctx, array.*, exception);
+                    },
+
+                    // Returns an Entry
+                    // [string, number | regex | object | string | null | undefined]
+                    .g_property => |property| {
+                        return JSBindings.toPropertyPrimitive(this, ctx, property.*, exception);
+                    },
+                    .e_null => {
+                        return js.JSValueMakeNull(ctx);
+                    },
+                    else => {
+                        return js.JSValueMakeUndefined(ctx);
+                    },
+                }
+            }
+
+            fn toValue(this: *JSNode, ctx: js.JSContextRef, exception: js.ExceptionRef) js.JSObjectRef {
+                switch (this.data) {
+                    .e_await => |aw| {
+                        return JSNode.makeFromExpr(getAllocator(ctx), aw.value);
+                    },
+                    .e_yield => |yi| {
+                        return JSNode.makeFromExpr(getAllocator(ctx), yi.value orelse return null);
+                    },
+                    .e_spread => |spread| {
+                        return JSNode.makeFromExpr(getAllocator(ctx), spread.value);
+                    },
+                    .e_reg_exp => |reg| {
+                        return JSC.ZigString.toRef(reg.value, JavaScript.VirtualMachine.vm.global);
+                    },
+
+                    .e_array => |array| {
+                        return toArrayValue(this, ctx, array.*, exception);
+                    },
+                    .e_object => |obj| {
+                        return toObjectValue(this, ctx, obj.*, exception);
+                    },
+                    else => {
+                        return null;
+                    },
+                }
+            }
+
+            pub fn getValue(
+                this: *JSNode,
+                ctx: js.JSContextRef,
+                thisObject: js.JSValueRef,
+                prop: js.JSStringRef,
+                exception: js.ExceptionRef,
+            ) js.JSObjectRef {
+                return toValue(this, ctx, exception) orelse return thisObject;
+            }
+
+            pub fn get(
+                this: *JSNode,
+                ctx: js.JSContextRef,
+                function: js.JSObjectRef,
+                thisObject: js.JSObjectRef,
+                arguments: []const js.JSValueRef,
+                exception: js.ExceptionRef,
+            ) js.JSObjectRef {
+                return toPrimitiveWithRecursion(this, ctx, exception) orelse return js.JSValueMakeUndefined(ctx);
+            }
+
+            pub fn getTag(
+                this: *JSNode,
+                ctx: js.JSContextRef,
+                thisObject: js.JSValueRef,
+                prop: js.JSStringRef,
+                exception: js.ExceptionRef,
+            ) js.JSObjectRef {
+                return JSC.JSValue.jsNumberFromU16(@intCast(u16, @enumToInt(std.meta.activeTag(this.data)))).asRef();
+            }
+            pub fn getTagName(
+                this: *JSNode,
+                ctx: js.JSContextRef,
+                thisObject: js.JSValueRef,
+                prop: js.JSStringRef,
+                exception: js.ExceptionRef,
+            ) js.JSObjectRef {
+                return JSC.ZigString.init(@tagName(this.data)).toValue(JavaScript.VirtualMachine.vm.global).asRef();
+            }
+            pub fn getPosition(
+                this: *JSNode,
+                ctx: js.JSContextRef,
+                thisObject: js.JSValueRef,
+                prop: js.JSStringRef,
+                exception: js.ExceptionRef,
+            ) js.JSObjectRef {
+                return JSC.JSValue.jsNumberFromInt32(this.loc.start).asRef();
+            }
+        };
+
+        pub fn initExpr(this: Expr) JSNode {
+            switch (this.data) {
+                .e_array => |value| {
+                    return JSNode{ .loc = this.loc, .data = .{ .e_array = value } };
+                },
+                .e_unary => |value| {
+                    return JSNode{ .loc = this.loc, .data = .{ .e_unary = value } };
+                },
+                .e_binary => |value| {
+                    return JSNode{ .loc = this.loc, .data = .{ .e_binary = value } };
+                },
+                .e_function => |value| {
+                    return JSNode{ .loc = this.loc, .data = .{ .e_function = value } };
+                },
+                .e_new_target => |value| {
+                    return JSNode{ .loc = this.loc, .data = .{ .e_new_target = value } };
+                },
+                .e_import_meta => |value| {
+                    return JSNode{ .loc = this.loc, .data = .{ .e_import_meta = value } };
+                },
+                .e_call => |value| {
+                    return JSNode{ .loc = this.loc, .data = .{ .e_call = value } };
+                },
+                .e_dot => |value| {
+                    return JSNode{ .loc = this.loc, .data = .{ .e_dot = value } };
+                },
+                .e_index => |value| {
+                    return JSNode{ .loc = this.loc, .data = .{ .e_index = value } };
+                },
+                .e_arrow => |value| {
+                    return JSNode{ .loc = this.loc, .data = .{ .e_arrow = value } };
+                },
+                .e_identifier => |value| {
+                    return JSNode{ .loc = this.loc, .data = .{ .e_identifier = value } };
+                },
+                .e_import_identifier => |value| {
+                    return JSNode{ .loc = this.loc, .data = .{ .e_import_identifier = value } };
+                },
+                .e_private_identifier => |value| {
+                    return JSNode{ .loc = this.loc, .data = .{ .e_private_identifier = value } };
+                },
+                .e_jsx_element => |value| {
+                    return JSNode{ .loc = this.loc, .data = .{ .e_jsx_element = value } };
+                },
+                .e_big_int => |value| {
+                    return JSNode{ .loc = this.loc, .data = .{ .e_big_int = value } };
+                },
+                .e_object => |value| {
+                    return JSNode{ .loc = this.loc, .data = .{ .e_object = value } };
+                },
+                .e_spread => |value| {
+                    return JSNode{ .loc = this.loc, .data = .{ .e_spread = value } };
+                },
+                .e_string => |value| {
+                    return JSNode{ .loc = this.loc, .data = .{ .e_string = value } };
+                },
+                .e_template_part => |value| {
+                    return JSNode{ .loc = this.loc, .data = .{ .e_template_part = value } };
+                },
+                .e_template => |value| {
+                    return JSNode{ .loc = this.loc, .data = .{ .e_template = value } };
+                },
+                .e_reg_exp => |value| {
+                    return JSNode{ .loc = this.loc, .data = .{ .e_reg_exp = value } };
+                },
+                .e_await => |value| {
+                    return JSNode{ .loc = this.loc, .data = .{ .e_await = value } };
+                },
+                .e_yield => |value| {
+                    return JSNode{ .loc = this.loc, .data = .{ .e_yield = value } };
+                },
+                .e_if => |value| {
+                    return JSNode{ .loc = this.loc, .data = .{ .e_if = value } };
+                },
+                .e_require_or_require_resolve => |value| {
+                    return JSNode{ .loc = this.loc, .data = .{ .e_require_or_require_resolve = value } };
+                },
+                .e_import => |value| {
+                    return JSNode{ .loc = this.loc, .data = .{ .e_import = value } };
+                },
+                .e_this => |value| {
+                    return JSNode{ .loc = this.loc, .data = .{ .e_this = value } };
+                },
+                .e_class => |value| {
+                    return JSNode{ .loc = this.loc, .data = .{ .e_class = value } };
+                },
+                .e_require => |value| {
+                    return JSNode{ .loc = this.loc, .data = .{ .e_require = value } };
+                },
+                .e_missing => |value| {
+                    return JSNode{ .loc = this.loc, .data = .{ .e_missing = value } };
+                },
+                .e_boolean => |value| {
+                    return JSNode{ .loc = this.loc, .data = .{ .e_boolean = value } };
+                },
+                .e_super => |value| {
+                    return JSNode{ .loc = this.loc, .data = .{ .e_super = value } };
+                },
+                .e_null => |value| {
+                    return JSNode{ .loc = this.loc, .data = .{ .e_null = value } };
+                },
+                .e_number => |value| {
+                    return JSNode{ .loc = this.loc, .data = .{ .e_number = value } };
+                },
+                .e_undefined => |value| {
+                    return JSNode{ .loc = this.loc, .data = .{ .e_undefined = value } };
+                },
+                else => {
+                    return JSNode{ .loc = this.loc, .data = .{ .e_missing = .{} } };
+                },
+            }
+        }
+
+        pub fn toExpr(this: JSNode) Expr {
+            switch (this.data) {
+                .e_array => |value| {
+                    return Expr{ .loc = this.loc, .data = .{ .e_array = value } };
+                },
+                .e_unary => |value| {
+                    return Expr{ .loc = this.loc, .data = .{ .e_unary = value } };
+                },
+                .e_binary => |value| {
+                    return Expr{ .loc = this.loc, .data = .{ .e_binary = value } };
+                },
+                .e_function => |value| {
+                    return Expr{ .loc = this.loc, .data = .{ .e_function = value } };
+                },
+                .e_new_target => |value| {
+                    return Expr{ .loc = this.loc, .data = .{ .e_new_target = value } };
+                },
+                .e_import_meta => |value| {
+                    return Expr{ .loc = this.loc, .data = .{ .e_import_meta = value } };
+                },
+                .e_call => |value| {
+                    return Expr{ .loc = this.loc, .data = .{ .e_call = value } };
+                },
+                .e_dot => |value| {
+                    return Expr{ .loc = this.loc, .data = .{ .e_dot = value } };
+                },
+                .e_index => |value| {
+                    return Expr{ .loc = this.loc, .data = .{ .e_index = value } };
+                },
+                .e_arrow => |value| {
+                    return Expr{ .loc = this.loc, .data = .{ .e_arrow = value } };
+                },
+                .e_identifier => |value| {
+                    return Expr{ .loc = this.loc, .data = .{ .e_identifier = value } };
+                },
+                .e_import_identifier => |value| {
+                    return Expr{ .loc = this.loc, .data = .{ .e_import_identifier = value } };
+                },
+                .e_private_identifier => |value| {
+                    return Expr{ .loc = this.loc, .data = .{ .e_private_identifier = value } };
+                },
+                .e_jsx_element => |value| {
+                    return Expr{ .loc = this.loc, .data = .{ .e_jsx_element = value } };
+                },
+                .e_big_int => |value| {
+                    return Expr{ .loc = this.loc, .data = .{ .e_big_int = value } };
+                },
+                .e_object => |value| {
+                    return Expr{ .loc = this.loc, .data = .{ .e_object = value } };
+                },
+                .e_spread => |value| {
+                    return Expr{ .loc = this.loc, .data = .{ .e_spread = value } };
+                },
+                .e_string => |value| {
+                    return Expr{ .loc = this.loc, .data = .{ .e_string = value } };
+                },
+                .e_template_part => |value| {
+                    return Expr{ .loc = this.loc, .data = .{ .e_template_part = value } };
+                },
+                .e_template => |value| {
+                    return Expr{ .loc = this.loc, .data = .{ .e_template = value } };
+                },
+                .e_reg_exp => |value| {
+                    return Expr{ .loc = this.loc, .data = .{ .e_reg_exp = value } };
+                },
+                .e_await => |value| {
+                    return Expr{ .loc = this.loc, .data = .{ .e_await = value } };
+                },
+                .e_yield => |value| {
+                    return Expr{ .loc = this.loc, .data = .{ .e_yield = value } };
+                },
+                .e_if => |value| {
+                    return Expr{ .loc = this.loc, .data = .{ .e_if = value } };
+                },
+                .e_require_or_require_resolve => |value| {
+                    return Expr{ .loc = this.loc, .data = .{ .e_require_or_require_resolve = value } };
+                },
+                .e_import => |value| {
+                    return Expr{ .loc = this.loc, .data = .{ .e_import = value } };
+                },
+                .e_this => |value| {
+                    return Expr{ .loc = this.loc, .data = .{ .e_this = value } };
+                },
+                .e_class => |value| {
+                    return Expr{ .loc = this.loc, .data = .{ .e_class = value } };
+                },
+                .e_require => |value| {
+                    return Expr{ .loc = this.loc, .data = .{ .e_require = value } };
+                },
+                .e_missing => |value| {
+                    return Expr{ .loc = this.loc, .data = .{ .e_missing = value } };
+                },
+                .e_boolean => |value| {
+                    return Expr{ .loc = this.loc, .data = .{ .e_boolean = value } };
+                },
+                .e_super => |value| {
+                    return Expr{ .loc = this.loc, .data = .{ .e_super = value } };
+                },
+                .e_null => |value| {
+                    return Expr{ .loc = this.loc, .data = .{ .e_null = value } };
+                },
+                .e_number => |value| {
+                    return Expr{ .loc = this.loc, .data = .{ .e_number = value } };
+                },
+                .e_undefined => |value| {
+                    return Expr{ .loc = this.loc, .data = .{ .e_undefined = value } };
+                },
+                else => {
+                    return Expr{ .loc = this.loc, .data = .{ .e_missing = .{} } };
+                },
+            }
+        }
+
+        pub const Data = union(Tag) {
+            inline_false: void,
+            inline_true: void,
+            e_boolean: E.Boolean,
+            e_super: E.Super,
+            e_null: E.Null,
+            e_number: E.Number,
+            e_undefined: E.Undefined,
+            e_new_target: E.NewTarget,
+            e_import_meta: E.ImportMeta,
+            e_missing: E.Missing,
+            e_this: E.This,
+
+            e_array: *E.Array,
+            e_unary: *E.Unary,
+            e_binary: *E.Binary,
+            e_function: *E.Function,
+
+            e_call: *E.Call,
+            e_dot: *E.Dot,
+            e_index: *E.Index,
+            e_arrow: *E.Arrow,
+            e_identifier: *E.Identifier,
+            e_import_identifier: *E.ImportIdentifier,
+            e_private_identifier: *E.PrivateIdentifier,
+            e_jsx_element: *E.JSXElement,
+
+            e_big_int: *E.BigInt,
+            e_object: *E.Object,
+            e_spread: *E.Spread,
+            e_string: *E.String,
+            e_template_part: *E.TemplatePart,
+            e_template: *E.Template,
+            e_reg_exp: *E.RegExp,
+            e_await: *E.Await,
+            e_yield: *E.Yield,
+            e_if: *E.If,
+            e_require_or_require_resolve: *E.RequireOrRequireResolve,
+            e_import: *E.Import,
+
+            e_class: *E.Class,
+            e_require: *E.Require,
+
+            s_import: *S.Import,
+            s_block: *S.Block,
+
+            g_property: *G.Property,
+
+            pub fn callArgs(this: Data) ExprNodeList {
+                if (this == .e_call)
+                    return this.e_call.args
+                else
+                    return &[_]Expr{};
+            }
+
+            pub fn booleanValue(this: Data) bool {
+                return switch (this) {
+                    .inline_false => false,
+                    .inline_true => true,
+                    .e_boolean => this.e_boolean.value,
+                };
+            }
+        };
+        pub const Tag = enum(u8) {
+            e_array,
+            e_unary,
+            e_binary,
+            e_function,
+            e_new_target,
+            e_import_meta,
+            e_call,
+            e_dot,
+            e_index,
+            e_arrow,
+            e_identifier,
+            e_import_identifier,
+            e_private_identifier,
+            e_jsx_element,
+            e_big_int,
+            e_object,
+            e_spread,
+            e_string,
+            e_template_part,
+            e_template,
+            e_reg_exp,
+            e_await,
+            e_yield,
+            e_if,
+            e_require_or_require_resolve,
+            e_import,
+            e_this,
+            e_class,
+            e_require,
+            s_import,
+            s_block,
+
+            g_property,
+
+            e_missing,
+            e_boolean,
+            e_super,
+            e_null,
+            e_number,
+            e_undefined,
+
+            inline_true,
+            inline_false,
+
+            pub const ids: std.EnumArray(Tag, Expr.Data) = brk: {
+                var list = std.EnumArray(Tag, Expr.Data).initFill(Expr.Data{ .e_number = E.Number{ .value = 0.0 } });
+                list.set(Tag.e_array, Expr.Data{
+                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_array)) },
+                });
+                list.set(Tag.e_unary, Expr.Data{
+                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_unary)) },
+                });
+                list.set(Tag.e_binary, Expr.Data{
+                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_binary)) },
+                });
+                list.set(Tag.e_boolean, Expr.Data{
+                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_boolean)) },
+                });
+                list.set(Tag.e_super, Expr.Data{
+                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_super)) },
+                });
+                list.set(Tag.e_null, Expr.Data{
+                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_null)) },
+                });
+                list.set(Tag.e_undefined, Expr.Data{
+                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_undefined)) },
+                });
+                list.set(Tag.e_function, Expr.Data{
+                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_function)) },
+                });
+                list.set(Tag.e_new_target, Expr.Data{
+                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_new_target)) },
+                });
+                list.set(Tag.e_import_meta, Expr.Data{
+                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_import_meta)) },
+                });
+                list.set(Tag.e_call, Expr.Data{
+                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_call)) },
+                });
+                list.set(Tag.e_dot, Expr.Data{
+                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_dot)) },
+                });
+                list.set(Tag.e_index, Expr.Data{
+                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_index)) },
+                });
+                list.set(Tag.e_arrow, Expr.Data{
+                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_arrow)) },
+                });
+                list.set(Tag.e_identifier, Expr.Data{
+                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_identifier)) },
+                });
+                list.set(Tag.e_import_identifier, Expr.Data{
+                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_import_identifier)) },
+                });
+                list.set(Tag.e_private_identifier, Expr.Data{
+                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_private_identifier)) },
+                });
+                list.set(Tag.e_jsx_element, Expr.Data{
+                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_jsx_element)) },
+                });
+                list.set(Tag.e_missing, Expr.Data{
+                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_missing)) },
+                });
+                list.set(Tag.e_number, Expr.Data{
+                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_number)) },
+                });
+                list.set(Tag.e_big_int, Expr.Data{
+                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_big_int)) },
+                });
+                list.set(Tag.e_object, Expr.Data{
+                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_object)) },
+                });
+                list.set(Tag.e_spread, Expr.Data{
+                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_spread)) },
+                });
+                list.set(Tag.e_string, Expr.Data{
+                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_string)) },
+                });
+                list.set(Tag.e_template_part, Expr.Data{
+                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_template_part)) },
+                });
+                list.set(Tag.e_template, Expr.Data{
+                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_template)) },
+                });
+                list.set(Tag.e_reg_exp, Expr.Data{
+                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_reg_exp)) },
+                });
+                list.set(Tag.e_await, Expr.Data{
+                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_await)) },
+                });
+                list.set(Tag.e_yield, Expr.Data{
+                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_yield)) },
+                });
+                list.set(Tag.e_if, Expr.Data{
+                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_if)) },
+                });
+                list.set(Tag.e_import, Expr.Data{
+                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_import)) },
+                });
+                list.set(Tag.e_this, Expr.Data{
+                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_this)) },
+                });
+                list.set(Tag.e_class, Expr.Data{
+                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_class)) },
+                });
+                list.set(Tag.e_require, Expr.Data{
+                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_require)) },
+                });
+                list.set(Tag.s_import, Expr.Data{
+                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.s_import)) },
+                });
+                list.set(Tag.g_property, Expr.Data{
+                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.g_property)) },
+                });
+                list.set(Tag.s_block, Expr.Data{
+                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.s_block)) },
+                });
+                list.set(Tag.inline_true, Expr.Data{
+                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.inline_true)) },
+                });
+                list.set(Tag.inline_false, Expr.Data{
+                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.inline_false)) },
+                });
+                break :brk list;
+            };
+
+            pub const names = std.ComptimeStringMap(Tag, .{
+                .{ "array", Tag.e_array },
+                .{ "unary", Tag.e_unary },
+                .{ "binary", Tag.e_binary },
+                .{ "bool", Tag.e_boolean },
+                .{ "super", Tag.e_super },
+                .{ "null", Tag.e_null },
+                .{ "undefined", Tag.e_undefined },
+                .{ "function", Tag.e_function },
+                .{ "new_target", Tag.e_new_target },
+                .{ "import_meta", Tag.e_import_meta },
+                .{ "call", Tag.e_call },
+                .{ "dot", Tag.e_dot },
+                .{ "index", Tag.e_index },
+                .{ "arrow", Tag.e_arrow },
+                .{ "id", Tag.e_identifier },
+                .{ "import-id", Tag.e_import_identifier },
+                .{ "private-id", Tag.e_private_identifier },
+                .{ "jsx", Tag.e_jsx_element },
+                .{ "missing", Tag.e_missing },
+                .{ "number", Tag.e_number },
+                .{ "bigint", Tag.e_big_int },
+                .{ "object", Tag.e_object },
+                .{ "spread", Tag.e_spread },
+                .{ "string", Tag.e_string },
+                .{ "template-part", Tag.e_template_part },
+                .{ "template", Tag.e_template },
+                .{ "regex", Tag.e_reg_exp },
+                .{ "await", Tag.e_await },
+                .{ "yield", Tag.e_yield },
+                .{ "if", Tag.e_if },
+                .{ "dynamic", Tag.e_import },
+                .{ "this", Tag.e_this },
+                .{ "class", Tag.e_class },
+                .{ "require", Tag.e_require },
+                .{ "import", Tag.s_import },
+                .{ "property", Tag.g_property },
+                .{ "block", Tag.s_block },
+                .{ "true", Tag.inline_true },
+                .{ "false", Tag.inline_false },
+            });
+
+            pub const as_expr_tag: std.EnumArray(Tag, Expr.Tag) = brk: {
+                var list = std.EnumArray(Tag, Expr.Tag).initFill(Expr.Tag.e_missing);
+                list.set(Tag.e_array, Expr.Tag.e_array);
+                list.set(Tag.e_unary, Expr.Tag.e_unary);
+                list.set(Tag.e_binary, Expr.Tag.e_binary);
+                list.set(Tag.e_boolean, Expr.Tag.e_boolean);
+                list.set(Tag.e_super, Expr.Tag.e_super);
+                list.set(Tag.e_null, Expr.Tag.e_null);
+                list.set(Tag.e_undefined, Expr.Tag.e_undefined);
+                list.set(Tag.e_function, Expr.Tag.e_function);
+                list.set(Tag.e_new_target, Expr.Tag.e_new_target);
+                list.set(Tag.e_import_meta, Expr.Tag.e_import_meta);
+                list.set(Tag.e_call, Expr.Tag.e_call);
+                list.set(Tag.e_dot, Expr.Tag.e_dot);
+                list.set(Tag.e_index, Expr.Tag.e_index);
+                list.set(Tag.e_arrow, Expr.Tag.e_arrow);
+                list.set(Tag.e_identifier, Expr.Tag.e_identifier);
+                list.set(Tag.e_import_identifier, Expr.Tag.e_import_identifier);
+                list.set(Tag.e_private_identifier, Expr.Tag.e_private_identifier);
+                list.set(Tag.e_jsx_element, Expr.Tag.e_jsx_element);
+                list.set(Tag.e_missing, Expr.Tag.e_missing);
+                list.set(Tag.e_number, Expr.Tag.e_number);
+                list.set(Tag.e_big_int, Expr.Tag.e_big_int);
+                list.set(Tag.e_object, Expr.Tag.e_object);
+                list.set(Tag.e_spread, Expr.Tag.e_spread);
+                list.set(Tag.e_string, Expr.Tag.e_string);
+                list.set(Tag.e_template_part, Expr.Tag.e_template_part);
+                list.set(Tag.e_template, Expr.Tag.e_template);
+                list.set(Tag.e_reg_exp, Expr.Tag.e_reg_exp);
+                list.set(Tag.e_await, Expr.Tag.e_await);
+                list.set(Tag.e_yield, Expr.Tag.e_yield);
+                list.set(Tag.e_if, Expr.Tag.e_if);
+                list.set(Tag.e_require_or_require_resolve, Expr.Tag.e_require_or_require_resolve);
+                list.set(Tag.e_import, Expr.Tag.e_import);
+                list.set(Tag.e_this, Expr.Tag.e_this);
+                list.set(Tag.e_class, Expr.Tag.e_class);
+                list.set(Tag.e_require, Expr.Tag.e_require);
+                break :brk list;
+            };
+
+            pub const to_expr_tag: std.EnumArray(Expr.Tag, Tag) = brk: {
+                var list = std.EnumArray(Expr.Tag, Tag).initFill(Tag.wip);
+                list.set(Expr.Tag.e_array, Tag.e_array);
+                list.set(Expr.Tag.e_unary, Tag.e_unary);
+                list.set(Expr.Tag.e_binary, Tag.e_binary);
+                list.set(Expr.Tag.e_boolean, Tag.e_boolean);
+                list.set(Expr.Tag.e_super, Tag.e_super);
+                list.set(Expr.Tag.e_null, Tag.e_null);
+                list.set(Expr.Tag.e_undefined, Tag.e_undefined);
+                list.set(Expr.Tag.e_function, Tag.e_function);
+                list.set(Expr.Tag.e_new_target, Tag.e_new_target);
+                list.set(Expr.Tag.e_import_meta, Tag.e_import_meta);
+                list.set(Expr.Tag.e_call, Tag.e_call);
+                list.set(Expr.Tag.e_dot, Tag.e_dot);
+                list.set(Expr.Tag.e_index, Tag.e_index);
+                list.set(Expr.Tag.e_arrow, Tag.e_arrow);
+                list.set(Expr.Tag.e_identifier, Tag.e_identifier);
+                list.set(Expr.Tag.e_import_identifier, Tag.e_import_identifier);
+                list.set(Expr.Tag.e_private_identifier, Tag.e_private_identifier);
+                list.set(Expr.Tag.e_jsx_element, Tag.e_jsx_element);
+                list.set(Expr.Tag.e_missing, Tag.e_missing);
+                list.set(Expr.Tag.e_number, Tag.e_number);
+                list.set(Expr.Tag.e_big_int, Tag.e_big_int);
+                list.set(Expr.Tag.e_object, Tag.e_object);
+                list.set(Expr.Tag.e_spread, Tag.e_spread);
+                list.set(Expr.Tag.e_string, Tag.e_string);
+                list.set(Expr.Tag.e_template_part, Tag.e_template_part);
+                list.set(Expr.Tag.e_template, Tag.e_template);
+                list.set(Expr.Tag.e_reg_exp, Tag.e_reg_exp);
+                list.set(Expr.Tag.e_await, Tag.e_await);
+                list.set(Expr.Tag.e_yield, Tag.e_yield);
+                list.set(Expr.Tag.e_if, Tag.e_if);
+                list.set(Expr.Tag.e_require_or_require_resolve, Tag.e_require_or_require_resolve);
+                list.set(Expr.Tag.e_import, Tag.e_import);
+                list.set(Expr.Tag.e_this, Tag.e_this);
+                list.set(Expr.Tag.e_class, Tag.e_class);
+                list.set(Expr.Tag.e_require, Tag.e_require);
+                break :brk list;
+            };
+
+            pub const Validator = struct {
+                pub const List = std.EnumArray(JSNode.Tag, bool);
+                fn NewList(comptime valid_tags: anytype) List {
+                    return comptime brk: {
+                        var list = List.initFill(false);
+                        for (std.meta.fieldNames(@TypeOf(valid_tags))) |index| {
+                            const name = @tagName(@field(valid_tags, index));
+
+                            if (!@hasField(JSNode.Tag, name)) {
+                                @compileError(
+                                    "JSNode.Tag does not have a \"" ++ name ++ "\" field. Valid fields are " ++ std.fmt.comptimePrint(
+                                        "{s}",
+                                        .{
+                                            std.meta.fieldNames(@TypeOf(valid_tags)),
+                                        },
+                                    ),
+                                );
+                            }
+                            list.set(@field(JSNode.Tag, name), true);
+                        }
+
+                        break :brk list;
+                    };
+                }
+
+                pub const valid_object_tags = Tag.Validator.NewList(.{
+                    .g_property,
+                    .e_spread,
+                    .e_identifier,
+                    .e_import_identifier,
+                    .e_index,
+                    .e_call,
+                    .e_private_identifier,
+                    .e_dot,
+                    .e_unary,
+                    .e_binary,
+                });
+            };
+
+            pub const max_tag: u8 = brk: {
+                const Enum: std.builtin.TypeInfo.Enum = @typeInfo(Tag).Enum;
+                var max_value: u8 = 0;
+                for (Enum.fields) |field| {
+                    max_value = std.math.max(@as(u8, field.value), max_value);
+                }
+                break :brk max_value;
+            };
+
+            pub const min_tag: u8 = brk: {
+                const Enum: std.builtin.TypeInfo.Enum = @typeInfo(Tag).Enum;
+                var min: u8 = 255;
+                for (Enum.fields) |field| {
+                    min = std.math.min(@as(u8, field.value), min);
+                }
+                break :brk min;
+            };
+        };
+
+        pub fn NewJSXWriter(comptime P: type) type {
+            return struct {
+                const JSXWriter = @This();
+                p: *P,
+                bun_jsx_ref: Ref,
+                log: *logger.Log,
+                args: ExprList,
+                bun_identifier: *E.Identifier,
+                allocator: *std.mem.Allocator,
+                parent_tag: Tag = Tag.e_missing,
+
+                pub fn initWriter(p: *P, bun_identifier: *E.Identifier) JSXWriter {
+                    return JSXWriter{
+                        .p = p,
+                        .log = p.log,
+                        .bun_jsx_ref = p.bun_jsx_ref,
+                        .args = ExprList.init(p.allocator),
+                        .allocator = p.allocator,
+                        .bun_identifier = bun_identifier,
+                    };
+                }
+
+                fn hasPropertyNamed(props: []G.Property, comptime name: string) bool {
+                    return indexOfPropertyByName(props, name) != null;
+                }
+
+                fn indexOfPropertyByName(props: []G.Property, comptime name: string) ?u32 {
+                    for (props) |prop, i| {
+                        const key = prop.key orelse continue;
+                        if (key.data != .e_string or !key.data.e_string.isUTF8()) continue;
+                        if (strings.eqlComptime(key.data.e_string.utf8, name)) return @intCast(u32, i);
+                    }
+
+                    return null;
+                }
+
+                fn propertyValueNamed(props: []G.Property, comptime name: string) ?Expr {
+                    for (props) |prop| {
+                        const key = prop.key orelse continue;
+                        if (key.data != .e_string or !key.data.e_string.isUTF8()) continue;
+                        if (strings.eqlComptime(key.data.e_string.utf8, name)) return prop.value;
+                    }
+
+                    return null;
+                }
+
+                pub fn writeExprType(self: *JSXWriter, expr: Expr) bool {}
+
+                pub fn writeNodeType(self: *JSXWriter, tag: JSNode.Tag, props: []G.Property, children: []Expr, loc: logger.Loc) bool {
+                    switch (tag) {
+
+                        // <bool value={foo} />
+                        // intended for dynamic values
+                        Tag.e_boolean => {
+                            self.args.ensureUnusedCapacity(2) catch unreachable;
+                            self.args.appendAssumeCapacity(Expr{ .loc = loc, .data = comptime Tag.ids.get(Tag.e_boolean) });
+                            const value_i = indexOfPropertyByName(props, "value") orelse {
+                                self.log.addError(self.p.source, loc, "<bool> should have a \"value\" prop") catch unreachable;
+                                self.args.append(Expr{ .data = .{ .e_boolean = .{ .value = true } }, .loc = loc }) catch unreachable;
+                                return true;
+                            };
+                            const value = props[value_i].value orelse Expr{ .data = .{ .e_boolean = .{ .value = true } }, .loc = loc };
+
+                            switch (value.data) {
+                                .e_jsx_element => |el| {
+                                    return self.writeElement(el.*);
+                                },
+                                .e_string => {
+                                    self.log.addError(self.p.source, value.loc, "\"value\" shouldn't be a string") catch unreachable;
+                                    self.args.appendAssumeCapacity(Expr{ .data = .{ .e_boolean = .{ .value = true } }, .loc = value.loc });
+                                },
+                                .e_boolean => {
+                                    self.args.appendAssumeCapacity(value);
+                                },
+                                .e_missing => {
+                                    self.args.appendAssumeCapacity(Expr{ .data = .{ .e_boolean = .{ .value = true } }, .loc = value.loc });
+                                },
+                                // null and undefined literals are coerced to false
+                                .e_null, .e_undefined => {
+                                    self.args.appendAssumeCapacity(Expr{ .data = .{ .e_boolean = .{ .value = false } }, .loc = value.loc });
+                                },
+                                .e_number => {
+                                    // Numbers are cooerced to booleans
+                                    self.args.appendAssumeCapacity(Expr{ .data = .{ .e_boolean = .{ .value = value.data.e_number.value > 0.0 } }, .loc = value.loc });
+                                },
+                                // these ones are not statically analyzable so we just leave them in as-is
+                                .e_if, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
+                                    self.args.appendAssumeCapacity(self.p.visitExpr(value));
+                                },
+                                // everything else is invalid
+                                else => {
+                                    self.log.addError(self.p.source, value.loc, "\"value\" should be a bool, jsx element, number, identifier, index, call, private identifier, or dot") catch unreachable;
+                                    self.args.appendAssumeCapacity(Expr{ .data = .{ .e_boolean = .{ .value = false } }, .loc = value.loc });
+                                },
+                            }
+
+                            return true;
+                        },
+                        // <number value={1.0} />
+                        Tag.e_number => {
+                            self.args.ensureUnusedCapacity(2) catch unreachable;
+                            self.args.appendAssumeCapacity(Expr{ .loc = loc, .data = comptime Tag.ids.get(Tag.e_number) });
+                            const invalid_value = Expr{ .data = .{ .e_number = .{ .value = 0.0 } }, .loc = loc };
+                            const value_i = indexOfPropertyByName(props, "value") orelse {
+                                self.log.addError(self.p.source, loc, "<number> should have a \"value\" prop") catch unreachable;
+                                self.args.append(invalid_value) catch unreachable;
+                                return true;
+                            };
+                            const value = props[value_i].value orelse invalid_value;
+
+                            switch (value.data) {
+                                .e_jsx_element => |el| {
+                                    return self.writeElement(el.*);
+                                },
+                                .e_string => {
+                                    self.log.addError(self.p.source, loc, "<number> should not be a string.") catch unreachable;
+                                    self.args.appendAssumeCapacity(invalid_value);
+                                },
+                                .e_boolean => {
+                                    // Booleans are cooerced to numbers
+                                    self.args.appendAssumeCapacity(
+                                        Expr{
+                                            .data = .{
+                                                .e_number = E.Number{
+                                                    .value = @intToFloat(f64, @boolToInt(value.data.e_boolean.value)),
+                                                },
+                                            },
+                                            .loc = value.loc,
+                                        },
+                                    );
+                                },
+                                .e_missing => {
+                                    self.args.appendAssumeCapacity(invalid_value);
+                                },
+                                // null and undefined literals are coerced to 0
+                                .e_null, .e_undefined => {
+                                    self.args.appendAssumeCapacity(Expr{ .data = .{ .e_number = .{ .value = 0 } }, .loc = value.loc });
+                                },
+                                // <number>123</number>
+                                .e_number => {
+                                    // Numbers are cooerced to booleans
+                                    self.args.appendAssumeCapacity(value);
+                                },
+                                // these ones are not statically analyzable so we just leave them in as-is
+                                .e_if, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
+                                    self.args.appendAssumeCapacity(self.p.visitExpr(value));
+                                },
+                                // everything else is invalid
+                                else => {
+                                    self.log.addError(self.p.source, value.loc, "<number value> should be a number, jsx element, identifier, index, call, private identifier, or dot expression") catch unreachable;
+                                    self.args.appendAssumeCapacity(invalid_value);
+                                },
+                            }
+
+                            return true;
+                        },
+                        Tag.e_big_int => {
+                            self.args.ensureUnusedCapacity(2) catch unreachable;
+                            self.args.appendAssumeCapacity(Expr{ .loc = loc, .data = comptime Tag.ids.get(Tag.e_big_int) });
+                            const invalid_value = Expr{ .data = .{ .e_big_int = &E.BigInt.empty }, .loc = loc };
+                            const value_i = indexOfPropertyByName(props, "value") orelse {
+                                self.log.addError(self.p.source, loc, "<big-int> should have a \"value\" prop") catch unreachable;
+                                self.args.append(invalid_value) catch unreachable;
+                                return true;
+                            };
+                            const value = props[value_i].value orelse invalid_value;
+
+                            switch (value.data) {
+                                .e_jsx_element => |el| {
+                                    return self.writeElement(el.*);
+                                },
+                                .e_string => |str| {
+                                    self.args.appendAssumeCapacity(Expr.alloc(self.allocator, E.BigInt, E.BigInt{ .value = std.mem.trimRight(u8, str.utf8, "n") }, value.loc));
+                                },
+                                .e_big_int => |bigint| {
+                                    self.args.appendAssumeCapacity(value);
+                                },
+                                .e_missing => {
+                                    self.args.appendAssumeCapacity(invalid_value);
+                                },
+                                // null and undefined literals are coerced to 0
+                                .e_null, .e_undefined => {
+                                    self.args.appendAssumeCapacity(Expr{ .data = .{ .e_big_int = &E.BigInt.empty }, .loc = value.loc });
+                                },
+                                // these ones are not statically analyzable so we just leave them in as-is
+                                .e_if, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
+                                    self.args.appendAssumeCapacity(self.p.visitExpr(value));
+                                },
+                                // everything else is invalid
+                                else => {
+                                    self.log.addError(self.p.source, value.loc, "\"value\" should be a BigInt, jsx element, identifier, index, call, private identifier, or dot expression") catch unreachable;
+                                    self.args.appendAssumeCapacity(invalid_value);
+                                },
+                            }
+
+                            return true;
+                        },
+                        Tag.e_array => {
+                            self.args.ensureUnusedCapacity(2 + children.len) catch unreachable;
+                            self.args.appendAssumeCapacity(Expr{ .loc = loc, .data = comptime Tag.ids.get(Tag.e_array) });
+                            const children_count = @truncate(u16, children.len);
+                            self.args.appendAssumeCapacity(Expr{ .loc = loc, .data = .{ .e_number = E.Number{ .value = @intToFloat(f64, children_count) } } });
+
+                            var old_parent = self.parent_tag;
+                            self.parent_tag = Tag.e_array;
+                            defer self.parent_tag = old_parent;
+                            for (children) |child, i| {
+                                switch (child.data) {
+                                    .e_jsx_element => |el| {
+                                        if (!self.writeElement(el.*)) return false;
+                                    },
+                                    // TODO: handle when simplification changes the expr type
+                                    .e_spread, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
+                                        const visited_expr = self.p.visitExpr(child);
+                                        switch (visited_expr.data) {
+                                            .e_jsx_element => |el| {
+                                                if (!self.writeElement(el.*)) return false;
+                                            },
+                                            .e_if, .e_spread, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
+                                                self.args.append(visited_expr) catch unreachable;
+                                            },
+                                            else => {
+                                                self.log.addError(self.p.source, visited_expr.loc, "<array> should only contain other jsx elements") catch unreachable;
+                                                self.args.append(Expr{ .data = .{ .e_missing = E.Missing{} }, .loc = visited_expr.loc }) catch unreachable;
+                                            },
+                                        }
+                                    },
+                                    else => {
+                                        self.log.addError(self.p.source, child.loc, "<array> should only contain other jsx elements") catch unreachable;
+                                        self.args.append(Expr{ .data = .{ .e_missing = E.Missing{} }, .loc = child.loc }) catch unreachable;
+                                    },
+                                }
+                            }
+
+                            return true;
+                        },
+                        Tag.e_object => {
+                            self.args.ensureUnusedCapacity(2 + children.len) catch unreachable;
+                            self.args.appendAssumeCapacity(Expr{ .loc = loc, .data = comptime Tag.ids.get(Tag.e_object) });
+                            const children_count = @truncate(u16, children.len);
+                            self.args.appendAssumeCapacity(Expr{ .loc = loc, .data = .{ .e_number = E.Number{ .value = @intToFloat(f64, children_count) } } });
+
+                            var old_parent = self.parent_tag;
+                            self.parent_tag = Tag.e_object;
+                            defer self.parent_tag = old_parent;
+
+                            for (children) |child, i| {
+                                switch (child.data) {
+                                    .e_jsx_element => |el| {
+                                        if (!self.writeElementWithValidTagList(el.*, comptime Tag.Validator.valid_object_tags)) return false;
+                                    },
+                                    .e_if, .e_spread, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
+                                        const visited = self.p.visitExpr(child);
+                                        switch (visited.data) {
+                                            .e_jsx_element => |el| {
+                                                if (!self.writeElementWithValidTagList(el.*, comptime Tag.Validator.valid_object_tags)) return false;
+                                            },
+                                            .e_if, .e_spread, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
+                                                self.args.append(visited) catch unreachable;
+                                            },
+                                            else => {
+                                                self.log.addError(self.p.source, child.loc, "<object> should only contain other jsx elements") catch unreachable;
+                                                self.args.append(Expr{ .data = .{ .e_missing = E.Missing{} }, .loc = child.loc }) catch unreachable;
+                                            },
+                                        }
+                                    },
+                                    else => {
+                                        self.log.addError(self.p.source, child.loc, "<object> should only contain other jsx elements") catch unreachable;
+                                        self.args.append(Expr{ .data = .{ .e_missing = E.Missing{} }, .loc = child.loc }) catch unreachable;
+                                    },
+                                }
+                            }
+
+                            return true;
+                        },
+
+                        Tag.g_property => {
+                            const name_property = propertyValueNamed(props, "name");
+                            const value_property = propertyValueNamed(props, "value");
+                            const init_property = propertyValueNamed(props, "init");
+
+                            var old_parent = self.parent_tag;
+                            if (old_parent != .e_object) {
+                                self.args.append(Expr{ .loc = loc, .data = comptime Tag.ids.get(Tag.g_property) }) catch unreachable;
+                            }
+
+                            self.parent_tag = Tag.g_property;
+                            defer self.parent_tag = old_parent;
+
+                            var is_spread = false;
+                            if (value_property) |prop| {
+                                switch (prop.data) {
+                                    .e_jsx_element => |el| {
+                                        if (!self.writeElement(el.*)) return false;
+                                    },
+                                    .e_if, .e_spread, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
+                                        self.args.append(self.p.visitExpr(prop)) catch unreachable;
+                                    },
+                                    else => {
+                                        self.log.addError(self.p.source, prop.loc, "value should only contain other jsx elements") catch unreachable;
+                                        self.args.append(Expr{ .data = .{ .e_missing = E.Missing{} }, .loc = prop.loc }) catch unreachable;
+                                    },
+                                }
+                            } else {
+                                self.args.append(Expr{ .data = comptime Tag.ids.get(.e_undefined), .loc = loc }) catch unreachable;
+                            }
+
+                            if (init_property) |prop| {
+                                switch (prop.data) {
+                                    .e_jsx_element => |el| {
+                                        if (!self.writeElement(el.*)) return false;
+                                    },
+
+                                    .e_spread, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
+                                        self.args.append(self.p.visitExpr(prop)) catch unreachable;
+                                    },
+                                    else => {
+                                        self.log.addError(self.p.source, prop.loc, "init should only contain other jsx elements") catch unreachable;
+                                        self.args.append(Expr{ .data = .{ .e_missing = E.Missing{} }, .loc = prop.loc }) catch unreachable;
+                                    },
+                                }
+                            } else {
+                                self.args.append(Expr{ .data = comptime Tag.ids.get(.e_undefined), .loc = loc }) catch unreachable;
+                            }
+
+                            if (name_property) |prop| {
+                                switch (prop.data) {
+                                    .e_jsx_element => |el| {
+                                        if (!self.writeElement(el.*)) return false;
+                                    },
+                                    .e_string => |str| {
+                                        self.args.append(prop) catch unreachable;
+                                    },
+                                    .e_if, .e_spread, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
+                                        self.args.append(self.p.visitExpr(prop)) catch unreachable;
+                                    },
+                                    else => {
+                                        self.log.addError(self.p.source, prop.loc, "should only contain other jsx elements or a string") catch unreachable;
+                                        self.args.append(Expr{ .data = .{ .e_missing = E.Missing{} }, .loc = prop.loc }) catch unreachable;
+                                    },
+                                }
+                            }
+
+                            return true;
+                        },
+                        Tag.e_string => {
+                            self.args.ensureUnusedCapacity(2) catch unreachable;
+                            self.args.appendAssumeCapacity(Expr{ .loc = loc, .data = comptime Tag.ids.get(Tag.e_string) });
+                            const invalid_value = Expr{ .data = .{ .e_string = &E.String.empty }, .loc = loc };
+                            const value_i = indexOfPropertyByName(props, "value") orelse {
+                                self.log.addError(self.p.source, loc, "<string> should have a \"value\" prop") catch unreachable;
+                                self.args.append(invalid_value) catch unreachable;
+                                return true;
+                            };
+                            const value = props[value_i].value orelse invalid_value;
+
+                            switch (value.data) {
+                                .e_jsx_element => |el| {
+                                    return self.writeElement(el.*);
+                                },
+                                .e_string => {
+                                    self.args.appendAssumeCapacity(value);
+                                },
+                                .e_missing => {
+                                    self.args.appendAssumeCapacity(invalid_value);
+                                },
+                                // null is cooerced to "null"
+                                .e_null => {
+                                    self.args.appendAssumeCapacity(Expr{ .loc = value.loc, .data = .{ .e_string = &E.String.@"null" } });
+                                },
+                                // undefined is cooerced to "undefined"
+                                .e_undefined => {
+                                    self.args.appendAssumeCapacity(Expr{ .loc = value.loc, .data = .{ .e_string = &E.String.@"undefined" } });
+                                },
+                                .e_boolean => |boolean| {
+                                    self.args.appendAssumeCapacity(Expr{ .loc = value.loc, .data = .{ .e_string = if (boolean.value) &E.String.@"true" else &E.String.@"false" } });
+                                },
+                                // these ones are not statically analyzable so we just leave them in as-is
+                                .e_if, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
+                                    self.args.appendAssumeCapacity(self.p.visitExpr(value));
+                                },
+                                // everything else is invalid
+                                else => {
+                                    self.log.addError(self.p.source, value.loc, "<string value> should be a string, jsx element, identifier, index, call, private identifier, or dot expression") catch unreachable;
+                                    self.args.appendAssumeCapacity(invalid_value);
+                                },
+                            }
+                        },
+                        Tag.e_reg_exp => {
+                            self.args.ensureUnusedCapacity(2) catch unreachable;
+                            self.args.appendAssumeCapacity(Expr{ .loc = loc, .data = comptime Tag.ids.get(Tag.e_reg_exp) });
+                            const invalid_value = Expr{ .data = .{ .e_reg_exp = &E.RegExp.empty }, .loc = loc };
+
+                            const value_i = indexOfPropertyByName(props, "value") orelse {
+                                self.log.addError(self.p.source, loc, "<regex> should have a \"value\" prop") catch unreachable;
+                                self.args.append(invalid_value) catch unreachable;
+                                return true;
+                            };
+
+                            const value = props[value_i].value orelse invalid_value;
+
+                            switch (value.data) {
+                                .e_string => |str| {
+                                    self.args.appendAssumeCapacity(Expr.alloc(self.allocator, E.RegExp, E.RegExp{ .value = str.utf8 }, value.loc));
+                                },
+                                .e_reg_exp => {
+                                    self.args.appendAssumeCapacity(value);
+                                },
+                                .e_missing, .e_null, .e_undefined => {
+                                    self.args.appendAssumeCapacity(invalid_value);
+                                },
+                                // these ones are not statically analyzable so we just leave them in as-is
+                                .e_if, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
+                                    self.args.appendAssumeCapacity(self.p.visitExpr(value));
+                                },
+                                // everything else is invalid
+                                else => {
+                                    self.log.addError(self.p.source, value.loc, "<regex value> should be a string, jsx element, identifier, index, call, private identifier, or dot expression") catch unreachable;
+                                    self.args.appendAssumeCapacity(invalid_value);
+                                },
+                            }
+
+                            return true;
+                        },
+                        // Tag.e_jsx_element => unreachable,
+                        // Tag.e_identifier => {
+                        //     // self.args.ensureUnusedCapacity(2) catch unreachable;
+                        //     Global.notimpl();
+                        // },
+                        // Tag.e_import_identifier => {
+                        //     Global.notimpl();
+                        // },
+                        // Tag.e_private_identifier => {
+                        //     Global.notimpl();
+                        // },
+
+                        // Tag.e_unary => {
+
+                        // },
+                        // Tag.e_binary => {},
+
+                        // Tag.e_function => {},
+                        // Tag.e_new_target => {},
+                        // Tag.e_import_meta => {},
+                        // Tag.e_call => {},
+                        // Tag.e_dot => {},
+                        // Tag.e_index => {},
+                        // Tag.e_arrow => {},
+
+                        // Tag.e_spread => {},
+
+                        // Tag.e_template_part => {},
+                        // Tag.e_template => {},
+                        // Tag.e_regex => {},
+                        // Tag.e_await => {},
+                        // Tag.e_yield => {},
+                        // Tag.e_if => {},
+                        // Tag.e_import => {},
+
+                        // Tag.e_class => {},
+                        // Tag.e_require => {},
+                        // Tag.s_import => {},
+
+                        // Tag.s_block => {},
+
+                        // The valueless ones
+                        Tag.e_super, Tag.e_null, Tag.e_undefined, Tag.e_missing, Tag.inline_true, Tag.inline_false, Tag.e_this => {
+                            self.args.append(Expr{ .loc = loc, .data = Tag.ids.get(tag) }) catch unreachable;
+                        },
+                        else => Global.panic("Tag \"{s}\" is not implemented yet.", .{@tagName(tag)}),
+                    }
+
+                    return true;
+                }
+
+                pub fn writeFunctionCall(self: *JSXWriter, element: E.JSXElement) Expr {
+                    if (element.tag) |tag_expr| {
+                        switch (tag_expr.data) {
+                            .e_string => |str| {
+                                self.p.recordUsage(self.bun_jsx_ref);
+                                _ = self.writeElement(element);
+                                var call_args = self.p.allocator.alloc(Expr, 1) catch unreachable;
+                                call_args[0] = Expr.alloc(self.p.allocator, E.Array, E.Array{ .items = self.args.items }, tag_expr.loc);
+
+                                return Expr.alloc(
+                                    self.p.allocator,
+                                    E.Call,
+                                    E.Call{
+                                        .target = Expr{
+                                            .data = .{
+                                                .e_identifier = self.bun_identifier,
+                                            },
+                                            .loc = tag_expr.loc,
+                                        },
+                                        .can_be_unwrapped_if_unused = true,
+                                        .args = call_args,
+                                    },
+                                    tag_expr.loc,
+                                );
+                            },
+                            else => Global.panic("Not implemented yet top-level jsx element: {s}", .{@tagName(tag_expr.data)}),
+                        }
+                    }
+
+                    return Expr{ .data = .{ .e_missing = .{} }, .loc = logger.Loc.Empty };
+                }
+
+                pub fn writeRootElement(self: JSXWriter, element: E.JSXElement) Expr {
+                    var tag = element.tag orelse E.Array{ .items = &.{} };
+                    switch (tag.data) {
+                        .e_string, .e_array => {},
+                        else => {},
+                    }
+                }
+
+                fn writeElementWithValidTagList(self: *JSXWriter, element: E.JSXElement, comptime valid_tags: Tag.Validator.List) bool {
+                    const tag_expr = element.tag orelse return false;
+                    if (tag_expr.data != .e_string) return false;
+                    const str = tag_expr.data.e_string;
+                    var p = self.p;
+
+                    const node_type: JSNode.Tag = JSNode.Tag.names.get(str.utf8) orelse {
+                        if (!str.isUTF8()) {
+                            self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid", .{strings.toUTF8Alloc(self.p.allocator, str.value)}) catch unreachable;
+                        } else {
+                            self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid", .{str.utf8}) catch unreachable;
+                        }
+                        return false;
+                    };
+
+                    if (!valid_tags.get(node_type)) {
+                        self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid here", .{str.utf8}) catch unreachable;
+                    }
+
+                    return self.writeNodeType(node_type, element.properties, element.children, tag_expr.loc);
+                }
+
+                pub fn writeElement(self: *JSXWriter, element: E.JSXElement) bool {
+                    const tag_expr = element.tag orelse return false;
+                    if (tag_expr.data != .e_string) return false;
+                    const str = tag_expr.data.e_string;
+                    var p = self.p;
+
+                    const node_type: JSNode.Tag = JSNode.Tag.names.get(str.utf8) orelse {
+                        if (!str.isUTF8()) {
+                            self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid", .{strings.toUTF8Alloc(self.p.allocator, str.value)}) catch unreachable;
+                        } else {
+                            self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid", .{str.utf8}) catch unreachable;
+                        }
+                        return false;
+                    };
+
+                    return self.writeNodeType(node_type, element.properties, element.children, tag_expr.loc);
+                }
+            };
+        }
+
+        pub const Writer = struct {
+            log: *logger.Log,
+            exception: JSCBase.ExceptionValueRef = null,
+            ctx: js.JSContextRef,
+            errored: bool = false,
+            allocator: *std.mem.Allocator,
+            loc: logger.Loc,
+            args_value: JSC.JSValue,
+            args_i: u32 = 0,
+            args_len: u32 = 0,
+
+            pub inline fn eatArg(this: *Writer) ?JSC.JSValue {
+                if (this.args_i >= this.args_len) return null;
+                const i = this.args_i;
+                this.args_i += 1;
+                return JSC.JSObject.getIndex(this.args_value, JavaScript.VirtualMachine.vm.global, i);
+            }
+
+            pub inline fn peekArg(this: *Writer) ?JSC.JSValue {
+                if (this.args_i >= this.args_len) return null;
+                return JSC.JSObject.getIndex(this.args_value, JavaScript.VirtualMachine.vm.global, this.args_i);
+            }
+
+            pub inline fn nextJSValue(this: *Writer) ?JSC.JSValue {
+                return this.eatArg();
+            }
+
+            pub const TagOrJSNode = union(TagOrNodeType) {
+                tag: JSNode.Tag,
+                node: JSNode,
+                invalid: void,
+
+                pub const TagOrNodeType = enum {
+                    tag,
+                    node,
+                    invalid,
+                };
+
+                pub fn fromJSValueRefNoValidate(ctx: js.JSContextRef, value: js.JSValueRef) TagOrJSNode {
+                    switch (js.JSValueGetType(ctx, value)) {
+                        js.JSType.kJSTypeNumber => {
+                            const tag_int = @floatToInt(u8, JSC.JSValue.fromRef(value).asNumber());
+                            if (tag_int < Tag.min_tag or tag_int > Tag.max_tag) {
+                                return TagOrJSNode{ .invalid = .{} };
+                            }
+                            return TagOrJSNode{ .tag = @intToEnum(JSNode.Tag, tag_int) };
+                        },
+                        js.JSType.kJSTypeObject => {
+                            if (JSCBase.GetJSPrivateData(JSNode, value)) |node| {
+                                return TagOrJSNode{ .node = node.* };
+                            }
+
+                            return TagOrJSNode{ .invalid = .{} };
+                        },
+                        else => {
+                            return TagOrJSNode{ .invalid = .{} };
+                        },
+                    }
+                }
+
+                pub fn fromJSValueRef(writer: *Writer, ctx: js.JSContextRef, value: js.JSValueRef) TagOrJSNode {
+                    switch (js.JSValueGetType(ctx, value)) {
+                        js.JSType.kJSTypeNumber => {
+                            const tag_int = @floatToInt(u8, JSC.JSValue.fromRef(value).asNumber());
+                            if (tag_int < Tag.min_tag or tag_int > Tag.max_tag) {
+                                throwTypeError(ctx, "Node type has invalid value", writer.exception);
+                                writer.errored = true;
+                                return TagOrJSNode{ .invalid = .{} };
+                            }
+                            return TagOrJSNode{ .tag = @intToEnum(JSNode.Tag, tag_int) };
+                        },
+                        js.JSType.kJSTypeObject => {
+                            if (JSCBase.GetJSPrivateData(JSNode, value)) |node| {
+                                return TagOrJSNode{ .node = node.* };
+                            }
+
+                            return TagOrJSNode{ .invalid = .{} };
+                        },
+                        else => {
+                            throwTypeError(writer.ctx, "Invalid Bun AST", writer.exception);
+                            return TagOrJSNode{ .invalid = .{} };
+                        },
+                    }
+                }
+
+                pub fn fromJSValue(writer: *Writer, value: JSC.JSValue) TagOrJSNode {
+                    return fromJSValueRef(writer, JavaScript.VirtualMachine.vm.global.ref(), value.asRef());
+                }
+            };
+
+            fn writeProperty(writer: *Writer, property: *G.Property) bool {
+
+                // Property is
+                // value
+                // initializer
+                // if property value is an e.spread, then key is skipped
+                // key
+
+                // value is first
+                var expect_key = true;
+                switch (TagOrJSNode.fromJSValue(writer, writer.eatArg() orelse return false)) {
+                    TagOrJSNode.tag => |tag| {
+                        var expr: Expr = Expr{ .loc = writer.loc, .data = .{ .e_null = E.Null{} } };
+
+                        if (!writer.writeFromJSWithTagInExpr(tag, &expr)) return false;
+                        property.value = switch (expr.data) {
+                            .e_missing, .e_undefined => null,
+                            else => expr,
+                        };
+                        property.flags.is_spread = expr.data == .e_spread;
+                        expect_key = property.value == null or !property.flags.is_spread;
+                    },
+                    TagOrJSNode.node => |node| {
+                        const expr = node.toExpr();
+                        property.value = switch (expr.data) {
+                            .e_missing, .e_undefined => null,
+                            else => expr,
+                        };
+                        property.flags.is_spread = expr.data == .e_spread;
+                        expect_key = property.value == null or !property.flags.is_spread;
+                    },
+                    TagOrJSNode.invalid => {
+                        return false;
+                    },
+                }
+
+                switch (TagOrJSNode.fromJSValue(writer, writer.eatArg() orelse return false)) {
+                    TagOrJSNode.tag => |tag| {
+                        var expr: Expr = Expr{ .loc = writer.loc, .data = .{ .e_null = E.Null{} } };
+
+                        if (!writer.writeFromJSWithTagInExpr(tag, &expr)) return false;
+                        property.initializer = switch (expr.data) {
+                            .e_missing, .e_undefined => null,
+                            else => expr,
+                        };
+                    },
+                    TagOrJSNode.node => |node| {
+                        const expr = node.toExpr();
+                        property.initializer = switch (expr.data) {
+                            .e_missing, .e_undefined => null,
+                            else => expr,
+                        };
+                    },
+                    TagOrJSNode.invalid => {
+                        return false;
+                    },
+                }
+
+                if (expect_key) {
+                    var next_arg = writer.peekArg() orelse return false;
+                    // its okay for property keys to literally be strings
+                    // <property name="foo">
+                    if (next_arg.isString()) {
+                        var expr: Expr = Expr{ .loc = writer.loc, .data = .{ .e_string = &E.String.empty } };
+                        if (!writer.writeFromJSWithTagInExpr(JSNode.Tag.e_string, &expr)) return false;
+                        property.key = expr;
+                    } else {
+                        switch (TagOrJSNode.fromJSValue(writer, writer.eatArg() orelse return false)) {
+                            TagOrJSNode.tag => |tag| {
+                                var expr: Expr = Expr{ .loc = writer.loc, .data = .{ .e_null = E.Null{} } };
+                                if (!writer.writeFromJSWithTagInExpr(tag, &expr)) return false;
+                                property.key = expr;
+                            },
+                            TagOrJSNode.node => |node| {
+                                property.key = node.toExpr();
+                            },
+                            TagOrJSNode.invalid => {
+                                return false;
+                            },
+                        }
+                    }
+                }
+
+                return true;
+            }
+
+            fn writeFromJSWithTagInExpr(writer: *Writer, tag: JSNode.Tag, expr: *Expr) bool {
+                switch (tag) {
+                    .e_array => {
+                        // var e_array: E.Array = E.Array{ .items = writer.allocator.alloc(E.Array, args.len) catch return false };
+                        var count = (writer.nextJSValue() orelse return false).toU16();
+                        var i: u16 = 0;
+                        var items = ExprList.initCapacity(writer.allocator, count) catch unreachable;
+
+                        while (i < count) {
+                            var nextArg = writer.eatArg() orelse return false;
+                            if (js.JSValueIsArray(writer.ctx, nextArg.asRef())) {
+                                const extras = nextArg.getLengthOfArray(JavaScript.VirtualMachine.vm.global);
+                                count += std.math.max(@truncate(u16, extras), 1) - 1;
+                                items.ensureUnusedCapacity(extras) catch unreachable;
+                                items.expandToCapacity();
+                                var new_writer = writer.*;
+                                new_writer.args_i = 0;
+                                new_writer.args_len = extras;
+                                new_writer.args_value = nextArg;
+
+                                while (new_writer.nextJSValue()) |value| {
+                                    defer i += 1;
+                                    switch (TagOrJSNode.fromJSValue(&new_writer, value)) {
+                                        TagOrJSNode.tag => |tag_| {
+                                            if (!new_writer.writeFromJSWithTagInExpr(
+                                                tag_,
+                                                &items.items[i],
+                                            )) return false;
+                                        },
+                                        TagOrJSNode.node => |node_| {
+                                            const node: JSNode = node_;
+                                            switch (node.data) {
+                                                JSNode.Tag.s_import => |import| {
+                                                    return false;
+                                                },
+                                                else => {
+                                                    items.items[i] = node.toExpr();
+                                                },
+                                            }
+                                        },
+                                        TagOrJSNode.invalid => {
+                                            return false;
+                                        },
+                                    }
+                                }
+                            } else {
+                                defer i += 1;
+
+                                switch (TagOrJSNode.fromJSValue(writer, nextArg)) {
+                                    TagOrJSNode.tag => |tag_| {
+                                        if (!writer.writeFromJSWithTagInExpr(tag_, &items.items[i])) return false;
+                                    },
+                                    TagOrJSNode.node => |node_| {
+                                        const node: JSNode = node_;
+                                        switch (node.data) {
+                                            JSNode.Tag.s_import => |import| {
+                                                return false;
+                                            },
+                                            else => {
+                                                items.items[i] = node.toExpr();
+                                            },
+                                        }
+                                    },
+                                    TagOrJSNode.invalid => {
+                                        return false;
+                                    },
+                                }
+                            }
+                        }
+                        expr.* = Expr.alloc(writer.allocator, E.Array, E.Array{ .items = items.items[0..i] }, writer.loc);
+                        return true;
+                    },
+                    .e_boolean => {
+                        expr.* = Expr{ .loc = writer.loc, .data = .{ .e_boolean = .{
+                            .value = JSC.JSValue.toBoolean(writer.nextJSValue() orelse return false),
+                        } } };
+                        return true;
+                    },
+                    .inline_true => {
+                        expr.* = Expr{ .loc = writer.loc, .data = .{ .e_boolean = .{ .value = true } } };
+                        return true;
+                    },
+                    .inline_false => {
+                        expr.* = Expr{ .loc = writer.loc, .data = .{ .e_boolean = .{ .value = false } } };
+                        return true;
+                    },
+                    .e_null => {
+                        expr.* = Expr{ .loc = writer.loc, .data = .{ .e_null = E.Null{} } };
+                        return true;
+                    },
+                    .e_undefined => {
+                        expr.* = Expr{ .loc = writer.loc, .data = .{ .e_undefined = E.Undefined{} } };
+                        return true;
+                    },
+                    .e_number => {
+                        expr.* = Expr{
+                            .loc = writer.loc,
+                            .data = .{
+                                .e_number = .{
+                                    .value = JSC.JSValue.asNumber(writer.nextJSValue() orelse return false),
+                                },
+                            },
+                        };
+                        return true;
+                    },
+                    .e_string => {
+                        var wtf_string = JSC.JSValue.toWTFString(writer.nextJSValue() orelse return false, JavaScript.VirtualMachine.vm.global);
+                        if (wtf_string.isEmpty()) {
+                            expr.* = Expr{
+                                .loc = writer.loc,
+                                .data = .{
+                                    .e_string = &E.String.empty,
+                                },
+                            };
+                        } else if (wtf_string.is8Bit()) {
+                            expr.* = Expr.alloc(writer.allocator, E.String, E.String{ .utf8 = wtf_string.characters8()[0..wtf_string.length()] }, writer.loc);
+                        } else if (wtf_string.is16Bit()) {
+                            expr.* = Expr.alloc(writer.allocator, E.String, E.String{ .value = wtf_string.characters16()[0..wtf_string.length()] }, writer.loc);
+                        } else {
+                            unreachable;
+                        }
+                        return true;
+                    },
+                    .e_reg_exp => {
+                        var jsstring = js.JSValueToStringCopy(writer.ctx, (writer.eatArg() orelse return false).asRef(), writer.exception);
+                        defer js.JSStringRelease(jsstring);
+
+                        const len = js.JSStringGetLength(jsstring);
+                        var str = writer.allocator.alloc(u8, len + 1) catch unreachable;
+                        const outlen = js.JSStringGetUTF8CString(jsstring, str.ptr, len + 1);
+                        expr.* = Expr.alloc(writer.allocator, E.RegExp, E.RegExp{ .value = str[0..outlen] }, writer.loc);
+                        return true;
+                    },
+                    .e_object => {
+                        const len = (writer.nextJSValue() orelse return false).toU16();
+
+                        var properties = writer.allocator.alloc(G.Property, len) catch return false;
+                        var property_i: u16 = 0;
+
+                        while (property_i < properties.len) : (property_i += 1) {
+                            switch (TagOrJSNode.fromJSValue(writer, writer.eatArg() orelse return false)) {
+                                TagOrJSNode.tag => |tag_| {
+                                    if (tag_ != JSNode.Tag.g_property) return false;
+
+                                    if (!writer.writeProperty(
+                                        &properties[property_i],
+                                    )) return false;
+                                },
+                                TagOrJSNode.node => |node_| {
+                                    const node: JSNode = node_;
+                                    switch (node.data) {
+                                        .g_property => |property| {
+                                            properties[property_i] = property.*;
+                                        },
+                                        else => {
+                                            return false;
+                                        },
+                                    }
+                                },
+                                TagOrJSNode.invalid => {
+                                    return false;
+                                },
+                            }
+                        }
+
+                        return true;
+                    },
+                    else => {
+                        return false;
+                    },
+
+                    // .e_call => {},
+
+                    // .e_dot => {},
+                    // .e_index => {},
+                    // .e_identifier => {},
+                    // .e_import_identifier => {},
+
+                    // .e_spread => {},
+
+                    // .e_template_part => {},
+                    // .e_template => {},
+
+                    // .e_await => {},
+                    // .e_yield => {},
+                    // .e_if => {},
+                    // .e_import => {},
+                    // .e_this => {},
+                    // .e_class => {},
+                    // s_import => {},
+                }
+
+                return false;
+            }
+
+            pub fn writeFromJS(writer: *Writer) ?JSNode {
+                switch (TagOrJSNode.fromJSValueRef(writer, writer.ctx, (writer.eatArg() orelse return null).asRef())) {
+                    TagOrJSNode.tag => |tag| {
+                        var expr: Expr = Expr{ .loc = writer.loc, .data = .{ .e_null = E.Null{} } };
+
+                        if (!writer.writeFromJSWithTagInExpr(tag, &expr)) return null;
+                        return JSNode.initExpr(expr);
+                    },
+                    TagOrJSNode.node => |node| {
+                        return node;
+                    },
+                    TagOrJSNode.invalid => {
+                        return null;
+                    },
+                }
+            }
+        };
 
         // pub fn isInstanceOf(
         //     ctx: js.JSContextRef,
@@ -4245,71 +6116,100 @@ pub const Macro = struct {
         //     js.JSValueToNumber(ctx, value, exception);
         // }
 
-        pub fn toString(
-            this: *JSExpr,
+        fn throwTypeError(ctx: js.JSContextRef, comptime msg: string, exception: js.ExceptionRef) void {
+            JSCBase.JSError(JSCBase.getAllocator(ctx), msg, .{}, ctx, exception);
+        }
+
+        pub const BunJSXCallbackFunction = JSCBase.NewClass(
+            void,
+            .{ .name = "bunJSX" },
+            .{
+                .call = .{
+                    .rfn = createFromJavaScript,
+                    .ro = true,
+                },
+                .isNodeType = .{
+                    .rfn = isNodeType,
+                    .ro = true,
+                },
+            },
+            .{},
+        );
+
+        pub fn isNodeType(
+            this: void,
             ctx: js.JSContextRef,
             function: js.JSObjectRef,
             thisObject: js.JSObjectRef,
             arguments: []const js.JSValueRef,
             exception: js.ExceptionRef,
         ) js.JSObjectRef {
-            switch (this.expr.data) {
-                .e_string => |str| {
-                    if (str.isBlank()) {
-                        return JSC.ZigString.init("").toValue(JavaScript.VirtualMachine.vm.global).asRef();
-                    }
-
-                    if (str.isUTF8()) {
-                        return JSC.ZigString.init(str.utf8).toValue(JavaScript.VirtualMachine.vm.global).asRef();
-                    } else {
-                        return js.JSValueMakeString(ctx, js.JSStringCreateWithCharactersNoCopy(str.value.ptr, str.value.len));
-                    }
-                },
-                .e_template => |template| {
-                    const str = template.head;
-
-                    if (str.isBlank()) {
-                        return JSC.ZigString.init("").toValue(JavaScript.VirtualMachine.vm.global).asRef();
-                    }
-
-                    if (str.isUTF8()) {
-                        return JSC.ZigString.init(str.utf8).toValue(JavaScript.VirtualMachine.vm.global).asRef();
-                    } else {
-                        return js.JSValueMakeString(ctx, js.JSStringCreateWithCharactersNoCopy(str.value.ptr, str.value.len));
-                    }
-                },
-                else => {
-                    return JSC.ZigString.init("").toValue(JavaScript.VirtualMachine.vm.global).asRef();
-                },
+            if (arguments.len != 2) {
+                throwTypeError(ctx, "bunJSX.isNodeType() requires 2 arguments", exception);
+                return null;
             }
+
+            const TagOrNodeType = Writer.TagOrJSNode.TagOrNodeType;
+
+            const left = Writer.TagOrJSNode.fromJSValueRefNoValidate(ctx, arguments[0]);
+            const right = Writer.TagOrJSNode.fromJSValueRefNoValidate(ctx, arguments[1]);
+
+            if (left == TagOrNodeType.invalid or right == TagOrNodeType.invalid) {
+                return js.JSValueMakeBoolean(ctx, false);
+            }
+
+            if (left == TagOrNodeType.node and right == TagOrNodeType.node) {
+                return js.JSValueMakeBoolean(ctx, @as(Tag, left.node.data) == @as(Tag, right.node.data));
+            }
+
+            if (left == TagOrNodeType.node) {
+                return js.JSValueMakeBoolean(ctx, @as(Tag, left.node.data) == right.tag);
+            }
+
+            if (right == TagOrNodeType.node) {
+                return js.JSValueMakeBoolean(ctx, @as(Tag, right.node.data) == left.tag);
+            }
+
+            unreachable;
         }
 
-        pub fn getTag(
-            this: *JSExpr,
+        pub fn createFromJavaScript(
+            this: void,
             ctx: js.JSContextRef,
-            thisObject: js.JSValueRef,
-            prop: js.JSStringRef,
+            function: js.JSObjectRef,
+            thisObject: js.JSObjectRef,
+            arguments: []const js.JSValueRef,
             exception: js.ExceptionRef,
         ) js.JSObjectRef {
-            return JSC.JSValue.jsNumberFromU16(@intCast(u16, @enumToInt(std.meta.activeTag(this.expr.data)))).asRef();
-        }
-        pub fn getTagName(
-            this: *JSExpr,
-            ctx: js.JSContextRef,
-            thisObject: js.JSValueRef,
-            prop: js.JSStringRef,
-            exception: js.ExceptionRef,
-        ) js.JSObjectRef {
-            return JSC.ZigString.init(@tagName(this.expr.data)).toValue(JavaScript.VirtualMachine.vm.global).asRef();
-        }
-        pub fn getPosition(
-            this: *JSExpr,
-            ctx: js.JSContextRef,
-            thisObject: js.JSValueRef,
-            prop: js.JSStringRef,
-            exception: js.ExceptionRef,
-        ) js.JSObjectRef {
-            return JSC.JSValue.jsNumberFromInt32(this.expr.loc.start).asRef();
+            if (arguments.len != 1 or !js.JSValueIsArray(ctx, arguments[0])) {
+                throwTypeError(ctx, "bunJSX requires one array argument", exception);
+                return null;
+            }
+
+            js.JSValueProtect(ctx, arguments[0]);
+            defer Output.flush();
+            const args_value = JSC.JSValue.fromRef(arguments[0]);
+            var writer = Writer{
+                .log = JavaScript.VirtualMachine.vm.log,
+                .ctx = ctx,
+                .loc = logger.Loc.Empty,
+                .allocator = JSCBase.getAllocator(ctx),
+                .exception = exception,
+                .args_value = args_value,
+                .args_len = args_value.getLengthOfArray(JavaScript.VirtualMachine.vm.global),
+                .args_i = 0,
+                .errored = false,
+            };
+
+            if (writer.writeFromJS()) |node| {
+                var ptr = writer.allocator.create(JSNode) catch unreachable;
+                ptr.* = node;
+                var result = JSNode.Class.make(ctx, ptr);
+                js.JSValueProtect(ctx, result);
+                return result;
+            }
+
+            return null;
         }
     };
 
@@ -4366,8 +6266,8 @@ pub const Macro = struct {
     }
 
     pub const Runner = struct {
-        threadlocal var args_buf: [32]js.JSObjectRef = undefined;
-        threadlocal var expr_nodes_buf: [32]JSExpr = undefined;
+        threadlocal var args_buf: [2]js.JSObjectRef = undefined;
+        threadlocal var expr_nodes_buf: [1]JSNode = undefined;
         threadlocal var exception_holder: Zig.ZigException.Holder = undefined;
         pub fn run(
             macro: Macro,
@@ -4382,23 +6282,18 @@ pub const Macro = struct {
             if (comptime isDebug) Output.prettyln("<r><d>[macro]<r> call <d><b>{s}<r>", .{function_name});
 
             exception_holder = Zig.ZigException.Holder.init();
-            expr_nodes_buf[0] = JSExpr{ .expr = caller };
-            args_buf[0] = JSExpr.Class.make(
+            expr_nodes_buf[0] = JSNode.initExpr(caller);
+            args_buf[0] = JSNode.Class.make(
                 macro.vm.global.ref(),
                 &expr_nodes_buf[0],
             );
-            for (args) |arg, i| {
-                expr_nodes_buf[i + 1] = JSExpr{ .expr = arg };
-                args_buf[i + 1] =
-                    JSExpr.Class.make(
-                    macro.vm.global.ref(),
-                    &expr_nodes_buf[i + 1],
-                );
-            }
-            args_buf[args.len + 2] = null;
+
+            args_buf[1] = null;
 
             var macro_callback = macro.vm.macros.get(id) orelse return caller;
             var result = js.JSObjectCallAsFunctionReturnValue(macro.vm.global.ref(), macro_callback, null, args.len + 1, &args_buf);
+            js.JSValueProtect(macro.vm.global.ref(), result.asRef());
+            defer js.JSValueUnprotect(macro.vm.global.ref(), result.asRef());
             var promise = JSC.JSPromise.resolvedPromise(macro.vm.global, result);
             macro.vm.global.vm().drainMicrotasks();
 
@@ -4409,7 +6304,11 @@ pub const Macro = struct {
 
             const value = promise.result(macro.vm.global.vm());
 
-            return caller;
+            if (JSCBase.GetJSPrivateData(JSNode, value.asObjectRef())) |node| {
+                return node.toExpr();
+            } else {
+                return Expr{ .data = .{ .e_missing = .{} }, .loc = caller.loc };
+            }
         }
     };
 };

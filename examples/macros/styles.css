@@ -1,0 +1,26 @@
+html {
+  font-size: 4rem;
+  margin: 0;
+  padding: 0;
+  background-color: black;
+
+  color: rgb(0, 255, 0);
+  font-family: "Courier";
+}
+
+body {
+  margin: 48px auto;
+  text-align: center;
+}
+
+.Line {
+  font-size: 0.5rem;
+  font-family: monospace;
+}
+
+.Lines {
+  text-align: left;
+  margin: 0 auto;
+  max-width: fit-content;
+  line-height: 1.5;
+}

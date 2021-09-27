@@ -437,11 +437,11 @@ pub fn index(self: string, str: string) i32 {
     }
 }
 
-pub fn eqlUtf16(comptime self: string, other: JavascriptString) bool {
+pub fn eqlUtf16(comptime self: string, other: []const u16) bool {
     return std.mem.eql(u16, std.unicode.utf8ToUtf16LeStringLiteral(self), other);
 }
 
-pub fn toUTF8Alloc(allocator: *std.mem.Allocator, js: JavascriptString) !string {
+pub fn toUTF8Alloc(allocator: *std.mem.Allocator, js: []const u16) !string {
     var temp: [4]u8 = undefined;
     var list = std.ArrayList(u8).initCapacity(allocator, js.len) catch unreachable;
     var i: usize = 0;
@@ -461,7 +461,7 @@ pub fn toUTF8Alloc(allocator: *std.mem.Allocator, js: JavascriptString) !string 
 }
 
 // Check utf16 string equals utf8 string without allocating extra memory
-pub fn utf16EqlString(text: []u16, str: string) bool {
+pub fn utf16EqlString(text: []const u16, str: string) bool {
     if (text.len > str.len) {
         // Strings can't be equal if UTF-16 encoding is longer than UTF-8 encoding
         return false;
@@ -603,7 +603,7 @@ pub fn trim(slice: anytype, values_to_strip: []const u8) @TypeOf(slice) {
     return slice[begin..end];
 }
 
-pub fn containsNonBmpCodePointUTF16(_text: JavascriptString) bool {
+pub fn containsNonBmpCodePointUTF16(_text: []const u16) bool {
     const n = _text.len;
     if (n > 0) {
         var i: usize = 0;

@@ -41,7 +41,7 @@ pub const JSObject = extern struct {
         return create(global, length, creator, Type.call);
     }
 
-    pub fn getIndex(this: *JSObject, globalThis: *JSGlobalObject, i: u32) JSValue {
+    pub fn getIndex(this: JSValue, globalThis: *JSGlobalObject, i: u32) JSValue {
         return cppFn("getIndex", .{
             this,
             globalThis,
@@ -98,6 +98,10 @@ pub const ZigString = extern struct {
 
     pub fn init(slice_: []const u8) ZigString {
         return ZigString{ .ptr = slice_.ptr, .len = slice_.len };
+    }
+
+    pub inline fn toRef(slice_: []const u8, global: *JSGlobalObject) C_API.JSValueRef {
+        return init(slice_).toValue(global).asRef();
     }
 
     pub const Empty = ZigString{ .ptr = "", .len = 0 };
@@ -1076,6 +1080,30 @@ pub const URL = extern struct {
     pub const Extern = [_][]const u8{ "fromFileSystemPath", "fromString", "isEmpty", "isValid", "protocol", "encodedUser", "encodedPassword", "host", "path", "lastPathComponent", "query", "fragmentIdentifier", "queryWithLeadingQuestionMark", "fragmentIdentifierWithLeadingNumberSign", "stringWithoutQueryOrFragmentIdentifier", "stringWithoutFragmentIdentifier", "protocolHostAndPort", "hostAndPort", "user", "password", "fileSystemPath", "setProtocol", "setHost", "setHostAndPort", "setUser", "setPassword", "setPath", "setQuery", "truncatedForUseAsBase" };
 };
 
+pub const JSArrayIterator = struct {
+    i: u32 = 0,
+    len: u32 = 0,
+    array: JSValue,
+    global: *JSGlobalObject,
+
+    pub fn init(value: JSValue, global: *JSGlobalObject) JSArrayIterator {
+        return .{
+            .array = value,
+            .global = global,
+            .len = value.getLengthOfArray(global),
+        };
+    }
+
+    pub fn next(this: *JSArrayIterator) ?JSValue {
+        if (!(this.i < this.len)) {
+            return null;
+        }
+        const i = this.i;
+        this.i += 1;
+        return JSObject.getIndex(this.array, this.global, i);
+    }
+};
+
 pub const String = extern struct {
     pub const shim = Shimmer("WTF", "String", @This());
     bytes: shim.Bytes,
@@ -1224,6 +1252,10 @@ pub const JSValue = enum(i64) {
             str,
             strings_count,
         });
+    }
+
+    pub inline fn arrayIterator(this: JSValue, global: *JSGlobalObject) JSArrayIterator {
+        return JSArrayIterator.init(this, global);
     }
 
     pub fn jsNumberFromDouble(i: f64) JSValue {
@@ -1411,6 +1443,17 @@ pub const JSValue = enum(i64) {
         });
     }
 
+    pub inline fn toU16(this: JSValue) u36 {
+        return @intCast(u16, this.toInt32());
+    }
+
+    pub fn getLengthOfArray(this: JSValue, globalThis: *JSGlobalObject) u32 {
+        return cppFn("getLengthOfArray", .{
+            this,
+            globalThis,
+        });
+    }
+
     pub fn isAggregateError(this: JSValue, globalObject: *JSGlobalObject) bool {
         return cppFn("isAggregateError", .{ this, globalObject });
     }
@@ -1427,11 +1470,11 @@ pub const JSValue = enum(i64) {
     }
 
     pub inline fn asRef(this: JSValue) C_API.JSValueRef {
-        return @intToPtr(C_API.JSValueRef, @intCast(usize, @enumToInt(this)));
+        return @intToPtr(C_API.JSValueRef, @bitCast(usize, @enumToInt(this)));
     }
 
     pub inline fn fromRef(this: C_API.JSValueRef) JSValue {
-        return @intToEnum(JSValue, @intCast(i64, @ptrToInt(this)));
+        return @intToEnum(JSValue, @bitCast(i64, @ptrToInt(this)));
     }
 
     pub inline fn asObjectRef(this: JSValue) C_API.JSObjectRef {
@@ -1442,7 +1485,7 @@ pub const JSValue = enum(i64) {
         return @intToPtr(*c_void, @intCast(usize, @enumToInt(this)));
     }
 
-    pub const Extern = [_][]const u8{ "toZigString", "createStringArray", "createEmptyObject", "putRecord", "asPromise", "isClass", "getNameProperty", "getClassName", "getErrorsProperty", "toInt32", "toBoolean", "isInt32", "isIterable", "forEach", "isAggregateError", "toZigException", "isException", "toWTFString", "hasProperty", "getPropertyNames", "getDirect", "putDirect", "get", "getIfExists", "asString", "asObject", "asNumber", "isError", "jsNull", "jsUndefined", "jsTDZValue", "jsBoolean", "jsDoubleNumber", "jsNumberFromDouble", "jsNumberFromChar", "jsNumberFromU16", "jsNumberFromInt32", "jsNumberFromInt64", "jsNumberFromUint64", "isUndefined", "isNull", "isUndefinedOrNull", "isBoolean", "isAnyInt", "isUInt32AsAnyInt", "isInt32AsAnyInt", "isNumber", "isString", "isBigInt", "isHeapBigInt", "isBigInt32", "isSymbol", "isPrimitive", "isGetterSetter", "isCustomGetterSetter", "isObject", "isCell", "asCell", "toString", "toStringOrNull", "toPropertyKey", "toPropertyKeyValue", "toObject", "toString", "getPrototype", "getPropertyByPropertyName", "eqlValue", "eqlCell", "isCallable" };
+    pub const Extern = [_][]const u8{ "getLengthOfArray", "toZigString", "createStringArray", "createEmptyObject", "putRecord", "asPromise", "isClass", "getNameProperty", "getClassName", "getErrorsProperty", "toInt32", "toBoolean", "isInt32", "isIterable", "forEach", "isAggregateError", "toZigException", "isException", "toWTFString", "hasProperty", "getPropertyNames", "getDirect", "putDirect", "get", "getIfExists", "asString", "asObject", "asNumber", "isError", "jsNull", "jsUndefined", "jsTDZValue", "jsBoolean", "jsDoubleNumber", "jsNumberFromDouble", "jsNumberFromChar", "jsNumberFromU16", "jsNumberFromInt32", "jsNumberFromInt64", "jsNumberFromUint64", "isUndefined", "isNull", "isUndefinedOrNull", "isBoolean", "isAnyInt", "isUInt32AsAnyInt", "isInt32AsAnyInt", "isNumber", "isString", "isBigInt", "isHeapBigInt", "isBigInt32", "isSymbol", "isPrimitive", "isGetterSetter", "isCustomGetterSetter", "isObject", "isCell", "asCell", "toString", "toStringOrNull", "toPropertyKey", "toPropertyKeyValue", "toObject", "toString", "getPrototype", "getPropertyByPropertyName", "eqlValue", "eqlCell", "isCallable" };
 };
 
 pub const PropertyName = extern struct {

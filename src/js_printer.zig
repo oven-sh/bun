@@ -567,7 +567,7 @@ pub fn NewPrinter(
             std.fmt.formatFloatScientific(float, .{}, p) catch unreachable;
         }
 
-        pub fn printQuotedUTF16(e: *Printer, text: JavascriptString, quote: u8) void {
+        pub fn printQuotedUTF16(e: *Printer, text: []const u16, quote: u8) void {
             // utf-8 is a max of 4 bytes
             // we leave two extra chars for "\" and "u"
             var temp = [6]u8{ 0, 0, 0, 0, 0, 0 };
@@ -857,6 +857,9 @@ pub fn NewPrinter(
             }
         }
 
+        // noop for now
+        pub inline fn printPure(p: *Printer) void {}
+
         pub fn printQuotedUTF8(p: *Printer, str: string, allow_backtick: bool) void {
             const quote = p.bestQuoteCharForString(str, allow_backtick);
             p.print(quote);
@@ -872,7 +875,7 @@ pub fn NewPrinter(
             }
         }
 
-        pub inline fn canPrintIdentifierUTF16(p: *Printer, name: JavascriptString) bool {
+        pub inline fn canPrintIdentifierUTF16(p: *Printer, name: []const u16) bool {
             // TODO: fix this
             // this is commented out because something isn't quite right
             // the problem may lie in isIdentifierUTF16, or it may lie in how these are allocated.
@@ -930,7 +933,7 @@ pub fn NewPrinter(
                     }
 
                     if (has_pure_comment) {
-                        p.print("/* @__PURE__ */ ");
+                        p.printPure();
                     }
 
                     p.printSpaceBeforeIdentifier();
@@ -978,7 +981,7 @@ pub fn NewPrinter(
 
                     if (has_pure_comment) {
                         const was_stmt_start = p.stmt_start == p.writer.written;
-                        p.print("/* @__PURE__ */ ");
+                        p.printPure();
                         if (was_stmt_start) {
                             p.stmt_start = p.writer.written;
                         }
@@ -3707,7 +3710,7 @@ pub fn NewPrinter(
             p.print(identifier);
         }
 
-        pub fn printIdentifierUTF16(p: *Printer, name: JavascriptString) !void {
+        pub fn printIdentifierUTF16(p: *Printer, name: []const u16) !void {
             var temp = [_]u8{ 0, 0, 0, 0, 0, 0 };
             const n = name.len;
             var i: usize = 0;

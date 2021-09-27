@@ -22,6 +22,9 @@ const JSXFactoryName = "JSX";
 const JSXAutomaticName = "jsx_module";
 const MacroRefs = std.AutoArrayHashMap(Ref, u32);
 
+const BunJSX = struct {
+    pub threadlocal var bun_jsx_identifier: E.Identifier = undefined;
+};
 pub fn ExpressionTransposer(
     comptime Kontext: type,
     visitor: fn (ptr: *Kontext, arg: Expr, state: anytype) Expr,
@@ -87,6 +90,12 @@ pub const ImportScanner = struct {
             switch (stmt.data) {
                 .s_import => |st| {
                     var record: *ImportRecord = &p.import_records.items[st.import_record_index];
+
+                    if (strings.eqlComptime(record.path.namespace, "macro")) {
+                        record.is_unused = true;
+                        record.path.is_disabled = true;
+                        continue;
+                    }
 
                     // The official TypeScript compiler always removes unused imported
                     // symbols. However, we deliberately deviate from the official
@@ -1767,7 +1776,7 @@ pub const Parser = struct {
         ts: bool = false,
         keep_names: bool = true,
         omit_runtime_for_tests: bool = false,
-        ignore_dce_annotations: bool = true,
+        ignore_dce_annotations: bool = false,
         preserve_unused_imports_ts: bool = false,
         use_define_for_class_fields: bool = false,
         suppress_warnings_about_weird_code: bool = true,
@@ -1846,9 +1855,10 @@ pub const Parser = struct {
                     // - import 'foo';
                     // - import("foo")
                     // - require("foo")
-                    import_record.is_unused = import_record.kind == .stmt and
+                    import_record.is_unused = import_record.is_unused or
+                        (import_record.kind == .stmt and
                         !import_record.was_originally_bare_import and
-                        !import_record.calls_run_time_re_export_fn;
+                        !import_record.calls_run_time_re_export_fn);
                 }
 
                 var iter = scan_pass.used_symbols.iterator();
@@ -1996,7 +2006,7 @@ pub const Parser = struct {
         }
 
         // Auto-import JSX
-        if (p.options.jsx.parse) {
+        if (ParserType.jsx_transform_type == .react) {
             const jsx_filename_symbol = p.symbols.items[p.jsx_filename.ref.inner_index];
 
             {
@@ -2693,8 +2703,9 @@ const ImportItemForNamespaceMap = std.StringArrayHashMap(LocRef);
 pub fn NewParser(
     comptime js_parser_features: ParserFeatures,
 ) type {
+    const js_parser_jsx = if (FeatureFlags.force_macro) JSXTransformType.macro else js_parser_features.jsx;
     const is_typescript_enabled = js_parser_features.typescript;
-    const is_jsx_enabled = js_parser_features.jsx != .none;
+    const is_jsx_enabled = js_parser_jsx != .none;
     const only_scan_imports_and_do_not_visit = js_parser_features.scan_only;
     const is_react_fast_refresh_enabled = js_parser_features.react_fast_refresh;
 
@@ -2706,7 +2717,7 @@ pub fn NewParser(
     // public only because of Binding.ToExpr
     return struct {
         const P = @This();
-        pub const jsx_transform_type: JSXTransformType = js_parser_features.jsx;
+        pub const jsx_transform_type: JSXTransformType = js_parser_jsx;
         macro_refs: MacroRefs = undefined,
         allocator: *std.mem.Allocator,
         options: Parser.Options,
@@ -2795,6 +2806,8 @@ pub fn NewParser(
         jsx_classic: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
         // only applicable when is_react_fast_refresh_enabled
         jsx_refresh_runtime: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
+
+        bun_jsx_ref: Ref = Ref.None,
 
         // Imports (both ES6 and CommonJS) are tracked at the top level
         import_records: ImportRecordList,
@@ -3627,6 +3640,12 @@ pub fn NewParser(
                     }
                 },
                 .macro => {
+                    p.bun_jsx_ref = p.declareSymbol(.other, logger.Loc.Empty, "bunJSX") catch unreachable;
+                    BunJSX.bun_jsx_identifier = E.Identifier{
+                        .ref = p.bun_jsx_ref,
+                        .can_be_removed_if_unused = true,
+                        .call_can_be_unwrapped_if_unused = true,
+                    };
                     p.jsx_fragment = p.declareGeneratedSymbol(.other, "Fragment") catch unreachable;
                 },
                 else => {},
@@ -6150,6 +6169,7 @@ pub fn NewParser(
                         p.import_records.items[stmt.import_record_index].path.namespace = js_ast.Macro.namespace;
                         if (comptime only_scan_imports_and_do_not_visit) {
                             p.import_records.items[stmt.import_record_index].path.is_disabled = true;
+                            p.import_records.items[stmt.import_record_index].is_internal = true;
                         }
                     }
 
@@ -6157,10 +6177,12 @@ pub fn NewParser(
                         const name = p.loadNameFromRef(stmt.namespace_ref);
                         stmt.namespace_ref = try p.declareSymbol(.import, star, name);
                         if (comptime ParsePassSymbolUsageType != void) {
-                            p.parse_pass_symbol_uses.put(name, .{
-                                .ref = stmt.namespace_ref,
-                                .import_record_index = stmt.import_record_index,
-                            }) catch unreachable;
+                            if (!is_macro) {
+                                p.parse_pass_symbol_uses.put(name, .{
+                                    .ref = stmt.namespace_ref,
+                                    .import_record_index = stmt.import_record_index,
+                                }) catch unreachable;
+                            }
                         }
 
                         if (is_macro) {
@@ -6190,10 +6212,12 @@ pub fn NewParser(
                         try p.is_import_item.put(ref, true);
                         name_loc.ref = ref;
                         if (comptime ParsePassSymbolUsageType != void) {
-                            p.parse_pass_symbol_uses.put(name, .{
-                                .ref = ref,
-                                .import_record_index = stmt.import_record_index,
-                            }) catch unreachable;
+                            if (!is_macro) {
+                                p.parse_pass_symbol_uses.put(name, .{
+                                    .ref = ref,
+                                    .import_record_index = stmt.import_record_index,
+                                }) catch unreachable;
+                            }
                         }
 
                         if (is_macro) {
@@ -6212,10 +6236,12 @@ pub fn NewParser(
                             item_refs.putAssumeCapacity(item.alias, LocRef{ .loc = item.name.loc, .ref = ref });
 
                             if (comptime ParsePassSymbolUsageType != void) {
-                                p.parse_pass_symbol_uses.put(name, .{
-                                    .ref = ref,
-                                    .import_record_index = stmt.import_record_index,
-                                }) catch unreachable;
+                                if (!is_macro) {
+                                    p.parse_pass_symbol_uses.put(name, .{
+                                        .ref = ref,
+                                        .import_record_index = stmt.import_record_index,
+                                    }) catch unreachable;
+                                }
                             }
 
                             if (is_macro) {
@@ -9752,9 +9778,12 @@ pub fn NewParser(
                 },
                 .t_slash, .t_slash_equals => {
                     try p.lexer.scanRegExp();
+                    // always set regex_flags_start to null to make sure we don't accidentally use the wrong value later
+                    defer p.lexer.regex_flags_start = null;
                     const value = p.lexer.raw();
                     try p.lexer.next();
-                    return p.e(E.RegExp{ .value = value }, loc);
+
+                    return p.e(E.RegExp{ .value = value, .flags_offset = p.lexer.regex_flags_start }, loc);
                 },
                 .t_void => {
                     try p.lexer.next();
@@ -10154,7 +10183,11 @@ pub fn NewParser(
         // do people do <API_URL>?
         fn jsxStringsToMemberExpression(p: *P, loc: logger.Loc, ref: Ref) Expr {
             p.recordUsage(ref);
-            return p.e(E.Identifier{ .ref = ref }, loc);
+            return p.e(E.Identifier{
+                .ref = ref,
+                .can_be_removed_if_unused = true,
+                .call_can_be_unwrapped_if_unused = true,
+            }, loc);
         }
 
         // Note: The caller has already parsed the "import" keyword
@@ -10733,7 +10766,8 @@ pub fn NewParser(
             });
         }
 
-        fn visitExpr(p: *P, expr: Expr) Expr {
+        // public for JSNode.JSXWriter usage
+        pub fn visitExpr(p: *P, expr: Expr) Expr {
             if (only_scan_imports_and_do_not_visit) {
                 @compileError("only_scan_imports_and_do_not_visit must not run this.");
             }
@@ -10925,52 +10959,9 @@ pub fn NewParser(
                 .e_jsx_element => |e_| {
                     switch (comptime jsx_transform_type) {
                         .macro => {
-                            const IdentifierOrNodeType = union(Tag) {
-                                identifier: Expr,
-                                expression: Expr.Tag,
-                                pub const Tag = enum { identifier, expression };
-                            };
-                            const tag: IdentifierOrNodeType = tagger: {
-                                if (e_.tag) |_tag| {
-                                    switch (_tag.data) {
-                                        .e_string => |str| {
-                                            if (Expr.Tag.find(str.utf8)) |tagname| {
-                                                break :tagger IdentifierOrNodeType{ .expression = tagname };
-                                            }
-
-                                            p.log.addErrorFmt(
-                                                p.source,
-                                                expr.loc,
-                                                p.allocator,
-                                                "Invalid expression tag: \"<{s}>\". Valid tags are:\n" ++ Expr.Tag.valid_names_list ++ "\n",
-                                                .{str.utf8},
-                                            ) catch unreachable;
-                                            break :tagger IdentifierOrNodeType{ .identifier = p.visitExpr(_tag) };
-                                        },
-                                        else => {
-                                            break :tagger IdentifierOrNodeType{ .identifier = p.visitExpr(_tag) };
-                                        },
-                                    }
-                                } else {
-                                    break :tagger IdentifierOrNodeType{ .expression = Expr.Tag.e_array };
-                                }
-                            };
-
-                            for (e_.properties) |property, i| {
-                                if (property.kind != .spread) {
-                                    e_.properties[i].key = p.visitExpr(e_.properties[i].key.?);
-                                }
-
-                                if (property.value != null) {
-                                    e_.properties[i].value = p.visitExpr(e_.properties[i].value.?);
-                                }
-
-                                if (property.initializer != null) {
-                                    e_.properties[i].initializer = p.visitExpr(e_.properties[i].initializer.?);
-                                }
-                            }
-
-                            return p.e(E.Missing{}, expr.loc);
+                            const WriterType = js_ast.Macro.JSNode.NewJSXWriter(P);
+                            var writer = WriterType.initWriter(p, &BunJSX.bun_jsx_identifier);
+                            return writer.writeFunctionCall(e_.*);
                         },
                         .react => {
                             const tag: Expr = tagger: {
@@ -11056,6 +11047,7 @@ pub fn NewParser(
                                     // Either:
                                     // jsxDEV(type, arguments, key, isStaticChildren, source, self)
                                     // jsx(type, arguments, key)
+                                    const include_filename = FeatureFlags.include_filename_in_jsx and p.options.jsx.development;
                                     const args = p.allocator.alloc(Expr, if (p.options.jsx.development) @as(usize, 6) else @as(usize, 4)) catch unreachable;
                                     args[0] = tag;
                                     var props = List(G.Property).fromOwnedSlice(p.allocator, e_.properties);
@@ -11134,27 +11126,34 @@ pub fn NewParser(
                                             },
                                         };
 
-                                        var source = p.allocator.alloc(G.Property, 2) catch unreachable;
-                                        p.recordUsage(p.jsx_filename.ref);
-                                        source[0] = G.Property{
-                                            .key = Expr{ .loc = expr.loc, .data = Prefill.Data.Filename },
-                                            .value = p.e(E.Identifier{ .ref = p.jsx_filename.ref }, expr.loc),
-                                        };
+                                        if (include_filename) {
+                                            var source = p.allocator.alloc(G.Property, 2) catch unreachable;
+                                            p.recordUsage(p.jsx_filename.ref);
+                                            source[0] = G.Property{
+                                                .key = Expr{ .loc = expr.loc, .data = Prefill.Data.Filename },
+                                                .value = p.e(E.Identifier{
+                                                    .ref = p.jsx_filename.ref,
+                                                    .can_be_removed_if_unused = true,
+                                                }, expr.loc),
+                                            };
 
-                                        source[1] = G.Property{
-                                            .key = Expr{ .loc = expr.loc, .data = Prefill.Data.LineNumber },
-                                            .value = p.e(E.Number{ .value = @intToFloat(f64, expr.loc.start) }, expr.loc),
-                                        };
+                                            source[1] = G.Property{
+                                                .key = Expr{ .loc = expr.loc, .data = Prefill.Data.LineNumber },
+                                                .value = p.e(E.Number{ .value = @intToFloat(f64, expr.loc.start) }, expr.loc),
+                                            };
 
-                                        // Officially, they ask for columnNumber. But I don't see any usages of it in the code!
-                                        // source[2] = G.Property{
-                                        //     .key = Expr{ .loc = expr.loc, .data = Prefill.Data.ColumnNumber },
-                                        //     .value = p.e(E.Number{ .value = @intToFloat(f64, expr.loc.start) }, expr.loc),
-                                        // };
+                                            // Officially, they ask for columnNumber. But I don't see any usages of it in the code!
+                                            // source[2] = G.Property{
+                                            //     .key = Expr{ .loc = expr.loc, .data = Prefill.Data.ColumnNumber },
+                                            //     .value = p.e(E.Number{ .value = @intToFloat(f64, expr.loc.start) }, expr.loc),
+                                            // };
+                                            args[4] = p.e(E.Object{
+                                                .properties = source,
+                                            }, expr.loc);
+                                        } else {
+                                            args[4] = p.e(E.Object{}, expr.loc);
+                                        }
 
-                                        args[4] = p.e(E.Object{
-                                            .properties = source,
-                                        }, expr.loc);
                                         args[5] = Expr{ .data = Prefill.Data.This, .loc = expr.loc };
                                     }
 
@@ -11230,6 +11229,89 @@ pub fn NewParser(
                     const is_call_target = @as(Expr.Tag, p.call_target) == .e_binary and expr.data.e_binary == p.call_target.e_binary;
                     const is_stmt_expr = @as(Expr.Tag, p.stmt_expr_value) == .e_binary and expr.data.e_binary == p.stmt_expr_value.e_binary;
                     const was_anonymous_named_expr = p.isAnonymousNamedExpr(e_.right);
+
+                    if (comptime jsx_transform_type == .macro) {
+                        if (e_.op == Op.Code.bin_instanceof and (e_.right.data == .e_jsx_element or e_.left.data == .e_jsx_element)) {
+                            // foo instanceof <string />
+                            // ->
+                            // bunJSX.isNodeType(foo, 13)
+
+                            // <string /> instanceof foo
+                            // ->
+                            // bunJSX.isNodeType(foo, 13)
+                            var call_args = p.allocator.alloc(Expr, 2) catch unreachable;
+                            call_args[0] = e_.left;
+                            call_args[1] = e_.right;
+
+                            if (e_.right.data == .e_jsx_element) {
+                                const jsx_element = e_.right.data.e_jsx_element;
+                                if (jsx_element.tag) |tag| {
+                                    if (tag.data == .e_string) {
+                                        const tag_string = tag.data.e_string.utf8;
+                                        if (js_ast.Macro.JSNode.Tag.names.get(tag_string)) |node_tag| {
+                                            call_args[1] = Expr{ .loc = tag.loc, .data = js_ast.Macro.JSNode.Tag.ids.get(node_tag) };
+                                        } else {
+                                            p.log.addRangeErrorFmt(
+                                                p.source,
+                                                js_lexer.rangeOfIdentifier(p.source, tag.loc),
+                                                p.allocator,
+                                                "Invalid JSX tag: \"{s}\"",
+                                                .{tag_string},
+                                            ) catch unreachable;
+                                            return expr;
+                                        }
+                                    }
+                                } else {
+                                    call_args[1] = p.visitExpr(call_args[1]);
+                                }
+                            } else {
+                                call_args[1] = p.visitExpr(call_args[1]);
+                            }
+
+                            if (e_.left.data == .e_jsx_element) {
+                                const jsx_element = e_.left.data.e_jsx_element;
+                                if (jsx_element.tag) |tag| {
+                                    if (tag.data == .e_string) {
+                                        const tag_string = tag.data.e_string.utf8;
+                                        if (js_ast.Macro.JSNode.Tag.names.get(tag_string)) |node_tag| {
+                                            call_args[0] = Expr{ .loc = tag.loc, .data = js_ast.Macro.JSNode.Tag.ids.get(node_tag) };
+                                        } else {
+                                            p.log.addRangeErrorFmt(
+                                                p.source,
+                                                js_lexer.rangeOfIdentifier(p.source, tag.loc),
+                                                p.allocator,
+                                                "Invalid JSX tag: \"{s}\"",
+                                                .{tag_string},
+                                            ) catch unreachable;
+                                            return expr;
+                                        }
+                                    }
+                                } else {
+                                    call_args[0] = p.visitExpr(call_args[0]);
+                                }
+                            } else {
+                                call_args[0] = p.visitExpr(call_args[0]);
+                            }
+
+                            return p.e(
+                                E.Call{
+                                    .target = p.e(
+                                        E.Dot{
+                                            .name = "isNodeType",
+                                            .name_loc = expr.loc,
+                                            .target = p.e(BunJSX.bun_jsx_identifier, expr.loc),
+                                            .can_be_removed_if_unused = true,
+                                            .call_can_be_unwrapped_if_unused = true,
+                                        },
+                                        expr.loc,
+                                    ),
+                                    .args = call_args,
+                                    .can_be_unwrapped_if_unused = true,
+                                },
+                                expr.loc,
+                            );
+                        }
+                    }
 
                     e_.left = p.visitExprInOut(e_.left, ExprIn{
                         .assign_target = e_.op.binaryAssignTarget(),
@@ -11857,7 +11939,10 @@ pub fn NewParser(
 
                     var has_spread = false;
                     var has_proto = false;
-                    for (e_.properties) |*property, i| {
+                    var i: usize = 0;
+                    while (i < e_.properties.len) : (i += 1) {
+                        var property = &e_.properties[i];
+
                         if (property.kind != .spread) {
                             property.key = p.visitExpr(property.key orelse Global.panic("Expected property key", .{}));
                             const key = property.key.?;
@@ -11949,11 +12034,33 @@ pub fn NewParser(
                         .has_chain_parent = (e_.optional_chain orelse js_ast.OptionalChain.start) == .ccontinue,
                     });
 
-                    // TODO: wan about import namespace call
-                    var has_spread = false;
-                    for (e_.args) |*arg| {
-                        arg.* = p.visitExpr(arg.*);
-                        has_spread = has_spread or @as(Expr.Tag, arg.data) == .e_spread;
+                    // Copy the call side effect flag over if this is a known target
+                    switch (e_.target.data) {
+                        .e_identifier => |ident| {
+                            e_.can_be_unwrapped_if_unused = e_.can_be_unwrapped_if_unused or ident.call_can_be_unwrapped_if_unused;
+                        },
+                        .e_dot => |dot| {
+                            e_.can_be_unwrapped_if_unused = e_.can_be_unwrapped_if_unused or dot.call_can_be_unwrapped_if_unused;
+                        },
+                        else => {},
+                    }
+
+                    const is_macro_ref: bool = if (comptime FeatureFlags.is_macro_enabled and
+                        jsx_transform_type != .macro)
+                        e_.target.data == .e_import_identifier and p.macro_refs.contains(e_.target.data.e_import_identifier.ref)
+                    else
+                        false;
+
+                    {
+                        const old_ce = p.options.ignore_dce_annotations;
+                        defer p.options.ignore_dce_annotations = old_ce;
+                        if (is_macro_ref)
+                            p.options.ignore_dce_annotations = true;
+
+                        for (e_.args) |_, i| {
+                            const arg = e_.args[i];
+                            e_.args[i] = p.visitExpr(arg);
+                        }
                     }
 
                     if (e_.optional_chain == null and @as(Expr.Tag, e_.target.data) == .e_identifier and e_.target.data.e_identifier.ref.eql(p.require_ref)) {
@@ -11969,22 +12076,22 @@ pub fn NewParser(
                     }
 
                     if (comptime FeatureFlags.is_macro_enabled and jsx_transform_type != .macro) {
-                        if (e_.target.data == .e_import_identifier) {
+                        if (is_macro_ref) {
                             const ref = e_.target.data.e_import_identifier.ref;
-                            if (p.macro_refs.get(ref)) |import_record_id| {
-                                const name = p.symbols.items[ref.inner_index].original_name;
-                                const record = &p.import_records.items[import_record_id];
-                                return p.options.macro_context.call(
-                                    record.path.text,
-                                    p.source.path.sourceDir(),
-                                    p.log,
-                                    p.source,
-                                    record.range,
-                                    expr,
-                                    &.{},
-                                    name,
-                                ) catch return expr;
-                            }
+                            const import_record_id = p.macro_refs.get(ref).?;
+                            const name = p.symbols.items[ref.inner_index].original_name;
+                            const record = &p.import_records.items[import_record_id];
+                            const copied = Expr{ .loc = expr.loc, .data = .{ .e_call = e_ } };
+                            return p.options.macro_context.call(
+                                record.path.text,
+                                p.source.path.sourceDir(),
+                                p.log,
+                                p.source,
+                                record.range,
+                                copied,
+                                &.{},
+                                name,
+                            ) catch return expr;
                         }
                     }
 
@@ -12311,6 +12418,7 @@ pub fn NewParser(
                         .un_typeof, .un_void, .un_not => {
                             return p.exprCanBeRemovedIfUnused(&ex.value);
                         },
+
                         else => {},
                     }
                 },
@@ -12571,7 +12679,7 @@ pub fn NewParser(
                             data.value.expr = p.visitExpr(expr);
 
                             // // Optionally preserve the name
-                            data.value.expr = p.maybeKeepExprSymbolName(expr, "default", was_anonymous_named_expr);
+                            data.value.expr = p.maybeKeepExprSymbolName(data.value.expr, "default", was_anonymous_named_expr);
 
                             // Discard type-only export default statements
                             if (is_typescript_enabled) {
@@ -12594,7 +12702,7 @@ pub fn NewParser(
                             if (p.options.enable_bundling) {
                                 var export_default_args = p.allocator.alloc(Expr, 2) catch unreachable;
                                 export_default_args[0] = p.e(E.Identifier{ .ref = p.exports_ref }, expr.loc);
-                                export_default_args[1] = expr;
+                                export_default_args[1] = data.value.expr;
                                 stmts.append(p.s(S.SExpr{ .value = p.callRuntime(expr.loc, "__exportDefault", export_default_args) }, expr.loc)) catch unreachable;
                                 return;
                             }
@@ -15250,7 +15358,7 @@ const JSParserMacro = NewParser(.{
     .jsx = .macro,
 });
 const TSParserMacro = NewParser(.{
-    .jsx = .react,
+    .jsx = .macro,
     .typescript = true,
 });
 

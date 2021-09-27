@@ -133,6 +133,7 @@ pub const Bundler = struct {
         to.log = try allocator.create(logger.Log);
         to.log.* = logger.Log.init(allocator);
         to.setLog(to.log);
+        to.macro_context = null;
     }
 
     pub fn setLog(this: *ThisBundler, log: *logger.Log) void {

@@ -1034,6 +1034,7 @@ pub const E = struct {
 
     pub const Number = struct {
         value: f64,
+
         pub fn jsonStringify(self: *const Number, opts: anytype, o: anytype) !void {
             return try std.json.stringify(self.value, opts, o);
         }
@@ -1188,7 +1189,44 @@ pub const E = struct {
     pub const RegExp = struct {
         value: string,
 
+        // This exists for JavaScript bindings
+        // The RegExp constructor expects flags as a second argument.
+        // We want to avoid re-lexing the flags, so we store them here.
+        // This is the index of the first character in a flag, not the "/"
+        // /foo/gim
+        //      ^
+        flags_offset: ?u16 = null,
+
         pub var empty = RegExp{ .value = "" };
+
+        pub fn pattern(this: RegExp) string {
+            // rewind until we reach the /foo/gim
+            //                               ^
+            // should only ever be a single character
+            // but we're being cautious
+            if (this.flags_offset) |i_| {
+                var i = i_;
+                while (i > 0 and this.value[i] != '/') {
+                    i -= 1;
+                }
+
+                return this.value[0..i];
+            }
+
+            return this.value;
+        }
+
+        pub fn flags(this: RegExp) string {
+            // rewind until we reach the /foo/gim
+            //                               ^
+            // should only ever be a single character
+            // but we're being cautious
+            if (this.flags_offset) |i| {
+                return this.value[i..];
+            }
+
+            return "";
+        }
 
         pub fn jsonStringify(self: *const RegExp, opts: anytype, o: anytype) !void {
             return try std.json.stringify(self.value, opts, o);
@@ -4078,27 +4116,371 @@ pub const Macro = struct {
             },
             .{
                 .toString = .{
-                    .rfn = toString,
+                    .rfn = JSBindings.toString,
                 },
+
+                // .getAt = .{
+                //     .rfn = JSBindings.getAt,
+                // },
+                // .valueAt = .{
+                //     .rfn = JSBindings.valueAt,
+                // },
                 // .toNumber = .{
                 //     .rfn = toNumber,
                 // },
+                .get = .{
+                    .rfn = JSBindings.get,
+                    .ro = true,
+                },
             },
             .{
                 .tag = .{
-                    .get = getTag,
+                    .get = JSBindings.getTag,
                     .ro = true,
                 },
+
                 .tagName = .{
-                    .get = getTagName,
+                    .get = JSBindings.getTagName,
                     .ro = true,
                 },
                 .position = .{
-                    .get = getPosition,
+                    .get = JSBindings.getPosition,
+                    .ro = true,
+                },
+                .value = .{
+                    .get = JSBindings.getValue,
+                    .ro = true,
+                },
+                .arguments = .{
+                    .get = JSBindings.getCallArgs,
                     .ro = true,
                 },
             },
         );
+
+        pub fn makeFromExpr(allocator: *std.mem.Allocator, expr: Expr) js.JSObjectRef {
+            var ptr = allocator.create(JSNode) catch unreachable;
+            ptr.* = JSNode.initExpr(expr);
+            // If we look at JSObjectMake, we can see that all it does with the ctx value is lookup what the global object is
+            // so it's safe to just avoid that and do it here like this:
+            return JSNode.Class.make(JavaScript.VirtualMachine.vm.global.ref(), ptr);
+        }
+        pub const JSBindings = struct {
+            const getAllocator = JSCBase.getAllocator;
+
+            threadlocal var temporary_call_args_array: [256]js.JSValueRef = undefined;
+            pub fn getCallArgs(
+                this: *JSNode,
+                ctx: js.JSContextRef,
+                thisObject: js.JSValueRef,
+                prop: js.JSStringRef,
+                exception: js.ExceptionRef,
+            ) js.JSObjectRef {
+                const args = this.data.callArgs();
+
+                switch (args.len) {
+                    0 => return js.JSObjectMakeArray(ctx, 0, null, exception),
+                    1...255 => {
+                        var slice = temporary_call_args_array[0..args.len];
+                        for (slice) |_, i| {
+                            var node = JSCBase.getAllocator(ctx).create(JSNode) catch unreachable;
+                            node.* = JSNode.initExpr(args[i]);
+                            slice[i] = JSNode.Class.make(ctx, node);
+                        }
+                        return js.JSObjectMakeArray(ctx, args.len, slice.ptr, exception);
+                    },
+                    else => {
+                        Output.prettyErrorln("are you for real? {d} args to your call expression? that has to be a bug.\n", .{args.len});
+                        Output.flush();
+                        return js.JSObjectMakeArray(ctx, 0, null, exception);
+                    },
+                }
+            }
+
+            fn toNumberValue(this: *JSNode, number: E.Number) js.JSValueRef {
+                return JSC.JSValue.jsNumberFromDouble(number.value).asRef();
+            }
+
+            fn toStringValue(this: *JSNode, ctx: js.JSContextRef, str: E.String) js.JSObjectRef {
+                if (str.isBlank()) {
+                    return JSC.ZigString.init("").toValue(JavaScript.VirtualMachine.vm.global).asRef();
+                }
+
+                if (str.isUTF8()) {
+                    return JSC.ZigString.init(str.utf8).toValue(JavaScript.VirtualMachine.vm.global).asRef();
+                } else {
+                    return js.JSValueMakeString(ctx, js.JSStringCreateWithCharactersNoCopy(str.value.ptr, str.value.len));
+                }
+            }
+
+            threadlocal var regex_value_array: [2]js.JSValueRef = undefined;
+
+            fn toRegexValue(this: *JSNode, ctx: js.JSContextRef, regex: *E.RegExp, exception: js.ExceptionRef) js.JSObjectRef {
+                if (regex.value.len == 0) {
+                    return js.JSObjectMakeRegExp(ctx, 0, null, exception);
+                }
+
+                regex_value_array[0] = JSC.ZigString.init(regex.pattern()).toValue(JavaScript.VirtualMachine.vm.global).asRef();
+                regex_value_array[1] = JSC.ZigString.init(regex.flags()).toValue(JavaScript.VirtualMachine.vm.global).asRef();
+
+                return js.JSObjectMakeRegExp(ctx, 2, &regex_value_array, exception);
+            }
+
+            fn toArrayValue(this: *JSNode, ctx: js.JSContextRef, array: E.Array, exception: js.ExceptionRef) js.JSObjectRef {
+                if (array.items.len == 0) {
+                    return js.JSObjectMakeArray(ctx, 0, null, exception);
+                }
+
+                for (array.items) |expr, i| {
+                    var node = JSCBase.getAllocator(ctx).create(JSNode) catch unreachable;
+                    node.* = JSNode.initExpr(expr);
+                    temporary_call_args_array[i] = JSNode.Class.make(ctx, node);
+                }
+
+                return js.JSObjectMakeArray(ctx, array.items.len, &temporary_call_args_array, exception);
+            }
+
+            fn toArrayPrimitive(this: *JSNode, ctx: js.JSContextRef, array: E.Array, exception: js.ExceptionRef) js.JSObjectRef {
+                if (array.items.len == 0) {
+                    return js.JSObjectMakeArray(ctx, 0, null, exception);
+                }
+
+                var node: JSNode = undefined;
+                for (array.items) |expr, i| {
+                    node = JSNode.initExpr(expr);
+                    temporary_call_args_array[i] = toPrimitive(&node, ctx, exception);
+                }
+
+                return js.JSObjectMakeArray(ctx, array.items.len, temporary_call_args_array[0..array.items.len].ptr, exception);
+            }
+
+            fn toObjectValue(this: *JSNode, ctx: js.JSContextRef, obj: E.Object, exception: js.ExceptionRef) js.JSObjectRef {
+                if (obj.properties.len == 0) {
+                    return js.JSObjectMakeArray(ctx, 0, null, exception);
+                }
+
+                for (obj.properties) |*prop, i| {
+                    var node = JSCBase.getAllocator(ctx).create(JSNode) catch unreachable;
+                    node.* = JSNode{
+                        .data = .{
+                            .g_property = prop,
+                        },
+                        .loc = this.loc,
+                    };
+                    temporary_call_args_array[i] = JSNode.Class.make(ctx, node);
+                }
+
+                return js.JSObjectMakeArray(ctx, obj.properties.len, &temporary_call_args_array, exception);
+            }
+
+            fn toObjectPrimitive(this: *JSNode, ctx: js.JSContextRef, obj: E.Object, exception: js.ExceptionRef) js.JSObjectRef {
+                return toObjectValue(this, ctx, obj, exception);
+            }
+
+            fn toPropertyPrimitive(this: *JSNode, ctx: js.JSContextRef, prop: G.Property, exception: js.ExceptionRef) js.JSObjectRef {
+                var entries: [3]js.JSValueRef = undefined;
+
+                entries[0] = js.JSValueMakeUndefined(ctx);
+                entries[1] = entries[0];
+                entries[2] = entries[0];
+
+                var other: JSNode = undefined;
+
+                if (prop.key) |key| {
+                    other = JSNode.initExpr(key);
+                    entries[0] = toPrimitive(
+                        &other,
+                        ctx,
+                        exception,
+                    ) orelse js.JSValueMakeUndefined(ctx);
+                }
+
+                if (prop.value) |value| {
+                    other = JSNode.initExpr(value);
+                    entries[1] = toPrimitive(
+                        &other,
+                        ctx,
+                        exception,
+                    ) orelse js.JSValueMakeUndefined(ctx);
+                }
+
+                if (prop.initializer) |value| {
+                    other = JSNode.initExpr(value);
+                    entries[2] = toPrimitive(
+                        &other,
+                        ctx,
+                        exception,
+                    ) orelse js.JSValueMakeUndefined(ctx);
+                }
+
+                const out = js.JSObjectMakeArray(ctx, 3, &entries, exception);
+                return out;
+            }
+
+            pub fn toString(
+                this: *JSNode,
+                ctx: js.JSContextRef,
+                function: js.JSObjectRef,
+                thisObject: js.JSObjectRef,
+                arguments: []const js.JSValueRef,
+                exception: js.ExceptionRef,
+            ) js.JSObjectRef {
+                switch (this.data) {
+                    .e_string => |str| {
+                        return toStringValue(this, ctx, str.*);
+                    },
+                    .e_template => |template| {
+                        const str = template.head;
+
+                        if (str.isBlank()) {
+                            return JSC.ZigString.init("").toValue(JavaScript.VirtualMachine.vm.global).asRef();
+                        }
+
+                        if (str.isUTF8()) {
+                            return JSC.ZigString.init(str.utf8).toValue(JavaScript.VirtualMachine.vm.global).asRef();
+                        } else {
+                            return js.JSValueMakeString(ctx, js.JSStringCreateWithCharactersNoCopy(str.value.ptr, str.value.len));
+                        }
+                    },
+                    // .e_number => |number| {
+
+                    // },
+                    else => {
+                        return JSC.ZigString.init("").toValue(JavaScript.VirtualMachine.vm.global).asRef();
+                    },
+                }
+            }
+
+            fn toPrimitive(
+                this: *JSNode,
+                ctx: js.JSContextRef,
+                exception: js.ExceptionRef,
+            ) js.JSValueRef {
+                return @call(.{ .modifier = .always_inline }, toPrimitiveAllowRecursion, .{ this, ctx, exception, false });
+            }
+
+            fn toPrimitiveWithRecursion(
+                this: *JSNode,
+                ctx: js.JSContextRef,
+                exception: js.ExceptionRef,
+            ) js.JSValueRef {
+                return @call(.{ .modifier = .always_inline }, toPrimitiveAllowRecursion, .{ this, ctx, exception, true });
+            }
+
+            fn toPrimitiveAllowRecursion(this: *JSNode, ctx: js.JSContextRef, exception: js.ExceptionRef, comptime allow_recursion: bool) js.JSValueRef {
+                switch (this.data) {
+                    .e_string => |str| {
+                        return JSBindings.toStringValue(this, ctx, str.*);
+                    },
+                    .e_template => |template| {
+                        return JSBindings.toStringValue(this, ctx, template.head);
+                        // return JSBindings.toTemplatePrimitive(this, ctx, template.*);
+                    },
+                    .e_number => |number| {
+                        return JSBindings.toNumberValue(this, number);
+                    },
+                    .e_reg_exp => |regex| {
+                        return JSBindings.toRegexValue(this, ctx, regex, exception);
+                    },
+                    .e_object => |object| {
+                        if (comptime !allow_recursion) return js.JSValueMakeUndefined(ctx);
+                        return JSBindings.toObjectPrimitive(this, ctx, object.*, exception);
+                    },
+                    .e_array => |array| {
+                        if (comptime !allow_recursion) return js.JSValueMakeUndefined(ctx);
+                        return JSBindings.toArrayPrimitive(this, ctx, array.*, exception);
+                    },
+
+                    // Returns an Entry
+                    // [string, number | regex | object | string | null | undefined]
+                    .g_property => |property| {
+                        return JSBindings.toPropertyPrimitive(this, ctx, property.*, exception);
+                    },
+                    .e_null => {
+                        return js.JSValueMakeNull(ctx);
+                    },
+                    else => {
+                        return js.JSValueMakeUndefined(ctx);
+                    },
+                }
+            }
+
+            fn toValue(this: *JSNode, ctx: js.JSContextRef, exception: js.ExceptionRef) js.JSObjectRef {
+                switch (this.data) {
+                    .e_await => |aw| {
+                        return JSNode.makeFromExpr(getAllocator(ctx), aw.value);
+                    },
+                    .e_yield => |yi| {
+                        return JSNode.makeFromExpr(getAllocator(ctx), yi.value orelse return null);
+                    },
+                    .e_spread => |spread| {
+                        return JSNode.makeFromExpr(getAllocator(ctx), spread.value);
+                    },
+                    .e_reg_exp => |reg| {
+                        return JSC.ZigString.toRef(reg.value, JavaScript.VirtualMachine.vm.global);
+                    },
+
+                    .e_array => |array| {
+                        return toArrayValue(this, ctx, array.*, exception);
+                    },
+                    .e_object => |obj| {
+                        return toObjectValue(this, ctx, obj.*, exception);
+                    },
+                    else => {
+                        return null;
+                    },
+                }
+            }
+
+            pub fn getValue(
+                this: *JSNode,
+                ctx: js.JSContextRef,
+                thisObject: js.JSValueRef,
+                prop: js.JSStringRef,
+                exception: js.ExceptionRef,
+            ) js.JSObjectRef {
+                return toValue(this, ctx, exception) orelse return thisObject;
+            }
+
+            pub fn get(
+                this: *JSNode,
+                ctx: js.JSContextRef,
+                function: js.JSObjectRef,
+                thisObject: js.JSObjectRef,
+                arguments: []const js.JSValueRef,
+                exception: js.ExceptionRef,
+            ) js.JSObjectRef {
+                return toPrimitiveWithRecursion(this, ctx, exception) orelse return js.JSValueMakeUndefined(ctx);
+            }
+
+            pub fn getTag(
+                this: *JSNode,
+                ctx: js.JSContextRef,
+                thisObject: js.JSValueRef,
+                prop: js.JSStringRef,
+                exception: js.ExceptionRef,
+            ) js.JSObjectRef {
+                return JSC.JSValue.jsNumberFromU16(@intCast(u16, @enumToInt(std.meta.activeTag(this.data)))).asRef();
+            }
+            pub fn getTagName(
+                this: *JSNode,
+                ctx: js.JSContextRef,
+                thisObject: js.JSValueRef,
+                prop: js.JSStringRef,
+                exception: js.ExceptionRef,
+            ) js.JSObjectRef {
+                return JSC.ZigString.init(@tagName(this.data)).toValue(JavaScript.VirtualMachine.vm.global).asRef();
+            }
+            pub fn getPosition(
+                this: *JSNode,
+                ctx: js.JSContextRef,
+                thisObject: js.JSValueRef,
+                prop: js.JSStringRef,
+                exception: js.ExceptionRef,
+            ) js.JSObjectRef {
+                return JSC.JSValue.jsNumberFromInt32(this.loc.start).asRef();
+            }
+        };
 
         pub fn initExpr(this: Expr) JSNode {
             switch (this.data) {
@@ -4373,6 +4755,21 @@ pub const Macro = struct {
             s_block: *S.Block,
 
             g_property: *G.Property,
+
+            pub fn callArgs(this: Data) ExprNodeList {
+                if (this == .e_call)
+                    return this.e_call.args
+                else
+                    return &[_]Expr{};
+            }
+
+            pub fn booleanValue(this: Data) bool {
+                return switch (this) {
+                    .inline_false => false,
+                    .inline_true => true,
+                    .e_boolean => this.e_boolean.value,
+                };
+            }
         };
         pub const Tag = enum(u8) {
             e_array,
@@ -5316,6 +5713,28 @@ pub const Macro = struct {
                     invalid,
                 };
 
+                pub fn fromJSValueRefNoValidate(ctx: js.JSContextRef, value: js.JSValueRef) TagOrJSNode {
+                    switch (js.JSValueGetType(ctx, value)) {
+                        js.JSType.kJSTypeNumber => {
+                            const tag_int = @floatToInt(u8, JSC.JSValue.fromRef(value).asNumber());
+                            if (tag_int < Tag.min_tag or tag_int > Tag.max_tag) {
+                                return TagOrJSNode{ .invalid = .{} };
+                            }
+                            return TagOrJSNode{ .tag = @intToEnum(JSNode.Tag, tag_int) };
+                        },
+                        js.JSType.kJSTypeObject => {
+                            if (JSCBase.GetJSPrivateData(JSNode, value)) |node| {
+                                return TagOrJSNode{ .node = node.* };
+                            }
+
+                            return TagOrJSNode{ .invalid = .{} };
+                        },
+                        else => {
+                            return TagOrJSNode{ .invalid = .{} };
+                        },
+                    }
+                }
+
                 pub fn fromJSValueRef(writer: *Writer, ctx: js.JSContextRef, value: js.JSValueRef) TagOrJSNode {
                     switch (js.JSValueGetType(ctx, value)) {
                         js.JSType.kJSTypeNumber => {
@@ -5622,9 +6041,55 @@ pub const Macro = struct {
         pub const BunJSXCallbackFunction = JSCBase.NewClass(
             void,
             .{ .name = "bunJSX" },
-            .{ .call = .{ .rfn = createFromJavaScript } },
+            .{
+                .call = .{
+                    .rfn = createFromJavaScript,
+                    .ro = true,
+                },
+                .isNodeType = .{
+                    .rfn = isNodeType,
+                    .ro = true,
+                },
+            },
             .{},
         );
+
+        pub fn isNodeType(
+            this: void,
+            ctx: js.JSContextRef,
+            function: js.JSObjectRef,
+            thisObject: js.JSObjectRef,
+            arguments: []const js.JSValueRef,
+            exception: js.ExceptionRef,
+        ) js.JSObjectRef {
+            if (arguments.len != 2) {
+                throwTypeError(ctx, "bunJSX.isNodeType() requires 2 arguments", exception);
+                return null;
+            }
+
+            const TagOrNodeType = Writer.TagOrJSNode.TagOrNodeType;
+
+            const left = Writer.TagOrJSNode.fromJSValueRefNoValidate(ctx, arguments[0]);
+            const right = Writer.TagOrJSNode.fromJSValueRefNoValidate(ctx, arguments[1]);
+
+            if (left == TagOrNodeType.invalid or right == TagOrNodeType.invalid) {
+                return js.JSValueMakeBoolean(ctx, false);
+            }
+
+            if (left == TagOrNodeType.node and right == TagOrNodeType.node) {
+                return js.JSValueMakeBoolean(ctx, @as(Tag, left.node.data) == @as(Tag, right.node.data));
+            }
+
+            if (left == TagOrNodeType.node) {
+                return js.JSValueMakeBoolean(ctx, @as(Tag, left.node.data) == right.tag);
+            }
+
+            if (right == TagOrNodeType.node) {
+                return js.JSValueMakeBoolean(ctx, @as(Tag, right.node.data) == left.tag);
+            }
+
+            unreachable;
+        }
 
         pub fn createFromJavaScript(
             this: void,
@@ -5661,73 +6126,6 @@ pub const Macro = struct {
             }
 
             return null;
-        }
-
-        pub fn toString(
-            this: *JSNode,
-            ctx: js.JSContextRef,
-            function: js.JSObjectRef,
-            thisObject: js.JSObjectRef,
-            arguments: []const js.JSValueRef,
-            exception: js.ExceptionRef,
-        ) js.JSObjectRef {
-            switch (this.data) {
-                .e_string => |str| {
-                    if (str.isBlank()) {
-                        return JSC.ZigString.init("").toValue(JavaScript.VirtualMachine.vm.global).asRef();
-                    }
-
-                    if (str.isUTF8()) {
-                        return JSC.ZigString.init(str.utf8).toValue(JavaScript.VirtualMachine.vm.global).asRef();
-                    } else {
-                        return js.JSValueMakeString(ctx, js.JSStringCreateWithCharactersNoCopy(str.value.ptr, str.value.len));
-                    }
-                },
-                .e_template => |template| {
-                    const str = template.head;
-
-                    if (str.isBlank()) {
-                        return JSC.ZigString.init("").toValue(JavaScript.VirtualMachine.vm.global).asRef();
-                    }
-
-                    if (str.isUTF8()) {
-                        return JSC.ZigString.init(str.utf8).toValue(JavaScript.VirtualMachine.vm.global).asRef();
-                    } else {
-                        return js.JSValueMakeString(ctx, js.JSStringCreateWithCharactersNoCopy(str.value.ptr, str.value.len));
-                    }
-                },
-                else => {
-                    return JSC.ZigString.init("").toValue(JavaScript.VirtualMachine.vm.global).asRef();
-                },
-            }
-        }
-
-        pub fn getTag(
-            this: *JSNode,
-            ctx: js.JSContextRef,
-            thisObject: js.JSValueRef,
-            prop: js.JSStringRef,
-            exception: js.ExceptionRef,
-        ) js.JSObjectRef {
-            return JSC.JSValue.jsNumberFromU16(@intCast(u16, @enumToInt(std.meta.activeTag(this.data)))).asRef();
-        }
-        pub fn getTagName(
-            this: *JSNode,
-            ctx: js.JSContextRef,
-            thisObject: js.JSValueRef,
-            prop: js.JSStringRef,
-            exception: js.ExceptionRef,
-        ) js.JSObjectRef {
-            return JSC.ZigString.init(@tagName(this.data)).toValue(JavaScript.VirtualMachine.vm.global).asRef();
-        }
-        pub fn getPosition(
-            this: *JSNode,
-            ctx: js.JSContextRef,
-            thisObject: js.JSValueRef,
-            prop: js.JSStringRef,
-            exception: js.ExceptionRef,
-        ) js.JSObjectRef {
-            return JSC.JSValue.jsNumberFromInt32(this.loc.start).asRef();
         }
     };
 

@@ -1776,7 +1776,7 @@ pub const Parser = struct {
         ts: bool = false,
         keep_names: bool = true,
         omit_runtime_for_tests: bool = false,
-        ignore_dce_annotations: bool = true,
+        ignore_dce_annotations: bool = false,
         preserve_unused_imports_ts: bool = false,
         use_define_for_class_fields: bool = false,
         suppress_warnings_about_weird_code: bool = true,
@@ -3640,7 +3640,11 @@ pub fn NewParser(
                 },
                 .macro => {
                     p.bun_jsx_ref = p.declareSymbol(.other, logger.Loc.Empty, "bunJSX") catch unreachable;
-                    BunJSX.bun_jsx_identifier = E.Identifier{ .ref = p.bun_jsx_ref, .can_be_removed_if_unused = true };
+                    BunJSX.bun_jsx_identifier = E.Identifier{
+                        .ref = p.bun_jsx_ref,
+                        .can_be_removed_if_unused = true,
+                        .call_can_be_unwrapped_if_unused = true,
+                    };
                     p.jsx_fragment = p.declareGeneratedSymbol(.other, "Fragment") catch unreachable;
                 },
                 else => {},
@@ -9766,9 +9770,12 @@ pub fn NewParser(
                 },
                 .t_slash, .t_slash_equals => {
                     try p.lexer.scanRegExp();
+                    // always set regex_flags_start to null to make sure we don't accidentally use the wrong value later
+                    defer p.lexer.regex_flags_start = null;
                     const value = p.lexer.raw();
                     try p.lexer.next();
-                    return p.e(E.RegExp{ .value = value }, loc);
+
+                    return p.e(E.RegExp{ .value = value, .flags_offset = p.lexer.regex_flags_start }, loc);
                 },
                 .t_void => {
                     try p.lexer.next();
@@ -10168,7 +10175,11 @@ pub fn NewParser(
         // do people do <API_URL>?
         fn jsxStringsToMemberExpression(p: *P, loc: logger.Loc, ref: Ref) Expr {
             p.recordUsage(ref);
-            return p.e(E.Identifier{ .ref = ref }, loc);
+            return p.e(E.Identifier{
+                .ref = ref,
+                .can_be_removed_if_unused = true,
+                .call_can_be_unwrapped_if_unused = true,
+            }, loc);
         }
 
         // Note: The caller has already parsed the "import" keyword
@@ -11028,6 +11039,7 @@ pub fn NewParser(
                                     // Either:
                                     // jsxDEV(type, arguments, key, isStaticChildren, source, self)
                                     // jsx(type, arguments, key)
+                                    const include_filename = FeatureFlags.include_filename_in_jsx and p.options.jsx.development;
                                     const args = p.allocator.alloc(Expr, if (p.options.jsx.development) @as(usize, 6) else @as(usize, 4)) catch unreachable;
                                     args[0] = tag;
                                     var props = List(G.Property).fromOwnedSlice(p.allocator, e_.properties);
@@ -11106,27 +11118,34 @@ pub fn NewParser(
                                             },
                                         };
 
-                                        var source = p.allocator.alloc(G.Property, 2) catch unreachable;
-                                        p.recordUsage(p.jsx_filename.ref);
-                                        source[0] = G.Property{
-                                            .key = Expr{ .loc = expr.loc, .data = Prefill.Data.Filename },
-                                            .value = p.e(E.Identifier{ .ref = p.jsx_filename.ref }, expr.loc),
-                                        };
+                                        if (include_filename) {
+                                            var source = p.allocator.alloc(G.Property, 2) catch unreachable;
+                                            p.recordUsage(p.jsx_filename.ref);
+                                            source[0] = G.Property{
+                                                .key = Expr{ .loc = expr.loc, .data = Prefill.Data.Filename },
+                                                .value = p.e(E.Identifier{
+                                                    .ref = p.jsx_filename.ref,
+                                                    .can_be_removed_if_unused = true,
+                                                }, expr.loc),
+                                            };
 
-                                        source[1] = G.Property{
-                                            .key = Expr{ .loc = expr.loc, .data = Prefill.Data.LineNumber },
-                                            .value = p.e(E.Number{ .value = @intToFloat(f64, expr.loc.start) }, expr.loc),
-                                        };
+                                            source[1] = G.Property{
+                                                .key = Expr{ .loc = expr.loc, .data = Prefill.Data.LineNumber },
+                                                .value = p.e(E.Number{ .value = @intToFloat(f64, expr.loc.start) }, expr.loc),
+                                            };
 
-                                        // Officially, they ask for columnNumber. But I don't see any usages of it in the code!
-                                        // source[2] = G.Property{
-                                        //     .key = Expr{ .loc = expr.loc, .data = Prefill.Data.ColumnNumber },
-                                        //     .value = p.e(E.Number{ .value = @intToFloat(f64, expr.loc.start) }, expr.loc),
-                                        // };
+                                            // Officially, they ask for columnNumber. But I don't see any usages of it in the code!
+                                            // source[2] = G.Property{
+                                            //     .key = Expr{ .loc = expr.loc, .data = Prefill.Data.ColumnNumber },
+                                            //     .value = p.e(E.Number{ .value = @intToFloat(f64, expr.loc.start) }, expr.loc),
+                                            // };
+                                            args[4] = p.e(E.Object{
+                                                .properties = source,
+                                            }, expr.loc);
+                                        } else {
+                                            args[4] = p.e(E.Object{}, expr.loc);
+                                        }
 
-                                        args[4] = p.e(E.Object{
-                                            .properties = source,
-                                        }, expr.loc);
                                         args[5] = Expr{ .data = Prefill.Data.This, .loc = expr.loc };
                                     }
 
@@ -11202,6 +11221,89 @@ pub fn NewParser(
                     const is_call_target = @as(Expr.Tag, p.call_target) == .e_binary and expr.data.e_binary == p.call_target.e_binary;
                     const is_stmt_expr = @as(Expr.Tag, p.stmt_expr_value) == .e_binary and expr.data.e_binary == p.stmt_expr_value.e_binary;
                     const was_anonymous_named_expr = p.isAnonymousNamedExpr(e_.right);
+
+                    if (comptime jsx_transform_type == .macro) {
+                        if (e_.op == Op.Code.bin_instanceof and (e_.right.data == .e_jsx_element or e_.left.data == .e_jsx_element)) {
+                            // foo instanceof <string />
+                            // ->
+                            // bunJSX.isNodeType(foo, 13)
+
+                            // <string /> instanceof foo
+                            // ->
+                            // bunJSX.isNodeType(foo, 13)
+                            var call_args = p.allocator.alloc(Expr, 2) catch unreachable;
+                            call_args[0] = e_.left;
+                            call_args[1] = e_.right;
+
+                            if (e_.right.data == .e_jsx_element) {
+                                const jsx_element = e_.right.data.e_jsx_element;
+                                if (jsx_element.tag) |tag| {
+                                    if (tag.data == .e_string) {
+                                        const tag_string = tag.data.e_string.utf8;
+                                        if (js_ast.Macro.JSNode.Tag.names.get(tag_string)) |node_tag| {
+                                            call_args[1] = Expr{ .loc = tag.loc, .data = js_ast.Macro.JSNode.Tag.ids.get(node_tag) };
+                                        } else {
+                                            p.log.addRangeErrorFmt(
+                                                p.source,
+                                                js_lexer.rangeOfIdentifier(p.source, tag.loc),
+                                                p.allocator,
+                                                "Invalid JSX tag: \"{s}\"",
+                                                .{tag_string},
+                                            ) catch unreachable;
+                                            return expr;
+                                        }
+                                    }
+                                } else {
+                                    call_args[1] = p.visitExpr(call_args[1]);
+                                }
+                            } else {
+                                call_args[1] = p.visitExpr(call_args[1]);
+                            }
+
+                            if (e_.left.data == .e_jsx_element) {
+                                const jsx_element = e_.left.data.e_jsx_element;
+                                if (jsx_element.tag) |tag| {
+                                    if (tag.data == .e_string) {
+                                        const tag_string = tag.data.e_string.utf8;
+                                        if (js_ast.Macro.JSNode.Tag.names.get(tag_string)) |node_tag| {
+                                            call_args[0] = Expr{ .loc = tag.loc, .data = js_ast.Macro.JSNode.Tag.ids.get(node_tag) };
+                                        } else {
+                                            p.log.addRangeErrorFmt(
+                                                p.source,
+                                                js_lexer.rangeOfIdentifier(p.source, tag.loc),
+                                                p.allocator,
+                                                "Invalid JSX tag: \"{s}\"",
+                                                .{tag_string},
+                                            ) catch unreachable;
+                                            return expr;
+                                        }
+                                    }
+                                } else {
+                                    call_args[0] = p.visitExpr(call_args[0]);
+                                }
+                            } else {
+                                call_args[0] = p.visitExpr(call_args[0]);
+                            }
+
+                            return p.e(
+                                E.Call{
+                                    .target = p.e(
+                                        E.Dot{
+                                            .name = "isNodeType",
+                                            .name_loc = expr.loc,
+                                            .target = p.e(BunJSX.bun_jsx_identifier, expr.loc),
+                                            .can_be_removed_if_unused = true,
+                                            .call_can_be_unwrapped_if_unused = true,
+                                        },
+                                        expr.loc,
+                                    ),
+                                    .args = call_args,
+                                    .can_be_unwrapped_if_unused = true,
+                                },
+                                expr.loc,
+                            );
+                        }
+                    }
 
                     e_.left = p.visitExprInOut(e_.left, ExprIn{
                         .assign_target = e_.op.binaryAssignTarget(),
@@ -12283,6 +12385,7 @@ pub fn NewParser(
                         .un_typeof, .un_void, .un_not => {
                             return p.exprCanBeRemovedIfUnused(&ex.value);
                         },
+
                         else => {},
                     }
                 },

@@ -252,6 +252,7 @@ pub const Runtime = struct {
             "__exportDefault",
         };
         pub const Name = "<RUNTIME";
+        pub const alt_name = "__runtime.js";
 
         pub const Iterator = struct {
             i: usize = 0,

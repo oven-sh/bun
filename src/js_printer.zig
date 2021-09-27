@@ -857,6 +857,9 @@ pub fn NewPrinter(
             }
         }
 
+        // noop for now
+        pub inline fn printPure(p: *Printer) void {}
+
         pub fn printQuotedUTF8(p: *Printer, str: string, allow_backtick: bool) void {
             const quote = p.bestQuoteCharForString(str, allow_backtick);
             p.print(quote);
@@ -930,7 +933,7 @@ pub fn NewPrinter(
                     }
 
                     if (has_pure_comment) {
-                        p.print("/* @__PURE__ */ ");
+                        p.printPure();
                     }
 
                     p.printSpaceBeforeIdentifier();
@@ -978,7 +981,7 @@ pub fn NewPrinter(
 
                     if (has_pure_comment) {
                         const was_stmt_start = p.stmt_start == p.writer.written;
-                        p.print("/* @__PURE__ */ ");
+                        p.printPure();
                         if (was_stmt_start) {
                             p.stmt_start = p.writer.written;
                         }

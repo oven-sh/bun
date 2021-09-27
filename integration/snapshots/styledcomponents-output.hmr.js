@@ -8,7 +8,7 @@ import {
 __HMRModule as HMR
 } from "http://localhost:8080/__runtime.js";
 import * as JSX from "http://localhost:8080/node_modules/react/jsx-dev-runtime.js";
-var jsx = require(JSX).jsxDEV, fileName = "styledcomponents-output.js";
+var jsx = require(JSX).jsxDEV;
 
 import * as $d4051a2e from "http://localhost:8080/node_modules/styled-components/dist/styled-components.browser.esm.js";
 var { default: styled} = require($d4051a2e);
@@ -54,16 +54,14 @@ var hmr = new HMR(1290604342, "styledcomponents-output.js"), exports = hmr.expor
     ReactDOM.render(jsx(ErrorScreenRoot, {
       id: "error-el",
       children: ["The react child should have this text"]
-    }, undefined, true, {
-      fileName,
-      lineNumber: 805
-    }, this), reactEl);
+    }, undefined, true, {}, this), reactEl);
     const style = document.querySelector("style[data-styled]");
     console.assert(style, "style tag should exist");
     console.assert(style.textContent.split("").every((a) => a.codePointAt(0) < 128), "style tag should not contain invalid unicode codepoints");
     console.assert(document.querySelector("#error-el").textContent === "The react child should have this text");
     ReactDOM.unmountComponentAtNode(reactEl);
     reactEl.remove();
+    style.remove();
     testDone(import.meta.url);
   }
   hmr.exportAll({

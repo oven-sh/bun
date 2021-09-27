@@ -4,7 +4,7 @@ __require as require
 import * as JSX from "http://localhost:8080/node_modules/react/jsx-dev-runtime.js";
 import * as $bbcd215f from "http://localhost:8080/node_modules/react/index.js";
 var JSXClassic = require($bbcd215f);
-var jsx = require(JSX).jsxDEV, fileName = "spread_with_key.tsx", jsxEl = require(JSXClassic).createElement;
+var jsx = require(JSX).jsxDEV, jsxEl = require(JSXClassic).createElement;
 
 var { default: React} = require($bbcd215f);
 export function SpreadWithTheKey({
@@ -23,9 +23,6 @@ export function SpreadWithTheKey({
 export function test() {
   console.assert(React.isValidElement(jsx(SpreadWithTheKey, {
     className: "foo"
-  }, undefined, true, {
-    fileName,
-    lineNumber: 375
-  }, this)));
+  }, undefined, true, {}, this)));
   return testDone(import.meta.url);
 }

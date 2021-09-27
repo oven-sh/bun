@@ -1443,8 +1443,12 @@ pub const JSValue = enum(i64) {
         });
     }
 
-    pub inline fn toU16(this: JSValue) u36 {
+    pub inline fn toU16(this: JSValue) u16 {
         return @intCast(u16, this.toInt32());
+    }
+
+    pub inline fn toU32(this: JSValue) u32 {
+        return @intCast(u32, this.toInt32());
     }
 
     pub fn getLengthOfArray(this: JSValue, globalThis: *JSGlobalObject) u32 {

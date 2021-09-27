@@ -5898,15 +5898,15 @@ pub const Macro = struct {
                 switch (tag) {
                     .e_array => {
                         // var e_array: E.Array = E.Array{ .items = writer.allocator.alloc(E.Array, args.len) catch return false };
-                        var count = (writer.nextJSValue() orelse return false).toU16();
-                        var i: u16 = 0;
+                        var count = (writer.nextJSValue() orelse return false).toU32();
+                        var i: @TypeOf(count) = 0;
                         var items = ExprList.initCapacity(writer.allocator, count) catch unreachable;
 
                         while (i < count) {
                             var nextArg = writer.eatArg() orelse return false;
                             if (js.JSValueIsArray(writer.ctx, nextArg.asRef())) {
                                 const extras = nextArg.getLengthOfArray(JavaScript.VirtualMachine.vm.global);
-                                count += std.math.max(@truncate(u16, extras), 1) - 1;
+                                count += std.math.max(@truncate(@TypeOf(count), extras), 1) - 1;
                                 items.ensureUnusedCapacity(extras) catch unreachable;
                                 items.expandToCapacity();
                                 var new_writer = writer.*;
@@ -6028,10 +6028,10 @@ pub const Macro = struct {
                         return true;
                     },
                     .e_object => {
-                        const len = (writer.nextJSValue() orelse return false).toU16();
+                        const len = (writer.nextJSValue() orelse return false).toU32();
 
                         var properties = writer.allocator.alloc(G.Property, len) catch return false;
-                        var property_i: u16 = 0;
+                        var property_i: u32 = 0;
 
                         while (property_i < properties.len) : (property_i += 1) {
                             switch (TagOrJSNode.fromJSValue(writer, writer.eatArg() orelse return false)) {

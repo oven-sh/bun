@@ -11931,7 +11931,10 @@ pub fn NewParser(
 
                     var has_spread = false;
                     var has_proto = false;
-                    for (e_.properties) |*property, i| {
+                    var i: usize = 0;
+                    while (i < e_.properties.len) : (i += 1) {
+                        var property = &e_.properties[i];
+
                         if (property.kind != .spread) {
                             property.key = p.visitExpr(property.key orelse Global.panic("Expected property key", .{}));
                             const key = property.key.?;
@@ -12023,11 +12026,33 @@ pub fn NewParser(
                         .has_chain_parent = (e_.optional_chain orelse js_ast.OptionalChain.start) == .ccontinue,
                     });
 
-                    // TODO: wan about import namespace call
-                    var has_spread = false;
-                    for (e_.args) |*arg| {
-                        arg.* = p.visitExpr(arg.*);
-                        has_spread = has_spread or @as(Expr.Tag, arg.data) == .e_spread;
+                    // Copy the call side effect flag over if this is a known target
+                    switch (e_.target.data) {
+                        .e_identifier => |ident| {
+                            e_.can_be_unwrapped_if_unused = e_.can_be_unwrapped_if_unused or ident.call_can_be_unwrapped_if_unused;
+                        },
+                        .e_dot => |dot| {
+                            e_.can_be_unwrapped_if_unused = e_.can_be_unwrapped_if_unused or dot.call_can_be_unwrapped_if_unused;
+                        },
+                        else => {},
+                    }
+
+                    const is_macro_ref: bool = if (comptime FeatureFlags.is_macro_enabled and
+                        jsx_transform_type != .macro)
+                        e_.target.data == .e_import_identifier and p.macro_refs.contains(e_.target.data.e_import_identifier.ref)
+                    else
+                        false;
+
+                    {
+                        const old_ce = p.options.ignore_dce_annotations;
+                        defer p.options.ignore_dce_annotations = old_ce;
+                        if (is_macro_ref)
+                            p.options.ignore_dce_annotations = true;
+
+                        for (e_.args) |_, i| {
+                            const arg = e_.args[i];
+                            e_.args[i] = p.visitExpr(arg);
+                        }
                     }
 
                     if (e_.optional_chain == null and @as(Expr.Tag, e_.target.data) == .e_identifier and e_.target.data.e_identifier.ref.eql(p.require_ref)) {
@@ -12043,22 +12068,22 @@ pub fn NewParser(
                     }
 
                     if (comptime FeatureFlags.is_macro_enabled and jsx_transform_type != .macro) {
-                        if (e_.target.data == .e_import_identifier) {
+                        if (is_macro_ref) {
                             const ref = e_.target.data.e_import_identifier.ref;
-                            if (p.macro_refs.get(ref)) |import_record_id| {
-                                const name = p.symbols.items[ref.inner_index].original_name;
-                                const record = &p.import_records.items[import_record_id];
-                                return p.options.macro_context.call(
-                                    record.path.text,
-                                    p.source.path.sourceDir(),
-                                    p.log,
-                                    p.source,
-                                    record.range,
-                                    expr,
-                                    &.{},
-                                    name,
-                                ) catch return expr;
-                            }
+                            const import_record_id = p.macro_refs.get(ref).?;
+                            const name = p.symbols.items[ref.inner_index].original_name;
+                            const record = &p.import_records.items[import_record_id];
+                            const copied = Expr{ .loc = expr.loc, .data = .{ .e_call = e_ } };
+                            return p.options.macro_context.call(
+                                record.path.text,
+                                p.source.path.sourceDir(),
+                                p.log,
+                                p.source,
+                                record.range,
+                                copied,
+                                &.{},
+                                name,
+                            ) catch return expr;
                         }
                     }
 

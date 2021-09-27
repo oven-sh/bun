@@ -4259,18 +4259,30 @@ pub const Macro = struct {
                     return js.JSObjectMakeArray(ctx, 0, null, exception);
                 }
 
-                for (obj.properties) |*prop, i| {
+                var object_properties_array: [64]js.JSObjectRef = undefined;
+
+                var did_allocate = false;
+                var properties_list = if (obj.properties.len < object_properties_array.len)
+                    object_properties_array[0..obj.properties.len]
+                else brk: {
+                    did_allocate = true;
+                    break :brk getAllocator(ctx).alloc(js.JSObjectRef, obj.properties.len) catch unreachable;
+                };
+
+                defer if (did_allocate) getAllocator(ctx).free(properties_list);
+
+                for (obj.properties) |_, i| {
                     var node = JSCBase.getAllocator(ctx).create(JSNode) catch unreachable;
                     node.* = JSNode{
                         .data = .{
-                            .g_property = prop,
+                            .g_property = &obj.properties[i],
                         },
                         .loc = this.loc,
                     };
-                    temporary_call_args_array[i] = JSNode.Class.make(ctx, node);
+                    properties_list[i] = JSNode.Class.make(ctx, node);
                 }
 
-                return js.JSObjectMakeArray(ctx, obj.properties.len, &temporary_call_args_array, exception);
+                return js.JSObjectMakeArray(ctx, properties_list.len, properties_list.ptr, exception);
             }
 
             fn toObjectPrimitive(this: *JSNode, ctx: js.JSContextRef, obj: E.Object, exception: js.ExceptionRef) js.JSObjectRef {

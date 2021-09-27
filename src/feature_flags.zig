@@ -68,7 +68,7 @@ pub const CSSInJSImportBehavior = enum {
 pub const remote_inspector = false;
 pub const auto_import_buffer = false;
 
-pub const is_macro_enabled = env.isDebug;
+pub const is_macro_enabled = true;
 
 pub const force_macro = false;
 pub const include_filename_in_jsx = false;

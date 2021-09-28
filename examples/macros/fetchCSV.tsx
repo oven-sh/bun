@@ -1,4 +1,12 @@
 import Pappa from "papaparse";
+// Example usage:
+// const rows = fetchCSV(
+//   "https://covid19.who.int/WHO-COVID-19-global-data.csv",
+//   {
+//     last: 100,
+//     columns: ["New_cases", "Date_reported", "Country"],
+//   }
+// );
 export async function fetchCSV(callExpression) {
   console.time("fetchCSV Total");
   const [

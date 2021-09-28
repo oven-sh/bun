@@ -5,6 +5,7 @@ import { IPAddresses } from "./example";
 const Start = function () {
   const root = document.createElement("div");
   document.body.appendChild(root);
+
   ReactDOM.render(<IPAddresses />, root);
 };
 

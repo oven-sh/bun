@@ -1360,6 +1360,16 @@ pub fn NewClass(
                                 ).rfn;
 
                                 def.callAsFunction = callback;
+                            } else if (comptime strings.eqlComptime(function_names[i], "hasProperty")) {
+                                def.hasProperty = @field(staticFunctions, "hasProperty").rfn;
+                            } else if (comptime strings.eqlComptime(function_names[i], "getProperty")) {
+                                def.getProperty = @field(staticFunctions, "getProperty").rfn;
+                            } else if (comptime strings.eqlComptime(function_names[i], "setProperty")) {
+                                def.setProperty = @field(staticFunctions, "setProperty").rfn;
+                            } else if (comptime strings.eqlComptime(function_names[i], "deleteProperty")) {
+                                def.deleteProperty = @field(staticFunctions, "deleteProperty").rfn;
+                            } else if (comptime strings.eqlComptime(function_names[i], "getPropertyNames")) {
+                                def.getPropertyNames = @field(staticFunctions, "getPropertyNames").rfn;
                             } else {
                                 const CtxField = @field(staticFunctions, function_names[i]);
                                 if (comptime !@hasField(@TypeOf(CtxField), "rfn")) {
@@ -1540,7 +1550,7 @@ pub fn castObj(obj: js.JSObjectRef, comptime Type: type) *Type {
     return JSPrivateDataPtr.from(js.JSObjectGetPrivate(obj)).as(Type);
 }
 const JSNode = @import("../../js_ast.zig").Macro.JSNode;
-
+const LazyPropertiesObject = @import("../../js_ast.zig").Macro.LazyPropertiesObject;
 pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     ResolveError,
     BuildError,
@@ -1551,6 +1561,7 @@ pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     Body,
     Router,
     JSNode,
+    LazyPropertiesObject,
 });
 
 pub inline fn GetJSPrivateData(comptime Type: type, ref: js.JSObjectRef) ?*Type {

@@ -4160,6 +4160,10 @@ pub const Macro = struct {
                     .get = JSBindings.getProperties,
                     .ro = true,
                 },
+                .propertyNodes = .{
+                    .get = JSBindings.getPropertyNodes,
+                    .ro = true,
+                },
             },
         );
 
@@ -4203,6 +4207,22 @@ pub const Macro = struct {
             }
 
             pub fn getProperties(
+                this: *JSNode,
+                ctx: js.JSContextRef,
+                thisObject: js.JSValueRef,
+                prop: js.JSStringRef,
+                exception: js.ExceptionRef,
+            ) js.JSObjectRef {
+                if (this.data != .e_object) {
+                    return js.JSObjectMake(ctx, null, null);
+                }
+
+                var lazy = getAllocator(ctx).create(LazyPropertiesObject) catch unreachable;
+                lazy.* = LazyPropertiesObject{ .node = this.* };
+                return LazyPropertiesObject.Class.make(ctx, lazy);
+            }
+
+            pub fn getPropertyNodes(
                 this: *JSNode,
                 ctx: js.JSContextRef,
                 thisObject: js.JSValueRef,
@@ -4317,7 +4337,9 @@ pub const Macro = struct {
             }
 
             fn toObjectPrimitive(this: *JSNode, ctx: js.JSContextRef, obj: E.Object, exception: js.ExceptionRef) js.JSObjectRef {
-                return toObjectValue(this, ctx, obj, exception);
+                var lazy = getAllocator(ctx).create(LazyPropertiesObject) catch unreachable;
+                lazy.* = LazyPropertiesObject{ .node = this.* };
+                return LazyPropertiesObject.Class.make(ctx, lazy);
             }
 
             fn toPropertyPrimitive(this: *JSNode, ctx: js.JSContextRef, prop: G.Property, exception: js.ExceptionRef) js.JSObjectRef {
@@ -4426,11 +4448,9 @@ pub const Macro = struct {
                         return JSBindings.toRegexValue(this, ctx, regex, exception);
                     },
                     .e_object => |object| {
-                        if (comptime !allow_recursion) return js.JSValueMakeUndefined(ctx);
                         return JSBindings.toObjectPrimitive(this, ctx, object.*, exception);
                     },
                     .e_array => |array| {
-                        if (comptime !allow_recursion) return js.JSValueMakeUndefined(ctx);
                         return JSBindings.toArrayPrimitive(this, ctx, array.*, exception);
                     },
 
@@ -6210,6 +6230,99 @@ pub const Macro = struct {
             }
 
             return null;
+        }
+    };
+
+    pub const LazyPropertiesObject = struct {
+        node: JSNode,
+
+        pub const Class = JSCBase.NewClass(
+            LazyPropertiesObject,
+            .{
+                .name = "LazyPropertiesObject",
+                .read_only = true,
+            },
+            .{
+                .getProperty = .{
+                    .rfn = getProperty,
+                },
+                .hasProperty = .{
+                    .rfn = hasProperty,
+                },
+                .getPropertyNames = .{
+                    .rfn = getPropertyNames,
+                },
+            },
+            .{},
+        );
+
+        pub fn getProperty(
+            ctx: js.JSContextRef,
+            thisObject: js.JSObjectRef,
+            propertyName: js.JSStringRef,
+            exception: js.ExceptionRef,
+        ) callconv(.C) js.JSValueRef {
+            var this: *LazyPropertiesObject = JSCBase.GetJSPrivateData(LazyPropertiesObject, thisObject) orelse return null;
+
+            const len = js.JSStringGetLength(propertyName);
+            const properties = this.node.data.e_object.properties;
+            var ptr = js.JSStringGetCharacters8Ptr(propertyName);
+            var property_slice = ptr[0..len];
+            var value_node: JSNode = undefined;
+
+            for (properties) |property| {
+                const key = property.key orelse continue;
+                if (key.data != .e_string) continue;
+                const str = key.data.e_string.utf8;
+
+                if (strings.eql(property_slice, str)) {
+                    const value = property.value orelse return js.JSValueMakeUndefined(ctx);
+                    value_node = JSNode.initExpr(value);
+                    return JSNode.JSBindings.toPrimitive(&value_node, ctx, exception);
+                }
+            }
+
+            return js.JSValueMakeUndefined(ctx);
+        }
+
+        pub fn hasProperty(
+            ctx: js.JSContextRef,
+            thisObject: js.JSObjectRef,
+            propertyName: js.JSStringRef,
+        ) callconv(.C) bool {
+            var this: *LazyPropertiesObject = JSCBase.GetJSPrivateData(LazyPropertiesObject, thisObject) orelse return false;
+
+            const len = js.JSStringGetLength(propertyName);
+            const properties = this.node.data.e_object.properties;
+            var ptr = js.JSStringGetCharacters8Ptr(propertyName);
+            var property_slice = ptr[0..len];
+
+            for (properties) |property| {
+                const key = property.key orelse continue;
+                if (key.data != .e_string) continue;
+                const str = key.data.e_string.utf8;
+
+                if (strings.eql(property_slice, str)) return true;
+            }
+
+            return false;
+        }
+
+        pub fn getPropertyNames(
+            ctx: js.JSContextRef,
+            thisObject: js.JSObjectRef,
+            props: js.JSPropertyNameAccumulatorRef,
+        ) callconv(.C) void {
+            var this: *LazyPropertiesObject = JSCBase.GetJSPrivateData(LazyPropertiesObject, thisObject) orelse return;
+
+            const properties = this.node.data.e_object.properties;
+
+            for (properties) |property| {
+                const key = property.key orelse continue;
+                if (key.data != .e_string) continue;
+                const str = key.data.e_string.utf8;
+                js.JSPropertyNameAccumulatorAddName(props, js.JSStringCreateStatic(str.ptr, str.len));
+            }
         }
     };
 

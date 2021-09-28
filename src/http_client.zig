@@ -35,7 +35,7 @@ header_entries: Headers.Entries,
 header_buf: string,
 url: URL,
 allocator: *std.mem.Allocator,
-verbose: bool = true,
+verbose: bool = false,
 
 pub fn init(allocator: *std.mem.Allocator, method: Method, url: URL, header_entries: Headers.Entries, header_buf: string) HTTPClient {
     return HTTPClient{
@@ -408,7 +408,7 @@ pub fn sendHTTPS(this: *HTTPClient, body_str: []const u8, body_out_str: *Mutable
             remaining_content_length -= size;
         }
 
-        body_out_str.list.items.len = body_size;
+        body_out_str.list.shrinkRetainingCapacity(body_size);
     }
 
     return response;

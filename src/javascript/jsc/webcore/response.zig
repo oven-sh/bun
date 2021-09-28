@@ -75,8 +75,14 @@ pub const Response = struct {
             (brk: {
                 switch (this.body.value) {
                     .Unconsumed => {
-                        if (this.body.ptr) |_ptr| {
-                            break :brk ZigString.init(_ptr[0..this.body.len]).toValue(VirtualMachine.vm.global);
+                        if (this.body.len > 0) {
+                            if (this.body.ptr) |_ptr| {
+                                var offset: usize = 0;
+                                while (offset < this.body.len and _ptr[offset] > 127 or strings.utf8ByteSequenceLength(_ptr[offset]) == 0) : (offset += 1) {}
+                                if (offset < this.body.len) {
+                                    break :brk ZigString.init(_ptr[offset..this.body.len]).toValue(VirtualMachine.vm.global);
+                                }
+                            }
                         }
 
                         break :brk ZigString.init("").toValue(VirtualMachine.vm.global);

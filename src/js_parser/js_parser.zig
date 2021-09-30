@@ -22,6 +22,31 @@ const JSXFactoryName = "JSX";
 const JSXAutomaticName = "jsx_module";
 const MacroRefs = std.AutoArrayHashMap(Ref, u32);
 
+// If we are currently in a hoisted child of the module scope, relocate these
+// declarations to the top level and return an equivalent assignment statement.
+// Make sure to check that the declaration kind is "var" before calling this.
+// And make sure to check that the returned statement is not the zero value.
+//
+// This is done to make some transformations non-destructive
+// Without relocating vars to the top level, simplifying this:
+// if (false) var foo = 1;
+// to nothing is unsafe
+// Because "foo" was defined. And now it's not.
+pub const RelocateVars = struct {
+    pub const Mode = enum { normal, for_in_or_for_of };
+
+    stmt: ?Stmt = null,
+    ok: bool = false,
+};
+
+const VisitArgsOpts = struct {
+    body: []Stmt = &([_]Stmt{}),
+    has_rest_arg: bool = false,
+
+    // This is true if the function is an arrow function or a method
+    is_unique_formal_parameters: bool = false,
+};
+
 const BunJSX = struct {
     pub threadlocal var bun_jsx_identifier: E.Identifier = undefined;
 };
@@ -64,6 +89,152 @@ pub fn locAfterOp(e: E.Binary) logger.Loc {
     }
 }
 const ExportsStringName = "exports";
+
+const TransposeState = struct {
+    is_await_target: bool = false,
+    is_then_catch_target: bool = false,
+    loc: logger.Loc,
+};
+
+pub const TypeScript = struct {
+    // This function is taken from the official TypeScript compiler source code:
+    // https://github.com/microsoft/TypeScript/blob/master/src/compiler/parser.ts
+    pub fn canFollowTypeArgumentsInExpression(token: js_lexer.T) bool {
+        switch (token) {
+            // These are the only tokens can legally follow a type argument list. So we
+            // definitely want to treat them as type arg lists.
+            .t_open_paren, // foo<x>(
+            .t_no_substitution_template_literal, // foo<T> `...`
+            // foo<T> `...${100}...`
+            .t_template_head,
+            => {
+                return true;
+            },
+            // These cases can't legally follow a type arg list. However, they're not
+            // legal expressions either. The user is probably in the middle of a
+            // generic type. So treat it as such.
+            .t_dot, // foo<x>.
+            .t_close_paren, // foo<x>)
+            .t_close_bracket, // foo<x>]
+            .t_colon, // foo<x>:
+            .t_semicolon, // foo<x>;
+            .t_question, // foo<x>?
+            .t_equals_equals, // foo<x> ==
+            .t_equals_equals_equals, // foo<x> ===
+            .t_exclamation_equals, // foo<x> !=
+            .t_exclamation_equals_equals, // foo<x> !==
+            .t_ampersand_ampersand, // foo<x> &&
+            .t_bar_bar, // foo<x> ||
+            .t_question_question, // foo<x> ??
+            .t_caret, // foo<x> ^
+            .t_ampersand, // foo<x> &
+            .t_bar, // foo<x> |
+            .t_close_brace, // foo<x> }
+            .t_end_of_file, // foo<x>
+            => {
+                return true;
+            },
+
+            // We don't want to treat these as type arguments. Otherwise we'll parse
+            // this as an invocation expression. Instead, we want to parse out the
+            // expression in isolation from the type arguments.
+            .t_comma, // foo<x>,
+            .t_open_brace, // foo<x> {
+            => {
+                return false;
+            },
+            else => {
+                // Anything else treat as an expression
+                return false;
+            },
+        }
+    }
+    pub const Identifier = struct {
+        pub const StmtIdentifier = enum {
+            s_type,
+
+            s_namespace,
+
+            s_abstract,
+
+            s_module,
+
+            s_interface,
+
+            s_declare,
+        };
+        pub fn forStr(str: string) ?StmtIdentifier {
+            switch (str.len) {
+                "type".len => {
+                    return if (std.mem.readIntNative(u32, str[0..4]) == comptime std.mem.readIntNative(u32, "type")) .s_type else null;
+                },
+                "interface".len => {
+                    if (strings.eqlComptime(str, "interface")) {
+                        return .s_interface;
+                    } else if (strings.eqlComptime(str, "namespace")) {
+                        return .s_namespace;
+                    } else {
+                        return null;
+                    }
+                },
+                "abstract".len => {
+                    if (strings.eqlComptime(str, "abstract")) {
+                        return .s_abstract;
+                    } else {
+                        return null;
+                    }
+                },
+                "declare".len => {
+                    if (strings.eqlComptime(str, "declare")) {
+                        return .s_declare;
+                    } else {
+                        return null;
+                    }
+                },
+                "module".len => {
+                    if (strings.eqlComptime(str, "module")) {
+                        return .s_module;
+                    } else {
+                        return null;
+                    }
+                },
+                else => {
+                    return null;
+                },
+            }
+        }
+        pub const IMap = std.ComptimeStringMap(Kind, .{
+            .{ "unique", .unique },
+            .{ "abstract", .abstract },
+            .{ "asserts", .asserts },
+            .{ "keyof", .prefix },
+            .{ "readonly", .prefix },
+            .{ "infer", .prefix },
+            .{ "any", .primitive },
+            .{ "never", .primitive },
+            .{ "unknown", .primitive },
+            .{ "undefined", .primitive },
+            .{ "object", .primitive },
+            .{ "number", .primitive },
+            .{ "string", .primitive },
+            .{ "boolean", .primitive },
+            .{ "bigint", .primitive },
+            .{ "symbol", .primitive },
+        });
+        pub const Kind = enum {
+            normal,
+            unique,
+            abstract,
+            asserts,
+            prefix,
+            primitive,
+        };
+    };
+
+    pub const SkipTypeOptions = struct {
+        is_return_type: bool = false,
+    };
+};
 
 // We must prevent collisions from generated names.
 // We want to avoid adding a pass over all the symbols in the file.
@@ -2700,6 +2871,20 @@ const FastRefresh = struct {};
 
 const ImportItemForNamespaceMap = std.StringArrayHashMap(LocRef);
 
+pub const MacroState = struct {
+    refs: MacroRefs,
+    prepend_stmts: *List(Stmt) = undefined,
+    imports: std.AutoArrayHashMap(i32, Ref),
+
+    pub fn init(allocator: *std.mem.Allocator) MacroState {
+        return MacroState{
+            .refs = MacroRefs.init(allocator),
+            .prepend_stmts = undefined,
+            .imports = std.AutoArrayHashMap(i32, Ref).init(allocator),
+        };
+    }
+};
+
 pub fn NewParser(
     comptime js_parser_features: ParserFeatures,
 ) type {
@@ -2709,16 +2894,17 @@ pub fn NewParser(
     const only_scan_imports_and_do_not_visit = js_parser_features.scan_only;
     const is_react_fast_refresh_enabled = js_parser_features.react_fast_refresh;
 
-    const ImportRecordList = if (only_scan_imports_and_do_not_visit) *std.ArrayList(ImportRecord) else std.ArrayList(ImportRecord);
-    const NamedImportsType = if (only_scan_imports_and_do_not_visit) *js_ast.Ast.NamedImports else js_ast.Ast.NamedImports;
-    const NeedsJSXType = if (only_scan_imports_and_do_not_visit) bool else void;
-    const ParsePassSymbolUsageType = if (only_scan_imports_and_do_not_visit and is_typescript_enabled) *ScanPassResult.ParsePassSymbolUsageMap else void;
     // P is for Parser!
     // public only because of Binding.ToExpr
     return struct {
+        const ImportRecordList = if (only_scan_imports_and_do_not_visit) *std.ArrayList(ImportRecord) else std.ArrayList(ImportRecord);
+        const NamedImportsType = if (only_scan_imports_and_do_not_visit) *js_ast.Ast.NamedImports else js_ast.Ast.NamedImports;
+        const NeedsJSXType = if (only_scan_imports_and_do_not_visit) bool else void;
+        const ParsePassSymbolUsageType = if (only_scan_imports_and_do_not_visit and is_typescript_enabled) *ScanPassResult.ParsePassSymbolUsageMap else void;
+
         const P = @This();
         pub const jsx_transform_type: JSXTransformType = js_parser_jsx;
-        macro_refs: MacroRefs = undefined,
+        macro: MacroState = undefined,
         allocator: *std.mem.Allocator,
         options: Parser.Options,
         log: *logger.Log,
@@ -2963,12 +3149,6 @@ pub fn NewParser(
         expr_list: List(Expr),
 
         scope_order_to_visit: []ScopeOrder = &([_]ScopeOrder{}),
-
-        const TransposeState = struct {
-            is_await_target: bool = false,
-            is_then_catch_target: bool = false,
-            loc: logger.Loc,
-        };
 
         pub fn transposeImport(p: *P, arg: Expr, state: anytype) Expr {
             // The argument must be a string
@@ -4363,146 +4543,6 @@ pub fn NewParser(
 
             return decorators.items;
         }
-
-        pub const TypeScript = struct {
-            // This function is taken from the official TypeScript compiler source code:
-            // https://github.com/microsoft/TypeScript/blob/master/src/compiler/parser.ts
-            pub fn canFollowTypeArgumentsInExpression(p: *P) bool {
-                switch (p.lexer.token) {
-                    // These are the only tokens can legally follow a type argument list. So we
-                    // definitely want to treat them as type arg lists.
-                    .t_open_paren, // foo<x>(
-                    .t_no_substitution_template_literal, // foo<T> `...`
-                    // foo<T> `...${100}...`
-                    .t_template_head,
-                    => {
-                        return true;
-                    },
-                    // These cases can't legally follow a type arg list. However, they're not
-                    // legal expressions either. The user is probably in the middle of a
-                    // generic type. So treat it as such.
-                    .t_dot, // foo<x>.
-                    .t_close_paren, // foo<x>)
-                    .t_close_bracket, // foo<x>]
-                    .t_colon, // foo<x>:
-                    .t_semicolon, // foo<x>;
-                    .t_question, // foo<x>?
-                    .t_equals_equals, // foo<x> ==
-                    .t_equals_equals_equals, // foo<x> ===
-                    .t_exclamation_equals, // foo<x> !=
-                    .t_exclamation_equals_equals, // foo<x> !==
-                    .t_ampersand_ampersand, // foo<x> &&
-                    .t_bar_bar, // foo<x> ||
-                    .t_question_question, // foo<x> ??
-                    .t_caret, // foo<x> ^
-                    .t_ampersand, // foo<x> &
-                    .t_bar, // foo<x> |
-                    .t_close_brace, // foo<x> }
-                    .t_end_of_file, // foo<x>
-                    => {
-                        return true;
-                    },
-
-                    // We don't want to treat these as type arguments. Otherwise we'll parse
-                    // this as an invocation expression. Instead, we want to parse out the
-                    // expression in isolation from the type arguments.
-                    .t_comma, // foo<x>,
-                    .t_open_brace, // foo<x> {
-                    => {
-                        return false;
-                    },
-                    else => {
-                        // Anything else treat as an expression
-                        return false;
-                    },
-                }
-            }
-            pub const Identifier = struct {
-                pub const StmtIdentifier = enum {
-                    s_type,
-
-                    s_namespace,
-
-                    s_abstract,
-
-                    s_module,
-
-                    s_interface,
-
-                    s_declare,
-                };
-                pub fn forStr(str: string) ?StmtIdentifier {
-                    switch (str.len) {
-                        "type".len => {
-                            return if (std.mem.readIntNative(u32, str[0..4]) == std.mem.readIntNative(u32, "type")) .s_type else null;
-                        },
-                        "interface".len => {
-                            if (strings.eqlComptime(str, "interface")) {
-                                return .s_interface;
-                            } else if (strings.eqlComptime(str, "namespace")) {
-                                return .s_namespace;
-                            } else {
-                                return null;
-                            }
-                        },
-                        "abstract".len => {
-                            if (strings.eqlComptime(str, "abstract")) {
-                                return .s_abstract;
-                            } else {
-                                return null;
-                            }
-                        },
-                        "declare".len => {
-                            if (strings.eqlComptime(str, "declare")) {
-                                return .s_declare;
-                            } else {
-                                return null;
-                            }
-                        },
-                        "module".len => {
-                            if (strings.eqlComptime(str, "module")) {
-                                return .s_module;
-                            } else {
-                                return null;
-                            }
-                        },
-                        else => {
-                            return null;
-                        },
-                    }
-                }
-                pub const IMap = std.ComptimeStringMap(Kind, .{
-                    .{ "unique", .unique },
-                    .{ "abstract", .abstract },
-                    .{ "asserts", .asserts },
-                    .{ "keyof", .prefix },
-                    .{ "readonly", .prefix },
-                    .{ "infer", .prefix },
-                    .{ "any", .primitive },
-                    .{ "never", .primitive },
-                    .{ "unknown", .primitive },
-                    .{ "undefined", .primitive },
-                    .{ "object", .primitive },
-                    .{ "number", .primitive },
-                    .{ "string", .primitive },
-                    .{ "boolean", .primitive },
-                    .{ "bigint", .primitive },
-                    .{ "symbol", .primitive },
-                });
-                pub const Kind = enum {
-                    normal,
-                    unique,
-                    abstract,
-                    asserts,
-                    prefix,
-                    primitive,
-                };
-            };
-
-            pub const SkipTypeOptions = struct {
-                is_return_type: bool = false,
-            };
-        };
 
         fn skipTypeScriptType(p: *P, level: js_ast.Op.Level) anyerror!void {
             try p.skipTypeScriptTypeWithOpts(level, .{});
@@ -6224,7 +6264,7 @@ pub fn NewParser(
                         }
 
                         if (is_macro) {
-                            try p.macro_refs.put(ref, stmt.import_record_index);
+                            try p.macro.refs.put(ref, stmt.import_record_index);
                         }
                     }
 
@@ -6248,7 +6288,7 @@ pub fn NewParser(
                             }
 
                             if (is_macro) {
-                                try p.macro_refs.put(ref, stmt.import_record_index);
+                                try p.macro.refs.put(ref, stmt.import_record_index);
                             }
                         }
                     }
@@ -8012,7 +8052,7 @@ pub fn NewParser(
                 _ = try p.skipTypeScriptTypeArguments(false);
 
                 // Check the token after this and backtrack if it's the wrong one
-                if (!TypeScript.canFollowTypeArgumentsInExpression(p)) {
+                if (!TypeScript.canFollowTypeArgumentsInExpression(p.lexer.token)) {
                     // try p.lexer.unexpected(); return error.SyntaxError;
                     return error.Backtrack;
                 }
@@ -9556,6 +9596,35 @@ pub fn NewParser(
                 }
             }
         }
+
+        pub const MacroVisitor = struct {
+            p: *P,
+
+            loc: logger.Loc,
+
+            pub fn visitImport(this: MacroVisitor, import_data: js_ast.Macro.JSNode.ImportData) void {
+                var p = this.p;
+
+                const record = p.addImportRecord(.import, import_data.loc, import_data.path);
+                p.macro.imports.ensureUnusedCapacity(import_data.import.items) catch unreachable;
+
+                var import = import_data.import;
+
+                p.is_import_item.ensureCapacity(
+                    @intCast(u32, p.is_import_item.count() + import.items.len),
+                ) catch unreachable;
+
+                for (import.items) |*clause| {
+                    const name_ref = p.declareSymbol(.import, this.loc, clause.alias) catch unreachable;
+                    clause.name = LocRef{ .loc = this.loc, .ref = name_ref };
+
+                    p.macro.imports.putAssumeCapacity(js_ast.Macro.JSNode.SymbolMap.generateImportHash(clause.alias, import_data.path), name_ref);
+                    p.is_import_item.put(name_ref, true) catch unreachable;
+                }
+
+                p.macro.prepend_stmts.append(p.s(import, this.loc)) catch unreachable;
+            }
+        };
 
         pub fn panic(p: *P, comptime str: string, args: anytype) noreturn {
             @setCold(true);
@@ -11186,10 +11255,11 @@ pub fn NewParser(
                         if (comptime FeatureFlags.is_macro_enabled and jsx_transform_type != .macro) {
                             if (e_.tag.?.data == .e_import_identifier) {
                                 const ref = e_.tag.?.data.e_import_identifier.ref;
-                                if (p.macro_refs.get(ref)) |import_record_id| {
+                                if (p.macro.refs.get(ref)) |import_record_id| {
                                     const name = p.symbols.items[ref.inner_index].original_name;
                                     const record = &p.import_records.items[import_record_id];
-                                    return p.options.macro_context.call(
+                                    // We must visit it to convert inline_identifiers and record usage
+                                    return p.visitExpr(p.options.macro_context.call(
                                         record.path.text,
                                         p.source.path.sourceDir(),
                                         p.log,
@@ -11198,11 +11268,29 @@ pub fn NewParser(
                                         expr,
                                         &.{},
                                         name,
-                                    ) catch return expr;
+                                        MacroVisitor,
+                                        MacroVisitor{ .p = p, .loc = expr.loc },
+                                    ) catch return expr);
                                 }
                             }
                         }
                     }
+                },
+
+                .inline_identifier => |id| {
+                    const ref = p.macro.imports.get(id) orelse {
+                        p.panic("Internal error: missing identifier from macro: {d}", .{id});
+                    };
+
+                    const ident = E.ImportIdentifier{
+                        .was_originally_identifier = false,
+                    };
+
+                    if (!p.is_control_flow_dead) {
+                        p.recordUsage(ref);
+                    }
+
+                    return p.e(ident, expr.loc);
                 },
 
                 .e_binary => |e_| {
@@ -12050,7 +12138,7 @@ pub fn NewParser(
 
                     const is_macro_ref: bool = if (comptime FeatureFlags.is_macro_enabled and
                         jsx_transform_type != .macro)
-                        e_.target.data == .e_import_identifier and p.macro_refs.contains(e_.target.data.e_import_identifier.ref)
+                        e_.target.data == .e_import_identifier and p.macro.refs.contains(e_.target.data.e_import_identifier.ref)
                     else
                         false;
 
@@ -12081,20 +12169,24 @@ pub fn NewParser(
                     if (comptime FeatureFlags.is_macro_enabled and jsx_transform_type != .macro) {
                         if (is_macro_ref) {
                             const ref = e_.target.data.e_import_identifier.ref;
-                            const import_record_id = p.macro_refs.get(ref).?;
+                            const import_record_id = p.macro.refs.get(ref).?;
                             const name = p.symbols.items[ref.inner_index].original_name;
                             const record = &p.import_records.items[import_record_id];
                             const copied = Expr{ .loc = expr.loc, .data = .{ .e_call = e_ } };
-                            return p.options.macro_context.call(
-                                record.path.text,
-                                p.source.path.sourceDir(),
-                                p.log,
-                                p.source,
-                                record.range,
-                                copied,
-                                &.{},
-                                name,
-                            ) catch return expr;
+                            return p.visitExpr(
+                                p.options.macro_context.call(
+                                    record.path.text,
+                                    p.source.path.sourceDir(),
+                                    p.log,
+                                    p.source,
+                                    record.range,
+                                    copied,
+                                    &.{},
+                                    name,
+                                    MacroVisitor,
+                                    MacroVisitor{ .p = p, .loc = expr.loc },
+                                ) catch return expr,
+                            );
                         }
                     }
 
@@ -12158,14 +12250,6 @@ pub fn NewParser(
             }
             return expr;
         }
-
-        const VisitArgsOpts = struct {
-            body: []Stmt = &([_]Stmt{}),
-            has_rest_arg: bool = false,
-
-            // This is true if the function is an arrow function or a method
-            is_unique_formal_parameters: bool = false,
-        };
 
         fn visitArgs(p: *P, args: []G.Arg, opts: VisitArgsOpts) void {
             const strict_loc = fnBodyContainsUseStrict(opts.body);
@@ -12448,23 +12532,6 @@ pub fn NewParser(
         fn jsxStringsToMemberExpressionAutomatic(p: *P, loc: logger.Loc, is_static: bool) Expr {
             return p.jsxStringsToMemberExpression(loc, if (is_static and !p.options.jsx.development) p.jsxs_runtime.ref else p.jsx_runtime.ref);
         }
-
-        // If we are currently in a hoisted child of the module scope, relocate these
-        // declarations to the top level and return an equivalent assignment statement.
-        // Make sure to check that the declaration kind is "var" before calling this.
-        // And make sure to check that the returned statement is not the zero value.
-        //
-        // This is done to make some transformations non-destructive
-        // Without relocating vars to the top level, simplifying this:
-        // if (false) var foo = 1;
-        // to nothing is unsafe
-        // Because "foo" was defined. And now it's not.
-        pub const RelocateVars = struct {
-            pub const Mode = enum { normal, for_in_or_for_of };
-
-            stmt: ?Stmt = null,
-            ok: bool = false,
-        };
 
         fn maybeRelocateVarsToTopLevel(p: *P, decls: []G.Decl, mode: RelocateVars.Mode) RelocateVars {
             // Only do this when the scope is not already top-level and when we're not inside a function.
@@ -14125,6 +14192,11 @@ pub fn NewParser(
             var visited = try List(Stmt).initCapacity(p.allocator, stmts.items.len);
             var before = List(Stmt).init(p.allocator);
             var after = List(Stmt).init(p.allocator);
+
+            if (p.current_scope == p.module_scope) {
+                p.macro.prepend_stmts = &before;
+            }
+
             defer before.deinit();
             defer visited.deinit();
             defer after.deinit();
@@ -15322,6 +15394,7 @@ pub fn NewParser(
                 .require_transposer = undefined,
                 .require_resolve_transposer = undefined,
                 .source = source,
+                .macro = MacroState.init(allocator),
 
                 .needs_jsx_import = if (comptime only_scan_imports_and_do_not_visit) false else NeedsJSXType{},
                 .lexer = lexer,

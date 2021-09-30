@@ -2593,6 +2593,9 @@ pub const Expr = struct {
         e_class,
         e_require,
 
+        // This should never make it to the printer
+        inline_identifier,
+
         pub fn jsonStringify(self: @This(), opts: anytype, o: anytype) !void {
             return try std.json.stringify(@tagName(self), opts, o);
         }
@@ -3136,6 +3139,10 @@ pub const Expr = struct {
         e_undefined: E.Undefined,
         e_new_target: E.NewTarget,
         e_import_meta: E.ImportMeta,
+
+        // This type should not exist outside of MacroContext
+        // If it ends up in JSParser or JSPrinter, it is a bug.
+        inline_identifier: i32,
 
         pub const Store = struct {
             const often = 512;
@@ -4019,6 +4026,8 @@ pub const Macro = struct {
             caller: Expr,
             args: []Expr,
             function_name: string,
+            comptime Visitor: type,
+            visitor: *Visitor,
         ) anyerror!Expr {
             Expr.Data.Store.disable_reset = true;
             Stmt.Data.Store.disable_reset = true;
@@ -4096,6 +4105,8 @@ pub const Macro = struct {
                 args,
                 source,
                 hash,
+                comptime Visitor,
+                visitor,
             );
             // this.macros.getOrPut(key: K)
         }
@@ -4164,6 +4175,11 @@ pub const Macro = struct {
                     .get = JSBindings.getPropertyNodes,
                     .ro = true,
                 },
+
+                .namespace = .{
+                    .get = JSBindings.getModuleNamespace,
+                    .ro = true,
+                },
             },
         );
 
@@ -4174,6 +4190,30 @@ pub const Macro = struct {
             // so it's safe to just avoid that and do it here like this:
             return JSNode.Class.make(JavaScript.VirtualMachine.vm.global.ref(), ptr);
         }
+
+        pub fn updateSymbolsMap(this: *JSNode, comptime Visitor: type, visitor: Visitor) void {
+            switch (this.data) {
+                Tag.fragment => |frag| {
+                    for (frag) |child| {
+                        if (child.data == .inline_inject) {
+                            child.updateSymbolsMap(Visitor, visitor);
+                        }
+                    }
+                },
+                Tag.inline_inject => |inject| {
+                    for (inject) |child| {
+                        child.updateSymbolsMap(Visitor, visitor);
+                    }
+                },
+
+                Tag.s_import => |import| {
+                    visitor.visitImport(import);
+                },
+
+                else => {},
+            }
+        }
+
         pub const JSBindings = struct {
             const getAllocator = JSCBase.getAllocator;
 
@@ -4765,6 +4805,20 @@ pub const Macro = struct {
                 .e_undefined => |value| {
                     return Expr{ .loc = this.loc, .data = .{ .e_undefined = value } };
                 },
+                .fragment => |fragment| {
+                    if (fragment.len == 0) return Expr{ .loc = this.loc, .data = .{ .e_missing = E.Missing{} } };
+
+                    var left = toExpr(fragment[0]);
+
+                    if (fragment.len == 1) return left;
+
+                    for (fragment[1..]) |item| {
+                        const right = toExpr(item);
+                        left = Expr.joinWithComma(left, right, default_allocator);
+                    }
+
+                    return left;
+                },
                 else => {
                     return Expr{ .loc = this.loc, .data = .{ .e_missing = .{} } };
                 },
@@ -4828,6 +4882,7 @@ pub const Macro = struct {
             g_property: *G.Property,
 
             inline_inject: []JSNode,
+            inline_identifier: i32,
 
             pub fn callArgs(this: Data) ExprNodeList {
                 if (this == .e_call)
@@ -4889,127 +4944,17 @@ pub const Macro = struct {
             inline_true,
             inline_false,
             inline_inject,
+            inline_identifier,
+
             fragment,
 
             pub const ids: std.EnumArray(Tag, Expr.Data) = brk: {
                 var list = std.EnumArray(Tag, Expr.Data).initFill(Expr.Data{ .e_number = E.Number{ .value = 0.0 } });
-                list.set(Tag.e_array, Expr.Data{
-                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_array)) },
-                });
-                list.set(Tag.e_unary, Expr.Data{
-                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_unary)) },
-                });
-                list.set(Tag.e_binary, Expr.Data{
-                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_binary)) },
-                });
-                list.set(Tag.e_boolean, Expr.Data{
-                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_boolean)) },
-                });
-                list.set(Tag.e_super, Expr.Data{
-                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_super)) },
-                });
-                list.set(Tag.e_null, Expr.Data{
-                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_null)) },
-                });
-                list.set(Tag.e_undefined, Expr.Data{
-                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_undefined)) },
-                });
-                list.set(Tag.e_function, Expr.Data{
-                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_function)) },
-                });
-                list.set(Tag.e_new_target, Expr.Data{
-                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_new_target)) },
-                });
-                list.set(Tag.e_import_meta, Expr.Data{
-                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_import_meta)) },
-                });
-                list.set(Tag.e_call, Expr.Data{
-                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_call)) },
-                });
-                list.set(Tag.e_dot, Expr.Data{
-                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_dot)) },
-                });
-                list.set(Tag.e_index, Expr.Data{
-                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_index)) },
-                });
-                list.set(Tag.e_arrow, Expr.Data{
-                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_arrow)) },
-                });
-                list.set(Tag.e_identifier, Expr.Data{
-                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_identifier)) },
-                });
-                list.set(Tag.e_import_identifier, Expr.Data{
-                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_import_identifier)) },
-                });
-                list.set(Tag.e_private_identifier, Expr.Data{
-                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_private_identifier)) },
-                });
-                list.set(Tag.e_jsx_element, Expr.Data{
-                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_jsx_element)) },
-                });
-                list.set(Tag.e_missing, Expr.Data{
-                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_missing)) },
-                });
-                list.set(Tag.e_number, Expr.Data{
-                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_number)) },
-                });
-                list.set(Tag.e_big_int, Expr.Data{
-                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_big_int)) },
-                });
-                list.set(Tag.e_object, Expr.Data{
-                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_object)) },
-                });
-                list.set(Tag.e_spread, Expr.Data{
-                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_spread)) },
-                });
-                list.set(Tag.e_string, Expr.Data{
-                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_string)) },
-                });
-                list.set(Tag.e_template_part, Expr.Data{
-                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_template_part)) },
-                });
-                list.set(Tag.e_template, Expr.Data{
-                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_template)) },
-                });
-                list.set(Tag.e_reg_exp, Expr.Data{
-                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_reg_exp)) },
-                });
-                list.set(Tag.e_await, Expr.Data{
-                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_await)) },
-                });
-                list.set(Tag.e_yield, Expr.Data{
-                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_yield)) },
-                });
-                list.set(Tag.e_if, Expr.Data{
-                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_if)) },
-                });
-                list.set(Tag.e_import, Expr.Data{
-                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_import)) },
-                });
-                list.set(Tag.e_this, Expr.Data{
-                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_this)) },
-                });
-                list.set(Tag.e_class, Expr.Data{
-                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_class)) },
-                });
-                list.set(Tag.e_require, Expr.Data{
-                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.e_require)) },
-                });
-                list.set(Tag.s_import, Expr.Data{
-                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.s_import)) },
-                });
-                list.set(Tag.g_property, Expr.Data{
-                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.g_property)) },
-                });
-                list.set(Tag.s_block, Expr.Data{
-                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.s_block)) },
-                });
-                list.set(Tag.inline_true, Expr.Data{
-                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.inline_true)) },
-                });
-                list.set(Tag.inline_false, Expr.Data{
-                    .e_number = E.Number{ .value = @intToFloat(f64, @enumToInt(Tag.inline_false)) },
-                });
+                const fields: []std.builtin.TypeInfo.EnumField = @typeInfo(Tag).Enum.fields;
+                for (fields) |field| {
+                    list.set(field.value, Expr.Data{ .e_number = E.Number{ .value = @intToFloat(f64, field.value) } });
+                }
+
                 break :brk list;
             };
 
@@ -5023,12 +4968,11 @@ pub const Macro = struct {
                 .{ "undefined", Tag.e_undefined },
                 .{ "function", Tag.e_function },
                 .{ "new_target", Tag.e_new_target },
-                .{ "import_meta", Tag.e_import_meta },
+                .{ "import-meta", Tag.e_import_meta },
                 .{ "call", Tag.e_call },
                 .{ "dot", Tag.e_dot },
                 .{ "index", Tag.e_index },
                 .{ "arrow", Tag.e_arrow },
-                .{ "id", Tag.e_identifier },
                 .{ "import-id", Tag.e_import_identifier },
                 .{ "private-id", Tag.e_private_identifier },
                 .{ "jsx", Tag.e_jsx_element },
@@ -5054,6 +4998,8 @@ pub const Macro = struct {
                 .{ "true", Tag.inline_true },
                 .{ "false", Tag.inline_false },
                 .{ "inject", Tag.inline_inject },
+
+                .{ "id", Tag.inline_identifier },
             });
 
             pub const as_expr_tag: std.EnumArray(Tag, Expr.Tag) = brk: {
@@ -5196,6 +5142,89 @@ pub const Macro = struct {
                 }
                 break :brk min;
             };
+        };
+
+        pub const ModuleNamespace = struct {
+            import_data: ImportData,
+
+            pub const Class = JSCBase.NewClass(
+                ModuleNamespace,
+                .{
+                    .name = "ModuleNamespace",
+                    .read_only = true,
+                },
+                .{
+                    .getProperty = .{
+                        .rfn = getProperty,
+                    },
+                    .hasProperty = .{
+                        .rfn = hasProperty,
+                    },
+                    .getPropertyNames = .{
+                        .rfn = getPropertyNames,
+                    },
+                },
+                .{},
+            );
+
+            pub fn getProperty(
+                ctx: js.JSContextRef,
+                thisObject: js.JSObjectRef,
+                propertyName: js.JSStringRef,
+                exception: js.ExceptionRef,
+            ) callconv(.C) js.JSValueRef {
+                var this: *ModuleNamespace = JSCBase.GetJSPrivateData(ModuleNamespace, thisObject) orelse return null;
+
+                const len = js.JSStringGetLength(propertyName);
+                const properties = this.import_data.import.items;
+                var ptr = js.JSStringGetCharacters8Ptr(propertyName);
+                var property_slice = ptr[0..len];
+                var value_node: JSNode = undefined;
+
+                for (properties) |property| {
+                    if (strings.eql(property.alias, str)) {
+                        const value = property.value orelse return js.JSValueMakeUndefined(ctx);
+                        value_node = JSNode.initExpr(value);
+                        return JSC.JSValue.jsNumberFromInt32(SymbolMap.generateImportHash(property.alias, this.import_data.path)).asRef();
+                    }
+                }
+
+                return js.JSValueMakeUndefined(ctx);
+            }
+
+            pub fn hasProperty(
+                ctx: js.JSContextRef,
+                thisObject: js.JSObjectRef,
+                propertyName: js.JSStringRef,
+            ) callconv(.C) bool {
+                var this: *ModuleNamespace = JSCBase.GetJSPrivateData(ModuleNamespace, thisObject) orelse return false;
+
+                const len = js.JSStringGetLength(propertyName);
+                const properties = this.import_data.import.items;
+                var ptr = js.JSStringGetCharacters8Ptr(propertyName);
+                var property_slice = ptr[0..len];
+
+                for (properties) |property| {
+                    if (strings.eql(property.alias, str)) return true;
+                }
+
+                return false;
+            }
+
+            pub fn getPropertyNames(
+                ctx: js.JSContextRef,
+                thisObject: js.JSObjectRef,
+                props: js.JSPropertyNameAccumulatorRef,
+            ) callconv(.C) void {
+                var this: *ModuleNamespace = JSCBase.GetJSPrivateData(ModuleNamespace, thisObject) orelse return;
+
+                const items = this.import_data.import.items;
+
+                for (items) |clause| {
+                    const str = clause.alias;
+                    js.JSPropertyNameAccumulatorAddName(props, js.JSStringCreateStatic(str.ptr, str.len));
+                }
+            }
         };
 
         pub const JSNodeList = std.ArrayListUnmanaged(JSNode);
@@ -5666,6 +5695,29 @@ pub const Macro = struct {
                             return true;
                         },
 
+                        Tag.inline_identifier => {
+                            // id only accepts "to" and it must be a int32
+                            self.args.ensureUnusedCapacity(2);
+                            self.args.appendAssumeCapacity(Expr{ .loc = loc, .data = comptime Tag.ids.get(Tag.inline_identifier) });
+
+                            if (propertyValueNamed(props, "to")) |prop| {
+                                switch (prop.data) {
+                                    .e_number, .e_if, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
+                                        self.args.appendAssumeCapacity(p.visitExpr(prop));
+                                    },
+                                    else => {
+                                        self.log.addError(self.p.source, prop.loc, "\"to\" prop must be a number", .{}) catch unreachable;
+                                        self.args.appendAssumeCapacity(prop);
+                                    },
+                                }
+                            } else {
+                                self.log.addError(self.p.source, prop.loc, "\"to\" prop is required", .{}) catch unreachable;
+                                self.args.appendAssumeCapacity(Expr{ .loc = loc, .data = .{ .e_number = .{ .value = @floatToInt(f64, 0) } } });
+                            }
+
+                            return true;
+                        },
+
                         Tag.s_import => {
                             const default_property_ = propertyValueNamed(props, "default");
                             const path_property = propertyValueNamed(props, "path") orelse {
@@ -5923,45 +5975,12 @@ pub const Macro = struct {
         }
 
         pub const SymbolMap = struct {
-            // this uses an i32 here instead of a typical Ref
-            // we only want the final return value's symbols to be added to the symbol map
-            // the point that the symbol name is referenced may not be when it's added to the symbol map
-            // this lets you do:
-            map: std.AutoArrayHashMap(i32, Symbol) = undefined,
-            allocator: *std.mem.Allocator,
-            loaded: bool = false,
-            loc: logger.Loc,
-
             pub fn generateImportHash(name: string, path: string) i32 {
                 var hasher = std.hash.Wyhash.init(8);
                 hasher.update(path);
                 hasher.update("#");
                 hasher.update(name);
                 return @bitCast(i32, @truncate(u32, hasher.final()));
-            }
-
-            pub fn putImport(self: *SymbolMap, import: *ImportData) void {
-                // we use items here
-                std.debug.assert(import.default_name == null);
-
-                const count = @intCast(u32, @intCast(u32, import.import.items.len));
-
-                if (!self.loaded) {
-                    self.loaded = true;
-                    self.map = std.AutoArrayHashMap(i32, Symbol).init(self);
-                }
-
-                self.map.ensureUnusedCapacity(count) catch unreachable;
-
-                for (import.import.items) |clause| {
-                    self.map.putAssumeCapacity(
-                        generateImportHash(clause.alias, import.path),
-                        Symbol{
-                            .kind = Symbol.Kind.import,
-                            .original_name = clause.name,
-                        },
-                    );
-                }
             }
         };
 
@@ -6235,14 +6254,24 @@ pub const Macro = struct {
 
                                 if (!JSLexer.isIdentifier(alias)) throwTypeError(writer.ctx, "import alias must be an identifier", writer.exception);
 
-                                import.import.items[import_item_i] = ClauseItem{ .alias = alias, .name = name, .alias_loc = writer.loc };
+                                import.import.items[import_item_i] = ClauseItem{
+                                    .alias = alias,
+                                    .original_name = name,
+                                    .name = .{ .loc = writer.loc, .ref = Ref.None },
+                                    .alias_loc = writer.loc,
+                                };
 
                                 import_item_i += 1;
                             }
                         }
 
                         if (has_default) {
-                            import.import.items[import_item_i] = ClauseItem{ .alias = import_default_name, .name = "default", .alias_loc = writer.loc };
+                            import.import.items[import_item_i] = ClauseItem{
+                                .alias = import_default_name,
+                                .name = .{ .loc = writer.loc, .ref = Ref.None },
+                                .original_name = name,
+                                .alias_loc = writer.loc,
+                            };
                             import_item_i += 1;
                         }
 
@@ -6426,6 +6455,11 @@ pub const Macro = struct {
 
                         return true;
                     },
+                    .inline_identifier => {
+                        const to = (writer.nextJSValue() orelse return false).toInt32();
+                        expr.* = Expr{ .data = .{ .inline_identifier = to }, .loc = writer.loc };
+                        return true;
+                    },
 
                     else => {
                         return false;
@@ -6456,100 +6490,96 @@ pub const Macro = struct {
             }
 
             pub fn writeFromJS(writer: *Writer) ?JSNode {
-                const out_node: JSNode = brk: {
-                    switch (TagOrJSNode.fromJSValueRef(writer, writer.ctx, (writer.eatArg() orelse return null).asRef())) {
-                        TagOrJSNode.tag => |tag| {
-                            if (tag == Tag.inline_inject) {
-                                const count: u32 = (writer.eatArg() orelse return false).toU32();
-                                var i: u32 = 0;
-                                while (i < count) : (i += 1) {
-                                    const next_value = (writer.eatArg() orelse return null);
-                                    const next_value_ref = next_value.asRef();
-                                    if (js.JSValueIsArray(writer.ctx, next_value)) {
-                                        const array = next_value;
-                                        const array_len = JSC.JSValue.getLengthOfArray(next_value, JavaScript.VirtualMachine.vm.global);
+                switch (TagOrJSNode.fromJSValueRef(writer, writer.ctx, (writer.eatArg() orelse return null).asRef())) {
+                    TagOrJSNode.tag => |tag| {
+                        if (tag == Tag.inline_inject) {
+                            const count: u32 = (writer.eatArg() orelse return false).toU32();
+                            var i: u32 = 0;
+                            while (i < count) : (i += 1) {
+                                const next_value = (writer.eatArg() orelse return null);
+                                const next_value_ref = next_value.asRef();
+                                if (js.JSValueIsArray(writer.ctx, next_value)) {
+                                    const array = next_value;
+                                    const array_len = JSC.JSValue.getLengthOfArray(next_value, JavaScript.VirtualMachine.vm.global);
 
-                                        var array_i: u32 = 0;
-                                        while (array_i < array_len) : (array_i += 1) {
-                                            var current_value = JSC.JSObject.getIndex(array, JavaScript.VirtualMachine.vm.global, i);
+                                    var array_i: u32 = 0;
+                                    while (array_i < array_len) : (array_i += 1) {
+                                        var current_value = JSC.JSObject.getIndex(array, JavaScript.VirtualMachine.vm.global, i);
 
-                                            switch (TagOrJSNode.fromJSValueRef(writer, writer.ctx, current_value.asRef())) {
-                                                .node => |node| {
-                                                    if (node.data != .s_import) {
-                                                        throwTypeError(writer.ctx, "inject must only contain imports", writer.exception);
-                                                        return null;
-                                                    }
-                                                    writer.inject.append(node);
-                                                },
-                                                .tag => |t| {
-                                                    if (!writer.writeFromJSWithTagInNode(t)) return null;
-                                                },
-                                                .invalid => {
+                                        switch (TagOrJSNode.fromJSValueRef(writer, writer.ctx, current_value.asRef())) {
+                                            .node => |node| {
+                                                if (node.data != .s_import) {
+                                                    throwTypeError(writer.ctx, "inject must only contain imports", writer.exception);
                                                     return null;
-                                                },
-                                            }
+                                                }
+                                                writer.inject.append(node);
+                                            },
+                                            .tag => |t| {
+                                                if (!writer.writeFromJSWithTagInNode(t)) return null;
+                                            },
+                                            .invalid => {
+                                                return null;
+                                            },
                                         }
-                                        i += 1;
-                                        continue;
                                     }
+                                    i += 1;
+                                    continue;
                                 }
-                                return JSNode{ .data = .{ .inline_inject = writer.inject.toOwnedSlice() }, .loc = writer.loc };
                             }
+                            return JSNode{ .data = .{ .inline_inject = writer.inject.toOwnedSlice() }, .loc = writer.loc };
+                        }
 
-                            if (tag == Tag.fragment) {
-                                const count: u32 = (writer.eatArg() orelse return null).toU32();
-                                // collapse single-item fragments
-                                switch (count) {
-                                    0 => {
-                                        return JSNode{ .data = .{ .fragment = &[_]JSNode{} }, .loc = writer.loc };
-                                    },
+                        if (tag == Tag.fragment) {
+                            const count: u32 = (writer.eatArg() orelse return null).toU32();
+                            // collapse single-item fragments
+                            switch (count) {
+                                0 => {
+                                    return JSNode{ .data = .{ .fragment = &[_]JSNode{} }, .loc = writer.loc };
+                                },
 
-                                    1 => {
-                                        var _node = writer.writeFromJS() orelse return null;
-                                        while (true) {
-                                            switch (_node.data) {
-                                                .fragment => |fragment| {
-                                                    if (fragment.len == 1) {
-                                                        _node = fragment[0];
-                                                        continue;
-                                                    }
+                                1 => {
+                                    var _node = writer.writeFromJS() orelse return null;
+                                    while (true) {
+                                        switch (_node.data) {
+                                            .fragment => |fragment| {
+                                                if (fragment.len == 1) {
+                                                    _node = fragment[0];
+                                                    continue;
+                                                }
 
-                                                    break :brk _node;
-                                                },
-                                                else => {
-                                                    break :brk _node;
-                                                },
-                                            }
+                                                return _node;
+                                            },
+                                            else => {
+                                                return _node;
+                                            },
                                         }
-                                    },
-                                    else => {},
-                                }
-
-                                var i: u32 = 0;
-                                var fragment = std.ArrayList(JSNode).initCapacity(writer.allocator, count) catch return null;
-                                while (i < count) : (i += 1) {
-                                    const node = writer.writeFromJS() orelse return null;
-                                    fragment.append(node) catch unreachable;
-                                }
-
-                                break :brk JSNode{ .data = .{ .fragment = fragment.toOwnedSlice() }, .loc = writer.loc };
+                                    }
+                                },
+                                else => {},
                             }
 
-                            var expr: Expr = Expr{ .loc = writer.loc, .data = .{ .e_null = E.Null{} } };
+                            var i: u32 = 0;
+                            var fragment = std.ArrayList(JSNode).initCapacity(writer.allocator, count) catch return null;
+                            while (i < count) : (i += 1) {
+                                const node = writer.writeFromJS() orelse return null;
+                                fragment.append(node) catch unreachable;
+                            }
 
-                            if (!writer.writeFromJSWithTagInExpr(tag, &expr)) return null;
-                            break :brk JSNode.initExpr(expr);
-                        },
-                        TagOrJSNode.node => |node| {
-                            break :brk node;
-                        },
-                        TagOrJSNode.invalid => {
-                            return null;
-                        },
-                    }
-                };
+                            return JSNode{ .data = .{ .fragment = fragment.toOwnedSlice() }, .loc = writer.loc };
+                        }
 
-                if (writer.inject.items.len > 0) {}
+                        var expr: Expr = Expr{ .loc = writer.loc, .data = .{ .e_null = E.Null{} } };
+
+                        if (!writer.writeFromJSWithTagInExpr(tag, &expr)) return null;
+                        return JSNode.initExpr(expr);
+                    },
+                    TagOrJSNode.node => |node| {
+                        return node;
+                    },
+                    TagOrJSNode.invalid => {
+                        return null;
+                    },
+                }
             }
         };
 
@@ -6817,6 +6847,8 @@ pub const Macro = struct {
             args: []Expr,
             source: *const logger.Source,
             id: i32,
+            comptime Visitor: type,
+            visitor: Visitor,
         ) Expr {
             if (comptime isDebug) Output.prettyln("<r><d>[macro]<r> call <d><b>{s}<r>", .{function_name});
 
@@ -6843,7 +6875,8 @@ pub const Macro = struct {
 
             const value = promise.result(macro.vm.global.vm());
 
-            if (JSCBase.GetJSPrivateData(JSNode, value.asObjectRef())) |node| {
+            if (JSCBase.GetJSPrivateData(JSNode, value.asObjectRef())) |*node| {
+                node.updateSymbolsMap(Visitor, visitor);
                 return node.toExpr();
             } else {
                 return Expr{ .data = .{ .e_missing = .{} }, .loc = caller.loc };

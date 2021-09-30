@@ -6494,11 +6494,35 @@ pub const Macro = struct {
                                     }
                                 }
                                 return JSNode{ .data = .{ .inline_inject = writer.inject.toOwnedSlice() }, .loc = writer.loc };
-                            } else if (tag == Tag.fragment) {
+                            }
+
+                            if (tag == Tag.fragment) {
                                 const count: u32 = (writer.eatArg() orelse return null).toU32();
                                 // collapse single-item fragments
-                                if (count == 1) {
-                                    break :brk writer.writeFromJS() orelse return null;
+                                switch (count) {
+                                    0 => {
+                                        return JSNode{ .data = .{ .fragment = &[_]JSNode{} }, .loc = writer.loc };
+                                    },
+
+                                    1 => {
+                                        var _node = writer.writeFromJS() orelse return null;
+                                        while (true) {
+                                            switch (_node.data) {
+                                                .fragment => |fragment| {
+                                                    if (fragment.len == 1) {
+                                                        _node = fragment[0];
+                                                        continue;
+                                                    }
+
+                                                    break :brk _node;
+                                                },
+                                                else => {
+                                                    break :brk _node;
+                                                },
+                                            }
+                                        }
+                                    },
+                                    else => {},
                                 }
 
                                 var i: u32 = 0;

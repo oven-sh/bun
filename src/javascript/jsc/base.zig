@@ -1569,3 +1569,16 @@ pub const JSPrivateDataPtr = TaggedPointerUnion(.{
 pub inline fn GetJSPrivateData(comptime Type: type, ref: js.JSObjectRef) ?*Type {
     return JSPrivateDataPtr.from(js.JSObjectGetPrivate(ref)).get(Type);
 }
+
+pub const JSPropertyNameIterator = struct {
+    array: js.JSPropertyNameArrayRef,
+    count: u32,
+    i: u32 = 0,
+
+    pub fn next(this: *JSPropertyNameIterator) ?js.JSStringRef {
+        if (this.i >= this.count) return null;
+        const i = this.i;
+        this.i += 1;
+        return js.JSPropertyNameArrayGetNameAtIndex(this.array, i);
+    }
+};

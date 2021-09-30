@@ -9605,21 +9605,31 @@ pub fn NewParser(
             pub fn visitImport(this: MacroVisitor, import_data: js_ast.Macro.JSNode.ImportData) void {
                 var p = this.p;
 
-                const record = p.addImportRecord(.import, import_data.loc, import_data.path);
-                p.macro.imports.ensureUnusedCapacity(import_data.import.items) catch unreachable;
+                const record_id = p.addImportRecord(.stmt, this.loc, import_data.path);
+                var record: *ImportRecord = &p.import_records.items[record_id];
+
+                p.macro.imports.ensureUnusedCapacity(import_data.import.items.len) catch unreachable;
 
                 var import = import_data.import;
+                import.import_record_index = record_id;
 
                 p.is_import_item.ensureCapacity(
                     @intCast(u32, p.is_import_item.count() + import.items.len),
                 ) catch unreachable;
 
                 for (import.items) |*clause| {
-                    const name_ref = p.declareSymbol(.import, this.loc, clause.alias) catch unreachable;
+                    if (strings.eqlComptime(clause.original_name, "default")) {
+                        var non_unique_name = record.path.name.nonUniqueNameString(p.allocator) catch unreachable;
+                        clause.original_name = std.fmt.allocPrint(p.allocator, "{s}_default", .{non_unique_name}) catch unreachable;
+                    }
+                    const name_ref = p.declareSymbol(.import, this.loc, clause.original_name) catch unreachable;
                     clause.name = LocRef{ .loc = this.loc, .ref = name_ref };
 
                     p.macro.imports.putAssumeCapacity(js_ast.Macro.JSNode.SymbolMap.generateImportHash(clause.alias, import_data.path), name_ref);
                     p.is_import_item.put(name_ref, true) catch unreachable;
+
+                    // Ensure we don't accidentally think this is an export from
+                    clause.original_name = "";
                 }
 
                 p.macro.prepend_stmts.append(p.s(import, this.loc)) catch unreachable;
@@ -11284,6 +11294,7 @@ pub fn NewParser(
 
                     const ident = E.ImportIdentifier{
                         .was_originally_identifier = false,
+                        .ref = ref,
                     };
 
                     if (!p.is_control_flow_dead) {
@@ -15359,7 +15370,6 @@ pub fn NewParser(
                 .stmt_expr_value = nullExprData,
                 .expr_list = List(Expr).init(allocator),
                 .loop_body = nullStmtData,
-                .macro_refs = MacroRefs.init(allocator),
                 .injected_define_symbols = @TypeOf(this.injected_define_symbols).init(allocator),
                 .emitted_namespace_vars = @TypeOf(this.emitted_namespace_vars).init(allocator),
                 .is_exported_inside_namespace = @TypeOf(this.is_exported_inside_namespace).init(allocator),

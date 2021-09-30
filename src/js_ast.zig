@@ -4027,7 +4027,7 @@ pub const Macro = struct {
             args: []Expr,
             function_name: string,
             comptime Visitor: type,
-            visitor: *Visitor,
+            visitor: Visitor,
         ) anyerror!Expr {
             Expr.Data.Store.disable_reset = true;
             Stmt.Data.Store.disable_reset = true;
@@ -4191,7 +4191,7 @@ pub const Macro = struct {
             return JSNode.Class.make(JavaScript.VirtualMachine.vm.global.ref(), ptr);
         }
 
-        pub fn updateSymbolsMap(this: *JSNode, comptime Visitor: type, visitor: Visitor) void {
+        pub fn updateSymbolsMap(this: *const JSNode, comptime Visitor: type, visitor: Visitor) void {
             switch (this.data) {
                 Tag.fragment => |frag| {
                     for (frag) |child| {
@@ -4207,7 +4207,7 @@ pub const Macro = struct {
                 },
 
                 Tag.s_import => |import| {
-                    visitor.visitImport(import);
+                    visitor.visitImport(import.*);
                 },
 
                 else => {},
@@ -4286,6 +4286,20 @@ pub const Macro = struct {
                         return js.JSObjectMakeArray(ctx, 0, null, exception);
                     },
                 }
+            }
+
+            pub fn getModuleNamespace(
+                this: *JSNode,
+                ctx: js.JSContextRef,
+                thisObject: js.JSValueRef,
+                prop: js.JSStringRef,
+                exception: js.ExceptionRef,
+            ) js.JSObjectRef {
+                if (this.data != .s_import) return js.JSValueMakeUndefined(ctx);
+
+                var module_namespace = getAllocator(ctx).create(ModuleNamespace) catch unreachable;
+                module_namespace.* = ModuleNamespace{ .import_data = this.data.s_import.* };
+                return ModuleNamespace.Class.make(ctx, module_namespace);
             }
 
             fn toNumberValue(this: *JSNode, number: E.Number) js.JSValueRef {
@@ -4950,9 +4964,9 @@ pub const Macro = struct {
 
             pub const ids: std.EnumArray(Tag, Expr.Data) = brk: {
                 var list = std.EnumArray(Tag, Expr.Data).initFill(Expr.Data{ .e_number = E.Number{ .value = 0.0 } });
-                const fields: []std.builtin.TypeInfo.EnumField = @typeInfo(Tag).Enum.fields;
+                const fields: []const std.builtin.TypeInfo.EnumField = @typeInfo(Tag).Enum.fields;
                 for (fields) |field| {
-                    list.set(field.value, Expr.Data{ .e_number = E.Number{ .value = @intToFloat(f64, field.value) } });
+                    list.set(@intToEnum(Tag, field.value), Expr.Data{ .e_number = E.Number{ .value = @intToFloat(f64, field.value) } });
                 }
 
                 break :brk list;
@@ -5142,89 +5156,6 @@ pub const Macro = struct {
                 }
                 break :brk min;
             };
-        };
-
-        pub const ModuleNamespace = struct {
-            import_data: ImportData,
-
-            pub const Class = JSCBase.NewClass(
-                ModuleNamespace,
-                .{
-                    .name = "ModuleNamespace",
-                    .read_only = true,
-                },
-                .{
-                    .getProperty = .{
-                        .rfn = getProperty,
-                    },
-                    .hasProperty = .{
-                        .rfn = hasProperty,
-                    },
-                    .getPropertyNames = .{
-                        .rfn = getPropertyNames,
-                    },
-                },
-                .{},
-            );
-
-            pub fn getProperty(
-                ctx: js.JSContextRef,
-                thisObject: js.JSObjectRef,
-                propertyName: js.JSStringRef,
-                exception: js.ExceptionRef,
-            ) callconv(.C) js.JSValueRef {
-                var this: *ModuleNamespace = JSCBase.GetJSPrivateData(ModuleNamespace, thisObject) orelse return null;
-
-                const len = js.JSStringGetLength(propertyName);
-                const properties = this.import_data.import.items;
-                var ptr = js.JSStringGetCharacters8Ptr(propertyName);
-                var property_slice = ptr[0..len];
-                var value_node: JSNode = undefined;
-
-                for (properties) |property| {
-                    if (strings.eql(property.alias, str)) {
-                        const value = property.value orelse return js.JSValueMakeUndefined(ctx);
-                        value_node = JSNode.initExpr(value);
-                        return JSC.JSValue.jsNumberFromInt32(SymbolMap.generateImportHash(property.alias, this.import_data.path)).asRef();
-                    }
-                }
-
-                return js.JSValueMakeUndefined(ctx);
-            }
-
-            pub fn hasProperty(
-                ctx: js.JSContextRef,
-                thisObject: js.JSObjectRef,
-                propertyName: js.JSStringRef,
-            ) callconv(.C) bool {
-                var this: *ModuleNamespace = JSCBase.GetJSPrivateData(ModuleNamespace, thisObject) orelse return false;
-
-                const len = js.JSStringGetLength(propertyName);
-                const properties = this.import_data.import.items;
-                var ptr = js.JSStringGetCharacters8Ptr(propertyName);
-                var property_slice = ptr[0..len];
-
-                for (properties) |property| {
-                    if (strings.eql(property.alias, str)) return true;
-                }
-
-                return false;
-            }
-
-            pub fn getPropertyNames(
-                ctx: js.JSContextRef,
-                thisObject: js.JSObjectRef,
-                props: js.JSPropertyNameAccumulatorRef,
-            ) callconv(.C) void {
-                var this: *ModuleNamespace = JSCBase.GetJSPrivateData(ModuleNamespace, thisObject) orelse return;
-
-                const items = this.import_data.import.items;
-
-                for (items) |clause| {
-                    const str = clause.alias;
-                    js.JSPropertyNameAccumulatorAddName(props, js.JSStringCreateStatic(str.ptr, str.len));
-                }
-            }
         };
 
         pub const JSNodeList = std.ArrayListUnmanaged(JSNode);
@@ -5657,7 +5588,11 @@ pub const Macro = struct {
 
                             // For <inject>, immediate children must be JSX types or arrays
                             if (props.len > 0) {
-                                self.log.addError(self.p.source, loc, "<inject> does not accept props") catch unreachable;
+                                self.log.addError(
+                                    self.p.source,
+                                    loc,
+                                    "<inject> does not accept props",
+                                ) catch unreachable;
                             }
 
                             var count: usize = children.len;
@@ -5668,14 +5603,18 @@ pub const Macro = struct {
                                     },
                                     .e_identifier => 1,
                                     else => brk: {
-                                        self.log.addError(self.p.source, c.loc, "<inject> children must be JSX AST nodes", .{}) catch unreachable;
+                                        self.log.addError(
+                                            self.p.source,
+                                            c.loc,
+                                            "<inject> children must be JSX AST nodes",
+                                        ) catch unreachable;
                                         break :brk 0;
                                     },
                                 };
                             }
                             self.args.ensureUnusedCapacity(2 + count) catch unreachable;
                             self.args.appendAssumeCapacity(Expr{ .loc = loc, .data = comptime Tag.ids.get(Tag.inline_inject) });
-                            self.args.appendAssumeCapacity(Expr{ .loc = loc, .data = .{ .e_number = .{ .value = @floatToInt(f64, children.len) } } });
+                            self.args.appendAssumeCapacity(Expr{ .loc = loc, .data = .{ .e_number = .{ .value = @intToFloat(f64, @intCast(u32, children.len)) } } });
 
                             const old_parent_tag = self.parent_tag;
                             self.parent_tag = Tag.inline_inject;
@@ -5687,8 +5626,9 @@ pub const Macro = struct {
                                         if (!self.writeElementWithValidTagList(el.*, comptime Tag.Validator.valid_inject_tags)) return false;
                                     },
                                     .e_spread, .e_if, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
-                                        self.args.append(child);
+                                        self.args.append(child) catch unreachable;
                                     },
+                                    else => {},
                                 }
                             }
 
@@ -5697,31 +5637,44 @@ pub const Macro = struct {
 
                         Tag.inline_identifier => {
                             // id only accepts "to" and it must be a int32
-                            self.args.ensureUnusedCapacity(2);
+                            self.args.ensureUnusedCapacity(2) catch unreachable;
                             self.args.appendAssumeCapacity(Expr{ .loc = loc, .data = comptime Tag.ids.get(Tag.inline_identifier) });
 
                             if (propertyValueNamed(props, "to")) |prop| {
                                 switch (prop.data) {
                                     .e_number, .e_if, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
-                                        self.args.appendAssumeCapacity(p.visitExpr(prop));
+                                        self.args.appendAssumeCapacity(self.p.visitExpr(prop));
                                     },
                                     else => {
-                                        self.log.addError(self.p.source, prop.loc, "\"to\" prop must be a number", .{}) catch unreachable;
+                                        self.log.addError(
+                                            self.p.source,
+                                            prop.loc,
+                                            "\"to\" prop must be a number",
+                                        ) catch unreachable;
                                         self.args.appendAssumeCapacity(prop);
                                     },
                                 }
                             } else {
-                                self.log.addError(self.p.source, prop.loc, "\"to\" prop is required", .{}) catch unreachable;
-                                self.args.appendAssumeCapacity(Expr{ .loc = loc, .data = .{ .e_number = .{ .value = @floatToInt(f64, 0) } } });
+                                self.log.addError(
+                                    self.p.source,
+                                    loc,
+                                    "\"to\" prop is required",
+                                ) catch unreachable;
+                                self.args.appendAssumeCapacity(Expr{ .loc = loc, .data = .{ .e_number = .{ .value = 0 } } });
                             }
 
                             return true;
                         },
 
                         Tag.s_import => {
+                            var p = self.p;
                             const default_property_ = propertyValueNamed(props, "default");
                             const path_property = propertyValueNamed(props, "path") orelse {
-                                self.log.addError(self.p.source, loc, "<import> must have a path", .{}) catch unreachable;
+                                self.log.addError(
+                                    self.p.source,
+                                    loc,
+                                    "<import> must have a path",
+                                ) catch unreachable;
                                 return false;
                             };
                             const namespace_ = propertyValueNamed(props, "namespace");
@@ -5737,14 +5690,22 @@ pub const Macro = struct {
                                     self.args.appendAssumeCapacity(path_property);
                                 },
                                 .e_jsx_element => {
-                                    self.log.addError(self.p.source, path_property.loc, "import path cannot be JSX", .{}) catch unreachable;
+                                    self.log.addError(
+                                        self.p.source,
+                                        path_property.loc,
+                                        "import path cannot be JSX",
+                                    ) catch unreachable;
                                     return false;
                                 },
                                 .e_if, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
                                     self.args.appendAssumeCapacity(p.visitExpr(path_property));
                                 },
                                 else => {
-                                    self.log.addError(self.p.source, path_property.loc, "import path must be a string or identifier", .{}) catch unreachable;
+                                    self.log.addError(
+                                        self.p.source,
+                                        path_property.loc,
+                                        "import path must be a string or identifier",
+                                    ) catch unreachable;
                                     self.args.appendAssumeCapacity(path_property);
                                 },
                             }
@@ -5752,12 +5713,20 @@ pub const Macro = struct {
                             if (namespace_) |namespace_expr| {
                                 switch (namespace_expr.data) {
                                     .e_string => {
-                                        self.log.addError(self.p.source, namespace_expr.loc, "import * as is not supported in macros yet", .{}) catch unreachable;
+                                        self.log.addError(
+                                            self.p.source,
+                                            namespace_expr.loc,
+                                            "import * as is not supported in macros yet",
+                                        ) catch unreachable;
                                         self.args.appendAssumeCapacity(p.visitExpr(namespace_expr));
                                         return false;
                                     },
                                     .e_jsx_element => {
-                                        self.log.addError(self.p.source, namespace_expr.loc, "namespace cannot be JSX", .{}) catch unreachable;
+                                        self.log.addError(
+                                            self.p.source,
+                                            namespace_expr.loc,
+                                            "namespace cannot be JSX",
+                                        ) catch unreachable;
                                         return false;
                                     },
 
@@ -5766,7 +5735,11 @@ pub const Macro = struct {
                                     },
 
                                     else => {
-                                        self.log.addError(self.p.source, namespace_expr.loc, "namespace must be an object shaped like {\"fromName\": \"toName\"}", .{}) catch unreachable;
+                                        self.log.addError(
+                                            self.p.source,
+                                            namespace_expr.loc,
+                                            "namespace must be an object shaped like {\"fromName\": \"toName\"}",
+                                        ) catch unreachable;
                                         self.args.appendAssumeCapacity(namespace_expr);
                                     },
                                 }
@@ -5785,14 +5758,18 @@ pub const Macro = struct {
                                         self.args.appendAssumeCapacity(default);
                                     },
                                     .e_jsx_element => {
-                                        self.log.addError(self.p.source, default.loc, "default import cannot be JSX", .{}) catch unreachable;
+                                        self.log.addError(
+                                            self.p.source,
+                                            default.loc,
+                                            "default import cannot be JSX",
+                                        ) catch unreachable;
                                         return false;
                                     },
                                     .e_if, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
                                         self.args.appendAssumeCapacity(p.visitExpr(default));
                                     },
                                     else => {
-                                        self.log.addError(self.p.source, default.loc, "default import must be a string or identifier", .{}) catch unreachable;
+                                        self.log.addError(self.p.source, default.loc, "default import must be a string or identifier") catch unreachable;
                                         self.args.appendAssumeCapacity(default);
                                     },
                                 }
@@ -5810,7 +5787,14 @@ pub const Macro = struct {
                         Tag.fragment => {
                             self.args.ensureUnusedCapacity(children.len + 2) catch unreachable;
                             self.args.appendAssumeCapacity(Expr{ .loc = loc, .data = comptime Tag.ids.get(Tag.fragment) });
-                            self.args.appendAssumeCapacity(Expr{ .loc = loc, .data = E.Number{ .value = @intToFloat(f64, children.len) } });
+                            self.args.appendAssumeCapacity(Expr{
+                                .loc = loc,
+                                .data = .{
+                                    .e_number = E.Number{
+                                        .value = @intToFloat(f64, children.len),
+                                    },
+                                },
+                            });
 
                             for (children) |child, i| {
                                 switch (child.data) {
@@ -6185,6 +6169,7 @@ pub const Macro = struct {
                         var import = ImportData{
                             .import = S.Import{
                                 .namespace_ref = Ref.None,
+                                .import_record_index = std.math.maxInt(u32),
                             },
                             .path = import_path,
                         };
@@ -6198,18 +6183,7 @@ pub const Macro = struct {
 
                         const import_default_name = import_default_name_string.slice();
 
-                        const JSPropertyNameIterator = struct {
-                            array: js.JSPropertyNameArrayRef,
-                            count: u32,
-                            i: u32 = 0,
-
-                            pub fn next(this: *JSPropertyNameIterator) ?js.JSStringRef {
-                                if (this.i >= this.count) return null;
-                                const i = this.i;
-                                this.i += 1;
-                                return js.JSPropertyNameArrayGetNameAtIndex(this.array, i);
-                            }
-                        };
+                        var import_item_i: u32 = 0;
 
                         // TODO: verify it's safe to reuse the memory here
                         if (!import_namespace_arg.isNull()) {
@@ -6219,22 +6193,21 @@ pub const Macro = struct {
                             }
 
                             const JSLexer = @import("./js_lexer.zig");
-                            var array = js.JSObjectCopyPropertyNames(ctx, import_namespace_arg);
+                            var array = js.JSObjectCopyPropertyNames(writer.ctx, import_namespace_arg.asObjectRef());
                             defer js.JSPropertyNameArrayRelease(array);
                             const property_names_count = @intCast(u32, js.JSPropertyNameArrayGetCount(array));
-                            var iter = JSPropertyNameIterator{
+                            var iter = JSCBase.JSPropertyNameIterator{
                                 .array = array,
                                 .count = @intCast(u32, property_names_count),
                             };
 
                             import.import.items = writer.allocator.alloc(
-                                G.ClauseItem,
+                                ClauseItem,
                                 @intCast(u32, @boolToInt(has_default)) + property_names_count,
                             ) catch return false;
 
                             var object_ref = import_namespace_arg.asObjectRef();
 
-                            var import_item_i: u32 = 0;
                             while (iter.next()) |prop| {
                                 const ptr = js.JSStringGetCharacters8Ptr(prop);
                                 const len = js.JSStringGetLength(prop);
@@ -6247,7 +6220,7 @@ pub const Macro = struct {
                                     return false;
                                 }
 
-                                const property_value_zig_string = JSC.ZigString.Empty;
+                                var property_value_zig_string = JSC.ZigString.Empty;
                                 property_value.toZigString(&property_value_zig_string, JavaScript.VirtualMachine.vm.global);
 
                                 const alias = property_value_zig_string.slice();
@@ -6269,7 +6242,7 @@ pub const Macro = struct {
                             import.import.items[import_item_i] = ClauseItem{
                                 .alias = import_default_name,
                                 .name = .{ .loc = writer.loc, .ref = Ref.None },
-                                .original_name = name,
+                                .original_name = "default",
                                 .alias_loc = writer.loc,
                             };
                             import_item_i += 1;
@@ -6493,12 +6466,12 @@ pub const Macro = struct {
                 switch (TagOrJSNode.fromJSValueRef(writer, writer.ctx, (writer.eatArg() orelse return null).asRef())) {
                     TagOrJSNode.tag => |tag| {
                         if (tag == Tag.inline_inject) {
-                            const count: u32 = (writer.eatArg() orelse return false).toU32();
+                            const count: u32 = (writer.eatArg() orelse return null).toU32();
                             var i: u32 = 0;
                             while (i < count) : (i += 1) {
                                 const next_value = (writer.eatArg() orelse return null);
                                 const next_value_ref = next_value.asRef();
-                                if (js.JSValueIsArray(writer.ctx, next_value)) {
+                                if (js.JSValueIsArray(writer.ctx, next_value_ref)) {
                                     const array = next_value;
                                     const array_len = JSC.JSValue.getLengthOfArray(next_value, JavaScript.VirtualMachine.vm.global);
 
@@ -6512,7 +6485,7 @@ pub const Macro = struct {
                                                     throwTypeError(writer.ctx, "inject must only contain imports", writer.exception);
                                                     return null;
                                                 }
-                                                writer.inject.append(node);
+                                                writer.inject.append(node) catch unreachable;
                                             },
                                             .tag => |t| {
                                                 if (!writer.writeFromJSWithTagInNode(t)) return null;
@@ -6666,6 +6639,7 @@ pub const Macro = struct {
             defer Output.flush();
             const args_value = JSC.JSValue.fromRef(arguments[0]);
             var writer = Writer{
+                .inject = std.ArrayList(JSNode).init(JSCBase.getAllocator(ctx)),
                 .log = JavaScript.VirtualMachine.vm.log,
                 .ctx = ctx,
                 .loc = logger.Loc.Empty,
@@ -6782,6 +6756,87 @@ pub const Macro = struct {
         }
     };
 
+    pub const ModuleNamespace = struct {
+        import_data: JSNode.ImportData,
+
+        pub const Class = JSCBase.NewClass(
+            ModuleNamespace,
+            .{
+                .name = "ModuleNamespace",
+                .read_only = true,
+            },
+            .{
+                .getProperty = .{
+                    .rfn = getProperty,
+                },
+                .hasProperty = .{
+                    .rfn = hasProperty,
+                },
+                .getPropertyNames = .{
+                    .rfn = getPropertyNames,
+                },
+            },
+            .{},
+        );
+
+        pub fn getProperty(
+            ctx: js.JSContextRef,
+            thisObject: js.JSObjectRef,
+            propertyName: js.JSStringRef,
+            exception: js.ExceptionRef,
+        ) callconv(.C) js.JSValueRef {
+            var this: *ModuleNamespace = JSCBase.GetJSPrivateData(ModuleNamespace, thisObject) orelse return null;
+
+            const len = js.JSStringGetLength(propertyName);
+            const properties = this.import_data.import.items;
+            var ptr = js.JSStringGetCharacters8Ptr(propertyName);
+            var property_slice = ptr[0..len];
+            var value_node: JSNode = undefined;
+
+            for (properties) |property| {
+                if (strings.eql(property.alias, property_slice)) {
+                    return JSC.JSValue.jsNumberFromInt32(JSNode.SymbolMap.generateImportHash(property.alias, this.import_data.path)).asRef();
+                }
+            }
+
+            return js.JSValueMakeUndefined(ctx);
+        }
+
+        pub fn hasProperty(
+            ctx: js.JSContextRef,
+            thisObject: js.JSObjectRef,
+            propertyName: js.JSStringRef,
+        ) callconv(.C) bool {
+            var this: *ModuleNamespace = JSCBase.GetJSPrivateData(ModuleNamespace, thisObject) orelse return false;
+
+            const len = js.JSStringGetLength(propertyName);
+            const properties = this.import_data.import.items;
+            var ptr = js.JSStringGetCharacters8Ptr(propertyName);
+            var property_slice = ptr[0..len];
+
+            for (properties) |property| {
+                if (strings.eql(property.alias, property_slice)) return true;
+            }
+
+            return false;
+        }
+
+        pub fn getPropertyNames(
+            ctx: js.JSContextRef,
+            thisObject: js.JSObjectRef,
+            props: js.JSPropertyNameAccumulatorRef,
+        ) callconv(.C) void {
+            var this: *ModuleNamespace = JSCBase.GetJSPrivateData(ModuleNamespace, thisObject) orelse return;
+
+            const items = this.import_data.import.items;
+
+            for (items) |clause| {
+                const str = clause.alias;
+                js.JSPropertyNameAccumulatorAddName(props, js.JSStringCreateStatic(str.ptr, str.len));
+            }
+        }
+    };
+
     resolver: *Resolver,
     vm: *JavaScript.VirtualMachine = undefined,
 
@@ -6875,7 +6930,7 @@ pub const Macro = struct {
 
             const value = promise.result(macro.vm.global.vm());
 
-            if (JSCBase.GetJSPrivateData(JSNode, value.asObjectRef())) |*node| {
+            if (JSCBase.GetJSPrivateData(JSNode, value.asObjectRef())) |node| {
                 node.updateSymbolsMap(Visitor, visitor);
                 return node.toExpr();
             } else {
@@ -7074,4 +7129,3 @@ test "Expr.init" {
 // Stmt               | 192
 // STry               | 384
 // -- ESBuild bit sizes
-

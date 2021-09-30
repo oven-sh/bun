@@ -110,6 +110,10 @@ pub const ZigString = extern struct {
         return this.ptr[0..std.math.min(this.len, 4096)];
     }
 
+    pub fn trimmedSlice(this: *const ZigString) []const u8 {
+        return std.mem.trim(u8, this.ptr[0..std.math.min(this.len, 4096)], " \r\n");
+    }
+
     pub fn toValue(this: ZigString, global: *JSGlobalObject) JSValue {
         return shim.cppFn("toValue", .{ this, global });
     }

@@ -4771,10 +4771,18 @@ pub const Macro = struct {
             }
         }
 
+        // S.Import but with the path
+        pub const ImportData = struct {
+            import: S.Import,
+            path: string,
+        };
+
         pub const Data = union(Tag) {
             inline_false: void,
             inline_true: void,
             e_boolean: E.Boolean,
+            fragment: []JSNode,
+
             e_super: E.Super,
             e_null: E.Null,
             e_number: E.Number,
@@ -4814,10 +4822,12 @@ pub const Macro = struct {
             e_class: *E.Class,
             e_require: *E.Require,
 
-            s_import: *S.Import,
+            s_import: *ImportData,
             s_block: *S.Block,
 
             g_property: *G.Property,
+
+            inline_inject: []JSNode,
 
             pub fn callArgs(this: Data) ExprNodeList {
                 if (this == .e_call)
@@ -4878,6 +4888,8 @@ pub const Macro = struct {
 
             inline_true,
             inline_false,
+            inline_inject,
+            fragment,
 
             pub const ids: std.EnumArray(Tag, Expr.Data) = brk: {
                 var list = std.EnumArray(Tag, Expr.Data).initFill(Expr.Data{ .e_number = E.Number{ .value = 0.0 } });
@@ -5041,6 +5053,7 @@ pub const Macro = struct {
                 .{ "block", Tag.s_block },
                 .{ "true", Tag.inline_true },
                 .{ "false", Tag.inline_false },
+                .{ "inject", Tag.inline_inject },
             });
 
             pub const as_expr_tag: std.EnumArray(Tag, Expr.Tag) = brk: {
@@ -5160,6 +5173,10 @@ pub const Macro = struct {
                     .e_unary,
                     .e_binary,
                 });
+
+                pub const valid_inject_tags = Tag.Validator.NewList(.{
+                    .s_import,
+                });
             };
 
             pub const max_tag: u8 = brk: {
@@ -5180,6 +5197,8 @@ pub const Macro = struct {
                 break :brk min;
             };
         };
+
+        pub const JSNodeList = std.ArrayListUnmanaged(JSNode);
 
         pub fn NewJSXWriter(comptime P: type) type {
             return struct {
@@ -5605,6 +5624,171 @@ pub const Macro = struct {
 
                             return true;
                         },
+                        Tag.inline_inject => {
+
+                            // For <inject>, immediate children must be JSX types or arrays
+                            if (props.len > 0) {
+                                self.log.addError(self.p.source, loc, "<inject> does not accept props") catch unreachable;
+                            }
+
+                            var count: usize = children.len;
+                            for (children) |c| {
+                                count += switch (c.data) {
+                                    .e_jsx_element => if (c.data.e_jsx_element.tag != null) 1 else brk: {
+                                        break :brk c.data.e_jsx_element.children.len;
+                                    },
+                                    .e_identifier => 1,
+                                    else => brk: {
+                                        self.log.addError(self.p.source, c.loc, "<inject> children must be JSX AST nodes", .{}) catch unreachable;
+                                        break :brk 0;
+                                    },
+                                };
+                            }
+                            self.args.ensureUnusedCapacity(2 + count) catch unreachable;
+                            self.args.appendAssumeCapacity(Expr{ .loc = loc, .data = comptime Tag.ids.get(Tag.inline_inject) });
+                            self.args.appendAssumeCapacity(Expr{ .loc = loc, .data = .{ .e_number = .{ .value = @floatToInt(f64, children.len) } } });
+
+                            const old_parent_tag = self.parent_tag;
+                            self.parent_tag = Tag.inline_inject;
+                            defer self.parent_tag = old_parent_tag;
+
+                            for (children) |child| {
+                                switch (child.data) {
+                                    .e_jsx_element => |el| {
+                                        if (!self.writeElementWithValidTagList(el.*, comptime Tag.Validator.valid_inject_tags)) return false;
+                                    },
+                                    .e_spread, .e_if, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
+                                        self.args.append(child);
+                                    },
+                                }
+                            }
+
+                            return true;
+                        },
+
+                        Tag.s_import => {
+                            const default_property_ = propertyValueNamed(props, "default");
+                            const path_property = propertyValueNamed(props, "path") orelse {
+                                self.log.addError(self.p.source, loc, "<import> must have a path", .{}) catch unreachable;
+                                return false;
+                            };
+                            const namespace_ = propertyValueNamed(props, "namespace");
+
+                            const items_count: u32 = 1 +
+                                @intCast(u32, @boolToInt(namespace_ != null));
+
+                            self.args.ensureUnusedCapacity(items_count) catch unreachable;
+                            self.args.appendAssumeCapacity(Expr{ .loc = loc, .data = comptime Tag.ids.get(Tag.s_import) });
+
+                            switch (path_property.data) {
+                                .e_string => {
+                                    self.args.appendAssumeCapacity(path_property);
+                                },
+                                .e_jsx_element => {
+                                    self.log.addError(self.p.source, path_property.loc, "import path cannot be JSX", .{}) catch unreachable;
+                                    return false;
+                                },
+                                .e_if, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
+                                    self.args.appendAssumeCapacity(p.visitExpr(path_property));
+                                },
+                                else => {
+                                    self.log.addError(self.p.source, path_property.loc, "import path must be a string or identifier", .{}) catch unreachable;
+                                    self.args.appendAssumeCapacity(path_property);
+                                },
+                            }
+
+                            if (namespace_) |namespace_expr| {
+                                switch (namespace_expr.data) {
+                                    .e_string => {
+                                        self.log.addError(self.p.source, namespace_expr.loc, "import * as is not supported in macros yet", .{}) catch unreachable;
+                                        self.args.appendAssumeCapacity(p.visitExpr(namespace_expr));
+                                        return false;
+                                    },
+                                    .e_jsx_element => {
+                                        self.log.addError(self.p.source, namespace_expr.loc, "namespace cannot be JSX", .{}) catch unreachable;
+                                        return false;
+                                    },
+
+                                    .e_object, .e_if, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
+                                        self.args.appendAssumeCapacity(p.visitExpr(namespace_expr));
+                                    },
+
+                                    else => {
+                                        self.log.addError(self.p.source, namespace_expr.loc, "namespace must be an object shaped like {\"fromName\": \"toName\"}", .{}) catch unreachable;
+                                        self.args.appendAssumeCapacity(namespace_expr);
+                                    },
+                                }
+                            } else {
+                                self.args.appendAssumeCapacity(Expr{
+                                    .loc = loc,
+                                    .data = .{
+                                        .e_null = E.Null{},
+                                    },
+                                });
+                            }
+
+                            if (default_property_) |default| {
+                                switch (default.data) {
+                                    .e_string => {
+                                        self.args.appendAssumeCapacity(default);
+                                    },
+                                    .e_jsx_element => {
+                                        self.log.addError(self.p.source, default.loc, "default import cannot be JSX", .{}) catch unreachable;
+                                        return false;
+                                    },
+                                    .e_if, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
+                                        self.args.appendAssumeCapacity(p.visitExpr(default));
+                                    },
+                                    else => {
+                                        self.log.addError(self.p.source, default.loc, "default import must be a string or identifier", .{}) catch unreachable;
+                                        self.args.appendAssumeCapacity(default);
+                                    },
+                                }
+                            } else {
+                                self.args.appendAssumeCapacity(Expr{
+                                    .loc = loc,
+                                    .data = .{
+                                        .e_null = E.Null{},
+                                    },
+                                });
+                            }
+
+                            return true;
+                        },
+                        Tag.fragment => {
+                            self.args.ensureUnusedCapacity(children.len + 2) catch unreachable;
+                            self.args.appendAssumeCapacity(Expr{ .loc = loc, .data = comptime Tag.ids.get(Tag.fragment) });
+                            self.args.appendAssumeCapacity(Expr{ .loc = loc, .data = E.Number{ .value = @intToFloat(f64, children.len) } });
+
+                            for (children) |child, i| {
+                                switch (child.data) {
+                                    .e_jsx_element => |el| {
+                                        if (!self.writeElement(el.*)) return false;
+                                    },
+                                    .e_if, .e_spread, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
+                                        const visited = self.p.visitExpr(child);
+                                        switch (visited.data) {
+                                            .e_jsx_element => |el| {
+                                                if (!self.writeElement(el.*)) return false;
+                                            },
+                                            .e_if, .e_spread, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
+                                                self.args.append(visited) catch unreachable;
+                                            },
+                                            else => {
+                                                self.log.addError(self.p.source, child.loc, "<> should only contain other jsx elements") catch unreachable;
+                                                self.args.append(Expr{ .data = .{ .e_missing = E.Missing{} }, .loc = child.loc }) catch unreachable;
+                                            },
+                                        }
+                                    },
+                                    else => {
+                                        self.log.addError(self.p.source, child.loc, "<> should only contain other jsx elements") catch unreachable;
+                                        self.args.append(Expr{ .data = .{ .e_missing = E.Missing{} }, .loc = child.loc }) catch unreachable;
+                                    },
+                                }
+                            }
+
+                            return true;
+                        },
                         // Tag.e_jsx_element => unreachable,
                         // Tag.e_identifier => {
                         //     // self.args.ensureUnusedCapacity(2) catch unreachable;
@@ -5738,6 +5922,49 @@ pub const Macro = struct {
             };
         }
 
+        pub const SymbolMap = struct {
+            // this uses an i32 here instead of a typical Ref
+            // we only want the final return value's symbols to be added to the symbol map
+            // the point that the symbol name is referenced may not be when it's added to the symbol map
+            // this lets you do:
+            map: std.AutoArrayHashMap(i32, Symbol) = undefined,
+            allocator: *std.mem.Allocator,
+            loaded: bool = false,
+            loc: logger.Loc,
+
+            pub fn generateImportHash(name: string, path: string) i32 {
+                var hasher = std.hash.Wyhash.init(8);
+                hasher.update(path);
+                hasher.update("#");
+                hasher.update(name);
+                return @bitCast(i32, @truncate(u32, hasher.final()));
+            }
+
+            pub fn putImport(self: *SymbolMap, import: *ImportData) void {
+                // we use items here
+                std.debug.assert(import.default_name == null);
+
+                const count = @intCast(u32, @intCast(u32, import.import.items.len));
+
+                if (!self.loaded) {
+                    self.loaded = true;
+                    self.map = std.AutoArrayHashMap(i32, Symbol).init(self);
+                }
+
+                self.map.ensureUnusedCapacity(count) catch unreachable;
+
+                for (import.import.items) |clause| {
+                    self.map.putAssumeCapacity(
+                        generateImportHash(clause.alias, import.path),
+                        Symbol{
+                            .kind = Symbol.Kind.import,
+                            .original_name = clause.name,
+                        },
+                    );
+                }
+            }
+        };
+
         pub const Writer = struct {
             log: *logger.Log,
             exception: JSCBase.ExceptionValueRef = null,
@@ -5749,9 +5976,12 @@ pub const Macro = struct {
             args_i: u32 = 0,
             args_len: u32 = 0,
 
+            inject: std.ArrayList(JSNode),
+
             pub inline fn eatArg(this: *Writer) ?JSC.JSValue {
                 if (this.args_i >= this.args_len) return null;
                 const i = this.args_i;
+
                 this.args_i += 1;
                 return JSC.JSObject.getIndex(this.args_value, JavaScript.VirtualMachine.vm.global, i);
             }
@@ -5912,6 +6142,121 @@ pub const Macro = struct {
                 }
 
                 return true;
+            }
+
+            fn writeFromJSWithTagInNode(writer: *Writer, tag: JSNode.Tag) bool {
+                switch (tag) {
+                    .s_import => {
+                        const path_arg = writer.eatArg() orelse return false;
+                        // path should be a plain old JS string
+                        if (!path_arg.isString()) {
+                            throwTypeError(writer.ctx, "Import path must be a string", writer.exception);
+                            return false;
+                        }
+
+                        var path_zig_string = JSC.ZigString.Empty;
+                        path_arg.toZigString(&path_zig_string, JavaScript.VirtualMachine.vm.global);
+                        const import_path = path_zig_string.trimmedSlice();
+
+                        if (import_path.len == 0) {
+                            throwTypeError(writer.ctx, "Import path must be a non-empty string", writer.exception);
+                            return false;
+                        }
+
+                        var import = ImportData{
+                            .import = S.Import{
+                                .namespace_ref = Ref.None,
+                            },
+                            .path = import_path,
+                        };
+                        var import_namespace_arg = writer.eatArg() orelse return false;
+                        var import_default_arg = writer.eatArg() orelse return false;
+
+                        const has_default = import_default_arg.isString();
+
+                        var import_default_name_string = JSC.ZigString.Empty;
+                        if (has_default) import_default_arg.toZigString(&import_default_name_string, JavaScript.VirtualMachine.vm.global);
+
+                        const import_default_name = import_default_name_string.slice();
+
+                        const JSPropertyNameIterator = struct {
+                            array: js.JSPropertyNameArrayRef,
+                            count: u32,
+                            i: u32 = 0,
+
+                            pub fn next(this: *JSPropertyNameIterator) ?js.JSStringRef {
+                                if (this.i >= this.count) return null;
+                                const i = this.i;
+                                this.i += 1;
+                                return js.JSPropertyNameArrayGetNameAtIndex(this.array, i);
+                            }
+                        };
+
+                        // TODO: verify it's safe to reuse the memory here
+                        if (!import_namespace_arg.isNull()) {
+                            if (import_namespace_arg.isObject()) {
+                                throwTypeError(writer.ctx, "Import namespace should be an object where the keys are import names and the values are aliases.", writer.exception);
+                                return false;
+                            }
+
+                            const JSLexer = @import("./js_lexer.zig");
+                            var array = js.JSObjectCopyPropertyNames(ctx, import_namespace_arg);
+                            defer js.JSPropertyNameArrayRelease(array);
+                            const property_names_count = @intCast(u32, js.JSPropertyNameArrayGetCount(array));
+                            var iter = JSPropertyNameIterator{
+                                .array = array,
+                                .count = @intCast(u32, property_names_count),
+                            };
+
+                            import.import.items = writer.allocator.alloc(
+                                G.ClauseItem,
+                                @intCast(u32, @boolToInt(has_default)) + property_names_count,
+                            ) catch return false;
+
+                            var object_ref = import_namespace_arg.asObjectRef();
+
+                            var import_item_i: u32 = 0;
+                            while (iter.next()) |prop| {
+                                const ptr = js.JSStringGetCharacters8Ptr(prop);
+                                const len = js.JSStringGetLength(prop);
+                                const name = ptr[0..len];
+                                const i = iter.i - 1;
+
+                                const property_value = JSC.JSValue.fromRef(js.JSObjectGetProperty(writer.ctx, object_ref, prop, writer.exception));
+
+                                if (!property_value.isString()) {
+                                    return false;
+                                }
+
+                                const property_value_zig_string = JSC.ZigString.Empty;
+                                property_value.toZigString(&property_value_zig_string, JavaScript.VirtualMachine.vm.global);
+
+                                const alias = property_value_zig_string.slice();
+
+                                if (!JSLexer.isIdentifier(alias)) throwTypeError(writer.ctx, "import alias must be an identifier", writer.exception);
+
+                                import.import.items[import_item_i] = ClauseItem{ .alias = alias, .name = name, .alias_loc = writer.loc };
+
+                                import_item_i += 1;
+                            }
+                        }
+
+                        if (has_default) {
+                            import.import.items[import_item_i] = ClauseItem{ .alias = import_default_name, .name = "default", .alias_loc = writer.loc };
+                            import_item_i += 1;
+                        }
+
+                        import.import.items = import.import.items[0..import_item_i];
+
+                        var import_ = writer.allocator.create(ImportData) catch return false;
+                        import_.* = import;
+                        writer.inject.append(JSNode{ .data = .{ .s_import = import_ }, .loc = writer.loc }) catch unreachable;
+                        return true;
+                    },
+                    else => {
+                        return false;
+                    },
+                }
             }
 
             fn writeFromJSWithTagInExpr(writer: *Writer, tag: JSNode.Tag, expr: *Expr) bool {
@@ -6081,6 +6426,7 @@ pub const Macro = struct {
 
                         return true;
                     },
+
                     else => {
                         return false;
                     },
@@ -6110,20 +6456,76 @@ pub const Macro = struct {
             }
 
             pub fn writeFromJS(writer: *Writer) ?JSNode {
-                switch (TagOrJSNode.fromJSValueRef(writer, writer.ctx, (writer.eatArg() orelse return null).asRef())) {
-                    TagOrJSNode.tag => |tag| {
-                        var expr: Expr = Expr{ .loc = writer.loc, .data = .{ .e_null = E.Null{} } };
+                const out_node: JSNode = brk: {
+                    switch (TagOrJSNode.fromJSValueRef(writer, writer.ctx, (writer.eatArg() orelse return null).asRef())) {
+                        TagOrJSNode.tag => |tag| {
+                            if (tag == Tag.inline_inject) {
+                                const count: u32 = (writer.eatArg() orelse return false).toU32();
+                                var i: u32 = 0;
+                                while (i < count) : (i += 1) {
+                                    const next_value = (writer.eatArg() orelse return null);
+                                    const next_value_ref = next_value.asRef();
+                                    if (js.JSValueIsArray(writer.ctx, next_value)) {
+                                        const array = next_value;
+                                        const array_len = JSC.JSValue.getLengthOfArray(next_value, JavaScript.VirtualMachine.vm.global);
 
-                        if (!writer.writeFromJSWithTagInExpr(tag, &expr)) return null;
-                        return JSNode.initExpr(expr);
-                    },
-                    TagOrJSNode.node => |node| {
-                        return node;
-                    },
-                    TagOrJSNode.invalid => {
-                        return null;
-                    },
-                }
+                                        var array_i: u32 = 0;
+                                        while (array_i < array_len) : (array_i += 1) {
+                                            var current_value = JSC.JSObject.getIndex(array, JavaScript.VirtualMachine.vm.global, i);
+
+                                            switch (TagOrJSNode.fromJSValueRef(writer, writer.ctx, current_value.asRef())) {
+                                                .node => |node| {
+                                                    if (node.data != .s_import) {
+                                                        throwTypeError(writer.ctx, "inject must only contain imports", writer.exception);
+                                                        return null;
+                                                    }
+                                                    writer.inject.append(node);
+                                                },
+                                                .tag => |t| {
+                                                    if (!writer.writeFromJSWithTagInNode(t)) return null;
+                                                },
+                                                .invalid => {
+                                                    return null;
+                                                },
+                                            }
+                                        }
+                                        i += 1;
+                                        continue;
+                                    }
+                                }
+                                return JSNode{ .data = .{ .inline_inject = writer.inject.toOwnedSlice() }, .loc = writer.loc };
+                            } else if (tag == Tag.fragment) {
+                                const count: u32 = (writer.eatArg() orelse return null).toU32();
+                                // collapse single-item fragments
+                                if (count == 1) {
+                                    break :brk writer.writeFromJS() orelse return null;
+                                }
+
+                                var i: u32 = 0;
+                                var fragment = std.ArrayList(JSNode).initCapacity(writer.allocator, count) catch return null;
+                                while (i < count) : (i += 1) {
+                                    const node = writer.writeFromJS() orelse return null;
+                                    fragment.append(node) catch unreachable;
+                                }
+
+                                break :brk JSNode{ .data = .{ .fragment = fragment.toOwnedSlice() }, .loc = writer.loc };
+                            }
+
+                            var expr: Expr = Expr{ .loc = writer.loc, .data = .{ .e_null = E.Null{} } };
+
+                            if (!writer.writeFromJSWithTagInExpr(tag, &expr)) return null;
+                            break :brk JSNode.initExpr(expr);
+                        },
+                        TagOrJSNode.node => |node| {
+                            break :brk node;
+                        },
+                        TagOrJSNode.invalid => {
+                            return null;
+                        },
+                    }
+                };
+
+                if (writer.inject.items.len > 0) {}
             }
         };
 

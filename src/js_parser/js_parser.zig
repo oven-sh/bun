@@ -3183,6 +3183,9 @@ pub fn NewParser(
         pub fn findSymbol(p: *P, loc: logger.Loc, name: string) !FindSymbolResult {
             var declare_loc: logger.Loc = undefined;
             var is_inside_with_scope = false;
+            // This function can show up in profiling.
+            // That's part of why we do this.
+            // Instead of rehashing `name` for every scope, we do it just once.
             const hash = @TypeOf(p.module_scope.members).getHash(name);
 
             const ref: Ref = brk: {

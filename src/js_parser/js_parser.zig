@@ -11337,7 +11337,7 @@ pub fn NewParser(
                                     const name = p.symbols.items[ref.inner_index].original_name;
                                     const record = &p.import_records.items[import_record_id];
                                     // We must visit it to convert inline_identifiers and record usage
-                                    return p.visitExpr(p.options.macro_context.call(
+                                    const macro_result = (p.options.macro_context.call(
                                         record.path.text,
                                         p.source.path.sourceDir(),
                                         p.log,
@@ -11349,6 +11349,9 @@ pub fn NewParser(
                                         MacroVisitor,
                                         MacroVisitor{ .p = p, .loc = expr.loc },
                                     ) catch return expr);
+                                    if (macro_result.data != .e_template) {
+                                        return p.visitExpr(macro_result);
+                                    }
                                 }
                             }
                         }
@@ -12252,20 +12255,23 @@ pub fn NewParser(
                             const name = p.symbols.items[ref.inner_index].original_name;
                             const record = &p.import_records.items[import_record_id];
                             const copied = Expr{ .loc = expr.loc, .data = .{ .e_call = e_ } };
-                            return p.visitExpr(
+                            const macro_result =
                                 p.options.macro_context.call(
-                                    record.path.text,
-                                    p.source.path.sourceDir(),
-                                    p.log,
-                                    p.source,
-                                    record.range,
-                                    copied,
-                                    &.{},
-                                    name,
-                                    MacroVisitor,
-                                    MacroVisitor{ .p = p, .loc = expr.loc },
-                                ) catch return expr,
-                            );
+                                record.path.text,
+                                p.source.path.sourceDir(),
+                                p.log,
+                                p.source,
+                                record.range,
+                                copied,
+                                &.{},
+                                name,
+                                MacroVisitor,
+                                MacroVisitor{ .p = p, .loc = expr.loc },
+                            ) catch return expr;
+
+                            if (macro_result.data != .e_call) {
+                                return p.visitExpr(macro_result);
+                            }
                         }
                     }
 

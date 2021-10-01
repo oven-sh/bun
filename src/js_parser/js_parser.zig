@@ -1030,7 +1030,9 @@ pub const SideEffects = enum(u2) {
                 // A call that has been marked "__PURE__" can be removed if all arguments
                 // can be removed. The annotation causes us to ignore the target.
                 if (call.can_be_unwrapped_if_unused) {
-                    return Expr.joinAllWithCommaCallback(call.args, @TypeOf(p), p, simpifyUnusedExpr, p.allocator);
+                    if (call.args.len > 0) {
+                        return Expr.joinAllWithCommaCallback(call.args, @TypeOf(p), p, simpifyUnusedExpr, p.allocator);
+                    }
                 }
             },
 
@@ -1077,7 +1079,9 @@ pub const SideEffects = enum(u2) {
                 // A constructor call that has been marked "__PURE__" can be removed if all arguments
                 // can be removed. The annotation causes us to ignore the target.
                 if (call.can_be_unwrapped_if_unused) {
-                    return Expr.joinAllWithComma(call.args, p.allocator);
+                    if (call.args.len > 0) {
+                        return Expr.joinAllWithComma(call.args, p.allocator);
+                    }
                 }
             },
             else => {},
@@ -12548,9 +12552,8 @@ pub fn NewParser(
                                 return false;
                             }
                         }
+                        return true;
                     }
-
-                    return true;
                 },
                 .e_new => |ex| {
 
@@ -12562,9 +12565,9 @@ pub fn NewParser(
                                 return false;
                             }
                         }
-                    }
 
-                    return true;
+                        return true;
+                    }
                 },
                 .e_unary => |ex| {
                     switch (ex.op) {

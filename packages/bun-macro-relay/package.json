@@ -1,9 +1,12 @@
 {
   "name": "bun-macro-relay",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "main": "index.js",
   "license": "MIT",
-  "dependencies": {
+  "peerDependencies": {
+    "graphql": "^15.0.0"
+  },
+  "devDependencies": {
     "graphql": "^15.6.0"
   },
   "files": [

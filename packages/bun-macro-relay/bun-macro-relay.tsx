@@ -4,7 +4,7 @@ import { parse, print } from "graphql";
 // 1. Parse the GraphQL tag.
 // 2. From the parsed GraphQL query, get the AST definition.
 // 3. From the AST definition, inject an import to that file inside the artifact directory
-// 4. MD5 the printed source text
+// 4. (TODO) MD5 the printed source text
 // 5. (TODO) At runtime, if md5 !== import.md5, then warn the user that the query has changed
 //    but the file hasn't been updated so it must be reloaded.
 // 6. Replace the TemplateLiteral with the default identifier from the injected import
@@ -18,6 +18,7 @@ if (process.env.BUN_MACRO_RELAY_ARTIFACT_DIRECTORY) {
   artifactDirectory = process.env.BUN_MACRO_RELAY_ARTIFACT_DIRECTORY;
 }
 
+// TODO: platform-independent path cleaning
 if (!artifactDirectory.startsWith("/")) {
   while (artifactDirectory.endsWith("/")) {
     artifactDirectory = artifactDirectory.substring(

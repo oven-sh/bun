@@ -11291,8 +11291,17 @@ pub fn NewParser(
                                             args[4] = p.e(E.Object{
                                                 .properties = source,
                                             }, expr.loc);
+
+                                            // When disabled, this must specifically be undefined
+                                            // Not an empty object
+                                            // See this code from react:
+                                            // >  if (source !== undefined) {
+                                            // >     var fileName = source.fileName.replace(/^.*[\\\/]/, "");
+                                            // >     var lineNumber = source.lineNumber;
+                                            // >     return "\n\nCheck your code at " + fileName + ":" + lineNumber + ".";
+                                            // > }
                                         } else {
-                                            args[4] = p.e(E.Object{}, expr.loc);
+                                            args[4] = p.e(E.Undefined{}, expr.loc);
                                         }
 
                                         args[5] = Expr{ .data = Prefill.Data.This, .loc = expr.loc };

@@ -26,7 +26,7 @@
 #include <JavaScriptCore/JSCallbackObject.h>
 #include <JavaScriptCore/JSCast.h>
 #include <JavaScriptCore/JSClassRef.h>
-#include <JavaScriptCore/JSContextInternal.h>
+// #include <JavaScriptCore/JSContextInternal.h>
 #include <JavaScriptCore/JSInternalPromise.h>
 #include <JavaScriptCore/JSLock.h>
 #include <JavaScriptCore/JSMap.h>

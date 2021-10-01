@@ -119,6 +119,7 @@ async function main() {
     "/code-simplification-neql-define.js",
     "/spread_with_key.tsx",
     "/styledcomponents-output.js",
+    "/void-shouldnt-delete-call-expressions.js",
   ];
   tests.reverse();
 

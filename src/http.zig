@@ -20,6 +20,7 @@ const resolve_path = @import("./resolver/resolve_path.zig");
 const OutputFile = Options.OutputFile;
 const DotEnv = @import("./env_loader.zig");
 const mimalloc = @import("./allocators/mimalloc.zig");
+const MacroMap = @import("./resolver/package_json.zig").MacroMap;
 pub fn constStrToU8(s: string) []u8 {
     return @intToPtr([*]u8, @ptrToInt(s.ptr))[0..s.len];
 }
@@ -195,13 +196,17 @@ pub const RequestContext = struct {
             // The answer, however, is yes.
             // What if you're importing a fallback that's in node_modules?
             try fallback_entry_point.generate(bundler_.options.framework.?.fallback.path, Bundler, bundler_);
+
+            const bundler_parse_options = Bundler.ParseOptions{
+                .allocator = default_allocator,
+                .path = fallback_entry_point.source.path,
+                .loader = .js,
+                .macro_remappings = .{},
+                .dirname_fd = 0,
+            };
+
             if (bundler_.parse(
-                default_allocator,
-                fallback_entry_point.source.path,
-                .js,
-                0,
-                null,
-                null,
+                bundler_parse_options,
                 @as(?*bundler.FallbackEntryPoint, &fallback_entry_point),
             )) |*result| {
                 try bundler_.linker.link(fallback_entry_point.source.path, result, .absolute_url, false);
@@ -697,7 +702,9 @@ pub const RequestContext = struct {
 
             var log = logger.Log.init(allocator);
 
-            const index = std.mem.indexOfScalar(u32, this.watcher.watchlist.items(.hash), id) orelse {
+            var watchlist_slice = this.watcher.watchlist.slice();
+
+            const index = std.mem.indexOfScalar(u32, watchlist_slice.items(.hash), id) orelse {
 
                 // log.addErrorFmt(null, logger.Loc.Empty, this, "File missing from watchlist: {d}. Please refresh :(", .{hash}) catch unreachable;
                 return WatchBuildResult{
@@ -708,9 +715,17 @@ pub const RequestContext = struct {
                 };
             };
 
-            const file_path_str = this.watcher.watchlist.items(.file_path)[index];
-            const fd = this.watcher.watchlist.items(.fd)[index];
-            const loader = this.watcher.watchlist.items(.loader)[index];
+            const file_path_str = watchlist_slice.items(.file_path)[index];
+            const fd = watchlist_slice.items(.fd)[index];
+            const loader = watchlist_slice.items(.loader)[index];
+            const macro_remappings = brk: {
+                if (watchlist_slice.items(.package_json)[index]) |package_json| {
+                    break :brk package_json.macros;
+                }
+
+                break :brk MacroMap{};
+            };
+
             const path = Fs.Path.init(file_path_str);
             var old_log = this.bundler.log;
             this.bundler.setLog(&log);
@@ -731,12 +746,15 @@ pub const RequestContext = struct {
                     this.bundler.resetStore();
 
                     var parse_result = this.bundler.parse(
-                        allocator,
-                        path,
-                        loader,
-                        0,
-                        fd,
-                        id,
+                        Bundler.ParseOptions{
+                            .allocator = allocator,
+                            .path = path,
+                            .loader = loader,
+                            .dirname_fd = 0,
+                            .file_descriptor = fd,
+                            .file_hash = id,
+                            .macro_remappings = macro_remappings,
+                        },
                         null,
                     ) orelse {
                         return WatchBuildResult{
@@ -1935,6 +1953,7 @@ pub const RequestContext = struct {
                             hash,
                             loader,
                             resolve_result.dirname_fd,
+                            resolve_result.package_json,
                             true,
                         );
 
@@ -1995,6 +2014,7 @@ pub const RequestContext = struct {
                             Watcher.getHash(result.file.input.text),
                             result.file.loader,
                             file.dir,
+                            null,
                             true,
                         )) {
                             if (ctx.watcher.watchloop_handle == null) {

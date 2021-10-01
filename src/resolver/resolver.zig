@@ -8,6 +8,7 @@ const cache = @import("../cache.zig");
 const sync = @import("../sync.zig");
 const TSConfigJSON = @import("./tsconfig_json.zig").TSConfigJSON;
 const PackageJSON = @import("./package_json.zig").PackageJSON;
+const MacroRemap = @import("./package_json.zig").MacroMap;
 const ESModule = @import("./package_json.zig").ESModule;
 const BrowserMap = @import("./package_json.zig").BrowserMap;
 const CacheSet = cache.Set;
@@ -105,6 +106,12 @@ pub const Result = struct {
     dirname_fd: StoredFileDescriptorType = 0,
     file_fd: StoredFileDescriptorType = 0,
     import_kind: ast.ImportKind = undefined,
+
+    pub fn getMacroRemappings(this: *const Result) MacroRemap {
+        const pkg = this.package_json orelse return MacroRemap{};
+
+        return pkg.macros;
+    }
 
     pub fn path(this: *Result) ?*Path {
         if (!this.path_pair.primary.is_disabled)

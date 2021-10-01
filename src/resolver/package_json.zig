@@ -15,6 +15,8 @@ const resolve_path = @import("./resolve_path.zig");
 const MainFieldMap = std.StringArrayHashMap(string);
 pub const BrowserMap = std.StringArrayHashMap(string);
 threadlocal var hashy: [2048]u8 = undefined;
+pub const MacroImportReplacementMap = std.StringArrayHashMap(string);
+pub const MacroMap = std.StringArrayHashMapUnmanaged(MacroImportReplacementMap);
 
 pub const PackageJSON = struct {
     pub const LoadFramework = enum {
@@ -56,6 +58,7 @@ pub const PackageJSON = struct {
     hash: u32 = 0xDEADBEEF,
 
     always_bundle: []string = &.{},
+    macros: MacroMap = MacroMap{},
 
     // Present if the "browser" field is present. This field is intended to be
     // used by bundlers and lets you redirect the paths of certain 3rd-party
@@ -480,6 +483,7 @@ pub const PackageJSON = struct {
             .hash = 0xDEADBEEF,
             .source = json_source,
             .module_type = .unknown,
+            .macros = MacroMap{},
             .browser_map = BrowserMap.init(r.allocator),
             .main_fields = MainFieldMap.init(r.allocator),
         };
@@ -544,6 +548,68 @@ pub const PackageJSON = struct {
                         if (!(item.data == .e_string and item.data.e_string.utf8.len > 0)) continue;
                         package_json.always_bundle[i] = item.asString(r.allocator).?;
                         i += 1;
+                    }
+                    // for (var i = 0; i < bundle_.expr.data.e_array.len; i++) {
+                }
+            }
+
+            if (bun_json.expr.asProperty("macros")) |macros| {
+                if (macros.expr.data == .e_object) {
+                    var always_bundle_count: u16 = 0;
+                    const properties = macros.expr.data.e_object.properties;
+
+                    for (properties) |property| {
+                        const key = property.key.?.asString(r.allocator) orelse continue;
+                        if (!resolver.isPackagePath(key)) {
+                            r.log.addRangeWarningFmt(
+                                &json_source,
+                                json_source.rangeOfString(property.key.?.loc),
+                                r.allocator,
+                                "\"{s}\" is not a package path. \"macros\" remaps package paths to macros. Skipping.",
+                                .{key},
+                            ) catch unreachable;
+                            continue;
+                        }
+
+                        const value = property.value.?;
+                        if (value.data != .e_object) {
+                            r.log.addWarningFmt(
+                                &json_source,
+                                value.loc,
+                                r.allocator,
+                                "Invalid macro remapping in \"{s}\": expected object where the keys are import names and the value is a string path to replace",
+                                .{key},
+                            ) catch unreachable;
+                            continue;
+                        }
+
+                        const remap_properties = value.data.e_object.properties;
+                        if (remap_properties.len == 0) continue;
+
+                        var map = MacroImportReplacementMap.init(r.allocator);
+                        map.ensureUnusedCapacity(remap_properties.len) catch unreachable;
+                        for (remap_properties) |remap| {
+                            const import_name = remap.key.?.asString(r.allocator) orelse continue;
+                            const remap_value = remap.value.?;
+                            if (remap_value.data != .e_string or remap_value.data.e_string.utf8.len == 0) {
+                                r.log.addWarningFmt(
+                                    &json_source,
+                                    remap_value.loc,
+                                    r.allocator,
+                                    "Invalid macro remapping for import \"{s}\": expected string to remap to. e.g. \"graphql\": \"bun-macro-relay\" ",
+                                    .{import_name},
+                                ) catch unreachable;
+                                continue;
+                            }
+
+                            const remap_value_str = remap_value.data.e_string.utf8;
+
+                            map.putAssumeCapacityNoClobber(import_name, remap_value_str);
+                        }
+
+                        if (map.count() > 0) {
+                            package_json.macros.put(r.allocator, key, map) catch unreachable;
+                        }
                     }
                     // for (var i = 0; i < bundle_.expr.data.e_array.len; i++) {
                 }

@@ -27,6 +27,8 @@ const Router = @import("./api/router.zig");
 const ImportRecord = ast.ImportRecord;
 const DotEnv = @import("../../env_loader.zig");
 const ParseResult = @import("../../bundler.zig").ParseResult;
+const PackageJSON = @import("../../resolver/package_json.zig").PackageJSON;
+const MacroRemap = @import("../../resolver/package_json.zig").MacroMap;
 pub const GlobalClasses = [_]type{
     Request.Class,
     Response.Class,
@@ -567,6 +569,8 @@ pub const VirtualMachine = struct {
     macro_entry_points: std.AutoArrayHashMap(i32, *MacroEntryPoint),
     macro_mode: bool = false,
 
+    has_any_macro_remappings: bool = false,
+
     pub const MacroMap = std.AutoArrayHashMap(i32, js.JSObjectRef);
 
     pub threadlocal var vm_loaded = false;
@@ -807,10 +811,12 @@ pub const VirtualMachine = struct {
                 var allocator = if (vm.has_loaded) &vm.arena.allocator else vm.allocator;
 
                 var fd: ?StoredFileDescriptorType = null;
+                var package_json: ?*PackageJSON = null;
 
                 if (vm.watcher) |watcher| {
                     if (watcher.indexOf(hash)) |index| {
                         fd = watcher.watchlist.items(.fd)[index];
+                        package_json = watcher.watchlist.items(.package_json)[index];
                     }
                 }
 
@@ -825,13 +831,31 @@ pub const VirtualMachine = struct {
                     vm.bundler.resolver.log = old;
                 }
 
+                const macro_remappings = if (vm.macro_mode or !vm.has_any_macro_remappings)
+                    MacroRemap{}
+                else brk: {
+                    if (package_json) |pkg| {
+                        break :brk pkg.macros;
+                    }
+
+                    // TODO: find a way to pass the package_json through the resolve
+                    const resolve_result = vm.bundler.resolver.resolve(vm.bundler.fs.top_level_dir, specifier, .stmt) catch break :brk MacroRemap{};
+
+                    break :brk resolve_result.getMacroRemappings();
+                };
+
+                var parse_options = Bundler.ParseOptions{
+                    .allocator = allocator,
+                    .path = path,
+                    .loader = loader,
+                    .dirname_fd = 0,
+                    .file_descriptor = fd,
+                    .file_hash = hash,
+                    .macro_remappings = macro_remappings,
+                };
+
                 var parse_result = vm.bundler.parse(
-                    allocator,
-                    path,
-                    loader,
-                    0,
-                    fd,
-                    hash,
+                    parse_options,
                     null,
                 ) orelse {
                     return error.ParseError;
@@ -916,6 +940,13 @@ pub const VirtualMachine = struct {
             .stmt,
         );
 
+        if (!vm.macro_mode) {
+            vm.has_any_macro_remappings = vm.has_any_macro_remappings or brk: {
+                if (result.package_json == null) break :brk false;
+
+                break :brk result.package_json.?.macros.count() > 0;
+            };
+        }
         ret.result = result;
         const result_path = result.pathConst() orelse return error.ModuleNotFound;
         vm.resolved_count += 1;

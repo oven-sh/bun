@@ -10,6 +10,8 @@ const KEvent = std.os.Kevent;
 const Mutex = @import("./lock.zig").Lock;
 const WatchItemIndex = u16;
 const NoWatchItem: WatchItemIndex = std.math.maxInt(WatchItemIndex);
+const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
+
 pub const WatchItem = struct {
     file_path: string,
     // filepath hash for quick comparison
@@ -20,6 +22,7 @@ pub const WatchItem = struct {
     count: u32,
     parent_hash: u32,
     kind: Kind,
+    package_json: ?*PackageJSON,
 
     pub const Kind = enum { file, directory };
 };
@@ -240,13 +243,14 @@ pub fn NewWatcher(comptime ContextType: type) type {
             hash: HashType,
             loader: options.Loader,
             dir_fd: StoredFileDescriptorType,
+            package_json: ?*PackageJSON,
             comptime copy_file_path: bool,
         ) !void {
             if (this.indexOf(hash) != null) {
                 return;
             }
 
-            try this.appendFile(fd, file_path, hash, loader, dir_fd, copy_file_path);
+            try this.appendFile(fd, file_path, hash, loader, dir_fd, package_json, copy_file_path);
         }
 
         fn appendFileAssumeCapacity(
@@ -256,6 +260,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
             hash: HashType,
             loader: options.Loader,
             parent_hash: HashType,
+            package_json: ?*PackageJSON,
             comptime copy_file_path: bool,
         ) !void {
             const index = this.eventlist_used;
@@ -309,6 +314,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 .eventlist_index = @truncate(u32, index),
                 .loader = loader,
                 .parent_hash = parent_hash,
+                .package_json = package_json,
                 .kind = .file,
             });
         }
@@ -374,6 +380,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 .loader = options.Loader.file,
                 .parent_hash = parent_hash,
                 .kind = .directory,
+                .package_json = null,
             });
             return @truncate(WatchItemIndex, this.watchlist.len - 1);
         }
@@ -408,6 +415,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
             hash: HashType,
             loader: options.Loader,
             dir_fd: StoredFileDescriptorType,
+            package_json: ?*PackageJSON,
             comptime copy_file_path: bool,
         ) !void {
             this.mutex.lock();
@@ -449,6 +457,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 hash,
                 loader,
                 parent_dir_hash,
+                package_json,
                 copy_file_path,
             );
 

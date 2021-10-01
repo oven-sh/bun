@@ -18,9 +18,14 @@ artifactDirectory = artifactDirectory.startsWith("/")
   : Bun.cwd + artifactDirectory;
 
 export function graphql(node) {
-  const [templateLiteral] = node.arguments;
+  let query;
 
-  const query = templateLiteral?.toString();
+  if (node instanceof <call />) {
+    query = node.arguments[0].toString();
+  } else if (node instanceof <template />) {
+    query = node.toString();
+  }
+
   if (typeof query !== "string" || query.length === 0) {
     throw new Error("BunMacroRelay: Unexpected empty graphql string.");
   }
@@ -56,10 +61,16 @@ export function graphql(node) {
     />
   );
 
-  return (
-    <>
-      <inject>{importStmt}</inject>,
-      <id to={importStmt.symbols.default} pure />,
-    </>
-  );
+  try {
+    const ret = (
+      <>
+        <inject>{importStmt}</inject>
+        <id to={importStmt.namespace[definitionName]} pure />
+      </>
+    );
+    return ret;
+  } catch (exception) {
+    console.error(exception);
+  }
+  return null;
 }

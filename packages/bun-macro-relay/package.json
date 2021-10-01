@@ -5,5 +5,15 @@
   "license": "MIT",
   "dependencies": {
     "graphql": "^15.6.0"
+  },
+  "files": [
+    "bun-macro-relay.tsx"
+  ],
+  "bun": {
+    "macros": {
+      "react-relay": {
+        "graphql": "../bun-macro-relay.tsx"
+      }
+    }
   }
 }

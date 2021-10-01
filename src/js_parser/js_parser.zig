@@ -6216,6 +6216,12 @@ pub fn NewParser(
                         }
                     }
 
+                    const macro_remap = if (FeatureFlags.is_macro_enabled and !is_macro and jsx_transform_type != .macro)
+                        p.options.macro_context.getRemap(path.text)
+                    else
+                        null;
+
+                    var remap_count: u16 = 0;
                     if (stmt.star_name_loc) |star| {
                         const name = p.loadNameFromRef(stmt.namespace_ref);
                         stmt.namespace_ref = try p.declareSymbol(.import, star, name);
@@ -6248,6 +6254,10 @@ pub fn NewParser(
 
                     var item_refs = ImportItemForNamespaceMap.init(p.allocator);
 
+                    const total_count = @intCast(u16, stmt.items.len) +
+                        @intCast(u16, @boolToInt(stmt.default_name != null)) +
+                        @intCast(u16, @boolToInt(stmt.star_name_loc != null));
+
                     // Link the default item to the namespace
                     if (stmt.default_name) |*name_loc| {
                         const name = p.loadNameFromRef(name_loc.ref orelse unreachable);
@@ -6265,6 +6275,20 @@ pub fn NewParser(
 
                         if (is_macro) {
                             try p.macro.refs.put(ref, stmt.import_record_index);
+                        }
+
+                        if (macro_remap) |remap| {
+                            if (remap.get("default")) |remapped_path| {
+                                const new_import_id = p.addImportRecord(.stmt, path.loc, remapped_path);
+                                try p.macro.refs.put(ref, new_import_id);
+                                stmt.default_name = null;
+                                p.import_records.items[new_import_id].path.namespace = js_ast.Macro.namespace;
+                                if (comptime only_scan_imports_and_do_not_visit) {
+                                    p.import_records.items[new_import_id].is_internal = true;
+                                    p.import_records.items[new_import_id].path.is_disabled = true;
+                                }
+                                remap_count += 1;
+                            }
                         }
                     }
 
@@ -6290,6 +6314,33 @@ pub fn NewParser(
                             if (is_macro) {
                                 try p.macro.refs.put(ref, stmt.import_record_index);
                             }
+
+                            if (macro_remap) |remap| {
+                                if (remap.get(item.alias)) |remapped_path| {
+                                    const new_import_id = p.addImportRecord(.stmt, path.loc, remapped_path);
+                                    p.import_records.items[new_import_id].path.namespace = js_ast.Macro.namespace;
+                                    if (comptime only_scan_imports_and_do_not_visit) {
+                                        p.import_records.items[new_import_id].is_internal = true;
+                                        p.import_records.items[new_import_id].path.is_disabled = true;
+                                    }
+                                    try p.macro.refs.put(ref, new_import_id);
+                                    remap_count += 1;
+
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+
+                    // If we remapped the entire import away
+                    // i.e. import {graphql} "react-relay"
+
+                    if (remap_count > 0 and remap_count == total_count) {
+                        p.import_records.items[stmt.import_record_index].path.namespace = js_ast.Macro.namespace;
+
+                        if (comptime only_scan_imports_and_do_not_visit) {
+                            p.import_records.items[stmt.import_record_index].path.is_disabled = true;
+                            p.import_records.items[stmt.import_record_index].is_internal = true;
                         }
                     }
 
@@ -9618,15 +9669,18 @@ pub fn NewParser(
                 ) catch unreachable;
 
                 for (import.items) |*clause| {
-                    if (strings.eqlComptime(clause.original_name, "default")) {
+                    const import_hash_name = clause.original_name;
+
+                    if (strings.eqlComptime(clause.alias, "default") and strings.eqlComptime(clause.original_name, "default")) {
                         var non_unique_name = record.path.name.nonUniqueNameString(p.allocator) catch unreachable;
                         clause.original_name = std.fmt.allocPrint(p.allocator, "{s}_default", .{non_unique_name}) catch unreachable;
                     }
                     const name_ref = p.declareSymbol(.import, this.loc, clause.original_name) catch unreachable;
                     clause.name = LocRef{ .loc = this.loc, .ref = name_ref };
 
-                    p.macro.imports.putAssumeCapacity(js_ast.Macro.JSNode.SymbolMap.generateImportHash(clause.alias, import_data.path), name_ref);
                     p.is_import_item.put(name_ref, true) catch unreachable;
+
+                    p.macro.imports.putAssumeCapacity(js_ast.Macro.JSNode.SymbolMap.generateImportHash(import_hash_name, import_data.path), name_ref);
 
                     // Ensure we don't accidentally think this is an export from
                     clause.original_name = "";
@@ -10350,6 +10404,7 @@ pub fn NewParser(
                     return JSXTag{
                         .range = logger.Range{ .loc = loc, .len = 0 },
                         .data = Data{ .fragment = 1 },
+                        .name = "",
                     };
                 }
 

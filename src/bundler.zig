@@ -27,6 +27,7 @@ const runtime = @import("./runtime.zig");
 const Timer = @import("./timer.zig");
 const hash_map = @import("hash_map.zig");
 const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
+const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
 const DebugLogs = _resolver.DebugLogs;
 const NodeModuleBundle = @import("./node_module_bundle.zig").NodeModuleBundle;
 const Router = @import("./router.zig");
@@ -2087,12 +2088,15 @@ pub const Bundler = struct {
             },
             else => {
                 var result = bundler.parse(
-                    allocator,
-                    file_path,
-                    loader,
-                    resolve_result.dirname_fd,
-                    file_descriptor,
-                    filepath_hash,
+                    ParseOptions{
+                        .allocator = allocator,
+                        .path = file_path,
+                        .loader = loader,
+                        .dirname_fd = resolve_result.dirname_fd,
+                        .file_descriptor = file_descriptor,
+                        .file_hash = filepath_hash,
+                        .macro_remappings = resolve_result.getMacroRemappings(),
+                    },
                     client_entry_point,
                 ) orelse {
                     bundler.resetStore();
@@ -2175,12 +2179,15 @@ pub const Bundler = struct {
         switch (loader) {
             .jsx, .tsx, .js, .ts, .json => {
                 var result = bundler.parse(
-                    bundler.allocator,
-                    file_path,
-                    loader,
-                    resolve_result.dirname_fd,
-                    null,
-                    null,
+                    ParseOptions{
+                        .allocator = bundler.allocator,
+                        .path = file_path,
+                        .loader = loader,
+                        .dirname_fd = resolve_result.dirname_fd,
+                        .file_descriptor = null,
+                        .file_hash = null,
+                        .macro_remappings = resolve_result.getMacroRemappings(),
+                    },
                     client_entry_point_,
                 ) orelse {
                     return null;
@@ -2333,17 +2340,28 @@ pub const Bundler = struct {
         };
     }
 
-    pub fn parse(
-        bundler: *ThisBundler,
+    pub const ParseOptions = struct {
         allocator: *std.mem.Allocator,
+        dirname_fd: StoredFileDescriptorType,
+        file_descriptor: ?StoredFileDescriptorType = null,
+        file_hash: ?u32 = null,
         path: Fs.Path,
         loader: options.Loader,
-        // only used when file_descriptor is null
-        dirname_fd: StoredFileDescriptorType,
-        file_descriptor: ?StoredFileDescriptorType,
-        file_hash: ?u32,
+        macro_remappings: MacroRemap,
+    };
+
+    pub fn parse(
+        bundler: *ThisBundler,
+        this_parse: ParseOptions,
         client_entry_point_: anytype,
     ) ?ParseResult {
+        var allocator = this_parse.allocator;
+        const dirname_fd = this_parse.dirname_fd;
+        const file_descriptor = this_parse.file_descriptor;
+        const file_hash = this_parse.file_hash;
+        const path = this_parse.path;
+        const loader = this_parse.loader;
+
         if (FeatureFlags.tracing) {
             bundler.timer.start();
         }
@@ -2421,6 +2439,7 @@ pub const Bundler = struct {
                 }
 
                 opts.macro_context = &bundler.macro_context.?;
+                opts.macro_context.remap = this_parse.macro_remappings;
                 opts.features.is_macro_runtime = bundler.options.platform == .bun_macro;
 
                 const value = (bundler.resolver.caches.js.parse(

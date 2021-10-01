@@ -3993,6 +3993,8 @@ pub const Macro = struct {
     const Zig = @import("./javascript/jsc/bindings/exports.zig");
     const Bundler = @import("./bundler.zig").Bundler;
     const MacroEntryPoint = @import("./bundler.zig").MacroEntryPoint;
+    const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
+    const MacroRemapEntry = @import("./resolver/package_json.zig").MacroImportReplacementMap;
 
     pub const namespace: string = "macro";
     pub const namespaceWithColon: string = namespace ++ ":";
@@ -4007,12 +4009,18 @@ pub const Macro = struct {
         resolver: *Resolver,
         env: *DotEnv.Loader,
         macros: MacroMap,
+        remap: MacroRemap,
+
+        pub fn getRemap(this: MacroContext, path: string) ?MacroRemapEntry {
+            return this.remap.get(path);
+        }
 
         pub fn init(bundler: *Bundler) MacroContext {
             return MacroContext{
                 .macros = MacroMap.init(default_allocator),
                 .resolver = &bundler.resolver,
                 .env = bundler.env,
+                .remap = MacroRemap{},
             };
         }
 
@@ -4034,9 +4042,14 @@ pub const Macro = struct {
             defer Expr.Data.Store.disable_reset = false;
             defer Stmt.Data.Store.disable_reset = false;
             // const is_package_path = isPackagePath(specifier);
-            std.debug.assert(isMacroPath(import_record_path));
+            const import_record_path_without_macro_prefix = if (isMacroPath(import_record_path))
+                import_record_path[namespaceWithColon.len..]
+            else
+                import_record_path;
 
-            const resolve_result = this.resolver.resolve(source_dir, import_record_path[namespaceWithColon.len..], .stmt) catch |err| {
+            std.debug.assert(!isMacroPath(import_record_path_without_macro_prefix));
+
+            const resolve_result = this.resolver.resolve(source_dir, import_record_path_without_macro_prefix, .stmt) catch |err| {
                 switch (err) {
                     error.ModuleNotFound => {
                         log.addResolveError(
@@ -4706,7 +4719,13 @@ pub const Macro = struct {
                 .e_undefined => |value| {
                     return JSNode{ .loc = this.loc, .data = .{ .e_undefined = value } };
                 },
+                .inline_identifier => |value| {
+                    return JSNode{ .loc = this.loc, .data = .{ .inline_identifier = value } };
+                },
                 else => {
+                    if (comptime isDebug) {
+                        Output.prettyWarnln("initExpr fail: {s}", .{@tagName(this.data)});
+                    }
                     return JSNode{ .loc = this.loc, .data = .{ .e_missing = .{} } };
                 },
             }
@@ -4818,6 +4837,9 @@ pub const Macro = struct {
                 },
                 .e_undefined => |value| {
                     return Expr{ .loc = this.loc, .data = .{ .e_undefined = value } };
+                },
+                .inline_identifier => |value| {
+                    return Expr{ .loc = this.loc, .data = .{ .inline_identifier = value } };
                 },
                 .fragment => |fragment| {
                     if (fragment.len == 0) return Expr{ .loc = this.loc, .data = .{ .e_missing = E.Missing{} } };
@@ -5372,13 +5394,13 @@ pub const Macro = struct {
                                         if (!self.writeElement(el.*)) return false;
                                     },
                                     // TODO: handle when simplification changes the expr type
-                                    .e_spread, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
+                                    .e_template, .e_if, .e_spread, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
                                         const visited_expr = self.p.visitExpr(child);
                                         switch (visited_expr.data) {
                                             .e_jsx_element => |el| {
                                                 if (!self.writeElement(el.*)) return false;
                                             },
-                                            .e_if, .e_spread, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
+                                            .e_template, .e_if, .e_spread, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
                                                 self.args.append(visited_expr) catch unreachable;
                                             },
                                             else => {
@@ -5411,13 +5433,13 @@ pub const Macro = struct {
                                     .e_jsx_element => |el| {
                                         if (!self.writeElementWithValidTagList(el.*, comptime Tag.Validator.valid_object_tags)) return false;
                                     },
-                                    .e_if, .e_spread, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
+                                    .e_template, .e_if, .e_spread, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
                                         const visited = self.p.visitExpr(child);
                                         switch (visited.data) {
                                             .e_jsx_element => |el| {
                                                 if (!self.writeElementWithValidTagList(el.*, comptime Tag.Validator.valid_object_tags)) return false;
                                             },
-                                            .e_if, .e_spread, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
+                                            .e_template, .e_if, .e_spread, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
                                                 self.args.append(visited) catch unreachable;
                                             },
                                             else => {
@@ -5455,7 +5477,7 @@ pub const Macro = struct {
                                     .e_jsx_element => |el| {
                                         if (!self.writeElement(el.*)) return false;
                                     },
-                                    .e_if, .e_spread, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
+                                    .e_template, .e_if, .e_spread, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
                                         self.args.append(self.p.visitExpr(prop)) catch unreachable;
                                     },
                                     else => {
@@ -5473,7 +5495,7 @@ pub const Macro = struct {
                                         if (!self.writeElement(el.*)) return false;
                                     },
 
-                                    .e_spread, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
+                                    .e_template, .e_spread, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
                                         self.args.append(self.p.visitExpr(prop)) catch unreachable;
                                     },
                                     else => {
@@ -5493,7 +5515,7 @@ pub const Macro = struct {
                                     .e_string => |str| {
                                         self.args.append(prop) catch unreachable;
                                     },
-                                    .e_if, .e_spread, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
+                                    .e_template, .e_if, .e_spread, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
                                         self.args.append(self.p.visitExpr(prop)) catch unreachable;
                                     },
                                     else => {
@@ -5538,7 +5560,7 @@ pub const Macro = struct {
                                     self.args.appendAssumeCapacity(Expr{ .loc = value.loc, .data = .{ .e_string = if (boolean.value) &E.String.@"true" else &E.String.@"false" } });
                                 },
                                 // these ones are not statically analyzable so we just leave them in as-is
-                                .e_if, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
+                                .e_template, .e_if, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
                                     self.args.appendAssumeCapacity(self.p.visitExpr(value));
                                 },
                                 // everything else is invalid
@@ -5601,15 +5623,7 @@ pub const Macro = struct {
                                     .e_jsx_element => if (c.data.e_jsx_element.tag != null) 1 else brk: {
                                         break :brk c.data.e_jsx_element.children.len;
                                     },
-                                    .e_identifier => 1,
-                                    else => brk: {
-                                        self.log.addError(
-                                            self.p.source,
-                                            c.loc,
-                                            "<inject> children must be JSX AST nodes",
-                                        ) catch unreachable;
-                                        break :brk 0;
-                                    },
+                                    else => 1,
                                 };
                             }
                             self.args.ensureUnusedCapacity(2 + count) catch unreachable;
@@ -5625,10 +5639,9 @@ pub const Macro = struct {
                                     .e_jsx_element => |el| {
                                         if (!self.writeElementWithValidTagList(el.*, comptime Tag.Validator.valid_inject_tags)) return false;
                                     },
-                                    .e_spread, .e_if, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
-                                        self.args.append(child) catch unreachable;
+                                    else => {
+                                        self.args.append(self.p.visitExpr(child)) catch unreachable;
                                     },
-                                    else => {},
                                 }
                             }
 
@@ -5697,7 +5710,7 @@ pub const Macro = struct {
                                     ) catch unreachable;
                                     return false;
                                 },
-                                .e_if, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
+                                .e_template, .e_if, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
                                     self.args.appendAssumeCapacity(p.visitExpr(path_property));
                                 },
                                 else => {
@@ -5765,7 +5778,7 @@ pub const Macro = struct {
                                         ) catch unreachable;
                                         return false;
                                     },
-                                    .e_if, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
+                                    .e_template, .e_if, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
                                         self.args.appendAssumeCapacity(p.visitExpr(default));
                                     },
                                     else => {
@@ -5801,6 +5814,7 @@ pub const Macro = struct {
                                     .e_jsx_element => |el| {
                                         if (!self.writeElement(el.*)) return false;
                                     },
+
                                     .e_if, .e_spread, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
                                         const visited = self.p.visitExpr(child);
                                         switch (visited.data) {
@@ -5903,6 +5917,28 @@ pub const Macro = struct {
                             },
                             else => Global.panic("Not implemented yet top-level jsx element: {s}", .{@tagName(tag_expr.data)}),
                         }
+                    } else {
+                        const loc = logger.Loc.Empty;
+                        self.p.recordUsage(self.bun_jsx_ref);
+                        _ = self.writeNodeType(JSNode.Tag.fragment, element.properties, element.children, loc);
+                        var call_args = self.p.allocator.alloc(Expr, 1) catch unreachable;
+                        call_args[0] = Expr.alloc(self.p.allocator, E.Array, E.Array{ .items = self.args.items }, loc);
+
+                        return Expr.alloc(
+                            self.p.allocator,
+                            E.Call,
+                            E.Call{
+                                .target = Expr{
+                                    .data = .{
+                                        .e_identifier = self.bun_identifier,
+                                    },
+                                    .loc = loc,
+                                },
+                                .can_be_unwrapped_if_unused = true,
+                                .args = call_args,
+                            },
+                            loc,
+                        );
                     }
 
                     return Expr{ .data = .{ .e_missing = .{} }, .loc = logger.Loc.Empty };
@@ -6228,21 +6264,26 @@ pub const Macro = struct {
                                 if (!JSLexer.isIdentifier(alias)) throwTypeError(writer.ctx, "import alias must be an identifier", writer.exception);
 
                                 import.import.items[import_item_i] = ClauseItem{
-                                    .alias = alias,
-                                    .original_name = name,
+                                    .alias = name,
+                                    .original_name = alias,
                                     .name = .{ .loc = writer.loc, .ref = Ref.None },
                                     .alias_loc = writer.loc,
                                 };
 
                                 import_item_i += 1;
                             }
+                        } else {
+                            import.import.items = writer.allocator.alloc(
+                                ClauseItem,
+                                @intCast(u32, @boolToInt(has_default)),
+                            ) catch return false;
                         }
 
                         if (has_default) {
                             import.import.items[import_item_i] = ClauseItem{
-                                .alias = import_default_name,
+                                .alias = "default",
                                 .name = .{ .loc = writer.loc, .ref = Ref.None },
-                                .original_name = "default",
+                                .original_name = import_default_name,
                                 .alias_loc = writer.loc,
                             };
                             import_item_i += 1;
@@ -6472,13 +6513,8 @@ pub const Macro = struct {
                                 const next_value = (writer.eatArg() orelse return null);
                                 const next_value_ref = next_value.asRef();
                                 if (js.JSValueIsArray(writer.ctx, next_value_ref)) {
-                                    const array = next_value;
-                                    const array_len = JSC.JSValue.getLengthOfArray(next_value, JavaScript.VirtualMachine.vm.global);
-
-                                    var array_i: u32 = 0;
-                                    while (array_i < array_len) : (array_i += 1) {
-                                        var current_value = JSC.JSObject.getIndex(array, JavaScript.VirtualMachine.vm.global, i);
-
+                                    var iter = JSC.JSArrayIterator.init(next_value, JavaScript.VirtualMachine.vm.global);
+                                    while (iter.next()) |current_value| {
                                         switch (TagOrJSNode.fromJSValueRef(writer, writer.ctx, current_value.asRef())) {
                                             .node => |node| {
                                                 if (node.data != .s_import) {
@@ -6497,9 +6533,26 @@ pub const Macro = struct {
                                     }
                                     i += 1;
                                     continue;
+                                } else {
+                                    switch (TagOrJSNode.fromJSValueRef(writer, writer.ctx, next_value_ref)) {
+                                        .tag => |tag2| {
+                                            if (!writer.writeFromJSWithTagInNode(tag2)) return null;
+                                        },
+                                        TagOrJSNode.node => |node| {
+                                            writer.inject.append(node) catch unreachable;
+                                        },
+                                        TagOrJSNode.invalid => {
+                                            return null;
+                                        },
+                                    }
                                 }
                             }
                             return JSNode{ .data = .{ .inline_inject = writer.inject.toOwnedSlice() }, .loc = writer.loc };
+                        }
+
+                        if (tag == Tag.s_import) {
+                            if (!writer.writeFromJSWithTagInNode(tag)) return null;
+                            return writer.inject.items[0];
                         }
 
                         if (tag == Tag.fragment) {
@@ -6794,8 +6847,8 @@ pub const Macro = struct {
             var value_node: JSNode = undefined;
 
             for (properties) |property| {
-                if (strings.eql(property.alias, property_slice)) {
-                    return JSC.JSValue.jsNumberFromInt32(JSNode.SymbolMap.generateImportHash(property.alias, this.import_data.path)).asRef();
+                if (strings.eql(property.original_name, property_slice)) {
+                    return JSC.JSValue.jsNumberFromInt32(JSNode.SymbolMap.generateImportHash(property.original_name, this.import_data.path)).asRef();
                 }
             }
 
@@ -6815,7 +6868,7 @@ pub const Macro = struct {
             var property_slice = ptr[0..len];
 
             for (properties) |property| {
-                if (strings.eql(property.alias, property_slice)) return true;
+                if (strings.eql(property.original_name, property_slice)) return true;
             }
 
             return false;
@@ -6831,7 +6884,7 @@ pub const Macro = struct {
             const items = this.import_data.import.items;
 
             for (items) |clause| {
-                const str = clause.alias;
+                const str = clause.original_name;
                 js.JSPropertyNameAccumulatorAddName(props, js.JSStringCreateStatic(str.ptr, str.len));
             }
         }

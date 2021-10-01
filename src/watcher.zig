@@ -5,12 +5,15 @@ const options = @import("./options.zig");
 const IndexType = @import("./allocators.zig").IndexType;
 
 const os = std.os;
+
 const KEvent = std.os.Kevent;
 
 const Mutex = @import("./lock.zig").Lock;
 const WatchItemIndex = u16;
 const NoWatchItem: WatchItemIndex = std.math.maxInt(WatchItemIndex);
 const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
+
+const WATCHER_MAX_LIST = 8096;
 
 pub const WatchItem = struct {
     file_path: string,
@@ -49,6 +52,20 @@ pub const WatchEvent = struct {
 
 pub const Watchlist = std.MultiArrayList(WatchItem);
 
+const DarwinWatcher = struct {
+
+    // Internal
+    changelist: [128]KEvent = undefined,
+
+    // Everything being watched
+    eventlist: [WATCHER_MAX_LIST]KEvent = undefined,
+};
+
+const PlatformWatcher = if (Environment.isMac)
+    DarwinWatcher
+else
+    void;
+
 // This implementation only works on macOS, for now.
 // The Internet seems to suggest basically always using FSEvents instead of kqueue
 // It seems like the main concern is max open file descriptors
@@ -57,22 +74,16 @@ pub fn NewWatcher(comptime ContextType: type) type {
     return struct {
         const Watcher = @This();
 
-        const KEventArrayList = std.ArrayList(KEvent);
-        const WATCHER_MAX_LIST = 8096;
-
         watchlist: Watchlist,
         watched_count: usize = 0,
         mutex: Mutex,
 
-        // Internal
-        changelist: [128]KEvent = undefined,
+        eventlist_used: usize = 0,
+
+        platform: PlatformWatcher = PlatformWatcher{},
 
         // User-facing
         watch_events: [128]WatchEvent = undefined,
-
-        // Everything being watched
-        eventlist: [WATCHER_MAX_LIST]KEvent = undefined,
-        eventlist_used: usize = 0,
 
         fs: *Fs.FileSystem,
         // this is what kqueue knows about
@@ -108,9 +119,11 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
         pub fn getQueue(this: *Watcher) !StoredFileDescriptorType {
             if (this.fd == 0) {
-                this.fd = try os.kqueue();
-                if (this.fd == 0) {
-                    return error.WatcherFailed;
+                if (Environment.isMac) {
+                    this.fd = try os.kqueue();
+                    if (this.fd == 0) {
+                        return error.WatcherFailed;
+                    }
                 }
             }
 
@@ -202,28 +215,31 @@ pub fn NewWatcher(comptime ContextType: type) type {
         fn _watchLoop(this: *Watcher) !void {
             const time = std.time;
 
-            std.debug.assert(this.fd > 0);
+            if (Environment.isMac) {
+                std.debug.assert(this.fd > 0);
 
-            var changelist_array: [1]KEvent = std.mem.zeroes([1]KEvent);
-            var changelist = &changelist_array;
-            while (true) {
-                defer Output.flush();
-                var code = std.os.system.kevent(
-                    try this.getQueue(),
-                    @as([*]KEvent, changelist),
-                    0,
-                    @as([*]KEvent, changelist),
-                    1,
+                var changelist_array: [1]KEvent = std.mem.zeroes([1]KEvent);
+                var changelist = &changelist_array;
+                while (true) {
+                    defer Output.flush();
 
-                    null,
-                );
+                    _ = std.os.system.kevent(
+                        try this.getQueue(),
+                        @as([*]KEvent, changelist),
+                        0,
+                        @as([*]KEvent, changelist),
+                        1,
 
-                var watchevents = this.watch_events[0..1];
-                for (changelist) |event, i| {
-                    watchevents[i].fromKEvent(&event);
+                        null,
+                    );
+
+                    var watchevents = this.watch_events[0..1];
+                    for (changelist) |event, i| {
+                        watchevents[i].fromKEvent(&event);
+                    }
+
+                    this.ctx.onFileUpdate(watchevents, this.watchlist);
                 }
-
-                this.ctx.onFileUpdate(watchevents, this.watchlist);
             }
         }
 
@@ -266,7 +282,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
             const index = this.eventlist_used;
             const watchlist_id = this.watchlist.len;
 
-            if (isMac) {
+            if (Environment.isMac) {
 
                 // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html
                 var event = std.mem.zeroes(KEvent);
@@ -290,7 +306,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
                 // Store the hash for fast filtering later
                 event.udata = @intCast(usize, watchlist_id);
-                this.eventlist[index] = event;
+                this.platform.eventlist[index] = event;
 
                 // This took a lot of work to figure out the right permutation
                 // Basically:
@@ -298,9 +314,9 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 // our while(true) loop above receives notification of changes to any of the events created here.
                 _ = std.os.system.kevent(
                     try this.getQueue(),
-                    this.eventlist[index .. index + 1].ptr,
+                    this.platform.eventlist[index .. index + 1].ptr,
                     1,
-                    this.eventlist[index .. index + 1].ptr,
+                    this.platform.eventlist[index .. index + 1].ptr,
                     0,
                     null,
                 );
@@ -337,39 +353,42 @@ pub fn NewWatcher(comptime ContextType: type) type {
             const index = this.eventlist_used;
             const watchlist_id = this.watchlist.len;
 
-            // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html
-            var event = std.mem.zeroes(KEvent);
+            if (Environment.isMac) {
 
-            event.flags = os.EV_ADD | os.EV_CLEAR | os.EV_ENABLE;
-            // we want to know about the vnode
-            event.filter = std.os.EVFILT_VNODE;
+                // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html
+                var event = std.mem.zeroes(KEvent);
 
-            // monitor:
-            // - Write
-            // - Rename
-            // - Delete
-            event.fflags = std.os.NOTE_WRITE | std.os.NOTE_RENAME | std.os.NOTE_DELETE;
+                event.flags = os.EV_ADD | os.EV_CLEAR | os.EV_ENABLE;
+                // we want to know about the vnode
+                event.filter = std.os.EVFILT_VNODE;
 
-            // id
-            event.ident = @intCast(usize, fd);
+                // monitor:
+                // - Write
+                // - Rename
+                // - Delete
+                event.fflags = std.os.NOTE_WRITE | std.os.NOTE_RENAME | std.os.NOTE_DELETE;
 
-            this.eventlist_used += 1;
-            // Store the hash for fast filtering later
-            event.udata = @intCast(usize, watchlist_id);
-            this.eventlist[index] = event;
+                // id
+                event.ident = @intCast(usize, fd);
 
-            // This took a lot of work to figure out the right permutation
-            // Basically:
-            // - We register the event here.
-            // our while(true) loop above receives notification of changes to any of the events created here.
-            _ = std.os.system.kevent(
-                try this.getQueue(),
-                this.eventlist[index .. index + 1].ptr,
-                1,
-                this.eventlist[index .. index + 1].ptr,
-                0,
-                null,
-            );
+                this.eventlist_used += 1;
+                // Store the hash for fast filtering later
+                event.udata = @intCast(usize, watchlist_id);
+                this.platform.eventlist[index] = event;
+
+                // This took a lot of work to figure out the right permutation
+                // Basically:
+                // - We register the event here.
+                // our while(true) loop above receives notification of changes to any of the events created here.
+                _ = std.os.system.kevent(
+                    try this.getQueue(),
+                    this.platform.eventlist[index .. index + 1].ptr,
+                    1,
+                    this.platform.eventlist[index .. index + 1].ptr,
+                    0,
+                    null,
+                );
+            }
 
             this.watchlist.appendAssumeCapacity(.{
                 .file_path = if (copy_file_path) try this.allocator.dupe(u8, file_path) else file_path,

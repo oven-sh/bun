@@ -1,8 +1,8 @@
 # bun-macro-relay
 
-This lets you use [Relay](https://github.com/facebook/relay) with Bun!
+This lets you use Faceook's [Relay](https://github.com/facebook/relay) framework (GraphQL) with Bun.
 
-Specifically, this implements the Bun equivalent of [`babel-plugin-relay`](https://github.com/facebook/relay/tree/main/packages/babel-plugin-relay). It does not compile or save the `.graphql` files, you still need [`relay-compiler`](https://github.com/facebook/relay/tree/main/packages/relay-compiler) for that.
+Specifically, this implements the Bun equivalent of [`babel-plugin-relay`](https://github.com/facebook/relay/tree/main/packages/babel-plugin-relay). It parses but does not compile or save the `.graphql` files, you still need [`relay-compiler`](https://github.com/facebook/relay/tree/main/packages/relay-compiler) for that.
 
 ## Installation
 
@@ -79,10 +79,10 @@ BUN_MACRO_RELAY_ARTIFACT_DIRECTORY="__generated__" bun
 
 You can also save it in `.env`, `.env.local`, or `.env.dev`. The path should be relative to the directory containing the project's package.json without a leading `.` or `./`. You can also pass it an absolute path.
 
-### What does this actually do?
+## What does `bun-macro-relay` actually do?
 
 1. Parses GraphQL (using the same `graphql` npm package as babel-plugin-relay)
-2. Injects an import to the correct compiled GraphQL file in the Relay artificats directory
+2. Injects an import to the correct compiled GraphQL file in the Relay artifacts directory
 3. Replaces the use of the `graphql` template literal with the `default` import from the compiled GraphQL file.
 
 Here's an example.
@@ -123,5 +123,5 @@ Bun automatically transpiles JSX & TypeScript, but that's not relevant to this e
 
 ### What does `bun-macro-relay` not do?
 
-1. This first version doesn't hash the contents of the `graphql` query, so it won't detect when the GraphQL query is out of sync with the compiled `.graphql` file in development. However, if you're running Relay's CLI, Bun's hot module reloading will automatically update. As long as you run Relay's CLI, it shouldn't matter. This will be fixed eventually (have to expose an MD5 hasher)
+1. This first version doesn't hash the contents of the `graphql` query, so it won't detect when the GraphQL query is out of sync with the compiled `.graphql` file in development. However, if you're running Relay's CLI, Bun's hot module reloading will automatically update. As long as you run Relay's CLI, it shouldn't matter. This will be fixed eventually (have to expose a native MD5 hashing function)
 2. Compile GraphQL. You still need to use `relay-compiler` for that.

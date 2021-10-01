@@ -627,9 +627,12 @@ pub const VirtualMachine = struct {
             .macros = MacroMap.init(allocator),
             .macro_entry_points = @TypeOf(VirtualMachine.vm.macro_entry_points).init(allocator),
         };
+        vm.bundler.macro_context = null;
 
         VirtualMachine.vm.bundler.configureLinker();
         try VirtualMachine.vm.bundler.configureFramework(false);
+
+        vm.bundler.macro_context = js_ast.Macro.MacroContext.init(&vm.bundler);
 
         if (_args.serve orelse false) {
             VirtualMachine.vm.bundler.linker.onImportCSS = Bun.onImportCSS;
@@ -745,6 +748,7 @@ pub const VirtualMachine = struct {
             opts.features.react_fast_refresh = false;
             opts.filepath_hash_for_hmr = 0;
             opts.warn_about_unbundled_modules = false;
+            opts.macro_context = &vm.bundler.macro_context.?;
             const main_ast = (bundler.resolver.caches.js.parse(vm.allocator, opts, bundler.options.define, bundler.log, &vm.entry_point.source) catch null) orelse {
                 return error.ParseError;
             };
@@ -870,7 +874,9 @@ pub const VirtualMachine = struct {
                     .absolute_path,
                     false,
                 );
-                vm.resolved_count += vm.bundler.linker.import_counter - start_count;
+
+                if (!vm.macro_mode)
+                    vm.resolved_count += vm.bundler.linker.import_counter - start_count;
                 vm.bundler.linker.import_counter = 0;
 
                 source_code_printer.ctx.reset();

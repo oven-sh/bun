@@ -12,7 +12,7 @@ export var __markAsModule = (target) =>
 // lazy require to prevent loading one icon from a design system
 export var $$lzy = (target, module, props) => {
   for (let key in props) {
-    if (!__hasOwnProp.call(target, key) && key !== "default")
+    if (!__hasOwnProp.call(target, key))
       __defProp(target, key, {
         get: () => module()[props[key]],
         enumerable: true,
@@ -99,7 +99,8 @@ export var __commonJS = (cb, name) => {
       // If it's a namespace export without .default, pretend .default is the same as mod.exports
     } else if (
       (kind === "function" || kind === "object") &&
-      !("default" in mod.exports)
+      !("default" in mod.exports) &&
+      Object.isExtensible(mod.exports)
     ) {
       var defaultValue = mod.exports;
       Object.defineProperty(mod.exports, "default", {
@@ -114,7 +115,11 @@ export var __commonJS = (cb, name) => {
       });
     }
 
-    if (kind === "object" && !mod.exports[tagSymbol]) {
+    if (
+      kind === "object" &&
+      !mod.exports[tagSymbol] &&
+      Object.isExtensible(mod.exports)
+    ) {
       Object.defineProperty(mod.exports, tagSymbol, {
         value: true,
         enumerable: false,
@@ -130,21 +135,6 @@ export var __commonJS = (cb, name) => {
 };
 
 export var __cJS2eSM = __commonJS;
-
-var require_cache = new WeakMap();
-
-export var __BUN_INTERNAL_DO_NOT_USE_OR_YOU_WILL_BE_FIRED = {
-  RequireFailedError: class {},
-};
-
-// __name(
-//   __BUN_INTERNAL_DO_NOT_USE_OR_YOU_WILL_BE_FIRED__MODULE_LOAD_CACHE.RequireFailedError,
-//   "RequireFailedError"
-// );
-// __name(
-//   __BUN_INTERNAL_DO_NOT_USE_OR_YOU_WILL_BE_FIRED__MODULE_LOAD_CACHE.Module,
-//   "Module"
-// );
 
 export var __require = (namespace) => {
   const namespaceType = typeof namespace;
@@ -221,5 +211,8 @@ export var __reExport = (target, module, desc) => {
 if (typeof globalThis.process === "undefined") {
   globalThis.process = {
     env: {},
+    cwd() {
+      return "/bun-fake-dir/";
+    },
   };
 }

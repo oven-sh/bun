@@ -241,6 +241,11 @@ pub const Bundler = struct {
             return;
         }
 
+        if (this.options.platform == .bun_macro) {
+            this.options.env.behavior = .prefix;
+            this.options.env.prefix = "BUN_";
+        }
+
         try this.runEnvLoader();
 
         js_ast.Expr.Data.Store.create(this.allocator);
@@ -429,6 +434,8 @@ pub const Bundler = struct {
                     worker.data.shared_buffer = try MutableString.init(generator.allocator, 0);
                     worker.data.scan_pass_result = js_parser.ScanPassResult.init(generator.allocator);
                     worker.data.log = generator.log;
+                    worker.data.estimated_input_lines_of_code = 0;
+                    worker.data.macro_context = js_ast.Macro.MacroContext.init(generator.bundler);
 
                     defer {
                         worker.data.deinit(generator.allocator);
@@ -484,6 +491,7 @@ pub const Bundler = struct {
                     scan_pass_result: js_parser.ScanPassResult = undefined,
                     log: *logger.Log,
                     estimated_input_lines_of_code: usize = 0,
+                    macro_context: js_ast.Macro.MacroContext,
 
                     pub fn deinit(this: *WorkerData, allocator: *std.mem.Allocator) void {
                         this.shared_buffer.deinit();
@@ -540,6 +548,7 @@ pub const Bundler = struct {
                     this.data.* = WorkerData{
                         .log = this.generator.allocator.create(logger.Log) catch unreachable,
                         .estimated_input_lines_of_code = 0,
+                        .macro_context = js_ast.Macro.MacroContext.init(this.generator.bundler),
                     };
                     this.data.log.* = logger.Log.init(this.generator.allocator);
                     this.data.shared_buffer = try MutableString.init(this.generator.allocator, 0);
@@ -804,6 +813,8 @@ pub const Bundler = struct {
                 }
             }
             if (generator.log.errors > 0) return error.BundleFailed;
+
+            this.bundler.macro_context = js_ast.Macro.MacroContext.init(bundler);
 
             const include_refresh_runtime =
                 !this.bundler.options.production and
@@ -1491,6 +1502,8 @@ pub const Bundler = struct {
                             opts.transform_require_to_import = false;
                             opts.enable_bundling = true;
                             opts.warn_about_unbundled_modules = false;
+                            opts.macro_context = &worker.data.macro_context;
+                            opts.macro_context.remap = package.macros;
 
                             ast = (try bundler.resolver.caches.js.parse(
                                 bundler.allocator,
@@ -1827,8 +1840,11 @@ pub const Bundler = struct {
                         const source = logger.Source.initRecycledFile(Fs.File{ .path = file_path, .contents = entry.contents }, bundler.allocator) catch return null;
 
                         var jsx = bundler.options.jsx;
+
                         jsx.parse = loader.isJSX();
                         var opts = js_parser.Parser.Options.init(jsx, loader);
+                        opts.macro_context = &worker.data.macro_context;
+                        opts.macro_context.remap = resolve.getMacroRemappings();
 
                         try bundler.resolver.caches.js.scan(
                             bundler.allocator,

@@ -598,3 +598,30 @@ zig build -Drelease-fast
 Note that `brew install zig` won't work. Bun uses a build of Zig with a couple patches.
 
 Additionally, you'll need `cmake`, `npm` and `esbuild` installed globally.
+
+## Linux
+
+You will need:
+
+- `clang-12` (clang-13 after next Zig upgrade)
+- ruby (JavaScriptCore dependency)
+
+On Ubuntu:
+
+```
+sudo apt install libc++-12-dev libc++1-12 libc++abi1-12 build-essential
+```
+
+If you **do not** have this setup correctly, you will see an error that looks something like this after compiling JavaScriptCore:
+
+```c
+src/javascript/jsc/WebKit/WebKitBuild/Release/WTF/Headers/wtf/FastMalloc.h:23:10: fatal error: 'new' file not found
+#include <new>
+         ^~~~~
+1 error generated.
+```
+
+
+When trying to run `make jsc` (run during `make vendor`), if you get an error complaining about Ruby missing but you have Ruby installed, it might mean your Ruby installation is corrupt.
+
+Verify that `ruby -v` runs without error.

@@ -6,7 +6,7 @@
 #include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSString.h>
-#include <JavaScriptCore/JSValue.h>
+#include <JavaScriptCore/JSValueInternal.h>
 #include <JavaScriptCore/ThrowScope.h>
 #include <JavaScriptCore/VM.h>
 

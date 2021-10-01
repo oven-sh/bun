@@ -1535,6 +1535,7 @@ pub const OutputFile = struct {
             // most efficient method (if available).
             var offset: u64 = 0;
             cfr_loop: while (true) {
+                const math = std.math;
                 // The kernel checks the u64 value `offset+count` for overflow, use
                 // a 32 bit value so that the syscall won't return EINVAL except for
                 // impossibly large files (> 2^64-1 - 2^32-1).

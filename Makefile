@@ -1,8 +1,13 @@
 OS_NAME := $(shell uname -s | tr '[:upper:]' '[:lower:]')
-ARCH_NAME_DENORAMLZIED_1 := $(shell uname -m)
-ARCH_NAME_DENORAMLZIED_2 := $(shell tr '[_]' '[--]' <<< $(ARCH_NAME_DENORAMLZIED_1))
-ARCH_NAME_DENORAMLZIED_3 := $(shell sed s/x86-64/x64/ <<< $(ARCH_NAME_DENORAMLZIED_2))
-ARCH_NAME := $(shell sed s/arm64/aarch64/ <<< $(ARCH_NAME_DENORAMLZIED_3))
+ARCH_NAME_RAW := $(shell uname -m)
+
+ARCH_NAME :=
+ifeq ($(ARCH_NAME_RAW),arm64)
+   ARCH_NAME = aarch64
+else
+   ARCH_NAME = x64
+endif
+
 TRIPLET := $(OS_NAME)-$(ARCH_NAME)
 PACKAGES_REALPATH := $(shell realpath packages)
 PACKAGE_DIR := $(PACKAGES_REALPATH)/bun-cli-$(TRIPLET)
@@ -69,6 +74,7 @@ endif
 ifeq ($(OS_NAME),darwin)
 	JSC_BUILD_STEPS += jsc-build-mac jsc-copy-headers
 endif
+
 
 jsc: jsc-build jsc-bindings
 jsc-build: $(JSC_BUILD_STEPS)
@@ -151,13 +157,13 @@ test-dev-all: test-dev-with-hmr test-dev-no-hmr
 test-dev: test-dev-with-hmr
 
 jsc-copy-headers:
-	find src/javascript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/Headers/JavaScriptCore/ -name "*.h" -exec cp {} src/JavaScript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/PrivateHeaders/JavaScriptCore \;
+	find src/javascript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/Headers/JavaScriptCore/ -name "*.h" -exec cp {} src/javascript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/PrivateHeaders/JavaScriptCore/ \;
 
 jsc-build-mac-compile:
 	cd src/javascript/jsc/WebKit && ICU_INCLUDE_DIRS="$(HOMEBREW_PREFIX)opt/icu4c/include" ./Tools/Scripts/build-jsc --jsc-only --cmakeargs="-DENABLE_STATIC_JSC=ON -DCMAKE_BUILD_TYPE=relwithdebinfo"
 
 jsc-build-linux-compile:
-	CC=$(CC) CXX=$(CXX) cd src/javascript/jsc/WebKit && ./Tools/Scripts/build-jsc --jsc-only --cmakeargs="-DENABLE_STATIC_JSC=ON -DCMAKE_BUILD_TYPE=relwithdebinfo"
+	cd src/javascript/jsc/WebKit && ./Tools/Scripts/build-jsc --jsc-only --cmakeargs="-DENABLE_STATIC_JSC=ON -DCMAKE_BUILD_TYPE=relwithdebinfo -DUSE_THIN_ARCHIVES=OFF"
 
 jsc-build-mac: jsc-build-mac-compile jsc-build-mac-copy
 
@@ -181,15 +187,15 @@ SRC_DIR := src/javascript/jsc/bindings
 OBJ_DIR := src/javascript/jsc/bindings-obj
 SRC_FILES := $(wildcard $(SRC_DIR)/*.cpp)
 OBJ_FILES := $(patsubst $(SRC_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(SRC_FILES))
-INCLUDE_DIRS := -Isrc/JavaScript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/PrivateHeaders \
+INCLUDE_DIRS := -Isrc/javascript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/PrivateHeaders \
 		-Isrc/javascript/jsc/WebKit/WebKitBuild/Release/WTF/Headers \
 		-Isrc/javascript/jsc/WebKit/WebKitBuild/Release/ICU/Headers \
-		-Isrc/JavaScript/jsc/WebKit/WebKitBuild/Release/ \
-		-Isrc/JavaScript/jsc/bindings/ \
+		-Isrc/javascript/jsc/WebKit/WebKitBuild/Release/ \
+		-Isrc/javascript/jsc/bindings/ \
 		-Isrc/javascript/jsc/WebKit/Source/bmalloc 
 
 CLANG_FLAGS := $(INCLUDE_DIRS) \
-		-std=gnu++1z \
+		-std=gnu++17 \
 		-stdlib=libc++ \
 		-DSTATICALLY_LINKED_WITH_JavaScriptCore=1 \
 		-DSTATICALLY_LINKED_WITH_WTF=1 \
@@ -212,12 +218,19 @@ MACOS_ICU_FILES := $(HOMEBREW_PREFIX)opt/icu4c/lib/libicudata.a \
 
 MACOS_ICU_INCLUDE := $(HOMEBREW_PREFIX)opt/icu4c/include
 
-MACOS_ICU_FLAGS := -l icucore \
+ICU_FLAGS := 
+
+ifeq ($(OS_NAME),linux)
+	JSC_BUILD_STEPS += jsc-build-linux jsc-copy-headers
+endif
+ifeq ($(OS_NAME),darwin)
+ICU_FLAGS += -l icucore \
 	$(MACOS_ICU_FILES) \
 	-I$(MACOS_ICU_INCLUDE)
+endif
 
 BUN_LLD_FLAGS := $(OBJ_FILES) \
-		${MACOS_ICU_FLAGS} \
+		${ICU_FLAGS} \
 		${JSC_FILES} \
 		src/deps/picohttpparser.o \
 		src/deps/mimalloc/libmimalloc.a \
@@ -230,7 +243,7 @@ mimalloc:
 bun-link-lld-debug:
 	$(CXX) $(BUN_LLD_FLAGS) \
 		$(DEBUG_BIN)/bun-debug.o \
-		-Wl,-dead_strip \
+		-W \
 		-ftls-model=local-exec \
 		-flto \
 		-o $(DEBUG_BIN)/bun-debug
@@ -239,7 +252,7 @@ bun-link-lld-release:
 	$(CXX) $(BUN_LLD_FLAGS) \
 		$(BIN_DIR)/bun.o \
 		-o $(BIN_DIR)/bun \
-		-Wl,-dead_strip \
+		-W \
 		-ftls-model=local-exec \
 		-flto \
 		-O3

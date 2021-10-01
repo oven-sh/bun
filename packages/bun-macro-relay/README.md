@@ -26,18 +26,33 @@ Add this to your `package.json`:
   },
 ```
 
-This tells Bun to automatically pretend every import statement to `react-relay` with a `graphql` import came from `macro:bun-macro-relay/bun-macro-relay.tsx`. Effectively, this but without you having to make any code changes:
+This tells Bun to automatically pretend every import statement to `react-relay` with a `graphql` import came from `macro:bun-macro-relay/bun-macro-relay.tsx`.
 
-```diff
--import { graphql } from 'react-relay';
-+import { graphql } from 'macro:bun-macro-relay/bun-macro-relay.tsx';
-```
-
-You can still use the other imports from `react-relay`, it will only affect the `graphql` export from `react-relay`.
+Effectively, it applies this diff in-memory so you can use `bun-macro-relay` without making other changes to your code:
 
 ```js
-// useFragment still works
+// Bun will remap this import:
+import { graphql } from "react-relay";
+
+// To this:
+import { graphql } from "macro:bun-macro-relay/bun-macro-relay.tsx";
+```
+
+You can still use the other imports from `react-relay`. It only affects the `graphql` export from `react-relay`.
+
+```js
+// Bun will remap this import:
 import { graphql, useFragment } from "react-relay";
+
+// To this:
+import { graphql } from "macro:bun-macro-relay/bun-macro-relay.tsx";
+import { useFragment } from "react-relay";
+```
+
+Ultimately, the `graphql` import should no longer appear in transpiled output:
+
+```js
+import { useFragment } from "react-relay";
 ```
 
 If you'd rather not modify your project's `package.json`, you can do this instead:
@@ -78,7 +93,7 @@ Input:
 import { graphql, useLazyLoadQuery } from "react-relay";
 
 const Tweet = () => {
-  const data = useLazyLoadQuery<Tweet>(
+  const data = useLazyLoadQuery(
     graphql`
       query TweetQuery {
         ...Tweet_tweet
@@ -106,7 +121,7 @@ const Tweet = () => {
 
 Bun automatically transpiles JSX & TypeScript, but that's not relevant to this example.
 
-### What does it not do?
+### What does `bun-macro-relay` not do?
 
 1. This first version doesn't hash the contents of the `graphql` query, so it won't detect when the GraphQL query is out of sync with the compiled `.graphql` file in development. However, if you're running Relay's CLI, Bun's hot module reloading will automatically update. As long as you run Relay's CLI, it shouldn't matter. This will be fixed eventually (have to expose an MD5 hasher)
 2. Compile GraphQL. You still need to use `relay-compiler` for that.

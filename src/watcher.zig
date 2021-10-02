@@ -6,8 +6,6 @@ const IndexType = @import("./allocators.zig").IndexType;
 
 const os = std.os;
 
-const KEvent = std.os.Kevent;
-
 const Mutex = @import("./lock.zig").Lock;
 const WatchItemIndex = u16;
 const NoWatchItem: WatchItemIndex = std.math.maxInt(WatchItemIndex);
@@ -15,11 +13,161 @@ const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 
 const WATCHER_MAX_LIST = 8096;
 
+pub const INotify = struct {
+    pub const IN_CLOEXEC = std.os.O_CLOEXEC;
+    pub const IN_NONBLOCK = std.os.O_NONBLOCK;
+
+    pub const IN_ACCESS = 0x00000001;
+    pub const IN_MODIFY = 0x00000002;
+    pub const IN_ATTRIB = 0x00000004;
+    pub const IN_CLOSE_WRITE = 0x00000008;
+    pub const IN_CLOSE_NOWRITE = 0x00000010;
+    pub const IN_CLOSE = IN_CLOSE_WRITE | IN_CLOSE_NOWRITE;
+    pub const IN_OPEN = 0x00000020;
+    pub const IN_MOVED_FROM = 0x00000040;
+    pub const IN_MOVED_TO = 0x00000080;
+    pub const IN_MOVE = IN_MOVED_FROM | IN_MOVED_TO;
+    pub const IN_CREATE = 0x00000100;
+    pub const IN_DELETE = 0x00000200;
+    pub const IN_DELETE_SELF = 0x00000400;
+    pub const IN_MOVE_SELF = 0x00000800;
+    pub const IN_ALL_EVENTS = 0x00000fff;
+
+    pub const IN_UNMOUNT = 0x00002000;
+    pub const IN_Q_OVERFLOW = 0x00004000;
+    pub const IN_IGNORED = 0x00008000;
+
+    pub const IN_ONLYDIR = 0x01000000;
+    pub const IN_DONT_FOLLOW = 0x02000000;
+    pub const IN_EXCL_UNLINK = 0x04000000;
+    pub const IN_MASK_ADD = 0x20000000;
+
+    pub const IN_ISDIR = 0x40000000;
+    pub const IN_ONESHOT = 0x80000000;
+
+    pub const EventListIndex = c_int;
+
+    pub const INotifyEvent = extern struct {
+        watch_descriptor: c_int,
+        mask: u32,
+        cookie: u32,
+        name_len: u32,
+    };
+    pub var inotify_fd: EventListIndex = 0;
+    pub var loaded_inotify = false;
+
+    const EventListBuffer = [@sizeOf([128]INotifyEvent) + (128 * std.fs.MAX_PATH_BYTES)]u8;
+    var eventlist: EventListBuffer = undefined;
+    var eventlist_ptrs: [128]*const INotifyEvent = undefined;
+
+    const add_mask = IN_EXCL_UNLINK | IN_MOVE_SELF | IN_CREATE | IN_DELETE | IN_DELETE_SELF;
+
+    pub fn watchPath(pathname: [*:0]const u8) !EventListIndex {
+        std.debug.assert(loaded_inotify);
+
+        return std.os.inotify_add_watchZ(inotify_fd, pathname, add_mask);
+    }
+
+    pub fn unwatch(wd: EventListIndex) void {
+        std.debug.assert(loaded_inotify);
+
+        std.os.inotify_rm_watch(inotify_fd, wd);
+    }
+
+    pub fn init() !void {
+        std.debug.assert(!loaded_inotify);
+        loaded_inotify = true;
+
+        inotify_fd = try std.os.inotify_init1(IN_CLOEXEC);
+    }
+
+    pub fn read() ![]*const INotifyEvent {
+        std.debug.assert(loaded_inotify);
+
+        const rc = std.os.system.read(
+            inotify_fd,
+            @ptrCast([*]u8, @alignCast(@alignOf([*]u8), &eventlist)),
+            @sizeOf(EventListBuffer),
+        );
+
+        switch (std.os.errno(rc)) {
+            .SUCCESS => {
+                const len = @intCast(usize, rc);
+
+                if (len == 0) return &[_]*INotifyEvent{};
+
+                var count: u32 = 0;
+                var i: u32 = 0;
+                while (i < len) : (i += @sizeOf(INotifyEvent)) {
+                    const event = @ptrCast(*const INotifyEvent, @alignCast(@alignOf(*const INotifyEvent), eventlist[i..][0..@sizeOf(INotifyEvent)]));
+                    if (event.name_len > 0) {
+                        i += event.name_len;
+                    }
+
+                    eventlist_ptrs[count] = event;
+                    count += 1;
+                }
+
+                return eventlist_ptrs[0..count];
+            },
+            .INVAL => return error.ShortRead,
+            .BADF => return error.INotifyFailedToStart,
+
+            else => unreachable,
+        }
+
+        unreachable;
+    }
+
+    pub fn stop() void {
+        if (inotify_fd != 0) {
+            std.os.close(inotify_fd);
+            inotify_fd = 0;
+        }
+    }
+};
+
+const DarwinWatcher = struct {
+    pub const EventListIndex = u32;
+
+    const KEvent = std.os.Kevent;
+    // Internal
+    pub var changelist: [128]KEvent = undefined;
+
+    // Everything being watched
+    pub var eventlist: [WATCHER_MAX_LIST]KEvent = undefined;
+    pub var eventlist_index: EventListIndex = 0;
+
+    var fd: EventListIndex = 0;
+
+    pub fn init() !void {
+        std.debug.assert(fd == 0);
+
+        fd = try std.os.kqueue();
+        if (fd == 0) return error.KQueueError;
+    }
+
+    pub fn stop() void {
+        if (fd != 0) {
+            std.os.close(fd);
+        }
+
+        fd = 0;
+    }
+};
+
+const PlatformWatcher = if (Environment.isMac)
+    DarwinWatcher
+else if (Environment.isLinux)
+    INotify
+else
+    void;
+
 pub const WatchItem = struct {
     file_path: string,
     // filepath hash for quick comparison
     hash: u32,
-    eventlist_index: u32,
+    eventlist_index: PlatformWatcher.EventListIndex,
     loader: options.Loader,
     fd: StoredFileDescriptorType,
     count: u32,
@@ -34,12 +182,34 @@ pub const WatchEvent = struct {
     index: WatchItemIndex,
     op: Op,
 
-    pub fn fromKEvent(this: *WatchEvent, kevent: *const KEvent) void {
-        this.op.delete = (kevent.fflags & std.os.NOTE_DELETE) > 0;
-        this.op.metadata = (kevent.fflags & std.os.NOTE_ATTRIB) > 0;
-        this.op.rename = (kevent.fflags & std.os.NOTE_RENAME) > 0;
-        this.op.write = (kevent.fflags & std.os.NOTE_WRITE) > 0;
-        this.index = @truncate(WatchItemIndex, kevent.udata);
+    const KEvent = std.os.Kevent;
+
+    pub fn fromKEvent(this: *WatchEvent, kevent: KEvent) void {
+        this.* =
+            WatchEvent{
+            .op = Op{
+                .delete = (kevent.fflags & std.os.NOTE_DELETE) > 0,
+                .metadata = (kevent.fflags & std.os.NOTE_ATTRIB) > 0,
+                .rename = (kevent.fflags & std.os.NOTE_RENAME) > 0,
+                .write = (kevent.fflags & std.os.NOTE_WRITE) > 0,
+            },
+            .index = @truncate(WatchItemIndex, kevent.udata),
+        };
+    }
+
+    pub fn fromINotify(this: *WatchEvent, event: INotify.INotifyEvent, index: WatchItemIndex) void {
+        this.* = WatchEvent{
+            .op = Op{
+                .delete = (event.mask & INotify.IN_DELETE_SELF) > 0,
+                // only applies to directories
+                .metadata = (event.mask & INotify.IN_CREATE) > 0 or
+                    (event.mask & INotify.IN_DELETE) > 0 or
+                    (event.mask & INotify.IN_MOVE) > 0,
+                .rename = (event.mask & INotify.IN_MOVE_SELF) > 0,
+                .write = (event.mask & INotify.IN_MODIFY) > 0,
+            },
+            .index = index,
+        };
     }
 
     pub const Op = packed struct {
@@ -52,20 +222,6 @@ pub const WatchEvent = struct {
 
 pub const Watchlist = std.MultiArrayList(WatchItem);
 
-const DarwinWatcher = struct {
-
-    // Internal
-    changelist: [128]KEvent = undefined,
-
-    // Everything being watched
-    eventlist: [WATCHER_MAX_LIST]KEvent = undefined,
-};
-
-const PlatformWatcher = if (Environment.isMac)
-    DarwinWatcher
-else
-    void;
-
 // This implementation only works on macOS, for now.
 // The Internet seems to suggest basically always using FSEvents instead of kqueue
 // It seems like the main concern is max open file descriptors
@@ -77,8 +233,6 @@ pub fn NewWatcher(comptime ContextType: type) type {
         watchlist: Watchlist,
         watched_count: usize = 0,
         mutex: Mutex,
-
-        eventlist_used: usize = 0,
 
         platform: PlatformWatcher = PlatformWatcher{},
 
@@ -117,21 +271,8 @@ pub fn NewWatcher(comptime ContextType: type) type {
             return watcher;
         }
 
-        pub fn getQueue(this: *Watcher) !StoredFileDescriptorType {
-            if (this.fd == 0) {
-                if (Environment.isMac) {
-                    this.fd = try os.kqueue();
-                    if (this.fd == 0) {
-                        return error.WatcherFailed;
-                    }
-                }
-            }
-
-            return this.fd;
-        }
-
         pub fn start(this: *Watcher) !void {
-            _ = try this.getQueue();
+            try PlatformWatcher.init();
             std.debug.assert(this.watchloop_handle == null);
             var thread = try std.Thread.spawn(.{}, Watcher.watchLoop, .{this});
             thread.setName("File Watcher") catch {};
@@ -152,8 +293,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 Output.prettyErrorln("<r>Watcher crashed: <red><b>{s}<r>", .{@errorName(err)});
 
                 this.watchloop_handle = null;
-                std.os.close(this.fd);
-                this.fd = 0;
+                PlatformWatcher.stop();
                 return;
             };
         }
@@ -193,13 +333,20 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
             var slice = this.watchlist.slice();
             var fds = slice.items(.fd);
+            var event_list_ids = slice.items(.eventlist_index);
             var last_item = NoWatchItem;
 
             for (evict_list[0..evict_list_i]) |item, i| {
                 // catch duplicates, since the list is sorted, duplicates will appear right after each other
                 if (item == last_item) continue;
+
                 // close the file descriptors here. this should automatically remove it from being watched too.
                 std.os.close(fds[item]);
+
+                if (Environment.isLinux) {
+                    INotify.unwatch(event_list_ids[item]);
+                }
+
                 last_item = item;
             }
 
@@ -216,7 +363,8 @@ pub fn NewWatcher(comptime ContextType: type) type {
             const time = std.time;
 
             if (Environment.isMac) {
-                std.debug.assert(this.fd > 0);
+                std.debug.assert(DarwinWatcher.fd > 0);
+                const KEvent = std.os.KEvent;
 
                 var changelist_array: [1]KEvent = std.mem.zeroes([1]KEvent);
                 var changelist = &changelist_array;
@@ -224,7 +372,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                     defer Output.flush();
 
                     _ = std.os.system.kevent(
-                        try this.getQueue(),
+                        DarwinWatcher.fd,
                         @as([*]KEvent, changelist),
                         0,
                         @as([*]KEvent, changelist),
@@ -235,10 +383,43 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
                     var watchevents = this.watch_events[0..1];
                     for (changelist) |event, i| {
-                        watchevents[i].fromKEvent(&event);
+                        watchevents[i].fromKEvent(event);
                     }
 
                     this.ctx.onFileUpdate(watchevents, this.watchlist);
+                }
+            } else if (Environment.isLinux) {
+                while (true) {
+                    defer Output.flush();
+
+                    var events = try INotify.read();
+                    // TODO: is this thread safe?
+                    const eventlist_index = this.watchlist.items(.eventlist_index);
+                    var remaining_events = events.len;
+
+                    while (remaining_events > 0) {
+                        const slice = events[0..std.math.min(remaining_events, this.watch_events.len)];
+                        var watchevents = this.watch_events[0..slice.len];
+                        var watch_event_id: u32 = 0;
+                        for (slice) |event| {
+                            watchevents[watch_event_id].fromINotify(
+                                event.*,
+                                @intCast(
+                                    WatchItemIndex,
+                                    std.mem.indexOfScalar(
+                                        INotify.EventListIndex,
+                                        eventlist_index,
+                                        event.watch_descriptor,
+                                    ) orelse continue,
+                                ),
+                            );
+
+                            watch_event_id += 1;
+                        }
+
+                        this.ctx.onFileUpdate(watchevents[0..watch_event_id], this.watchlist);
+                        remaining_events -= slice.len;
+                    }
                 }
             }
         }
@@ -279,10 +460,17 @@ pub fn NewWatcher(comptime ContextType: type) type {
             package_json: ?*PackageJSON,
             comptime copy_file_path: bool,
         ) !void {
-            const index = this.eventlist_used;
+            var index: PlatformWatcher.EventListIndex = undefined;
             const watchlist_id = this.watchlist.len;
 
+            const file_path_: string = if (comptime copy_file_path)
+                std.mem.span(try this.allocator.dupeZ(u8, file_path))
+            else
+                file_path;
+
             if (Environment.isMac) {
+                const KEvent = std.os.Kevent;
+                index = DarwinWatcher.eventlist_index;
 
                 // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html
                 var event = std.mem.zeroes(KEvent);
@@ -291,43 +479,43 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 // we want to know about the vnode
                 event.filter = std.os.EVFILT_VNODE;
 
-                // monitor:
-                // - Write
-                // - Rename
-
-                // we should monitor:
-                // - Delete
                 event.fflags = std.os.NOTE_WRITE | std.os.NOTE_RENAME | std.os.NOTE_DELETE;
 
                 // id
                 event.ident = @intCast(usize, fd);
 
-                this.eventlist_used += 1;
+                DarwinWatcher.eventlist_index += 1;
 
                 // Store the hash for fast filtering later
                 event.udata = @intCast(usize, watchlist_id);
-                this.platform.eventlist[index] = event;
+                DarwinWatcher.eventlist[index] = event;
 
                 // This took a lot of work to figure out the right permutation
                 // Basically:
                 // - We register the event here.
                 // our while(true) loop above receives notification of changes to any of the events created here.
                 _ = std.os.system.kevent(
-                    try this.getQueue(),
-                    this.platform.eventlist[index .. index + 1].ptr,
+                    DarwinWatcher.fd,
+                    DarwinWatcher.eventlist[index .. index + 1].ptr,
                     1,
-                    this.platform.eventlist[index .. index + 1].ptr,
+                    DarwinWatcher.eventlist[index .. index + 1].ptr,
                     0,
                     null,
                 );
+            } else if (Environment.isLinux) {
+                var sentineled = file_path_;
+                var file_path_to_use_ptr: [*c]u8 = @intToPtr([*c]u8, @ptrToInt(file_path_.ptr));
+                var file_path_to_use: [:0]u8 = file_path_to_use_ptr[0..sentineled.len :0];
+
+                index = try INotify.watchPath(file_path_to_use);
             }
 
             this.watchlist.appendAssumeCapacity(.{
-                .file_path = if (copy_file_path) try this.allocator.dupe(u8, file_path) else file_path,
+                .file_path = std.mem.span(file_path_),
                 .fd = fd,
                 .hash = hash,
                 .count = 0,
-                .eventlist_index = @truncate(u32, index),
+                .eventlist_index = index,
                 .loader = loader,
                 .parent_hash = parent_hash,
                 .package_json = package_json,
@@ -350,10 +538,20 @@ pub fn NewWatcher(comptime ContextType: type) type {
             };
 
             const parent_hash = Watcher.getHash(Fs.PathName.init(file_path).dirWithTrailingSlash());
-            const index = this.eventlist_used;
+            var index: PlatformWatcher.EventListIndex = undefined;
+            const file_path_ptr = @intToPtr([*]const u8, @ptrToInt(file_path.ptr));
+            const file_path_len = file_path.len;
+
+            const file_path_: string = if (comptime copy_file_path)
+                std.mem.span(try this.allocator.dupeZ(u8, file_path))
+            else
+                file_path;
+
             const watchlist_id = this.watchlist.len;
 
             if (Environment.isMac) {
+                index = DarwinWatcher.eventlist_index;
+                const KEvent = std.os.Kevent;
 
                 // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html
                 var event = std.mem.zeroes(KEvent);
@@ -374,28 +572,35 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 this.eventlist_used += 1;
                 // Store the hash for fast filtering later
                 event.udata = @intCast(usize, watchlist_id);
-                this.platform.eventlist[index] = event;
+                DarwinWatcher.eventlist[index] = event;
 
                 // This took a lot of work to figure out the right permutation
                 // Basically:
                 // - We register the event here.
                 // our while(true) loop above receives notification of changes to any of the events created here.
                 _ = std.os.system.kevent(
-                    try this.getQueue(),
-                    this.platform.eventlist[index .. index + 1].ptr,
+                    DarwinWatcher.fd,
+                    DarwinWatcher.eventlist[index .. index + 1].ptr,
                     1,
-                    this.platform.eventlist[index .. index + 1].ptr,
+                    DarwinWatcher.eventlist[index .. index + 1].ptr,
                     0,
                     null,
                 );
+            } else if (Environment.isLinux) {
+                // This works around a Zig compiler bug when casting a slice from a string to a sentineled string.
+                var sentineled = file_path_;
+                var file_path_to_use_ptr: [*c]u8 = @intToPtr([*c]u8, @ptrToInt(file_path_.ptr));
+                var file_path_to_use: [:0]u8 = file_path_to_use_ptr[0..sentineled.len :0];
+
+                index = try INotify.watchPath(file_path_to_use);
             }
 
             this.watchlist.appendAssumeCapacity(.{
-                .file_path = if (copy_file_path) try this.allocator.dupe(u8, file_path) else file_path,
+                .file_path = file_path_,
                 .fd = fd,
                 .hash = hash,
                 .count = 0,
-                .eventlist_index = @truncate(u32, index),
+                .eventlist_index = index,
                 .loader = options.Loader.file,
                 .parent_hash = parent_hash,
                 .kind = .directory,

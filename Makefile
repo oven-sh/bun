@@ -121,6 +121,9 @@ release-mac-push: write-package-json-version
 dev-obj:
 	zig build obj
 
+dev-obj-linux:
+	zig build obj -Dtarget=x86_64-linux-gnu
+
 dev: mkdir-dev dev-obj bun-link-lld-debug
 
 mkdir-dev:
@@ -222,6 +225,7 @@ ICU_FLAGS :=
 
 ifeq ($(OS_NAME),linux)
 	JSC_BUILD_STEPS += jsc-build-linux jsc-copy-headers
+	ICU_FLAGS += -licuuc -licudata -licui18n
 endif
 ifeq ($(OS_NAME),darwin)
 ICU_FLAGS += -l icucore \

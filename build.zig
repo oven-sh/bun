@@ -261,6 +261,10 @@ pub fn build(b: *std.build.Builder) !void {
                 step.linkSystemLibrary("icucore");
                 step.addLibPath(homebrew_prefix ++ "opt/icu4c/lib");
                 step.addIncludeDir(homebrew_prefix ++ "opt/icu4c/include");
+            } else {
+                step.linkSystemLibrary("icuuc");
+                step.linkSystemLibrary("icudata");
+                step.linkSystemLibrary("icui18n");
             }
 
             for (bindings_files.items) |binding| {
@@ -283,6 +287,8 @@ pub fn build(b: *std.build.Builder) !void {
         obj.setOutputDir(output_dir);
         obj.setBuildMode(mode);
         obj.linkLibC();
+        obj.linkLibCpp();
+
         obj.setTarget(target);
     } else {
         b.default_step.dependOn(&exe.step);

@@ -20,5 +20,5 @@ pub const isWindows = std.Target.current.os.tag == .windows;
 pub const isDebug = std.builtin.Mode.Debug == std.builtin.mode;
 pub const isRelease = std.builtin.Mode.Debug != std.builtin.mode and !isTest;
 pub const isTest = std.builtin.is_test;
-
+pub const isLinux = std.Target.current.os.tag == .linux;
 pub const isAarch64 = std.Target.current.cpu.arch == .aarch64;

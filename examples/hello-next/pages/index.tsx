@@ -5,12 +5,11 @@ import styles from "../styles/Home.module.css";
 
 export async function getStaticProps(ctx) {
   return {
-    props: {
-    },
+    props: {},
   };
 }
 
-export default function Home({  }) {
+export default function Home({}) {
   return (
     <div className={styles.container}>
       <Head>
@@ -21,7 +20,7 @@ export default function Home({  }) {
 
       <main className={styles.main}>
         <h1 className={styles.title}>
-          Welcome to <a href="https://nextjs.org">Next.js!</a>
+          Welcome!!to <a href="https://nextjs.org">Next.js!</a>
         </h1>
 
         <p className={styles.description}>

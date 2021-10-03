@@ -600,7 +600,4 @@ Additionally, you'll need `cmake`, `npm` and `esbuild` installed globally.
 
 ## Linux
 
-```bash
-git submodule update --init --recursive --progress --depth=1
-make vendor
-```
+Compile Zig:

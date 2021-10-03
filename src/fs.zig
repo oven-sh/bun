@@ -541,16 +541,22 @@ pub const FileSystem = struct {
         }
 
         // Always try to max out how many files we can keep open
-        pub fn adjustUlimit() usize {
-            var limit = std.os.getrlimit(.NOFILE) catch return 32;
-            if (limit.cur < limit.max) {
-                var new_limit = std.mem.zeroes(std.os.rlimit);
-                new_limit.cur = limit.max;
-                new_limit.max = limit.max;
-                std.os.setrlimit(.NOFILE, new_limit) catch return limit.cur;
-                return new_limit.cur;
+        pub fn adjustUlimit() !usize {
+            const LIMITS = [_]std.os.rlimit_resource{std.os.rlimit_resource.STACK, std.os.rlimit_resource.NOFILE};
+            inline for (LIMITS) |limit_type, i| {
+                const limit = try std.os.getrlimit(limit_type);
+
+                if (limit.cur < limit.max) {
+                    var new_limit = std.mem.zeroes(std.os.rlimit);
+                    new_limit.cur = limit.max;
+                    new_limit.max = limit.max;
+
+                    try std.os.setrlimit(limit_type, new_limit);
+
+                }
+
+                if (i == LIMITS.len - 1) return limit.max;
             }
-            return limit.cur;
         }
 
         var _entries_option_map: *EntriesOption.Map = undefined;
@@ -559,7 +565,7 @@ pub const FileSystem = struct {
             allocator: *std.mem.Allocator,
             cwd: string,
         ) RealFS {
-            const file_limit = adjustUlimit();
+            const file_limit = adjustUlimit() catch unreachable;
 
             if (!_entries_option_map_loaded) {
                 _entries_option_map = EntriesOption.Map.init(allocator);

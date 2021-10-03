@@ -50,6 +50,7 @@ threadlocal var req_headers_buf: [100]picohttp.Header = undefined;
 threadlocal var res_headers_buf: [100]picohttp.Header = undefined;
 const sync = @import("./sync.zig");
 const JavaScript = @import("./javascript/jsc/javascript.zig");
+const JavaScriptCore = @import("./javascript/jsc/JavascriptCore.zig");
 usingnamespace @import("./javascript/jsc/bindings/bindings.zig");
 usingnamespace @import("./javascript/jsc/bindings/exports.zig");
 const Router = @import("./router.zig");
@@ -1102,11 +1103,11 @@ pub const RequestContext = struct {
         pub var channel: Channel = undefined;
         var has_loaded_channel = false;
         pub var javascript_disabled = false;
-
+        var js_thread: std.Thread = undefined;
         pub fn spawnThread(handler: *HandlerThread) !void {
-            var thread = try std.Thread.spawn(.{}, spawn, .{handler});
-            thread.setName("WebSocket") catch {};
-            thread.detach();
+            js_thread = try std.Thread.spawn(.{.stack_size = 64 * 1024 * 1024}, spawn, .{handler});
+            js_thread.setName("JavaScript SSR") catch {};
+            js_thread.detach();
         }
 
         pub fn spawn(handler: *HandlerThread) void {
@@ -1118,20 +1119,19 @@ pub const RequestContext = struct {
                 javascript_disabled = true;
             }
             var start_timer = std.time.Timer.start() catch unreachable;
+            
 
             var stdout = std.io.getStdOut();
-            // var stdout = std.io.bufferedWriter(stdout_file.writer());
             var stderr = std.io.getStdErr();
-            // var stderr = std.io.bufferedWriter(stderr_file.writer());
             var output_source = Output.Source.init(stdout, stderr);
-            // defer stdout.flush() catch {};
-            // defer stderr.flush() catch {};
+            defer Output.flush();
             Output.Source.set(&output_source);
 
+   
             js_ast.Stmt.Data.Store.create(std.heap.c_allocator);
             js_ast.Expr.Data.Store.create(std.heap.c_allocator);
 
-            defer Output.flush();
+           
             var vm = JavaScript.VirtualMachine.init(
                 std.heap.c_allocator,
                 handler.args,
@@ -1947,6 +1947,8 @@ pub const RequestContext = struct {
                 // CSS handles this specially
                 if (loader != .css and client_entry_point_ == null) {
                     if (written.input_fd) |written_fd| {
+                      
+
                         try ctx.watcher.addFile(
                             written_fd,
                             result.file.input.text,
@@ -1958,8 +1960,9 @@ pub const RequestContext = struct {
                         );
 
                         if (ctx.watcher.watchloop_handle == null) {
-                            try ctx.watcher.start();
+                             ctx.watcher.start() catch {};
                         }
+                        
                     }
                 } else {
                     if (written.written > 0) {
@@ -2008,6 +2011,7 @@ pub const RequestContext = struct {
                     if (file.autowatch) {
                         // we must never autowatch a file that will be closed
                         std.debug.assert(!file.close_handle_on_complete);
+
                         if (ctx.watcher.addFile(
                             file.fd,
                             result.file.input.text,
@@ -2438,16 +2442,6 @@ pub const Server = struct {
     transform_options: Api.TransformOptions,
     javascript_enabled: bool = false,
 
-    pub fn adjustUlimit() !void {
-        var limit = try std.os.getrlimit(.NOFILE);
-        if (limit.cur < limit.max) {
-            var new_limit = std.mem.zeroes(std.os.rlimit);
-            new_limit.cur = limit.max;
-            new_limit.max = limit.max;
-            try std.os.setrlimit(.NOFILE, new_limit);
-        }
-    }
-
     pub fn onTCPConnection(server: *Server, conn: tcp.Connection, comptime features: ConnectionFeatures) void {
         conn.client.setNoDelay(true) catch {};
         conn.client.setQuickACK(true) catch {};
@@ -2502,6 +2496,9 @@ pub const Server = struct {
         defer ctx.watcher.flushEvictions();
         defer Output.flush();
 
+        var rfs: *Fs.FileSystem.RealFS = &ctx.bundler.fs.fs;
+
+
         // It's important that this function does not do any memory allocations
         // If this blocks, it can cause cascading bad things to happen
         for (events) |event| {
@@ -2526,7 +2523,6 @@ pub const Server = struct {
             switch (kind) {
                 .file => {
                     if (event.op.delete or event.op.rename) {
-                        var rfs: *Fs.FileSystem.RealFS = &ctx.bundler.fs.fs;
                         ctx.watcher.removeAtIndex(
                             event.index,
                             0,
@@ -2559,12 +2555,12 @@ pub const Server = struct {
                     }
                 },
                 .directory => {
-                    var rfs: *Fs.FileSystem.RealFS = &ctx.bundler.fs.fs;
+                   
                     rfs.bustEntriesCache(file_path);
                     ctx.bundler.resolver.dir_cache.remove(file_path);
 
-                    if (event.op.delete or event.op.rename)
-                        ctx.watcher.removeAtIndex(event.index, hashes[event.index], parent_hashes, .directory);
+                    // if (event.op.delete or event.op.rename)
+                    //     ctx.watcher.removeAtIndex(event.index, hashes[event.index], parent_hashes, .directory);
 
                     if (comptime is_emoji_enabled) {
                         Output.prettyln("<r>📁  <d>Dir change: {s}<r>", .{ctx.bundler.fs.relativeTo(file_path)});
@@ -2577,7 +2573,7 @@ pub const Server = struct {
     }
 
     fn run(server: *Server, comptime features: ConnectionFeatures) !void {
-        adjustUlimit() catch {};
+      _ =  Fs.FileSystem.RealFS.adjustUlimit() catch {};
         RequestContext.WebsocketHandler.open_websockets = @TypeOf(
             RequestContext.WebsocketHandler.open_websockets,
         ).init(server.allocator);
@@ -2723,6 +2719,7 @@ pub const Server = struct {
         };
     };
 
+    threadlocal var req_ctx_: RequestContext = undefined;
     pub fn handleConnection(server: *Server, conn: *tcp.Connection, comptime features: ConnectionFeatures) void {
 
         // https://stackoverflow.com/questions/686217/maximum-on-http-header-values
@@ -2745,9 +2742,9 @@ pub const Server = struct {
 
         var request_arena = server.allocator.create(std.heap.ArenaAllocator) catch unreachable;
         request_arena.* = std.heap.ArenaAllocator.init(server.allocator);
-        var req_ctx: RequestContext = undefined;
+        
 
-        req_ctx = RequestContext.init(
+        req_ctx_ = RequestContext.init(
             req,
             request_arena,
             conn,
@@ -2759,6 +2756,7 @@ pub const Server = struct {
             conn.client.deinit();
             return;
         };
+        var req_ctx = &req_ctx_;
         req_ctx.timer.reset();
 
         if (req_ctx.url.needs_redirect) {
@@ -2880,7 +2878,7 @@ pub const Server = struct {
 
         if (comptime features.filesystem_router) {
             if (!finished) {
-                req_ctx.bundler.router.?.match(server, RequestContext, &req_ctx) catch |err| {
+                req_ctx.bundler.router.?.match(server, RequestContext, req_ctx) catch |err| {
                     switch (err) {
                         error.ModuleNotFound => {
                             req_ctx.sendNotFound() catch {};

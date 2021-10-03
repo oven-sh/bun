@@ -2920,7 +2920,7 @@ pub const Transformer = struct {
         var arena: std.heap.ArenaAllocator = undefined;
         const use_arenas = opts.entry_points.len > 8;
 
-        var ulimit: usize = Fs.FileSystem.RealFS.adjustUlimit();
+        var ulimit: usize = Fs.FileSystem.RealFS.adjustUlimit() catch unreachable;
         var care_about_closing_files = !(FeatureFlags.store_file_descriptors and opts.entry_points.len * 2 < ulimit);
 
         var transformer = Transformer{

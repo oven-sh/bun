@@ -544,3 +544,7 @@ pub const JSString = struct {
         }
     }
 };
+
+
+// not official api functions
+pub extern "c" fn JSCInitialize() void;

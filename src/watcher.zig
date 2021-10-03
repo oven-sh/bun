@@ -60,17 +60,29 @@ pub const INotify = struct {
     var eventlist: EventListBuffer = undefined;
     var eventlist_ptrs: [128]*const INotifyEvent = undefined;
 
-    const add_mask = IN_EXCL_UNLINK | IN_MOVE_SELF | IN_CREATE | IN_DELETE | IN_DELETE_SELF;
+    var watch_count: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0);
 
-    pub fn watchPath(pathname: [*:0]const u8) !EventListIndex {
+    const watch_file_mask = IN_EXCL_UNLINK | IN_MOVE_SELF | IN_DELETE_SELF | IN_CLOSE_WRITE;
+    const watch_dir_mask = IN_EXCL_UNLINK | IN_DELETE | IN_DELETE_SELF | IN_CREATE | IN_MOVE_SELF | IN_ONLYDIR;
+
+    pub fn watchPath(pathname: [:0]const u8) !EventListIndex {
         std.debug.assert(loaded_inotify);
-
-        return std.os.inotify_add_watchZ(inotify_fd, pathname, add_mask);
+        const old_count = watch_count.fetchAdd(1, .Release);
+      defer  if (old_count == 0) std.Thread.Futex.wake(&watch_count, 10);
+        return std.os.inotify_add_watchZ(inotify_fd, pathname, watch_file_mask);
     }
+
+    pub fn watchDir(pathname: [:0]const u8) !EventListIndex {
+        std.debug.assert(loaded_inotify);
+        const old_count = watch_count.fetchAdd(1, .Release);
+      defer  if (old_count == 0) std.Thread.Futex.wake(&watch_count, 10);
+        return std.os.inotify_add_watchZ(inotify_fd, pathname, watch_dir_mask);
+    }
+
 
     pub fn unwatch(wd: EventListIndex) void {
         std.debug.assert(loaded_inotify);
-
+        _ = watch_count.fetchSub(1, .Release);
         std.os.inotify_rm_watch(inotify_fd, wd);
     }
 
@@ -84,6 +96,10 @@ pub const INotify = struct {
     pub fn read() ![]*const INotifyEvent {
         std.debug.assert(loaded_inotify);
 
+        restart: while (true) {
+
+
+        std.Thread.Futex.wait(&watch_count,0, null) catch unreachable;
         const rc = std.os.system.read(
             inotify_fd,
             @ptrCast([*]u8, @alignCast(@alignOf([*]u8), &eventlist)),
@@ -110,12 +126,14 @@ pub const INotify = struct {
 
                 return eventlist_ptrs[0..count];
             },
+            .AGAIN => continue :restart,
             .INVAL => return error.ShortRead,
             .BADF => return error.INotifyFailedToStart,
 
             else => unreachable,
         }
 
+}
         unreachable;
     }
 
@@ -183,6 +201,21 @@ pub const WatchEvent = struct {
     op: Op,
 
     const KEvent = std.os.Kevent;
+    
+    pub const Sorter = void;
+
+    pub fn sortByIndex(context: Sorter, event: WatchEvent, rhs: WatchEvent) bool {
+        return event.index < rhs.index;
+    }
+
+    pub fn merge(this: *WatchEvent, other: WatchEvent) void {
+        this.op = Op{
+            .delete = this.op.delete or other.op.delete,
+            .metadata = this.op.metadata or other.op.metadata,
+            .rename = this.op.rename or other.op.rename,
+            .write = this.op.write or other.op.write,
+        };
+    }
 
     pub fn fromKEvent(this: *WatchEvent, kevent: KEvent) void {
         this.* =
@@ -200,13 +233,10 @@ pub const WatchEvent = struct {
     pub fn fromINotify(this: *WatchEvent, event: INotify.INotifyEvent, index: WatchItemIndex) void {
         this.* = WatchEvent{
             .op = Op{
-                .delete = (event.mask & INotify.IN_DELETE_SELF) > 0,
-                // only applies to directories
-                .metadata = (event.mask & INotify.IN_CREATE) > 0 or
-                    (event.mask & INotify.IN_DELETE) > 0 or
-                    (event.mask & INotify.IN_MOVE) > 0,
+                .delete = (event.mask & INotify.IN_DELETE_SELF) > 0 or (event.mask & INotify.IN_DELETE) > 0,
+                .metadata = false,
                 .rename = (event.mask & INotify.IN_MOVE_SELF) > 0,
-                .write = (event.mask & INotify.IN_MODIFY) > 0,
+                .write = (event.mask & INotify.IN_MODIFY) > 0 or (event.mask & INotify.IN_MOVE) > 0,
             },
             .index = index,
         };
@@ -257,6 +287,8 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
         pub fn init(ctx: ContextType, fs: *Fs.FileSystem, allocator: *std.mem.Allocator) !*Watcher {
             var watcher = try allocator.create(Watcher);
+            try PlatformWatcher.init();
+
             watcher.* = Watcher{
                 .fs = fs,
                 .fd = 0,
@@ -272,7 +304,6 @@ pub fn NewWatcher(comptime ContextType: type) type {
         }
 
         pub fn start(this: *Watcher) !void {
-            try PlatformWatcher.init();
             std.debug.assert(this.watchloop_handle == null);
             var thread = try std.Thread.spawn(.{}, Watcher.watchLoop, .{this});
             thread.setName("File Watcher") catch {};
@@ -389,7 +420,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                     this.ctx.onFileUpdate(watchevents, this.watchlist);
                 }
             } else if (Environment.isLinux) {
-                while (true) {
+               restart: while (true) {
                     defer Output.flush();
 
                     var events = try INotify.read();
@@ -417,7 +448,21 @@ pub fn NewWatcher(comptime ContextType: type) type {
                             watch_event_id += 1;
                         }
 
-                        this.ctx.onFileUpdate(watchevents[0..watch_event_id], this.watchlist);
+                        var all_events = watchevents[0..watch_event_id];
+                        std.sort.sort(WatchEvent, all_events, void{}, WatchEvent.sortByIndex); 
+
+                        var last_event_index: usize = 0;
+                        var last_event_id: INotify.EventListIndex = std.math.maxInt(INotify.EventListIndex);
+                        for (all_events) |event, i| {
+                            if (event.index == last_event_id) {
+                                all_events[last_event_index].merge(event);
+                                continue;
+                            }
+                            last_event_index = i;
+                            last_event_id = event.index;
+                        }
+                        if (all_events.len == 0) continue :restart;
+                        this.ctx.onFileUpdate(all_events[0..last_event_index+1], this.watchlist);
                         remaining_events -= slice.len;
                     }
                 }
@@ -503,11 +548,13 @@ pub fn NewWatcher(comptime ContextType: type) type {
                     null,
                 );
             } else if (Environment.isLinux) {
-                var sentineled = file_path_;
-                var file_path_to_use_ptr: [*c]u8 = @intToPtr([*c]u8, @ptrToInt(file_path_.ptr));
-                var file_path_to_use: [:0]u8 = file_path_to_use_ptr[0..sentineled.len :0];
-
-                index = try INotify.watchPath(file_path_to_use);
+                // var file_path_to_use_ = std.mem.trimRight(u8, file_path_, "/");
+                // var buf: [std.fs.MAX_PATH_BYTES+1]u8 = undefined;
+                // std.mem.copy(u8, &buf, file_path_to_use_);
+                // buf[file_path_to_use_.len] = 0;
+                var buf = file_path_.ptr;
+                var slice: [:0]const u8 = buf[0..file_path_.len:0];
+                index = try INotify.watchPath(slice);
             }
 
             this.watchlist.appendAssumeCapacity(.{
@@ -587,12 +634,12 @@ pub fn NewWatcher(comptime ContextType: type) type {
                     null,
                 );
             } else if (Environment.isLinux) {
-                // This works around a Zig compiler bug when casting a slice from a string to a sentineled string.
-                var sentineled = file_path_;
-                var file_path_to_use_ptr: [*c]u8 = @intToPtr([*c]u8, @ptrToInt(file_path_.ptr));
-                var file_path_to_use: [:0]u8 = file_path_to_use_ptr[0..sentineled.len :0];
-
-                index = try INotify.watchPath(file_path_to_use);
+                var file_path_to_use_ = std.mem.trimRight(u8, file_path_, "/");
+                var buf: [std.fs.MAX_PATH_BYTES+1]u8 = undefined;
+                std.mem.copy(u8, &buf, file_path_to_use_);
+                buf[file_path_to_use_.len] = 0;
+                var slice: [:0]u8 = buf[0..file_path_to_use_.len:0];
+                index = try INotify.watchDir(slice);
             }
 
             this.watchlist.appendAssumeCapacity(.{

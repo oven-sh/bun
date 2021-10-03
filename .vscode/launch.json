@@ -79,6 +79,15 @@
       "cwd": "${workspaceFolder}/src/test/fixtures",
       "console": "internalConsole"
     },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Linux Launch",
+      "program": "${workspaceFolder}/packages/debug-bun-cli-linux-x64/bin/bun-debug",
+      "args": ["--origin=http://jarred-desktop.local:3000/"],
+      "cwd": "${workspaceFolder}/examples/hello-next",
+      "console": "internalConsole"
+    },
 
     {
       "type": "lldb",

@@ -58,6 +58,8 @@
 #include <wtf/text/StringView.h>
 #include <wtf/text/WTFString.h>
 
+#include <wtf/Gigacage.h>
+
 #include <cstdlib>
 #include <exception>
 #include <iostream>
@@ -82,22 +84,21 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 
 bool has_loaded_jsc = false;
 
-extern "C" JSC__JSGlobalObject *Zig__GlobalObject__create(JSClassRef *globalObjectClass, int count,
-                                                          void *console_client) {
-
-  if (!has_loaded_jsc) {
+extern "C" void JSCInitialize() {
+  if (has_loaded_jsc) return;
     JSC::Options::useSourceProviderCache() = true;
     JSC::Options::useUnlinkedCodeBlockJettisoning() = false;
     // JSC::Options::useTopLevelAwait() = true;
     JSC::Options::exposeInternalModuleLoader() = true;
-    std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
+    // std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
     WTF::initializeMainThread();
     JSC::initialize();
+    // Gigacage::disablePrimitiveGigacage();
     has_loaded_jsc = true;
-  }
+}
 
-  // JSC::Options::useCodeCache() = false;
-
+extern "C" JSC__JSGlobalObject *Zig__GlobalObject__create(JSClassRef *globalObjectClass, int count,
+                                                          void *console_client) {
   auto heapSize = JSC::LargeHeap;
 
   JSC::VM &vm = JSC::VM::create(heapSize).leakRef();

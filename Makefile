@@ -24,7 +24,10 @@ CXX := clang++
 
 bun: vendor build-obj bun-link-lld-release
 
-vendor: require init-submodules api node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp jsc
+
+vendor-without-check: api node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp
+
+vendor: require init-submodules vendor-without-check
 
 require:
 	@echo "Checking if the required utilities are available..."
@@ -67,6 +70,30 @@ runtime_js:
 bun_error:
 	@cd packages/bun-error; npm install; npm run --silent build
 
+
+DEFAULT_USE_BMALLOC := 1
+# ifeq ($(OS_NAME),linux)
+# 	DEFAULT_USE_BMALLOC = 0
+# endif
+
+USE_BMALLOC ?= DEFAULT_USE_BMALLOC
+
+DEFAULT_JSC_LIB := 
+
+ifeq ($(OS_NAME),linux)
+DEFAULT_JSC_LIB = ${HOME}/webkit-build/lib
+endif
+
+ifeq ($(OS_NAME),darwin)
+DEFAULT_JSC_LIB = src/deps
+endif
+
+JSC_LIB ?= $(DEFAULT_JSC_LIB)
+
+JSC_INCLUDE_DIR ?= ${HOME}/webkit-build/include
+
+JSC_FILES := $(JSC_LIB)/libJavaScriptCore.a $(JSC_LIB)/libWTF.a
+
 JSC_BUILD_STEPS :=
 ifeq ($(OS_NAME),linux)
 	JSC_BUILD_STEPS += jsc-build-linux jsc-copy-headers
@@ -74,6 +101,10 @@ endif
 ifeq ($(OS_NAME),darwin)
 	JSC_BUILD_STEPS += jsc-build-mac jsc-copy-headers
 endif
+
+# ifeq ($(USE_BMALLOC),1)
+JSC_FILES += $(JSC_LIB)/libbmalloc.a
+# endif
 
 
 jsc: jsc-build jsc-bindings
@@ -177,10 +208,12 @@ jsc-build-mac-copy:
 	cp src/javascript/jsc/WebKit/WebKitBuild/Release/lib/libWTF.a src/deps/libWTF.a
 	cp src/javascript/jsc/WebKit/WebKitBuild/Release/lib/libbmalloc.a src/deps/libbmalloc.a
 	 
-JSC_FILES := src/deps/libJavaScriptCore.a \
-	src/deps/libWTF.a \
-	src/deps/libbmalloc.a 
+clean-bindings: 
+	rm -rf $(OBJ_DIR)/*.o
 
+clean: clean-bindings
+	rm src/deps/*.a src/deps/*.o
+	cd src/deps/mimalloc && make clean;
 
 ifeq ($(OS_NAME),darwin)
 	HOMEBREW_PREFIX := $(shell brew --prefix)/
@@ -190,18 +223,31 @@ SRC_DIR := src/javascript/jsc/bindings
 OBJ_DIR := src/javascript/jsc/bindings-obj
 SRC_FILES := $(wildcard $(SRC_DIR)/*.cpp)
 OBJ_FILES := $(patsubst $(SRC_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(SRC_FILES))
-INCLUDE_DIRS := -Isrc/javascript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/PrivateHeaders \
+MAC_INCLUDE_DIRS := -Isrc/javascript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/PrivateHeaders \
 		-Isrc/javascript/jsc/WebKit/WebKitBuild/Release/WTF/Headers \
 		-Isrc/javascript/jsc/WebKit/WebKitBuild/Release/ICU/Headers \
 		-Isrc/javascript/jsc/WebKit/WebKitBuild/Release/ \
 		-Isrc/javascript/jsc/bindings/ \
 		-Isrc/javascript/jsc/WebKit/Source/bmalloc 
 
+LINUX_INCLUDE_DIRS := -I$(JSC_INCLUDE_DIR) \
+					  -Isrc/javascript/jsc/bindings/
+
+INCLUDE_DIRS :=
+
+ifeq ($(OS_NAME),linux)
+	INCLUDE_DIRS += $(LINUX_INCLUDE_DIRS)
+endif
+
+ifeq ($(OS_NAME),darwin)
+	INCLUDE_DIRS += $(MAC_INCLUDE_DIRS)
+endif
+
 CLANG_FLAGS := $(INCLUDE_DIRS) \
 		-std=gnu++17 \
-		-stdlib=libc++ \
 		-DSTATICALLY_LINKED_WITH_JavaScriptCore=1 \
 		-DSTATICALLY_LINKED_WITH_WTF=1 \
+		-DSTATICALLY_LINKED_WITH_BMALLOC=1 \
 		-DBUILDING_WITH_CMAKE=1 \
 		-DNDEBUG=1 \
 		-DNOMINMAX \
@@ -209,8 +255,15 @@ CLANG_FLAGS := $(INCLUDE_DIRS) \
 		-g \
 		-DENABLE_INSPECTOR_ALTERNATE_DISPATCHERS=0 \
 		-DBUILDING_JSCONLY__ \
-		-DASSERT_ENABLED=0\
-		-DDU_DISABLE_RENAMING=1
+		-DASSERT_ENABLED=0 \
+		-fPIE
+		
+# This flag is only added to webkit builds on Apple platforms
+# It has something to do with ICU
+ifeq ($(OS_NAME), darwin)
+CLANG_FLAGS += -DDU_DISABLE_RENAMING=1 
+endif
+
 
 jsc-bindings-mac: $(OBJ_FILES)
 
@@ -239,7 +292,20 @@ BUN_LLD_FLAGS := $(OBJ_FILES) \
 		src/deps/picohttpparser.o \
 		src/deps/mimalloc/libmimalloc.a \
 		$(CLANG_FLAGS) \
-		-fpie \
+		
+
+ifeq ($(OS_NAME), linux)
+BUN_LLD_FLAGS += -lstdc++fs \
+		-pthread \
+		-ldl \
+		-lc \
+		-fuse-ld=lld \
+		-Wl,-z,now \
+		-Wl,--as-needed \
+		-Wl,-z,stack-size=12800000 \
+		-Wl,-z,notext
+endif
+		
 
 mimalloc:
 	cd src/deps/mimalloc; cmake .; make; 
@@ -248,17 +314,19 @@ bun-link-lld-debug:
 	$(CXX) $(BUN_LLD_FLAGS) \
 		$(DEBUG_BIN)/bun-debug.o \
 		-W \
-		-ftls-model=local-exec \
-		-flto \
-		-o $(DEBUG_BIN)/bun-debug
+		-o $(DEBUG_BIN)/bun-debug \
+		-march=native \
+		-flto
+		
 
 bun-link-lld-release:
 	$(CXX) $(BUN_LLD_FLAGS) \
 		$(BIN_DIR)/bun.o \
 		-o $(BIN_DIR)/bun \
 		-W \
-		-ftls-model=local-exec \
 		-flto \
+		-ftls-model=initial-exec \
+		-march=native \
 		-O3
 	rm $(BIN_DIR)/bun.o
 
@@ -267,7 +335,7 @@ bun-link-lld-release-aarch64:
 		build/macos-aarch64/bun.o \
 		-o build/macos-aarch64/bun \
 		-Wl,-dead_strip \
-		-ftls-model=local-exec \
+		-ftls-model=initial-exec \
 		-flto \
 		-O3
 
@@ -283,4 +351,4 @@ sizegen:
 	/tmp/sizegen > src/javascript/jsc/bindings/sizes.zig
 
 picohttp:
-	 $(CC) -O3 -g -c src/deps/picohttpparser.c -Isrc/deps -o src/deps/picohttpparser.o; cd ../../	
+	 $(CC) -O3 -g -fPIE -c src/deps/picohttpparser.c -Isrc/deps -o src/deps/picohttpparser.o; cd ../../	

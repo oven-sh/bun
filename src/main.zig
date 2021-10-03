@@ -22,7 +22,6 @@ pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace) nore
 }
 pub var start_time: i128 = 0;
 pub fn main() anyerror!void {
-    @import("javascript/jsc/JavascriptCore.zig").JSCInitialize();
     start_time = std.time.nanoTimestamp();
 
     // The memory allocator makes a massive difference.

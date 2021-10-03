@@ -3,7 +3,7 @@ pub usingnamespace @import("strings.zig");
 pub const Environment = @import("env.zig");
 
 
-pub const default_allocator: *std.mem.Allocator = if (isTest or Environment.isLinux) 
+pub const default_allocator: *std.mem.Allocator = if (isTest) 
         std.heap.c_allocator 
     else 
         @import("./memory_allocator.zig").c_allocator;

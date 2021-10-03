@@ -1119,13 +1119,14 @@ pub const RequestContext = struct {
                 javascript_disabled = true;
             }
             var start_timer = std.time.Timer.start() catch unreachable;
-            
+                
 
             var stdout = std.io.getStdOut();
             var stderr = std.io.getStdErr();
             var output_source = Output.Source.init(stdout, stderr);
             defer Output.flush();
             Output.Source.set(&output_source);
+            @import("javascript/jsc/JavascriptCore.zig").JSCInitialize();
 
    
             js_ast.Stmt.Data.Store.create(std.heap.c_allocator);

@@ -6,6 +6,25 @@
     "@babel/standalone": "^7.15.3",
     "lodash": "^4.17.21",
     "three.js": "^0.77.1",
-    "underscore": "^1.13.1"
+    "underscore": "^1.13.1",
+    "webpack": "^5.56.0"
+  },
+  "type": "module",
+  "browserslist": [
+    "last 1 version"
+  ],
+  "scripts": {
+    "generate": "cp node_modules/three/three.js node_modules/three/three1.js; cp node_modules/three/three.js node_modules/three/three2.js; cp node_modules/three/three.js node_modules/three/three3.js; cp node_modules/three/three.js node_modules/three/three4.js; cp node_modules/three/three.js node_modules/three/three5.js; cp node_modules/three/three.js node_modules/three/three6.js; cp node_modules/three/three.js node_modules/three/three7.js; cp node_modules/three/three.js node_modules/three/three8.js; cp node_modules/three/three.js node_modules/three/three9.js; cp node_modules/three/three.js node_modules/three/three10.js",
+    "bench": "hyperfine \"bun bun ./index.js\" \"GOMAXPROCS=1 bun bun ./index.js\" \"esbuild --bundle ./index.js --platform=browser --format=esm > /dev/null\" \"swc ./node_modules/three/three1.js ./node_modules/three/three2.js ./node_modules/three/three3.js ./node_modules/three/three4.js ./node_modules/three/three5.js ./node_modules/three/three6.js ./node_modules/three/three7.js ./node_modules/three/three8.js ./node_modules/three/three9.js ./node_modules/three/three10.js -C \"module.type=es6\"  --no-swcrc -s false -o /tmp/out.swc.js\" \"node_modules/.bin/parcel build --no-optimize --no-source-maps --no-content-hash --no-cache --no-autoinstall ./index.js\" --prepare=\"rm -rf dist *.bun .parcel-cache;\"",
+    "bench-sync": "hyperfine \"GOMAXPROCS=1 bun bun ./index.js\" \"GOMAXPROCS=1 esbuild --bundle ./index.js --platform=browser --format=esm > /dev/null\" \"swc ./node_modules/three/three1.js ./node_modules/three/three2.js ./node_modules/three/three3.js ./node_modules/three/three4.js ./node_modules/three/three5.js ./node_modules/three/three6.js ./node_modules/three/three7.js ./node_modules/three/three8.js ./node_modules/three/three9.js ./node_modules/three/three10.js -C \"module.type=es6\" --sync --no-swcrc -s false -o /tmp/out.swc.js\"  --prepare=\"rm -rf *.bun\" ",
+    "bench-all": "hyperfine \"bun bun ./index.js\" \"esbuild --bundle ./index.js --platform=browser --format=esm > /dev/null\"  \"esbuild --bundle ./index.js --platform=browser --format=esm > /dev/null\" \"swc ./node_modules/three/three1.js ./node_modules/three/three2.js ./node_modules/three/three3.js ./node_modules/three/three4.js ./node_modules/three/three5.js ./node_modules/three/three6.js ./node_modules/three/three7.js ./node_modules/three/three8.js ./node_modules/three/three9.js ./node_modules/three/three10.js -C \"module.type=es6\"  --no-swcrc -s false -o /tmp/out.swc.js\" \"GOMAXPROCS=1 bun bun ./index.js\" \"GOMAXPROCS=1 esbuild --bundle ./index.js --platform=browser --format=esm > /dev/null\" \"swc ./node_modules/three/three1.js ./node_modules/three/three2.js ./node_modules/three/three3.js ./node_modules/three/three4.js ./node_modules/three/three5.js ./node_modules/three/three6.js ./node_modules/three/three7.js ./node_modules/three/three8.js ./node_modules/three/three9.js ./node_modules/three/three10.js -C \"module.type=es6\" --sync --no-swcrc -s false -o /tmp/out.swc.js\"  --prepare=\"rm -rf *.bun\""
+  },
+  "devDependencies": {
+    "@babel/core": "^7.15.5",
+    "@babel/preset-env": "^7.15.6",
+    "@parcel/core": "^2.0.0-rc.0",
+    "babel-loader": "^8.2.2",
+    "parcel": "^2.0.0-rc.0",
+    "webpack-cli": "^4.8.0"
   }
 }

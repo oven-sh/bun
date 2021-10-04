@@ -1112,7 +1112,7 @@ pub const Bundler = struct {
                 // chmod 777
                 0000010 | 0000100 | 0000001 | 0001000 | 0000040 | 0000004 | 0000002 | 0000400 | 0000200 | 0000020,
             );
-            try std.os.renameatZ(tmpdir.fd, tmpname, top_dir.fd, destination);
+            try C.moveFileZ(tmpdir.fd, tmpname, top_dir.fd, destination);
             // Print any errors at the end
             // try this.log.print(Output.errorWriter());
             return javascript_bundle_container;

@@ -1,4 +1,5 @@
 const std = @import("std");
+const Enviroment = @import("./env.zig");
 
 pub usingnamespace switch (std.Target.current.os.tag) {
     .macos => @import("./darwin_c.zig"),
@@ -88,4 +89,31 @@ pub fn lstat_absolute(path: [:0]const u8) StatError!Stat {
         .mtime = @as(i128, mtime.tv_sec) * std.time.ns_per_s + mtime.tv_nsec,
         .ctime = @as(i128, ctime.tv_sec) * std.time.ns_per_s + ctime.tv_nsec,
     };
+}
+
+// renameatZ fails when renaming across mount points
+// we assume that this is relatively uncommon
+pub fn moveFileZ(from_dir: std.os.fd_t, filename: [*:0]const u8, to_dir: std.os.fd_t, destination: [*:0]const u8) !void {
+    std.os.renameatZ(from_dir, filename, to_dir, destination) catch |err| {
+        switch (err) {
+            error.RenameAcrossMountPoints => {
+                try moveFileZSlow(from_dir, filename, to_dir, destination);
+            },
+            else => {
+                return err;
+            },
+        }
+    };
+}
+
+// On Linux, this will be fast because sendfile() supports copying between two file descriptors on disk
+// On macOS & BSDs, this will be slow because it will attempt to copy with sendfile, fail, and then fallback to a copy loop
+pub fn moveFileZSlow(from_dir: std.os.fd_t, filename: [*:0]const u8, to_dir: std.os.fd_t, destination: [*:0]const u8) !void {
+    const flags = std.os.O_RDWR;
+    const in_handle = try std.os.openatZ(from_dir, filename, flags, 0777);
+    defer std.os.close(in_handle);
+    const out_handle = try std.os.openatZ(to_dir, filename, flags | std.os.O_CREAT, 0777);
+    defer std.os.close(out_handle);
+    const written = try std.os.sendfile(out_handle, in_handle, 0, 0, &[_]std.c.iovec_const{}, &[_]std.c.iovec_const{}, 0);
+    try std.os.ftruncate(out_handle, written);
 }

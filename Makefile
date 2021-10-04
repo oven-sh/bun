@@ -9,9 +9,10 @@ else
 endif
 
 TRIPLET := $(OS_NAME)-$(ARCH_NAME)
+PACKAGE_NAME := bun-cli-$(TRIPLET)
 PACKAGES_REALPATH := $(shell realpath packages)
-PACKAGE_DIR := $(PACKAGES_REALPATH)/bun-cli-$(TRIPLET)
-DEBUG_PACKAGE_DIR := $(PACKAGES_REALPATH)/debug-bun-cli-$(TRIPLET)
+PACKAGE_DIR := $(PACKAGES_REALPATH)/$(PACKAGE_NAME)
+DEBUG_PACKAGE_DIR := $(PACKAGES_REALPATH)/debug-$(PACKAGE_NAME)
 BIN_DIR := $(PACKAGE_DIR)/bin
 RELEASE_BUN := $(PACKAGE_DIR)/bin/bun
 DEBUG_BIN := $(DEBUG_PACKAGE_DIR)/bin
@@ -154,12 +155,13 @@ release-create:
 
 BUN_DEPLOY_DIR := $(BUN_TMP_DIR)/bun-deploy
 BUN_DEPLOY_CLI := $(BUN_TMP_DIR)/bun-cli
+BUN_DEPLOY_PKG := $(BUN_DEPLOY_DIR)/$(PACKAGE_NAME)
 
 release-cli-push:
 	rm -rf $(BUN_DEPLOY_CLI)
 	mkdir -p $(BUN_DEPLOY_CLI)
 	cp -r packages/bun-cli $(BUN_DEPLOY_CLI)
-	cd $(BUN_DEPLOY_CLI); npm pack;
+	cd $(BUN_DEPLOY_PKG); npm pack;
 	gh release upload $(BUN_BUILD_TAG) --clobber $(BUN_DEPLOY_CLI)/bun-cli-$(PACKAGE_JSON_VERSION).tgz
 	npm publish $(BUN_DEPLOY_CLI)/bun-cli-$(PACKAGE_JSON_VERSION).tgz --access=public
 
@@ -167,9 +169,9 @@ release-bin-push: write-package-json-version
 	rm -rf $(BUN_DEPLOY_DIR)
 	mkdir -p $(BUN_DEPLOY_DIR)
 	cp -r $(PACKAGE_DIR) $(BUN_DEPLOY_DIR)
-	cd $(BUN_DEPLOY_DIR); npm pack;
-	gh release upload $(BUN_BUILD_TAG) --clobber $(BUN_DEPLOY_DIR)/bun-cli-$(TRIPLET)-$(PACKAGE_JSON_VERSION).tgz
-	npm publish $(BUN_DEPLOY_DIR)/bun-cli-$(TRIPLET)-$(PACKAGE_JSON_VERSION).tgz --access=public
+	cd $(BUN_DEPLOY_PKG); npm pack;
+	gh release upload $(BUN_BUILD_TAG) --clobber $(BUN_DEPLOY_PKG)/$(PACKAGE_NAME)-$(PACKAGE_JSON_VERSION).tgz
+	npm publish $(BUN_DEPLOY_PKG)/$(PACKAGE_NAME)-$(PACKAGE_JSON_VERSION).tgz --access=public
 
 dev-obj:
 	zig build obj

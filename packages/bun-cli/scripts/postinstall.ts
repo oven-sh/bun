@@ -336,6 +336,7 @@ const knownUnixlikePackages: Record<string, string> = {
   //   "android arm64 LE": "bun-cli-android-arm64",
   "darwin arm64 LE": "bun-cli-darwin-aarch64",
   "darwin x64 LE": "bun-cli-darwin-x64",
+  "linux x64 LE": "bun-cli-linux-x64",
   //   "freebsd arm64 LE": "bun-cli-freebsd-arm64",
   //   "freebsd x64 LE": "bun-cli-freebsd-64",
   //   "openbsd x64 LE": "bun-cli-openbsd-64",
@@ -344,7 +345,7 @@ const knownUnixlikePackages: Record<string, string> = {
   //   "linux ia32 LE": "bun-cli-linux-32",
   //   "linux mips64el LE": "bun-cli-linux-mips64le",
   //   "linux ppc64 LE": "bun-cli-linux-ppc64le",
-  //   "linux x64 LE": "bun-cli-linux-64",
+
   //   "sunos x64 LE": "bun-cli-sunos-64",
 };
 

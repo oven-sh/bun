@@ -1626,7 +1626,7 @@ pub const Bundler = struct {
                                         json_e_identifier = js_ast.E.Identifier{ .ref = Ref{ .source_index = 0, .inner_index = @intCast(Ref.Int, json_ast_symbols_list.len - 1) } };
 
                                         json_e_call = js_ast.E.Call{
-                                            .target = js_ast.Expr{ .data = .{ .e_identifier = &json_e_identifier }, .loc = logger.Loc{ .start = 0 } },
+                                            .target = js_ast.Expr{ .data = .{ .e_identifier = json_e_identifier }, .loc = logger.Loc{ .start = 0 } },
                                             .args = std.mem.span(&json_call_args),
                                         };
                                         break :brk js_ast.Expr{ .data = .{ .e_call = &json_e_call }, .loc = logger.Loc{ .start = 0 } };
@@ -1746,7 +1746,7 @@ pub const Bundler = struct {
 
                             var call_register = E.Call{
                                 .target = Expr{
-                                    .data = .{ .e_identifier = &target_identifier },
+                                    .data = .{ .e_identifier = target_identifier },
                                     .loc = logger.Loc{ .start = 0 },
                                 },
                                 .args = &register_args,
@@ -3364,12 +3364,11 @@ pub const ResolveQueue = std.fifo.LinearFifo(
     std.fifo.LinearFifoBufferType.Dynamic,
 );
 
-// This is not very fast.
-// The idea is: we want to generate a unique entry point per macro function export that registers the macro
-// Registering the macro happens in VirtualMachine
-// We "register" it which just marks the JSValue as protected.
-// This is mostly a workaround for being unable to call ESM exported functions from C++.
-// When that is resolved, we should remove this.
+// This is not very fast. The idea is: we want to generate a unique entry point
+// per macro function export that registers the macro Registering the macro
+// happens in VirtualMachine We "register" it which just marks the JSValue as
+// protected. This is mostly a workaround for being unable to call ESM exported
+// functions from C++. When that is resolved, we should remove this.
 pub const MacroEntryPoint = struct {
     code_buffer: [std.fs.MAX_PATH_BYTES * 2 + 500]u8 = undefined,
     output_code_buffer: [std.fs.MAX_PATH_BYTES * 8 + 500]u8 = undefined,

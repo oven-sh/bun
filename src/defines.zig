@@ -96,9 +96,7 @@ pub const DefineData = struct {
                         },
                     );
                 } else {
-                    var ident: *js_ast.E.Identifier = try allocator.create(js_ast.E.Identifier);
-                    ident.ref = Ref.None;
-                    ident.can_be_removed_if_unused = true;
+                    const ident = js_ast.E.Identifier{ .ref = Ref.None, .can_be_removed_if_unused = true };
 
                     user_defines.putAssumeCapacity(
                         entry.key_ptr.*,
@@ -334,7 +332,7 @@ pub const Define = struct {
         {
             var global_entry = define.identifiers.getOrPutAssumeCapacity(Rewrites.global);
             if (!global_entry.found_existing) {
-                global_entry.value_ptr.* = DefineData{ .value = js_ast.Expr.Data{ .e_identifier = &globalThisIdentifier }, .original_name = Rewrites.globalThis };
+                global_entry.value_ptr.* = DefineData{ .value = js_ast.Expr.Data{ .e_identifier = globalThisIdentifier }, .original_name = Rewrites.globalThis };
             }
         }
 

@@ -1251,7 +1251,7 @@ pub const E = struct {
         no: ExprNodeIndex,
     };
 
-    pub const Require = packed struct {
+    pub const Require = struct {
         import_record_index: u32 = 0,
     };
 
@@ -1962,12 +1962,6 @@ pub const Expr = struct {
     pub fn getArrow(exp: *const Expr) *E.Arrow {
         return exp.data.e_arrow;
     }
-    pub fn getIdentifier(exp: *const Expr) *E.Identifier {
-        return exp.data.e_identifier;
-    }
-    pub fn getImportIdentifier(exp: *const Expr) *E.ImportIdentifier {
-        return exp.data.e_import_identifier;
-    }
     pub fn getPrivateIdentifier(exp: *const Expr) *E.PrivateIdentifier {
         return exp.data.e_private_identifier;
     }
@@ -2383,7 +2377,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_identifier = Data.Store.Identifier.append(Type, st),
+                        .e_identifier = st,
                     },
                 };
             },
@@ -2391,7 +2385,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_import_identifier = Data.Store.All.append(Type, st),
+                        .e_import_identifier = st,
                     },
                 };
             },
@@ -2515,7 +2509,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_require_or_require_resolve = Data.Store.All.append(Type, st),
+                        .e_require_or_require_resolve = st,
                     },
                 };
             },
@@ -2531,7 +2525,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_require = Data.Store.All.append(Type, st),
+                        .e_require = st,
                     },
                 };
             },
@@ -3109,8 +3103,8 @@ pub const Expr = struct {
         e_dot: *E.Dot,
         e_index: *E.Index,
         e_arrow: *E.Arrow,
-        e_identifier: *E.Identifier,
-        e_import_identifier: *E.ImportIdentifier,
+        e_identifier: E.Identifier,
+        e_import_identifier: E.ImportIdentifier,
         e_private_identifier: *E.PrivateIdentifier,
         e_jsx_element: *E.JSXElement,
 
@@ -3123,8 +3117,8 @@ pub const Expr = struct {
         e_await: *E.Await,
         e_yield: *E.Yield,
         e_if: *E.If,
-        e_require: *E.Require,
-        e_require_or_require_resolve: *E.RequireOrRequireResolve,
+        e_require: E.Require,
+        e_require_or_require_resolve: E.RequireOrRequireResolve,
         e_import: *E.Import,
 
         e_boolean: E.Boolean,
@@ -3148,7 +3142,6 @@ pub const Expr = struct {
             const often = 512;
             const medium = 256;
             const rare = 24;
-            const Identifier = NewBaseStore([_]type{E.Identifier}, 512);
 
             pub const All = NewBaseStore(
                 &([_]type{
@@ -3156,16 +3149,14 @@ pub const Expr = struct {
                     E.Unary,
                     E.Binary,
                     E.Class,
-                    E.Boolean,
-                    E.Super,
                     E.New,
                     E.Function,
                     E.Call,
                     E.Dot,
                     E.Index,
                     E.Arrow,
+                    E.RegExp,
 
-                    E.ImportIdentifier,
                     E.PrivateIdentifier,
                     E.JSXElement,
                     E.Number,
@@ -3175,12 +3166,9 @@ pub const Expr = struct {
                     E.String,
                     E.TemplatePart,
                     E.Template,
-                    E.RegExp,
                     E.Await,
                     E.Yield,
                     E.If,
-                    E.Require,
-                    E.RequireOrRequireResolve,
                     E.Import,
                 }),
                 512,
@@ -3195,13 +3183,11 @@ pub const Expr = struct {
 
                 has_inited = true;
                 _ = All.init(allocator);
-                _ = Identifier.init(allocator);
             }
 
             pub fn reset() void {
                 if (disable_reset) return;
                 All.reset();
-                Identifier.reset();
             }
 
             pub fn append(comptime ValueType: type, value: anytype) *ValueType {
@@ -4891,8 +4877,9 @@ pub const Macro = struct {
             e_dot: *E.Dot,
             e_index: *E.Index,
             e_arrow: *E.Arrow,
-            e_identifier: *E.Identifier,
-            e_import_identifier: *E.ImportIdentifier,
+            e_identifier: E.Identifier,
+            e_import_identifier: E.ImportIdentifier,
+
             e_private_identifier: *E.PrivateIdentifier,
             e_jsx_element: *E.JSXElement,
 
@@ -4902,18 +4889,21 @@ pub const Macro = struct {
             e_string: *E.String,
             e_template_part: *E.TemplatePart,
             e_template: *E.Template,
-            e_reg_exp: *E.RegExp,
+
             e_await: *E.Await,
             e_yield: *E.Yield,
             e_if: *E.If,
-            e_require_or_require_resolve: *E.RequireOrRequireResolve,
+
             e_import: *E.Import,
 
             e_class: *E.Class,
-            e_require: *E.Require,
 
             s_import: *ImportData,
             s_block: *S.Block,
+
+            e_reg_exp: *E.RegExp,
+            e_require_or_require_resolve: E.RequireOrRequireResolve,
+            e_require: E.Require,
 
             g_property: *G.Property,
 
@@ -5905,7 +5895,7 @@ pub const Macro = struct {
                                     E.Call{
                                         .target = Expr{
                                             .data = .{
-                                                .e_identifier = self.bun_identifier,
+                                                .e_identifier = self.bun_identifier.*,
                                             },
                                             .loc = tag_expr.loc,
                                         },
@@ -5930,7 +5920,7 @@ pub const Macro = struct {
                             E.Call{
                                 .target = Expr{
                                     .data = .{
-                                        .e_identifier = self.bun_identifier,
+                                        .e_identifier = self.bun_identifier.*,
                                     },
                                     .loc = loc,
                                 },

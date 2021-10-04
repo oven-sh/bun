@@ -734,8 +734,7 @@ pub fn NewPrinter(
 
         pub fn isUnboundEvalIdentifier(p: *Printer, value: Expr) bool {
             switch (value.data) {
-                .e_identifier => {
-                    const ident = value.getIdentifier();
+                .e_identifier => |ident| {
                     if (ident.ref.is_source_contents_slice) return false;
 
                     const symbol = p.symbols.get(p.symbols.follow(ident.ref)) orelse return false;
@@ -1018,7 +1017,7 @@ pub fn NewPrinter(
                 .e_require => |e| {
                     if (rewrite_esm_to_cjs and p.import_records[e.import_record_index].is_bundled) {
                         p.printIndent();
-                        p.printBundledRequire(e.*);
+                        p.printBundledRequire(e);
                         p.printSemicolonIfNeeded();
                     }
 
@@ -1502,7 +1501,7 @@ pub fn NewPrinter(
                             var wrap = false;
 
                             if (p.call_target) |target| {
-                                wrap = e.was_originally_identifier and target.e_import_identifier == expr.data.e_import_identifier;
+                                wrap = e.was_originally_identifier and target.e_import_identifier.ref.eql(expr.data.e_import_identifier.ref);
                             }
 
                             if (wrap) {

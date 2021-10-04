@@ -3599,7 +3599,7 @@ pub fn NewParser(
             return .forbidden;
         }
 
-        pub fn handleIdentifier(p: *P, loc: logger.Loc, ident: *E.Identifier, _original_name: ?string, opts: IdentifierOpts) Expr {
+        pub fn handleIdentifier(p: *P, loc: logger.Loc, ident: E.Identifier, _original_name: ?string, opts: IdentifierOpts) Expr {
             const ref = ident.ref;
 
             if ((opts.assign_target != .none or opts.is_delete_target) and p.symbols.items[ref.inner_index].kind == .import) {
@@ -3639,7 +3639,9 @@ pub fn NewParser(
 
             if (_original_name) |original_name| {
                 const result = p.findSymbol(loc, original_name) catch unreachable;
-                ident.ref = result.ref;
+                var _ident = ident;
+                _ident.ref = result.ref;
+                return p.e(_ident, loc);
             }
 
             return p.e(ident, loc);
@@ -11039,8 +11041,9 @@ pub fn NewParser(
                 .e_spread => |exp| {
                     exp.value = p.visitExpr(exp.value);
                 },
-                .e_identifier => |e_| {
-                    const is_delete_target = @as(Expr.Tag, p.delete_target) == .e_identifier and expr.data.e_identifier == p.delete_target.e_identifier;
+                .e_identifier => {
+                    var e_ = expr.data.e_identifier;
+                    const is_delete_target = @as(Expr.Tag, p.delete_target) == .e_identifier and expr.data.e_identifier.ref.eql(p.delete_target.e_identifier.ref);
 
                     const name = p.loadNameFromRef(e_.ref);
                     if (p.isStrictMode() and js_lexer.StrictModeReservedWords.has(name)) {
@@ -13859,11 +13862,9 @@ pub fn NewParser(
         fn valueForDefine(p: *P, loc: logger.Loc, assign_target: js_ast.AssignTarget, is_delete_target: bool, define_data: *const DefineData) Expr {
             switch (define_data.value) {
                 .e_identifier => {
-                    var ident = define_data.value.e_identifier;
-
                     return p.handleIdentifier(
                         loc,
-                        ident,
+                        define_data.value.e_identifier,
                         define_data.original_name.?,
                         IdentifierOpts{
                             .assign_target = assign_target,

@@ -22,6 +22,12 @@ BUN_BUILD_TAG := bun-v$(PACKAGE_JSON_VERSION)
 CC := clang
 CXX := clang++
 
+
+
+STRIP ?= $(shell which llvm-strip || which llvm-strip-12 || echo "Missing llvm-strip. Please pass it in the STRIP environment var"; exit 1)
+
+
+
 ifeq ($(OS_NAME),darwin)
 	HOMEBREW_PREFIX := $(shell brew --prefix)/
 endif
@@ -335,7 +341,7 @@ bun-link-lld-release:
 		-ftls-model=initial-exec \
 		-O3
 	cp $(BIN_DIR)/bun $(BIN_DIR)/bun-profile
-	llvm-strip $(BIN_DIR)/bun
+	$(STRIP) $(BIN_DIR)/bun
 	rm $(BIN_DIR)/bun.o
 
 bun-link-lld-release-aarch64:

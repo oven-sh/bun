@@ -153,12 +153,14 @@ release-create:
 	gh release create --title "Bun v$(PACKAGE_JSON_VERSION)" "$(BUN_BUILD_TAG)"
 
 release-cli-push:
-	cd packages/bun-cli && npm pack --pack-destination $(BUN_TMP_DIR)/
+	rm -rf $(BUN_TMP_DIR)/packages/bun-cli
+	cp -r packages/bun-cli $(BUN_TMP_DIR)/packages/bun-cli
 	gh release upload $(BUN_BUILD_TAG) --clobber $(BUN_TMP_DIR)/bun-cli-$(PACKAGE_JSON_VERSION).tgz
 	npm publish $(BUN_TMP_DIR)/bun-cli-$(PACKAGE_JSON_VERSION).tgz --access=public
 
 release-bin-push: write-package-json-version
-	cd $(PACKAGE_DIR) && npm pack --pack-destination $(BUN_TMP_DIR)/
+	rm -rf $(BUN_TMP_DIR)/$(PACKAGE_DIR)
+	cp -r $(PACKAGE_DIR) $(BUN_TMP_DIR)/$(PACKAGE_DIR)
 	gh release upload $(BUN_BUILD_TAG) --clobber $(BUN_TMP_DIR)/bun-cli-$(TRIPLET)-$(PACKAGE_JSON_VERSION).tgz
 	npm publish $(BUN_TMP_DIR)/bun-cli-$(TRIPLET)-$(PACKAGE_JSON_VERSION).tgz --access=public
 

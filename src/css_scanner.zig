@@ -1263,12 +1263,11 @@ pub fn NewBundler(
 
             if (watcher_index == null) {
                 var file = try std.fs.openFileAbsolute(absolute_path, .{ .read = true });
-               
+
                 try this.watcher.appendFile(file.handle, absolute_path, hash, .css, 0, null, true);
-                 if (this.watcher.watchloop_handle == null) {
+                if (this.watcher.watchloop_handle == null) {
                     try this.watcher.start();
                 }
-                
             }
 
             try this.import_queue.writeItem(hash);

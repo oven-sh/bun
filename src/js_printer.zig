@@ -3975,10 +3975,10 @@ const FileWriterInternal = struct {
                     result = result[written..];
                 },
                 else => {
-                    const first = result.ptr[0..result.len / 3];
+                    const first = result.ptr[0 .. result.len / 3];
                     const second = result[first.len..][0..first.len];
-                    const remain = first.len+second.len;
-                    const third: []const u8 =  result[remain..];
+                    const remain = first.len + second.len;
+                    const third: []const u8 = result[remain..];
 
                     var vecs = [_]std.os.iovec_const{
                         .{
@@ -3995,14 +3995,12 @@ const FileWriterInternal = struct {
                         },
                     };
 
-                    const written = try std.os.writev(ctx.file.handle, vecs[0..@as(usize, if(third.len > 0) 3 else 2)]);
+                    const written = try std.os.writev(ctx.file.handle, vecs[0..@as(usize, if (third.len > 0) 3 else 2)]);
                     if (written == 0 or result.len - written == 0) return;
                     result = result[written..];
                 },
             }
         }
-       
-       
     }
 
     pub fn flush(
@@ -4250,7 +4248,7 @@ pub fn printCommonJSThreaded(
                 }
 
                 if (comptime isLinux) {
-                    _ = std.os.system.fallocate(getter.handle, 0, @intCast(i64, result.off),  printer.writer.written);
+                    _ = std.os.system.fallocate(getter.handle, 0, @intCast(i64, result.off), printer.writer.written);
                 }
             }
         }

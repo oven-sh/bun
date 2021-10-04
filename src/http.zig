@@ -1105,7 +1105,7 @@ pub const RequestContext = struct {
         pub var javascript_disabled = false;
         var js_thread: std.Thread = undefined;
         pub fn spawnThread(handler: *HandlerThread) !void {
-            js_thread = try std.Thread.spawn(.{.stack_size = 64 * 1024 * 1024}, spawn, .{handler});
+            js_thread = try std.Thread.spawn(.{ .stack_size = 64 * 1024 * 1024 }, spawn, .{handler});
             js_thread.setName("JavaScript SSR") catch {};
             js_thread.detach();
         }
@@ -1119,7 +1119,6 @@ pub const RequestContext = struct {
                 javascript_disabled = true;
             }
             var start_timer = std.time.Timer.start() catch unreachable;
-                
 
             var stdout = std.io.getStdOut();
             var stderr = std.io.getStdErr();
@@ -1128,11 +1127,9 @@ pub const RequestContext = struct {
             Output.Source.set(&output_source);
             @import("javascript/jsc/JavascriptCore.zig").JSCInitialize();
 
-   
             js_ast.Stmt.Data.Store.create(std.heap.c_allocator);
             js_ast.Expr.Data.Store.create(std.heap.c_allocator);
 
-           
             var vm = JavaScript.VirtualMachine.init(
                 std.heap.c_allocator,
                 handler.args,
@@ -1948,8 +1945,6 @@ pub const RequestContext = struct {
                 // CSS handles this specially
                 if (loader != .css and client_entry_point_ == null) {
                     if (written.input_fd) |written_fd| {
-                      
-
                         try ctx.watcher.addFile(
                             written_fd,
                             result.file.input.text,
@@ -1961,9 +1956,8 @@ pub const RequestContext = struct {
                         );
 
                         if (ctx.watcher.watchloop_handle == null) {
-                             ctx.watcher.start() catch {};
+                            ctx.watcher.start() catch {};
                         }
-                        
                     }
                 } else {
                     if (written.written > 0) {
@@ -2499,7 +2493,6 @@ pub const Server = struct {
 
         var rfs: *Fs.FileSystem.RealFS = &ctx.bundler.fs.fs;
 
-
         // It's important that this function does not do any memory allocations
         // If this blocks, it can cause cascading bad things to happen
         for (events) |event| {
@@ -2556,7 +2549,6 @@ pub const Server = struct {
                     }
                 },
                 .directory => {
-                   
                     rfs.bustEntriesCache(file_path);
                     ctx.bundler.resolver.dir_cache.remove(file_path);
 
@@ -2574,7 +2566,7 @@ pub const Server = struct {
     }
 
     fn run(server: *Server, comptime features: ConnectionFeatures) !void {
-      _ =  Fs.FileSystem.RealFS.adjustUlimit() catch {};
+        _ = Fs.FileSystem.RealFS.adjustUlimit() catch {};
         RequestContext.WebsocketHandler.open_websockets = @TypeOf(
             RequestContext.WebsocketHandler.open_websockets,
         ).init(server.allocator);
@@ -2743,7 +2735,6 @@ pub const Server = struct {
 
         var request_arena = server.allocator.create(std.heap.ArenaAllocator) catch unreachable;
         request_arena.* = std.heap.ArenaAllocator.init(server.allocator);
-        
 
         req_ctx_ = RequestContext.init(
             req,

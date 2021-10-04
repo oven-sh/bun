@@ -542,7 +542,7 @@ pub const FileSystem = struct {
 
         // Always try to max out how many files we can keep open
         pub fn adjustUlimit() !usize {
-            const LIMITS = [_]std.os.rlimit_resource{std.os.rlimit_resource.STACK, std.os.rlimit_resource.NOFILE};
+            const LIMITS = [_]std.os.rlimit_resource{ std.os.rlimit_resource.STACK, std.os.rlimit_resource.NOFILE };
             inline for (LIMITS) |limit_type, i| {
                 const limit = try std.os.getrlimit(limit_type);
 
@@ -552,7 +552,6 @@ pub const FileSystem = struct {
                     new_limit.max = limit.max;
 
                     try std.os.setrlimit(limit_type, new_limit);
-
                 }
 
                 if (i == LIMITS.len - 1) return limit.max;

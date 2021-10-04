@@ -6,7 +6,7 @@ __HMRClient as Bun
 } from "http://localhost:8080/__runtime.js";
 Bun.activate(false);
 
-var hmr = new HMR(421762902, "ts-fallback-rewrite-works.ts"), exports = hmr.exports;
+var hmr = new HMR(631080924, "ts-fallback-rewrite-works.ts"), exports = hmr.exports;
 (hmr._load = function() {
   function test() {
     return testDone(import.meta.url);

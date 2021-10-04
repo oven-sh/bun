@@ -22,6 +22,7 @@ BUN_BUILD_TAG := bun-v$(PACKAGE_JSON_VERSION)
 CC := clang
 CXX := clang++
 
+
 bun: vendor build-obj bun-link-lld-release
 
 
@@ -48,7 +49,11 @@ sign-macos-x64:
 sign-macos-aarch64: 
 	gon sign.macos-aarch64.json
 
-release-macos: all-js build-obj jsc-bindings-mac bun-link-lld-release
+release: all-js build-obj jsc-bindings-mac bun-link-lld-release
+
+release-linux: release strip-debug
+
+
 
 all-js: runtime_js fallback_decoder bun_error node-fallbacks
 
@@ -299,11 +304,14 @@ BUN_LLD_FLAGS += -lstdc++fs \
 		-pthread \
 		-ldl \
 		-lc \
-		-fuse-ld=lld \
 		-Wl,-z,now \
 		-Wl,--as-needed \
 		-Wl,-z,stack-size=12800000 \
-		-Wl,-z,notext
+		-Wl,-z,notext \
+		-ffunction-sections \
+		-fdata-sections \
+		-Wl,--gc-sections \
+		-fuse-ld=lld
 endif
 		
 
@@ -312,12 +320,10 @@ mimalloc:
 
 bun-link-lld-debug:
 	$(CXX) $(BUN_LLD_FLAGS) \
+		-g \
 		$(DEBUG_BIN)/bun-debug.o \
 		-W \
 		-o $(DEBUG_BIN)/bun-debug \
-		-march=native \
-		-flto
-		
 
 bun-link-lld-release:
 	$(CXX) $(BUN_LLD_FLAGS) \
@@ -326,8 +332,7 @@ bun-link-lld-release:
 		-W \
 		-flto \
 		-ftls-model=initial-exec \
-		-march=native \
-		-O3
+		-O3 \
 	rm $(BIN_DIR)/bun.o
 
 bun-link-lld-release-aarch64:

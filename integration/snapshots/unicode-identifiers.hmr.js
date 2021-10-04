@@ -6,7 +6,7 @@ __HMRClient as Bun
 } from "http://localhost:8080/__runtime.js";
 Bun.activate(false);
 
-var hmr = new HMR(1398361736, "unicode-identifiers.js"), exports = hmr.exports;
+var hmr = new HMR(2975064322, "unicode-identifiers.js"), exports = hmr.exports;
 (hmr._load = function() {
   var ε = 1.0e-06, ε2 = ε * ε, π = Math.PI, τ = 2 * π, τε = τ - ε, halfπ = π / 2, d3_radians = π / 180, d3_degrees = 180 / π;
   function test() {

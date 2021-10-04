@@ -10,15 +10,15 @@ __HMRModule as HMR
 import * as JSX from "http://localhost:8080/node_modules/react/jsx-dev-runtime.js";
 var jsx = require(JSX).jsxDEV;
 
-import * as $d4051a2e from "http://localhost:8080/node_modules/styled-components/dist/styled-components.browser.esm.js";
-var { default: styled} = require($d4051a2e);
-import * as $bbcd215f from "http://localhost:8080/node_modules/react/index.js";
-var { default: React} = require($bbcd215f);
-import * as $5b3cea55 from "http://localhost:8080/node_modules/react-dom/index.js";
-var { default: ReactDOM} = require($5b3cea55);
+import * as $ab83b9cf from "http://localhost:8080/node_modules/styled-components/dist/styled-components.browser.esm.js";
+var { default: styled} = require($ab83b9cf);
+import * as $2ed51059 from "http://localhost:8080/node_modules/react/index.js";
+var { default: React} = require($2ed51059);
+import * as $a259fa9b from "http://localhost:8080/node_modules/react-dom/index.js";
+var { default: ReactDOM} = require($a259fa9b);
 Bun.activate(false);
 
-var hmr = new HMR(1290604342, "styledcomponents-output.js"), exports = hmr.exports;
+var hmr = new HMR(2744898121, "styledcomponents-output.js"), exports = hmr.exports;
 (hmr._load = function() {
   const ErrorScreenRoot = styled.div`
   font-family: "Muli", -apple-system, BlinkMacSystemFont, Helvetica, Arial,
@@ -54,7 +54,7 @@ var hmr = new HMR(1290604342, "styledcomponents-output.js"), exports = hmr.expor
     ReactDOM.render(jsx(ErrorScreenRoot, {
       id: "error-el",
       children: ["The react child should have this text"]
-    }, undefined, true, {}, this), reactEl);
+    }, undefined, true, undefined, this), reactEl);
     const style = document.querySelector("style[data-styled]");
     console.assert(style, "style tag should exist");
     console.assert(style.textContent.split("").every((a) => a.codePointAt(0) < 128), "style tag should not contain invalid unicode codepoints");

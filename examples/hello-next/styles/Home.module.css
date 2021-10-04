@@ -1,4 +1,5 @@
 @import url("./2.css");
+
 .container {
   min-height: 99vh;
   padding: 0 0.5rem;
@@ -8,7 +9,6 @@
   align-items: center;
   height: 100vh;
 }
-
 
 .main {
   padding: 5rem 0;

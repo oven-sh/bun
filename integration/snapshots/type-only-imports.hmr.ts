@@ -6,7 +6,7 @@ __HMRClient as Bun
 } from "http://localhost:8080/__runtime.js";
 Bun.activate(false);
 
-var hmr = new HMR(650094581, "type-only-imports.ts"), exports = hmr.exports;
+var hmr = new HMR(2365801153, "type-only-imports.ts"), exports = hmr.exports;
 (hmr._load = function() {
   var baconator = true;
   var SilentSymbolCollisionsAreOkayInTypeScript = true;

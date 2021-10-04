@@ -6,7 +6,7 @@ __HMRClient as Bun
 } from "http://localhost:8080/__runtime.js";
 Bun.activate(false);
 
-var hmr = new HMR(726376257, "code-simplification-neql-define.js"), exports = hmr.exports;
+var hmr = new HMR(1142302163, "code-simplification-neql-define.js"), exports = hmr.exports;
 (hmr._load = function() {
   var testFailed = false;
   const invariant = () => {

@@ -280,7 +280,7 @@ pub fn build(b: *std.build.Builder) !void {
 
         var obj_step = b.step("obj", "Build Bun as a .o file");
         var obj = b.addObject(bun_executable_name, exe.root_src.?.path);
-        obj.bundle_compiler_rt = true;
+        obj.setTarget(target);
         addPicoHTTP(obj, false);
         obj.addPackage(.{
             .name = "clap",
@@ -293,7 +293,15 @@ pub fn build(b: *std.build.Builder) !void {
         obj.linkLibC();
         obj.linkLibCpp();
 
-        obj.setTarget(target);
+        obj.bundle_compiler_rt = true;
+
+      if (target.getOsTag() == .linux) {
+        // obj.want_lto = tar;
+        obj.link_emit_relocs = true;
+        obj.link_function_sections = true;
+      }
+
+   
     } else {
         b.default_step.dependOn(&exe.step);
     }

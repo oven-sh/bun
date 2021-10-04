@@ -68,17 +68,16 @@ pub const INotify = struct {
     pub fn watchPath(pathname: [:0]const u8) !EventListIndex {
         std.debug.assert(loaded_inotify);
         const old_count = watch_count.fetchAdd(1, .Release);
-      defer  if (old_count == 0) std.Thread.Futex.wake(&watch_count, 10);
+        defer if (old_count == 0) std.Thread.Futex.wake(&watch_count, 10);
         return std.os.inotify_add_watchZ(inotify_fd, pathname, watch_file_mask);
     }
 
     pub fn watchDir(pathname: [:0]const u8) !EventListIndex {
         std.debug.assert(loaded_inotify);
         const old_count = watch_count.fetchAdd(1, .Release);
-      defer  if (old_count == 0) std.Thread.Futex.wake(&watch_count, 10);
+        defer if (old_count == 0) std.Thread.Futex.wake(&watch_count, 10);
         return std.os.inotify_add_watchZ(inotify_fd, pathname, watch_dir_mask);
     }
-
 
     pub fn unwatch(wd: EventListIndex) void {
         std.debug.assert(loaded_inotify);
@@ -97,43 +96,40 @@ pub const INotify = struct {
         std.debug.assert(loaded_inotify);
 
         restart: while (true) {
+            std.Thread.Futex.wait(&watch_count,0, null) catch unreachable;
+            const rc = std.os.system.read(
+                inotify_fd,
+                @ptrCast([*]u8, @alignCast(@alignOf([*]u8), &eventlist)),
+                @sizeOf(EventListBuffer),
+            );
 
+            switch (std.os.errno(rc)) {
+                .SUCCESS => {
+                    const len = @intCast(usize, rc);
 
-        std.Thread.Futex.wait(&watch_count,0, null) catch unreachable;
-        const rc = std.os.system.read(
-            inotify_fd,
-            @ptrCast([*]u8, @alignCast(@alignOf([*]u8), &eventlist)),
-            @sizeOf(EventListBuffer),
-        );
+                    if (len == 0) return &[_]*INotifyEvent{};
 
-        switch (std.os.errno(rc)) {
-            .SUCCESS => {
-                const len = @intCast(usize, rc);
+                    var count: u32 = 0;
+                    var i: u32 = 0;
+                    while (i < len) : (i += @sizeOf(INotifyEvent)) {
+                        const event = @ptrCast(*const INotifyEvent, @alignCast(@alignOf(*const INotifyEvent), eventlist[i..][0..@sizeOf(INotifyEvent)]));
+                        if (event.name_len > 0) {
+                            i += event.name_len;
+                        }
 
-                if (len == 0) return &[_]*INotifyEvent{};
-
-                var count: u32 = 0;
-                var i: u32 = 0;
-                while (i < len) : (i += @sizeOf(INotifyEvent)) {
-                    const event = @ptrCast(*const INotifyEvent, @alignCast(@alignOf(*const INotifyEvent), eventlist[i..][0..@sizeOf(INotifyEvent)]));
-                    if (event.name_len > 0) {
-                        i += event.name_len;
+                        eventlist_ptrs[count] = event;
+                        count += 1;
                     }
 
-                    eventlist_ptrs[count] = event;
-                    count += 1;
-                }
+                    return eventlist_ptrs[0..count];
+                },
+                .AGAIN => continue :restart,
+                .INVAL => return error.ShortRead,
+                .BADF => return error.INotifyFailedToStart,
 
-                return eventlist_ptrs[0..count];
-            },
-            .AGAIN => continue :restart,
-            .INVAL => return error.ShortRead,
-            .BADF => return error.INotifyFailedToStart,
-
-            else => unreachable,
-        }
-
-}
+                else => unreachable,
+            }
+    }
         unreachable;
     }
 

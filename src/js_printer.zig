@@ -3964,9 +3964,45 @@ const FileWriterInternal = struct {
         ctx: *FileWriterInternal,
     ) anyerror!void {
         defer buffer.reset();
-        const result = buffer.toOwnedSliceLeaky();
+        var result_ = buffer.toOwnedSliceLeaky();
+        var result = result_;
 
-        _ = try ctx.file.writeAll(result);
+        while (result.len > 0) {
+            switch (result.len) {
+                0...4096 => {
+                    const written = try ctx.file.write(result);
+                    if (written == 0 or result.len - written == 0) return;
+                    result = result[written..];
+                },
+                else => {
+                    const first = result.ptr[0..result.len / 3];
+                    const second = result[first.len..][0..first.len];
+                    const remain = first.len+second.len;
+                    const third: []const u8 =  result[remain..];
+
+                    var vecs = [_]std.os.iovec_const{
+                        .{
+                            .iov_base = first.ptr,
+                            .iov_len = first.len,
+                        },
+                        .{
+                            .iov_base = second.ptr,
+                            .iov_len = second.len,
+                        },
+                        .{
+                            .iov_base = third.ptr,
+                            .iov_len = third.len,
+                        },
+                    };
+
+                    const written = try std.os.writev(ctx.file.handle, vecs[0..@as(usize, if(third.len > 0) 3 else 2)]);
+                    if (written == 0 or result.len - written == 0) return;
+                    result = result[written..];
+                },
+            }
+        }
+       
+       
     }
 
     pub fn flush(
@@ -4202,14 +4238,20 @@ pub fn printCommonJSThreaded(
         defer lock.unlock();
         lock.lock();
         result.off = @truncate(u32, try getPos(getter));
-        if (comptime isMac) {
+        if (comptime isMac or isLinux) {
             // Don't bother preallocate the file if it's less than 1 KB. Preallocating is potentially two syscalls
             if (printer.writer.written > 1024) {
-                try C.preallocate_file(
-                    getter.handle,
-                    @intCast(std.os.off_t, 0),
-                    @intCast(std.os.off_t, printer.writer.written),
-                );
+                if (comptime isMac) {
+                    try C.preallocate_file(
+                        getter.handle,
+                        @intCast(std.os.off_t, 0),
+                        @intCast(std.os.off_t, printer.writer.written),
+                    );
+                }
+
+                if (comptime isLinux) {
+                    _ = std.os.system.fallocate(getter.handle, 0, @intCast(i64, result.off),  printer.writer.written);
+                }
             }
         }
         try printer.writer.done();

@@ -6,7 +6,7 @@ __HMRClient as Bun
 } from "http://localhost:8080/__runtime.js";
 Bun.activate(false);
 
-var hmr = new HMR(3474597122, "array-args-with-default-values.js"), exports = hmr.exports;
+var hmr = new HMR(186686614, "array-args-with-default-values.js"), exports = hmr.exports;
 (hmr._load = function() {
   var lines;
   const data = () => lines.map(([a = null, b = null, c = null, d = null]) => ({

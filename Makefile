@@ -22,6 +22,9 @@ BUN_BUILD_TAG := bun-v$(PACKAGE_JSON_VERSION)
 CC := clang
 CXX := clang++
 
+ifeq ($(OS_NAME),darwin)
+	HOMEBREW_PREFIX := $(shell brew --prefix)/
+endif
 
 bun: vendor build-obj bun-link-lld-release
 
@@ -220,9 +223,7 @@ clean: clean-bindings
 	rm src/deps/*.a src/deps/*.o
 	cd src/deps/mimalloc && make clean;
 
-ifeq ($(OS_NAME),darwin)
-	HOMEBREW_PREFIX := $(shell brew --prefix)/
-endif
+
 
 SRC_DIR := src/javascript/jsc/bindings
 OBJ_DIR := src/javascript/jsc/bindings-obj
@@ -332,7 +333,9 @@ bun-link-lld-release:
 		-W \
 		-flto \
 		-ftls-model=initial-exec \
-		-O3 \
+		-O3
+	cp $(BIN_DIR)/bun $(BIN_DIR)/bun-profile
+	llvm-strip $(BIN_DIR)/bun
 	rm $(BIN_DIR)/bun.o
 
 bun-link-lld-release-aarch64:

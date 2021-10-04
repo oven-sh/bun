@@ -159,6 +159,7 @@ release-cli-push:
 	rm -rf $(BUN_DEPLOY_CLI)
 	mkdir -p $(BUN_DEPLOY_CLI)
 	cp -r packages/bun-cli $(BUN_DEPLOY_CLI)
+	cd $(BUN_DEPLOY_CLI); npm pack;
 	gh release upload $(BUN_BUILD_TAG) --clobber $(BUN_DEPLOY_CLI)/bun-cli-$(PACKAGE_JSON_VERSION).tgz
 	npm publish $(BUN_DEPLOY_CLI)/bun-cli-$(PACKAGE_JSON_VERSION).tgz --access=public
 
@@ -166,6 +167,7 @@ release-bin-push: write-package-json-version
 	rm -rf $(BUN_DEPLOY_DIR)
 	mkdir -p $(BUN_DEPLOY_DIR)
 	cp -r $(PACKAGE_DIR) $(BUN_DEPLOY_DIR)
+	cd $(BUN_DEPLOY_DIR); npm pack;
 	gh release upload $(BUN_BUILD_TAG) --clobber $(BUN_DEPLOY_DIR)/bun-cli-$(TRIPLET)-$(PACKAGE_JSON_VERSION).tgz
 	npm publish $(BUN_DEPLOY_DIR)/bun-cli-$(TRIPLET)-$(PACKAGE_JSON_VERSION).tgz --access=public
 

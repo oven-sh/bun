@@ -8,8 +8,8 @@ const Start = function () {
   document.body.appendChild(root);
 
   // comment out to switch between examples
-  ReactDOM.render(<IPAddresses />, root);
-  // ReactDOM.render(<Covid19 />, root);
+  // ReactDOM.render(<IPAddresses />, root);
+  ReactDOM.render(<Covid19 />, root);
 };
 
 Start();

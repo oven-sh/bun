@@ -600,4 +600,41 @@ Additionally, you'll need `cmake`, `npm` and `esbuild` installed globally.
 
 ## Linux
 
+A Dockerfile with the exact version of Zig used is availble at `Dockerfile.zig`. This installs all the system dependencies you'll need excluding JavaScriptCore, but doesn't currently compile Bun in one command. If you're having trouble compiling Zig, it might be helpful to look at.
+
 Compile Zig:
+
+```bash
+git clone https://github.com/jarred-sumner/zig --depth=1
+cd zig
+git checkout jarred/zig-sloppy-with-small-structs
+cmake . -DCMAKE_BUILD_TYPE=Release && make -j $(nproc)
+```
+
+Compile JavaScriptCore:
+
+```bash
+# This will take a few minutes, depending on how fast your internet is
+git submodule update --init --recursive --progress --depth=1
+
+# This will take 10-30 minutes, depending on how many cores your CPU has
+DOCKER_BUILDKIT=1 docker build -t bun-webkit $(pwd)/src/javascript/jsc/WebKit -f $(pwd)/src/javascript/jsc/WebKit/Dockerfile --progress=plain
+docker container create bun-webkit
+
+# Find the docker container ID manually. If you know a better way, please submit a PR!
+docker container ls
+
+docker cp DOCKER_CONTAINER_ID_YOU_JUST_FOUND:/output $HOME/webkit-build
+```
+
+Compile Bun:
+
+```bash
+make vendor dev
+```
+
+Run bun:
+
+```bash
+packages/debug-bun-cli-darwin-x64/bin/bun-debug
+```

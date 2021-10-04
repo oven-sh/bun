@@ -2,12 +2,12 @@ import {
 __require as require
 } from "http://localhost:8080/__runtime.js";
 import * as JSX from "http://localhost:8080/node_modules/react/jsx-dev-runtime.js";
-import * as $2ed51059 from "http://localhost:8080/node_modules/react/index.js";
-var JSXClassic = require($2ed51059);
+import * as $bbcd215f from "http://localhost:8080/node_modules/react/index.js";
+var JSXClassic = require($bbcd215f);
 var jsx = require(JSX).jsxDEV, JSXFrag = require(JSXClassic).Fragment;
 
-var { default: React} = require($2ed51059);
-var { default: React2} = require($2ed51059);
+var { default: React} = require($bbcd215f);
+var { default: React2} = require($bbcd215f);
 const bacon = React;
 
 const bacon2 = jsx(JSXFrag, {

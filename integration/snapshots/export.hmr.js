@@ -8,7 +8,7 @@ import what from "http://localhost:8080/_auth.js";
 import * as where from "http://localhost:8080/_auth.js";
 Bun.activate(false);
 
-var hmr = new HMR(4033101122, "export.js"), exports = hmr.exports;
+var hmr = new HMR(1879780259, "export.js"), exports = hmr.exports;
 (hmr._load = function() {
   var yoyoyo = "yoyoyo";
   function hey() {

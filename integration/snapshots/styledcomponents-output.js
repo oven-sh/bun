@@ -4,12 +4,12 @@ __require as require
 import * as JSX from "http://localhost:8080/node_modules/react/jsx-dev-runtime.js";
 var jsx = require(JSX).jsxDEV;
 
-import * as $ab83b9cf from "http://localhost:8080/node_modules/styled-components/dist/styled-components.browser.esm.js";
-var { default: styled} = require($ab83b9cf);
-import * as $2ed51059 from "http://localhost:8080/node_modules/react/index.js";
-var { default: React} = require($2ed51059);
-import * as $a259fa9b from "http://localhost:8080/node_modules/react-dom/index.js";
-var { default: ReactDOM} = require($a259fa9b);
+import * as $d4051a2e from "http://localhost:8080/node_modules/styled-components/dist/styled-components.browser.esm.js";
+var { default: styled} = require($d4051a2e);
+import * as $bbcd215f from "http://localhost:8080/node_modules/react/index.js";
+var { default: React} = require($bbcd215f);
+import * as $5b3cea55 from "http://localhost:8080/node_modules/react-dom/index.js";
+var { default: ReactDOM} = require($5b3cea55);
 const ErrorScreenRoot = styled.div`
   font-family: "Muli", -apple-system, BlinkMacSystemFont, Helvetica, Arial,
     sans-serif;

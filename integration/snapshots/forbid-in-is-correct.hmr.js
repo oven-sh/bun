@@ -6,7 +6,7 @@ __HMRClient as Bun
 } from "http://localhost:8080/__runtime.js";
 Bun.activate(false);
 
-var hmr = new HMR(2952402969, "forbid-in-is-correct.js"), exports = hmr.exports;
+var hmr = new HMR(346837007, "forbid-in-is-correct.js"), exports = hmr.exports;
 (hmr._load = function() {
   var foo = () => {
     var D = (i, r) => () => (r || i((r = {exports: {} }).exports, r), r.exports);

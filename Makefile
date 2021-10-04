@@ -22,11 +22,41 @@ BUN_BUILD_TAG := bun-v$(PACKAGE_JSON_VERSION)
 CC := clang
 CXX := clang++
 
+DEFAULT_USE_BMALLOC := 1
+# ifeq ($(OS_NAME),linux)
+# 	DEFAULT_USE_BMALLOC = 0
+# endif
+
+USE_BMALLOC ?= DEFAULT_USE_BMALLOC
+
+JSC_BASE_DIR ?= ${HOME}/webkit-build
+
+DEFAULT_JSC_LIB := 
+
+ifeq ($(OS_NAME),linux)
+DEFAULT_JSC_LIB = $(JSC_BASE_DIR)/lib
+endif
+
+ifeq ($(OS_NAME),darwin)
+DEFAULT_JSC_LIB = src/deps
+endif
+
+JSC_LIB ?= $(DEFAULT_JSC_LIB)
+
+JSC_INCLUDE_DIR ?= $(JSC_BASE_DIR)/include
+
+JSC_FILES := $(JSC_LIB)/libJavaScriptCore.a $(JSC_LIB)/libWTF.a  $(JSC_LIB)/libbmalloc.a
+
+JSC_BUILD_STEPS :=
+ifeq ($(OS_NAME),linux)
+	JSC_BUILD_STEPS += jsc-check
+endif
+ifeq ($(OS_NAME),darwin)
+	JSC_BUILD_STEPS += jsc-build-mac jsc-copy-headers
+endif
 
 
 STRIP ?= $(shell which llvm-strip || which llvm-strip-12 || echo "Missing llvm-strip. Please pass it in the STRIP environment var"; exit 1;)
-
-
 
 ifeq ($(OS_NAME),darwin)
 	HOMEBREW_PREFIX := $(shell brew --prefix)/
@@ -60,9 +90,10 @@ sign-macos-aarch64:
 
 release: all-js build-obj jsc-bindings-mac bun-link-lld-release
 
-release-linux: release strip-debug
-
-
+jsc-check:
+	@ls $(JSC_BASE_DIR)  >/dev/null 2>&1 || (echo "Failed to access WebKit build. Please compile the WebKit submodule using the Dockerfile at $(shell pwd)/src/javascript/WebKit/Dockerfile and then copy from /output in the Docker container to $(JSC_BASE_DIR). You can override the directory via JSC_BASE_DIR. \n\n 	DOCKER_BUILDKIT=1 docker build -t bun-webkit $(shell pwd)/src/javascript/jsc/WebKit -f $(shell pwd)/src/javascript/jsc/WebKit/Dockerfile --progress=plain\n\n 	docker container create bun-webkit\n\n 	# Get the container ID\n	docker container ls\n\n 	docker cp DOCKER_CONTAINER_ID_YOU_JUST_FOUND:/output $(JSC_BASE_DIR)" && exit 1)	
+	@ls $(JSC_INCLUDE_DIR)  >/dev/null 2>&1 || (echo "Failed to access WebKit include directory at $(JSC_INCLUDE_DIR)." && exit 1)	
+	@ls $(JSC_LIB)  >/dev/null 2>&1 || (echo "Failed to access WebKit lib directory at $(JSC_LIB)." && exit 1)	
 
 all-js: runtime_js fallback_decoder bun_error node-fallbacks
 
@@ -85,40 +116,6 @@ bun_error:
 	@cd packages/bun-error; npm install; npm run --silent build
 
 
-DEFAULT_USE_BMALLOC := 1
-# ifeq ($(OS_NAME),linux)
-# 	DEFAULT_USE_BMALLOC = 0
-# endif
-
-USE_BMALLOC ?= DEFAULT_USE_BMALLOC
-
-DEFAULT_JSC_LIB := 
-
-ifeq ($(OS_NAME),linux)
-DEFAULT_JSC_LIB = ${HOME}/webkit-build/lib
-endif
-
-ifeq ($(OS_NAME),darwin)
-DEFAULT_JSC_LIB = src/deps
-endif
-
-JSC_LIB ?= $(DEFAULT_JSC_LIB)
-
-JSC_INCLUDE_DIR ?= ${HOME}/webkit-build/include
-
-JSC_FILES := $(JSC_LIB)/libJavaScriptCore.a $(JSC_LIB)/libWTF.a
-
-JSC_BUILD_STEPS :=
-ifeq ($(OS_NAME),linux)
-	JSC_BUILD_STEPS += jsc-build-linux jsc-copy-headers
-endif
-ifeq ($(OS_NAME),darwin)
-	JSC_BUILD_STEPS += jsc-build-mac jsc-copy-headers
-endif
-
-# ifeq ($(USE_BMALLOC),1)
-JSC_FILES += $(JSC_LIB)/libbmalloc.a
-# endif
 
 
 jsc: jsc-build jsc-bindings
@@ -156,12 +153,12 @@ release-create:
 release-cli-push:
 	cd packages/bun-cli && npm pack --pack-destination /tmp/
 	gh release upload $(BUN_BUILD_TAG) --clobber /tmp/bun-cli-$(PACKAGE_JSON_VERSION).tgz
-	npm publish /tmp/bun-cli-$(PACKAGE_JSON_VERSION).tgz
+	npm publish /tmp/bun-cli-$(PACKAGE_JSON_VERSION).tgz --access=public
 
-release-mac-push: write-package-json-version
+release-bin-push: write-package-json-version
 	cd $(PACKAGE_DIR) && npm pack --pack-destination /tmp/
 	gh release upload $(BUN_BUILD_TAG) --clobber /tmp/bun-cli-$(TRIPLET)-$(PACKAGE_JSON_VERSION).tgz
-	npm publish /tmp/bun-cli-$(TRIPLET)-$(PACKAGE_JSON_VERSION).tgz
+	npm publish /tmp/bun-cli-$(TRIPLET)-$(PACKAGE_JSON_VERSION).tgz --access=public
 
 dev-obj:
 	zig build obj
@@ -289,7 +286,6 @@ MACOS_ICU_INCLUDE := $(HOMEBREW_PREFIX)opt/icu4c/include
 ICU_FLAGS := 
 
 ifeq ($(OS_NAME),linux)
-	JSC_BUILD_STEPS += jsc-build-linux jsc-copy-headers
 	ICU_FLAGS += -licuuc -licudata -licui18n
 endif
 ifeq ($(OS_NAME),darwin)

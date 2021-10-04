@@ -1,0 +1,4 @@
+bin/bun-profile
+bin/*.o
+*.o
+*.a

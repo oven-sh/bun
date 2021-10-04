@@ -152,8 +152,8 @@ prepare-release: tag release-create write-package-json-version-cli write-package
 release-create:
 	gh release create --title "Bun v$(PACKAGE_JSON_VERSION)" "$(BUN_BUILD_TAG)"
 
-BUN_DEPLOY_DIR: $(BUN_TMP_DIR)/bun-deploy
-BUN_DEPLOY_CLI: $(BUN_TMP_DIR)/bun-cli
+BUN_DEPLOY_DIR := $(BUN_TMP_DIR)/bun-deploy
+BUN_DEPLOY_CLI := $(BUN_TMP_DIR)/bun-cli
 
 release-cli-push:
 	rm -rf $(BUN_DEPLOY_CLI)

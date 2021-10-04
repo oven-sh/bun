@@ -22,6 +22,8 @@ BUN_BUILD_TAG := bun-v$(PACKAGE_JSON_VERSION)
 CC := clang
 CXX := clang++
 
+BUN_TMP_DIR := /tmp/make-bun
+
 DEFAULT_USE_BMALLOC := 1
 # ifeq ($(OS_NAME),linux)
 # 	DEFAULT_USE_BMALLOC = 0
@@ -151,14 +153,14 @@ release-create:
 	gh release create --title "Bun v$(PACKAGE_JSON_VERSION)" "$(BUN_BUILD_TAG)"
 
 release-cli-push:
-	cd packages/bun-cli && npm pack --pack-destination /tmp/
-	gh release upload $(BUN_BUILD_TAG) --clobber /tmp/bun-cli-$(PACKAGE_JSON_VERSION).tgz
-	npm publish /tmp/bun-cli-$(PACKAGE_JSON_VERSION).tgz --access=public
+	cd packages/bun-cli && npm pack --pack-destination $(BUN_TMP_DIR)/
+	gh release upload $(BUN_BUILD_TAG) --clobber $(BUN_TMP_DIR)/bun-cli-$(PACKAGE_JSON_VERSION).tgz
+	npm publish $(BUN_TMP_DIR)/bun-cli-$(PACKAGE_JSON_VERSION).tgz --access=public
 
 release-bin-push: write-package-json-version
-	cd $(PACKAGE_DIR) && npm pack --pack-destination /tmp/
-	gh release upload $(BUN_BUILD_TAG) --clobber /tmp/bun-cli-$(TRIPLET)-$(PACKAGE_JSON_VERSION).tgz
-	npm publish /tmp/bun-cli-$(TRIPLET)-$(PACKAGE_JSON_VERSION).tgz --access=public
+	cd $(PACKAGE_DIR) && npm pack --pack-destination $(BUN_TMP_DIR)/
+	gh release upload $(BUN_BUILD_TAG) --clobber $(BUN_TMP_DIR)/bun-cli-$(TRIPLET)-$(PACKAGE_JSON_VERSION).tgz
+	npm publish $(BUN_TMP_DIR)/bun-cli-$(TRIPLET)-$(PACKAGE_JSON_VERSION).tgz --access=public
 
 dev-obj:
 	zig build obj
@@ -357,8 +359,8 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 		-O1
 
 sizegen:
-	$(CXX) src/javascript/jsc/headergen/sizegen.cpp -o /tmp/sizegen $(CLANG_FLAGS) -O1
-	/tmp/sizegen > src/javascript/jsc/bindings/sizes.zig
+	$(CXX) src/javascript/jsc/headergen/sizegen.cpp -o $(BUN_TMP_DIR)/sizegen $(CLANG_FLAGS) -O1
+	$(BUN_TMP_DIR)/sizegen > src/javascript/jsc/bindings/sizes.zig
 
 picohttp:
 	 $(CC) -O3 -g -fPIE -c src/deps/picohttpparser.c -Isrc/deps -o src/deps/picohttpparser.o; cd ../../	

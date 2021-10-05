@@ -700,7 +700,7 @@ pub const Bundler = struct {
             const tmpname = try bundler.fs.tmpname(
                 ".bun",
                 std.mem.span(&tmpname_buf),
-                std.hash.Wyhash.hash(0, std.mem.span(destination)),
+                std.hash.Wyhash.hash(@intCast(usize, std.time.milliTimestamp()) % std.math.maxInt(u32), std.mem.span(destination)),
             );
 
             var tmpfile = Fs.FileSystem.RealFS.Tmpfile{};

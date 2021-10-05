@@ -703,12 +703,10 @@ pub const Bundler = struct {
                 std.hash.Wyhash.hash(0, std.mem.span(destination)),
             );
 
-            var tmpfile = try tmpdir.createFileZ(tmpname, .{ .read = isDebug, .exclusive = true });
+            var tmpfile = Fs.FileSystem.RealFS.Tmpfile{};
+            try tmpfile.create(&bundler.fs.fs, tmpname);
 
-            errdefer {
-                tmpfile.close();
-                tmpdir.deleteFile(std.mem.span(tmpname)) catch {};
-            }
+            errdefer tmpfile.closeAndDelete(tmpname);
 
             var generator = try allocator.create(GenerateNodeModuleBundle);
             var queue = try BunQueue.init(allocator);
@@ -722,7 +720,7 @@ pub const Bundler = struct {
                 .estimated_input_lines_of_code = 0,
                 // .resolve_queue = queue,
                 .bundler = bundler,
-                .tmpfile = tmpfile,
+                .tmpfile = tmpfile.file(),
 
                 .dynamic_import_file_size_store = U32Map.init(allocator),
                 .dynamic_import_file_size_store_lock = Lock.init(),
@@ -930,8 +928,7 @@ pub const Bundler = struct {
             // }
 
             if (this.log.errors > 0) {
-                tmpfile.close();
-                tmpdir.deleteFile(std.mem.span(tmpname)) catch {};
+                tmpfile.closeAndDelete(std.mem.span(tmpname));
                 // We stop here because if there are errors we don't know if the bundle is valid
                 // This manifests as a crash when sorting through the module list because we may have added files to the bundle which were never actually finished being added.
                 return null;
@@ -1112,7 +1109,7 @@ pub const Bundler = struct {
                 // chmod 777
                 0000010 | 0000100 | 0000001 | 0001000 | 0000040 | 0000004 | 0000002 | 0000400 | 0000200 | 0000020,
             );
-            try C.moveFileZ(tmpdir.fd, tmpname, top_dir.fd, destination);
+            try tmpfile.promote(tmpname, top_dir.fd, destination);
             // Print any errors at the end
             // try this.log.print(Output.errorWriter());
             return javascript_bundle_container;

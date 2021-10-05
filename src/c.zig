@@ -17,10 +17,10 @@ const errno = os.errno;
 const zeroes = mem.zeroes;
 
 pub extern "c" fn chmod([*c]const u8, mode_t) c_int;
-pub extern "c" fn fchmod(c_int, mode_t) c_int;
+pub extern "c" fn fchmod(std.c.fd_t, mode_t) c_int;
 pub extern "c" fn umask(mode_t) mode_t;
 pub extern "c" fn fchmodat(c_int, [*c]const u8, mode_t, c_int) c_int;
-
+pub extern "c" fn fchown(std.c.fd_t, std.c.uid_t, std.c.gid_t) c_int;
 pub extern "c" fn lstat([*c]const u8, [*c]libc_stat) c_int;
 pub extern "c" fn lstat64([*c]const u8, [*c]libc_stat) c_int;
 
@@ -106,14 +106,61 @@ pub fn moveFileZ(from_dir: std.os.fd_t, filename: [*:0]const u8, to_dir: std.os.
     };
 }
 
+pub fn moveFileZWithHandle(from_handle: std.os.fd_t, from_dir: std.os.fd_t, filename: [*:0]const u8, to_dir: std.os.fd_t, destination: [*:0]const u8) !void {
+    std.os.renameatZ(from_dir, filename, to_dir, destination) catch |err| {
+        switch (err) {
+            error.RenameAcrossMountPoints => {
+                try moveFileZSlowWithHandle(from_handle, to_dir, destination);
+            },
+            else => {
+                return err;
+            },
+        }
+    };
+}
+
 // On Linux, this will be fast because sendfile() supports copying between two file descriptors on disk
-// On macOS & BSDs, this will be slow because it will attempt to copy with sendfile, fail, and then fallback to a copy loop
+// macOS & BSDs will be slow because
 pub fn moveFileZSlow(from_dir: std.os.fd_t, filename: [*:0]const u8, to_dir: std.os.fd_t, destination: [*:0]const u8) !void {
-    const flags = std.os.O_RDWR;
-    const in_handle = try std.os.openatZ(from_dir, filename, flags, 0777);
-    defer std.os.close(in_handle);
-    const out_handle = try std.os.openatZ(to_dir, filename, flags | std.os.O_CREAT, 0777);
+    const in_handle = try std.os.openatZ(from_dir, filename, std.os.O_RDONLY | std.os.O_CLOEXEC, 0600);
+    try moveFileZSlowWithHandle(in_handle, to_dir, destination);
+}
+
+pub fn moveFileZSlowWithHandle(in_handle: std.os.fd_t, to_dir: std.os.fd_t, destination: [*:0]const u8) !void {
+    const stat = try std.os.fstat(in_handle);
+    // delete if exists, don't care if it fails. it may fail due to the file not existing
+    // delete here because we run into weird truncation issues if we do not
+    // ftruncate() instead didn't work.
+    // this is technically racy because it could end up deleting the file without saving
+    std.os.unlinkatZ(to_dir, destination, 0) catch {};
+    const out_handle = try std.os.openatZ(to_dir, destination, std.os.O_WRONLY | std.os.O_CREAT | std.os.O_CLOEXEC, 022);
     defer std.os.close(out_handle);
-    const written = try std.os.sendfile(out_handle, in_handle, 0, 0, &[_]std.c.iovec_const{}, &[_]std.c.iovec_const{}, 0);
-    try std.os.ftruncate(out_handle, written);
+    if (comptime Enviroment.isLinux) {
+        std.os.system.fallocate(out_handle, 0, 0, @intCast(i64, stat.size));
+        _ = try std.os.sendfile(out_handle, in_handle, 0, @intCast(usize, stat.size), &[_]std.c.iovec_const{}, &[_]std.c.iovec_const{}, 0);
+    } else {
+        if (comptime Enviroment.isMac) {
+            // if this fails, it doesn't matter
+            // we only really care about read & write succeeding
+            preallocate_file(
+                out_handle,
+                @intCast(std.os.off_t, 0),
+                @intCast(std.os.off_t, stat.size),
+            ) catch {};
+        }
+
+        var buf: [8092 * 2]u8 = undefined;
+        var total_read: usize = 0;
+        while (true) {
+            const read = try std.os.pread(in_handle, &buf, total_read);
+            total_read += read;
+            if (read == 0) break;
+            const bytes = buf[0..read];
+            const written = try std.os.write(out_handle, bytes);
+            if (written == 0) break;
+        }
+    }
+
+    _ = fchmod(out_handle, stat.mode);
+    _ = fchown(out_handle, stat.uid, stat.gid);
 }

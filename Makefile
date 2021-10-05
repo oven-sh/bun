@@ -298,9 +298,14 @@ MACOS_ICU_INCLUDE := $(HOMEBREW_PREFIX)opt/icu4c/include
 
 ICU_FLAGS := 
 
+# TODO: find a way to make this more resilient
+# Ideally, we could just look up the linker search paths
+LIB_ICU_PATH ?= /usr/lib/x86_64-linux-gnu
+
 ifeq ($(OS_NAME),linux)
-	ICU_FLAGS += -licuuc -licudata -licui18n
+	ICU_FLAGS += $(LIB_ICU_PATH)/libicuuc.a $(LIB_ICU_PATH)/libicudata.a $(LIB_ICU_PATH)/libicui18n.a
 endif
+
 ifeq ($(OS_NAME),darwin)
 ICU_FLAGS += -l icucore \
 	$(MACOS_ICU_FILES) \

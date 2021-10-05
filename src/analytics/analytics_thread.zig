@@ -17,6 +17,8 @@ pub const EventName = enum(u8) {
     http_build,
 };
 
+var random: std.rand.DefaultPrng = undefined;
+
 const platform_arch = if (Environment.isAarch64) Analytics.Architecture.arm else Analytics.Architecture.x64;
 
 pub const Event = struct {
@@ -60,6 +62,7 @@ pub const GenerateHeader = struct {
                 .machine_id = GenerateMachineID.forMac() catch Analytics.Uint64{},
                 .platform = GeneratePlatform.forMac(),
                 .build_id = comptime @truncate(u32, Global.build_id),
+                .session_id = random.random.int(u32),
             };
         }
 
@@ -68,6 +71,7 @@ pub const GenerateHeader = struct {
                 .machine_id = GenerateMachineID.forLinux() catch Analytics.Uint64{},
                 .platform = GeneratePlatform.forLinux(),
                 .build_id = comptime @truncate(u32, Global.build_id),
+                .session_id = random.random.int(u32),
             };
         }
 
@@ -166,6 +170,7 @@ pub fn enqueue(comptime name: EventName) void {
 
     if (!has_loaded) {
         defer has_loaded = true;
+
         event_queue = EventQueue.init(std.heap.c_allocator);
         spawn() catch |err| {
             if (comptime isDebug) {
@@ -218,8 +223,6 @@ pub const EventList = struct {
     out_buffer: MutableString,
     in_buffer: std.ArrayList(u8),
 
-    var random: std.rand.DefaultPrng = undefined;
-
     pub fn init() EventList {
         random = std.rand.DefaultPrng.init(@intCast(u64, std.time.milliTimestamp()));
         return EventList{
@@ -249,6 +252,7 @@ pub const EventList = struct {
     }
 
     pub var is_stuck = false;
+    var stuck_count: u8 = 0;
     fn _flush(this: *EventList) !void {
         this.in_buffer.clearRetainingCapacity();
 
@@ -327,6 +331,9 @@ pub const EventList = struct {
         }
 
         @atomicStore(bool, &is_stuck, retry_remaining == 0, .Release);
+        stuck_count += @intCast(u8, @boolToInt(retry_remaining == 0));
+        stuck_count *= @intCast(u8, @boolToInt(retry_remaining == 0));
+        disabled = disabled or stuck_count > 4;
 
         this.in_buffer.clearRetainingCapacity();
         this.out_buffer.reset();

@@ -33,9 +33,10 @@ struct Uint64 {
 
 struct EventListHeader {
     Uint64 machine_id;
+    uint32 session_id;
     Platform platform;
     uint32 build_id;
-    uint32 session_length;    
+    uint32 session_length;
 }
 
 struct EventHeader {

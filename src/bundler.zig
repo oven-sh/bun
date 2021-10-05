@@ -183,6 +183,7 @@ pub const Bundler = struct {
             loader.* = DotEnv.Loader.init(map, allocator);
             break :brk loader;
         };
+        DotEnv.instance = env_loader;
         // var pool = try allocator.create(ThreadPool);
         // try pool.init(ThreadPool.InitConfig{
         //     .allocator = allocator,
@@ -249,6 +250,8 @@ pub const Bundler = struct {
                 Analytics.is_ci = true;
             }
         }
+
+        Analytics.disabled = Analytics.disabled or this.env.map.get("HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET") != null;
     }
 
     // This must be run after a framework is configured, if a framework is enabled

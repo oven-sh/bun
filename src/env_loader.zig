@@ -666,6 +666,8 @@ pub const Map = struct {
     }
 };
 
+pub var instance: ?*Loader = null;
+
 const expectString = std.testing.expectEqualStrings;
 const expect = std.testing.expect;
 test "DotEnv Loader" {

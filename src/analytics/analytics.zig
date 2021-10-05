@@ -393,6 +393,9 @@ pub const Analytics = struct {
         /// machine_id
         machine_id: Uint64,
 
+        /// session_id
+        session_id: u32 = 0,
+
         /// platform
         platform: Platform,
 
@@ -406,6 +409,7 @@ pub const Analytics = struct {
             var this = std.mem.zeroes(EventListHeader);
 
             this.machine_id = try reader.readValue(Uint64);
+            this.session_id = try reader.readValue(u32);
             this.platform = try reader.readValue(Platform);
             this.build_id = try reader.readValue(u32);
             this.session_length = try reader.readValue(u32);
@@ -414,6 +418,7 @@ pub const Analytics = struct {
 
         pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
             try writer.writeValue(this.machine_id);
+            try writer.writeInt(this.session_id);
             try writer.writeValue(this.platform);
             try writer.writeInt(this.build_id);
             try writer.writeInt(this.session_length);

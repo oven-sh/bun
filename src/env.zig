@@ -22,3 +22,5 @@ pub const isRelease = std.builtin.Mode.Debug != std.builtin.mode and !isTest;
 pub const isTest = std.builtin.is_test;
 pub const isLinux = std.Target.current.os.tag == .linux;
 pub const isAarch64 = std.Target.current.cpu.arch == .aarch64;
+
+pub const analytics_url = "http://localhost:3008/events";

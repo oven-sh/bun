@@ -72,3 +72,5 @@ pub const is_macro_enabled = true;
 
 pub const force_macro = false;
 pub const include_filename_in_jsx = false;
+
+pub const verbose_analytics = true;

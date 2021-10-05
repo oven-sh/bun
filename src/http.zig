@@ -21,6 +21,7 @@ const OutputFile = Options.OutputFile;
 const DotEnv = @import("./env_loader.zig");
 const mimalloc = @import("./allocators/mimalloc.zig");
 const MacroMap = @import("./resolver/package_json.zig").MacroMap;
+const Analytics = @import("./analytics/analytics_thread.zig");
 pub fn constStrToU8(s: string) []u8 {
     return @intToPtr([*]u8, @ptrToInt(s.ptr))[0..s.len];
 }
@@ -542,6 +543,14 @@ pub const RequestContext = struct {
         };
 
         return ctx;
+    }
+
+    pub inline fn isBrowserNavigation(req: *RequestContext) bool {
+        if (req.header("Sec-Fetch-Mode")) |mode| {
+            return strings.eqlComptime(mode.value, "navigate");
+        }
+
+        return false;
     }
 
     pub fn sendNotFound(req: *RequestContext) !void {
@@ -2686,6 +2695,7 @@ pub const Server = struct {
             server.detectTSConfig();
             try server.initWatcher();
             did_init = true;
+            Analytics.enqueue(Analytics.EventName.http_start);
 
             server.handleConnection(&conn, comptime features);
         }
@@ -2750,6 +2760,9 @@ pub const Server = struct {
         };
         var req_ctx = &req_ctx_;
         req_ctx.timer.reset();
+
+        const is_navigation_request = req_ctx_.isBrowserNavigation();
+        defer if (is_navigation_request) Analytics.enqueue(Analytics.EventName.http_build);
 
         if (req_ctx.url.needs_redirect) {
             req_ctx.handleRedirect(req_ctx.url.path) catch |err| {

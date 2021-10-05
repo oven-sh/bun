@@ -38,6 +38,7 @@ const Lock = @import("./lock.zig").Lock;
 const NewBunQueue = @import("./bun_queue.zig").NewBunQueue;
 const NodeFallbackModules = @import("./node_fallbacks.zig");
 const CacheEntry = @import("./cache.zig").FsCacheEntry;
+const Analytics = @import("./analytics/analytics_thread.zig");
 
 const Linker = linker.Linker;
 const Resolver = _resolver.Resolver;
@@ -231,7 +232,22 @@ pub const Bundler = struct {
                     try this.env.load(&this.fs.fs, dir, true);
                 }
             },
+            .disable => {
+                this.env.loadProcess();
+            },
             else => {},
+        }
+
+        if (this.env.map.get("DISABLE_BUN_ANALYTICS")) |should_disable| {
+            if (strings.eqlComptime(should_disable, "1")) {
+                Analytics.disabled = true;
+            }
+        }
+
+        if (this.env.map.get("CI")) |IS_CI| {
+            if (strings.eqlComptime(IS_CI, "true")) {
+                Analytics.is_ci = true;
+            }
         }
     }
 

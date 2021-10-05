@@ -68,7 +68,7 @@ endif
 bun: vendor build-obj bun-link-lld-release
 
 
-vendor-without-check: api node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp
+vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp
 
 vendor: require init-submodules vendor-without-check
 
@@ -380,3 +380,6 @@ sizegen:
 
 picohttp:
 	 $(CC) -O3 -g -fPIE -c src/deps/picohttpparser.c -Isrc/deps -o src/deps/picohttpparser.o; cd ../../	
+
+analytics:
+	 ./node_modules/.bin/peechy --schema src/analytics/schema.peechy --go src/analytics/analytics.go --zig src/analytics/analytics.zig

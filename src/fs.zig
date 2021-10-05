@@ -533,13 +533,11 @@ pub const FileSystem = struct {
                 if (this.fd != 0) std.os.close(this.fd);
             }
 
-            const O_TMPFILE = 020000000;
-
             pub fn create(this: *Tmpfile, rfs: *RealFS, name: [*:0]const u8) !void {
                 var tmpdir_ = if (Environment.isLinux) try rfs.openDir(rfs.parent_fs.top_level_dir) else try rfs.openTmpDir();
-                
+
                 const default_flags = std.os.O_CREAT | std.os.O_EXCL | std.os.O_RDWR | std.os.O_CLOEXEC;
-                const flags = if (Environment.isLinux) default_flags | O_TMPFILE else default_flags;
+                const flags = if (Environment.isLinux) default_flags | std.os.O_TMPFILE else default_flags;
                 this.dir_fd = tmpdir_.fd;
                 this.fd = try std.os.openatZ(tmpdir_.fd, name, flags, 0666);
             }

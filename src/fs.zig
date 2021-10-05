@@ -533,41 +533,18 @@ pub const FileSystem = struct {
                 if (this.fd != 0) std.os.close(this.fd);
             }
 
+            const O_TMPFILE = 020000000;
+
             pub fn create(this: *Tmpfile, rfs: *RealFS, name: [*:0]const u8) !void {
-                if (comptime Environment.isLinux) {
-                    this.fd = try std.os.memfd_createZ(name, std.os.MFD_CLOEXEC);
-                    return;
-                }
-
-                var tmpdir_ = try rfs.openTmpDir();
+                var tmpdir_ = if (Environment.isLinux) try rfs.openDir(rfs.parent_fs.top_level_dir) else try rfs.openTmpDir();
+                
+                const default_flags = std.os.O_CREAT | std.os.O_EXCL | std.os.O_RDWR | std.os.O_CLOEXEC;
+                const flags = if (Environment.isLinux) default_flags | O_TMPFILE else default_flags;
                 this.dir_fd = tmpdir_.fd;
-                this.fd = try std.os.openatZ(tmpdir_.fd, name, std.os.O_CREAT | std.os.O_EXCL | std.os.O_RDWR | std.os.O_CLOEXEC, 0666);
-            }
-
-            pub fn promoteLinux(this: *Tmpfile, destination_fd: std.os.fd_t, name: [*:0]const u8) !void {
-                std.debug.assert(this.fd != 0);
-
-                const out_handle = try std.os.openatZ(destination_fd, name, std.os.O_WRONLY | std.os.O_CREAT | std.os.O_CLOEXEC, 022);
-                defer std.os.close(out_handle);
-                const read = try std.os.sendfile(
-                    out_handle,
-                    this.fd,
-                    0,
-                    0,
-                    &[_]std.c.iovec_const{},
-                    &[_]std.c.iovec_const{},
-                    0,
-                );
-                try std.os.ftruncate(out_handle, read);
-                this.close();
+                this.fd = try std.os.openatZ(tmpdir_.fd, name, flags, 0666);
             }
 
             pub fn promote(this: *Tmpfile, from_name: [*:0]const u8, destination_fd: std.os.fd_t, name: [*:0]const u8) !void {
-                if (comptime Environment.isLinux) {
-                    try @call(.{ .modifier = .always_inline }, promoteLinux, .{ this, destination_fd, name });
-                    return;
-                }
-
                 std.debug.assert(this.fd != 0);
                 std.debug.assert(this.dir_fd != 0);
 

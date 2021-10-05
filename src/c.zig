@@ -136,7 +136,7 @@ pub fn moveFileZSlowWithHandle(in_handle: std.os.fd_t, to_dir: std.os.fd_t, dest
     const out_handle = try std.os.openatZ(to_dir, destination, std.os.O_WRONLY | std.os.O_CREAT | std.os.O_CLOEXEC, 022);
     defer std.os.close(out_handle);
     if (comptime Enviroment.isLinux) {
-        std.os.system.fallocate(out_handle, 0, 0, @intCast(i64, stat.size));
+        _ = std.os.system.fallocate(out_handle, 0, 0, @intCast(i64, stat.size));
         _ = try std.os.sendfile(out_handle, in_handle, 0, @intCast(usize, stat.size), &[_]std.c.iovec_const{}, &[_]std.c.iovec_const{}, 0);
     } else {
         if (comptime Enviroment.isMac) {

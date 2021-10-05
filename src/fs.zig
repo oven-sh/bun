@@ -513,6 +513,53 @@ pub const FileSystem = struct {
             return file;
         }
 
+        pub const Tmpfile = struct {
+            fd: std.os.fd_t = 0,
+            dir_fd: std.os.fd_t = 0,
+
+            pub inline fn dir(this: *Tmpfile) std.fs.Dir {
+                return std.fs.Dir{
+                    .fd = this.dir_fd,
+                };
+            }
+
+            pub inline fn file(this: *Tmpfile) std.fs.File {
+                return std.fs.File{
+                    .handle = this.fd,
+                };
+            }
+
+            pub fn close(this: *Tmpfile) void {
+                if (this.fd != 0) std.os.close(this.fd);
+            }
+
+            pub fn create(this: *Tmpfile, rfs: *RealFS, name: [*:0]const u8) !void {
+                var tmpdir_ = try rfs.openTmpDir();
+
+                const flags = std.os.O_CREAT | std.os.O_RDWR | std.os.O_CLOEXEC;
+                this.dir_fd = tmpdir_.fd;
+                this.fd = try std.os.openatZ(tmpdir_.fd, name, flags, std.os.S_IRWXO);
+            }
+
+            pub fn promote(this: *Tmpfile, from_name: [*:0]const u8, destination_fd: std.os.fd_t, name: [*:0]const u8) !void {
+                std.debug.assert(this.fd != 0);
+                std.debug.assert(this.dir_fd != 0);
+
+                try C.moveFileZWithHandle(this.fd, this.dir_fd, from_name, destination_fd, name);
+                this.close();
+            }
+
+            pub fn closeAndDelete(this: *Tmpfile, name: [*:0]const u8) void {
+                this.close();
+
+                if (comptime !Environment.isLinux) {
+                    if (this.dir_fd == 0) return;
+
+                    this.dir().deleteFileZ(name) catch {};
+                }
+            }
+        };
+
         inline fn _fetchCacheFile(fs: *RealFS, basename: string) !std.fs.File {
             var parts = [_]string{ "node_modules", ".cache", basename };
             var path = fs.parent_fs.join(&parts);

@@ -644,8 +644,8 @@ pub const ESMConditions = struct {
 pub const JSX = struct {
     pub const Pragma = struct {
         // these need to be arrays
-        factory: []const string = &(Defaults.Factory),
-        fragment: []const string = &(Defaults.Fragment),
+        factory: []const string = Defaults.Factory,
+        fragment: []const string = Defaults.Fragment,
         runtime: JSX.Runtime = JSX.Runtime.automatic,
 
         /// Facilitates automatic JSX importing
@@ -655,9 +655,9 @@ pub const JSX = struct {
         classic_import_source: string = "react",
         package_name: []const u8 = "react",
         refresh_runtime: string = "react-refresh/runtime",
-        supports_fast_refresh: bool = false,
+        supports_fast_refresh: bool = true,
 
-        jsx: string = Defaults.JSXFunction,
+        jsx: string = Defaults.JSXFunctionDev,
         jsx_static: string = Defaults.JSXStaticFunction,
 
         development: bool = true,
@@ -686,8 +686,8 @@ pub const JSX = struct {
         }
 
         pub const Defaults = struct {
-            pub var Factory = [_]string{ "React", "createElement" };
-            pub var Fragment = [_]string{ "React", "Fragment" };
+            pub const Factory = &[_]string{"createElement"};
+            pub const Fragment = &[_]string{"Fragment"};
             pub const ImportSourceDev = "react/jsx-dev-runtime";
             pub const ImportSource = "react/jsx-runtime";
             pub const JSXFunction = "jsx";
@@ -746,16 +746,13 @@ pub const JSX = struct {
             if (jsx.import_source.len > 0) {
                 pragma.import_source = jsx.import_source;
                 pragma.package_name = parsePackageName(pragma.import_source);
-                pragma.supports_fast_refresh = pragma.development and pragma.isReactLike();
             } else if (jsx.development) {
                 pragma.import_source = Defaults.ImportSourceDev;
                 pragma.jsx = Defaults.JSXFunctionDev;
-                pragma.supports_fast_refresh = true;
                 pragma.package_name = "react";
             } else {
                 pragma.import_source = Defaults.ImportSource;
                 pragma.jsx = Defaults.JSXFunction;
-                pragma.supports_fast_refresh = false;
             }
 
             pragma.development = jsx.development;

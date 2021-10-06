@@ -217,6 +217,16 @@ pub const Bundler = struct {
             bundler.resolve_results,
             bundler.fs,
         );
+
+        // If we don't explicitly pass JSX, try to get it from the root tsconfig
+        if (bundler.options.transform_options.jsx == null) {
+            // Most of the time, this will already be cached
+            if (bundler.resolver.readDirInfo(bundler.fs.top_level_dir) catch null) |root_dir| {
+                if (root_dir.tsconfig_json) |tsconfig| {
+                    bundler.options.jsx = tsconfig.jsx;
+                }
+            }
+        }
     }
 
     pub fn runEnvLoader(this: *ThisBundler) !void {
@@ -1533,7 +1543,7 @@ pub const Bundler = struct {
                         .js,
                         .ts,
                         => {
-                            var jsx = bundler.options.jsx;
+                            var jsx = _resolve.jsx;
                             jsx.parse = loader.isJSX();
 
                             var opts = js_parser.Parser.Options.init(jsx, loader);
@@ -2150,6 +2160,7 @@ pub const Bundler = struct {
                         .file_descriptor = file_descriptor,
                         .file_hash = filepath_hash,
                         .macro_remappings = resolve_result.getMacroRemappings(),
+                        .jsx = resolve_result.jsx,
                     },
                     client_entry_point,
                 ) orelse {
@@ -2241,6 +2252,7 @@ pub const Bundler = struct {
                         .file_descriptor = null,
                         .file_hash = null,
                         .macro_remappings = resolve_result.getMacroRemappings(),
+                        .jsx = resolve_result.jsx,
                     },
                     client_entry_point_,
                 ) orelse {
@@ -2401,6 +2413,7 @@ pub const Bundler = struct {
         file_hash: ?u32 = null,
         path: Fs.Path,
         loader: options.Loader,
+        jsx: options.JSX.Pragma,
         macro_remappings: MacroRemap,
     };
 
@@ -2467,7 +2480,7 @@ pub const Bundler = struct {
             .ts,
             .tsx,
             => {
-                var jsx = bundler.options.jsx;
+                var jsx = this_parse.jsx;
                 jsx.parse = loader.isJSX();
                 var opts = js_parser.Parser.Options.init(jsx, loader);
                 opts.enable_bundling = false;

@@ -34,6 +34,9 @@ pub const TSConfigJSON = struct {
     paths: PathsMap,
 
     jsx: options.JSX.Pragma = options.JSX.Pragma{},
+    has_jsxFactory: bool = false,
+    has_jsxFragmentFactory: bool = false,
+    has_jsxImportSource: bool = false,
 
     use_define_for_class_fields: ?bool = null,
 
@@ -56,12 +59,30 @@ pub const TSConfigJSON = struct {
         });
     };
 
+    pub fn mergeJSX(this: *const TSConfigJSON, current: options.JSX.Pragma) options.JSX.Pragma {
+        var out = current;
+
+        if (this.has_jsxFactory) {
+            out.factory = this.jsx.factory;
+        }
+
+        if (this.has_jsxFragmentFactory) {
+            out.fragment = this.jsx.fragment;
+        }
+
+        if (this.has_jsxImportSource) {
+            out.import_source = this.jsx.import_source;
+        }
+
+        return out;
+    }
+
     pub fn parse(
         allocator: *std.mem.Allocator,
         log: *logger.Log,
         source: logger.Source,
-        comptime JSONCache: type,
-        json_cache: *JSONCache,
+        json_cache: *cache.Json,
+        is_jsx_development: bool,
     ) anyerror!?*TSConfigJSON {
         // Unfortunately "tsconfig.json" isn't actually JSON. It's some other
         // format that appears to be defined by the implementation details of the
@@ -107,20 +128,29 @@ pub const TSConfigJSON = struct {
             if (compiler_opts.expr.asProperty("jsxFactory")) |jsx_prop| {
                 if (jsx_prop.expr.asString(allocator)) |str| {
                     result.jsx.factory = try parseMemberExpressionForJSX(log, &source, jsx_prop.loc, str, allocator);
+                    result.has_jsxFactory = true;
                 }
             }
 
             // Parse "jsxFragmentFactory"
-            if (compiler_opts.expr.asProperty("jsxFactory")) |jsx_prop| {
+            if (compiler_opts.expr.asProperty("jsxFragmentFactory")) |jsx_prop| {
                 if (jsx_prop.expr.asString(allocator)) |str| {
                     result.jsx.fragment = try parseMemberExpressionForJSX(log, &source, jsx_prop.loc, str, allocator);
+                    result.has_jsxFragmentFactory = true;
                 }
             }
 
             // Parse "jsxImportSource"
             if (compiler_opts.expr.asProperty("jsxImportSource")) |jsx_prop| {
                 if (jsx_prop.expr.asString(allocator)) |str| {
-                    result.jsx.import_source = str;
+                    if (is_jsx_development) {
+                        result.jsx.import_source = std.fmt.allocPrint(allocator, "{s}/jsx-dev-runtime", .{str}) catch unreachable;
+                    } else {
+                        result.jsx.import_source = std.fmt.allocPrint(allocator, "{s}/jsx-runtime", .{str}) catch unreachable;
+                    }
+
+                    result.jsx.package_name = options.JSX.Pragma.parsePackageName(str);
+                    result.has_jsxImportSource = true;
                 }
             }
 

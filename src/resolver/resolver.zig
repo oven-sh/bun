@@ -689,6 +689,10 @@ pub const Resolver = struct {
             var dir: *DirInfo = (r.readDirInfo(path.name.dir) catch continue) orelse continue;
             result.package_json = result.package_json orelse dir.enclosing_package_json;
 
+            if (dir.enclosing_tsconfig_json) |tsconfig| {
+                result.jsx = tsconfig.mergeJSX(result.jsx);
+            }
+
             if (dir.getEntries()) |entries| {
                 if (entries.get(path.name.filename)) |query| {
                     const symlink_path = query.entry.symlink(&r.fs.fs);
@@ -758,7 +762,12 @@ pub const Resolver = struct {
 
         // This implements the module resolution algorithm from node.js, which is
         // described here: https://nodejs.org/api/modules.html#modules_all_together
-        var result: Result = Result{ .path_pair = PathPair{ .primary = Path.empty } };
+        var result: Result = Result{
+            .path_pair = PathPair{
+                .primary = Path.empty,
+            },
+            .jsx = r.opts.jsx,
+        };
 
         // Return early if this is already an absolute path. In addition to asking
         // the file system whether this is an absolute path, we also explicitly check
@@ -788,6 +797,7 @@ pub const Resolver = struct {
                                 .package_json = res.package_json,
                                 .dirname_fd = res.dirname_fd,
                                 .file_fd = res.file_fd,
+                                .jsx = tsconfig.mergeJSX(result.jsx),
                             };
                         }
                     }
@@ -1325,7 +1335,7 @@ pub const Resolver = struct {
         const source = logger.Source.initPathString(key_path.text, entry.contents);
         const file_dir = source.path.sourceDir();
 
-        var result = (try TSConfigJSON.parse(r.allocator, r.log, source, @TypeOf(r.caches.json), &r.caches.json)) orelse return null;
+        var result = (try TSConfigJSON.parse(r.allocator, r.log, source, &r.caches.json, r.opts.jsx.development)) orelse return null;
 
         if (result.hasBaseURL()) {
             // this might leak

@@ -45,8 +45,10 @@ const ServerBundleGeneratorThread = struct {
             null,
             env_loader_,
         );
-        server_bundler.options.jsx.supports_fast_refresh = false;
         server_bundler.configureLinker();
+
+        server_bundler.options.jsx.supports_fast_refresh = false;
+
         server_bundler.router = router;
         server_bundler.configureDefines() catch |err| {
             Output.prettyErrorln("<r><red>{s}<r> loading --define or .env values for node_modules.server.bun\n", .{@errorName(err)});

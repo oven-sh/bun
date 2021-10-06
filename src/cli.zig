@@ -405,7 +405,7 @@ pub const Arguments = struct {
             jsx_fragment != null or
             jsx_import_source != null or
             jsx_runtime != null or
-            jsx_production or react_fast_refresh)
+            jsx_production or !react_fast_refresh)
         {
             var default_factory = "".*;
             var default_fragment = "".*;

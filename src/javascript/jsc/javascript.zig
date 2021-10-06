@@ -858,6 +858,7 @@ pub const VirtualMachine = struct {
                     .file_descriptor = fd,
                     .file_hash = hash,
                     .macro_remappings = macro_remappings,
+                    .jsx = vm.bundler.options.jsx,
                 };
 
                 var parse_result = vm.bundler.parse(

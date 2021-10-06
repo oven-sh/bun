@@ -205,6 +205,7 @@ pub const RequestContext = struct {
                 .loader = .js,
                 .macro_remappings = .{},
                 .dirname_fd = 0,
+                .jsx = bundler_.options.jsx,
             };
 
             if (bundler_.parse(
@@ -764,6 +765,8 @@ pub const RequestContext = struct {
                             .file_descriptor = fd,
                             .file_hash = id,
                             .macro_remappings = macro_remappings,
+                            // TODO: make this work correctly when multiple tsconfigs define different JSX pragmas
+                            .jsx = this.bundler.options.jsx,
                         },
                         null,
                     ) orelse {

@@ -124,6 +124,7 @@ async function main() {
     "/spread_with_key.tsx",
     "/styledcomponents-output.js",
     "/void-shouldnt-delete-call-expressions.js",
+    "/custom-emotion-jsx/file.jsx",
   ];
   tests.reverse();
 

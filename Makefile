@@ -382,4 +382,4 @@ picohttp:
 	 $(CC) -O3 -g -fPIE -c src/deps/picohttpparser.c -Isrc/deps -o src/deps/picohttpparser.o; cd ../../	
 
 analytics:
-	 ./node_modules/.bin/peechy --schema src/analytics/schema.peechy --go src/analytics/analytics.go --zig src/analytics/analytics.zig
+	 ./node_modules/.bin/peechy --schema src/analytics/schema.peechy --zig src/analytics/analytics_schema.zig

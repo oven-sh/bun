@@ -281,7 +281,7 @@ pub fn Writer(comptime WritableStream: type) type {
 pub const ByteWriter = Writer(*std.io.FixedBufferStream([]u8));
 pub const FileWriter = Writer(std.fs.File);
 
-pub const Analytics = struct {
+pub const analytics = struct {
     pub const OperatingSystem = enum(u8) {
         _none,
         /// linux
@@ -333,14 +333,14 @@ pub const Analytics = struct {
 
             this.os = try reader.readValue(OperatingSystem);
             this.arch = try reader.readValue(Architecture);
-            this.version = try reader.readValue([]const u8);
+            this.version = try reader.readArray(u8);
             return this;
         }
 
         pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
             try writer.writeEnum(this.os);
             try writer.writeEnum(this.arch);
-            try writer.writeValue(this.version);
+            try writer.writeArray(u8, this.version);
         }
     };
 

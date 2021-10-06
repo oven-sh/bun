@@ -5,8 +5,8 @@ const std = @import("std");
 const HTTPClient = @import("../http_client.zig");
 const URL = @import("../query_string_map.zig").URL;
 const Fs = @import("../fs.zig");
-const Analytics = @import("./analytics.zig").Analytics;
-const Writer = @import("./analytics.zig").Writer;
+const Analytics = @import("./analytics_schema.zig").analytics;
+const Writer = @import("./analytics_schema.zig").Writer;
 const Headers = @import("../javascript/jsc/webcore/response.zig").Headers;
 
 pub const EventName = enum(u8) {
@@ -18,6 +18,7 @@ pub const EventName = enum(u8) {
 };
 
 var random: std.rand.DefaultPrng = undefined;
+const DotEnv = @import("../env_loader.zig");
 
 const platform_arch = if (Environment.isAarch64) Analytics.Architecture.arm else Analytics.Architecture.x64;
 
@@ -83,7 +84,7 @@ pub const GenerateHeader = struct {
         pub fn forMac() Analytics.Platform {
             std.mem.set(u8, std.mem.span(&osversion_name), 0);
 
-            var platform = Analytics.Platform{ .os = Analytics.OperatingSystem.macos, .version = "", .arch = platform_arch };
+            var platform = Analytics.Platform{ .os = Analytics.OperatingSystem.macos, .version = &[_]u8{}, .arch = platform_arch };
             var osversion_name_buf: [2]c_int = undefined;
             var osversion_name_ptr = osversion_name.len - 1;
             var len = osversion_name.len - 1;
@@ -169,30 +170,50 @@ pub fn enqueue(comptime name: EventName) void {
     if (disabled) return;
 
     if (!has_loaded) {
-        defer has_loaded = true;
-
-        event_queue = EventQueue.init(std.heap.c_allocator);
-        spawn() catch |err| {
-            if (comptime isDebug) {
-                Output.prettyErrorln("[Analytics] error spawning thread {s}", .{@errorName(err)});
-                Output.flush();
-            }
-
-            disabled = true;
-            return;
-        };
+        if (!start()) return;
     }
 
-    _ = event_queue.tryWriteItem(Event.init(name)) catch false;
+    var items = [_]Event{Event.init(name)};
+    _ = event_queue.write(&items) catch false;
+    std.Thread.Futex.wake(&counter, 1);
 }
 
 pub var thread: std.Thread = undefined;
+var counter: std.atomic.Atomic(u32) = undefined;
 
-pub fn spawn() !void {
+fn start() bool {
+    @setCold(true);
+
+    defer has_loaded = true;
+    counter = std.atomic.Atomic(u32).init(0);
+
+    event_queue = EventQueue.init(std.heap.c_allocator);
+    spawn() catch |err| {
+        if (comptime isDebug) {
+            Output.prettyErrorln("[Analytics] error spawning thread {s}", .{@errorName(err)});
+            Output.flush();
+        }
+
+        disabled = true;
+        return false;
+    };
+    return true;
+}
+
+fn spawn() !void {
     @setCold(true);
     has_loaded = true;
     thread = try std.Thread.spawn(.{}, readloop, .{});
 }
+
+const headers_buf: string = "Content-Type binary/peechy";
+const header_entry = Headers.Kv{
+    .name = .{ .offset = 0, .length = @intCast(u32, "Content-Type".len) },
+    .value = .{
+        .offset = std.mem.indexOf(u8, headers_buf, "binary/peechy").?,
+        .length = @intCast(u32, "binary/peechy".len),
+    },
+};
 
 fn readloop() anyerror!void {
     defer disabled = true;
@@ -201,8 +222,13 @@ fn readloop() anyerror!void {
     thread.setName("Analytics") catch {};
 
     var event_list = EventList.init();
+    event_list.client.verbose = FeatureFlags.verbose_analytics;
+    event_list.client.header_entries.append(default_allocator, header_entry) catch unreachable;
+    event_list.client.header_buf = headers_buf;
+
     // everybody's random should be random
     while (true) {
+        // Wait for the next event by blocking
         while (event_queue.tryReadItem() catch null) |item| {
             event_list.push(item);
         }
@@ -211,7 +237,7 @@ fn readloop() anyerror!void {
             event_list.flush();
         }
 
-        event_queue.getters.wait(&event_queue.mutex);
+        std.Thread.Futex.wait(&counter, counter.load(.Acquire), null) catch unreachable;
     }
 }
 

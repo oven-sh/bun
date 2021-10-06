@@ -1,4 +1,4 @@
-package Analytics;
+package analytics;
 
 smol OperatingSystem {
   linux = 1;
@@ -15,7 +15,7 @@ smol Architecture {
 struct Platform {
     OperatingSystem os;
     Architecture arch;
-    string version;
+    byte[] version;
 }
 
 enum EventKind {

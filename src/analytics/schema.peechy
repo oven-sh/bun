@@ -36,7 +36,11 @@ struct EventListHeader {
     uint32 session_id;
     Platform platform;
     uint32 build_id;
+    // hash of the folder name
+    Uint64 project_id;
     uint32 session_length;
+    // enum flags
+    uint32 feature_usage;
 }
 
 struct EventHeader {

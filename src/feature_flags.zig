@@ -70,7 +70,10 @@ pub const auto_import_buffer = false;
 
 pub const is_macro_enabled = true;
 
+// pretend everything is always the macro environment
+// useful for debugging the macro's JSX transform
 pub const force_macro = false;
+
 pub const include_filename_in_jsx = false;
 
-pub const verbose_analytics = true;
+pub const verbose_analytics = false;

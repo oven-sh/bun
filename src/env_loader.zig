@@ -2,6 +2,7 @@ const std = @import("std");
 const logger = @import("./logger.zig");
 usingnamespace @import("./global.zig");
 const CodepointIterator = @import("./string_immutable.zig").CodepointIterator;
+const Analytics = @import("./analytics/analytics_thread.zig");
 const Fs = @import("./fs.zig");
 const Api = @import("./api/schema.zig").Api;
 const Variable = struct {
@@ -461,6 +462,12 @@ pub const Loader = struct {
             Parser.parse(&source, this.allocator, this.map, true);
         }
         this.did_load_process = true;
+
+        if (this.map.get("HOME")) |home_folder| {
+            Analytics.username_only_for_determining_project_id_and_never_sent = home_folder;
+        } else if (this.map.get("USER")) |home_folder| {
+            Analytics.username_only_for_determining_project_id_and_never_sent = home_folder;
+        }
     }
 
     // mostly for tests
@@ -486,20 +493,24 @@ pub const Loader = struct {
 
         if (dir.hasComptimeQuery(".env.local")) {
             try this.loadEnvFile(fs, dir_handle, ".env.local", false);
+            Analytics.Features.dotenv = true;
         }
 
         if (comptime development) {
             if (dir.hasComptimeQuery(".env.development")) {
                 try this.loadEnvFile(fs, dir_handle, ".env.development", false);
+                Analytics.Features.dotenv = true;
             }
         } else {
             if (dir.hasComptimeQuery(".env.production")) {
                 try this.loadEnvFile(fs, dir_handle, ".env.production", false);
+                Analytics.Features.dotenv = true;
             }
         }
 
         if (dir.hasComptimeQuery(".env")) {
             try this.loadEnvFile(fs, dir_handle, ".env", false);
+            Analytics.Features.dotenv = true;
         }
 
         this.printLoaded(start);

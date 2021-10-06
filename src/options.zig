@@ -14,6 +14,8 @@ const URL = @import("./query_string_map.zig").URL;
 const ConditionsMap = @import("./resolver/package_json.zig").ESModule.ConditionsMap;
 usingnamespace @import("global.zig");
 
+const Analytics = @import("./analytics/analytics_thread.zig");
+
 const DotEnv = @import("./env_loader.zig");
 
 const assert = std.debug.assert;
@@ -1034,6 +1036,9 @@ pub const BundleOptions = struct {
             .transform_options = transform,
         };
 
+        Analytics.Features.define = Analytics.Features.define or transform.define != null;
+        Analytics.Features.loaders = Analytics.Features.loaders or transform.loaders != null;
+
         if (transform.origin) |origin| {
             opts.origin = URL.parse(origin);
         }
@@ -1324,6 +1329,15 @@ pub const BundleOptions = struct {
 
         opts.polyfill_node_globals = opts.platform != .node;
 
+        Analytics.Features.framework = Analytics.Features.framework or opts.framework != null;
+        Analytics.Features.filesystem_router = Analytics.Features.filesystem_router or opts.routes.routes_enabled;
+        Analytics.Features.origin = Analytics.Features.origin or transform.origin != null;
+        Analytics.Features.public_folder = Analytics.Features.public_folder or opts.routes.static_dir_enabled;
+        Analytics.Features.bun_bun = Analytics.Features.bun_bun or transform.node_modules_bundle_path != null;
+        Analytics.Features.bunjs = Analytics.Features.bunjs or transform.node_modules_bundle_path_server != null;
+        Analytics.Features.macros = Analytics.Features.macros or opts.platform == .bun_macro;
+        Analytics.Features.external = Analytics.Features.external or transform.external.len > 0;
+        Analytics.Features.single_page_app_routing = Analytics.Features.single_page_app_routing or opts.routes.single_page_app_routing;
         return opts;
     }
 };

@@ -1,3 +1,4 @@
+
 const std = @import("std");
 
 pub const Reader = struct {
@@ -281,192 +282,228 @@ pub fn Writer(comptime WritableStream: type) type {
 pub const ByteWriter = Writer(*std.io.FixedBufferStream([]u8));
 pub const FileWriter = Writer(std.fs.File);
 
-pub const analytics = struct {
-    pub const OperatingSystem = enum(u8) {
-        _none,
-        /// linux
-        linux,
 
-        /// macos
-        macos,
 
-        /// windows
-        windows,
 
-        /// wsl
-        wsl,
+pub const analytics = struct { 
 
-        _,
+pub const OperatingSystem = enum(u8) {
 
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
-        }
-    };
+_none,
+  /// linux
+  linux,
 
-    pub const Architecture = enum(u8) {
-        _none,
-        /// x64
-        x64,
+  /// macos
+  macos,
 
-        /// arm
-        arm,
+  /// windows
+  windows,
 
-        _,
+  /// wsl
+  wsl,
 
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
-        }
-    };
+_,
 
-    pub const Platform = struct {
-        /// os
-        os: OperatingSystem,
+                pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
+                    return try std.json.stringify(@tagName(self), opts, o);
+                }
 
-        /// arch
-        arch: Architecture,
-
-        /// version
-        version: []const u8,
-
-        pub fn decode(reader: anytype) anyerror!Platform {
-            var this = std.mem.zeroes(Platform);
-
-            this.os = try reader.readValue(OperatingSystem);
-            this.arch = try reader.readValue(Architecture);
-            this.version = try reader.readArray(u8);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeEnum(this.os);
-            try writer.writeEnum(this.arch);
-            try writer.writeArray(u8, this.version);
-        }
-    };
-
-    pub const EventKind = enum(u32) {
-        _none,
-        /// bundle_success
-        bundle_success,
-
-        /// bundle_fail
-        bundle_fail,
-
-        /// http_start
-        http_start,
-
-        /// http_build
-        http_build,
-
-        /// bundle_start
-        bundle_start,
-
-        _,
-
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
-        }
-    };
-
-    pub const Uint64 = packed struct {
-        /// first
-        first: u32 = 0,
-
-        /// second
-        second: u32 = 0,
-
-        pub fn decode(reader: anytype) anyerror!Uint64 {
-            var this = std.mem.zeroes(Uint64);
-
-            this.first = try reader.readValue(u32);
-            this.second = try reader.readValue(u32);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeInt(this.first);
-            try writer.writeInt(this.second);
-        }
-    };
-
-    pub const EventListHeader = struct {
-        /// machine_id
-        machine_id: Uint64,
-
-        /// session_id
-        session_id: u32 = 0,
-
-        /// platform
-        platform: Platform,
-
-        /// build_id
-        build_id: u32 = 0,
-
-        /// session_length
-        session_length: u32 = 0,
-
-        pub fn decode(reader: anytype) anyerror!EventListHeader {
-            var this = std.mem.zeroes(EventListHeader);
-
-            this.machine_id = try reader.readValue(Uint64);
-            this.session_id = try reader.readValue(u32);
-            this.platform = try reader.readValue(Platform);
-            this.build_id = try reader.readValue(u32);
-            this.session_length = try reader.readValue(u32);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeValue(this.machine_id);
-            try writer.writeInt(this.session_id);
-            try writer.writeValue(this.platform);
-            try writer.writeInt(this.build_id);
-            try writer.writeInt(this.session_length);
-        }
-    };
-
-    pub const EventHeader = struct {
-        /// timestamp
-        timestamp: Uint64,
-
-        /// kind
-        kind: EventKind,
-
-        pub fn decode(reader: anytype) anyerror!EventHeader {
-            var this = std.mem.zeroes(EventHeader);
-
-            this.timestamp = try reader.readValue(Uint64);
-            this.kind = try reader.readValue(EventKind);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeValue(this.timestamp);
-            try writer.writeEnum(this.kind);
-        }
-    };
-
-    pub const EventList = struct {
-        /// header
-        header: EventListHeader,
-
-        /// event_count
-        event_count: u32 = 0,
-
-        pub fn decode(reader: anytype) anyerror!EventList {
-            var this = std.mem.zeroes(EventList);
-
-            this.header = try reader.readValue(EventListHeader);
-            this.event_count = try reader.readValue(u32);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeValue(this.header);
-            try writer.writeInt(this.event_count);
-        }
-    };
+                
 };
+
+pub const Architecture = enum(u8) {
+
+_none,
+  /// x64
+  x64,
+
+  /// arm
+  arm,
+
+_,
+
+                pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
+                    return try std.json.stringify(@tagName(self), opts, o);
+                }
+
+                
+};
+
+pub const Platform = struct {
+/// os
+os: OperatingSystem,
+
+/// arch
+arch: Architecture,
+
+/// version
+version: []const u8,
+
+
+pub fn decode(reader: anytype) anyerror!Platform {
+  var this = std.mem.zeroes(Platform);
+
+  this.os = try reader.readValue(OperatingSystem); 
+  this.arch = try reader.readValue(Architecture); 
+  this.version = try reader.readArray(u8); 
+   return this;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+   try writer.writeEnum(this.os);
+   try writer.writeEnum(this.arch);
+   try writer.writeArray(u8, this.version);
+}
+
+};
+
+pub const EventKind = enum(u32) {
+
+_none,
+  /// bundle_success
+  bundle_success,
+
+  /// bundle_fail
+  bundle_fail,
+
+  /// http_start
+  http_start,
+
+  /// http_build
+  http_build,
+
+  /// bundle_start
+  bundle_start,
+
+_,
+
+                pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
+                    return try std.json.stringify(@tagName(self), opts, o);
+                }
+
+                
+};
+
+pub const Uint64 = packed struct {
+/// first
+first: u32 = 0,
+
+/// second
+second: u32 = 0,
+
+
+pub fn decode(reader: anytype) anyerror!Uint64 {
+  var this = std.mem.zeroes(Uint64);
+
+  this.first = try reader.readValue(u32); 
+  this.second = try reader.readValue(u32); 
+   return this;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+   try writer.writeInt(this.first);
+   try writer.writeInt(this.second);
+}
+
+};
+
+pub const EventListHeader = struct {
+/// machine_id
+machine_id: Uint64,
+
+/// session_id
+session_id: u32 = 0,
+
+/// platform
+platform: Platform,
+
+/// build_id
+build_id: u32 = 0,
+
+/// project_id
+project_id: Uint64,
+
+/// session_length
+session_length: u32 = 0,
+
+/// feature_usage
+feature_usage: u32 = 0,
+
+
+pub fn decode(reader: anytype) anyerror!EventListHeader {
+  var this = std.mem.zeroes(EventListHeader);
+
+  this.machine_id = try reader.readValue(Uint64); 
+  this.session_id = try reader.readValue(u32); 
+  this.platform = try reader.readValue(Platform); 
+  this.build_id = try reader.readValue(u32); 
+  this.project_id = try reader.readValue(Uint64); 
+  this.session_length = try reader.readValue(u32); 
+  this.feature_usage = try reader.readValue(u32); 
+   return this;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+   try writer.writeValue(this.machine_id);
+   try writer.writeInt(this.session_id);
+   try writer.writeValue(this.platform);
+   try writer.writeInt(this.build_id);
+   try writer.writeValue(this.project_id);
+   try writer.writeInt(this.session_length);
+   try writer.writeInt(this.feature_usage);
+}
+
+};
+
+pub const EventHeader = struct {
+/// timestamp
+timestamp: Uint64,
+
+/// kind
+kind: EventKind,
+
+
+pub fn decode(reader: anytype) anyerror!EventHeader {
+  var this = std.mem.zeroes(EventHeader);
+
+  this.timestamp = try reader.readValue(Uint64); 
+  this.kind = try reader.readValue(EventKind); 
+   return this;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+   try writer.writeValue(this.timestamp);
+   try writer.writeEnum(this.kind);
+}
+
+};
+
+pub const EventList = struct {
+/// header
+header: EventListHeader,
+
+/// event_count
+event_count: u32 = 0,
+
+
+pub fn decode(reader: anytype) anyerror!EventList {
+  var this = std.mem.zeroes(EventList);
+
+  this.header = try reader.readValue(EventListHeader); 
+  this.event_count = try reader.readValue(u32); 
+   return this;
+}
+
+pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+   try writer.writeValue(this.header);
+   try writer.writeInt(this.event_count);
+}
+
+};
+
+
+};
+
 
 const ExamplePackedStruct = packed struct {
     len: u32 = 0,

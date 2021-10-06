@@ -16,6 +16,7 @@ const js_ast = @import("../../js_ast.zig");
 const hash_map = @import("../../hash_map.zig");
 const http = @import("../../http.zig");
 const ImportKind = ast.ImportKind;
+const Analytics = @import("../../analytics/analytics_thread.zig");
 usingnamespace @import("./node_env_buf_map.zig");
 usingnamespace @import("./base.zig");
 usingnamespace @import("./webcore/response.zig");
@@ -579,6 +580,7 @@ pub const VirtualMachine = struct {
     pub fn enableMacroMode(this: *VirtualMachine) void {
         this.bundler.options.platform = .bun_macro;
         this.macro_mode = true;
+        Analytics.Features.macros = true;
     }
 
     pub fn disableMacroMode(this: *VirtualMachine) void {

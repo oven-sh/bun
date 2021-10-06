@@ -16,6 +16,10 @@ const bunExec = process.env.BUN_BIN || "bun";
 const bunProcess = child_process.spawn(bunExec, bunFlags, {
   cwd: snippetsDir,
   stdio: "pipe",
+  env: {
+    ...process.env,
+    DISABLE_BUN_ANALYTICS: "1",
+  },
 
   shell: false,
 });

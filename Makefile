@@ -383,3 +383,6 @@ picohttp:
 
 analytics:
 	 ./node_modules/.bin/peechy --schema src/analytics/schema.peechy --zig src/analytics/analytics_schema.zig
+
+analytics-features:
+	@cd misctools; zig run --main-pkg-path ../ ./features.zig

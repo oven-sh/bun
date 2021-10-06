@@ -772,6 +772,8 @@ pub const Bundler = struct {
                 bundler.resolver.debug_logs = try DebugLogs.init(allocator);
             }
 
+            Analytics.Features.bun_bun = true;
+
             always_bundled: {
                 const root_package_json_resolved: _resolver.Result = bundler.resolver.resolve(bundler.fs.top_level_dir, "./package.json", .stmt) catch |err| {
                     generator.log.addWarning(null, logger.Loc.Empty, "Please run `bun bun` from a directory containing a package.json.") catch unreachable;
@@ -779,9 +781,14 @@ pub const Bundler = struct {
                 };
                 const root_package_json = root_package_json_resolved.package_json orelse brk: {
                     const read_dir = (bundler.resolver.readDirInfo(bundler.fs.top_level_dir) catch unreachable).?;
+                    Analytics.Features.tsconfig = Analytics.Features.tsconfig or read_dir.tsconfig_json != null;
                     break :brk read_dir.package_json.?;
                 };
+                Analytics.setProjectID(std.fs.path.dirname(root_package_json.source.path.text) orelse "/", root_package_json.name);
+                Analytics.Features.macros = Analytics.Features.macros or root_package_json.macros.count() > 0;
+
                 if (root_package_json.always_bundle.len > 0) {
+                    Analytics.Features.always_bundle = true;
                     var always_bundled_package_jsons = bundler.allocator.alloc(*PackageJSON, root_package_json.always_bundle.len) catch unreachable;
                     var always_bundled_package_hashes = bundler.allocator.alloc(u32, root_package_json.always_bundle.len) catch unreachable;
                     var i: u16 = 0;
@@ -838,6 +845,8 @@ pub const Bundler = struct {
                 this.bundler.options.jsx.supports_fast_refresh and
                 bundler.options.platform.isWebLike();
 
+            Analytics.Features.fast_refresh = this.bundler.options.jsx.supports_fast_refresh;
+
             const resolve_queue_estimate = bundler.options.entry_points.len +
                 @intCast(usize, @boolToInt(framework_config != null)) +
                 @intCast(usize, @boolToInt(include_refresh_runtime)) +
@@ -845,6 +854,7 @@ pub const Bundler = struct {
 
             if (bundler.router) |router| {
                 defer this.bundler.resetStore();
+                Analytics.Features.filesystem_router = true;
 
                 const entry_points = try router.getEntryPoints(allocator);
                 for (entry_points) |entry_point| {
@@ -870,6 +880,8 @@ pub const Bundler = struct {
 
                 try this.bundler.configureFramework(true);
                 if (bundler.options.framework) |framework| {
+                    Analytics.Features.framework = true;
+
                     if (framework.override_modules.keys.len > 0) {
                         bundler.options.framework.?.override_modules_hashes = allocator.alloc(u64, framework.override_modules.keys.len) catch unreachable;
                         for (framework.override_modules.keys) |key, i| {
@@ -878,6 +890,7 @@ pub const Bundler = struct {
                     }
                     if (bundler.options.platform.isBun()) {
                         if (framework.server.isEnabled()) {
+                            Analytics.Features.bunjs = true;
                             const resolved = try bundler.linker.resolver.resolve(
                                 bundler.fs.top_level_dir,
                                 framework.server.path,
@@ -938,8 +951,17 @@ pub const Bundler = struct {
 
             this.bundler.resetStore();
 
-            try this.pool.start(this);
-            try this.pool.wait(this);
+            if (bundler.options.platform != .bun) Analytics.enqueue(Analytics.EventName.bundle_start);
+            this.pool.start(this) catch |err| {
+                Analytics.enqueue(Analytics.EventName.bundle_fail);
+                return err;
+            };
+            this.pool.wait(this) catch |err| {
+                Analytics.enqueue(Analytics.EventName.bundle_fail);
+                return err;
+            };
+            if (bundler.options.platform != .bun) Analytics.enqueue(Analytics.EventName.bundle_success);
+
             estimated_input_lines_of_code.* = generator.estimated_input_lines_of_code;
 
             // if (comptime !isRelease) {

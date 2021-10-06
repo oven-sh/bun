@@ -23,4 +23,4 @@ pub const isTest = std.builtin.is_test;
 pub const isLinux = std.Target.current.os.tag == .linux;
 pub const isAarch64 = std.Target.current.cpu.arch == .aarch64;
 
-pub const analytics_url = "http://localhost:4000/events";
+pub const analytics_url = if (isDebug) "http://localhost:4000/events" else "http://i.bun.sh/events";

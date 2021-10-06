@@ -1556,6 +1556,7 @@ pub const RequestContext = struct {
             try ctx.flushHeaders();
             // Output.prettyln("<r><green>101<r><d> Hot Module Reloading connected.<r>", .{});
             // Output.flush();
+            Analytics.Features.hot_module_reloading = true;
 
             var cmd: Api.WebsocketCommand = undefined;
             var msg: Api.WebsocketMessage = .{
@@ -2682,6 +2683,11 @@ pub const Server = struct {
 
         Output.flush();
 
+        Analytics.Features.bun_bun = server.bundler.options.node_modules_bundle != null;
+        Analytics.Features.framework = server.bundler.options.framework != null;
+        Analytics.Features.filesystem_router = server.bundler.router != null;
+        Analytics.Features.bunjs = server.transform_options.node_modules_bundle_path_server != null;
+
         var did_init = false;
         while (!did_init) {
             defer Output.flush();
@@ -2692,6 +2698,7 @@ pub const Server = struct {
             // We want to bind to the network socket as quickly as possible so that opening the URL works
             // We use a secondary loop so that we avoid the extra branch in a hot code path
             server.detectFastRefresh();
+            Analytics.Features.fast_refresh = server.bundler.options.jsx.supports_fast_refresh;
             server.detectTSConfig();
             try server.initWatcher();
             did_init = true;
@@ -2977,8 +2984,20 @@ pub const Server = struct {
         defer this.bundler.resetStore();
 
         const dir_info = (this.bundler.resolver.readDirInfo(this.bundler.fs.top_level_dir) catch return) orelse return;
+
+        if (dir_info.package_json) |pkg| {
+            Analytics.Features.macros = Analytics.Features.macros or pkg.macros.count() > 0;
+            Analytics.Features.always_bundle = pkg.always_bundle.len > 0;
+            Analytics.setProjectID(dir_info.abs_path, pkg.name);
+        } else {
+            Analytics.setProjectID(dir_info.abs_path, "");
+        }
+
         const tsconfig = dir_info.tsconfig_json orelse return;
+        Analytics.Features.tsconfig = true;
+
         serve_as_package_path = tsconfig.base_url_for_paths.len > 0 or tsconfig.base_url.len > 0;
+        Analytics.Features.tsconfig_paths = tsconfig.paths.count() > 0;
     }
 
     pub var global_start_time: std.time.Timer = undefined;
@@ -2998,6 +3017,8 @@ pub const Server = struct {
         server.bundler.* = try Bundler.init(allocator, &server.log, options, null, null);
         server.bundler.configureLinker();
         try server.bundler.configureRouter(true);
+
+        Analytics.Features.filesystem_router = server.bundler.router != null;
 
         const public_folder_is_top_level = server.bundler.options.routes.static_dir_enabled and strings.eql(
             server.bundler.fs.top_level_dir,

@@ -9,6 +9,124 @@ const Analytics = @import("./analytics_schema.zig").analytics;
 const Writer = @import("./analytics_schema.zig").Writer;
 const Headers = @import("../javascript/jsc/webcore/response.zig").Headers;
 
+fn NewUint64(val: u64) Analytics.Uint64 {
+    const bytes = std.mem.asBytes(&val);
+    return .{
+        .first = std.mem.readIntNative(u32, bytes[0..4]),
+        .second = std.mem.readIntNative(u32, bytes[4..]),
+    };
+}
+
+// This answers, "What parts of Bun are people actually using?"
+pub const Features = struct {
+    pub var single_page_app_routing = false;
+    pub var tsconfig_paths = false;
+    pub var fast_refresh = false;
+    pub var hot_module_reloading = false;
+    pub var jsx = false;
+    pub var always_bundle = false;
+    pub var tsconfig = false;
+    pub var bun_bun = false;
+    pub var filesystem_router = false;
+    pub var framework = false;
+    pub var bunjs = false;
+    pub var macros = false;
+    pub var public_folder = false;
+    pub var dotenv = false;
+    pub var define = false;
+    pub var loaders = false;
+    pub var origin = false;
+    pub var external = false;
+    pub var fetch = false;
+
+    const Bitset = std.bit_set.IntegerBitSet(32);
+
+    pub const Serializer = struct {
+        inline fn shiftIndex(index: u32) !u32 {
+            return @intCast(u32, @as(Bitset.MaskInt, 1) << @intCast(Bitset.ShiftInt, index));
+        }
+
+        fn writeField(comptime WriterType: type, writer: WriterType, field_name: string, index: u32) !void {
+            var output: [64]u8 = undefined;
+            const name = std.ascii.upperString(&output, field_name);
+
+            try writer.print("const Features_{s} = {d}\n", .{ name, shiftIndex(index) });
+        }
+
+        pub fn writeAll(comptime WriterType: type, writer: WriterType) !void {
+            try writer.writeAll("package analytics\n\n");
+            try writeField(WriterType, writer, "single_page_app_routing", 1);
+            try writeField(WriterType, writer, "tsconfig_paths", 2);
+            try writeField(WriterType, writer, "fast_refresh", 3);
+            try writeField(WriterType, writer, "hot_module_reloading", 4);
+            try writeField(WriterType, writer, "jsx", 5);
+            try writeField(WriterType, writer, "always_bundle", 6);
+            try writeField(WriterType, writer, "tsconfig", 7);
+            try writeField(WriterType, writer, "bun_bun", 8);
+            try writeField(WriterType, writer, "filesystem_router", 9);
+            try writeField(WriterType, writer, "framework", 10);
+            try writeField(WriterType, writer, "bunjs", 11);
+            try writeField(WriterType, writer, "macros", 12);
+            try writeField(WriterType, writer, "public_folder", 13);
+            try writeField(WriterType, writer, "dotenv", 14);
+            try writeField(WriterType, writer, "define", 15);
+            try writeField(WriterType, writer, "loaders", 16);
+            try writeField(WriterType, writer, "origin", 17);
+            try writeField(WriterType, writer, "external", 18);
+            try writeField(WriterType, writer, "fetch", 19);
+            try writer.writeAll("\n");
+        }
+    };
+
+    pub fn toInt() u32 {
+        var list = Bitset.initEmpty();
+        list.setValue(1, Features.single_page_app_routing);
+        list.setValue(2, Features.tsconfig_paths);
+        list.setValue(3, Features.fast_refresh);
+        list.setValue(4, Features.hot_module_reloading);
+        list.setValue(5, Features.jsx);
+        list.setValue(6, Features.always_bundle);
+        list.setValue(7, Features.tsconfig);
+        list.setValue(8, Features.bun_bun);
+        list.setValue(9, Features.filesystem_router);
+        list.setValue(10, Features.framework);
+        list.setValue(11, Features.bunjs);
+        list.setValue(12, Features.macros);
+        list.setValue(13, Features.public_folder);
+        list.setValue(14, Features.dotenv);
+        list.setValue(15, Features.define);
+        list.setValue(16, Features.loaders);
+        list.setValue(17, Features.origin);
+        list.setValue(18, Features.external);
+        list.setValue(19, Features.fetch);
+
+        if (comptime FeatureFlags.verbose_analytics) {
+            if (Features.single_page_app_routing) Output.pretty("<r><d>single_page_app_routing<r>,", .{});
+            if (Features.tsconfig_paths) Output.pretty("<r><d>tsconfig_paths<r>,", .{});
+            if (Features.fast_refresh) Output.pretty("<r><d>fast_refresh<r>,", .{});
+            if (Features.hot_module_reloading) Output.pretty("<r><d>hot_module_reloading<r>,", .{});
+            if (Features.jsx) Output.pretty("<r><d>jsx<r>,", .{});
+            if (Features.always_bundle) Output.pretty("<r><d>always_bundle<r>,", .{});
+            if (Features.tsconfig) Output.pretty("<r><d>tsconfig<r>,", .{});
+            if (Features.bun_bun) Output.pretty("<r><d>bun_bun<r>,", .{});
+            if (Features.filesystem_router) Output.pretty("<r><d>filesystem_router<r>,", .{});
+            if (Features.framework) Output.pretty("<r><d>framework<r>,", .{});
+            if (Features.bunjs) Output.pretty("<r><d>bunjs<r>,", .{});
+            if (Features.macros) Output.pretty("<r><d>macros<r>,", .{});
+            if (Features.public_folder) Output.pretty("<r><d>public_folder<r>,", .{});
+            if (Features.dotenv) Output.pretty("<r><d>dotenv<r>,", .{});
+            if (Features.define) Output.pretty("<r><d>define<r>,", .{});
+            if (Features.loaders) Output.pretty("<r><d>loaders<r>,", .{});
+            if (Features.origin) Output.pretty("<r><d>origin<r>,", .{});
+            if (Features.external) Output.pretty("<r><d>external<r>,", .{});
+            if (Features.fetch) Output.pretty("<r><d>fetch<r>,", .{});
+            Output.prettyln("\n", .{});
+        }
+
+        return @as(u32, list.mask);
+    }
+};
+
 pub const EventName = enum(u8) {
     bundle_success,
     bundle_fail,
@@ -21,6 +139,7 @@ var random: std.rand.DefaultPrng = undefined;
 const DotEnv = @import("../env_loader.zig");
 
 const platform_arch = if (Environment.isAarch64) Analytics.Architecture.arm else Analytics.Architecture.x64;
+var project_id: Analytics.Uint64 = .{};
 
 pub const Event = struct {
     timestamp: u64,
@@ -58,12 +177,19 @@ var event_queue: EventQueue = undefined;
 
 pub const GenerateHeader = struct {
     pub fn generate() Analytics.EventListHeader {
+        if (comptime isDebug) {
+            if (project_id.first == 0 and project_id.second == 0) {
+                Output.prettyErrorln("warn: project_id is 0", .{});
+            }
+        }
+
         if (Environment.isMac) {
             return Analytics.EventListHeader{
                 .machine_id = GenerateMachineID.forMac() catch Analytics.Uint64{},
                 .platform = GeneratePlatform.forMac(),
                 .build_id = comptime @truncate(u32, Global.build_id),
                 .session_id = random.random.int(u32),
+                .project_id = project_id,
             };
         }
 
@@ -73,6 +199,7 @@ pub const GenerateHeader = struct {
                 .platform = GeneratePlatform.forLinux(),
                 .build_id = comptime @truncate(u32, Global.build_id),
                 .session_id = random.random.int(u32),
+                .project_id = project_id,
             };
         }
 
@@ -292,6 +419,7 @@ pub const EventList = struct {
         const now = std.time.nanoTimestamp();
 
         this.header.session_length = @truncate(u32, @intCast(u64, (now - start_time)) / std.time.ns_per_ms);
+        this.header.feature_usage = Features.toInt();
 
         var list = Analytics.EventList{
             .header = this.header,
@@ -372,3 +500,32 @@ pub const EventList = struct {
 };
 
 pub var is_ci = false;
+
+pub var username_only_for_determining_project_id_and_never_sent: string = "";
+pub fn setProjectID(folder_name_: string, package_name: string) void {
+    if (disabled) return;
+
+    var hasher = std.hash.Wyhash.init(10);
+
+    var folder_name = folder_name_;
+
+    // The idea here is
+    // When you're working at a mid-large company
+    // Basically everyone has standardized laptops
+    // The hardware may differ, but the folder structure is typically identical
+    // But the username or home folder may differ
+    // So when we hash, we skip that if it exists
+    if (username_only_for_determining_project_id_and_never_sent.len > 0) {
+        if (std.mem.indexOf(u8, folder_name, username_only_for_determining_project_id_and_never_sent)) |i| {
+            const offset = i + username_only_for_determining_project_id_and_never_sent.len + 1;
+            if (folder_name.len > offset) {
+                folder_name = folder_name[offset..];
+            }
+        }
+    }
+    hasher.update(folder_name);
+    hasher.update("@");
+    if (package_name.len > 0) hasher.update(package_name);
+    if (package_name.len == 0) hasher.update("\"\"");
+    project_id = NewUint64(hasher.final());
+}

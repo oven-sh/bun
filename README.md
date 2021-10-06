@@ -516,6 +516,12 @@ Is generated like this:
 
 The implementation details of this module ID hash will vary between versions of Bun. The important part is the metadata contains the module IDs, the package paths, and the package hashes so it shouldn't really matter in practice if other tooling wants to make use of any of this.
 
+### Environment variables
+
+- `GOMAXPROCS`: For `bun bun`, this sets the maximum number of threads to use. If you're experiencing an issue with `bun bun`, you try setting `GOMAXPROCS=1` to force it to be single-threaded
+- `DISABLE_BUN_ANALYTICS=1` this disables Bun's analytics. Bun records bundle timings (so we can answer with data, "is bun getting faster?") and feature usage (e.g. "are people actually using macros?"). The request body size is about 60 bytes, so it's not a lot of data
+- `TMPDIR`: Before `bun bun`, completes, it stores the new `.bun` in `$TMPDIR`. If unset, it defaults to the platform-specific temporary directory
+
 # Credits
 
 - While written in Zig instead of Go, Bun's JS transpiler, CSS lexer, and node module resolver source code is based off of @evanw's esbuild project. @evanw did a fantastic job with esbuild.

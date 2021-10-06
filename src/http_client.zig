@@ -49,6 +49,7 @@ pub fn init(allocator: *std.mem.Allocator, method: Method, url: URL, header_entr
 
 threadlocal var response_headers_buf: [256]picohttp.Header = undefined;
 threadlocal var request_headers_buf: [256]picohttp.Header = undefined;
+threadlocal var request_content_len_buf: [64]u8 = undefined;
 threadlocal var header_name_hashes: [256]u64 = undefined;
 // threadlocal var resolver_cache
 const tcp = std.x.net.tcp;
@@ -157,8 +158,8 @@ pub fn buildRequest(this: *const HTTPClient, body_len: usize) picohttp.Request {
 
     if (body_len > 0) {
         request_headers_buf[header_count] = picohttp.Header{
-            .name = host_header_name,
-            .value = this.url.hostname,
+            .name = content_length_header_name,
+            .value = std.fmt.bufPrint(&request_content_len_buf, "{d}", .{body_len}) catch "0",
         };
         header_count += 1;
     }
@@ -231,13 +232,20 @@ pub fn sendHTTP(this: *HTTPClient, body: []const u8, body_out_str: *MutableStrin
     }
 
     var client_reader = client.reader(SOCKET_FLAGS);
-    var req_buf_len = try client_reader.readAll(&http_req_buf);
-    var request_buffer = http_req_buf[0..req_buf_len];
+
     var response: picohttp.Response = undefined;
 
     {
+        var req_buf_len: usize = 0;
+        var req_buf_read: usize = std.math.maxInt(usize);
+
         var response_length: usize = 0;
-        restart: while (true) {
+        restart: while (req_buf_read != 0) {
+            req_buf_read = try client_reader.read(&http_req_buf);
+            req_buf_len += req_buf_read;
+
+            var request_buffer = http_req_buf[0..req_buf_len];
+
             response = picohttp.Response.parseParts(request_buffer, &response_headers_buf, &response_length) catch |err| {
                 switch (err) {
                     error.ShortRead => {

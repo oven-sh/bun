@@ -125,6 +125,7 @@ async function main() {
     "/styledcomponents-output.js",
     "/void-shouldnt-delete-call-expressions.js",
     "/custom-emotion-jsx/file.jsx",
+    "/react-context-value-func.tsx",
   ];
   tests.reverse();
 

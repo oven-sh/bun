@@ -4,20 +4,15 @@
   "main": "index.js",
   "license": "MIT",
   "dependencies": {
-    "@jarred/react-static-tweets": "0.5.8",
-    "@jarred/static-tweets": "^0.5.8",
     "date-fns": "^2.23.0",
     "isomorphic-fetch": "^3.0.0",
-    "next": "^11.1.0",
-    "parcel": "2.0.0-rc.0",
-    "path-browserify": "^1.0.1",
+    "next": "11.1.2",
     "react": "^17.0.2",
     "react-dom": "^17.0.2",
     "react-is": "^17.0.2",
     "whatwg-url": "^9.1.0"
   },
   "devDependencies": {
-    "@babel/standalone": "^7.15.3",
     "@types/react": "^17.0.19",
     "bun-framework-next": "^0.0.0-21",
     "typescript": "^4.3.5"

@@ -31,7 +31,7 @@ var hmr = new HMR(2717584935, "spread_with_key.tsx"), exports = hmr.exports;
   function test() {
     console.assert(React.isValidElement(jsx(SpreadWithTheKey, {
       className: "foo"
-    }, undefined, true, undefined, this)));
+    }, undefined, false, undefined, this)));
     return testDone(import.meta.url);
   }
   hmr.exportAll({

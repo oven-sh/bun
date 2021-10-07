@@ -20,8 +20,8 @@ var hmr = new HMR(2165509932, "multiple-imports.js"), exports = hmr.exports;
 (hmr._load = function() {
   const bacon = React;
   const bacon2 = jsx(JSXFrag, {
-    children: ["hello"]
-  }, undefined, true, undefined, this);
+    children: "hello"
+  }, undefined, false, undefined, this);
   function test() {
     console.assert(bacon === React);
     console.assert(bacon === React2);

@@ -23,23 +23,23 @@ var hmr = new HMR(3514348331, "react-context-value-func.tsx"), exports = hmr.exp
     const foo = true;
     return jsx(Context.Provider, {
       value: cb,
-      children: [children(foo)]
-    }, undefined, true, undefined, this);
+      children: children(foo)
+    }, undefined, false, undefined, this);
   };
   const ContextValue = ({}) => jsx(Context.Consumer, {
-    children: [(foo) => {
+    children: (foo) => {
       if (foo)
         return jsx("div", {
-          children: ["Worked!"]
-        }, undefined, true, undefined, this);
+          children: "Worked!"
+        }, undefined, false, undefined, this);
       throw `Value "${foo}"" should be true`;
-    }]
-  }, undefined, true, undefined, this);
+    }
+  }, undefined, false, undefined, this);
   const TestComponent = () => jsx(ContextProvider, {
-    children: [jsx(ContextValue, {}, undefined, true, undefined, this)]
-  }, undefined, true, undefined, this);
+    children: jsx(ContextValue, {}, undefined, false, undefined, this)
+  }, undefined, false, undefined, this);
   function test() {
-    const foo = jsx(TestComponent, {}, undefined, true, undefined, this);
+    const foo = jsx(TestComponent, {}, undefined, false, undefined, this);
     return testDone(import.meta.url);
   }
   hmr.exportAll({

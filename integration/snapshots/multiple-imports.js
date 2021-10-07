@@ -11,8 +11,8 @@ var { default: React2} = require($bbcd215f);
 const bacon = React;
 
 const bacon2 = jsx(JSXFrag, {
-  children: ["hello"]
-}, undefined, true, undefined, this);
+  children: "hello"
+}, undefined, false, undefined, this);
 export function test() {
   console.assert(bacon === React);
   console.assert(bacon === React2);

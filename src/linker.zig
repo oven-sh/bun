@@ -197,10 +197,7 @@ pub const Linker = struct {
         comptime ignore_runtime: bool,
     ) !void {
         var needs_runtime = result.ast.uses_exports_ref or result.ast.uses_module_ref or result.ast.runtime_imports.hasAny();
-        const source_dir = if (file_path.is_symlink and file_path.pretty.len > 0 and import_path_format == .absolute_url and linker.options.platform.isNotBun())
-            Fs.PathName.init(file_path.pretty).dirWithTrailingSlash()
-        else
-            file_path.sourceDir();
+        const source_dir = file_path.sourceDir();
         var externals = std.ArrayList(u32).init(linker.allocator);
         var needs_bundle = false;
         var first_bundled_index: ?u32 = null;

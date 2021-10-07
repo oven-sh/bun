@@ -11201,40 +11201,35 @@ pub fn NewParser(
                                     //    children: [el1, el2]
                                     // }
 
-                                    const is_static_jsx = e_.children.len == 0 or e_.children.len > 1 or e_.children[0].data != .e_array;
+                                    {
+                                        var last_child: usize = 0;
+                                        for (e_.children[0..children_count]) |child| {
+                                            e_.children[last_child] = p.visitExpr(child);
+                                            // if tree-shaking removes the element, we must also remove it here.
+                                            last_child += @intCast(usize, @boolToInt(e_.children[last_child].data != .e_missing));
+                                        }
+                                        e_.children = e_.children[0..last_child];
+                                    }
+
+                                    const children_key = Expr{ .data = jsxChildrenKeyData, .loc = expr.loc };
+
+                                    // Babel defines static jsx as children.len > 1
+                                    const is_static_jsx = last_child > 1;
 
                                     // if (p.options.jsx.development) {
-                                    switch (children_count) {
+                                    switch (last_child) {
                                         0 => {},
                                         1 => {
-                                            // static jsx must always be an array
-                                            if (is_static_jsx) {
-                                                const children_key = Expr{ .data = jsxChildrenKeyData, .loc = expr.loc };
-                                                e_.children[0] = p.visitExpr(e_.children[0]);
-                                                props.append(G.Property{
-                                                    .key = children_key,
-                                                    .value = p.e(E.Array{
-                                                        .items = e_.children[0..children_count],
-                                                        .is_single_line = e_.children.len < 2,
-                                                    }, expr.loc),
-                                                }) catch unreachable;
-                                            } else {
-                                                const children_key = Expr{ .data = jsxChildrenKeyData, .loc = expr.loc };
-                                                props.append(G.Property{
-                                                    .key = children_key,
-                                                    .value = p.visitExpr(e_.children[0]),
-                                                }) catch unreachable;
-                                            }
+                                            props.append(G.Property{
+                                                .key = children_key,
+                                                .value = e_.children[0],
+                                            }) catch unreachable;
                                         },
                                         else => {
-                                            for (e_.children[0..children_count]) |child, i| {
-                                                e_.children[i] = p.visitExpr(child);
-                                            }
-                                            const children_key = Expr{ .data = jsxChildrenKeyData, .loc = expr.loc };
                                             props.append(G.Property{
                                                 .key = children_key,
                                                 .value = p.e(E.Array{
-                                                    .items = e_.children[0..children_count],
+                                                    .items = e_.children,
                                                     .is_single_line = e_.children.len < 2,
                                                 }, expr.loc),
                                             }) catch unreachable;

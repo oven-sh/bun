@@ -226,10 +226,10 @@ pub const GenerateHeader = struct {
         pub fn forLinux() Analytics.Platform {
             linux_os_name = std.mem.zeroes(@TypeOf(linux_os_name));
 
-            std.c.uname(&linux_os_name);
+            _ = std.c.uname(&linux_os_name);
 
-            const release = std.mem.span(linux_os_name.release);
-            const version = std.mem.sliceTo(std.mem.span(linux_os_name.version).ptr, @as(u8, 0));
+            const release = std.mem.span(&linux_os_name.release);
+            const version = std.mem.sliceTo(std.mem.span(&linux_os_name.version).ptr, @as(u8, 0));
             // Linux DESKTOP-P4LCIEM 5.10.16.3-microsoft-standard-WSL2 #1 SMP Fri Apr 2 22:23:49 UTC 2021 x86_64 x86_64 x86_64 GNU/Linux
             if (std.mem.indexOf(u8, release, "microsoft") != null) {
                 return Analytics.Platform{ .os = Analytics.OperatingSystem.wsl, .version = version, .arch = platform_arch };

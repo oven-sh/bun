@@ -11214,10 +11214,10 @@ pub fn NewParser(
                                     const children_key = Expr{ .data = jsxChildrenKeyData, .loc = expr.loc };
 
                                     // Babel defines static jsx as children.len > 1
-                                    const is_static_jsx = last_child > 1;
+                                    const is_static_jsx = e_.children.len > 1;
 
                                     // if (p.options.jsx.development) {
-                                    switch (last_child) {
+                                    switch (e_.children.len) {
                                         0 => {},
                                         1 => {
                                             props.append(G.Property{

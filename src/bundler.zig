@@ -2551,6 +2551,7 @@ pub const Bundler = struct {
     // This is public so it can be used by the HTTP handler when matching against public dir.
     pub threadlocal var tmp_buildfile_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
     threadlocal var tmp_buildfile_buf2: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+    threadlocal var tmp_buildfile_buf3: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 
     // We try to be mostly stateless when serving
     // This means we need a slightly different resolver setup
@@ -2558,7 +2559,7 @@ pub const Bundler = struct {
         bundler: *ThisBundler,
         log: *logger.Log,
         allocator: *std.mem.Allocator,
-        relative_path: string,
+        path_to_use_: string,
         _extension: string,
         comptime client_entry_point_enabled: bool,
         comptime serve_as_package_path: bool,
@@ -2570,22 +2571,14 @@ pub const Bundler = struct {
         bundler.setLog(log);
         defer bundler.setLog(old_log);
 
-        if (strings.eqlComptime(relative_path, "__runtime.js")) {
+        var path_to_use = path_to_use_;
+
+        if (strings.eqlComptime(path_to_use, "__runtime.js")) {
             return ServeResult{
                 .file = options.OutputFile.initBuf(runtime.Runtime.sourceContent(), "__runtime.js", .js),
                 .mime_type = MimeType.javascript,
             };
         }
-
-        var absolute_path = if (comptime serve_as_package_path)
-            relative_path
-        else
-            resolve_path.joinAbsStringBuf(
-                bundler.fs.top_level_dir,
-                &tmp_buildfile_buf,
-                &([_][]const u8{relative_path}),
-                .auto,
-            );
 
         defer {
             js_ast.Expr.Data.Store.reset();
@@ -2597,8 +2590,15 @@ pub const Bundler = struct {
         //     absolute_path = absolute_path[0 .. absolute_path.len - ".js".len];
         // }
 
-        const resolved = if (comptime !client_entry_point_enabled) (try bundler.resolver.resolve(bundler.fs.top_level_dir, absolute_path, .stmt)) else brk: {
-            const absolute_pathname = Fs.PathName.init(absolute_path);
+        // All non-absolute paths are ./paths
+        if (path_to_use[0] != '/' and path_to_use[0] != '.') {
+            tmp_buildfile_buf3[0..2].* = "./".*;
+            @memcpy(tmp_buildfile_buf3[2..], path_to_use.ptr, path_to_use.len);
+            path_to_use = tmp_buildfile_buf3[0 .. 2 + path_to_use.len];
+        }
+
+        const resolved = if (comptime !client_entry_point_enabled) (try bundler.resolver.resolve(bundler.fs.top_level_dir, path_to_use, .stmt)) else brk: {
+            const absolute_pathname = Fs.PathName.init(path_to_use);
 
             const loader_for_ext = bundler.options.loader(absolute_pathname.ext);
 
@@ -2625,7 +2625,7 @@ pub const Bundler = struct {
                 }
             }
 
-            break :brk (try bundler.resolver.resolve(bundler.fs.top_level_dir, absolute_path, .stmt));
+            break :brk (try bundler.resolver.resolve(bundler.fs.top_level_dir, path_to_use, .stmt));
         };
 
         const path = (resolved.pathConst() orelse return error.ModuleNotFound);

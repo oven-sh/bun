@@ -224,7 +224,7 @@ pub const GenerateHeader = struct {
         pub var linux_os_name: std.c.utsname = undefined;
 
         pub fn forLinux() Analytics.Platform {
-            linux_os_name = std.mem.zeroes(linux_os_name);
+            linux_os_name = std.mem.zeroes(@TypeOf(linux_os_name));
 
             std.c.uname(&linux_os_name);
 

@@ -4,7 +4,7 @@
 
 How do you benchmark hot module reloading? What do you call "done" and what do you call "start"?
 
-The answer is certainly not compilation time. Compilation time is one step.
+The answer for "done" is certainly not compilation time. Compilation time is one step.
 
 I think the answer should be different depending on the type of content loaded.
 

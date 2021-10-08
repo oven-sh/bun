@@ -67,9 +67,11 @@ export function graphql(node) {
     throw new Error("GraphQL operations and fragments must contain names");
   }
 
+  const identifiername = `${definitionName}_$gql`;
+
   const importStmt = (
     <import
-      default={definitionName}
+      default={identifiername}
       path={`${artifactDirectory}/${definitionName}.graphql`}
     />
   );
@@ -77,7 +79,7 @@ export function graphql(node) {
   return (
     <>
       <inject>{importStmt}</inject>
-      <id to={importStmt.namespace[definitionName]} pure />
+      <id to={importStmt.namespace[identifiername]} pure />
     </>
   );
 }

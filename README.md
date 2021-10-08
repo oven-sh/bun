@@ -20,8 +20,9 @@ npm install -g bun-cli
 
 ## Benchmarks
 
-CSS: [Bun is 14x faster](./bench/hot-module-reloading/css-stress-test) than Next.js at hot reloading CSS. TODO: compare Vite
-JavaScript: TODO
+**CSS**: [Bun is 14x faster](./bench/hot-module-reloading/css-stress-test) than Next.js at hot reloading CSS. TODO: compare Vite
+
+**JavaScript**: TODO
 
 ### Getting started
 

@@ -21,7 +21,7 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
 
     const UnionValueType = [max_size]u8;
     const MaxAlign = max_align;
-
+    const total_items_len = max_size * count;
     return struct {
         const Allocator = std.mem.Allocator;
         const Self = @This();
@@ -174,7 +174,7 @@ pub const AssignTarget = enum(u2) {
 pub const LocRef = struct { loc: logger.Loc, ref: ?Ref };
 
 pub const Flags = struct {
-    pub const JSXElement = packed struct {
+    pub const JSXElement = struct {
         is_key_before_rest: bool = false,
     };
 
@@ -919,7 +919,7 @@ pub const E = struct {
 
     pub const Function = struct { func: G.Fn };
 
-    pub const Identifier = packed struct {
+    pub const Identifier = struct {
         ref: Ref = Ref.None,
 
         // If we're inside a "with" statement, this identifier may be a property
@@ -937,6 +937,15 @@ pub const E = struct {
         // unwrapped if the resulting value is unused. Unwrapping means discarding
         // the call target but keeping any arguments with side effects.
         call_can_be_unwrapped_if_unused: bool = false,
+
+        pub inline fn init(ref: Ref) Identifier {
+            return Identifier{
+                .ref = ref,
+                .must_keep_due_to_with_stmt = true,
+                .can_be_removed_if_unused = true,
+                .call_can_be_unwrapped_if_unused = true,
+            };
+        }
     };
 
     // This is similar to an EIdentifier but it represents a reference to an ES6
@@ -958,8 +967,8 @@ pub const E = struct {
     // "{x}" shorthand syntax wasn't aware that the "x" in this case is actually
     // "{x: importedNamespace.x}". This separate type forces code to opt-in to
     // doing this instead of opt-out.
-    pub const ImportIdentifier = packed struct {
-        ref: Ref,
+    pub const ImportIdentifier = struct {
+        ref: Ref = Ref.None,
 
         // If true, this was originally an identifier expression such as "foo". If
         // false, this could potentially have been a member access expression such
@@ -1905,6 +1914,16 @@ pub const Stmt = struct {
 pub const Expr = struct {
     loc: logger.Loc,
     data: Data,
+
+    pub inline fn initIdentifier(ref: Ref, loc: logger.Loc) Expr {
+        return Expr{
+            .loc = loc,
+            .data = .{
+                .e_identifier = E.Identifier.init(ref),
+            },
+        };
+    }
+
     pub fn toEmpty(expr: *Expr) Expr {
         return Expr{ .data = .{ .e_missing = E.Missing{} }, .loc = expr.loc };
     }
@@ -2377,7 +2396,12 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_identifier = st,
+                        .e_identifier = E.Identifier{
+                            .ref = st.ref,
+                            .must_keep_due_to_with_stmt = st.must_keep_due_to_with_stmt,
+                            .can_be_removed_if_unused = st.can_be_removed_if_unused,
+                            .call_can_be_unwrapped_if_unused = st.call_can_be_unwrapped_if_unused,
+                        },
                     },
                 };
             },
@@ -2385,7 +2409,10 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_import_identifier = st,
+                        .e_import_identifier = .{
+                            .ref = st.ref,
+                            .was_originally_identifier = st.was_originally_identifier,
+                        },
                     },
                 };
             },
@@ -3772,7 +3799,7 @@ pub fn isDynamicExport(exp: ExportsKind) bool {
     return kind == .cjs || kind == .esm_with_dyn;
 }
 
-pub const DeclaredSymbol = packed struct {
+pub const DeclaredSymbol = struct {
     ref: Ref,
     is_top_level: bool = false,
 };

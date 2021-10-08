@@ -2221,12 +2221,6 @@ pub fn NewPrinter(
                     if (s.func.flags.is_export) {
                         if (!rewrite_esm_to_cjs) {
                             p.print("export ");
-                        } else {
-                            if (rewrite_esm_to_cjs) {
-                                p.print("var ");
-                                p.printSymbol(nameRef);
-                                p.print(" = ");
-                            }
                         }
                     }
                     if (s.func.flags.is_async) {
@@ -2243,6 +2237,11 @@ pub fn NewPrinter(
                     p.printFunc(s.func);
 
                     if (rewrite_esm_to_cjs and s.func.flags.is_export) {
+                        p.printSemicolonAfterStatement();
+                        p.print("var ");
+                        p.printSymbol(nameRef);
+                        p.print(" = ");
+                        p.printSymbol(nameRef);
                         p.printSemicolonAfterStatement();
                     } else {
                         p.printNewline();
@@ -2266,12 +2265,6 @@ pub fn NewPrinter(
                     if (s.is_export) {
                         if (!rewrite_esm_to_cjs) {
                             p.print("export ");
-                        }
-
-                        if (rewrite_esm_to_cjs) {
-                            p.print("var ");
-                            p.printSymbol(nameRef);
-                            p.print(" = ");
                         }
                     }
 

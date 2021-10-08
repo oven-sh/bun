@@ -2596,7 +2596,9 @@ pub const Server = struct {
 
         var port: u16 = 3000;
 
-        if (server.bundler.options.origin.getPort()) |_port| {
+        if (server.transform_options.port) |_port| {
+            port = _port;
+        } else if (server.bundler.options.origin.getPort()) |_port| {
             port = _port;
         }
 

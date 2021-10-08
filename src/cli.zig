@@ -150,7 +150,7 @@ pub const Arguments = struct {
 
     pub const ParamType = clap.Param(clap.Help);
 
-    const params: [25]ParamType = brk: {
+    const params: [26]ParamType = brk: {
         @setEvalBranchQuota(9999);
         break :brk [_]ParamType{
             clap.parseParam("--use <STR>                       Choose a framework, e.g. \"--use next\". It checks first for a package named \"bun-framework-packagename\" and then \"packagename\".") catch unreachable,
@@ -169,6 +169,7 @@ pub const Arguments = struct {
             clap.parseParam("--no-summary                      Don't print a summary (when generating .bun") catch unreachable,
             clap.parseParam("--version                         Print version and exit") catch unreachable,
             clap.parseParam("--origin <STR>                    Rewrite import paths to start with --origin. Default: \"/\"") catch unreachable,
+            clap.parseParam("--port <STR>                      Port to serve Bun's dev server on. Default: \"/3000\"") catch unreachable,
             clap.parseParam("--platform <STR>                  \"browser\" or \"node\". Defaults to \"browser\"") catch unreachable,
             // clap.parseParam("--production                      [not implemented] generate production code") catch unreachable,
             clap.parseParam("--public-dir <STR>                Top-level directory for .html files, fonts or anything external. Defaults to \"<cwd>/public\", to match create-react-app and Next.js") catch unreachable,
@@ -232,6 +233,7 @@ pub const Arguments = struct {
                 .extensions = loader_tuple.keys,
                 .loaders = loader_tuple.values,
             },
+            .port = if (args.option("--port")) |port_str| std.fmt.parseInt(u16, port_str, 10) catch return error.InvalidPort else null,
 
             .serve = cmd == .DevCommand or (FeatureFlags.dev_only and cmd == .AutoCommand),
             .main_fields = args.options("--main-fields"),
@@ -242,6 +244,10 @@ pub const Arguments = struct {
             .no_summary = args.flag("--no-summary"),
             .disable_hmr = args.flag("--disable-hmr"),
         };
+
+        if (opts.port != null and opts.origin == null) {
+            opts.origin = try std.fmt.allocPrint(allocator, "http://localhost:{d}/", .{opts.port.?});
+        }
 
         const print_help = args.flag("--help");
         if (print_help) {

@@ -339,6 +339,8 @@ message TransformOptions {
   bool no_summary = 23;
 
   bool disable_hmr = 24;
+
+  uint16 port = 25;
 }
 
 struct FileHandle {

@@ -1711,6 +1711,10 @@ function decodeTransformOptions(bb) {
       result["disable_hmr"] = !!bb.readByte();
       break;
 
+    case 25:
+      result["port"] = bb.readUint16();
+      break;
+
     default:
       throw new Error("Attempted to parse invalid message");
     }
@@ -1890,6 +1894,12 @@ bb.writeByte(encoded);
   if (value != null) {
     bb.writeByte(24);
     bb.writeByte(value);
+  }
+
+  var value = message["port"];
+  if (value != null) {
+    bb.writeByte(25);
+    bb.writeUint16(value);
   }
   bb.writeByte(0);
 

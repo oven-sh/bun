@@ -1757,6 +1757,9 @@ no_summary: ?bool = null,
 /// disable_hmr
 disable_hmr: ?bool = null,
 
+/// port
+port: ?u16 = null,
+
 
 pub fn decode(reader: anytype) anyerror!TransformOptions {
   var this = std.mem.zeroes(TransformOptions);
@@ -1836,6 +1839,9 @@ pub fn decode(reader: anytype) anyerror!TransformOptions {
 },
       24 => {
         this.disable_hmr = try reader.readValue(bool); 
+},
+      25 => {
+        this.port = try reader.readValue(u16); 
 },
       else => {
       return error.InvalidMessage;
@@ -1941,6 +1947,10 @@ if (this.no_summary) |no_summary| {
 if (this.disable_hmr) |disable_hmr| {
   try writer.writeFieldID(24);
    try writer.writeInt(@intCast(u8, @boolToInt(disable_hmr)));
+}
+if (this.port) |port| {
+  try writer.writeFieldID(25);
+   try writer.writeInt(port);
 }
 try writer.endMessage();
 }

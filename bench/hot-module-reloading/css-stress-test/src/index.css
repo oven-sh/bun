@@ -112,15 +112,26 @@ section {
   flex-direction: column;
 }
 
+.ran,
 .timer {
-  font-weight: normal;
+  white-space: nowrap;
+  font-weight: bold;
+  -webkit-text-stroke: white;
+  -webkit-text-stroke-width: 2px;
+  color: white;
+  font-size: 100px;
+}
+.ran {
 }
 
 .ProgressBar-container {
   width: 100%;
   display: block;
   position: relative;
-  border: 1px solid var(--color-brand-muted);
+  border-left: 10px solid red;
+  border-right: 10px solid pink;
+  border-top: 10px solid yellow;
+  border-bottom: 10px solid orange;
   border-radius: 4px;
 
   height: 92px;

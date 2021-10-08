@@ -1,17 +1,17 @@
-export const Main = ({ productName }) => {
+export const Main = ({ productName, cssInJS }) => {
   return (
     <>
       <header>
         <div className="Title">CSS HMR Stress Test!</div>
         <p className="Description">
-          This page visually tests how quickly a bundler can update CSS over Hot
-          Module Reloading.
+          This page visually tests how quickly a bundler can update{" "}
+          {cssInJS ? "CSS-in-JS" : "CSS"} over Hot Module Reloading.
         </p>
       </header>
       <main className="main">
         <section className="ProgressSection">
           <p className="Subtitle">
-            <span className="Subtitle-part">
+            <span className="Subtitle-part ran">
               Ran: <span className="timer"></span>
             </span>
           </p>
@@ -55,10 +55,7 @@ export const Main = ({ productName }) => {
         <div className="Bundler-container">
           <div className="Bundler">{productName}</div>
           <div className="Bundler-updateRate">
-            {/* This should loose all the styles
-            <span className="highlight">
-              <span className="interval"></span>ms
-            </span> */}
+            {cssInJS ? "CSS-in-JS framework: " + cssInJS : ""}
           </div>
         </div>
       </footer>

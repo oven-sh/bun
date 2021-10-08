@@ -7,7 +7,7 @@ const Base = ({}) => {
     typeof location !== "undefined"
       ? decodeURIComponent(location.search.substring(1))
       : null;
-  return <Main productName={name || "asdasdasdasdasdasd"} />;
+  return <Main productName={name} />;
 };
 
 function startReact() {

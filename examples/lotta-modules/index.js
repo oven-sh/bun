@@ -1,11 +1,1 @@
-import "three/three1.js";
-import "three/three2.js";
-import "three/three3.js";
-import "three/three4.js";
-import "three/three5.js";
-import "three/three6.js";
-import "three/three7.js";
-import "three/three8.js";
-import "three/three9.js";
-import "three/three10.js";
-// import "@babel/standalone/babel";
+import "@babel/standalone/babel";

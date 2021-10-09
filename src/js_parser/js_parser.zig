@@ -873,7 +873,7 @@ pub const SideEffects = enum(u2) {
     could_have_side_effects,
     no_side_effects,
 
-    pub const Result = packed struct {
+    pub const Result = struct {
         side_effects: SideEffects,
         ok: bool = false,
         value: bool = false,
@@ -1173,7 +1173,7 @@ pub const SideEffects = enum(u2) {
         }
     }
 
-    pub const Equality = packed struct { equal: bool = false, ok: bool = false };
+    pub const Equality = struct { equal: bool = false, ok: bool = false };
 
     // Returns "equal, ok". If "ok" is false, then nothing is known about the two
     // values. If "ok" is true, the equality or inequality of the two values is
@@ -1561,7 +1561,7 @@ const AsyncPrefixExpression = enum(u4) {
     }
 };
 
-const IdentifierOpts = packed struct {
+const IdentifierOpts = struct {
     assign_target: js_ast.AssignTarget = js_ast.AssignTarget.none,
     is_delete_target: bool = false,
     was_originally_identifier: bool = false,
@@ -1603,7 +1603,7 @@ fn statementCaresAboutScope(stmt: Stmt) bool {
     }
 }
 
-const ExprIn = packed struct {
+const ExprIn = struct {
     // This tells us if there are optional chain expressions (EDot, EIndex, or
     // ECall) that are chained on to this expression. Because of the way the AST
     // works, chaining expressions on to this expression means they are our
@@ -1755,7 +1755,7 @@ const ScopeOrder = struct {
     scope: *js_ast.Scope,
 };
 
-const ParenExprOpts = packed struct {
+const ParenExprOpts = struct {
     async_range: logger.Range = logger.Range.None,
     is_async: bool = false,
     force_arrow_fn: bool = false,
@@ -1770,7 +1770,7 @@ const AwaitOrYield = enum(u3) {
 // This is function-specific information used during parsing. It is saved and
 // restored on the call stack around code that parses nested functions and
 // arrow expressions.
-const FnOrArrowDataParse = packed struct {
+const FnOrArrowDataParse = struct {
     async_range: logger.Range = logger.Range.None,
     allow_await: AwaitOrYield = AwaitOrYield.allow_ident,
     allow_yield: AwaitOrYield = AwaitOrYield.allow_ident,
@@ -1797,7 +1797,7 @@ const FnOrArrowDataParse = packed struct {
 // This is function-specific information used during visiting. It is saved and
 // restored on the call stack around code that parses nested functions and
 // arrow expressions.
-const FnOrArrowDataVisit = packed struct {
+const FnOrArrowDataVisit = struct {
     // super_index_ref: ?*js_ast.Ref = null,
 
     is_arrow: bool = false,
@@ -9886,9 +9886,7 @@ pub fn NewParser(
 
                     const ref = p.storeNameInRef(name) catch unreachable;
 
-                    return p.e(E.Identifier{
-                        .ref = ref,
-                    }, loc);
+                    return Expr.initIdentifier(ref, loc);
                 },
                 .t_string_literal, .t_no_substitution_template_literal => {
                     return try p.parseStringLiteral();
@@ -13673,19 +13671,13 @@ pub fn NewParser(
                 // "name = enclosing.name || (enclosing.name = {})"
                 const name = p.symbols.items[name_ref.inner_index].original_name;
                 arg_expr = Expr.assign(
-                    p.e(
-                        E.Identifier{ .ref = name_ref },
-                        name_loc,
-                    ),
+                    Expr.initIdentifier(name_ref, name_loc),
                     p.e(
                         E.Binary{
                             .op = .bin_logical_or,
                             .left = p.e(
                                 E.Dot{
-                                    .target = p.e(
-                                        E.Identifier{ .ref = namespace },
-                                        name_loc,
-                                    ),
+                                    .target = Expr.initIdentifier(namespace, name_loc),
                                     .name = name,
                                     .name_loc = name_loc,
                                 },
@@ -13694,10 +13686,7 @@ pub fn NewParser(
                             .right = Expr.assign(
                                 p.e(
                                     E.Dot{
-                                        .target = p.e(
-                                            E.Identifier{ .ref = namespace },
-                                            name_loc,
-                                        ),
+                                        .target = Expr.initIdentifier(namespace, name_loc),
                                         .name = name,
                                         .name_loc = name_loc,
                                     },
@@ -13718,9 +13707,9 @@ pub fn NewParser(
                 // "name || (name = {})"
                 arg_expr = p.e(E.Binary{
                     .op = .bin_logical_or,
-                    .left = p.e(E.Identifier{ .ref = name_ref }, name_loc),
+                    .left = Expr.initIdentifier(name_ref, name_loc),
                     .right = Expr.assign(
-                        p.e(E.Identifier{ .ref = name_ref }, name_loc),
+                        Expr.initIdentifier(name_ref, name_loc),
                         p.e(
                             E.Object{ .properties = &[_]G.Property{} },
                             name_loc,
@@ -13820,7 +13809,7 @@ pub fn NewParser(
             p.recordUsage(enclosing_ref);
 
             return p.e(E.Dot{
-                .target = p.e(E.Identifier{ .ref = enclosing_ref }, loc),
+                .target = Expr.initIdentifier(enclosing_ref, loc),
                 .name = p.symbols.items[ref.inner_index].original_name,
                 .name_loc = loc,
             }, loc);
@@ -13834,7 +13823,7 @@ pub fn NewParser(
             p.relocated_top_level_vars.append(LocRef{ .loc = loc, .ref = ref }) catch unreachable;
             var _ref = ref;
             p.recordUsage(_ref);
-            return p.e(E.Identifier{ .ref = _ref }, loc);
+            return Expr.initIdentifier(_ref, loc);
         }
 
         fn isAnonymousNamedExpr(p: *P, expr: ExprNodeIndex) bool {
@@ -15549,7 +15538,7 @@ const TypeScriptImportScanner = NewParser(.{ .typescript = true, .scan_only = tr
 //   // This is an error
 //   function* foo() { (x = yield y) => {} }
 //
-const DeferredArrowArgErrors = packed struct {
+const DeferredArrowArgErrors = struct {
     invalid_expr_await: logger.Range = logger.Range.None,
     invalid_expr_yield: logger.Range = logger.Range.None,
 };

@@ -941,9 +941,9 @@ pub const E = struct {
         pub inline fn init(ref: Ref) Identifier {
             return Identifier{
                 .ref = ref,
-                .must_keep_due_to_with_stmt = true,
-                .can_be_removed_if_unused = true,
-                .call_can_be_unwrapped_if_unused = true,
+                .must_keep_due_to_with_stmt = false,
+                .can_be_removed_if_unused = false,
+                .call_can_be_unwrapped_if_unused = false,
             };
         }
     };

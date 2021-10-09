@@ -7,7 +7,7 @@
 	ignore = dirty
 [submodule "src/javascript/jsc/WebKit"]
 	path = src/javascript/jsc/WebKit
-	url = git@github.com:/Jarred-Sumner/WebKit
+	url = https://github.com/Jarred-Sumner/WebKit.git
 	ignore = dirty
 [submodule "src/deps/mimalloc"]
 	path = src/deps/mimalloc

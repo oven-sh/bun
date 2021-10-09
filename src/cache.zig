@@ -18,7 +18,7 @@ pub const FsCacheEntry = struct {
     contents: string,
     fd: StoredFileDescriptorType = 0,
     // Null means its not usable
-    mod_key: ?fs.FileSystem.Implementation.ModKey = null,
+    // mod_key: ?fs.FileSystem.Implementation.ModKey = null,
 
     pub fn deinit(entry: *FsCacheEntry, allocator: *std.mem.Allocator) void {
         if (entry.contents.len > 0) {
@@ -70,6 +70,7 @@ pub const Fs = struct {
 
         if (_file_handle == null) {
             file_handle = try std.fs.openFileAbsoluteZ(path, .{ .read = true });
+            fs.FileSystem.setMaxFd(file_handle.handle);
         }
 
         defer {
@@ -78,42 +79,17 @@ pub const Fs = struct {
             }
         }
 
-        // If the file's modification key hasn't changed since it was cached, assume
-        // the contents of the file are also the same and skip reading the file.
-        var mod_key: ?fs.FileSystem.Implementation.ModKey = rfs.modKeyWithFile(path, file_handle) catch |err| handler: {
-            switch (err) {
-                error.FileNotFound, error.AccessDenied => {
-                    return err;
-                },
-                else => {
-                    if (isDebug) {
-                        Output.printError("modkey error: {s}", .{@errorName(err)});
-                    }
-                    break :handler null;
-                },
-            }
-        };
+        const stat = try std.os.fstat(file_handle.handle);
 
-        var file: fs.File = undefined;
-        if (mod_key) |modk| {
-            file = rfs.readFileWithHandle(path, modk.size, file_handle, true, shared) catch |err| {
-                if (isDebug) {
-                    Output.printError("{s}: readFile error -- {s}", .{ path, @errorName(err) });
-                }
-                return err;
-            };
-        } else {
-            file = rfs.readFileWithHandle(path, null, file_handle, true, shared) catch |err| {
-                if (isDebug) {
-                    Output.printError("{s}: readFile error -- {s}", .{ path, @errorName(err) });
-                }
-                return err;
-            };
-        }
+        var file = rfs.readFileWithHandle(path, @intCast(usize, stat.size), file_handle, true, shared) catch |err| {
+            if (isDebug) {
+                Output.printError("{s}: readFile error -- {s}", .{ path, @errorName(err) });
+            }
+            return err;
+        };
 
         return Entry{
             .contents = file.contents,
-            .mod_key = mod_key,
             .fd = if (FeatureFlags.store_file_descriptors) file_handle.handle else 0,
         };
     }
@@ -151,47 +127,27 @@ pub const Fs = struct {
         }
 
         defer {
+            fs.FileSystem.setMaxFd(file_handle.handle);
+
             if (rfs.needToCloseFiles() and _file_handle == null) {
                 file_handle.close();
             }
         }
 
-        // If the file's modification key hasn't changed since it was cached, assume
-        // the contents of the file are also the same and skip reading the file.
-        var mod_key: ?fs.FileSystem.Implementation.ModKey = rfs.modKeyWithFile(path, file_handle) catch |err| handler: {
-            switch (err) {
-                error.FileNotFound, error.AccessDenied => {
-                    return err;
-                },
-                else => {
-                    if (isDebug) {
-                        Output.printError("modkey error: {s}", .{@errorName(err)});
-                    }
-                    break :handler null;
-                },
-            }
-        };
+        const stat = try std.os.fstat(file_handle.handle);
 
         var file: fs.File = undefined;
-        if (mod_key) |modk| {
-            file = rfs.readFileWithHandle(path, modk.size, file_handle, use_shared_buffer, &c.shared_buffer) catch |err| {
-                if (isDebug) {
-                    Output.printError("{s}: readFile error -- {s}", .{ path, @errorName(err) });
-                }
-                return err;
-            };
-        } else {
-            file = rfs.readFileWithHandle(path, null, file_handle, use_shared_buffer, &c.shared_buffer) catch |err| {
-                if (isDebug) {
-                    Output.printError("{s}: readFile error -- {s}", .{ path, @errorName(err) });
-                }
-                return err;
-            };
-        }
+
+        file = rfs.readFileWithHandle(path, @intCast(usize, stat.size), file_handle, use_shared_buffer, &c.shared_buffer) catch |err| {
+            if (isDebug) {
+                Output.printError("{s}: readFile error -- {s}", .{ path, @errorName(err) });
+            }
+            return err;
+        };
 
         return Entry{
             .contents = file.contents,
-            .mod_key = mod_key,
+            // .mod_key = mod_key,
             .fd = if (FeatureFlags.store_file_descriptors) file_handle.handle else 0,
         };
     }

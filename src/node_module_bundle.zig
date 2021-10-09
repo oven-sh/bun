@@ -53,7 +53,7 @@ pub const NodeModuleBundle = struct {
         return this.package_name_map.contains("react-refresh");
     }
 
-    pub inline fn fetchByteCodeCache(this: *NodeModuleBundle, basename: string, fs: *Fs.FileSystem.RealFS) ?StoredFileDescriptorType {
+    pub inline fn fetchByteCodeCache(this: *NodeModuleBundle, basename: string, fs: *Fs.RealFS) ?StoredFileDescriptorType {
         return this.bytecode_cache_fetcher.fetch(basename, fs);
     }
 

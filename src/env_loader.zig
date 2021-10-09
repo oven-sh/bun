@@ -483,8 +483,8 @@ pub const Loader = struct {
     // .env goes last
     pub fn load(
         this: *Loader,
-        fs: *Fs.FileSystem.RealFS,
-        dir: *Fs.FileSystem.DirEntry,
+        fs: *Fs.RealFS,
+        dir: *Fs.DirEntry,
         comptime development: bool,
     ) !void {
         const start = std.time.nanoTimestamp();
@@ -557,7 +557,7 @@ pub const Loader = struct {
         Output.flush();
     }
 
-    pub fn loadEnvFile(this: *Loader, fs: *Fs.FileSystem.RealFS, dir: std.fs.Dir, comptime base: string, comptime override: bool) !void {
+    pub fn loadEnvFile(this: *Loader, fs: *Fs.RealFS, dir: std.fs.Dir, comptime base: string, comptime override: bool) !void {
         if (@field(this, base) != null) {
             return;
         }

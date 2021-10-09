@@ -84,7 +84,7 @@ pub const Result = struct {
     // This is true when the package was loaded from within the node_modules directory.
     is_from_node_modules: bool = false,
 
-    diff_case: ?Fs.FileSystem.Entry.Lookup.DifferentCase = null,
+    diff_case: ?Fs.Entry.Lookup.DifferentCase = null,
 
     // If present, any ES6 imports to this file can be considered to have no side
     // effects. This means they should be removed if unused.
@@ -309,13 +309,13 @@ pub const MatchResult = struct {
     file_fd: StoredFileDescriptorType = 0,
     is_node_module: bool = false,
     package_json: ?*PackageJSON = null,
-    diff_case: ?Fs.FileSystem.Entry.Lookup.DifferentCase = null,
+    diff_case: ?Fs.Entry.Lookup.DifferentCase = null,
     dir_info: ?*DirInfo = null,
 };
 
 pub const LoadResult = struct {
     path: string,
-    diff_case: ?Fs.FileSystem.Entry.Lookup.DifferentCase,
+    diff_case: ?Fs.Entry.Lookup.DifferentCase,
     dirname_fd: StoredFileDescriptorType = 0,
     file_fd: StoredFileDescriptorType = 0,
     dir_info: ?*DirInfo = null,
@@ -1424,7 +1424,7 @@ pub const Resolver = struct {
             // we cannot just use "/"
             // we will write to the buffer past the ptr len so it must be a non-const buffer
             path[0..1];
-        var rfs: *Fs.FileSystem.RealFS = &r.fs.fs;
+        var rfs: *Fs.RealFS = &r.fs.fs;
 
         rfs.entries_mutex.lock();
         defer rfs.entries_mutex.unlock();
@@ -1600,7 +1600,7 @@ pub const Resolver = struct {
 
             var cached_dir_entry_result = rfs.entries.getOrPut(dir_path) catch unreachable;
 
-            var dir_entries_option: *Fs.FileSystem.RealFS.EntriesOption = undefined;
+            var dir_entries_option: *Fs.EntriesOption = undefined;
             var needs_iter: bool = true;
 
             if (rfs.entries.atIndex(cached_dir_entry_result.index)) |cached_entry| {
@@ -1612,7 +1612,7 @@ pub const Resolver = struct {
 
             if (needs_iter) {
                 dir_entries_option = try rfs.entries.put(&cached_dir_entry_result, .{
-                    .entries = Fs.FileSystem.DirEntry.init(dir_path, r.fs.allocator),
+                    .entries = Fs.DirEntry.init(dir_path, r.fs.allocator),
                 });
 
                 if (FeatureFlags.store_file_descriptors) {
@@ -2261,7 +2261,7 @@ pub const Resolver = struct {
     }
 
     pub fn loadAsFile(r: *ThisResolver, path: string, extension_order: []const string) ?LoadResult {
-        var rfs: *Fs.FileSystem.RealFS = &r.fs.fs;
+        var rfs: *Fs.RealFS = &r.fs.fs;
 
         if (r.debug_logs) |*debug| {
             debug.addNoteFmt("Attempting to load \"{s}\" as a file", .{path}) catch {};
@@ -2275,14 +2275,14 @@ pub const Resolver = struct {
 
         const dir_path = Dirname.dirname(path);
 
-        const dir_entry: *Fs.FileSystem.RealFS.EntriesOption = rfs.readDirectory(
+        const dir_entry: *Fs.EntriesOption = rfs.readDirectory(
             dir_path,
             null,
         ) catch {
             return null;
         };
 
-        if (@as(Fs.FileSystem.RealFS.EntriesOption.Tag, dir_entry.*) == .err) {
+        if (@as(Fs.EntriesOption.Tag, dir_entry.*) == .err) {
             if (dir_entry.err.original_err != error.ENOENT) {
                 r.log.addErrorFmt(
                     null,
@@ -2442,7 +2442,7 @@ pub const Resolver = struct {
         r: *ThisResolver,
         info: *DirInfo,
         path: string,
-        _entries: *Fs.FileSystem.RealFS.EntriesOption,
+        _entries: *Fs.EntriesOption,
         _result: allocators.Result,
         dir_entry_index: allocators.IndexType,
         parent: ?*DirInfo,
@@ -2451,7 +2451,7 @@ pub const Resolver = struct {
     ) anyerror!void {
         var result = _result;
 
-        var rfs: *Fs.FileSystem.RealFS = &r.fs.fs;
+        var rfs: *Fs.RealFS = &r.fs.fs;
         var entries = _entries.entries;
 
         info.* = DirInfo{

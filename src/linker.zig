@@ -96,7 +96,7 @@ pub const Linker = struct {
 
         var file: std.fs.File = if (fd) |_fd| std.fs.File{ .handle = _fd } else try std.fs.openFileAbsolute(file_path.text, .{ .read = true });
         Fs.FileSystem.setMaxFd(file.handle);
-        var modkey = try Fs.FileSystem.RealFS.ModKey.generate(&this.fs.fs, file_path.text, file);
+        var modkey = try Fs.RealFS.ModKey.generate(&this.fs.fs, file_path.text, file);
         const hash_name = try modkey.hashName(file_path.name.base);
 
         if (Bundler.isCacheEnabled) {

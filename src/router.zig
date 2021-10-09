@@ -232,7 +232,7 @@ pub const Route = struct {
     hash: u32,
     children: Ptr = Ptr{},
     parent: u16 = top_level_parent,
-    entry: *Fs.FileSystem.Entry,
+    entry: *Fs.Entry,
 
     full_hash: u32,
 
@@ -241,7 +241,7 @@ pub const Route = struct {
     pub const List = std.MultiArrayList(Route);
     pub const Ptr = TinyPtr;
 
-    pub fn parse(base: string, dir: string, extname: string, entry: *Fs.FileSystem.Entry) Route {
+    pub fn parse(base: string, dir: string, extname: string, entry: *Fs.Entry) Route {
         const ensure_slash = if (dir.len > 0 and dir[dir.len - 1] != '/') "/" else "";
 
         var parts = [3]string{ dir, ensure_slash, base };

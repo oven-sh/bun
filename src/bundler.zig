@@ -233,7 +233,7 @@ pub const Bundler = struct {
         switch (this.options.env.behavior) {
             .prefix, .load_all => {
                 // Step 1. Load the project root.
-                var dir: *Fs.FileSystem.DirEntry = ((this.resolver.readDirInfo(this.fs.top_level_dir) catch return) orelse return).getEntries() orelse return;
+                var dir: *Fs.DirEntry = ((this.resolver.readDirInfo(this.fs.top_level_dir) catch return) orelse return).getEntries() orelse return;
 
                 // Process always has highest priority.
                 this.env.loadProcess();
@@ -732,7 +732,7 @@ pub const Bundler = struct {
                 std.hash.Wyhash.hash(@intCast(usize, std.time.milliTimestamp()) % std.math.maxInt(u32), std.mem.span(destination)),
             );
 
-            var tmpfile = Fs.FileSystem.RealFS.Tmpfile{};
+            var tmpfile = Fs.RealFS.Tmpfile{};
             try tmpfile.create(&bundler.fs.fs, tmpname);
 
             errdefer tmpfile.closeAndDelete(tmpname);
@@ -2971,7 +2971,7 @@ pub const Transformer = struct {
         var arena: std.heap.ArenaAllocator = undefined;
         const use_arenas = opts.entry_points.len > 8;
 
-        var ulimit: usize = Fs.FileSystem.RealFS.adjustUlimit() catch unreachable;
+        var ulimit: usize = Fs.RealFS.adjustUlimit() catch unreachable;
         var care_about_closing_files = !(FeatureFlags.store_file_descriptors and opts.entry_points.len * 2 < ulimit);
 
         var transformer = Transformer{

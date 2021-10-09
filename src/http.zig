@@ -452,6 +452,10 @@ pub const RequestContext = struct {
             ctx.appendHeader("Content-Length", content_length_header_buf[0..std.fmt.formatIntBuf(&content_length_header_buf, length, 10, .upper, .{})]);
         }
 
+        if (ctx.header("Cookie")) |cookie| {
+            ctx.appendHeader("Set-Cookie", cookie.value);
+        }
+
         try ctx.flushHeaders();
     }
 
@@ -2504,7 +2508,7 @@ pub const Server = struct {
         defer ctx.watcher.flushEvictions();
         defer Output.flush();
 
-        var rfs: *Fs.FileSystem.RealFS = &ctx.bundler.fs.fs;
+        var rfs: *Fs.RealFS = &ctx.bundler.fs.fs;
 
         // It's important that this function does not do any memory allocations
         // If this blocks, it can cause cascading bad things to happen
@@ -2579,7 +2583,7 @@ pub const Server = struct {
     }
 
     fn run(server: *Server, comptime features: ConnectionFeatures) !void {
-        _ = Fs.FileSystem.RealFS.adjustUlimit() catch {};
+        _ = Fs.RealFS.adjustUlimit() catch {};
         RequestContext.WebsocketHandler.open_websockets = @TypeOf(
             RequestContext.WebsocketHandler.open_websockets,
         ).init(server.allocator);

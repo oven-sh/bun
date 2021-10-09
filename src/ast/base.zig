@@ -34,10 +34,13 @@ pub const RefHashCtx = struct {
 };
 
 pub const Ref = packed struct {
+    const Padding = std.meta.Int(.unsigned, 64 - ((@bitSizeOf(Int) * 2) + 1));
+
     source_index: Int = std.math.maxInt(Ref.Int),
     inner_index: Int = 0,
     is_source_contents_slice: bool = false,
 
+    _padding: Padding = 0,
     // 2 bits of padding for whatever is the parent
     pub const Int = u30;
     pub const None = Ref{
@@ -92,4 +95,8 @@ pub inline fn debugl(
     comptime fmt: []const u8,
 ) void {
     // Output.print("{s}\n", .{fmt});
+}
+
+comptime {
+    if (@bitSizeOf(Ref) != 64) @compileError("Ref should be 64 bits exactly");
 }

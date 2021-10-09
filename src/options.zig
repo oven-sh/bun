@@ -1221,7 +1221,7 @@ pub const BundleOptions = struct {
 
             if (!static_dir_set) {
                 chosen_dir = choice: {
-                    if (fs.fs.readDirectory(fs.top_level_dir, null)) |dir_| {
+                    if (fs.readDirectory(fs.top_level_dir, null)) |dir_| {
                         const dir: *const Fs.EntriesOption = dir_;
                         switch (dir.*) {
                             .entries => {

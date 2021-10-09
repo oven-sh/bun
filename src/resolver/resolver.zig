@@ -28,6 +28,7 @@ const Path = Fs.Path;
 const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
 
 const FileSystem = Fs.FileSystem;
+const File = Fs.File;
 
 pub fn isPackagePath(path: string) bool {
     // this could probably be flattened into something more optimized
@@ -562,14 +563,14 @@ pub const Resolver = struct {
                         var parts = [_]string{ FileSystem.instance.top_level_dir, std.fs.path.sep_str, route_dir };
                         const abs = FileSystem.instance.join(&parts);
                         // must end in trailing slash
-                        break :brk (std.os.realpath(abs, &buf) catch continue);
+                        break :brk (File.realpath(abs, &buf) catch continue);
                     }
                     return error.MissingRouteDir;
                 } else {
                     var parts = [_]string{ FileSystem.instance.top_level_dir, std.fs.path.sep_str, pair.router.dir };
                     const abs = FileSystem.instance.join(&parts);
                     // must end in trailing slash
-                    break :brk std.os.realpath(abs, &buf) catch return error.MissingRouteDir;
+                    break :brk File.realpath(abs, &buf) catch return error.MissingRouteDir;
                 }
             };
 

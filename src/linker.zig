@@ -96,7 +96,7 @@ pub const Linker = struct {
         }
 
         var file = try FileSystem.openFileZ(file_path.textZ(), .{ .read = true });
-        var modkey = try Fs.RealFS.ModKey.generate(&this.fs.fs, file_path.text, file);
+        var modkey = try Fs.ModKey.generate(file_path.text, file);
         const hash_name = try modkey.hashName(file_path.name.base);
 
         if (Bundler.isCacheEnabled) {

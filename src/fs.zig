@@ -340,8 +340,66 @@ pub const FileSystem = struct {
         return Implementation.cwd();
     }
 
+    pub fn bustEntriesCache(rfs: *FileSystem, file_path: string) void {
+        rfs.entries.remove(file_path);
+    }
+
     pub fn readDirectory(fs: *FileSystem, _dir: string, _handle: ?FileDescriptorType) !*EntriesOption {
-        return @call(.{ .modifier = .always_inline }, Implementation.readDirectory, .{ &fs.fs, _dir, _handle });
+        var dir = _dir;
+        var cache_result: ?allocators.Result = null;
+        if (comptime FeatureFlags.enable_entry_cache) {
+            fs.entries_mutex.lock();
+        }
+        defer {
+            if (comptime FeatureFlags.enable_entry_cache) {
+                fs.entries_mutex.unlock();
+            }
+        }
+
+        if (comptime FeatureFlags.enable_entry_cache) {
+            cache_result = try fs.entries.getOrPut(dir);
+
+            if (cache_result.?.hasCheckedIfExists()) {
+                if (fs.entries.atIndex(cache_result.?.index)) |cached_result| {
+                    return cached_result;
+                }
+            }
+        }
+
+        var handle = Dir{ .fd = _handle orelse try openFileAbsolute(dir, .{}) };
+
+        defer {
+            if (_handle == null and fs.needToCloseFiles()) {
+                handle.close();
+            }
+        }
+
+        // if we get this far, it's a real directory, so we can just store the dir name.
+        if (_handle == null) {
+            dir = try FileSystem.DirnameStore.instance.append(string, _dir);
+        }
+
+        // Cache miss: read the directory entries
+        var entries = fs.fs.readdir(
+            dir,
+            handle,
+        ) catch |err| {
+            return fs.readDirectoryError(dir, err) catch unreachable;
+        };
+
+        if (comptime FeatureFlags.enable_entry_cache) {
+            const result = EntriesOption{
+                .entries = entries,
+            };
+
+            var out = try fs.entries.put(&cache_result.?, result);
+
+            return out;
+        }
+
+        temp_entries_option = EntriesOption{ .entries = entries };
+
+        return &temp_entries_option;
     }
 
     pub fn openDirectory(_dir: string, flags: std.fs.Dir.OpenDirOptions) !Dir {
@@ -366,24 +424,67 @@ pub const FileSystem = struct {
         fs: *FileSystem,
         path: string,
         _size: ?usize,
-        file: FileDescriptorType,
+        fd: FileDescriptorType,
         comptime use_shared_buffer: bool,
         shared_buffer: *MutableString,
     ) !string {
-        return @call(
-            .{
-                .modifier = .always_inline,
-            },
-            Implementation.readFileWithHandle,
-            .{
-                &fs.fs,
-                path,
-                _size,
-                file,
-                comptime use_shared_buffer,
-                shared_buffer,
-            },
-        );
+        const file = File{ .handle = fd };
+        FileSystem.setMaxFd(file.handle);
+
+        if (comptime FeatureFlags.disable_filesystem_cache) {
+            _ = std.os.fcntl(file.handle, std.os.F_NOCACHE, 1) catch 0;
+        }
+
+        // Skip the extra file.stat() call when possible
+        var size = _size orelse try file.getEndPos();
+
+        // Skip the pread call for empty files
+        // Otherwise will get out of bounds errors
+        // plus it's an unnecessary syscall
+        if (size == 0) {
+            if (comptime use_shared_buffer) {
+                shared_buffer.reset();
+                return shared_buffer.list.items;
+            } else {
+                return "";
+            }
+        }
+
+        // When we're serving a JavaScript-like file over HTTP, we do not want to cache the contents in memory
+        // This imposes a performance hit because not reading from disk is faster than reading from disk
+        // Part of that hit is allocating a temporary buffer to store the file contents in
+        // As a mitigation, we can just keep one buffer forever and re-use it for the parsed files
+        if (comptime use_shared_buffer) {
+            shared_buffer.reset();
+            try shared_buffer.growBy(size);
+            shared_buffer.list.expandToCapacity();
+            // We use pread to ensure if the file handle was open, it doesn't seek from the last position
+            var read_count = try file.preadAll(shared_buffer.list.items, 0);
+            shared_buffer.list.items = shared_buffer.list.items[0..read_count];
+            return shared_buffer.list.items;
+        } else {
+            // We use pread to ensure if the file handle was open, it doesn't seek from the last position
+            var buf = try fs.allocator.alloc(u8, size);
+            var read_count = try file.preadAll(buf, 0);
+
+            return buf[0..read_count];
+        }
+    }
+
+    fn readDirectoryError(fs: *FileSystem, dir: string, err: anyerror) !*EntriesOption {
+        if (comptime FeatureFlags.enable_entry_cache) {
+            var get_or_put_result = try fs.entries.getOrPut(dir);
+            var opt = try fs.entries.put(&get_or_put_result, EntriesOption{
+                .err = DirEntry.Err{ .original_err = err, .canonical_error = err },
+            });
+
+            return opt;
+        }
+
+        temp_entries_option = EntriesOption{
+            .err = DirEntry.Err{ .original_err = err, .canonical_error = err },
+        };
+        return &temp_entries_option;
     }
 
     pub fn openFileInDir(
@@ -458,7 +559,7 @@ pub const FileSystem = struct {
         path: string,
         flags: std.fs.File.CreateFlags,
     ) !File {
-        return File{ .handle = try createFileAbsolute(path, flags) };
+        return File{ .handle = try Implementation.createFileAbsolute(path, flags) };
     }
 
     pub inline fn getFileSize(
@@ -570,15 +671,15 @@ pub const FileSystem = struct {
     // pub fn readDir(fs: *FileSystemEntry, path: string) ?[]string {
 
     // }
-    pub fn normalize(f: *@This(), str: string) string {
+    pub fn normalize(f: *const @This(), str: string) string {
         return @call(.{ .modifier = .always_inline }, path_handler.normalizeString, .{ str, true, .auto });
     }
 
-    pub fn normalizeBuf(f: *@This(), buf: []u8, str: string) string {
+    pub fn normalizeBuf(f: *const @This(), buf: []u8, str: string) string {
         return @call(.{ .modifier = .always_inline }, path_handler.normalizeStringBuf, .{ str, buf, false, .auto, false });
     }
 
-    pub fn join(f: *@This(), parts: anytype) string {
+    pub fn join(f: *const @This(), parts: anytype) string {
         return @call(.{ .modifier = .always_inline }, path_handler.joinStringBuf, .{
             &join_buf,
             parts,
@@ -586,7 +687,7 @@ pub const FileSystem = struct {
         });
     }
 
-    pub fn joinBuf(f: *@This(), parts: anytype, buf: []u8) string {
+    pub fn joinBuf(f: *const @This(), parts: anytype, buf: []u8) string {
         return @call(.{ .modifier = .always_inline }, path_handler.joinStringBuf, .{
             buf,
             parts,
@@ -594,14 +695,14 @@ pub const FileSystem = struct {
         });
     }
 
-    pub fn relative(f: *@This(), from: string, to: string) string {
+    pub fn relative(f: *const @This(), from: string, to: string) string {
         return @call(.{ .modifier = .always_inline }, path_handler.relative, .{
             from,
             to,
         });
     }
 
-    pub fn relativeAlloc(f: *@This(), allocator: *std.mem.Allocator, from: string, to: string) string {
+    pub fn relativeAlloc(f: *const @This(), allocator: *std.mem.Allocator, from: string, to: string) string {
         return @call(.{ .modifier = .always_inline }, path_handler.relativeAlloc, .{
             alloc,
             from,
@@ -609,21 +710,21 @@ pub const FileSystem = struct {
         });
     }
 
-    pub fn relativeTo(f: *@This(), to: string) string {
+    pub fn relativeTo(f: *const @This(), to: string) string {
         return @call(.{ .modifier = .always_inline }, path_handler.relative, .{
             f.top_level_dir,
             to,
         });
     }
 
-    pub fn relativeFrom(f: *@This(), from: string) string {
+    pub fn relativeFrom(f: *const @This(), from: string) string {
         return @call(.{ .modifier = .always_inline }, path_handler.relative, .{
             from,
             f.top_level_dir,
         });
     }
 
-    pub fn relativeToAlloc(f: *@This(), allocator: *std.mem.Allocator, to: string) string {
+    pub fn relativeToAlloc(f: *const @This(), allocator: *std.mem.Allocator, to: string) string {
         return @call(.{ .modifier = .always_inline }, path_handler.relativeAlloc, .{
             allocator,
             f.top_level_dir,
@@ -631,7 +732,7 @@ pub const FileSystem = struct {
         });
     }
 
-    pub fn absAlloc(f: *@This(), allocator: *std.mem.Allocator, parts: anytype) !string {
+    pub fn absAlloc(f: *const @This(), allocator: *std.mem.Allocator, parts: anytype) !string {
         const joined = path_handler.joinAbsString(
             f.top_level_dir,
             parts,
@@ -640,7 +741,7 @@ pub const FileSystem = struct {
         return try allocator.dupe(u8, joined);
     }
 
-    pub fn abs(f: *@This(), parts: anytype) string {
+    pub fn abs(f: *const @This(), parts: anytype) string {
         return path_handler.joinAbsString(
             f.top_level_dir,
             parts,
@@ -758,6 +859,17 @@ pub const File = struct {
 
     pub fn pread(self: File, buffer: []u8, offset: u64) PReadError!usize {
         return try FSType.pread(self.handle, buffer, offset);
+    }
+
+    pub inline fn realpath(path: string, buf: *[std.fs.MAX_PATH_BYTES]u8) anyerror!string {
+        return try FSType.realpath(path, buf);
+    }
+
+    pub inline fn getPath(
+        self: File,
+        buffer: *[std.fs.MAX_PATH_BYTES]u8,
+    ) !string {
+        return try FSType.getPath(self.handle, buffer);
     }
 
     pub fn preadAll(self: File, buffer: []u8, offset: u64) PReadError!usize {
@@ -1080,6 +1192,71 @@ pub const Path = struct {
     }
 };
 
+pub const ModKeyError = error{
+    Unusable,
+};
+pub const ModKey = struct {
+    inode: std.fs.File.INode = 0,
+    size: u64 = 0,
+    mtime: i128 = 0,
+    mode: std.fs.File.Mode = 0,
+
+    threadlocal var hash_bytes: [32]u8 = undefined;
+    threadlocal var hash_name_buf: [1024]u8 = undefined;
+
+    pub fn hashName(
+        this: *const ModKey,
+        basename: string,
+    ) !string {
+
+        // We shouldn't just read the contents of the ModKey into memory
+        // The hash should be deterministic across computers and operating systems.
+        // inode is non-deterministic across volumes within the same compuiter
+        // so if we're not going to do a full content hash, we should use mtime and size.
+        // even mtime is debatable.
+        var hash_bytes_remain: []u8 = hash_bytes[0..];
+        std.mem.writeIntNative(@TypeOf(this.size), hash_bytes_remain[0..@sizeOf(@TypeOf(this.size))], this.size);
+        hash_bytes_remain = hash_bytes_remain[@sizeOf(@TypeOf(this.size))..];
+        std.mem.writeIntNative(@TypeOf(this.mtime), hash_bytes_remain[0..@sizeOf(@TypeOf(this.mtime))], this.mtime);
+
+        return try std.fmt.bufPrint(
+            &hash_name_buf,
+            "{s}-{x}",
+            .{
+                basename,
+                @truncate(u32, std.hash.Wyhash.hash(1, &hash_bytes)),
+            },
+        );
+    }
+
+    pub fn generate(path: string, file: File) anyerror!ModKey {
+        const stat_ = try file.stat();
+
+        const seconds = @divTrunc(stat_.mtime, @as(@TypeOf(stat_.mtime), std.time.ns_per_s));
+
+        // We can't detect changes if the file system zeros out the modification time
+        if (seconds == 0 and std.time.ns_per_s == 0) {
+            return error.Unusable;
+        }
+
+        // Don't generate a modification key if the file is too new
+        const now = std.time.nanoTimestamp();
+        const now_seconds = @divTrunc(now, std.time.ns_per_s);
+        if (seconds > seconds or (seconds == now_seconds and stat_.mtime > now)) {
+            return error.Unusable;
+        }
+
+        return ModKey{
+            .inode = stat_.inode,
+            .size = stat_.size,
+            .mtime = stat_.mtime,
+            .mode = stat_.mode,
+            // .uid = stat.
+        };
+    }
+    pub const SafetyGap = 3;
+};
+
 pub const RealFS = struct {
     entries: *EntriesOption.Map,
     allocator: *std.mem.Allocator,
@@ -1182,10 +1359,6 @@ pub const RealFS = struct {
         return !(rfs.file_limit > 254 and rfs.file_limit > (FileSystem.max_fd + 1) * 2);
     }
 
-    pub fn bustEntriesCache(rfs: *RealFS, file_path: string) void {
-        rfs.entries.remove(file_path);
-    }
-
     // Always try to max out how many files we can keep open
     pub fn adjustUlimit() !usize {
         const LIMITS = [_]std.os.rlimit_resource{ std.os.rlimit_resource.STACK, std.os.rlimit_resource.NOFILE };
@@ -1219,71 +1392,6 @@ pub const RealFS = struct {
             .file_quota = file_limit,
         };
     }
-
-    pub const ModKeyError = error{
-        Unusable,
-    };
-    pub const ModKey = struct {
-        inode: std.fs.File.INode = 0,
-        size: u64 = 0,
-        mtime: i128 = 0,
-        mode: std.fs.File.Mode = 0,
-
-        threadlocal var hash_bytes: [32]u8 = undefined;
-        threadlocal var hash_name_buf: [1024]u8 = undefined;
-
-        pub fn hashName(
-            this: *const ModKey,
-            basename: string,
-        ) !string {
-
-            // We shouldn't just read the contents of the ModKey into memory
-            // The hash should be deterministic across computers and operating systems.
-            // inode is non-deterministic across volumes within the same compuiter
-            // so if we're not going to do a full content hash, we should use mtime and size.
-            // even mtime is debatable.
-            var hash_bytes_remain: []u8 = hash_bytes[0..];
-            std.mem.writeIntNative(@TypeOf(this.size), hash_bytes_remain[0..@sizeOf(@TypeOf(this.size))], this.size);
-            hash_bytes_remain = hash_bytes_remain[@sizeOf(@TypeOf(this.size))..];
-            std.mem.writeIntNative(@TypeOf(this.mtime), hash_bytes_remain[0..@sizeOf(@TypeOf(this.mtime))], this.mtime);
-
-            return try std.fmt.bufPrint(
-                &hash_name_buf,
-                "{s}-{x}",
-                .{
-                    basename,
-                    @truncate(u32, std.hash.Wyhash.hash(1, &hash_bytes)),
-                },
-            );
-        }
-
-        pub fn generate(fs: *RealFS, path: string, file: File) anyerror!ModKey {
-            const stat_ = try file.stat();
-
-            const seconds = @divTrunc(stat_.mtime, @as(@TypeOf(stat_.mtime), std.time.ns_per_s));
-
-            // We can't detect changes if the file system zeros out the modification time
-            if (seconds == 0 and std.time.ns_per_s == 0) {
-                return error.Unusable;
-            }
-
-            // Don't generate a modification key if the file is too new
-            const now = std.time.nanoTimestamp();
-            const now_seconds = @divTrunc(now, std.time.ns_per_s);
-            if (seconds > seconds or (seconds == now_seconds and stat_.mtime > now)) {
-                return error.Unusable;
-            }
-
-            return ModKey{
-                .inode = stat_.inode,
-                .size = stat_.size,
-                .mtime = stat_.mtime,
-                .mode = stat_.mode,
-                // .uid = stat.
-            };
-        }
-        pub const SafetyGap = 3;
-    };
 
     pub fn modKeyWithFile(fs: *RealFS, path: string, file: anytype) anyerror!ModKey {
         return try ModKey.generate(fs, path, file);
@@ -1344,6 +1452,11 @@ pub const RealFS = struct {
         return try std.fs.File.getPos(std.fs.File{ .handle = fd });
     }
 
+    pub fn openDirectory(path: string, flags: std.fs.Dir.OpenDirOptions) anyerror!Dir {
+        const dir = try std.fs.cwd().openDir(path, flags);
+        return Dir{ .fd = dir.fd };
+    }
+
     pub fn modKey(fs: *const RealFS, path: string) anyerror!ModKey {
         // fs.limiter.before();
         // defer fs.limiter.after();
@@ -1356,48 +1469,29 @@ pub const RealFS = struct {
         return try fs.modKeyWithFile(path, file);
     }
 
-    // Limit the number of files open simultaneously to avoid ulimit issues
-    pub const Limiter = struct {
-        semaphore: Semaphore,
-        pub fn init(allocator: *std.mem.Allocator, limit: usize) Limiter {
-            return Limiter{
-                .semaphore = Semaphore.init(limit),
-                // .counter = std.atomic.Int(u8).init(0),
-                // .lock = std.Thread.Mutex.init(),
-            };
-        }
-
-        // This will block if the number of open files is already at the limit
-        pub fn before(limiter: *Limiter) void {
-            limiter.semaphore.wait();
-            // var added = limiter.counter.fetchAdd(1);
-        }
-
-        pub fn after(limiter: *Limiter) void {
-            limiter.semaphore.post();
-            // limiter.counter.decr();
-            // if (limiter.held) |hold| {
-            //     hold.release();
-            //     limiter.held = null;
-            // }
-        }
-    };
-
-    fn openDir(unsafe_dir_string: string) std.fs.File.OpenError!FileDescriptorType {
-        const fd = try std.fs.openDirAbsolute(unsafe_dir_string, std.fs.Dir.OpenDirOptions{ .iterate = true, .access_sub_paths = true, .no_follow = false });
-
-        return fd.fd;
+    pub inline fn getFileSize(
+        handle: FileDescriptorType,
+    ) !u64 {
+        const stat_ = try std.os.fstat(handle);
+        return @intCast(u64, stat_.size);
     }
 
-    pub fn openDirectory(path: string, flags: std.fs.Dir.OpenDirOptions) anyerror!Dir {
-        const dir = try std.fs.cwd().openDir(path, flags);
-        return Dir{ .fd = dir.fd };
+    pub inline fn close(fd: FileDescriptorType) void {
+        std.os.close(fd);
     }
 
-    fn readdir(
+    pub inline fn realpath(path: string, buf: *[std.fs.MAX_PATH_BYTES]u8) !string {
+        return try std.os.realpath(path, buf);
+    }
+
+    pub inline fn getPath(handle: FileDescriptorType, buf: *[std.fs.MAX_PATH_BYTES]u8) !string {
+        return try std.os.getFdPath(handle, buf);
+    }
+
+    pub fn readdir(
         fs: *RealFS,
         _dir: string,
-        handle: std.fs.Dir,
+        handle: Dir,
     ) !DirEntry {
         // fs.limiter.before();
         // defer fs.limiter.after();
@@ -1418,156 +1512,12 @@ pub const RealFS = struct {
         return dir;
     }
 
-    fn readDirectoryError(fs: *RealFS, dir: string, err: anyerror) !*EntriesOption {
-        if (comptime FeatureFlags.enable_entry_cache) {
-            var get_or_put_result = try fs.entries.getOrPut(dir);
-            var opt = try fs.entries.put(&get_or_put_result, EntriesOption{
-                .err = DirEntry.Err{ .original_err = err, .canonical_error = err },
-            });
-
-            return opt;
-        }
-
-        temp_entries_option = EntriesOption{
-            .err = DirEntry.Err{ .original_err = err, .canonical_error = err },
-        };
-        return &temp_entries_option;
-    }
-
     threadlocal var temp_entries_option: EntriesOption = undefined;
-
-    pub fn readDirectory(fs: *RealFS, _dir: string, _handle: ?FileDescriptorType) !*EntriesOption {
-        var dir = _dir;
-        var cache_result: ?allocators.Result = null;
-        if (comptime FeatureFlags.enable_entry_cache) {
-            fs.parent_fs.entries_mutex.lock();
-        }
-        defer {
-            if (comptime FeatureFlags.enable_entry_cache) {
-                fs.parent_fs.entries_mutex.unlock();
-            }
-        }
-
-        if (comptime FeatureFlags.enable_entry_cache) {
-            cache_result = try fs.entries.getOrPut(dir);
-
-            if (cache_result.?.hasCheckedIfExists()) {
-                if (fs.entries.atIndex(cache_result.?.index)) |cached_result| {
-                    return cached_result;
-                }
-            }
-        }
-
-        var handle = std.fs.Dir{ .fd = _handle orelse try openDir(dir) };
-
-        defer {
-            if (_handle == null and fs.needToCloseFiles()) {
-                handle.close();
-            }
-        }
-
-        // if we get this far, it's a real directory, so we can just store the dir name.
-        if (_handle == null) {
-            dir = try FileSystem.DirnameStore.instance.append(string, _dir);
-        }
-
-        // Cache miss: read the directory entries
-        var entries = fs.readdir(
-            dir,
-            handle,
-        ) catch |err| {
-            return fs.readDirectoryError(dir, err) catch unreachable;
-        };
-
-        if (comptime FeatureFlags.enable_entry_cache) {
-            const result = EntriesOption{
-                .entries = entries,
-            };
-
-            var out = try fs.entries.put(&cache_result.?, result);
-
-            return out;
-        }
-
-        temp_entries_option = EntriesOption{ .entries = entries };
-
-        return &temp_entries_option;
-    }
 
     fn readFileError(fs: *RealFS, path: string, err: anyerror) void {}
 
     pub inline fn stat(fd: FileDescriptorType) anyerror!Stat {
         return try std.fs.File.stat(.{ .handle = fd });
-    }
-
-    pub inline fn getFileSize(
-        handle: FileDescriptorType,
-    ) !u64 {
-        const stat_ = try std.os.fstat(handle);
-        return @intCast(u64, stat_.size);
-    }
-
-    pub fn readFileWithHandle(
-        fs: *RealFS,
-        path: string,
-        _size: ?usize,
-        handle: FileDescriptorType,
-        comptime use_shared_buffer: bool,
-        shared_buffer: *MutableString,
-    ) !string {
-        const file = std.fs.File{ .handle = handle };
-        FileSystem.setMaxFd(file.handle);
-
-        if (comptime FeatureFlags.disable_filesystem_cache) {
-            _ = std.os.fcntl(file.handle, std.os.F_NOCACHE, 1) catch 0;
-        }
-
-        // Skip the extra file.stat() call when possible
-        var size = _size orelse (file.getEndPos() catch |err| {
-            fs.readFileError(path, err);
-            return err;
-        });
-
-        // Skip the pread call for empty files
-        // Otherwise will get out of bounds errors
-        // plus it's an unnecessary syscall
-        if (size == 0) {
-            if (comptime use_shared_buffer) {
-                shared_buffer.reset();
-                return shared_buffer.list.items;
-            } else {
-                return "";
-            }
-        }
-
-        // When we're serving a JavaScript-like file over HTTP, we do not want to cache the contents in memory
-        // This imposes a performance hit because not reading from disk is faster than reading from disk
-        // Part of that hit is allocating a temporary buffer to store the file contents in
-        // As a mitigation, we can just keep one buffer forever and re-use it for the parsed files
-        if (use_shared_buffer) {
-            shared_buffer.reset();
-            try shared_buffer.growBy(size);
-            shared_buffer.list.expandToCapacity();
-            // We use pread to ensure if the file handle was open, it doesn't seek from the last position
-            var read_count = file.preadAll(shared_buffer.list.items, 0) catch |err| {
-                fs.readFileError(path, err);
-                return err;
-            };
-            shared_buffer.list.items = shared_buffer.list.items[0..read_count];
-            return shared_buffer.list.items;
-        } else {
-            // We use pread to ensure if the file handle was open, it doesn't seek from the last position
-            var buf = try fs.allocator.alloc(u8, size);
-            var read_count = file.preadAll(buf, 0) catch |err| {
-                fs.readFileError(path, err);
-                return err;
-            };
-            return buf[0..read_count];
-        }
-    }
-
-    pub inline fn close(fd: FileDescriptorType) void {
-        std.os.close(fd);
     }
 
     pub fn kind(fs: *RealFS, _dir: string, base: string, existing_fd: StoredFileDescriptorType) !Entry.Cache {
@@ -1622,6 +1572,12 @@ pub const RealFS = struct {
         return cache;
     }
 
+    fn openDir(unsafe_dir_string: string) std.fs.File.OpenError!FileDescriptorType {
+        const fd = try std.fs.openDirAbsolute(unsafe_dir_string, std.fs.Dir.OpenDirOptions{ .iterate = true, .access_sub_paths = true, .no_follow = false });
+
+        return fd.fd;
+    }
+
     //     	// Stores the file entries for directories we've listed before
     // entries_mutex: std.Mutex
     // entries      map[string]entriesOrErr
@@ -1630,7 +1586,311 @@ pub const RealFS = struct {
     // doNotCacheEntries bool
 };
 
-pub const TestFS = struct {};
+pub const TestFS = struct {
+    pub const TestFile = struct {
+        bytes: std.ArrayList(u8),
+        kind: std.fs.File.Kind = .File,
+
+        pub fn toDirEntry(this: TestFile, name: string) std.fs.Dir.Entry {
+            return std.fs.Dir.Entry{ .name = name, .kind = this.kind };
+        }
+    };
+    const Handle = struct {
+        pos: usize = 0,
+        path: string = "",
+    };
+    entries: *EntriesOption.Map,
+    allocator: *std.mem.Allocator,
+    parent_fs: *FileSystem = undefined,
+
+    pub var map: std.StringHashMap(TestFile) = undefined;
+    pub var handles: std.AutoArrayHashMap(FileDescriptorType, Handle) = undefined;
+    pub var max_fd: FileDescriptorType = 1;
+    pub var loaded = false;
+    pub fn init(
+        allocator: *std.mem.Allocator,
+        cwd_: string,
+        entries: *EntriesOption.Map,
+    ) TestFS {
+        if (!loaded) {
+            map = std.StringHashMap(TestFile).init(allocator);
+            loaded = true;
+            handles = std.AutoArrayHashMap(FileDescriptorType, Handle).init(allocator);
+        }
+
+        return TestFS{
+            .entries = entries,
+            .allocator = allocator,
+        };
+    }
+
+    pub var cwd_path: string = "/bun-testfs";
+
+    pub fn close(fd: FileDescriptorType) void {
+        const path = handles.get(fd) orelse @panic("tried to close file without descriptor");
+        std.debug.assert(handles.swapRemove(fd));
+    }
+
+    pub fn create(allocator: *std.mem.Allocator, data: anytype) void {
+        _ = FileSystem.init1(allocator, cwd_path) catch unreachable;
+        make(allocator, data);
+    }
+
+    pub fn make(allocator: *std.mem.Allocator, data: anytype) void {
+        const Data = @TypeOf(data);
+        _ = map.getOrPutValue(cwd_path, TestFile{ .kind = .Directory, .bytes = std.ArrayList(u8).init(map.allocator) }) catch unreachable;
+        _ = handles.getOrPutValue(0, .{ .path = cwd_path }) catch unreachable;
+
+        const fields: []const std.builtin.TypeInfo.StructField = comptime std.meta.fields(Data);
+        inline for (fields) |field| {
+            var file = TestFile{ .bytes = std.ArrayList(u8).init(map.allocator) };
+            const value = @field(data, field.name);
+            var had_bytes = false;
+            const ValueType = @TypeOf(value);
+            const file_data: []const std.builtin.TypeInfo.StructField = std.meta.fields(ValueType);
+            inline for (file_data) |file_field| {
+                const file_value = @field(value, file_field.name);
+                if (comptime strings.eql(file_field.name, "data")) {
+                    file.bytes = std.ArrayList(u8).init(allocator);
+                    file.bytes.insertSlice(0, std.mem.span(file_value)) catch unreachable;
+                    had_bytes = true;
+                } else if (comptime strings.eql(file_field.name, "kind")) {
+                    file.kind = @field(file_field, file_field.name);
+                    had_bytes = file.kind == .File or had_bytes;
+                }
+            }
+
+            if (!had_bytes) {
+                file.kind = .File;
+            }
+
+            var parent = std.fs.path.dirname(field.name);
+            while (parent) |_parent| {
+                _ = map.getOrPutValue(_parent, .{
+                    .bytes = std.ArrayList(u8).init(map.allocator),
+                    .kind = .Directory,
+                }) catch unreachable;
+                parent = std.fs.path.dirname(_parent);
+            }
+            map.put(field.name, file) catch unreachable;
+        }
+    }
+
+    pub fn kind(fs: *TestFS, _dir: string, base: string, existing_fd: StoredFileDescriptorType) !Entry.Cache {
+        var parts = [2]string{ _dir, base };
+        var pathbuf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        var joined = path_handler.joinAbsStringBuf(cwd, &pathbuf, &parts, .posix);
+        var fd = try openFileAbsolute(joined, .{});
+        var handle = handles.get(fd).?;
+        var file = map.get(handle).?;
+        return Entry.Cache{
+            .kind = if (file.kind == .File) .file else .dir,
+            .symlink = false,
+            .fd = fd,
+        };
+    }
+
+    pub fn modKeyWithFile(fs: *RealFS, path: string, file: anytype) anyerror!ModKey {
+        return try ModKey.generate(fs, path, file);
+    }
+
+    pub fn cwd() Dir {
+        return Dir{ .fd = handles.get(0).? };
+    }
+
+    pub fn read(fd: FileDescriptorType, buf: []u8) File.ReadError!usize {
+        var handle = handles.getPtr(fd) orelse return error.NotOpenForReading;
+        const file = map.getPtr(handle.path) orelse return error.Unexpected;
+        if (handle.pos >= file.bytes.items.len) return 0;
+
+        const bytes = file.bytes.items[handle.pos..];
+        const len = std.math.min(buf.len, bytes.len);
+        std.mem.copy(u8, buf, bytes[0..len]);
+        handle.pos += len;
+        handle.pos = std.math.min(file.bytes.items.len, handle.pos);
+        return len;
+    }
+
+    pub inline fn write(fd: FileDescriptorType, buf: []const u8) File.WriteError!usize {
+        var handle = handles.getPtr(fd) orelse return error.NotOpenForWriting;
+        const file = map.getPtr(handle.path) orelse return error.Unexpected;
+
+        if (handle.pos >= file.bytes.capacity) {
+            file.bytes.ensureUnusedCapacity(buf.len) catch return error.DiskQuota;
+        }
+
+        file.bytes.insertSlice(handle.pos, buf) catch return error.DiskQuota;
+        handle.pos += buf.len;
+        return buf.len;
+    }
+
+    pub inline fn pwrite(fd: FileDescriptorType, buf: []const u8, offset: usize) File.PWriteError!usize {
+        const handle = handles.get(fd) orelse return error.NotOpenForWriting;
+        const file = map.getPtr(handle.path) orelse return error.Unexpected;
+
+        file.bytes.insertSlice(offset, buf) catch return error.DiskQuota;
+        return buf.len;
+    }
+
+    pub inline fn pread(fd: FileDescriptorType, buf: []u8, offset: usize) File.PReadError!usize {
+        var handle = handles.getPtr(fd) orelse return error.NotOpenForWriting;
+        const file = map.getPtr(handle.path) orelse return error.Unexpected;
+        if (offset >= file.bytes.items.len) return 0;
+        var remainder = file.bytes.items[offset..];
+        remainder = remainder[0..std.math.min(buf.len, remainder.len)];
+        std.mem.copy(u8, buf, remainder);
+        return remainder.len;
+    }
+
+    pub inline fn openFileInDir(dir: FileDescriptorType, subpath: string, flags: FileOpenFlags) !FileDescriptorType {
+        const fd = max_fd;
+        max_fd += 1;
+        const handle = handles.get(dir) orelse return error.NotOpenForWriting;
+        var parts = [_]string{ dir_path, subpath };
+        var outbuf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        var path = path_handler.joinAbsStringBuf(cwd_path, &outbuf, &parts, .posix);
+        if (!map.contains(handle.path)) return error.FileNotFound;
+        try handles.put(fd, .{ .path = try map.allocator.dupe(u8, path) });
+        return fd;
+    }
+
+    pub inline fn createFileInDir(dir: FileDescriptorType, subpath: string, flags: std.fs.File.CreateFlags) !FileDescriptorType {
+        const fd = max_fd;
+        max_fd += 1;
+        const dir_path = handles.get(dir) orelse return error.NotOpenForWriting;
+        var parts = [_]string{ dir_path.path, subpath };
+        var outbuf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        var path = path_handler.joinAbsStringBuf(cwd_path, &outbuf, &parts, .posix);
+        return createFileAbsolute(path, flags);
+    }
+
+    pub inline fn openFileAbsolute(path: string, flags: FileOpenFlags) !FileDescriptorType {
+        if (!map.contains(path)) return error.FileNotFound;
+        const fd = max_fd;
+        max_fd += 1;
+
+        try handles.put(fd, .{ .path = try map.allocator.dupe(u8, path) });
+        return fd;
+    }
+
+    pub inline fn openFileAbsoluteZ(path_z: stringZ, flags: FileOpenFlags) !FileDescriptorType {
+        const path = std.mem.span(path_z);
+        return try openFileAbsolute(path, flags);
+    }
+
+    pub inline fn createFileAbsolute(path: string, flags: std.fs.File.CreateFlags) !FileDescriptorType {
+        const fd = max_fd;
+        max_fd += 1;
+
+        var entry = try map.getOrPutValue(
+            try map.allocator.dupe(
+                u8,
+                path,
+            ),
+            TestFile{ .kind = .File, .bytes = std.ArrayList(u8).init(map.allocator) },
+        );
+
+        if (flags.truncate) {
+            entry.value_ptr.bytes.clearRetainingCapacity();
+        }
+
+        try handles.put(fd, .{ .path = try map.allocator.dupe(u8, path) });
+        return fd;
+    }
+
+    pub inline fn seekTo(fd: FileDescriptorType, offset: usize) !void {
+        var handle = handles.getPtr(fd) orelse @panic("bad file");
+        handle.pos = offset;
+    }
+
+    pub inline fn getPos(
+        fd: FileDescriptorType,
+    ) !usize {
+        const handle = handles.get(fd) orelse @panic("bad file");
+        return handle.pos;
+    }
+
+    pub fn needToCloseFiles(fs: *TestFS) bool {
+        return false;
+    }
+
+    pub fn openDirectory(path: string, flags: std.fs.Dir.OpenDirOptions) anyerror!Dir {
+        var entry = try map.getOrPutValue(
+            try map.allocator.dupe(
+                u8,
+                path,
+            ),
+            TestFile{ .kind = .Directory, .bytes = std.ArrayList(u8).init(map.allocator) },
+        );
+        const fd = max_fd;
+        max_fd += 1;
+        try handles.put(fd, .{ .path = try map.allocator.dupe(u8, path) });
+        return fd;
+    }
+
+    pub fn modKey(fs: *const TestFS, path: string) anyerror!ModKey {
+        return ModKey{};
+    }
+
+    pub inline fn realpath(path: string, buf: *[std.fs.MAX_PATH_BYTES]u8) anyerror!string {
+        return path;
+    }
+
+    pub inline fn getPath(
+        fd: FileDescriptorType,
+        buffer: *[std.fs.MAX_PATH_BYTES]u8,
+    ) !string {
+        return handles.get(fd).?.path;
+    }
+
+    pub inline fn getFileSize(
+        fd: FileDescriptorType,
+    ) !u64 {
+        const handle = handles.get(fd) orelse @panic("bad file");
+        const file = map.get(handle.path) orelse @panic("bad file");
+        return file.bytes.items.len;
+    }
+
+    pub fn readdir(
+        fs: *TestFS,
+        _dir: string,
+        dir_: Dir,
+    ) !DirEntry {
+        var handle = handles.getPtr(dir_.fd) orelse @panic("bad dir");
+        const dir = map.get(handle.path) orelse @panic("bad dir");
+
+        var dirent = DirEntry.init(_dir, fs.allocator);
+
+        var iter = map.keyIterator();
+        while (iter.next()) |key_| {
+            const key = key_.*;
+            if (strings.eql(key, _dir)) continue;
+
+            if (strings.indexOf(key, handle.path)) |i| {
+                if (i == 0) {
+                    const basename = std.fs.path.basename(key);
+                    if (std.fs.path.dirname(basename) != null) continue;
+
+                    try dirent.addEntry(map.get(key).?.toDirEntry(basename));
+                }
+            }
+        }
+
+        return dirent;
+    }
+
+    pub inline fn stat(fd: FileDescriptorType) anyerror!Stat {
+        const handle = handles.get(fd) orelse @panic("bad file");
+        const file = map.get(handle.path) orelse @panic("bad file");
+
+        return Stat{
+            .size = file.bytes.items.len,
+            .mode = 0x666,
+            .kind = file.kind,
+            .inode = @truncate(Stat.INode, std.hash.Wyhash.hash(10, handle.path)),
+        };
+    }
+};
 
 const FSType = switch (FSImpl.choice) {
     FSImpl.Test => TestFS,
@@ -1648,4 +1908,43 @@ test "PathName.init" {
     try std.testing.expectEqualStrings(res.ext, ".ext");
 }
 
-test {}
+const expectEqual = std.testing.expectEqual;
+
+test "TestFS.init" {
+    var instance = try FileSystem.init1(default_allocator, null);
+    const fs = FileSystem;
+    var file = try fs.createFile("/hiiiiiii", .{ .truncate = true });
+    try file.writeAll("wow");
+    try file.seekTo(0);
+    var buf: [1024]u8 = undefined;
+    const read = try file.readAll(&buf);
+    try expectEqual(read, 3);
+    try expect(strings.eql(buf[0..read], "wow"));
+
+    try expectEqual(read, try file.getPos());
+    try file.seekTo(0);
+}
+
+test "TestFS.make" {
+    var instance = try FileSystem.init1(default_allocator, null);
+    const fs = FileSystem;
+    TestFS.make(default_allocator, .{
+        .@"/foo/bar/wow" = .{
+            .data = "hello",
+        },
+        .@"/foo/bar/hi" = .{
+            .data = "greetings",
+        },
+        .@"/foo/bar/salutations" = .{
+            .data = "welcome",
+        },
+    });
+    var file = try fs.openFile("/foo/bar/hi", .{});
+    var buf: [1024]u8 = undefined;
+    var data = buf[0..try file.readAll(&buf)];
+    try std.testing.expectEqualStrings(data, "greetings");
+
+    var entries = try instance.readDirectory("/foo/bar", null);
+    var wow = entries.entries.get("wow").?;
+    try std.testing.expectEqualStrings(wow.entry.base(), "wow");
+}

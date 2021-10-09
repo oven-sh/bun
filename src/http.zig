@@ -388,8 +388,7 @@ pub const RequestContext = struct {
             if (stat.kind == .SymLink) {
                 _ = FileSystem.openFileAbsolute(absolute_path, .{ .read = true }) catch return null;
 
-                absolute_path = std.os.getFdPath(
-                    file.handle,
+                absolute_path = file.getPath(
                     &Bundler.tmp_buildfile_buf,
                 ) catch return null;
 
@@ -2567,7 +2566,7 @@ pub const Server = struct {
                     }
                 },
                 .directory => {
-                    rfs.bustEntriesCache(file_path);
+                    FileSystem.instance.bustEntriesCache(file_path);
                     ctx.bundler.resolver.dir_cache.remove(file_path);
 
                     // if (event.op.delete or event.op.rename)

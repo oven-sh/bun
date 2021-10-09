@@ -14,7 +14,10 @@ const URL = @import("./query_string_map.zig").URL;
 const ConditionsMap = @import("./resolver/package_json.zig").ESModule.ConditionsMap;
 usingnamespace @import("global.zig");
 
+const Dir = Fs.Dir;
+const File = Fs.File;
 const Analytics = @import("./analytics/analytics_thread.zig");
+const FileSystem = Fs.FileSystem;
 
 const DotEnv = @import("./env_loader.zig");
 
@@ -909,7 +912,7 @@ pub const BundleOptions = struct {
     origin: URL = URL{},
 
     output_dir: string = "",
-    output_dir_handle: ?std.fs.Dir = null,
+    output_dir_handle: ?Dir = null,
     node_modules_bundle_url: string = "",
     node_modules_bundle_pretty_path: string = "",
 
@@ -1103,7 +1106,7 @@ pub const BundleOptions = struct {
             if (bundle_path.len > 0) {
                 load_bundle: {
                     const pretty_path = fs.relativeTo(bundle_path);
-                    var bundle_file = std.fs.openFileAbsolute(bundle_path, .{ .read = true, .write = true }) catch |err| {
+                    const bundle_file = Fs.FileSystem.openFileAbsolute(bundle_path, .{ .read = true, .write = true }) catch |err| {
                         if (is_generating_bundle) {
                             break :load_bundle;
                         }
@@ -1114,11 +1117,11 @@ pub const BundleOptions = struct {
                     };
 
                     defer {
-                        if (is_generating_bundle) bundle_file.close();
+                        if (is_generating_bundle) Fs.FileSystem.close(bundle_file);
                     }
 
                     const time_start = std.time.nanoTimestamp();
-                    if (NodeModuleBundle.loadBundle(allocator, bundle_file)) |bundle| {
+                    if (NodeModuleBundle.loadBundle(allocator, Fs.File{ .handle = bundle_file })) |bundle| {
                         if (!is_generating_bundle) {
                             var node_module_bundle = try allocator.create(NodeModuleBundle);
                             node_module_bundle.* = bundle;
@@ -1181,7 +1184,7 @@ pub const BundleOptions = struct {
                                 "<r>error reading <d>\"<r><b>{s}<r><d>\":<r> <b><red>{s}<r>, <b>deleting it<r> so you don't keep seeing this message.",
                                 .{ pretty_path, @errorName(err) },
                             );
-                            bundle_file.close();
+                            FileSystem.close(bundle_file);
                         }
                     }
                 }
@@ -1254,7 +1257,7 @@ pub const BundleOptions = struct {
             if (!disabled_static) {
                 var _dirs = [_]string{chosen_dir};
                 opts.routes.static_dir = try fs.absAlloc(allocator, &_dirs);
-                opts.routes.static_dir_handle = std.fs.openDirAbsolute(opts.routes.static_dir, .{ .iterate = true }) catch |err| brk: {
+                opts.routes.static_dir_handle = FileSystem.openDirectory(opts.routes.static_dir, .{ .iterate = true }) catch |err| brk: {
                     var did_warn = false;
                     switch (err) {
                         error.FileNotFound => {
@@ -1339,14 +1342,14 @@ pub const BundleOptions = struct {
     }
 };
 
-pub fn openOutputDir(output_dir: string) !std.fs.Dir {
-    return std.fs.openDirAbsolute(output_dir, std.fs.Dir.OpenDirOptions{}) catch brk: {
-        std.fs.makeDirAbsolute(output_dir) catch |err| {
+pub fn openOutputDir(output_dir: string) !Dir {
+    return FileSystem.openDirectory(output_dir, Dir.OpenDirOptions{}) catch brk: {
+        FileSystem.mkdir(output_dir) catch |err| {
             Output.printErrorln("error: Unable to mkdir \"{s}\": \"{s}\"", .{ output_dir, @errorName(err) });
             Global.crash();
         };
 
-        var handle = std.fs.openDirAbsolute(output_dir, std.fs.Dir.OpenDirOptions{}) catch |err2| {
+        var handle = FileSystem.openDirectory(output_dir, Dir.OpenDirOptions{}) catch |err2| {
             Output.printErrorln("error: Unable to open \"{s}\": \"{s}\"", .{ output_dir, @errorName(err2) });
             Global.crash();
         };
@@ -1365,7 +1368,7 @@ pub const TransformOptions = struct {
     inject: ?[]string = null,
     origin: string = "",
     preserve_symlinks: bool = false,
-    entry_point: Fs.File,
+    entry_point: Fs.LoadedFile,
     resolve_paths: bool = false,
     tsconfig_override: ?string = null,
 
@@ -1375,7 +1378,7 @@ pub const TransformOptions = struct {
     pub fn initUncached(allocator: *std.mem.Allocator, entryPointName: string, code: string) !TransformOptions {
         assert(entryPointName.len > 0);
 
-        var entryPoint = Fs.File{
+        var entryPoint = Fs.LoadedFile{
             .path = Fs.Path.init(entryPointName),
             .contents = code,
         };
@@ -1467,16 +1470,16 @@ pub const OutputFile = struct {
         };
     }
 
-    pub fn initFile(file: std.fs.File, pathname: string, size: usize) OutputFile {
+    pub fn initFile(handle: FileDescriptorType, pathname: string, size: usize) OutputFile {
         return .{
             .loader = .file,
             .input = Fs.Path.init(pathname),
             .size = size,
-            .value = .{ .copy = FileOperation.fromFile(file.handle, pathname) },
+            .value = .{ .copy = FileOperation.fromFile(handle, pathname) },
         };
     }
 
-    pub fn initFileWithDir(file: std.fs.File, pathname: string, size: usize, dir: std.fs.Dir) OutputFile {
+    pub fn initFileWithDir(file: File, pathname: string, size: usize, dir: Dir) OutputFile {
         var res = initFile(file, pathname, size);
         res.value.copy.dir_handle = dir.fd;
         return res;
@@ -1495,7 +1498,7 @@ pub const OutputFile = struct {
         var move = file.value.move;
         if (move.dir > 0) {
             std.os.renameat(move.dir, move.pathname, dir, rel_path) catch |err| {
-                const dir_ = std.fs.Dir{ .fd = dir };
+                const dir_ = Dir{ .fd = dir };
                 if (std.fs.path.dirname(rel_path)) |dirname| {
                     dir_.makePath(dirname) catch {};
                     std.os.renameat(move.dir, move.pathname, dir, rel_path) catch {};
@@ -1511,7 +1514,7 @@ pub const OutputFile = struct {
     pub fn copyTo(file: *const OutputFile, base_path: string, rel_path: []u8, dir: FileDescriptorType) !void {
         var copy = file.value.copy;
 
-        var dir_obj = std.fs.Dir{ .fd = dir };
+        var dir_obj = Dir{ .fd = dir };
         const file_out = (try dir_obj.createFile(rel_path, .{}));
 
         const fd_out = file_out.handle;
@@ -1576,7 +1579,7 @@ pub const TransformResult = struct {
     warnings: []logger.Msg = &([_]logger.Msg{}),
     output_files: []OutputFile = &([_]OutputFile{}),
     outbase: string,
-    root_dir: ?std.fs.Dir = null,
+    root_dir: ?Dir = null,
     pub fn init(
         outbase: string,
         output_files: []OutputFile,
@@ -1925,7 +1928,7 @@ pub const RouteConfig = struct {
     routes_enabled: bool = false,
 
     static_dir: string = "",
-    static_dir_handle: ?std.fs.Dir = null,
+    static_dir_handle: ?Dir = null,
     static_dir_enabled: bool = false,
     single_page_app_routing: bool = false,
     single_page_app_fd: StoredFileDescriptorType = 0,

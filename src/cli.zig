@@ -124,20 +124,6 @@ pub const Arguments = struct {
         std.process.exit(1);
     }
 
-    pub fn readFile(
-        allocator: *std.mem.Allocator,
-        cwd: string,
-        filename: string,
-    ) ![]u8 {
-        var paths = [_]string{ cwd, filename };
-        const outpath = try std.fs.path.resolve(allocator, &paths);
-        defer allocator.free(outpath);
-        var file = try std.fs.openFileAbsolute(outpath, std.fs.File.OpenFlags{ .read = true, .write = false });
-        defer file.close();
-        const stats = try file.stat();
-        return try file.readToEndAlloc(allocator, stats.size);
-    }
-
     pub fn resolve_jsx_runtime(str: string) !Api.JsxRuntime {
         if (strings.eqlComptime(str, "automatic")) {
             return Api.JsxRuntime.automatic;
@@ -150,7 +136,7 @@ pub const Arguments = struct {
 
     pub const ParamType = clap.Param(clap.Help);
 
-    const params: [26]ParamType = brk: {
+    const params: [25]ParamType = brk: {
         @setEvalBranchQuota(9999);
         break :brk [_]ParamType{
             clap.parseParam("--use <STR>                       Choose a framework, e.g. \"--use next\". It checks first for a package named \"bun-framework-packagename\" and then \"packagename\".") catch unreachable,
@@ -173,7 +159,7 @@ pub const Arguments = struct {
             clap.parseParam("--platform <STR>                  \"browser\" or \"node\". Defaults to \"browser\"") catch unreachable,
             // clap.parseParam("--production                      [not implemented] generate production code") catch unreachable,
             clap.parseParam("--public-dir <STR>                Top-level directory for .html files, fonts or anything external. Defaults to \"<cwd>/public\", to match create-react-app and Next.js") catch unreachable,
-            clap.parseParam("--tsconfig-override <STR>         Load tsconfig from path instead of cwd/tsconfig.json") catch unreachable,
+            // clap.parseParam("--tsconfig-override <STR>         Load tsconfig from path instead of cwd/tsconfig.json") catch unreachable,
             clap.parseParam("-d, --define <STR>...             Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:\"development\". Values are parsed as JSON.") catch unreachable,
             clap.parseParam("-e, --external <STR>...           Exclude module from transpilation (can use * wildcards). ex: -e react") catch unreachable,
             clap.parseParam("-h, --help                        Display this help and exit.              ") catch unreachable,
@@ -221,7 +207,7 @@ pub const Arguments = struct {
         }
 
         var opts = Api.TransformOptions{
-            .tsconfig_override = if (args.option("--tsconfig-override")) |ts| (Arguments.readFile(allocator, cwd, ts) catch |err| fileReadError(err, Output.errorStream(), ts, "tsconfig.json")) else null,
+            // .tsconfig_override = if (args.option("--tsconfig-override")) |ts| (Arguments.readFile(allocator, cwd, ts) catch |err| fileReadError(err, Output.errorStream(), ts, "tsconfig.json")) else null,
             .external = externals,
             .absolute_working_dir = cwd,
             .origin = args.option("--origin"),

@@ -273,7 +273,7 @@ pub const Bun = struct {
         exception: js.ExceptionRef,
     ) js.JSValueRef {
         const path = buf_z.ptr[0..buf_z.len];
-        var file = std.fs.cwd().openFileZ(buf_z, .{ .read = true, .write = false }) catch |err| {
+        var file = Fs.FileSystem.openFileZ(buf_z, .{ .read = true, .write = false }) catch |err| {
             JSError(getAllocator(ctx), "Opening file {s} for path: \"{s}\"", .{ @errorName(err), path }, ctx, exception);
             return js.JSValueMakeUndefined(ctx);
         };
@@ -313,7 +313,7 @@ pub const Bun = struct {
     ) js.JSValueRef {
         const path = buf_z.ptr[0..buf_z.len];
 
-        var file = std.fs.cwd().openFileZ(buf_z, .{ .read = true, .write = false }) catch |err| {
+        var file = Fs.FileSystem.openFileZ(buf_z, .{ .read = true, .write = false }) catch |err| {
             JSError(getAllocator(ctx), "Opening file {s} for path: \"{s}\"", .{ @errorName(err), path }, ctx, exception);
             return js.JSValueMakeUndefined(ctx);
         };

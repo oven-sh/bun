@@ -878,7 +878,7 @@ pub const Source = struct {
         line_count: usize,
     };
 
-    pub fn initFile(file: fs.File, allocator: *std.mem.Allocator) !Source {
+    pub fn initFile(file: fs.LoadedFile, allocator: *std.mem.Allocator) !Source {
         var name = file.path.name;
 
         var source = Source{
@@ -890,7 +890,7 @@ pub const Source = struct {
         return source;
     }
 
-    pub fn initRecycledFile(file: fs.File, allocator: *std.mem.Allocator) !Source {
+    pub fn initRecycledFile(file: fs.LoadedFile, allocator: *std.mem.Allocator) !Source {
         var name = file.path.name;
 
         var source = Source{

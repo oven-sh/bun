@@ -62,7 +62,7 @@ pub const NodeModuleBundle = struct {
             return code.str;
         }
 
-        var file = std.fs.File{ .handle = this.fd };
+        var file = Fs.File{ .handle = this.fd };
 
         var buf = try allocator.alloc(u8, this.code_end_pos);
         const count = try file.preadAll(buf, this.codeStartOffset());

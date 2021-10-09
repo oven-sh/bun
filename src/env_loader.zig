@@ -3,8 +3,10 @@ const logger = @import("./logger.zig");
 usingnamespace @import("./global.zig");
 const CodepointIterator = @import("./string_immutable.zig").CodepointIterator;
 const Analytics = @import("./analytics/analytics_thread.zig");
-const Fs = @import("./fs.zig");
 const Api = @import("./api/schema.zig").Api;
+const FileSystem = @import("./fs.zig").FileSystem;
+const Dir = @import("./fs.zig").Dir;
+const DirEntry = @import("./fs.zig").DirEntry;
 const Variable = struct {
     key: string,
     value: string,
@@ -483,12 +485,12 @@ pub const Loader = struct {
     // .env goes last
     pub fn load(
         this: *Loader,
-        fs: *Fs.RealFS,
-        dir: *Fs.DirEntry,
+        fs: *FileSystem,
+        dir: *DirEntry,
         comptime development: bool,
     ) !void {
         const start = std.time.nanoTimestamp();
-        var dir_handle: std.fs.Dir = std.fs.cwd();
+        const dir_handle = FileSystem.cwd();
         var can_auto_close = false;
 
         if (dir.hasComptimeQuery(".env.local")) {
@@ -557,7 +559,7 @@ pub const Loader = struct {
         Output.flush();
     }
 
-    pub fn loadEnvFile(this: *Loader, fs: *Fs.RealFS, dir: std.fs.Dir, comptime base: string, comptime override: bool) !void {
+    pub fn loadEnvFile(this: *Loader, fs: *FileSystem, dir: Dir, comptime base: string, comptime override: bool) !void {
         if (@field(this, base) != null) {
             return;
         }
@@ -574,7 +576,6 @@ pub const Loader = struct {
                 },
             }
         };
-        Fs.FileSystem.setMaxFd(file.handle);
 
         defer {
             if (fs.needToCloseFiles()) {
@@ -582,13 +583,13 @@ pub const Loader = struct {
             }
         }
 
-        const stat = try file.stat();
-        if (stat.size == 0) {
+        const size = try file.getEndPos();
+        if (size == 0) {
             @field(this, base) = logger.Source.initPathString(base, "");
             return;
         }
 
-        var buf = try this.allocator.allocSentinel(u8, stat.size, 0);
+        var buf = try this.allocator.allocSentinel(u8, size, 0);
         errdefer this.allocator.free(buf);
         var contents = try file.readAll(buf);
         // always sentinel

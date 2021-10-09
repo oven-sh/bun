@@ -42,6 +42,9 @@ const Analytics = @import("./analytics/analytics_thread.zig");
 
 const Linker = linker.Linker;
 const Resolver = _resolver.Resolver;
+const FileSystem = Fs.FileSystem;
+
+const Dir = Fs.Dir;
 
 // How it works end-to-end
 // 1. Resolve a file path from input using the resolver
@@ -238,9 +241,9 @@ pub const Bundler = struct {
                 // Process always has highest priority.
                 this.env.loadProcess();
                 if (this.options.production) {
-                    try this.env.load(&this.fs.fs, dir, false);
+                    try this.env.load(this.fs, dir, false);
                 } else {
-                    try this.env.load(&this.fs.fs, dir, true);
+                    try this.env.load(this.fs, dir, true);
                 }
             },
             .disable => {
@@ -619,7 +622,7 @@ pub const Bundler = struct {
         queue: *BunQueue,
         bundler: *ThisBundler,
         allocator: *std.mem.Allocator,
-        tmpfile: std.fs.File,
+        tmpfile: Fs.File,
         log: *logger.Log,
         pool: *ThreadPool,
         tmpfile_byte_offset: u32 = 0,
@@ -721,7 +724,7 @@ pub const Bundler = struct {
             destination: [*:0]const u8,
             estimated_input_lines_of_code: *usize,
         ) !?Api.JavascriptBundleContainer {
-            var tmpdir: std.fs.Dir = try bundler.fs.fs.openTmpDir();
+            var tmpdir: Dir = bundler.fs.tmpdir();
             var tmpname_buf: [64]u8 = undefined;
             bundler.resetStore();
             try bundler.configureDefines();
@@ -1530,7 +1533,7 @@ pub const Bundler = struct {
                     var ast: js_ast.Ast = undefined;
 
                     const source = logger.Source.initRecycledFile(
-                        Fs.File{
+                        Fs.LoadedFile{
                             .path = file_path,
                             .contents = entry.contents,
                         },
@@ -1845,9 +1848,9 @@ pub const Bundler = struct {
                                 Linker,
                                 &bundler.linker,
                                 &this.write_lock,
-                                std.fs.File,
+                                Fs.File,
                                 this.tmpfile,
-                                std.fs.File.getPos,
+                                Fs.File.getPos,
                                 &this.tmpfile_byte_offset,
                             );
 
@@ -1885,7 +1888,7 @@ pub const Bundler = struct {
                         ) catch return;
                         if (entry.contents.len == 0 or (entry.contents.len < 33 and strings.trim(entry.contents, " \n\r").len == 0)) return;
 
-                        const source = logger.Source.initRecycledFile(Fs.File{ .path = file_path, .contents = entry.contents }, bundler.allocator) catch return null;
+                        const source = logger.Source.initRecycledFile(Fs.LoadedFile{ .path = file_path, .contents = entry.contents }, bundler.allocator) catch return null;
 
                         var jsx = bundler.options.jsx;
 
@@ -1941,7 +1944,7 @@ pub const Bundler = struct {
                                                     var can_close = false;
                                                     if (fd == 0) {
                                                         dynamic_import_file_size.value_ptr.* = 0;
-                                                        fd = (std.fs.openFileAbsolute(path.textZ(), .{}) catch |err| {
+                                                        fd = (FileSystem.openFileAbsoluteZ(path.textZ(), .{}) catch |err| {
                                                             this.log.addRangeWarningFmt(
                                                                 &source,
                                                                 import_record.range,
@@ -1950,23 +1953,20 @@ pub const Bundler = struct {
                                                                 .{ @errorName(err), path.text },
                                                             ) catch unreachable;
                                                             continue;
-                                                        }).handle;
+                                                        });
                                                         can_close = true;
-                                                        Fs.FileSystem.setMaxFd(fd);
                                                     }
 
                                                     defer {
-                                                        if (can_close and bundler.fs.fs.needToCloseFiles()) {
-                                                            var _file = std.fs.File{ .handle = fd };
-                                                            _file.close();
+                                                        if (can_close and bundler.fs.needToCloseFiles()) {
+                                                            FileSystem.close(fd);
                                                             _resolved_import.file_fd = 0;
                                                         } else if (FeatureFlags.store_file_descriptors) {
                                                             _resolved_import.file_fd = fd;
                                                         }
                                                     }
 
-                                                    var file = std.fs.File{ .handle = fd };
-                                                    var stat = file.stat() catch |err| {
+                                                    const size = FileSystem.getFileSize(fd) catch |err| {
                                                         this.log.addRangeWarningFmt(
                                                             &source,
                                                             import_record.range,
@@ -1978,7 +1978,7 @@ pub const Bundler = struct {
                                                         continue;
                                                     };
 
-                                                    dynamic_import_file_size.value_ptr.* = @truncate(u32, stat.size);
+                                                    dynamic_import_file_size.value_ptr.* = @truncate(u32, size);
                                                 }
 
                                                 if (dynamic_import_file_size.value_ptr.* > 1024 * 100)
@@ -2228,10 +2228,10 @@ pub const Bundler = struct {
             .value = undefined,
         };
 
-        var file: std.fs.File = undefined;
+        var file: Fs.File = undefined;
 
-        if (Outstream == std.fs.Dir) {
-            const output_dir = outstream;
+        if (Outstream == Dir) {
+            const output_dir: Dir = outstream;
 
             if (std.fs.path.dirname(file_path.pretty)) |dirname| {
                 try output_dir.makePath(dirname);
@@ -2279,10 +2279,10 @@ pub const Bundler = struct {
 
                 file_op.is_tmpdir = false;
 
-                if (Outstream == std.fs.Dir) {
+                if (Outstream == Dir) {
                     file_op.dir = outstream.fd;
 
-                    if (bundler.fs.fs.needToCloseFiles()) {
+                    if (bundler.fs.needToCloseFiles()) {
                         file.close();
                         file_op.fd = 0;
                     }
@@ -2292,7 +2292,7 @@ pub const Bundler = struct {
             },
             .css => {
                 const CSSWriter = Css.NewWriter(
-                    std.fs.File,
+                    Fs.File,
                     @TypeOf(&bundler.linker),
                     import_path_format,
                     void,
@@ -2305,7 +2305,7 @@ pub const Bundler = struct {
                     null,
                 ) catch return null;
 
-                const _file = Fs.File{ .path = file_path, .contents = entry.contents };
+                const _file = Fs.LoadedFile{ .path = file_path, .contents = entry.contents };
                 var source = try logger.Source.initFile(_file, bundler.allocator);
                 source.contents_is_recycled = !cache_files;
                 var css_writer = CSSWriter.init(
@@ -2323,10 +2323,10 @@ pub const Bundler = struct {
 
                 file_op.is_tmpdir = false;
 
-                if (Outstream == std.fs.Dir) {
+                if (Outstream == Dir) {
                     file_op.dir = outstream.fd;
 
-                    if (bundler.fs.fs.needToCloseFiles()) {
+                    if (bundler.fs.needToCloseFiles()) {
                         file.close();
                         file_op.fd = 0;
                     }
@@ -2467,7 +2467,7 @@ pub const Bundler = struct {
                 return null;
             };
             input_fd = entry.fd;
-            break :brk logger.Source.initRecycledFile(Fs.File{ .path = path, .contents = entry.contents }, bundler.allocator) catch return null;
+            break :brk logger.Source.initRecycledFile(Fs.LoadedFile{ .path = path, .contents = entry.contents }, bundler.allocator) catch return null;
         };
 
         if (source.contents.len == 0 or (source.contents.len < 33 and std.mem.trim(u8, source.contents, "\n\r ").len == 0)) {
@@ -2651,10 +2651,9 @@ pub const Bundler = struct {
             },
             else => {
                 var abs_path = path.text;
-                const file = try std.fs.openFileAbsolute(abs_path, .{ .read = true });
-                var stat = try file.stat();
+                const file = try FileSystem.openFile(abs_path, .{ .read = true });
                 return ServeResult{
-                    .file = options.OutputFile.initFile(file, abs_path, stat.size),
+                    .file = options.OutputFile.initFile(file.handle, abs_path, try file.getEndPos()),
                     .mime_type = MimeType.byLoader(
                         loader,
                         mime_type_ext[1..],
@@ -2770,7 +2769,7 @@ pub const Bundler = struct {
         var did_start = false;
 
         if (bundler.options.output_dir_handle == null) {
-            const outstream = std.io.getStdOut();
+            const outstream = Fs.File{ .handle = std.io.getStdOut().handle };
 
             if (load_from_routes) {
                 if (bundler.options.framework) |*framework| {
@@ -2808,11 +2807,11 @@ pub const Bundler = struct {
                     if (framework.client.isEnabled()) {
                         did_start = true;
                         try switch (bundler.options.import_path_format) {
-                            .relative => bundler.processResolveQueue(.relative, true, std.fs.Dir, output_dir),
-                            .relative_nodejs => bundler.processResolveQueue(.relative_nodejs, true, std.fs.Dir, output_dir),
-                            .absolute_url => bundler.processResolveQueue(.absolute_url, true, std.fs.Dir, output_dir),
-                            .absolute_path => bundler.processResolveQueue(.absolute_path, true, std.fs.Dir, output_dir),
-                            .package_path => bundler.processResolveQueue(.package_path, true, std.fs.Dir, output_dir),
+                            .relative => bundler.processResolveQueue(.relative, true, Dir, output_dir),
+                            .relative_nodejs => bundler.processResolveQueue(.relative_nodejs, true, Dir, output_dir),
+                            .absolute_url => bundler.processResolveQueue(.absolute_url, true, Dir, output_dir),
+                            .absolute_path => bundler.processResolveQueue(.absolute_path, true, Dir, output_dir),
+                            .package_path => bundler.processResolveQueue(.package_path, true, Dir, output_dir),
                         };
                     }
                 }
@@ -2820,11 +2819,11 @@ pub const Bundler = struct {
 
             if (!did_start) {
                 try switch (bundler.options.import_path_format) {
-                    .relative => bundler.processResolveQueue(.relative, false, std.fs.Dir, output_dir),
-                    .relative_nodejs => bundler.processResolveQueue(.relative_nodejs, false, std.fs.Dir, output_dir),
-                    .absolute_url => bundler.processResolveQueue(.absolute_url, false, std.fs.Dir, output_dir),
-                    .absolute_path => bundler.processResolveQueue(.absolute_path, false, std.fs.Dir, output_dir),
-                    .package_path => bundler.processResolveQueue(.package_path, false, std.fs.Dir, output_dir),
+                    .relative => bundler.processResolveQueue(.relative, false, Dir, output_dir),
+                    .relative_nodejs => bundler.processResolveQueue(.relative_nodejs, false, Dir, output_dir),
+                    .absolute_url => bundler.processResolveQueue(.absolute_url, false, Dir, output_dir),
+                    .absolute_path => bundler.processResolveQueue(.absolute_path, false, Dir, output_dir),
+                    .package_path => bundler.processResolveQueue(.package_path, false, Dir, output_dir),
                 };
             }
         }
@@ -2987,7 +2986,7 @@ pub const Transformer = struct {
 
         const write_to_output_dir = opts.entry_points.len > 1 or opts.output_dir != null;
 
-        var output_dir_handle: ?std.fs.Dir = null;
+        var output_dir_handle: ?Dir = null;
         if (write_to_output_dir) {
             output_dir_handle = try options.openOutputDir(output_dir);
         }
@@ -3030,7 +3029,7 @@ pub const Transformer = struct {
         entry_point: string,
         i: usize,
         output_files: *std.ArrayList(options.OutputFile),
-        _output_dir: ?std.fs.Dir,
+        _output_dir: ?Dir,
         comptime write_destination_type: options.WriteDestination,
         care_about_closing_files: bool,
         use_default_loaders: bool,
@@ -3044,7 +3043,7 @@ pub const Transformer = struct {
         var __log = &_log;
         const absolutePath = resolve_path.joinAbs(transformer.cwd, .auto, entry_point);
 
-        const file = try std.fs.openFileAbsolute(absolutePath, std.fs.File.OpenFlags{ .read = true });
+        const file = try FileSystem.openFile(absolutePath, std.fs.File.OpenFlags{ .read = true });
         defer {
             if (care_about_closing_files) {
                 file.close();
@@ -3060,7 +3059,7 @@ pub const Transformer = struct {
             }
             _log.appendTo(log) catch {};
         }
-        const _file = Fs.File{ .path = Fs.Path.init(entry_point), .contents = code };
+        const _file = Fs.LoadedFile{ .path = Fs.Path.init(entry_point), .contents = code };
         var source = try logger.Source.initFile(_file, allocator);
         var loader: options.Loader = undefined;
         if (use_default_loaders) {
@@ -3080,12 +3079,12 @@ pub const Transformer = struct {
             .value = undefined,
         };
 
-        var file_to_write: std.fs.File = undefined;
+        var file_to_write: Fs.File = undefined;
         var output_path: Fs.Path = undefined;
 
         switch (write_destination_type) {
             .stdout => {
-                file_to_write = std.io.getStdOut();
+                file_to_write = Fs.File{ .handle = std.io.getStdOut().handle };
                 output_path = Fs.Path.init("stdout");
             },
             .disk => {

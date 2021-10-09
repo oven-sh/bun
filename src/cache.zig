@@ -7,7 +7,7 @@ const json_parser = @import("./json_parser.zig");
 const options = @import("./options.zig");
 const Define = @import("./defines.zig").Define;
 const std = @import("std");
-const fs = @import("./fs.zig");
+const FileSystem = @import("./fs.zig").FileSystem;
 const sync = @import("sync.zig");
 const Mutex = @import("./lock.zig").Lock;
 
@@ -58,60 +58,45 @@ pub const Fs = struct {
 
     pub fn readFileShared(
         c: *Fs,
-        _fs: *fs.FileSystem,
-        path: [:0]const u8,
+        fs: *FileSystem,
+        path: stringZ,
         dirname_fd: StoredFileDescriptorType,
         _file_handle: ?StoredFileDescriptorType,
         shared: *MutableString,
     ) !Entry {
-        var rfs = _fs.fs;
-
-        var file_handle: std.fs.File = if (_file_handle) |__file| std.fs.File{ .handle = __file } else undefined;
-
-        if (_file_handle == null) {
-            file_handle = try std.fs.openFileAbsoluteZ(path, .{ .read = true });
-            fs.FileSystem.setMaxFd(file_handle.handle);
-        }
+        const file = _file_handle orelse try FileSystem.openFileAbsoluteZ(path, .{ .read = true });
 
         defer {
-            if (rfs.needToCloseFiles() and _file_handle == null) {
-                file_handle.close();
+            if (fs.needToCloseFiles() and _file_handle == null) {
+                FileSystem.close(file);
             }
         }
 
-        const stat = try std.os.fstat(file_handle.handle);
-
-        var file = rfs.readFileWithHandle(path, @intCast(usize, stat.size), file_handle, true, shared) catch |err| {
-            if (isDebug) {
-                Output.printError("{s}: readFile error -- {s}", .{ path, @errorName(err) });
-            }
-            return err;
-        };
-
         return Entry{
-            .contents = file.contents,
-            .fd = if (FeatureFlags.store_file_descriptors) file_handle.handle else 0,
+            .contents = fs.readFileWithHandle(path, null, file, true, shared) catch |err| {
+                if (isDebug) {
+                    Output.printError("{s}: readFile error -- {s}", .{ path, @errorName(err) });
+                }
+                return err;
+            },
+            .fd = if (FeatureFlags.store_file_descriptors) file else 0,
         };
     }
 
     pub fn readFile(
         c: *Fs,
-        _fs: *fs.FileSystem,
+        fs: *FileSystem,
         path: string,
         dirname_fd: StoredFileDescriptorType,
         comptime use_shared_buffer: bool,
         _file_handle: ?StoredFileDescriptorType,
     ) !Entry {
-        var rfs = _fs.fs;
-
-        var file_handle: std.fs.File = if (_file_handle) |__file| std.fs.File{ .handle = __file } else undefined;
-
-        if (_file_handle == null) {
+        const file_handle: FileDescriptorType = _file_handle orelse brk: {
             if (FeatureFlags.store_file_descriptors and dirname_fd > 0) {
-                file_handle = std.fs.Dir.openFile(std.fs.Dir{ .fd = dirname_fd }, std.fs.path.basename(path), .{ .read = true }) catch |err| brk: {
+                break :brk FileSystem.openFileInDir(dirname_fd, std.fs.path.basename(path), .{ .read = true }) catch |err| {
                     switch (err) {
                         error.FileNotFound => {
-                            const handle = try std.fs.openFileAbsolute(path, .{ .read = true });
+                            const handle = try FileSystem.openFileAbsolute(path, .{ .read = true });
                             Output.prettyErrorln(
                                 "<r><d>Internal error: directory mismatch for directory \"{s}\", fd {d}<r>. You don't need to do anything, but this indicates a bug.",
                                 .{ path, dirname_fd },
@@ -122,33 +107,25 @@ pub const Fs = struct {
                     }
                 };
             } else {
-                file_handle = try std.fs.openFileAbsolute(path, .{ .read = true });
+                break :brk try FileSystem.openFileAbsolute(path, .{ .read = true });
             }
-        }
-
-        defer {
-            fs.FileSystem.setMaxFd(file_handle.handle);
-
-            if (rfs.needToCloseFiles() and _file_handle == null) {
-                file_handle.close();
-            }
-        }
-
-        const stat = try std.os.fstat(file_handle.handle);
-
-        var file: fs.File = undefined;
-
-        file = rfs.readFileWithHandle(path, @intCast(usize, stat.size), file_handle, use_shared_buffer, &c.shared_buffer) catch |err| {
-            if (isDebug) {
-                Output.printError("{s}: readFile error -- {s}", .{ path, @errorName(err) });
-            }
-            return err;
         };
 
+        defer {
+            if (fs.needToCloseFiles() and _file_handle == null) {
+                FileSystem.close(file_handle);
+            }
+        }
+
         return Entry{
-            .contents = file.contents,
+            .contents = fs.readFileWithHandle(path, null, file_handle, use_shared_buffer, &c.shared_buffer) catch |err| {
+                if (isDebug) {
+                    Output.printError("{s}: readFile error -- {s}", .{ path, @errorName(err) });
+                }
+                return err;
+            },
             // .mod_key = mod_key,
-            .fd = if (FeatureFlags.store_file_descriptors) file_handle.handle else 0,
+            .fd = if (FeatureFlags.store_file_descriptors) file_handle else 0,
         };
     }
 };

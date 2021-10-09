@@ -29,6 +29,7 @@ const ResolveQueue = _bundler.ResolveQueue;
 const ResolverType = Resolver.Resolver;
 const Runtime = @import("./runtime.zig").Runtime;
 
+const FileSystem = Fs.FileSystem;
 pub const CSSResolveError = error{ResolveError};
 
 pub const OnImportCallback = fn (resolve_result: *const Resolver.Result, import_record: *ImportRecord, source_dir: string) void;
@@ -94,8 +95,7 @@ pub const Linker = struct {
             }
         }
 
-        var file: std.fs.File = if (fd) |_fd| std.fs.File{ .handle = _fd } else try std.fs.openFileAbsolute(file_path.text, .{ .read = true });
-        Fs.FileSystem.setMaxFd(file.handle);
+        var file = try FileSystem.openFileZ(file_path.textZ(), .{ .read = true });
         var modkey = try Fs.RealFS.ModKey.generate(&this.fs.fs, file_path.text, file);
         const hash_name = try modkey.hashName(file_path.name.base);
 
@@ -104,7 +104,7 @@ pub const Linker = struct {
             try this.hashed_filenames.put(hashed, try this.allocator.dupe(u8, hash_name));
         }
 
-        if (this.fs.fs.needToCloseFiles() and fd == null) {
+        if (this.fs.needToCloseFiles() and fd == null) {
             file.close();
         }
 

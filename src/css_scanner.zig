@@ -1249,7 +1249,7 @@ pub fn NewBundler(
 
         pub fn getSource(this: *CSSBundler, url: string, input_fd: StoredFileDescriptorType) !logger.Source {
             const entry = try this.fs_reader.readFile(this.fs, url, 0, true, input_fd);
-            const file = Fs.File{ .path = Fs.Path.init(url), .contents = entry.contents };
+            const file = Fs.LoadedFile{ .path = Fs.Path.init(url), .contents = entry.contents };
             return logger.Source.initFile(file, this.allocator);
         }
 
@@ -1262,9 +1262,9 @@ pub fn NewBundler(
             const watcher_index = this.watcher.indexOf(hash);
 
             if (watcher_index == null) {
-                var file = try std.fs.openFileAbsolute(absolute_path, .{ .read = true });
+                const file = try Fs.FileSystem.openFileAbsolute(absolute_path, .{ .read = true });
 
-                try this.watcher.appendFile(file.handle, absolute_path, hash, .css, 0, null, true);
+                try this.watcher.appendFile(file, absolute_path, hash, .css, 0, null, true);
                 if (this.watcher.watchloop_handle == null) {
                     try this.watcher.start();
                 }

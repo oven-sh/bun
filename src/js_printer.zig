@@ -3910,7 +3910,7 @@ pub const DirectWriter = struct {
 //   Buffered    16k     43ms
 //   Buffered     4k     55ms
 const FileWriterInternal = struct {
-    file: std.fs.File,
+    file: fs.File,
     threadlocal var buffer: MutableString = undefined;
     threadlocal var has_loaded_buffer: bool = false;
 
@@ -3919,7 +3919,7 @@ const FileWriterInternal = struct {
         return &buffer;
     }
 
-    pub fn init(file: std.fs.File) FileWriterInternal {
+    pub fn init(file: fs.File) FileWriterInternal {
         if (!has_loaded_buffer) {
             buffer = MutableString.init(alloc.dynamic, 0) catch unreachable;
             has_loaded_buffer = true;
@@ -4066,7 +4066,7 @@ pub const BufferPrinter = NewWriter(
     BufferWriter.getLastLastByte,
 );
 pub const FileWriter = NewWriter(FileWriterInternal, FileWriterInternal.writeByte, FileWriterInternal.writeAll, FileWriterInternal.getLastByte, FileWriterInternal.getLastLastByte);
-pub fn NewFileWriter(file: std.fs.File) FileWriter {
+pub fn NewFileWriter(file: fs.File) FileWriter {
     var internal = FileWriterInternal.init(file);
     return FileWriter.init(internal);
 }

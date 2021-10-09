@@ -22,6 +22,7 @@ const DotEnv = @import("./env_loader.zig");
 const mimalloc = @import("./allocators/mimalloc.zig");
 const MacroMap = @import("./resolver/package_json.zig").MacroMap;
 const Analytics = @import("./analytics/analytics_thread.zig");
+const FileSystem = Fs.FileSystem;
 pub fn constStrToU8(s: string) []u8 {
     return @intToPtr([*]u8, @ptrToInt(s.ptr))[0..s.len];
 }
@@ -307,7 +308,7 @@ pub const RequestContext = struct {
         var tmp_buildfile_buf = std.mem.span(&Bundler.tmp_buildfile_buf);
 
         // On Windows, we don't keep the directory handle open forever because Windows doesn't like that.
-        const public_dir: std.fs.Dir = this.bundler.options.routes.static_dir_handle orelse std.fs.openDirAbsolute(this.bundler.options.routes.static_dir, .{}) catch |err| {
+        const public_dir: Fs.Dir = this.bundler.options.routes.static_dir_handle orelse FileSystem.openDirectory(this.bundler.options.routes.static_dir, .{}) catch |err| {
             this.bundler.log.addErrorFmt(null, logger.Loc.Empty, this.allocator, "Opening public directory failed: {s}", .{@errorName(err)}) catch unreachable;
             Output.printErrorln("Opening public directory failed: {s}", .{@errorName(err)});
             this.bundler.options.routes.static_dir_enabled = false;
@@ -316,7 +317,7 @@ pub const RequestContext = struct {
 
         var relative_unrooted_path: []u8 = resolve_path.normalizeString(relative_path, false, .auto);
 
-        var _file: ?std.fs.File = null;
+        var _file: ?FileDescriptorType = null;
 
         // Is it the index file?
         if (relative_unrooted_path.len == 0) {
@@ -331,14 +332,14 @@ pub const RequestContext = struct {
             } else if (public_dir.openFile("index.html", .{})) |file| {
                 var index_path = "index.html".*;
                 relative_unrooted_path = &(index_path);
-                _file = file;
+                _file = file.handle;
                 extension = "html";
             } else |err| {}
 
             // Okay is it actually a full path?
         } else if (extension.len > 0) {
             if (public_dir.openFile(relative_unrooted_path, .{})) |file| {
-                _file = file;
+                _file = file.handle;
             } else |err| {}
         }
 
@@ -350,7 +351,7 @@ pub const RequestContext = struct {
                 std.mem.copy(u8, tmp_buildfile_buf[relative_unrooted_path.len..], ".html");
 
                 if (public_dir.openFile(tmp_buildfile_buf[0 .. relative_unrooted_path.len + ".html".len], .{})) |file| {
-                    _file = file;
+                    _file = file.handle;
                     extension = "html";
                     break;
                 } else |err| {}
@@ -371,7 +372,7 @@ pub const RequestContext = struct {
                     const __path = _path;
                     relative_unrooted_path = __path;
                     extension = "html";
-                    _file = file;
+                    _file = file.handle;
                     break;
                 } else |err| {}
             }
@@ -379,12 +380,13 @@ pub const RequestContext = struct {
             break;
         }
 
-        if (_file) |*file| {
+        if (_file) |fd| {
+            const file = Fs.File{ .handle = fd };
             var stat = file.stat() catch return null;
             var absolute_path = resolve_path.joinAbs(this.bundler.options.routes.static_dir, .auto, relative_unrooted_path);
 
             if (stat.kind == .SymLink) {
-                file.* = std.fs.openFileAbsolute(absolute_path, .{ .read = true }) catch return null;
+                _ = FileSystem.openFileAbsolute(absolute_path, .{ .read = true }) catch return null;
 
                 absolute_path = std.os.getFdPath(
                     file.handle,
@@ -399,7 +401,7 @@ pub const RequestContext = struct {
                 return null;
             }
 
-            var output_file = OutputFile.initFile(file.*, absolute_path, stat.size);
+            var output_file = OutputFile.initFile(fd, absolute_path, stat.size);
             output_file.value.copy.close_handle_on_complete = true;
             output_file.value.copy.autowatch = false;
             return bundler.ServeResult{
@@ -2238,22 +2240,21 @@ pub const RequestContext = struct {
                 const fd = if (resolve_result.file_fd != 0)
                     resolve_result.file_fd
                 else brk: {
-                    var file = std.fs.openFileAbsoluteZ(path.textZ(), .{ .read = true }) catch |err| {
+                    const file = FileSystem.openFileAbsoluteZ(path.textZ(), .{ .read = true }) catch |err| {
                         Output.prettyErrorln("Failed to open {s} due to error {s}", .{ path.text, @errorName(err) });
                         return try ctx.sendInternalError(err);
                     };
                     needs_close = true;
-                    break :brk file.handle;
+                    break :brk file;
                 };
                 defer {
                     if (needs_close) {
-                        std.os.close(fd);
+                        FileSystem.close(fd);
                     }
                 }
 
                 const content_length = brk: {
-                    var file = std.fs.File{ .handle = fd };
-                    var stat = file.stat() catch |err| {
+                    var stat = Fs.File.stat(.{ .handle = fd }) catch |err| {
                         Output.prettyErrorln("Failed to read {s} due to error {s}", .{ path.text, @errorName(err) });
                         return try ctx.sendInternalError(err);
                     };

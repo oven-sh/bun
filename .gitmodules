@@ -15,5 +15,5 @@
 	ignore = dirty
 [submodule "src/deps/zlib"]
 	path = src/deps/zlib
-	url = https://github.com/cloudflare/zlib
+	url = https://github.com/cloudflare/zlib.git
 	ignore = dirty

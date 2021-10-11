@@ -656,4 +656,13 @@ packages/debug-bun-cli-darwin-x64/bin/bun-debug
 
 You will want to install the fork of `vscode-zig` so you get a `Run test` and a `Debug test` button.
 
+To do that:
+
+```bash
+git clone https://github.com/jarred-sumner/vscode-zig
+cd vscode-zig
+yarn install
+yarn vsce package && code --install-extension ./zig-0.2.5.vsix
+```
+
 <a target="_blank" href="https://github.com/jarred-sumner/vscode-zig"><img src="https://pbs.twimg.com/media/FBZsKHlUcAYDzm5?format=jpg&name=large"></a>

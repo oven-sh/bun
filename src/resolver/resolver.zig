@@ -14,7 +14,7 @@ const BrowserMap = @import("./package_json.zig").BrowserMap;
 const CacheSet = cache.Set;
 usingnamespace @import("./data_url.zig");
 pub const DirInfo = @import("./dir_info.zig");
-const HTTPWatcher = @import("../http.zig").Watcher;
+const HTTPWatcher = if (isTest) void else @import("../http.zig").Watcher;
 const Wyhash = std.hash.Wyhash;
 const ResolvePath = @import("./resolve_path.zig");
 const NodeFallbackModules = @import("../node_fallbacks.zig");

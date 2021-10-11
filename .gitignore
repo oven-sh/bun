@@ -67,3 +67,4 @@ packages/bun-cli/postinstall.js
 packages/bun-*/bin/*
 
 packages/bun-cli/bin/*
+bun-test-scratch

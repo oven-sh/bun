@@ -12,7 +12,7 @@ const mem = std.mem;
 const meta = std.meta;
 const trait = meta.trait;
 const Allocator = mem.Allocator;
-const Wyhash = @import("./Wyhash.zig").Wyhash;
+const Wyhash = std.hash.Wyhash;
 
 pub fn getAutoHashFn(comptime K: type) (fn (K) u64) {
     comptime {

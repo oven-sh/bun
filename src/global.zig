@@ -87,6 +87,11 @@ pub const Output = struct {
         return enable_ansi_colors and !isWindows;
     }
 
+    pub fn initTest() void {
+        var in = std.io.getStdErr();
+        var src = Output.Source.init(in, in);
+        Output.Source.set(&src);
+    }
     pub fn enableBuffering() void {
         enable_buffering = true;
     }

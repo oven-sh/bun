@@ -68,9 +68,12 @@ endif
 bun: vendor build-obj bun-link-lld-release
 
 
-vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp
+vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib
 
 vendor: require init-submodules vendor-without-check
+
+zlib: 
+	cd src/deps/zlib; cmake .; make;
 
 require:
 	@echo "Checking if the required utilities are available..."
@@ -317,6 +320,7 @@ BUN_LLD_FLAGS := $(OBJ_FILES) \
 		${JSC_FILES} \
 		src/deps/picohttpparser.o \
 		src/deps/mimalloc/libmimalloc.a \
+		src/deps/zlib/libz.a \
 		$(CLANG_FLAGS) \
 		
 

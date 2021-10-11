@@ -93,7 +93,6 @@ pub const Linker = struct {
                 return hashed_result.value_ptr.*;
             }
         }
-
         var file: std.fs.File = if (fd) |_fd| std.fs.File{ .handle = _fd } else try std.fs.openFileAbsolute(file_path.text, .{ .read = true });
         Fs.FileSystem.setMaxFd(file.handle);
         var modkey = try Fs.FileSystem.RealFS.ModKey.generate(&this.fs.fs, file_path.text, file);

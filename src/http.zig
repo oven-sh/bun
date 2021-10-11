@@ -36,7 +36,7 @@ const IPv6 = std.x.os.IPv6;
 const Socket = std.x.os.Socket;
 const os = std.os;
 
-const picohttp = @import("picohttp");
+const picohttp = @import("./deps/picohttp.zig");
 const Header = picohttp.Header;
 const Request = picohttp.Request;
 const Response = picohttp.Response;
@@ -592,8 +592,8 @@ pub const RequestContext = struct {
     }
 
     pub fn appendHeader(ctx: *RequestContext, comptime key: string, value: string) void {
-        if (isDebug or isTest) std.debug.assert(!ctx.has_written_last_header);
-        if (isDebug or isTest) std.debug.assert(ctx.res_headers_count < res_headers_buf.len);
+        if (comptime isDebug or isTest) std.debug.assert(!ctx.has_written_last_header);
+        if (comptime isDebug or isTest) std.debug.assert(ctx.res_headers_count < res_headers_buf.len);
         res_headers_buf[ctx.res_headers_count] = Header{ .name = key, .value = value };
         ctx.res_headers_count += 1;
     }

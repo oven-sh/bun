@@ -557,6 +557,7 @@ Bun also statically links these libraries:
 - `libicu`, which can be found here: https://github.com/unicode-org/icu/blob/main/icu4c/LICENSE
 - [`picohttp`](https://github.com/h2o/picohttpparser), which is dual-licensed under the Perl License or the MIT License
 - [`mimalloc`](https://github.com/microsoft/mimalloc), which is MIT licensed
+- [`zlib-cloudflare`](https://github.com/cloudflare/zlib), which is zlib licensed
 
 For compatibiltiy reasons, these NPM packages are embedded into Bun's binary and injected if imported.
 

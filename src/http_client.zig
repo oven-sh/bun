@@ -1,3 +1,6 @@
+// @link "/Users/jarred/Code/bun/src/deps/zlib/libz.a"
+// @link "/Users/jarred/Code/bun/src/deps/picohttpparser.o"
+
 const picohttp = @import("picohttp");
 usingnamespace @import("./global.zig");
 const std = @import("std");
@@ -6,7 +9,7 @@ const URL = @import("./query_string_map.zig").URL;
 const Method = @import("./http.zig").Method;
 const iguanaTLS = @import("iguanaTLS");
 const Api = @import("./api/schema.zig").Api;
-
+const Lock = @import("./lock.zig").Lock;
 const HTTPClient = @This();
 const SOCKET_FLAGS = os.SOCK_CLOEXEC;
 
@@ -35,7 +38,8 @@ header_entries: Headers.Entries,
 header_buf: string,
 url: URL,
 allocator: *std.mem.Allocator,
-verbose: bool = false,
+verbose: bool = isTest,
+tcp_client: tcp.Client = undefined,
 
 pub fn init(allocator: *std.mem.Allocator, method: Method, url: URL, header_entries: Headers.Entries, header_buf: string) HTTPClient {
     return HTTPClient{
@@ -79,13 +83,23 @@ fn hashHeaderName(name: string) u64 {
 const host_header_hash = hashHeaderName("Host");
 const connection_header_hash = hashHeaderName("Connection");
 
+pub const Encoding = enum {
+    identity,
+    gzip,
+    deflate,
+    brotli,
+};
+
 const content_encoding_hash = hashHeaderName("Content-Encoding");
+
 const host_header_name = "Host";
 const content_length_header_name = "Content-Length";
 const content_length_header_hash = hashHeaderName("Content-Length");
 const connection_header = picohttp.Header{ .name = "Connection", .value = "close" };
 const accept_header = picohttp.Header{ .name = "Accept", .value = "*/*" };
 const accept_header_hash = hashHeaderName("Accept");
+const accept_encoding_header = picohttp.Header{ .name = "Accept-Encoding", .value = "deflate, gzip" };
+const accept_encoding_header_hash = hashHeaderName("Accept-Encoding");
 const user_agent_header = picohttp.Header{ .name = "User-Agent", .value = "Bun.js " ++ Global.package_json_version };
 const user_agent_header_hash = hashHeaderName("User-Agent");
 
@@ -99,11 +113,13 @@ pub fn buildRequest(this: *const HTTPClient, body_len: usize) picohttp.Request {
     var header_names = header_entries.items(.name);
     var header_values = header_entries.items(.value);
 
+    var override_accept_encoding = false;
+
     var override_user_agent = false;
     for (header_names) |head, i| {
         const name = this.headerStr(head);
         // Hash it as lowercase
-        const hash = hashHeaderName(request_headers_buf[header_count].name);
+        const hash = hashHeaderName(name);
 
         // Skip host and connection header
         // we manage those
@@ -111,12 +127,13 @@ pub fn buildRequest(this: *const HTTPClient, body_len: usize) picohttp.Request {
             host_header_hash,
             connection_header_hash,
             content_length_header_hash,
-            accept_header_hash,
             => continue,
             else => {},
         }
 
         override_user_agent = override_user_agent or hash == user_agent_header_hash;
+
+        override_accept_encoding = override_accept_encoding or hash == accept_encoding_header_hash;
 
         request_headers_buf[header_count] = picohttp.Header{
             .name = name,
@@ -155,6 +172,11 @@ pub fn buildRequest(this: *const HTTPClient, body_len: usize) picohttp.Request {
         .value = this.url.hostname,
     };
     header_count += 1;
+
+    if (!override_accept_encoding) {
+        request_headers_buf[header_count] = accept_encoding_header;
+        header_count += 1;
+    }
 
     if (body_len > 0) {
         request_headers_buf[header_count] = picohttp.Header{
@@ -209,15 +231,15 @@ pub inline fn send(this: *HTTPClient, body: []const u8, body_out_str: *MutableSt
 }
 
 pub fn sendHTTP(this: *HTTPClient, body: []const u8, body_out_str: *MutableString) !picohttp.Response {
-    var client = try this.connect();
+    this.tcp_client = try this.connect();
     defer {
-        std.os.closeSocket(client.socket.fd);
+        std.os.closeSocket(this.tcp_client.socket.fd);
     }
     var request = buildRequest(this, body.len);
     if (this.verbose) {
         Output.prettyErrorln("{s}", .{request});
     }
-    var client_writer = client.writer(SOCKET_FLAGS);
+    var client_writer = this.tcp_client.writer(SOCKET_FLAGS);
     {
         var client_writer_buffered = std.io.bufferedWriter(client_writer);
         var client_writer_buffered_writer = client_writer_buffered.writer();
@@ -231,8 +253,56 @@ pub fn sendHTTP(this: *HTTPClient, body: []const u8, body_out_str: *MutableStrin
         try client_writer.writeAll(body);
     }
 
-    var client_reader = client.reader(SOCKET_FLAGS);
+    var client_reader = this.tcp_client.reader(SOCKET_FLAGS);
 
+    return this.processResponse(
+        false,
+        @TypeOf(client_reader),
+        client_reader,
+        body_out_str,
+    );
+}
+
+const ZlibPool = struct {
+    lock: Lock = Lock.init(),
+    items: std.ArrayList(*MutableString),
+    allocator: *std.mem.Allocator,
+    pub var instance: ZlibPool = undefined;
+    pub var loaded: bool = false;
+
+    pub fn init(allocator: *std.mem.Allocator) ZlibPool {
+        return ZlibPool{
+            .allocator = allocator,
+            .items = std.ArrayList(*MutableString).init(allocator),
+        };
+    }
+
+    pub fn get(this: *ZlibPool) !*MutableString {
+        this.lock.lock();
+        defer this.lock.unlock();
+        switch (this.items.items.len) {
+            0 => {
+                var mutable = try this.allocator.create(MutableString);
+                mutable.* = try MutableString.init(this.allocator, 0);
+                return mutable;
+            },
+            else => {
+                return this.items.pop();
+            },
+        }
+
+        return item;
+    }
+
+    pub fn put(this: *ZlibPool, mutable: *MutableString) !void {
+        this.lock.lock();
+        defer this.lock.unlock();
+        mutable.reset();
+        try this.items.append(mutable);
+    }
+};
+
+pub fn processResponse(this: *HTTPClient, comptime is_https: bool, comptime Client: type, client: Client, body_out_str: *MutableString) !picohttp.Response {
     var response: picohttp.Response = undefined;
 
     {
@@ -241,7 +311,10 @@ pub fn sendHTTP(this: *HTTPClient, body: []const u8, body_out_str: *MutableStrin
 
         var response_length: usize = 0;
         restart: while (req_buf_read != 0) {
-            req_buf_read = try client_reader.read(&http_req_buf);
+            req_buf_read = try client.read(if (comptime is_https)
+                &http_req_buf
+            else
+                http_req_buf[req_buf_len..]);
             req_buf_len += req_buf_read;
 
             var request_buffer = http_req_buf[0..req_buf_len];
@@ -262,17 +335,27 @@ pub fn sendHTTP(this: *HTTPClient, body: []const u8, body_out_str: *MutableStrin
 
     body_out_str.reset();
     var content_length: u32 = 0;
+    var encoding = Encoding.identity;
+
     for (response.headers) |header| {
+        if (this.verbose) {
+            Output.prettyErrorln("Response: {s}", .{response});
+        }
+
         switch (hashHeaderName(header.name)) {
             content_length_header_hash => {
                 content_length = std.fmt.parseInt(u32, header.value, 10) catch 0;
-                // Always write a sentinel
-                try body_out_str.inflate(content_length + 1);
+                try body_out_str.inflate(content_length);
                 body_out_str.list.expandToCapacity();
-                body_out_str.list.items[content_length] = 0;
             },
             content_encoding_hash => {
-                return error.UnsupportedEncoding;
+                if (strings.eqlComptime(header.value, "gzip")) {
+                    encoding = Encoding.gzip;
+                } else if (strings.eqlComptime(header.value, "deflate")) {
+                    encoding = Encoding.deflate;
+                } else if (!strings.eqlComptime(header.value, "identity")) {
+                    return error.UnsupportedEncoding;
+                }
             },
             else => {},
         }
@@ -283,22 +366,62 @@ pub fn sendHTTP(this: *HTTPClient, body: []const u8, body_out_str: *MutableStrin
         var remainder = http_req_buf[@intCast(u32, response.bytes_read)..];
         remainder = remainder[0..std.math.min(remainder.len, content_length)];
 
+        const Zlib = @import("./zlib.zig");
+
+        var buffer: *MutableString = body_out_str;
+
+        switch (encoding) {
+            Encoding.gzip, Encoding.deflate => {
+                if (!ZlibPool.loaded) {
+                    ZlibPool.instance = ZlibPool.init(default_allocator);
+                    ZlibPool.loaded = true;
+                }
+
+                buffer = try ZlibPool.instance.get();
+                if (buffer.list.capacity < remaining_content_length) {
+                    try buffer.list.ensureUnusedCapacity(buffer.allocator, remaining_content_length);
+                }
+                buffer.list.items = buffer.list.items.ptr[0..remaining_content_length];
+            },
+            else => {},
+        }
+
         var body_size: usize = 0;
-        if (remainder.len > 0) {
-            std.mem.copy(u8, body_out_str.list.items, remainder);
-            body_size = @intCast(u32, remainder.len);
-            remaining_content_length -= @intCast(u32, remainder.len);
+        if (comptime !is_https) {
+            if (remainder.len > 0) {
+                std.mem.copy(u8, buffer.list.items, remainder);
+                body_size = @intCast(u32, remainder.len);
+                remaining_content_length -= @intCast(u32, remainder.len);
+            }
         }
 
         while (remaining_content_length > 0) {
-            const size = @intCast(u32, try client.read(body_out_str.list.items[body_size..], SOCKET_FLAGS));
+            const size = @intCast(u32, try client.read(
+                buffer.list.items[body_size..],
+            ));
             if (size == 0) break;
 
             body_size += size;
             remaining_content_length -= size;
         }
 
-        body_out_str.list.items.len = body_size;
+        buffer.list.shrinkRetainingCapacity(body_size);
+
+        switch (encoding) {
+            Encoding.gzip, Encoding.deflate => {
+                body_out_str.list.expandToCapacity();
+                defer ZlibPool.instance.put(buffer) catch unreachable;
+                var reader = try Zlib.ZlibReaderArrayList.init(buffer.list.items, &body_out_str.list, default_allocator);
+                reader.readAll() catch |err| {
+                    if (reader.errorMessage()) |msg| {
+                        Output.prettyErrorln("<r><red>Zlib error<r>: <b>{s}<r>", .{msg});
+                        Output.flush();
+                    }
+                    return err;
+                };
+            },
+            else => {},
+        }
     }
 
     return response;
@@ -352,78 +475,16 @@ pub fn sendHTTPS(this: *HTTPClient, body_str: []const u8, body_out_str: *Mutable
         try client_writer.writeAll(body);
     }
 
-    var client_reader = client.reader();
-    var req_buf_len = try client_reader.readAll(&http_req_buf);
-    var request_buffer = http_req_buf[0..req_buf_len];
-    var response: picohttp.Response = undefined;
+    var reader = client.reader();
 
-    {
-        var response_length: usize = 0;
-        restart: while (true) {
-            response = picohttp.Response.parseParts(request_buffer, &response_headers_buf, &response_length) catch |err| {
-                switch (err) {
-                    error.ShortRead => {
-                        continue :restart;
-                    },
-                    else => {
-                        return err;
-                    },
-                }
-            };
-            break :restart;
-        }
-    }
-
-    body_out_str.reset();
-    var content_length: u32 = 0;
-    for (response.headers) |header| {
-        if (this.verbose) {
-            Output.prettyErrorln("Response: {s}", .{response});
-        }
-
-        switch (hashHeaderName(header.name)) {
-            content_length_header_hash => {
-                content_length = std.fmt.parseInt(u32, header.value, 10) catch 0;
-                try body_out_str.inflate(content_length);
-                body_out_str.list.expandToCapacity();
-            },
-            content_encoding_hash => {
-                return error.UnsupportedEncoding;
-            },
-            else => {},
-        }
-    }
-
-    if (content_length > 0) {
-        var remaining_content_length = content_length;
-        var remainder = http_req_buf[@intCast(u32, response.bytes_read)..];
-        remainder = remainder[0..std.math.min(remainder.len, content_length)];
-
-        var body_size: usize = 0;
-        if (remainder.len > 0) {
-            std.mem.copy(u8, body_out_str.list.items, remainder);
-            body_size = @intCast(u32, remainder.len);
-            remaining_content_length -= @intCast(u32, remainder.len);
-        }
-
-        while (remaining_content_length > 0) {
-            const size = @intCast(u32, try client.read(
-                body_out_str.list.items[body_size..],
-            ));
-            if (size == 0) break;
-
-            body_size += size;
-            remaining_content_length -= size;
-        }
-
-        body_out_str.list.shrinkRetainingCapacity(body_size);
-    }
-
-    return response;
+    return try this.processResponse(true, @TypeOf(&reader), &reader, body_out_str);
 }
 
-// zig test src/http_client.zig --test-filter "sendHTTP" -lc -lc++ /Users/jarred/Code/bun/src/deps/picohttpparser.o --cache-dir /Users/jarred/Code/bun/zig-cache --global-cache-dir /Users/jarred/.cache/zig --name bun --pkg-begin clap /Users/jarred/Code/bun/src/deps/zig-clap/clap.zig --pkg-end --pkg-begin picohttp /Users/jarred/Code/bun/src/deps/picohttp.zig --pkg-end --pkg-begin iguanaTLS /Users/jarred/Code/bun/src/deps/iguanaTLS/src/main.zig --pkg-end -I /Users/jarred/Code/bun/src/deps -I /Users/jarred/Code/bun/src/deps/mimalloc -I /usr/local/opt/icu4c/include  -L src/deps/mimalloc -L /usr/local/opt/icu4c/lib --main-pkg-path /Users/jarred/Code/bun --enable-cache
-test "sendHTTP" {
+// zig test src/http_client.zig --test-filter "sendHTTP - only" -lc -lc++ /Users/jarred/Code/bun/src/deps/zlib/libz.a /Users/jarred/Code/bun/src/deps/picohttpparser.o --cache-dir /Users/jarred/Code/bun/zig-cache --global-cache-dir /Users/jarred/.cache/zig --name bun --pkg-begin clap /Users/jarred/Code/bun/src/deps/zig-clap/clap.zig --pkg-end --pkg-begin picohttp /Users/jarred/Code/bun/src/deps/picohttp.zig --pkg-end --pkg-begin iguanaTLS /Users/jarred/Code/bun/src/deps/iguanaTLS/src/main.zig --pkg-end -I /Users/jarred/Code/bun/src/deps -I /Users/jarred/Code/bun/src/deps/mimalloc -I /usr/local/opt/icu4c/include  -L src/deps/mimalloc -L /usr/local/opt/icu4c/lib --main-pkg-path /Users/jarred/Code/bun --enable-cache -femit-bin=zig-out/bin/test --test-no-exec
+test "sendHTTP - only" {
+    Output.initTest();
+    defer Output.flush();
+
     var headers = try std.heap.c_allocator.create(Headers);
     headers.* = Headers{
         .entries = @TypeOf(headers.entries){},
@@ -432,7 +493,8 @@ test "sendHTTP" {
         .allocator = std.heap.c_allocator,
     };
 
-    headers.appendHeader("X-What", "ok", true, true, false);
+    // headers.appendHeader("X-What", "ok", true, true, false);
+    headers.appendHeader("Accept-Encoding", "identity", true, true, false);
 
     var client = HTTPClient.init(
         std.heap.c_allocator,
@@ -445,10 +507,43 @@ test "sendHTTP" {
     var response = try client.sendHTTP("", &body_out_str);
     try std.testing.expectEqual(response.status_code, 200);
     try std.testing.expectEqual(body_out_str.list.items.len, 1256);
+    try std.testing.expectEqualStrings(body_out_str.list.items, @embedFile("fixtures_example.com.html"));
 }
 
-// zig test src/http_client.zig --test-filter "sendHTTPS" -lc -lc++ /Users/jarred/Code/bun/src/deps/picohttpparser.o --cache-dir /Users/jarred/Code/bun/zig-cache --global-cache-dir /Users/jarred/.cache/zig --name bun --pkg-begin clap /Users/jarred/Code/bun/src/deps/zig-clap/clap.zig --pkg-end --pkg-begin picohttp /Users/jarred/Code/bun/src/deps/picohttp.zig --pkg-end --pkg-begin iguanaTLS /Users/jarred/Code/bun/src/deps/iguanaTLS/src/main.zig --pkg-end -I /Users/jarred/Code/bun/src/deps -I /Users/jarred/Code/bun/src/deps/mimalloc -I /usr/local/opt/icu4c/include  -L src/deps/mimalloc -L /usr/local/opt/icu4c/lib --main-pkg-path /Users/jarred/Code/bun --enable-cache
-test "sendHTTPS" {
+// zig test src/http_client.zig --test-filter "sendHTTP - gzip" -lc -lc++ /Users/jarred/Code/bun/src/deps/zlib/libz.a /Users/jarred/Code/bun/src/deps/picohttpparser.o --cache-dir /Users/jarred/Code/bun/zig-cache --global-cache-dir /Users/jarred/.cache/zig --name bun --pkg-begin clap /Users/jarred/Code/bun/src/deps/zig-clap/clap.zig --pkg-end --pkg-begin picohttp /Users/jarred/Code/bun/src/deps/picohttp.zig --pkg-end --pkg-begin iguanaTLS /Users/jarred/Code/bun/src/deps/iguanaTLS/src/main.zig --pkg-end -I /Users/jarred/Code/bun/src/deps -I /Users/jarred/Code/bun/src/deps/mimalloc -I /usr/local/opt/icu4c/include  -L src/deps/mimalloc -L /usr/local/opt/icu4c/lib --main-pkg-path /Users/jarred/Code/bun --enable-cache -femit-bin=zig-out/bin/test --test-no-exec
+test "sendHTTP - gzip" {
+    Output.initTest();
+    defer Output.flush();
+
+    var headers = try std.heap.c_allocator.create(Headers);
+    headers.* = Headers{
+        .entries = @TypeOf(headers.entries){},
+        .buf = @TypeOf(headers.buf){},
+        .used = 0,
+        .allocator = std.heap.c_allocator,
+    };
+
+    // headers.appendHeader("X-What", "ok", true, true, false);
+    headers.appendHeader("Accept-Encoding", "gzip", true, true, false);
+
+    var client = HTTPClient.init(
+        std.heap.c_allocator,
+        .GET,
+        URL.parse("http://example.com/"),
+        headers.entries,
+        headers.buf.items,
+    );
+    var body_out_str = try MutableString.init(std.heap.c_allocator, 0);
+    var response = try client.sendHTTP("", &body_out_str);
+    try std.testing.expectEqual(response.status_code, 200);
+    try std.testing.expectEqualStrings(body_out_str.list.items, @embedFile("fixtures_example.com.html"));
+}
+
+// zig test src/http_client.zig --test-filter "sendHTTPS - identity" -lc -lc++ /Users/jarred/Code/bun/src/deps/zlib/libz.a /Users/jarred/Code/bun/src/deps/picohttpparser.o --cache-dir /Users/jarred/Code/bun/zig-cache --global-cache-dir /Users/jarred/.cache/zig --name bun --pkg-begin clap /Users/jarred/Code/bun/src/deps/zig-clap/clap.zig --pkg-end --pkg-begin picohttp /Users/jarred/Code/bun/src/deps/picohttp.zig --pkg-end --pkg-begin iguanaTLS /Users/jarred/Code/bun/src/deps/iguanaTLS/src/main.zig --pkg-end -I /Users/jarred/Code/bun/src/deps -I /Users/jarred/Code/bun/src/deps/mimalloc -I /usr/local/opt/icu4c/include  -L src/deps/mimalloc -L /usr/local/opt/icu4c/lib --main-pkg-path /Users/jarred/Code/bun --enable-cache -femit-bin=zig-out/bin/test --test-no-exec
+test "sendHTTPS - identity" {
+    Output.initTest();
+    defer Output.flush();
+
     var headers = try std.heap.c_allocator.create(Headers);
     headers.* = Headers{
         .entries = @TypeOf(headers.entries){},
@@ -458,16 +553,47 @@ test "sendHTTPS" {
     };
 
     headers.appendHeader("X-What", "ok", true, true, false);
+    headers.appendHeader("Accept-Encoding", "identity", true, true, false);
 
     var client = HTTPClient.init(
         std.heap.c_allocator,
         .GET,
-        URL.parse("https://hookb.in/aBnOOWN677UXQ9kkQ2g3"),
+        URL.parse("https://example.com/"),
         headers.entries,
         headers.buf.items,
     );
     var body_out_str = try MutableString.init(std.heap.c_allocator, 0);
     var response = try client.sendHTTPS("", &body_out_str);
     try std.testing.expectEqual(response.status_code, 200);
-    try std.testing.expectEqual(body_out_str.list.items.len, 1256);
+    try std.testing.expectEqualStrings(body_out_str.list.items, @embedFile("fixtures_example.com.html"));
 }
+
+// zig test src/http_client.zig --test-filter "sendHTTPS - gzip" -lc -lc++ /Users/jarred/Code/bun/src/deps/zlib/libz.a /Users/jarred/Code/bun/src/deps/picohttpparser.o --cache-dir /Users/jarred/Code/bun/zig-cache --global-cache-dir /Users/jarred/.cache/zig --name bun --pkg-begin clap /Users/jarred/Code/bun/src/deps/zig-clap/clap.zig --pkg-end --pkg-begin picohttp /Users/jarred/Code/bun/src/deps/picohttp.zig --pkg-end --pkg-begin iguanaTLS /Users/jarred/Code/bun/src/deps/iguanaTLS/src/main.zig --pkg-end -I /Users/jarred/Code/bun/src/deps -I /Users/jarred/Code/bun/src/deps/mimalloc -I /usr/local/opt/icu4c/include  -L src/deps/mimalloc -L /usr/local/opt/icu4c/lib --main-pkg-path /Users/jarred/Code/bun --enable-cache -femit-bin=zig-out/bin/test --test-no-exec
+test "sendHTTPS - gzip" {
+    Output.initTest();
+    defer Output.flush();
+
+    var headers = try std.heap.c_allocator.create(Headers);
+    headers.* = Headers{
+        .entries = @TypeOf(headers.entries){},
+        .buf = @TypeOf(headers.buf){},
+        .used = 0,
+        .allocator = std.heap.c_allocator,
+    };
+
+    headers.appendHeader("Accept-Encoding", "gzip", false, false, false);
+
+    var client = HTTPClient.init(
+        std.heap.c_allocator,
+        .GET,
+        URL.parse("https://example.com/"),
+        headers.entries,
+        headers.buf.items,
+    );
+    var body_out_str = try MutableString.init(std.heap.c_allocator, 0);
+    var response = try client.sendHTTPS("", &body_out_str);
+    try std.testing.expectEqual(response.status_code, 200);
+    try std.testing.expectEqualStrings(body_out_str.list.items, @embedFile("fixtures_example.com.html"));
+}
+
+// zig test src/http_client.zig --test-filter "sendHTTP" -lc -lc++ /Users/jarred/Code/bun/src/deps/zlib/libz.a /Users/jarred/Code/bun/src/deps/picohttpparser.o --cache-dir /Users/jarred/Code/bun/zig-cache --global-cache-dir /Users/jarred/.cache/zig --name bun --pkg-begin clap /Users/jarred/Code/bun/src/deps/zig-clap/clap.zig --pkg-end --pkg-begin picohttp /Users/jarred/Code/bun/src/deps/picohttp.zig --pkg-end --pkg-begin iguanaTLS /Users/jarred/Code/bun/src/deps/iguanaTLS/src/main.zig --pkg-end -I /Users/jarred/Code/bun/src/deps -I /Users/jarred/Code/bun/src/deps/mimalloc -I /usr/local/opt/icu4c/include  -L src/deps/mimalloc -L /usr/local/opt/icu4c/lib --main-pkg-path /Users/jarred/Code/bun --enable-cache -femit-bin=zig-out/bin/test

@@ -652,7 +652,7 @@ Run bun:
 packages/debug-bun-cli-darwin-x64/bin/bun-debug
 ```
 
-### vscode-zig
+## vscode-zig
 
 You will want to install the fork of `vscode-zig` so you get a `Run test` and a `Debug test` button.
 

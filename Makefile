@@ -22,6 +22,7 @@ PACKAGE_JSON_VERSION := 0.0.$(BUILD_ID)
 BUN_BUILD_TAG := bun-v$(PACKAGE_JSON_VERSION)
 CC := clang
 CXX := clang++
+DEPS_DIR := $(shell pwd)/src/deps
 
 BUN_TMP_DIR := /tmp/make-bun
 
@@ -69,6 +70,13 @@ bun: vendor build-obj bun-link-lld-release
 
 
 vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib
+
+libarchive:
+	cd src/deps/libarchive; \
+	make clean; \
+	cmake . -DENABLE_ZLIB=OFF -DENABLE_OPENSSL=OFF; \
+	make -j${shell nproc}; \
+	cp libarchive/libarchive.a $(DEPS_DIR)/libarchive.a;
 
 vendor: require init-submodules vendor-without-check
 
@@ -321,6 +329,7 @@ BUN_LLD_FLAGS := $(OBJ_FILES) \
 		src/deps/picohttpparser.o \
 		src/deps/mimalloc/libmimalloc.a \
 		src/deps/zlib/libz.a \
+		src/deps/libarchive.a \
 		$(CLANG_FLAGS) \
 		
 

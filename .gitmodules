@@ -24,3 +24,4 @@
 [submodule "src/deps/s2n-tls"]
 	path = src/deps/s2n-tls
 	url = https://github.com/Jarred-Sumner/s2n-tls
+	ignore = dirty

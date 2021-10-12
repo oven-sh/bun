@@ -133,16 +133,6 @@ pub fn build(b: *std.build.Builder) !void {
 
     exe.setOutputDir(output_dir);
     var cwd_dir = std.fs.cwd();
-    if (std.builtin.is_test) {
-        var walker = cwd_dir.walk(std.heap.c_allocator) catch unreachable;
-
-        while (walker.next() catch unreachable) |entry| {
-            if (std.mem.endsWith(u8, entry.basename, "_test.zig")) {
-                std.debug.print("[test] Added {s}", .{entry.basename});
-                _ = b.addTest(entry.path);
-            }
-        }
-    }
 
     const runtime_hash = std.hash.Wyhash.hash(0, @embedFile("./src/runtime.out.js"));
     const runtime_version_file = std.fs.cwd().openFile("src/runtime.version", .{ .write = true }) catch unreachable;
@@ -237,13 +227,14 @@ pub fn build(b: *std.build.Builder) !void {
                 true,
             );
 
-
             step.addObjectFile("src/deps/libJavaScriptCore.a");
             step.addObjectFile("src/deps/libWTF.a");
 
-            if (target.getOs().tag != .linux) {
-                step.addObjectFile("src/deps/libbmalloc.a");
-            }
+            step.addObjectFile("src/deps/libbmalloc.a");
+            step.addObjectFile("src/deps/libarchive.a");
+            step.addObjectFile("src/deps/zlib/libz.a");
+            step.addObjectFile("src/deps/openssl/libssl.a");
+            step.addObjectFile("src/deps/openssl/libcrypto.a");
 
             step.addObjectFile("src/deps/mimalloc/libmimalloc.a");
             step.addLibPath("src/deps/mimalloc");
@@ -295,13 +286,11 @@ pub fn build(b: *std.build.Builder) !void {
 
         obj.bundle_compiler_rt = true;
 
-      if (target.getOsTag() == .linux) {
-        // obj.want_lto = tar;
-        obj.link_emit_relocs = true;
-        obj.link_function_sections = true;
-      }
-
-   
+        if (target.getOsTag() == .linux) {
+            // obj.want_lto = tar;
+            obj.link_emit_relocs = true;
+            obj.link_function_sections = true;
+        }
     } else {
         b.default_step.dependOn(&exe.step);
     }

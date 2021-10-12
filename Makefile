@@ -48,6 +48,8 @@ endif
 JSC_LIB ?= $(DEFAULT_JSC_LIB)
 
 JSC_INCLUDE_DIR ?= $(JSC_BASE_DIR)/include
+ZLIB_INCLUDE_DIR ?= $(DEPS_DIR)/zlib
+ZLIB_LIB_DIR ?= $(DEPS_DIR)/zlib
 
 JSC_FILES := $(JSC_LIB)/libJavaScriptCore.a $(JSC_LIB)/libWTF.a  $(JSC_LIB)/libbmalloc.a
 
@@ -69,7 +71,7 @@ endif
 bun: vendor build-obj bun-link-lld-release
 
 
-vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib
+vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib openssl
 
 libarchive:
 	cd src/deps/libarchive; \
@@ -82,6 +84,11 @@ vendor: require init-submodules vendor-without-check
 
 zlib: 
 	cd src/deps/zlib; cmake .; make;
+
+openssl:
+	cd src/deps/zlib; \
+	./configure --with-zlib-lib=$(ZLIB_LIB_DIR) --with-zlib-include=$(ZLIB_INCLUDE_DIR); \
+	make -j${shell nproc};
 
 require:
 	@echo "Checking if the required utilities are available..."
@@ -330,6 +337,8 @@ BUN_LLD_FLAGS := $(OBJ_FILES) \
 		src/deps/mimalloc/libmimalloc.a \
 		src/deps/zlib/libz.a \
 		src/deps/libarchive.a \
+		src/deps/openssl/libssl.a \
+		src/deps/openssl/libcrypto.a \
 		$(CLANG_FLAGS) \
 		
 

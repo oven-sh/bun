@@ -12,7 +12,7 @@ const RecognizedExtensions = std.ComptimeStringMap(void, .{
     .{ ".gz", void{} },
 });
 
-var buf: [512 * 1024 * 1024]u8 = undefined;
+var buf: [32 * 1024 * 1024]u8 = undefined;
 
 // zig build-exe -Drelease-fast --main-pkg-path ../ ./tgz.zig ../src/deps/zlib/libz.a ../src/deps/libarchive.a -lc -liconv
 // zig build-exe -Drelease-fast --main-pkg-path ../ ./tgz.zig ../src/deps/zlib/libz.a ../src/deps/libarchive.a -lc -liconv
@@ -62,14 +62,14 @@ pub fn main() anyerror!void {
     }
 
     // if (std.mem.eql(u8, std.fs.path.extension(tarball_path), ".gz") or std.mem.eql(u8, std.fs.path.extension(tarball_path), ".tgz")) {
-    //     tarball_buf_list = std.ArrayListUnmanaged(u8){ .capacity = gzip_buf.len, .items = std.mem.span(&gzip_buf) };
+    //     tarball_buf_list = std.ArrayListUnmanaged(u8){ .capacity = file_buf.len, .items = file_buf };
     //     var gunzip = try Zlib.ZlibReaderArrayList.init(file_buf, &tarball_buf_list, std.heap.c_allocator);
     //     try gunzip.readAll();
     //     gunzip.deinit();
     //     Output.prettyErrorln("Decompressed {d} -> {d}\n", .{ file_buf.len, tarball_buf_list.items.len });
     // } else {
-    tarball_buf_list = std.ArrayListUnmanaged(u8){ .capacity = file_buf.len, .items = file_buf };
+    //     tarball_buf_list = std.ArrayListUnmanaged(u8){ .capacity = file_buf.len, .items = file_buf };
     // }
 
-    try Archive.extractToDisk(tarball_buf_list.items, folder, 1, false);
+    try Archive.extractToDisk(file_buf, folder, 1, false);
 }

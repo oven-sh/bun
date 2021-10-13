@@ -221,6 +221,9 @@ pub fn connect(
 ) !tcp.Client {
     var client: tcp.Client = try tcp.Client.init(tcp.Domain.ip, .{ .close_on_exec = true });
     const port = this.url.getPortAuto();
+    client.setNoDelay(true) catch {};
+    client.setReadBufferSize(http_req_buf.len) catch {};
+    client.setQuickACK(true) catch {};
 
     // if (this.url.isLocalhost()) {
     //     try client.connect(
@@ -230,6 +233,7 @@ pub fn connect(
     // } else if (this.url.isDomainName()) {
     var stream = try std.net.tcpConnectToHost(default_allocator, this.url.hostname, port);
     client.socket = std.x.os.Socket.from(stream.handle);
+
     // }
     // } else if (this.url.getIPv4Address()) |ip_addr| {
     //     try client.connect(std.x.os.Socket.Address(ip_addr, port));

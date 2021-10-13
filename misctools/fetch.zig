@@ -165,14 +165,17 @@ pub fn main() anyerror!void {
     var body_out_str = try MutableString.init(default_allocator, 1024);
     var response = try client.send(args.body, &body_out_str);
 
+    Output.flush();
     Output.disableBuffering();
     try Output.writer().writeAll(body_out_str.list.items);
-
+    Output.enableBuffering();
     switch (response.status_code) {
         200, 302 => {},
         else => {
             if (!client.verbose) {
-                Output.prettyErrorln("Response: {}", .{response});
+                // Output.flush();
+
+                // Output.prettyErrorln("Response: {}", .{response});
             }
         },
     }

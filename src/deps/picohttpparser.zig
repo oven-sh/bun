@@ -15,7 +15,7 @@ pub const struct_phr_chunked_decoder = extern struct {
     _hex_count: u8,
     _state: u8,
 };
-pub extern fn phr_decode_chunked(decoder: [*c]struct_phr_chunked_decoder, buf: [*c]u8, bufsz: [*c]usize) isize;
-pub extern fn phr_decode_chunked_is_in_data(decoder: [*c]struct_phr_chunked_decoder) c_int;
+pub extern fn phr_decode_chunked(decoder: *struct_phr_chunked_decoder, buf: [*]u8, bufsz: *usize) isize;
+pub extern fn phr_decode_chunked_is_in_data(decoder: *struct_phr_chunked_decoder) c_int;
 pub const phr_header = struct_phr_header;
 pub const phr_chunked_decoder = struct_phr_chunked_decoder;

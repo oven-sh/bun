@@ -163,7 +163,7 @@ pub const Response = struct {
                 .status_code = @intCast(usize, status_code),
                 .status = status,
                 .headers = src[0..num_headers],
-                .bytes_read = bytes_read,
+                .bytes_read = rc,
             },
         };
     }
@@ -238,3 +238,5 @@ test "pico_http: parse headers" {
         std.debug.print("{}\n", .{header});
     }
 }
+
+pub usingnamespace c;

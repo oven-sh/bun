@@ -21,7 +21,7 @@ pub fn boot(allcoator: *std.mem.Allocator) void {
     // It can never be changed after initialization or we risk undefined memory bugs.
     if (s2n_get_highest_fully_supported_tls_version() == S2N_TLS13) {
         // This conditional should always return true since we statically compile libCrypto.
-        _ = s2n_enable_tls13();
+        // _ = s2n_enable_tls13();
 
         // Sadly, this TLS 1.3 implementation is slower than TLS 1.2.
         // ❯ hyperfine "./fetch https://example.com" "./fetchtls13 https://example.com"
@@ -54,7 +54,7 @@ pub fn boot(allcoator: *std.mem.Allocator) void {
     var protocols = &protocol;
     s2nassert(s2n_config_set_protocol_preferences(global_s2n_config, protocols, 1));
     s2nassert(s2n_config_send_max_fragment_length(global_s2n_config, S2N_TLS_MAX_FRAG_LEN_4096));
-
+    s2nassert(s2n_config_set_cipher_preferences(global_s2n_config, "default_tls13"));
     // s2n_config_set_ticket_decrypt_key_lifetime(global_s2n_config, 9999999);
 
     s2nassert(
@@ -700,6 +700,10 @@ pub const Connection = struct {
             .CONNRESET => return error.ConnectionResetByPeer,
             else => |err| return unexpectedErrno(err),
         }
+    }
+
+    pub fn peek(this: *Connection) u32 {
+        return s2n_peek(this.conn);
     }
 
     var blocked_status: s2n_blocked_status = 0;

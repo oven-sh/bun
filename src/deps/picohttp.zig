@@ -152,7 +152,7 @@ pub const Response = struct {
         );
 
         return switch (rc) {
-            -1 => error.BadResponse,
+            -1 => error.Malformed_HTTP_Response,
             -2 => brk: {
                 offset.?.* += buf.len;
 

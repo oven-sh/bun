@@ -26,6 +26,7 @@ const params = [_]clap.Param(clap.Help){
     clap.parseParam("--no-deflate               Disable deflate") catch unreachable,
     clap.parseParam("--no-compression           Disable gzip & deflate") catch unreachable,
     clap.parseParam("--version                  Print the version and exit") catch unreachable,
+    clap.parseParam("--turbo                    Skip sending TLS shutdown signals") catch unreachable,
     clap.parseParam("<POS>...                          ") catch unreachable,
 };
 
@@ -59,6 +60,7 @@ pub const Arguments = struct {
     headers: Headers.Entries,
     headers_buf: string,
     body: string = "",
+    turbo: bool = false,
 
     pub fn parse(allocator: *std.mem.Allocator) !Arguments {
         var diag = clap.Diagnostic{};
@@ -147,6 +149,7 @@ pub const Arguments = struct {
             .headers = .{},
             .headers_buf = "",
             .body = body_string,
+            .turbo = args.flag("--turbo"),
         };
     }
 };
@@ -161,7 +164,7 @@ pub fn main() anyerror!void {
     var args = try Arguments.parse(default_allocator);
     var client = HTTPClient.init(default_allocator, args.method, args.url, args.headers, args.headers_buf);
     client.verbose = args.verbose;
-    client.disable_shutdown = true;
+    client.disable_shutdown = args.turbo;
     var body_out_str = try MutableString.init(default_allocator, 1024);
     var response = try client.send(args.body, &body_out_str);
 

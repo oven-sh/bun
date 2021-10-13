@@ -229,12 +229,13 @@ pub fn build(b: *std.build.Builder) !void {
 
             step.addObjectFile("src/deps/libJavaScriptCore.a");
             step.addObjectFile("src/deps/libWTF.a");
-
+            step.addObjectFile("src/deps/libcrypto.a");
             step.addObjectFile("src/deps/libbmalloc.a");
             step.addObjectFile("src/deps/libarchive.a");
+            step.addObjectFile("src/deps/libs2n.a");
+
             step.addObjectFile("src/deps/zlib/libz.a");
             step.addObjectFile("src/deps/openssl/libssl.a");
-            step.addObjectFile("src/deps/openssl/libcrypto.a");
 
             step.addObjectFile("src/deps/mimalloc/libmimalloc.a");
             step.addLibPath("src/deps/mimalloc");

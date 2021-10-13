@@ -1,7 +1,8 @@
 const std = @import("std");
-const c = @cImport(@cInclude("picohttpparser.h"));
+const c = @import("picohttpparser.zig");
 const ExactSizeMatcher = @import("../exact_size_matcher.zig").ExactSizeMatcher;
 const Match = ExactSizeMatcher(2);
+const Output = @import("../global.zig").Output;
 
 const fmt = std.fmt;
 
@@ -16,10 +17,18 @@ pub const Header = struct {
     }
 
     pub fn format(self: Header, comptime layout: []const u8, opts: fmt.FormatOptions, writer: anytype) !void {
-        if (self.isMultiline()) {
-            try fmt.format(writer, "{s}", .{self.value});
+        if (Output.enable_ansi_colors) {
+            if (self.isMultiline()) {
+                try fmt.format(writer, comptime Output.prettyFmt("<r><cyan>{s}", true), .{self.value});
+            } else {
+                try fmt.format(writer, comptime Output.prettyFmt("<r><cyan>{s}<r><d>: <r>{s}", true), .{ self.name, self.value });
+            }
         } else {
-            try fmt.format(writer, "{s}: {s}", .{ self.name, self.value });
+            if (self.isMultiline()) {
+                try fmt.format(writer, comptime Output.prettyFmt("<r><cyan>{s}", false), .{self.value});
+            } else {
+                try fmt.format(writer, comptime Output.prettyFmt("<r><cyan>{s}<r><d>: <r>{s}", false), .{ self.name, self.value });
+            }
         }
     }
 

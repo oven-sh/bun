@@ -1,6 +1,8 @@
 OS_NAME := $(shell uname -s | tr '[:upper:]' '[:lower:]')
 ARCH_NAME_RAW := $(shell uname -m)
 
+make-lazy = $(eval $1 = $​$(eval $1 := $(value $(1)))$​$($1))
+
 ARCH_NAME :=
 ifeq ($(ARCH_NAME_RAW),arm64)
    ARCH_NAME = aarch64
@@ -8,21 +10,28 @@ else
    ARCH_NAME = x64
 endif
 
-TRIPLET := $(OS_NAME)-$(ARCH_NAME)
-PACKAGE_NAME := bun-cli-$(TRIPLET)
-PACKAGES_REALPATH := $(shell realpath packages)
-PACKAGE_DIR := $(PACKAGES_REALPATH)/$(PACKAGE_NAME)
-DEBUG_PACKAGE_DIR := $(PACKAGES_REALPATH)/debug-$(PACKAGE_NAME)
-BIN_DIR := $(PACKAGE_DIR)/bin
-RELEASE_BUN := $(PACKAGE_DIR)/bin/bun
-DEBUG_BIN := $(DEBUG_PACKAGE_DIR)/bin
-DEBUG_BUN := $(DEBUG_BIN)/bun-debug
-BUILD_ID := $(shell cat ./build-id)
-PACKAGE_JSON_VERSION := 0.0.$(BUILD_ID)
-BUN_BUILD_TAG := bun-v$(PACKAGE_JSON_VERSION)
-CC := clang
-CXX := clang++
-DEPS_DIR := $(shell pwd)/src/deps
+TRIPLET = $(OS_NAME)-$(ARCH_NAME)
+PACKAGE_NAME = bun-cli-$(TRIPLET)
+PACKAGES_REALPATH = $(shell realpath packages)
+PACKAGE_DIR = $(PACKAGES_REALPATH)/$(PACKAGE_NAME)
+DEBUG_PACKAGE_DIR = $(PACKAGES_REALPATH)/debug-$(PACKAGE_NAME)
+BIN_DIR = $(PACKAGE_DIR)/bin
+RELEASE_BUN = $(PACKAGE_DIR)/bin/bun
+DEBUG_BIN = $(DEBUG_PACKAGE_DIR)/bin
+DEBUG_BUN = $(DEBUG_BIN)/bun-debug
+BUILD_ID = $(shell cat ./build-id)
+PACKAGE_JSON_VERSION = 0.0.$(BUILD_ID)
+BUN_BUILD_TAG = bun-v$(PACKAGE_JSON_VERSION)
+CC ?= $(shell realpath clang)
+CXX ?= $(shell realpath clang++)
+DEPS_DIR = $(shell pwd)/src/deps
+CPUS ?= $(shell nproc)
+USER ?= $(echo $USER)
+
+LIBCRYPTO_STATIC_LIB = $(shell brew list openssl@1.1|grep libcrypto.a)
+LIBCRYPTO_PREFIX_LIB_DIR = $(shell dirname $(LIBCRYPTO_STATIC_LIB))
+LIBCRYPTO_PREFIX_DIR = $(shell dirname $(LIBCRYPTO_PREFIX_LIB_DIR))
+LIBCRYPTO_INCLUDE_DIR = $(LIBCRYPTO_PREFIX_DIR)/include
 
 BUN_TMP_DIR := /tmp/make-bun
 
@@ -65,7 +74,105 @@ endif
 STRIP ?= $(shell which llvm-strip || which llvm-strip-12 || echo "Missing llvm-strip. Please pass it in the STRIP environment var"; exit 1;)
 
 ifeq ($(OS_NAME),darwin)
-	HOMEBREW_PREFIX := $(shell brew --prefix)/
+	HOMEBREW_PREFIX = $(shell brew --prefix)/
+endif
+
+
+SRC_DIR := src/javascript/jsc/bindings
+OBJ_DIR := src/javascript/jsc/bindings-obj
+SRC_FILES := $(wildcard $(SRC_DIR)/*.cpp)
+OBJ_FILES := $(patsubst $(SRC_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(SRC_FILES))
+MAC_INCLUDE_DIRS := -Isrc/javascript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/PrivateHeaders \
+		-Isrc/javascript/jsc/WebKit/WebKitBuild/Release/WTF/Headers \
+		-Isrc/javascript/jsc/WebKit/WebKitBuild/Release/ICU/Headers \
+		-Isrc/javascript/jsc/WebKit/WebKitBuild/Release/ \
+		-Isrc/javascript/jsc/bindings/ \
+		-Isrc/javascript/jsc/WebKit/Source/bmalloc 
+
+LINUX_INCLUDE_DIRS := -I$(JSC_INCLUDE_DIR) \
+					  -Isrc/javascript/jsc/bindings/
+
+INCLUDE_DIRS :=
+
+ifeq ($(OS_NAME),linux)
+	INCLUDE_DIRS += $(LINUX_INCLUDE_DIRS)
+endif
+
+ifeq ($(OS_NAME),darwin)
+	INCLUDE_DIRS += $(MAC_INCLUDE_DIRS)
+endif
+
+
+
+MACOS_ICU_FILES := $(HOMEBREW_PREFIX)opt/icu4c/lib/libicudata.a \
+	$(HOMEBREW_PREFIX)opt/icu4c/lib/libicui18n.a \
+	$(HOMEBREW_PREFIX)opt/icu4c/lib/libicuuc.a 
+
+MACOS_ICU_INCLUDE := $(HOMEBREW_PREFIX)opt/icu4c/include
+
+ICU_FLAGS := 
+
+# TODO: find a way to make this more resilient
+# Ideally, we could just look up the linker search paths
+LIB_ICU_PATH ?= /usr/lib/x86_64-linux-gnu
+
+ifeq ($(OS_NAME),linux)
+	ICU_FLAGS += $(LIB_ICU_PATH)/libicuuc.a $(LIB_ICU_PATH)/libicudata.a $(LIB_ICU_PATH)/libicui18n.a
+endif
+
+ifeq ($(OS_NAME),darwin)
+ICU_FLAGS += -l icucore \
+	$(MACOS_ICU_FILES) \
+	-I$(MACOS_ICU_INCLUDE)
+endif
+
+		
+
+CLANG_FLAGS = $(INCLUDE_DIRS) \
+		-std=gnu++17 \
+		-DSTATICALLY_LINKED_WITH_JavaScriptCore=1 \
+		-DSTATICALLY_LINKED_WITH_WTF=1 \
+		-DSTATICALLY_LINKED_WITH_BMALLOC=1 \
+		-DBUILDING_WITH_CMAKE=1 \
+		-DNDEBUG=1 \
+		-DNOMINMAX \
+		-DIS_BUILD \
+		-g \
+		-DENABLE_INSPECTOR_ALTERNATE_DISPATCHERS=0 \
+		-DBUILDING_JSCONLY__ \
+		-DASSERT_ENABLED=0 \
+		-fPIE
+		
+# This flag is only added to webkit builds on Apple platforms
+# It has something to do with ICU
+ifeq ($(OS_NAME), darwin)
+CLANG_FLAGS += -DDU_DISABLE_RENAMING=1 
+endif
+
+BUN_LLD_FLAGS = $(OBJ_FILES) \
+		${ICU_FLAGS} \
+		${JSC_FILES} \
+		src/deps/mimalloc/libmimalloc.a \
+		src/deps/zlib/libz.a \
+		src/deps/libarchive.a \
+		src/deps/libs2n.a \
+		src/deps/libcrypto.a \
+		src/deps/picohttpparser.o \
+		$(CLANG_FLAGS) \
+
+ifeq ($(OS_NAME), linux)
+BUN_LLD_FLAGS += -lstdc++fs \
+		-pthread \
+		-ldl \
+		-lc \
+		-Wl,-z,now \
+		-Wl,--as-needed \
+		-Wl,-z,stack-size=12800000 \
+		-Wl,-z,notext \
+		-ffunction-sections \
+		-fdata-sections \
+		-Wl,--gc-sections \
+		-fuse-ld=lld
 endif
 
 bun: vendor build-obj bun-link-lld-release
@@ -77,18 +184,13 @@ libarchive:
 	cd src/deps/libarchive; \
 	make clean; \
 	cmake . -DENABLE_ZLIB=OFF -DENABLE_OPENSSL=OFF; \
-	make -j${shell nproc}; \
+	make -j${CPUS}; \
 	cp libarchive/libarchive.a $(DEPS_DIR)/libarchive.a;
 
 vendor: require init-submodules vendor-without-check
 
 zlib: 
 	cd src/deps/zlib; cmake .; make;
-
-openssl:
-	cd src/deps/zlib; \
-	./configure --with-zlib-lib=$(ZLIB_LIB_DIR) --with-zlib-include=$(ZLIB_INCLUDE_DIR); \
-	make -j${shell nproc};
 
 require:
 	@echo "Checking if the required utilities are available..."
@@ -136,8 +238,64 @@ runtime_js:
 bun_error:
 	@cd packages/bun-error; npm install; npm run --silent build
 
+fetch:
+	cd misctools; zig build-obj -Drelease-fast ./fetch.zig -fcompiler-rt --main-pkg-path ../
+	$(CXX) ./misctools/fetch.o -g -O3 -o ./misctools/fetch \
+		src/deps/mimalloc/libmimalloc.a \
+		src/deps/zlib/libz.a \
+		src/deps/libarchive.a \
+		src/deps/libs2n.a \
+		src/deps/picohttpparser.o \
+		src/deps/libcrypto.a
 
+fetch-debug:
+	cd misctools; zig build-obj ./fetch.zig -fcompiler-rt --main-pkg-path ../
+	$(CXX) ./misctools/fetch.o -g -o ./misctools/fetch \
+		src/deps/mimalloc/libmimalloc.a \
+		src/deps/zlib/libz.a \
+		src/deps/libarchive.a \
+		src/deps/libs2n.a \
+		src/deps/picohttpparser.o \
+		src/deps/libcrypto.a
 
+s2n-mac:
+	cd $(DEPS_DIR)/s2n-tls; \
+	make clean; \
+	CC=$(CC) CXX=$(CXX) cmake . -Bbuild -GNinja \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DBUILD_SHARED_LIBS=OFF \
+		-DLibCrypto_INCLUDE_DIR=$(LIBCRYPTO_INCLUDE_DIR) \
+		-DLibCrypto_STATIC_LIBRARY=$(LIBCRYPTO_STATIC_LIB) \
+		-DLibCrypto_LIBRARY=$(LIBCRYPTO_STATIC_LIB) \
+		-DCMAKE_PREFIX_PATH=$(shell brew --prefix openssl@1.1); \
+	CC=$(CC) CXX=$(CXX) cmake --build ./build -j$(CPUS); \
+	CC=$(CC) CXX=$(CXX) CTEST_PARALLEL_LEVEL=$(CPUS) ninja -C build
+	cp $(DEPS_DIR)/s2n-tls/build/lib/libs2n.a $(DEPS_DIR)/libs2n.a
+	unlink $(DEPS_DIR)/libcrypto.a || echo "";
+	ln $(LIBCRYPTO_STATIC_LIB) $(DEPS_DIR)/libcrypto.a || echo "";
+
+s2n-mac-debug:
+	cd $(DEPS_DIR)/s2n-tls; \
+	make clean; \
+	CC=$(CC) CXX=$(CXX) cmake . -Bbuild -GNinja \
+		-DCMAKE_BUILD_TYPE=Debug \
+		-DBUILD_SHARED_LIBS=OFF \
+		-DLibCrypto_INCLUDE_DIR=$(LIBCRYPTO_INCLUDE_DIR) \
+		-DLibCrypto_STATIC_LIBRARY=$(LIBCRYPTO_STATIC_LIB) \
+		-DLibCrypto_LIBRARY=$(LIBCRYPTO_STATIC_LIB) \
+		-DCMAKE_PREFIX_PATH=$(shell brew --prefix openssl@1.1); \
+	CC=$(CC) CXX=$(CXX) cmake --build ./build -j$(CPUS); \
+	CC=$(CC) CXX=$(CXX) CTEST_PARALLEL_LEVEL=$(CPUS) ninja -C build test
+	cp $(DEPS_DIR)/s2n-tls/build/lib/libs2n.a $(DEPS_DIR)/libs2n.a
+	unlink $(DEPS_DIR)/libcrypto.a || echo "";
+	ln $(LIBCRYPTO_STATIC_LIB) $(DEPS_DIR)/libcrypto.a || echo "";
+
+libcrypto_path:
+	@echo ${LIBCRYPTO_STATIC_LIB}
+
+ifeq ($(OS_NAME),darwin)
+s2n: s2n-mac
+endif
 
 jsc: jsc-build jsc-bindings
 jsc-build: $(JSC_BUILD_STEPS)
@@ -259,104 +417,10 @@ clean: clean-bindings
 
 
 
-SRC_DIR := src/javascript/jsc/bindings
-OBJ_DIR := src/javascript/jsc/bindings-obj
-SRC_FILES := $(wildcard $(SRC_DIR)/*.cpp)
-OBJ_FILES := $(patsubst $(SRC_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(SRC_FILES))
-MAC_INCLUDE_DIRS := -Isrc/javascript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/PrivateHeaders \
-		-Isrc/javascript/jsc/WebKit/WebKitBuild/Release/WTF/Headers \
-		-Isrc/javascript/jsc/WebKit/WebKitBuild/Release/ICU/Headers \
-		-Isrc/javascript/jsc/WebKit/WebKitBuild/Release/ \
-		-Isrc/javascript/jsc/bindings/ \
-		-Isrc/javascript/jsc/WebKit/Source/bmalloc 
-
-LINUX_INCLUDE_DIRS := -I$(JSC_INCLUDE_DIR) \
-					  -Isrc/javascript/jsc/bindings/
-
-INCLUDE_DIRS :=
-
-ifeq ($(OS_NAME),linux)
-	INCLUDE_DIRS += $(LINUX_INCLUDE_DIRS)
-endif
-
-ifeq ($(OS_NAME),darwin)
-	INCLUDE_DIRS += $(MAC_INCLUDE_DIRS)
-endif
-
-CLANG_FLAGS := $(INCLUDE_DIRS) \
-		-std=gnu++17 \
-		-DSTATICALLY_LINKED_WITH_JavaScriptCore=1 \
-		-DSTATICALLY_LINKED_WITH_WTF=1 \
-		-DSTATICALLY_LINKED_WITH_BMALLOC=1 \
-		-DBUILDING_WITH_CMAKE=1 \
-		-DNDEBUG=1 \
-		-DNOMINMAX \
-		-DIS_BUILD \
-		-g \
-		-DENABLE_INSPECTOR_ALTERNATE_DISPATCHERS=0 \
-		-DBUILDING_JSCONLY__ \
-		-DASSERT_ENABLED=0 \
-		-fPIE
-		
-# This flag is only added to webkit builds on Apple platforms
-# It has something to do with ICU
-ifeq ($(OS_NAME), darwin)
-CLANG_FLAGS += -DDU_DISABLE_RENAMING=1 
-endif
 
 
 jsc-bindings-mac: $(OBJ_FILES)
 
-
-MACOS_ICU_FILES := $(HOMEBREW_PREFIX)opt/icu4c/lib/libicudata.a \
-	$(HOMEBREW_PREFIX)opt/icu4c/lib/libicui18n.a \
-	$(HOMEBREW_PREFIX)opt/icu4c/lib/libicuuc.a 
-
-MACOS_ICU_INCLUDE := $(HOMEBREW_PREFIX)opt/icu4c/include
-
-ICU_FLAGS := 
-
-# TODO: find a way to make this more resilient
-# Ideally, we could just look up the linker search paths
-LIB_ICU_PATH ?= /usr/lib/x86_64-linux-gnu
-
-ifeq ($(OS_NAME),linux)
-	ICU_FLAGS += $(LIB_ICU_PATH)/libicuuc.a $(LIB_ICU_PATH)/libicudata.a $(LIB_ICU_PATH)/libicui18n.a
-endif
-
-ifeq ($(OS_NAME),darwin)
-ICU_FLAGS += -l icucore \
-	$(MACOS_ICU_FILES) \
-	-I$(MACOS_ICU_INCLUDE)
-endif
-
-BUN_LLD_FLAGS := $(OBJ_FILES) \
-		${ICU_FLAGS} \
-		${JSC_FILES} \
-		src/deps/picohttpparser.o \
-		src/deps/mimalloc/libmimalloc.a \
-		src/deps/zlib/libz.a \
-		src/deps/libarchive.a \
-		src/deps/openssl/libssl.a \
-		src/deps/openssl/libcrypto.a \
-		$(CLANG_FLAGS) \
-		
-
-ifeq ($(OS_NAME), linux)
-BUN_LLD_FLAGS += -lstdc++fs \
-		-pthread \
-		-ldl \
-		-lc \
-		-Wl,-z,now \
-		-Wl,--as-needed \
-		-Wl,-z,stack-size=12800000 \
-		-Wl,-z,notext \
-		-ffunction-sections \
-		-fdata-sections \
-		-Wl,--gc-sections \
-		-fuse-ld=lld
-endif
-		
 
 mimalloc:
 	cd src/deps/mimalloc; cmake .; make; 
@@ -401,7 +465,7 @@ sizegen:
 	$(BUN_TMP_DIR)/sizegen > src/javascript/jsc/bindings/sizes.zig
 
 picohttp:
-	 $(CC) -O3 -g -fPIE -c src/deps/picohttpparser.c -Isrc/deps -o src/deps/picohttpparser.o; cd ../../	
+	 $(CC) -march=native -O3 -g -fPIE -c src/deps/picohttpparser/picohttpparser.c -Isrc/deps -o src/deps/picohttpparser.o; cd ../../	
 
 analytics:
 	 ./node_modules/.bin/peechy --schema src/analytics/schema.peechy --zig src/analytics/analytics_schema.zig

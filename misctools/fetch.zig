@@ -161,9 +161,19 @@ pub fn main() anyerror!void {
     var args = try Arguments.parse(default_allocator);
     var client = HTTPClient.init(default_allocator, args.method, args.url, args.headers, args.headers_buf);
     client.verbose = args.verbose;
+    client.disable_shutdown = true;
     var body_out_str = try MutableString.init(default_allocator, 1024);
     var response = try client.send(args.body, &body_out_str);
 
     Output.disableBuffering();
     try Output.writer().writeAll(body_out_str.list.items);
+
+    switch (response.status_code) {
+        200, 302 => {},
+        else => {
+            if (!client.verbose) {
+                Output.prettyErrorln("Response: {}", .{response});
+            }
+        },
+    }
 }

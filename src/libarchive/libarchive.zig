@@ -448,7 +448,7 @@ pub const Archive = struct {
                                 error.FileNotFound => {
                                     const subdir = try dir.makeOpenPath(dirname, .{ .iterate = true });
                                     defer if (comptime close_handles) subdir.close();
-                                    break :brk try subdir.createFile(std.fs.path.basename(pathname), .{ .truncate = true });
+                                    break :brk try dir.createFileZ(pathname, .{ .truncate = true });
                                 },
                                 else => {
                                     return err;
@@ -458,12 +458,6 @@ pub const Archive = struct {
                         defer if (comptime close_handles) file.close();
                         _ = lib.archive_read_data_into_fd(archive, file.handle);
                         _ = C.fchmod(file.handle, lib.archive_entry_perm(entry));
-
-                        //     switch (status) {
-                        //         Status.eof => break :copy_data,
-                        //         Status.ok => {
-                        //         else => return error.Fail,
-                        //     }
                     }
                 },
             }

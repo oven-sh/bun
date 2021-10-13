@@ -77,3 +77,5 @@ pub const force_macro = false;
 pub const include_filename_in_jsx = false;
 
 pub const verbose_analytics = false;
+
+pub const disable_compression_in_http_client = false;

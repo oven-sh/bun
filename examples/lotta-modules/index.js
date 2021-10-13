@@ -1,1 +1,0 @@
-import "@babel/standalone/babel";

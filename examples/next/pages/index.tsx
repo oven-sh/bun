@@ -20,7 +20,7 @@ export default function Home({}) {
 
       <main className={styles.main}>
         <h1 className={styles.title}>
-          Welcome!!to <a href="https://nextjs.org">Next.js!</a>
+          Welcome to <a href="https://nextjs.org">Next.js!</a>
         </h1>
 
         <p className={styles.description}>
@@ -35,14 +35,6 @@ export default function Home({}) {
               <p>Link</p>
             </div>
           </Link>
-
-          <a
-            onClick={() => router.push("/foo/bar/third")}
-            className={styles.card}
-          >
-            <h2>Third Page &rarr;</h2>
-            <p>button, router.push()</p>
-          </a>
 
           <a
             href="https://github.com/vercel/next.js/tree/master/examples"

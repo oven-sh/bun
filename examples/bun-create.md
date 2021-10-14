@@ -48,14 +48,18 @@ When you run `bun create ${template} ${destination}`, here's what happens:
 1. GET `registry.npmjs.org/@bun-examples/${template}/latest` and parse it
 2. GET `registry.npmjs.org/@bun-examples/${template}/-/${template}-${latestVersion}.tgz`
 3. Decompress & extract `${template}-${latestVersion}.tgz` into `${destination}`
-   3a. If there are files that would overwrite, warn and exit unless `--force` is passed
+
+   - If there are files that would overwrite, warn and exit unless `--force` is passed
+
 4. Parse the `package.json` (again!), update `name` to be `${basename(destination)}`, remove the `bun-create` section from the `package.json` and save updated `package.json` to disk
 5. Auto-detect the npm client, preferring `pnpm`, `yarn` (v1), and lastly `npm`
 6. Run any tasks defined in `"bun-create": { "preinstall" }` with the npm client
 7. Run `${npmClient} install`
 8. Run any tasks defined in `"bun-create": { "preinstall" }` with the npm client
 9. Run `git init; git add -A .; git commit -am "Initial Commit";`.
-   8a. Rename `gitignore` to `.gitignore`. NPM automatically removes `.gitignore` files from appearing in packages.
+
+   - Rename `gitignore` to `.gitignore`. NPM automatically removes `.gitignore` files from appearing in packages.
+
 10. Done
 
 `../misctools/publish-examples.js` publishes all examples to npm.

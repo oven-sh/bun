@@ -127,7 +127,7 @@ pub fn moveFileZSlow(from_dir: std.os.fd_t, filename: [*:0]const u8, to_dir: std
 }
 
 pub fn moveFileZSlowWithHandle(in_handle: std.os.fd_t, to_dir: std.os.fd_t, destination: [*:0]const u8) !void {
-    const stat = try std.os.fstat(in_handle);
+    const stat_ = try std.os.fstat(in_handle);
     // delete if exists, don't care if it fails. it may fail due to the file not existing
     // delete here because we run into weird truncation issues if we do not
     // ftruncate() instead didn't work.
@@ -136,8 +136,8 @@ pub fn moveFileZSlowWithHandle(in_handle: std.os.fd_t, to_dir: std.os.fd_t, dest
     const out_handle = try std.os.openatZ(to_dir, destination, std.os.O_WRONLY | std.os.O_CREAT | std.os.O_CLOEXEC, 022);
     defer std.os.close(out_handle);
     if (comptime Enviroment.isLinux) {
-        _ = std.os.system.fallocate(out_handle, 0, 0, @intCast(i64, stat.size));
-        _ = try std.os.sendfile(out_handle, in_handle, 0, @intCast(usize, stat.size), &[_]std.c.iovec_const{}, &[_]std.c.iovec_const{}, 0);
+        _ = std.os.system.fallocate(out_handle, 0, 0, @intCast(i64, stat_.size));
+        _ = try std.os.sendfile(out_handle, in_handle, 0, @intCast(usize, stat_.size), &[_]std.c.iovec_const{}, &[_]std.c.iovec_const{}, 0);
     } else {
         if (comptime Enviroment.isMac) {
             // if this fails, it doesn't matter
@@ -145,7 +145,7 @@ pub fn moveFileZSlowWithHandle(in_handle: std.os.fd_t, to_dir: std.os.fd_t, dest
             preallocate_file(
                 out_handle,
                 @intCast(std.os.off_t, 0),
-                @intCast(std.os.off_t, stat.size),
+                @intCast(std.os.off_t, stat_.size),
             ) catch {};
         }
 
@@ -161,6 +161,6 @@ pub fn moveFileZSlowWithHandle(in_handle: std.os.fd_t, to_dir: std.os.fd_t, dest
         }
     }
 
-    _ = fchmod(out_handle, stat.mode);
-    _ = fchown(out_handle, stat.uid, stat.gid);
+    _ = fchmod(out_handle, stat_.mode);
+    _ = fchown(out_handle, stat_.uid, stat_.gid);
 }

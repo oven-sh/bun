@@ -159,6 +159,7 @@ BUN_LLD_FLAGS = $(OBJ_FILES) \
 		src/deps/libcrypto.a \
 		src/deps/picohttpparser.o \
 		$(CLANG_FLAGS) \
+		-liconv \
 
 ifeq ($(OS_NAME), linux)
 BUN_LLD_FLAGS += -lstdc++fs \

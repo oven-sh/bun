@@ -33,6 +33,7 @@ const DevCommand = @import("./cli/dev_command.zig").DevCommand;
 const DiscordCommand = @import("./cli/discord_command.zig").DiscordCommand;
 const BuildCommand = @import("./cli/build_command.zig").BuildCommand;
 const CreateCommand = @import("./cli/create_command.zig").CreateCommand;
+const CreateListExamplesCommand = @import("./cli/create_command.zig").CreateListExamplesCommand;
 const RunCommand = @import("./cli/run_command.zig").RunCommand;
 
 var start_time: i128 = undefined;
@@ -518,7 +519,10 @@ pub const Command = struct {
 
         pub fn create(allocator: *std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {
             return Command.Context{
-                .args = try Arguments.parse(allocator, command),
+                .args = if (comptime command != Command.Tag.CreateCommand)
+                    try Arguments.parse(allocator, command)
+                else
+                    std.mem.zeroes(Api.TransformOptions),
                 .log = log,
                 .start_time = start_time,
                 .allocator = allocator,
@@ -535,7 +539,10 @@ pub const Command = struct {
             return .AutoCommand;
         }
 
-        const next_arg = (args_iter.next(allocator) orelse return .AutoCommand) catch unreachable;
+        var next_arg = (args_iter.next(allocator) orelse return .AutoCommand) catch unreachable;
+        while (next_arg[0] == '-') {
+            next_arg = (args_iter.next(allocator) orelse return .AutoCommand) catch unreachable;
+        }
 
         const first_arg_name = std.mem.span(next_arg);
         const RootCommandMatcher = strings.ExactSizeMatcher(8);
@@ -595,8 +602,29 @@ pub const Command = struct {
             },
             .CreateCommand => {
                 const ctx = try Command.Context.create(allocator, log, .CreateCommand);
+                var positionals: [2]string = undefined;
+                var positional_i: usize = 0;
 
-                try CreateCommand.exec(ctx);
+                var args = try std.process.argsAlloc(allocator);
+
+                if (args.len > 2) {
+                    var remainder = args[2..];
+                    var remainder_i: usize = 0;
+                    var i: usize = 0;
+                    while (remainder_i < remainder.len and positional_i < positionals.len) : (remainder_i += 1) {
+                        var slice = std.mem.trim(u8, std.mem.span(remainder[remainder_i]), " \t\n;");
+                        if (slice.len > 0) {
+                            positionals[positional_i] = slice;
+                            positional_i += 1;
+                        }
+                    }
+                }
+                var positionals_ = positionals[0..positional_i];
+
+                switch (positionals_.len) {
+                    0...1 => try CreateListExamplesCommand.exec(ctx),
+                    else => try CreateCommand.exec(ctx, positionals_),
+                }
             },
             .RunCommand => {
                 const ctx = try Command.Context.create(allocator, log, .RunCommand);

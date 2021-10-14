@@ -405,7 +405,34 @@ pub const Archive = struct {
     // buf: []const u8 = undefined,
     // dir: FileDescriptorType = 0,
 
-    pub fn extractToDisk(file_buffer: []const u8, root: []const u8, comptime depth_to_skip: usize, comptime close_handles: bool) !void {
+    pub const Context = struct {
+        pluckers: []Plucker = &[_]Plucker{},
+        overwrite_list: std.StringArrayHashMap(void),
+    };
+
+    pub const Plucker = struct {
+        contents: MutableString,
+        filename_hash: u64 = 0,
+        found: bool = false,
+        fd: FileDescriptorType = 0,
+        pub fn init(filepath: string, estimated_size: usize, allocator: *std.mem.Allocator) !Plucker {
+            return Plucker{
+                .contents = try MutableString.init(allocator, estimated_size),
+                .filename_hash = std.hash.Wyhash.hash(0, filepath),
+                .fd = 0,
+                .found = false,
+            };
+        }
+    };
+
+    pub fn getOverwritingFileList(
+        file_buffer: []const u8,
+        root: []const u8,
+        ctx: *Archive.Context,
+        comptime FilePathAppender: type,
+        appender: FilePathAppender,
+        comptime depth_to_skip: usize,
+    ) !void {
         var entry: *lib.archive_entry = undefined;
         var ext: *lib.archive = undefined;
 
@@ -415,9 +442,100 @@ pub const Archive = struct {
         defer stream.deinit();
         _ = stream.openRead();
         var archive = stream.archive;
+        const dir: std.fs.Dir = brk: {
+            const cwd = std.fs.cwd();
 
-        const cwd = std.fs.cwd();
-        const dir = try cwd.makeOpenPath(root, .{ .iterate = true });
+            // if the destination doesn't exist, we skip the whole thing since nothing can overwrite it.
+            if (std.fs.path.isAbsolute(root)) {
+                break :brk std.fs.openDirAbsolute(root, .{ .iterate = true }) catch return;
+            } else {
+                break :brk cwd.openDir(root, .{ .iterate = true }) catch return;
+            }
+        };
+
+        loop: while (true) {
+            const r = @intToEnum(Status, lib.archive_read_next_header(archive, &entry));
+
+            switch (r) {
+                Status.eof => break :loop,
+                Status.failed, Status.fatal, Status.retry => return error.Fail,
+                else => {
+                    var pathname: [:0]const u8 = std.mem.sliceTo(lib.archive_entry_pathname(entry).?, 0);
+                    var tokenizer = std.mem.tokenize(u8, std.mem.span(pathname), std.fs.path.sep_str);
+                    comptime var depth_i: usize = 0;
+                    inline while (depth_i < depth_to_skip) : (depth_i += 1) {
+                        if (tokenizer.next() == null) continue :loop;
+                    }
+
+                    var pathname_ = tokenizer.rest();
+                    pathname = std.mem.sliceTo(pathname_.ptr[0..pathname_.len :0], 0);
+                    const dirname = std.mem.trim(u8, std.fs.path.dirname(std.mem.span(pathname)) orelse "", std.fs.path.sep_str);
+
+                    const size = @intCast(usize, std.math.max(lib.archive_entry_size(entry), 0));
+                    if (size > 0) {
+                        var opened = dir.openFileZ(pathname, .{ .write = true }) catch continue :loop;
+                        var stat = try opened.stat();
+
+                        if (stat.size > 0) {
+                            const is_already_top_level = dirname.len == 0;
+                            const path_to_use_: string = brk: {
+                                const __pathname: string = std.mem.span(pathname);
+
+                                if (is_already_top_level) break :brk __pathname;
+
+                                const index = std.mem.indexOfScalar(u8, __pathname, std.fs.path.sep).?;
+                                break :brk __pathname[0..index];
+                            };
+                            var temp_buf: [1024]u8 = undefined;
+                            std.mem.copy(u8, &temp_buf, path_to_use_);
+                            var path_to_use: string = temp_buf[0..path_to_use_.len];
+                            if (!is_already_top_level) {
+                                temp_buf[path_to_use_.len] = std.fs.path.sep;
+                                path_to_use = temp_buf[0 .. path_to_use_.len + 1];
+                            }
+
+                            var overwrite_entry = try ctx.overwrite_list.getOrPut(path_to_use);
+                            if (!overwrite_entry.found_existing) {
+                                overwrite_entry.key_ptr.* = try appender.append(@TypeOf(path_to_use), path_to_use);
+                            }
+                        }
+                    }
+                },
+            }
+        }
+    }
+
+    pub fn extractToDisk(
+        file_buffer: []const u8,
+        root: []const u8,
+        ctx: ?*Archive.Context,
+        comptime depth_to_skip: usize,
+        comptime close_handles: bool,
+    ) !u32 {
+        var entry: *lib.archive_entry = undefined;
+        var ext: *lib.archive = undefined;
+
+        const flags = @enumToInt(Flags.Extract.time) | @enumToInt(Flags.Extract.perm) | @enumToInt(Flags.Extract.acl) | @enumToInt(Flags.Extract.fflags);
+        var stream: BufferReadStream = undefined;
+        stream.init(file_buffer);
+        defer stream.deinit();
+        _ = stream.openRead();
+        var archive = stream.archive;
+        var count: u32 = 0;
+
+        const dir: std.fs.Dir = brk: {
+            const cwd = std.fs.cwd();
+            cwd.makePath(
+                root,
+            ) catch {};
+
+            if (std.fs.path.isAbsolute(root)) {
+                break :brk try std.fs.openDirAbsolute(root, .{ .iterate = true });
+            } else {
+                break :brk try cwd.openDir(root, .{ .iterate = true });
+            }
+        };
+
         defer if (comptime close_handles) dir.close();
 
         loop: while (true) {
@@ -427,7 +545,7 @@ pub const Archive = struct {
                 Status.eof => break :loop,
                 Status.failed, Status.fatal, Status.retry => return error.Fail,
                 else => {
-                    var pathname: [:0]const u8 = std.mem.sliceTo(lib.archive_entry_pathname_utf8(entry).?, 0);
+                    var pathname: [:0]const u8 = std.mem.sliceTo(lib.archive_entry_pathname(entry).?, 0);
                     var tokenizer = std.mem.tokenize(u8, std.mem.span(pathname), std.fs.path.sep_str);
                     comptime var depth_i: usize = 0;
                     inline while (depth_i < depth_to_skip) : (depth_i += 1) {
@@ -439,15 +557,14 @@ pub const Archive = struct {
                     const dirname = std.fs.path.dirname(std.mem.span(pathname)) orelse "";
 
                     const mask = lib.archive_entry_filetype(entry);
-
-                    if (lib.archive_entry_size(entry) > 0) {
-                        Output.prettyln("<r><d>{s}/<r>{s}", .{ root, pathname });
+                    const size = @intCast(usize, std.math.max(lib.archive_entry_size(entry), 0));
+                    if (size > 0) {
+                        Output.prettyln(" {s}", .{pathname});
 
                         const file = dir.createFileZ(pathname, .{ .truncate = true }) catch |err| brk: {
                             switch (err) {
                                 error.FileNotFound => {
-                                    const subdir = try dir.makeOpenPath(dirname, .{ .iterate = true });
-                                    defer if (comptime close_handles) subdir.close();
+                                    dir.makePath(dirname) catch {};
                                     break :brk try dir.createFileZ(pathname, .{ .truncate = true });
                                 },
                                 else => {
@@ -455,12 +572,35 @@ pub const Archive = struct {
                                 },
                             }
                         };
-                        defer if (comptime close_handles) file.close();
-                        _ = lib.archive_read_data_into_fd(archive, file.handle);
+                        count += 1;
+
                         _ = C.fchmod(file.handle, lib.archive_entry_perm(entry));
+
+                        if (ctx) |ctx_| {
+                            const hash: u64 = if (ctx_.pluckers.len > 0)
+                                std.hash.Wyhash.hash(0, std.mem.span(pathname))
+                            else
+                                @as(u64, 0);
+
+                            for (ctx_.pluckers) |*plucker_| {
+                                if (plucker_.filename_hash == hash) {
+                                    try plucker_.contents.inflate(size);
+                                    plucker_.contents.list.expandToCapacity();
+                                    var read = lib.archive_read_data(archive, plucker_.contents.list.items.ptr, size);
+                                    try plucker_.contents.inflate(@intCast(usize, read));
+                                    plucker_.found = read > 0;
+                                    plucker_.fd = file.handle;
+                                    continue :loop;
+                                }
+                            }
+                        }
+
+                        _ = lib.archive_read_data_into_fd(archive, file.handle);
                     }
                 },
             }
         }
+
+        return count;
     }
 };

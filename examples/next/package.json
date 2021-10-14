@@ -1,8 +1,7 @@
 {
-  "name": "hello-next",
-  "version": "1.0.0",
+  "name": "@bun-examples/next",
+  "version": "0.0.31",
   "main": "index.js",
-  "license": "MIT",
   "dependencies": {
     "next": "11.1.2",
     "react": "^17.0.2",
@@ -14,7 +13,7 @@
     "bun-framework-next": "^0.0.0-21",
     "typescript": "^4.3.5"
   },
-  "bun-template": {
+  "bun-create": {
     "postinstall": [
       "bun bun --use next"
     ]

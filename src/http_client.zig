@@ -46,6 +46,7 @@ read_count: u32 = 0,
 remaining_redirect_count: i8 = 127,
 redirect_buf: [2048]u8 = undefined,
 disable_shutdown: bool = false,
+timeout: u32 = 0,
 
 pub fn init(allocator: *std.mem.Allocator, method: Method, url: URL, header_entries: Headers.Entries, header_buf: string) HTTPClient {
     return HTTPClient{
@@ -225,6 +226,11 @@ pub fn connect(
     client.setReadBufferSize(http_req_buf.len) catch {};
     client.setQuickACK(true) catch {};
 
+    if (this.timeout > 0) {
+        client.setReadTimeout(this.timeout) catch {};
+        client.setWriteTimeout(this.timeout) catch {};
+    }
+
     // if (this.url.isLocalhost()) {
     //     try client.connect(
     //         try std.x.os.Socket.Address.initIPv4(try std.net.Address.resolveIp("localhost", port), port),
@@ -394,6 +400,7 @@ pub fn processResponse(this: *HTTPClient, comptime is_https: bool, comptime Clie
                 content_length = std.fmt.parseInt(u32, header.value, 10) catch 0;
                 try body_out_str.inflate(content_length);
                 body_out_str.list.expandToCapacity();
+                this.body_size = content_length;
             },
             content_encoding_hash => {
                 if (strings.eqlComptime(header.value, "gzip")) {
@@ -486,6 +493,10 @@ pub fn processResponse(this: *HTTPClient, comptime is_https: bool, comptime Clie
         // set consume_trailer to 1 to discard the trailing header
         // using content-encoding per chunk is not supported
         decoder.consume_trailer = 1;
+
+        // these variable names are terrible
+        // it's copypasta from https://github.com/h2o/picohttpparser#phr_decode_chunked
+        // (but ported from C -> zig)
         var rret: usize = 0;
         var rsize: usize = last_read;
         var pret: isize = picohttp.phr_decode_chunked(&decoder, buffer.list.items.ptr, &rsize);
@@ -530,6 +541,7 @@ pub fn processResponse(this: *HTTPClient, comptime is_https: bool, comptime Clie
             else => {},
         }
 
+        this.body_size = @intCast(u32, body_out_str.list.items.len);
         return response;
     }
 

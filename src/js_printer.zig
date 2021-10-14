@@ -81,11 +81,11 @@ pub const SourceMapChunk = struct {
 
 pub const Options = struct {
     transform_imports: bool = true,
-    to_module_ref: js_ast.Ref,
+    to_module_ref: js_ast.Ref = js_ast.Ref.None,
     require_ref: ?js_ast.Ref = null,
     indent: usize = 0,
     externals: []u32 = &[_]u32{},
-    runtime_imports: runtime.Runtime.Imports,
+    runtime_imports: runtime.Runtime.Imports = runtime.Runtime.Imports{},
     module_hash: u32 = 0,
     source_path: ?fs.Path = null,
     bundle_export_ref: ?js_ast.Ref = null,
@@ -219,6 +219,7 @@ pub fn NewPrinter(
     comptime rewrite_esm_to_cjs: bool,
     comptime bun: bool,
     comptime is_inside_bundle: bool,
+    comptime is_json: bool,
 ) type {
     return struct {
         symbols: Symbol.Map,
@@ -506,7 +507,11 @@ pub fn NewPrinter(
             }
         }
 
-        pub fn bestQuoteCharForString(p: *Printer, str: anytype, allow_backtick: bool) u8 {
+        pub fn bestQuoteCharForString(p: *Printer, str: anytype, allow_backtick_: bool) u8 {
+            if (comptime is_json) return '"';
+
+            const allow_backtick = allow_backtick_;
+
             var single_cost: usize = 0;
             var double_cost: usize = 0;
             var backtick_cost: usize = 0;
@@ -867,6 +872,8 @@ pub fn NewPrinter(
         }
 
         pub inline fn canPrintIdentifier(p: *Printer, name: string) bool {
+            if (comptime is_json) return false;
+
             if (comptime ascii_only) {
                 return js_lexer.isIdentifier(name) and !strings.containsNonBmpCodePoint(name);
             } else {
@@ -889,8 +896,6 @@ pub fn NewPrinter(
         pub fn printExpr(p: *Printer, expr: Expr, level: Level, _flags: ExprFlag) void {
             p.addSourceMapping(expr.loc);
             var flags = _flags;
-            debugl("<printExpr>");
-            defer debugl("</printExpr>");
 
             switch (expr.data) {
                 .e_missing => {},
@@ -1321,7 +1326,10 @@ pub fn NewPrinter(
                 },
                 .e_object => |e| {
                     const n = p.writer.written;
-                    const wrap = p.stmt_start == n or p.arrow_expr_start == n;
+                    const wrap = if (comptime is_json)
+                        false
+                    else
+                        p.stmt_start == n or p.arrow_expr_start == n;
 
                     if (wrap) {
                         p.print("(");
@@ -1879,7 +1887,7 @@ pub fn NewPrinter(
                         // While each of those property keys are ASCII, a subset of ASCII is valid as the start of an identifier
                         // "=" and ":" are not valid
                         // So we need to check
-                        if (js_lexer.isIdentifier(key.utf8)) {
+                        if ((comptime !is_json) and js_lexer.isIdentifier(key.utf8)) {
                             p.print(key.utf8);
                         } else {
                             allow_shorthand = false;
@@ -4087,7 +4095,7 @@ pub fn printAst(
     comptime LinkerType: type,
     linker: ?*LinkerType,
 ) !usize {
-    const PrinterType = NewPrinter(false, Writer, LinkerType, false, false, false);
+    const PrinterType = NewPrinter(false, Writer, LinkerType, false, false, false, false);
     var writer = _writer;
 
     var printer = try PrinterType.init(
@@ -4122,6 +4130,39 @@ pub fn printAst(
     return @intCast(usize, std.math.max(printer.writer.written, 0));
 }
 
+pub fn printJSON(
+    comptime Writer: type,
+    _writer: Writer,
+    expr: Expr,
+    source: *const logger.Source,
+) !usize {
+    const PrinterType = NewPrinter(false, Writer, void, false, false, false, true);
+    var writer = _writer;
+    var s_expr = S.SExpr{ .value = expr };
+    var stmt = Stmt{ .loc = logger.Loc.Empty, .data = .{
+        .s_expr = &s_expr,
+    } };
+    var stmts = &[_]js_ast.Stmt{stmt};
+    var parts = &[_]js_ast.Part{.{ .stmts = stmts }};
+    const ast = Ast.initTest(parts);
+    var printer = try PrinterType.init(
+        writer,
+        &ast,
+        source,
+        std.mem.zeroes(Symbol.Map),
+        .{},
+        null,
+    );
+
+    printer.printExpr(expr, Level.lowest, ExprFlag{});
+    if (printer.writer.getError()) {} else |err| {
+        return err;
+    }
+    try printer.writer.done();
+
+    return @intCast(usize, std.math.max(printer.writer.written, 0));
+}
+
 pub fn printCommonJS(
     comptime Writer: type,
     _writer: Writer,
@@ -4133,7 +4174,7 @@ pub fn printCommonJS(
     comptime LinkerType: type,
     linker: ?*LinkerType,
 ) !usize {
-    const PrinterType = NewPrinter(false, Writer, LinkerType, true, false, false);
+    const PrinterType = NewPrinter(false, Writer, LinkerType, true, false, false, false);
     var writer = _writer;
     var printer = try PrinterType.init(
         writer,
@@ -4191,7 +4232,7 @@ pub fn printCommonJSThreaded(
     comptime getPos: fn (ctx: GetPosType) anyerror!u64,
     end_off_ptr: *u32,
 ) !WriteResult {
-    const PrinterType = NewPrinter(false, Writer, LinkerType, true, false, true);
+    const PrinterType = NewPrinter(false, Writer, LinkerType, true, false, true, false);
     var writer = _writer;
     var printer = try PrinterType.init(
         writer,

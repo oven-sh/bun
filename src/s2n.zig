@@ -549,14 +549,14 @@ pub const s2n_offered_early_data = struct_s2n_offered_early_data;
 var booted = false;
 pub var global_s2n_config: *s2n_config = undefined;
 const unexpectedErrno = std.os.unexpectedErrno;
-const S2NError = error{ Closed, Blocked, Alert, Protocol, Internal, Usage };
+const S2NError = error{ Closed, WouldBlock, Alert, Protocol, Internal, Usage };
 pub inline fn s2nErrorNo(rc: c_int) S2NError!std.os.system.E {
     switch (s2n_error_get_type(rc)) {
         -1 => return error.Internal,
         S2N_ERR_T_OK => return .SUCCESS,
         S2N_ERR_T_IO => return std.os.errno(rc),
         S2N_ERR_T_CLOSED => return error.Closed,
-        S2N_ERR_T_BLOCKED => return error.Blocked,
+        S2N_ERR_T_BLOCKED => return error.WouldBlock,
         S2N_ERR_T_ALERT => return error.Alert,
         S2N_ERR_T_PROTO => return error.Protocol,
         S2N_ERR_T_INTERNAL => return error.Internal,

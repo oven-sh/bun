@@ -128,7 +128,14 @@ pub const Output = struct {
     }
 
     pub fn printElapsed(elapsed: f64) void {
-        Output.prettyError("<r><d>[<b>{d:>.2}ms<r><d>]<r>", .{elapsed});
+        switch (elapsed) {
+            0...1500 => {
+                Output.prettyError("<r><d>[<b>{d:>.2}ms<r><d>]<r>", .{elapsed});
+            },
+            else => {
+                Output.prettyError("<r><d>[<b>{d:>.2}s<r><d>]<r>", .{elapsed / 1000.0});
+            },
+        }
     }
 
     pub fn printStartEnd(start: i128, end: i128) void {

@@ -519,7 +519,7 @@ pub const Command = struct {
 
         pub fn create(allocator: *std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {
             return Command.Context{
-                .args = if (comptime command != Command.Tag.CreateCommand)
+                .args = if (comptime command != Command.Tag.CreateCommand)  
                     try Arguments.parse(allocator, command)
                 else
                     std.mem.zeroes(Api.TransformOptions),

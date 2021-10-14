@@ -5,7 +5,7 @@ fn isValid(buf: *[std.fs.MAX_PATH_BYTES]u8, segment: []const u8, bin: []const u8
     buf[segment.len] = std.fs.path.sep;
     std.mem.copy(u8, buf[segment.len + 1 ..], bin);
     buf[segment.len + 1 + bin.len ..][0] = 0;
-    var filepath = buf[0 .. segment.len + 1 + bin.len :0];
+    const filepath = buf[0 .. segment.len + 1 + bin.len :0];
 
     std.os.accessZ(filepath, std.os.X_OK) catch return null;
     return @intCast(u16, filepath.len);

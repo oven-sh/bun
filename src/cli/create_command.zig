@@ -95,18 +95,18 @@ const CreateOptions = struct {
     overwrite: bool = false,
     skip_git: bool = false,
 
-    pub fn parse(allocator: *std.mem.Allocator) !CreateOptions {
-        const params = comptime [_]clap.Param(clap.Help){
-            clap.parseParam("--help                     Print this menu") catch unreachable,
-            clap.parseParam("--npm                      Use npm for tasks & install") catch unreachable,
-            clap.parseParam("--yarn                     Use yarn for tasks & install") catch unreachable,
-            clap.parseParam("--pnpm                     Use pnpm for tasks & install") catch unreachable,
-            clap.parseParam("--force                    Overwrite existing files") catch unreachable,
-            clap.parseParam("--no-install               Don't install node_modules") catch unreachable,
-            clap.parseParam("--no-git                   Don't create a git repository") catch unreachable,
-            clap.parseParam("<POS>...                          ") catch unreachable,
-        };
+    const params = [_]clap.Param(clap.Help){
+        clap.parseParam("--help                     Print this menu") catch unreachable,
+        clap.parseParam("--npm                      Use npm for tasks & install") catch unreachable,
+        clap.parseParam("--yarn                     Use yarn for tasks & install") catch unreachable,
+        clap.parseParam("--pnpm                     Use pnpm for tasks & install") catch unreachable,
+        clap.parseParam("--force                    Overwrite existing files") catch unreachable,
+        clap.parseParam("--no-install               Don't install node_modules") catch unreachable,
+        clap.parseParam("--no-git                   Don't create a git repository") catch unreachable,
+        clap.parseParam("<POS>...                   ") catch unreachable,
+    };
 
+    pub fn parse(allocator: *std.mem.Allocator, comptime print_flags_only: bool) !CreateOptions {
         var diag = clap.Diagnostic{};
 
         var args = clap.parse(clap.Help, &params, .{ .diagnostic = &diag, .allocator = allocator }) catch |err| {
@@ -115,8 +115,15 @@ const CreateOptions = struct {
             return err;
         };
 
-        if (args.flag("--help")) {
-            clap.help(Output.writer(), &params) catch {};
+        if (args.flag("--help") or comptime print_flags_only) {
+            if (comptime print_flags_only) {
+                clap.help(Output.writer(), params[1..]) catch {};
+                return undefined;
+            }
+
+            Output.prettyln("<r><b>bun create<r> flags:\n", .{});
+            clap.help(Output.writer(), params[1..]) catch {};
+            Output.flush();
             std.os.exit(0);
         }
 
@@ -153,9 +160,23 @@ pub const CreateCommand = struct {
     var client: HTTPClient = undefined;
     var extracting_name_buf: [1024]u8 = undefined;
     pub fn exec(ctx: Command.Context, positionals: []const []const u8) !void {
-        var create_options = try CreateOptions.parse(ctx.allocator);
+        var create_options = try CreateOptions.parse(ctx.allocator, false);
+
+        var filesystem = try fs.FileSystem.init1(ctx.allocator, null);
+        var env_loader: DotEnv.Loader = brk: {
+            var map = try ctx.allocator.create(DotEnv.Map);
+            map.* = DotEnv.Map.init(ctx.allocator);
+
+            break :brk DotEnv.Loader.init(map, ctx.allocator);
+        };
+
+        env_loader.loadProcess();
+
         const template = positionals[0];
         const dirname = positionals[1];
+        var filename_writer = filesystem.dirname_store;
+        const destination = try filesystem.dirname_store.append([]const u8, resolve_path.joinAbs(filesystem.top_level_dir, .auto, dirname));
+
         var progress = std.Progress{};
 
         var node_ = try progress.start(try std.fmt.bufPrint(&extracting_name_buf, "Loading {s}", .{template}), 0);
@@ -163,7 +184,7 @@ pub const CreateCommand = struct {
         var node = node_.start("Downloading", 0);
 
         // alacritty is fast
-        if (std.os.getenvZ("ALACRITTY_LOG") != null) {
+        if (env_loader.map.get("ALACRITTY_LOG") != null) {
             progress.refresh_rate_ns = std.time.ns_per_ms * 8;
         }
 
@@ -172,115 +193,193 @@ pub const CreateCommand = struct {
             progress.refresh();
         }
 
-        var filesystem = try fs.FileSystem.init1(ctx.allocator, null);
+        var package_json_contents: MutableString = undefined;
+        var package_json_file: std.fs.File = undefined;
 
-        var tarball_bytes: MutableString = if (!(strings.eqlComptime(std.fs.path.extension(template), ".tgz") or strings.eqlComptime(std.fs.path.extension(template), ".tar.gz")))
-            try Example.fetch(ctx, template, &progress, &node)
-        else
-            Example.fetchFromDisk(ctx, template, &progress, &node) catch |err| {
-                node.end();
-                progress.refresh();
-                Output.prettyErrorln("Error loading package from disk {s}", .{@errorName(err)});
-                Output.flush();
-                std.os.exit(1);
+        if (!std.fs.path.isAbsolute(template)) {
+            var tarball_bytes: MutableString = try Example.fetch(ctx, template, &progress, &node);
+
+            node.end();
+
+            node = progress.root.start(try std.fmt.bufPrint(&extracting_name_buf, "Decompressing {s}", .{template}), 0);
+            node.setCompletedItems(0);
+            node.setEstimatedTotalItems(0);
+            node.activate();
+            progress.refresh();
+
+            var file_buf = try ctx.allocator.alloc(u8, 16384);
+
+            var tarball_buf_list = std.ArrayListUnmanaged(u8){ .capacity = file_buf.len, .items = file_buf };
+            var gunzip = try Zlib.ZlibReaderArrayList.init(tarball_bytes.list.items, &tarball_buf_list, ctx.allocator);
+            try gunzip.readAll();
+            gunzip.deinit();
+
+            node.end();
+
+            node = progress.root.start(try std.fmt.bufPrint(&extracting_name_buf, "Extracting {s}", .{template}), 0);
+            node.setCompletedItems(0);
+            node.setEstimatedTotalItems(0);
+            node.activate();
+            progress.refresh();
+
+            var pluckers = [_]Archive.Plucker{
+                try Archive.Plucker.init("package.json", 2048, ctx.allocator),
+                try Archive.Plucker.init("GETTING_STARTED", 512, ctx.allocator),
             };
 
-        node.end();
+            var archive_context = Archive.Context{
+                .pluckers = &pluckers,
+                .overwrite_list = std.StringArrayHashMap(void).init(ctx.allocator),
+            };
 
-        node = progress.root.start(try std.fmt.bufPrint(&extracting_name_buf, "Decompressing {s}", .{template}), 0);
-        node.setCompletedItems(0);
-        node.setEstimatedTotalItems(0);
-        node.activate();
-        progress.refresh();
+            if (!create_options.overwrite) {
+                try Archive.getOverwritingFileList(
+                    tarball_buf_list.items,
+                    destination,
+                    &archive_context,
+                    @TypeOf(filesystem.dirname_store),
+                    filesystem.dirname_store,
+                    1,
+                );
 
-        var file_buf = try ctx.allocator.alloc(u8, 16384);
+                if (archive_context.overwrite_list.count() > 0) {
+                    node.end();
+                    progress.root.end();
+                    progress.refresh();
 
-        var tarball_buf_list = std.ArrayListUnmanaged(u8){ .capacity = file_buf.len, .items = file_buf };
-        var gunzip = try Zlib.ZlibReaderArrayList.init(tarball_bytes.list.items, &tarball_buf_list, ctx.allocator);
-        try gunzip.readAll();
-        gunzip.deinit();
+                    // Thank you create-react-app for this copy (and idea)
+                    Output.prettyErrorln(
+                        "<r><red>error<r><d>: <r>The directory <b><green>{s}<r> contains files that could conflict:",
+                        .{
+                            std.fs.path.basename(destination),
+                        },
+                    );
+                    for (archive_context.overwrite_list.keys()) |path| {
+                        if (strings.endsWith(path, std.fs.path.sep_str)) {
+                            Output.prettyErrorln("<r>  <cyan>{s}<r>", .{path});
+                        } else {
+                            Output.prettyErrorln("<r>  {s}", .{path});
+                        }
+                    }
+                    Output.flush();
+                    std.os.exit(1);
+                }
+            }
 
-        node.end();
-
-        node = progress.root.start(try std.fmt.bufPrint(&extracting_name_buf, "Extracting {s}", .{template}), 0);
-        node.setCompletedItems(0);
-        node.setEstimatedTotalItems(0);
-        node.activate();
-        progress.refresh();
-
-        var pluckers = [_]Archive.Plucker{
-            try Archive.Plucker.init("package.json", 2048, ctx.allocator),
-            try Archive.Plucker.init("GETTING_STARTED", 512, ctx.allocator),
-        };
-
-        var archive_context = Archive.Context{
-            .pluckers = &pluckers,
-            .overwrite_list = std.StringArrayHashMap(void).init(ctx.allocator),
-        };
-
-        var filename_writer = filesystem.dirname_store;
-
-        const destination = try filesystem.dirname_store.append([]const u8, resolve_path.joinAbs(filesystem.top_level_dir, .auto, dirname));
-
-        if (!create_options.overwrite) {
-            try Archive.getOverwritingFileList(
+            const extracted_file_count = try Archive.extractToDisk(
                 tarball_buf_list.items,
                 destination,
                 &archive_context,
-                @TypeOf(filesystem.dirname_store),
-                filesystem.dirname_store,
                 1,
+                false,
             );
 
-            if (archive_context.overwrite_list.count() > 0) {
+            var plucker = pluckers[0];
+
+            if (!plucker.found or plucker.fd == 0) {
+                node.end();
+                progress.root.end();
+                Output.prettyErrorln("package.json not found. This package is corrupt. Please try again or file an issue if it keeps happening.", .{});
+                Output.flush();
+                std.os.exit(1);
+            }
+
+            node.end();
+            node = progress.root.start(try std.fmt.bufPrint(&extracting_name_buf, "Updating package.json", .{}), 0);
+
+            node.activate();
+            progress.refresh();
+
+            package_json_contents = plucker.contents;
+            package_json_file = std.fs.File{ .handle = plucker.fd };
+        } else {
+            const template_dir = std.fs.openDirAbsolute(template, .{ .iterate = true }) catch |err| {
                 node.end();
                 progress.root.end();
                 progress.refresh();
 
-                // Thank you create-react-app for this copy (and idea)
-                Output.prettyErrorln(
-                    "<r><red>error<r><d>: <r>The directory <b><green>{s}<r> contains files that could conflict:",
-                    .{
-                        std.fs.path.basename(destination),
-                    },
-                );
-                for (archive_context.overwrite_list.keys()) |path| {
-                    if (strings.endsWith(path, std.fs.path.sep_str)) {
-                        Output.prettyErrorln("<r>  <cyan>{s}<r>", .{path});
-                    } else {
-                        Output.prettyErrorln("<r>  {s}", .{path});
+                Output.prettyErrorln("<r><red>{s}<r>: opening dir {s}", .{ @errorName(err), template });
+                Output.flush();
+                std.os.exit(1);
+            };
+
+            std.fs.deleteTreeAbsolute(destination) catch {};
+            const destination_dir = std.fs.cwd().makeOpenPath(destination, .{ .iterate = true }) catch |err| {
+                node.end();
+                progress.root.end();
+                progress.refresh();
+
+                Output.prettyErrorln("<r><red>{s}<r>: creating dir {s}", .{ @errorName(err), destination });
+                Output.flush();
+                std.os.exit(1);
+            };
+
+            var walker = try template_dir.walk(ctx.allocator);
+            defer walker.deinit();
+            while (try walker.next()) |entry| {
+                // TODO: make this not walk these folders entirely
+                // rather than checking each file path.....
+                if (entry.kind != .File or
+                    std.mem.indexOf(u8, entry.path, "node_modules") != null or
+                    std.mem.indexOf(u8, entry.path, ".git") != null) continue;
+
+                entry.dir.copyFile(entry.basename, destination_dir, entry.path, .{}) catch {
+                    if (std.fs.path.dirname(entry.path)) |entry_dirname| {
+                        destination_dir.makePath(entry_dirname) catch {};
                     }
-                }
+                    entry.dir.copyFile(entry.basename, destination_dir, entry.path, .{}) catch |err| {
+                        node.end();
+                        progress.root.end();
+                        progress.refresh();
+
+                        Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
+                        Output.flush();
+                        std.os.exit(1);
+                    };
+                };
+            }
+
+            package_json_file = destination_dir.openFile("package.json", .{ .read = true, .write = true }) catch |err| {
+                node.end();
+                progress.root.end();
+                progress.refresh();
+
+                Output.prettyErrorln("Failed to open package.json due to error <r><red>{s}", .{@errorName(err)});
+                Output.flush();
+                std.os.exit(1);
+            };
+            const stat = package_json_file.stat() catch |err| {
+                node.end();
+                progress.root.end();
+                progress.refresh();
+
+                Output.prettyErrorln("Failed to stat package.json due to error <r><red>{s}", .{@errorName(err)});
+                Output.flush();
+                std.os.exit(1);
+            };
+
+            if (stat.kind != .File or stat.size == 0) {
+                node.end();
+                progress.root.end();
+                progress.refresh();
+
+                Output.prettyErrorln("package.json must be a file with content", .{});
                 Output.flush();
                 std.os.exit(1);
             }
+            package_json_contents = try MutableString.init(ctx.allocator, stat.size);
+            package_json_contents.inflate(package_json_file.readAll(package_json_contents.list.items) catch |err| {
+                node.end();
+                progress.root.end();
+                progress.refresh();
+
+                Output.prettyErrorln("Error reading package.json: <r><red>{s}", .{@errorName(err)});
+                Output.flush();
+                std.os.exit(1);
+            }) catch unreachable;
         }
 
-        const extracted_file_count = try Archive.extractToDisk(
-            tarball_buf_list.items,
-            destination,
-            &archive_context,
-            1,
-            false,
-        );
-
-        var plucker = pluckers[0];
-
-        if (!plucker.found or plucker.fd == 0) {
-            node.end();
-            progress.root.end();
-            Output.prettyErrorln("package.json not found. This package is corrupt. Please try again or file an issue if it keeps happening.", .{});
-            Output.flush();
-            std.os.exit(1);
-        }
-
-        node.end();
-        node = progress.root.start(try std.fmt.bufPrint(&extracting_name_buf, "Updating package.json", .{}), 0);
-
-        node.activate();
-        progress.refresh();
-
-        var source = logger.Source.initPathString("package.json", plucker.contents.toOwnedSliceLeaky());
+        var source = logger.Source.initPathString("package.json", package_json_contents.list.items);
         var package_json_expr = ParseJSON(&source, ctx.log, ctx.allocator) catch |err| {
             node.end();
             progress.root.end();
@@ -399,7 +498,6 @@ pub const CreateCommand = struct {
         node.name = "Saving package.json";
         progress.maybeRefresh();
 
-        const package_json_file = std.fs.File{ .handle = plucker.fd };
         var package_json_writer = JSPrinter.NewFileWriter(package_json_file);
 
         _ = JSPrinter.printJSON(@TypeOf(package_json_writer), package_json_writer, package_json_expr, &source) catch |err| {
@@ -407,15 +505,6 @@ pub const CreateCommand = struct {
             Output.flush();
             std.os.exit(1);
         };
-
-        var env_loader: DotEnv.Loader = brk: {
-            var map = try ctx.allocator.create(DotEnv.Map);
-            map.* = DotEnv.Map.init(ctx.allocator);
-
-            break :brk DotEnv.Loader.init(map, ctx.allocator);
-        };
-
-        env_loader.loadProcess();
 
         const PATH = env_loader.map.get("PATH") orelse "";
 
@@ -457,6 +546,7 @@ pub const CreateCommand = struct {
         node.end();
 
         if (npm_client_) |npm_client| {
+            const start_time = std.time.nanoTimestamp();
             var install_args = [_]string{ npm_client.bin, "install" };
             Output.printError("\n", .{});
             Output.flush();
@@ -468,12 +558,18 @@ pub const CreateCommand = struct {
             process.cwd = destination;
 
             defer {
+                Output.printErrorln("\n", .{});
+                Output.printStartEnd(start_time, std.time.nanoTimestamp());
+                Output.prettyError(" <r><d>{s} install<r>\n", .{@tagName(npm_client.tag)});
+                Output.flush();
+
                 Output.print("\n", .{});
                 Output.flush();
             }
             defer process.deinit();
 
             var term = try process.spawnAndWait();
+
             _ = process.kill() catch undefined;
         } else if (!create_options.skip_install) {
             progress.log("Failed to detect npm client. Tried pnpm, yarn, and npm.\n", .{});
@@ -530,7 +626,7 @@ pub const CreateCommand = struct {
 
         Output.printError("\n", .{});
         Output.printStartEnd(ctx.start_time, std.time.nanoTimestamp());
-        Output.prettyErrorln(" <r><d>bun create {s} <r><d><b>({d} files)<r>", .{ template, extracted_file_count });
+        Output.prettyErrorln(" <r><d>bun create {s}<r>", .{template});
         Output.flush();
     }
 };
@@ -847,6 +943,8 @@ pub const CreateListExamplesCommand = struct {
         Output.flush();
 
         Example.print(examples);
+
+        _ = try CreateOptions.parse(ctx.allocator, true);
 
         Output.pretty("<d>To add a new template, git clone https://github.com/jarred-sumner/bun, add a new folder to the \"examples\" folder, and submit a PR.<r>", .{});
         Output.flush();

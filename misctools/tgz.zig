@@ -71,5 +71,5 @@ pub fn main() anyerror!void {
         tarball_buf_list = std.ArrayListUnmanaged(u8){ .capacity = file_buf.len, .items = file_buf };
     }
 
-    try Archive.extractToDisk(file_buf, folder, 1, false);
+    try Archive.extractToDisk(file_buf, folder, null, 1, false);
 }

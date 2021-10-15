@@ -81,6 +81,7 @@ Run this:
 
 ```bash
 bun create react app
+cd app
 bun
 ```
 
@@ -439,6 +440,8 @@ To see a list of available templates, run
 ```bash
 bun create
 ```
+
+Note: you don't need `bun create` to use Bun. You don't need any configuration at all. This command exists to make it a little easier.
 
 ##### Local templates
 

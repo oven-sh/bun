@@ -31,7 +31,7 @@ npm install -g bun-cli
 In your project folder root (where `package.json` is):
 
 ```bash
-bun create next app
+bun create next ./app
 cd app
 bun
 ```
@@ -80,7 +80,7 @@ If `public/index.html` exists, it becomes the default page instead of a 404 page
 Run this:
 
 ```bash
-bun create react app
+bun create react ./app
 cd app
 bun
 ```

@@ -471,15 +471,14 @@ Warning: unlike with remote templates, **bun will delete the entire destination 
 
 ##### Flags
 
-| Flag                   | Description                            |
-| ---------------------- | -------------------------------------- |
-| --npm                  | Use `npm` for tasks & install          |
-| --yarn                 | Use `yarn` for tasks & install         |
-| --pnpm                 | Use `pnpm` for tasks & install         |
-| --force                | Overwrite existing files               |
-| --no-install           | Skip installing `node_modules` & tasks |
-| --no-git               | Don't initialize a git repository      |
-| ---------------------- | -----------------------------------    |
+| Flag         | Description                            |
+| ------------ | -------------------------------------- |
+| --npm        | Use `npm` for tasks & install          |
+| --yarn       | Use `yarn` for tasks & install         |
+| --pnpm       | Use `pnpm` for tasks & install         |
+| --force      | Overwrite existing files               |
+| --no-install | Skip installing `node_modules` & tasks |
+| --no-git     | Don't initialize a git repository      |
 
 By default, `bun create` will cancel if there are existing files it would overwrite and its a remote template. You can pass `--force` to disable this behavior.
 

@@ -444,7 +444,7 @@ const HelpCommand = struct {
             const fmt =
                 \\> <r> <b><green>dev     <r><d>  ./a.ts ./b.jsx<r>        Start a Bun Dev Server
                 \\> <r> <b><magenta>bun     <r><d>  ./a.ts ./b.jsx<r>        Bundle dependencies of input files into a <r><magenta>.bun<r>
-                \\> <r> <b><cyan>create     <r><d>  next<r>          <r>     Start a new project from a template <d>(shorthand: c)<r>
+                \\> <r> <b><cyan>create     <r><d>  next ./app<r>          Start a new project from a template <d>(shorthand: c)<r>
                 \\> <r> <b><blue>discord <r>                        Open Bun's Discord server
                 \\> <r> <b><d>help      <r>                      Print this help menu
                 \\
@@ -519,7 +519,7 @@ pub const Command = struct {
 
         pub fn create(allocator: *std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {
             return Command.Context{
-                .args = if (comptime command != Command.Tag.CreateCommand)  
+                .args = if (comptime command != Command.Tag.CreateCommand)
                     try Arguments.parse(allocator, command)
                 else
                     std.mem.zeroes(Api.TransformOptions),

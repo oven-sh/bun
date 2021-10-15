@@ -41,6 +41,17 @@ const skip_files = &[_]string{
     "pnpm-lock.yaml",
 };
 
+const never_conflict = &[_]string{
+    "README.md",
+    "gitignore",
+    ".gitignore",
+    ".git/",
+};
+
+const npm_task_args = &[_]string{
+    "exec",
+};
+
 var bun_path: ?[:0]const u8 = null;
 fn execTask(allocator: *std.mem.Allocator, task_: string, cwd: string, PATH: string, npm_client: NPMClient) void {
     const task = std.mem.trim(u8, task_, " \n\r\t");
@@ -52,13 +63,17 @@ fn execTask(allocator: *std.mem.Allocator, task_: string, cwd: string, PATH: str
         count += 1;
     }
 
-    var argv = allocator.alloc(string, count + 2) catch return;
+    const npm_args = 2;
+    const total = count + npm_args;
+    var argv = allocator.alloc(string, total) catch return;
     defer allocator.free(argv);
 
     argv[0] = npm_client.bin;
-    argv[1] = "exec";
+    argv[1] = npm_task_args[0];
+
     {
         var i: usize = 2;
+
         splitter = std.mem.split(u8, task, " ");
         while (splitter.next()) |split| {
             argv[i] = split;
@@ -67,9 +82,10 @@ fn execTask(allocator: *std.mem.Allocator, task_: string, cwd: string, PATH: str
     }
 
     if (strings.startsWith(task, "bun ")) {
+        // TODO: use self exe
         if (bun_path orelse which(&bun_path_buf, PATH, cwd, "bun")) |bun_path_| {
             bun_path = bun_path_;
-            argv = argv[2..];
+            argv = argv[npm_args..];
             argv[0] = std.mem.span(bun_path_);
         }
     }
@@ -97,6 +113,23 @@ fn execTask(allocator: *std.mem.Allocator, task_: string, cwd: string, PATH: str
     proc.cwd = cwd;
     _ = proc.spawnAndWait() catch undefined;
 }
+
+// We don't want to allocate memory each time
+// But we cannot print over an existing buffer or weird stuff will happen
+// so we keep two and switch between them
+pub const ProgressBuf = struct {
+    var bufs: [2][1024]u8 = [2][1024]u8{
+        @as([1024]u8, undefined),
+        @as([1024]u8, undefined),
+    };
+
+    var buf_index: usize = 0;
+
+    pub fn print(comptime fmt: string, args: anytype) !string {
+        buf_index += 1;
+        return try std.fmt.bufPrint(std.mem.span(&bufs[buf_index % 2]), fmt, args);
+    }
+};
 
 const CreateOptions = struct {
     npm_client: ?NPMClient.Tag = null,
@@ -131,6 +164,7 @@ const CreateOptions = struct {
             }
 
             Output.prettyln("<r><b>bun create<r> flags:\n", .{});
+            Output.flush();
             clap.help(Output.writer(), params[1..]) catch {};
             Output.flush();
             std.os.exit(0);
@@ -169,7 +203,7 @@ const BUN_CREATE_DIR = ".bun-create";
 var home_dir_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 pub const CreateCommand = struct {
     var client: HTTPClient = undefined;
-    var extracting_name_buf: [1024]u8 = undefined;
+
     pub fn exec(ctx: Command.Context, positionals: []const []const u8) !void {
         var create_options = try CreateOptions.parse(ctx.allocator, false);
 
@@ -226,10 +260,8 @@ pub const CreateCommand = struct {
         const destination = try filesystem.dirname_store.append([]const u8, resolve_path.joinAbs(filesystem.top_level_dir, .auto, dirname));
 
         var progress = std.Progress{};
-
-        var node_ = try progress.start(try std.fmt.bufPrint(&extracting_name_buf, "Loading {s}", .{template}), 0);
+        var node = try progress.start(try ProgressBuf.print("Loading {s}", .{template}), 0);
         progress.supports_ansi_escape_codes = Output.enable_ansi_colors;
-        var node = node_.start("Downloading", 0);
 
         // alacritty is fast
         if (env_loader.map.get("ALACRITTY_LOG") != null) {
@@ -237,7 +269,6 @@ pub const CreateCommand = struct {
         }
 
         defer {
-            progress.root.end();
             progress.refresh();
         }
 
@@ -247,14 +278,31 @@ pub const CreateCommand = struct {
         const is_remote_template = !std.fs.path.isAbsolute(template);
 
         if (is_remote_template) {
-            var tarball_bytes: MutableString = try Example.fetch(ctx, template, &progress, &node);
+            var tarball_bytes: MutableString = Example.fetch(ctx, template, &progress, node) catch |err| {
+                switch (err) {
+                    error.HTTPForbidden, error.ExampleNotFound => {
+                        node.end();
+                        progress.refresh();
 
-            node.end();
+                        Output.prettyError("\n<r><red>error:<r> <b>\"{s}\"<r> was not found. Here are templates you can use:\n\n", .{
+                            template,
+                        });
+                        Output.flush();
+                        const examples = try Example.fetchAllLocalAndRemote(ctx, &env_loader, filesystem);
+                        Example.print(examples.items, dirname);
+                        Output.flush();
+                        std.os.exit(1);
+                    },
+                    else => {
+                        return err;
+                    },
+                }
+            };
 
-            node = progress.root.start(try std.fmt.bufPrint(&extracting_name_buf, "Decompressing {s}", .{template}), 0);
+            node.name = try ProgressBuf.print("Decompressing {s}", .{template});
             node.setCompletedItems(0);
             node.setEstimatedTotalItems(0);
-            node.activate();
+
             progress.refresh();
 
             var file_buf = try ctx.allocator.alloc(u8, 16384);
@@ -264,12 +312,10 @@ pub const CreateCommand = struct {
             try gunzip.readAll();
             gunzip.deinit();
 
-            node.end();
-
-            node = progress.root.start(try std.fmt.bufPrint(&extracting_name_buf, "Extracting {s}", .{template}), 0);
+            node.name = try ProgressBuf.print("Extracting {s}", .{template});
             node.setCompletedItems(0);
             node.setEstimatedTotalItems(0);
-            node.activate();
+
             progress.refresh();
 
             var pluckers = [_]Archive.Plucker{
@@ -292,9 +338,12 @@ pub const CreateCommand = struct {
                     1,
                 );
 
+                inline for (never_conflict) |never_conflict_path| {
+                    _ = archive_context.overwrite_list.swapRemove(never_conflict_path);
+                }
+
                 if (archive_context.overwrite_list.count() > 0) {
                     node.end();
-                    progress.root.end();
                     progress.refresh();
 
                     // Thank you create-react-app for this copy (and idea)
@@ -322,31 +371,32 @@ pub const CreateCommand = struct {
                 &archive_context,
                 1,
                 false,
+                false,
             );
 
             var plucker = pluckers[0];
 
             if (!plucker.found or plucker.fd == 0) {
                 node.end();
-                progress.root.end();
+
                 Output.prettyErrorln("package.json not found. This package is corrupt. Please try again or file an issue if it keeps happening.", .{});
                 Output.flush();
                 std.os.exit(1);
             }
 
-            node.end();
-            node = progress.root.start(try std.fmt.bufPrint(&extracting_name_buf, "Updating package.json", .{}), 0);
-
-            node.activate();
+            node.name = "Updating package.json";
             progress.refresh();
 
             package_json_contents = plucker.contents;
             package_json_file = std.fs.File{ .handle = plucker.fd };
         } else {
             var template_parts = [_]string{template};
+
+            node.name = "Copying files";
+            progress.refresh();
+
             const template_dir = std.fs.openDirAbsolute(filesystem.abs(&template_parts), .{ .iterate = true }) catch |err| {
                 node.end();
-                progress.root.end();
                 progress.refresh();
 
                 Output.prettyErrorln("<r><red>{s}<r>: opening dir {s}", .{ @errorName(err), template });
@@ -357,7 +407,7 @@ pub const CreateCommand = struct {
             std.fs.deleteTreeAbsolute(destination) catch {};
             const destination_dir = std.fs.cwd().makeOpenPath(destination, .{ .iterate = true }) catch |err| {
                 node.end();
-                progress.root.end();
+
                 progress.refresh();
 
                 Output.prettyErrorln("<r><red>{s}<r>: creating dir {s}", .{ @errorName(err), destination });
@@ -369,6 +419,8 @@ pub const CreateCommand = struct {
             var walker = try Walker.walk(template_dir, ctx.allocator, skip_files, skip_dirs);
             defer walker.deinit();
 
+            var count: usize = 0;
+
             while (try walker.next()) |entry| {
                 // TODO: make this not walk these folders entirely
                 // rather than checking each file path.....
@@ -379,7 +431,7 @@ pub const CreateCommand = struct {
                     }
                     break :brk destination_dir.createFile(entry.path, .{}) catch |err| {
                         node.end();
-                        progress.root.end();
+
                         progress.refresh();
 
                         Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
@@ -388,13 +440,14 @@ pub const CreateCommand = struct {
                     };
                 };
                 defer outfile.close();
+                defer node.completeOne();
 
                 var infile = try entry.dir.openFile(entry.basename, .{ .read = true });
                 defer infile.close();
                 CopyFile.copy(infile.handle, outfile.handle) catch {
                     entry.dir.copyFile(entry.basename, destination_dir, entry.path, .{}) catch |err| {
                         node.end();
-                        progress.root.end();
+
                         progress.refresh();
 
                         Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
@@ -408,7 +461,7 @@ pub const CreateCommand = struct {
 
             package_json_file = destination_dir.openFile("package.json", .{ .read = true, .write = true }) catch |err| {
                 node.end();
-                progress.root.end();
+
                 progress.refresh();
 
                 Output.prettyErrorln("Failed to open package.json due to error <r><red>{s}", .{@errorName(err)});
@@ -417,7 +470,7 @@ pub const CreateCommand = struct {
             };
             const stat = package_json_file.stat() catch |err| {
                 node.end();
-                progress.root.end();
+
                 progress.refresh();
 
                 Output.prettyErrorln("Failed to stat package.json due to error <r><red>{s}", .{@errorName(err)});
@@ -427,7 +480,7 @@ pub const CreateCommand = struct {
 
             if (stat.kind != .File or stat.size == 0) {
                 node.end();
-                progress.root.end();
+
                 progress.refresh();
 
                 Output.prettyErrorln("package.json must be a file with content", .{});
@@ -439,7 +492,7 @@ pub const CreateCommand = struct {
 
             _ = package_json_file.preadAll(package_json_contents.list.items, 0) catch |err| {
                 node.end();
-                progress.root.end();
+
                 progress.refresh();
 
                 Output.prettyErrorln("Error reading package.json: <r><red>{s}", .{@errorName(err)});
@@ -453,22 +506,17 @@ pub const CreateCommand = struct {
             js_ast.Stmt.Data.Store.create(default_allocator);
         }
 
+        node.end();
+        progress.refresh();
+
         var source = logger.Source.initPathString("package.json", package_json_contents.list.items);
         var package_json_expr = ParseJSON(&source, ctx.log, ctx.allocator) catch |err| {
-            node.end();
-            progress.root.end();
-            progress.refresh();
-
             Output.prettyErrorln("package.json failed to parse with error: {s}", .{@errorName(err)});
             Output.flush();
             std.os.exit(1);
         };
 
         if (ctx.log.errors > 0) {
-            node.end();
-
-            progress.refresh();
-
             if (Output.enable_ansi_colors) {
                 try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true);
             } else {
@@ -481,11 +529,6 @@ pub const CreateCommand = struct {
 
         if (package_json_expr.asProperty("name")) |name_expr| {
             if (name_expr.expr.data != .e_string) {
-                node.end();
-                progress.root.end();
-
-                progress.refresh();
-
                 Output.prettyErrorln("package.json failed to parse correctly. its missing a name. it shouldnt be missing a name.", .{});
                 Output.flush();
                 std.os.exit(1);
@@ -494,11 +537,6 @@ pub const CreateCommand = struct {
             var basename = std.fs.path.basename(destination);
             name_expr.expr.data.e_string.utf8 = @intToPtr([*]u8, @ptrToInt(basename.ptr))[0..basename.len];
         } else {
-            node.end();
-            progress.root.end();
-
-            progress.refresh();
-
             Output.prettyErrorln("package.json failed to parse correctly. its missing a name. it shouldnt be missing a name.", .{});
             Output.flush();
             std.os.exit(1);
@@ -569,9 +607,6 @@ pub const CreateCommand = struct {
             }
         }
 
-        node.name = "Saving package.json";
-        progress.maybeRefresh();
-
         var package_json_writer = JSPrinter.NewFileWriter(package_json_file);
 
         _ = JSPrinter.printJSON(@TypeOf(package_json_writer), package_json_writer, package_json_expr, &source) catch |err| {
@@ -591,10 +626,10 @@ pub const CreateCommand = struct {
                 var realpath_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 
                 if (create_options.npm_client) |tag| {
-                    if (which(&realpath_buf, PATH, filesystem.top_level_dir, @tagName(tag))) |bin| {
+                    if (which(&realpath_buf, PATH, destination, @tagName(tag))) |bin| {
                         npm_client_ = NPMClient{ .tag = tag, .bin = try ctx.allocator.dupe(u8, bin) };
                     }
-                } else if (try NPMClient.detect(ctx.allocator, &realpath_buf, PATH, filesystem.top_level_dir, true)) |npmclient| {
+                } else if (try NPMClient.detect(ctx.allocator, &realpath_buf, PATH, destination, true)) |npmclient| {
                     npm_client_ = NPMClient{
                         .bin = try ctx.allocator.dupe(u8, npmclient.bin),
                         .tag = npmclient.tag,
@@ -604,31 +639,35 @@ pub const CreateCommand = struct {
         }
 
         if (npm_client_ != null and preinstall_tasks.items.len > 0) {
-            node.end();
-            node = progress.root.start("Running pre-install tasks", preinstall_tasks.items.len);
-            node.setCompletedItems(0);
-            progress.refresh();
-
             for (preinstall_tasks.items) |task, i| {
                 execTask(ctx.allocator, task, destination, PATH, npm_client_.?);
-
-                node.setCompletedItems(i);
-                progress.refresh();
             }
         }
 
-        node.end();
-
         if (npm_client_) |npm_client| {
             const start_time = std.time.nanoTimestamp();
-            var install_args = [_]string{ npm_client.bin, "install" };
-            Output.printError("\n", .{});
+            const install_args_ = [_]string{ npm_client.bin, "install", "--loglevel=error", "--no-fund", "--no-audit" };
+            const len: usize = switch (npm_client.tag) {
+                .npm => install_args_.len,
+                else => 2,
+            };
+
+            const install_args = install_args_[0..len];
+            Output.flush();
+            Output.pretty("\n<r><d>$ <b><cyan>{s}<r><d> install", .{@tagName(npm_client.tag)});
+            var writer = Output.writer();
+
+            if (install_args.len > 2) {
+                for (install_args[2..]) |arg| {
+                    Output.pretty(" ", .{});
+                    Output.pretty("{s}", .{arg});
+                }
+            }
+
+            Output.pretty("<r>\n", .{});
             Output.flush();
 
-            Output.prettyln("\n<r><d>$ <b><cyan>{s}<r><d> install<r>", .{@tagName(npm_client.tag)});
-            Output.flush();
-
-            var process = try std.ChildProcess.init(&install_args, ctx.allocator);
+            var process = try std.ChildProcess.init(install_args, ctx.allocator);
             process.cwd = destination;
 
             defer {
@@ -649,30 +688,22 @@ pub const CreateCommand = struct {
             progress.log("Failed to detect npm client. Tried pnpm, yarn, and npm.\n", .{});
         }
 
-        progress.refresh();
-
         if (npm_client_ != null and !create_options.skip_install and postinstall_tasks.items.len > 0) {
-            node.end();
-            node = progress.root.start("Running post-install tasks", postinstall_tasks.items.len);
-            node.setCompletedItems(0);
-            progress.refresh();
-
             for (postinstall_tasks.items) |task, i| {
                 execTask(ctx.allocator, task, destination, PATH, npm_client_.?);
-
-                node.setCompletedItems(i);
-                progress.refresh();
             }
         }
 
-        var parent_dir = try std.fs.openDirAbsolute(destination, .{});
-        std.os.linkat(parent_dir.fd, "gitignore", parent_dir.fd, ".gitignore", 0) catch {};
-        std.os.unlinkat(
-            parent_dir.fd,
-            "gitignore",
-            0,
-        ) catch {};
-        parent_dir.close();
+        {
+            var parent_dir = try std.fs.openDirAbsolute(destination, .{});
+            std.os.linkat(parent_dir.fd, "gitignore", parent_dir.fd, ".gitignore", 0) catch {};
+            std.os.unlinkat(
+                parent_dir.fd,
+                "gitignore",
+                0,
+            ) catch {};
+            parent_dir.close();
+        }
 
         if (!create_options.skip_git) {
             if (which(&bun_path_buf, PATH, destination, "git")) |git| {
@@ -701,6 +732,48 @@ pub const CreateCommand = struct {
         Output.printError("\n", .{});
         Output.printStartEnd(ctx.start_time, std.time.nanoTimestamp());
         Output.prettyErrorln(" <r><d>bun create {s}<r>", .{template});
+        Output.flush();
+
+        Output.pretty(
+            \\
+            \\<r><d>-----<r>
+            \\
+        , .{});
+
+        if (!create_options.skip_git and !create_options.skip_install) {
+            Output.pretty(
+                \\
+                \\<d>A local git repository was created for you and dependencies were installed automatically.<r>
+                \\
+            , .{});
+        } else if (!create_options.skip_git) {
+            Output.pretty(
+                \\
+                \\<d>A local git repository was created for you.<r>
+                \\
+            , .{});
+        } else if (!create_options.skip_install) {
+            Output.pretty(
+                \\
+                \\<d>Dependencies were installed automatically.<r>
+                \\
+            , .{});
+        }
+
+        Output.pretty(
+            \\
+            \\<b>Created <green>{s}<r> project successfully
+            \\
+            \\<d>#<r><b> To get started, run:<r>
+            \\
+            \\  <b><cyan>cd {s}<r>
+            \\  <b><cyan>bun<r>
+            \\
+        , .{
+            std.fs.path.basename(template),
+            filesystem.relativeTo(destination),
+        });
+
         Output.flush();
     }
 };
@@ -760,18 +833,19 @@ pub const Example = struct {
     var url: URL = undefined;
     pub const timeout: u32 = 6000;
 
-    pub fn print(examples: []const Example) void {
+    var app_name_buf: [512]u8 = undefined;
+    pub fn print(examples: []const Example, default_app_name: ?string) void {
         for (examples) |example, i| {
-            var app_name = example.name;
+            var app_name = default_app_name orelse (std.fmt.bufPrint(&app_name_buf, "./{s}-app", .{example.name[0..std.math.min(example.name.len, 492)]}) catch unreachable);
 
             if (example.description.len > 0) {
-                Output.pretty("  <r># {s}<r>\n  <b>bun create <cyan>{s}<r><b> ./{s}-app<r>\n<d>  \n\n", .{
+                Output.pretty("  <r># {s}<r>\n  <b>bun create <cyan>{s}<r><b> {s}<r>\n<d>  \n\n", .{
                     example.description,
                     example.name,
                     app_name,
                 });
             } else {
-                Output.pretty("  <r><b>bun create <cyan>{s}<r><b> ./{s}-app<r>\n\n", .{
+                Output.pretty("  <r><b>bun create <cyan>{s}<r><b> {s}<r>\n\n", .{
                     example.name,
                     app_name,
                 });
@@ -779,31 +853,76 @@ pub const Example = struct {
         }
     }
 
-    pub fn fetchFromDisk(ctx: Command.Context, absolute_path: string, refresher: *std.Progress, progress: *std.Progress.Node) !MutableString {
-        progress.name = "Reading local package";
-        refresher.refresh();
+    pub fn fetchAllLocalAndRemote(ctx: Command.Context, env_loader: *DotEnv.Loader, filesystem: *fs.FileSystem) !std.ArrayList(Example) {
+        const remote_examples = try Example.fetchAll(ctx);
 
-        var package = try std.fs.openFileAbsolute(absolute_path, .{ .read = true });
-        var stat = try package.stat();
-        if (stat.kind != .File) {
-            progress.end();
-            Output.prettyErrorln("<r>{s} is not a file", .{absolute_path});
-            Output.flush();
-            std.os.exit(1);
+        var examples = std.ArrayList(Example).fromOwnedSlice(ctx.allocator, remote_examples);
+        {
+            var folders = [3]std.fs.Dir{ std.fs.Dir{ .fd = 0 }, std.fs.Dir{ .fd = 0 }, std.fs.Dir{ .fd = 0 } };
+            if (env_loader.map.get("BUN_CREATE_DIR")) |home_dir| {
+                var parts = [_]string{home_dir};
+                var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
+                folders[0] = std.fs.openDirAbsolute(outdir_path, .{ .iterate = true }) catch std.fs.Dir{ .fd = 0 };
+            }
+
+            {
+                var parts = [_]string{ filesystem.top_level_dir, BUN_CREATE_DIR };
+                var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
+                folders[1] = std.fs.openDirAbsolute(outdir_path, .{ .iterate = true }) catch std.fs.Dir{ .fd = 0 };
+            }
+
+            if (env_loader.map.get("HOME")) |home_dir| {
+                var parts = [_]string{ home_dir, BUN_CREATE_DIR };
+                var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
+                folders[2] = std.fs.openDirAbsolute(outdir_path, .{ .iterate = true }) catch std.fs.Dir{ .fd = 0 };
+            }
+
+            // subfolders with package.json
+            for (folders) |folder_| {
+                if (folder_.fd != 0) {
+                    const folder: std.fs.Dir = folder_;
+                    var iter = folder.iterate();
+
+                    loop: while (iter.next() catch null) |entry_| {
+                        const entry: std.fs.Dir.Entry = entry_;
+
+                        switch (entry.kind) {
+                            .Directory => {
+                                inline for (skip_dirs) |skip_dir| {
+                                    if (strings.eqlComptime(entry.name, skip_dir)) {
+                                        continue :loop;
+                                    }
+                                }
+
+                                std.mem.copy(u8, &home_dir_buf, entry.name);
+                                home_dir_buf[entry.name.len] = std.fs.path.sep;
+                                std.mem.copy(u8, home_dir_buf[entry.name.len + 1 ..], "package.json");
+                                home_dir_buf[entry.name.len + 1 + "package.json".len] = 0;
+
+                                var path: [:0]u8 = home_dir_buf[0 .. entry.name.len + 1 + "package.json".len :0];
+
+                                folder.accessZ(path, .{
+                                    .read = true,
+                                }) catch continue :loop;
+
+                                try examples.append(
+                                    Example{
+                                        .name = try filesystem.filename_store.append(@TypeOf(entry.name), entry.name),
+                                        .version = "",
+                                        .local = true,
+                                        .description = "",
+                                    },
+                                );
+                                continue :loop;
+                            },
+                            else => continue,
+                        }
+                    }
+                }
+            }
         }
 
-        if (stat.size == 0) {
-            progress.end();
-            Output.prettyErrorln("<r>{s} is an empty file", .{absolute_path});
-            Output.flush();
-            std.os.exit(1);
-        }
-
-        var mutable_string = try MutableString.init(ctx.allocator, stat.size);
-        mutable_string.list.expandToCapacity();
-        var bytes = try package.readAll(mutable_string.list.items);
-        try mutable_string.inflate(bytes);
-        return mutable_string;
+        return examples;
     }
 
     pub fn fetch(ctx: Command.Context, name: string, refresher: *std.Progress, progress: *std.Progress.Node) !MutableString {
@@ -1020,79 +1139,13 @@ pub const CreateListExamplesCommand = struct {
         env_loader.loadProcess();
 
         const time = std.time.nanoTimestamp();
-        const remote_examples = try Example.fetchAll(ctx);
-
-        var examples = std.ArrayList(Example).fromOwnedSlice(ctx.allocator, remote_examples);
-        {
-            var folders = [3]std.fs.Dir{ std.fs.Dir{ .fd = 0 }, std.fs.Dir{ .fd = 0 }, std.fs.Dir{ .fd = 0 } };
-            if (env_loader.map.get("BUN_CREATE_DIR")) |home_dir| {
-                var parts = [_]string{home_dir};
-                var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
-                folders[0] = std.fs.openDirAbsolute(outdir_path, .{ .iterate = true }) catch std.fs.Dir{ .fd = 0 };
-            }
-
-            {
-                var parts = [_]string{ filesystem.top_level_dir, BUN_CREATE_DIR };
-                var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
-                folders[1] = std.fs.openDirAbsolute(outdir_path, .{ .iterate = true }) catch std.fs.Dir{ .fd = 0 };
-            }
-
-            if (env_loader.map.get("HOME")) |home_dir| {
-                var parts = [_]string{ home_dir, BUN_CREATE_DIR };
-                var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
-                folders[2] = std.fs.openDirAbsolute(outdir_path, .{ .iterate = true }) catch std.fs.Dir{ .fd = 0 };
-            }
-
-            // subfolders with package.json
-            for (folders) |folder_| {
-                if (folder_.fd != 0) {
-                    const folder: std.fs.Dir = folder_;
-                    var iter = folder.iterate();
-
-                    loop: while (iter.next() catch null) |entry_| {
-                        const entry: std.fs.Dir.Entry = entry_;
-
-                        switch (entry.kind) {
-                            .Directory => {
-                                inline for (skip_dirs) |skip_dir| {
-                                    if (strings.eqlComptime(entry.name, skip_dir)) {
-                                        continue :loop;
-                                    }
-                                }
-
-                                std.mem.copy(u8, &home_dir_buf, entry.name);
-                                home_dir_buf[entry.name.len] = std.fs.path.sep;
-                                std.mem.copy(u8, home_dir_buf[entry.name.len + 1 ..], "package.json");
-                                home_dir_buf[entry.name.len + 1 + "package.json".len] = 0;
-
-                                var path: [:0]u8 = home_dir_buf[0 .. entry.name.len + 1 + "package.json".len :0];
-
-                                folder.accessZ(path, .{
-                                    .read = true,
-                                }) catch continue :loop;
-
-                                try examples.append(
-                                    Example{
-                                        .name = try filesystem.filename_store.append(@TypeOf(entry.name), entry.name),
-                                        .version = "",
-                                        .local = true,
-                                        .description = "",
-                                    },
-                                );
-                                continue :loop;
-                            },
-                            else => continue,
-                        }
-                    }
-                }
-            }
-        }
+        const examples = try Example.fetchAllLocalAndRemote(ctx, &env_loader, filesystem);
         Output.printStartEnd(time, std.time.nanoTimestamp());
         Output.prettyln(" <d>Fetched examples<r>", .{});
         Output.prettyln("Welcome to Bun! Create a new project by pasting any of the following:\n\n", .{});
         Output.flush();
 
-        Example.print(examples.items);
+        Example.print(examples.items, null);
 
         if (env_loader.map.get("HOME")) |homedir| {
             Output.prettyln(

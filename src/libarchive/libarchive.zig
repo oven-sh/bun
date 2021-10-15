@@ -460,6 +460,9 @@ pub const Archive = struct {
                 Status.eof => break :loop,
                 Status.failed, Status.fatal, Status.retry => return error.Fail,
                 else => {
+                    // do not use the utf8 name there
+                    // it will require us to pull in libiconv
+                    // though we should probably validate the utf8 here nonetheless
                     var pathname: [:0]const u8 = std.mem.sliceTo(lib.archive_entry_pathname(entry).?, 0);
                     var tokenizer = std.mem.tokenize(u8, std.mem.span(pathname), std.fs.path.sep_str);
                     comptime var depth_i: usize = 0;
@@ -511,6 +514,7 @@ pub const Archive = struct {
         ctx: ?*Archive.Context,
         comptime depth_to_skip: usize,
         comptime close_handles: bool,
+        comptime log: bool,
     ) !u32 {
         var entry: *lib.archive_entry = undefined;
         var ext: *lib.archive = undefined;
@@ -559,7 +563,9 @@ pub const Archive = struct {
                     const mask = lib.archive_entry_filetype(entry);
                     const size = @intCast(usize, std.math.max(lib.archive_entry_size(entry), 0));
                     if (size > 0) {
-                        Output.prettyln(" {s}", .{pathname});
+                        if (comptime log) {
+                            Output.prettyln(" {s}", .{pathname});
+                        }
 
                         const file = dir.createFileZ(pathname, .{ .truncate = true }) catch |err| brk: {
                             switch (err) {

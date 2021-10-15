@@ -1,6 +1,6 @@
 {
   "name": "@bun-examples/next",
-  "version": "0.0.31",
+  "version": "0.0.32",
   "main": "index.js",
   "dependencies": {
     "next": "11.1.2",

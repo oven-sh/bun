@@ -31,7 +31,16 @@ const NPMClient = @import("../which_npm_client.zig").NPMClient;
 const which = @import("../which.zig").which;
 const clap = @import("clap");
 
+const CopyFile = @import("../copy_file.zig");
 var bun_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+
+const skip_dirs = &[_]string{ "node_modules", ".git" };
+const skip_files = &[_]string{
+    "package-lock.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+};
+
 var bun_path: ?[:0]const u8 = null;
 fn execTask(allocator: *std.mem.Allocator, task_: string, cwd: string, PATH: string, npm_client: NPMClient) void {
     const task = std.mem.trim(u8, task_, " \n\r\t");
@@ -156,6 +165,8 @@ const CreateOptions = struct {
     }
 };
 
+const BUN_CREATE_DIR = ".bun-create";
+var home_dir_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 pub const CreateCommand = struct {
     var client: HTTPClient = undefined;
     var extracting_name_buf: [1024]u8 = undefined;
@@ -172,7 +183,44 @@ pub const CreateCommand = struct {
 
         env_loader.loadProcess();
 
-        const template = positionals[0];
+        const template = brk: {
+            var positional = positionals[0];
+
+            if (!std.fs.path.isAbsolute(positional)) {
+                outer: {
+                    if (env_loader.map.get("BUN_CREATE_DIR")) |home_dir| {
+                        var parts = [_]string{ home_dir, positional };
+                        var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
+                        home_dir_buf[outdir_path.len] = 0;
+                        var outdir_path_ = home_dir_buf[0..outdir_path.len :0];
+                        std.fs.accessAbsoluteZ(outdir_path_, .{}) catch break :outer;
+                        break :brk outdir_path;
+                    }
+                }
+
+                outer: {
+                    var parts = [_]string{ filesystem.top_level_dir, BUN_CREATE_DIR, positional };
+                    var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
+                    home_dir_buf[outdir_path.len] = 0;
+                    var outdir_path_ = home_dir_buf[0..outdir_path.len :0];
+                    std.fs.accessAbsoluteZ(outdir_path_, .{}) catch break :outer;
+                    break :brk outdir_path;
+                }
+
+                outer: {
+                    if (env_loader.map.get("HOME")) |home_dir| {
+                        var parts = [_]string{ home_dir, BUN_CREATE_DIR, positional };
+                        var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
+                        home_dir_buf[outdir_path.len] = 0;
+                        var outdir_path_ = home_dir_buf[0..outdir_path.len :0];
+                        std.fs.accessAbsoluteZ(outdir_path_, .{}) catch break :outer;
+                        break :brk outdir_path;
+                    }
+                }
+            }
+
+            break :brk positional;
+        };
         const dirname = positionals[1];
         var filename_writer = filesystem.dirname_store;
         const destination = try filesystem.dirname_store.append([]const u8, resolve_path.joinAbs(filesystem.top_level_dir, .auto, dirname));
@@ -196,7 +244,9 @@ pub const CreateCommand = struct {
         var package_json_contents: MutableString = undefined;
         var package_json_file: std.fs.File = undefined;
 
-        if (!std.fs.path.isAbsolute(template)) {
+        const is_remote_template = !std.fs.path.isAbsolute(template);
+
+        if (is_remote_template) {
             var tarball_bytes: MutableString = try Example.fetch(ctx, template, &progress, &node);
 
             node.end();
@@ -293,7 +343,8 @@ pub const CreateCommand = struct {
             package_json_contents = plucker.contents;
             package_json_file = std.fs.File{ .handle = plucker.fd };
         } else {
-            const template_dir = std.fs.openDirAbsolute(template, .{ .iterate = true }) catch |err| {
+            var template_parts = [_]string{template};
+            const template_dir = std.fs.openDirAbsolute(filesystem.abs(&template_parts), .{ .iterate = true }) catch |err| {
                 node.end();
                 progress.root.end();
                 progress.refresh();
@@ -314,19 +365,33 @@ pub const CreateCommand = struct {
                 std.os.exit(1);
             };
 
-            var walker = try template_dir.walk(ctx.allocator);
+            const Walker = @import("../walker_skippable.zig");
+            var walker = try Walker.walk(template_dir, ctx.allocator, skip_files, skip_dirs);
             defer walker.deinit();
+
             while (try walker.next()) |entry| {
                 // TODO: make this not walk these folders entirely
                 // rather than checking each file path.....
-                if (entry.kind != .File or
-                    std.mem.indexOf(u8, entry.path, "node_modules") != null or
-                    std.mem.indexOf(u8, entry.path, ".git") != null) continue;
-
-                entry.dir.copyFile(entry.basename, destination_dir, entry.path, .{}) catch {
+                if (entry.kind != .File) continue;
+                var outfile = destination_dir.createFile(entry.path, .{}) catch brk: {
                     if (std.fs.path.dirname(entry.path)) |entry_dirname| {
                         destination_dir.makePath(entry_dirname) catch {};
                     }
+                    break :brk destination_dir.createFile(entry.path, .{}) catch |err| {
+                        node.end();
+                        progress.root.end();
+                        progress.refresh();
+
+                        Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
+                        Output.flush();
+                        std.os.exit(1);
+                    };
+                };
+                defer outfile.close();
+
+                var infile = try entry.dir.openFile(entry.basename, .{ .read = true });
+                defer infile.close();
+                CopyFile.copy(infile.handle, outfile.handle) catch {
                     entry.dir.copyFile(entry.basename, destination_dir, entry.path, .{}) catch |err| {
                         node.end();
                         progress.root.end();
@@ -337,6 +402,8 @@ pub const CreateCommand = struct {
                         std.os.exit(1);
                     };
                 };
+                var stat = outfile.stat() catch continue;
+                _ = C.fchmod(outfile.handle, stat.mode);
             }
 
             package_json_file = destination_dir.openFile("package.json", .{ .read = true, .write = true }) catch |err| {
@@ -368,7 +435,9 @@ pub const CreateCommand = struct {
                 std.os.exit(1);
             }
             package_json_contents = try MutableString.init(ctx.allocator, stat.size);
-            package_json_contents.inflate(package_json_file.readAll(package_json_contents.list.items) catch |err| {
+            package_json_contents.list.expandToCapacity();
+
+            _ = package_json_file.preadAll(package_json_contents.list.items, 0) catch |err| {
                 node.end();
                 progress.root.end();
                 progress.refresh();
@@ -376,7 +445,12 @@ pub const CreateCommand = struct {
                 Output.prettyErrorln("Error reading package.json: <r><red>{s}", .{@errorName(err)});
                 Output.flush();
                 std.os.exit(1);
-            }) catch unreachable;
+            };
+            // The printer doesn't truncate, so we must do so manually
+            std.os.ftruncate(package_json_file.handle, 0) catch {};
+
+            js_ast.Expr.Data.Store.create(default_allocator);
+            js_ast.Stmt.Data.Store.create(default_allocator);
         }
 
         var source = logger.Source.initPathString("package.json", package_json_contents.list.items);
@@ -679,6 +753,7 @@ pub const Example = struct {
     name: string,
     version: string,
     description: string,
+    local: bool = false,
 
     var client: HTTPClient = undefined;
     const examples_url: string = "https://registry.npmjs.org/bun-examples-all/latest";
@@ -848,7 +923,7 @@ pub const Example = struct {
         return thread.buffer;
     }
 
-    pub fn fetchAll(ctx: Command.Context) ![]const Example {
+    pub fn fetchAll(ctx: Command.Context) ![]Example {
         url = URL.parse(examples_url);
         client = HTTPClient.init(ctx.allocator, .GET, url, .{}, "");
         client.timeout = timeout;
@@ -934,19 +1009,103 @@ pub const Example = struct {
 
 pub const CreateListExamplesCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
+        var filesystem = try fs.FileSystem.init1(ctx.allocator, null);
+        var env_loader: DotEnv.Loader = brk: {
+            var map = try ctx.allocator.create(DotEnv.Map);
+            map.* = DotEnv.Map.init(ctx.allocator);
+
+            break :brk DotEnv.Loader.init(map, ctx.allocator);
+        };
+
+        env_loader.loadProcess();
+
         const time = std.time.nanoTimestamp();
-        const examples = try Example.fetchAll(ctx);
+        const remote_examples = try Example.fetchAll(ctx);
+
+        var examples = std.ArrayList(Example).fromOwnedSlice(ctx.allocator, remote_examples);
+        {
+            var folders = [3]std.fs.Dir{ std.fs.Dir{ .fd = 0 }, std.fs.Dir{ .fd = 0 }, std.fs.Dir{ .fd = 0 } };
+            if (env_loader.map.get("BUN_CREATE_DIR")) |home_dir| {
+                var parts = [_]string{home_dir};
+                var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
+                folders[0] = std.fs.openDirAbsolute(outdir_path, .{ .iterate = true }) catch std.fs.Dir{ .fd = 0 };
+            }
+
+            {
+                var parts = [_]string{ filesystem.top_level_dir, BUN_CREATE_DIR };
+                var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
+                folders[1] = std.fs.openDirAbsolute(outdir_path, .{ .iterate = true }) catch std.fs.Dir{ .fd = 0 };
+            }
+
+            if (env_loader.map.get("HOME")) |home_dir| {
+                var parts = [_]string{ home_dir, BUN_CREATE_DIR };
+                var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
+                folders[2] = std.fs.openDirAbsolute(outdir_path, .{ .iterate = true }) catch std.fs.Dir{ .fd = 0 };
+            }
+
+            // subfolders with package.json
+            for (folders) |folder_| {
+                if (folder_.fd != 0) {
+                    const folder: std.fs.Dir = folder_;
+                    var iter = folder.iterate();
+
+                    loop: while (iter.next() catch null) |entry_| {
+                        const entry: std.fs.Dir.Entry = entry_;
+
+                        switch (entry.kind) {
+                            .Directory => {
+                                inline for (skip_dirs) |skip_dir| {
+                                    if (strings.eqlComptime(entry.name, skip_dir)) {
+                                        continue :loop;
+                                    }
+                                }
+
+                                std.mem.copy(u8, &home_dir_buf, entry.name);
+                                home_dir_buf[entry.name.len] = std.fs.path.sep;
+                                std.mem.copy(u8, home_dir_buf[entry.name.len + 1 ..], "package.json");
+                                home_dir_buf[entry.name.len + 1 + "package.json".len] = 0;
+
+                                var path: [:0]u8 = home_dir_buf[0 .. entry.name.len + 1 + "package.json".len :0];
+
+                                folder.accessZ(path, .{
+                                    .read = true,
+                                }) catch continue :loop;
+
+                                try examples.append(
+                                    Example{
+                                        .name = try filesystem.filename_store.append(@TypeOf(entry.name), entry.name),
+                                        .version = "",
+                                        .local = true,
+                                        .description = "",
+                                    },
+                                );
+                                continue :loop;
+                            },
+                            else => continue,
+                        }
+                    }
+                }
+            }
+        }
         Output.printStartEnd(time, std.time.nanoTimestamp());
         Output.prettyln(" <d>Fetched examples<r>", .{});
-
         Output.prettyln("Welcome to Bun! Create a new project by pasting any of the following:\n\n", .{});
         Output.flush();
 
-        Example.print(examples);
+        Example.print(examples.items);
 
-        _ = try CreateOptions.parse(ctx.allocator, true);
+        if (env_loader.map.get("HOME")) |homedir| {
+            Output.prettyln(
+                "<d>This command is completely optional. To add a new local template, create a folder in {s}/.bun-create/. To publish a new template, git clone https://github.com/jarred-sumner/bun, add a new folder to the \"examples\" folder, and submit a PR.<r>",
+                .{homedir},
+            );
+        } else {
+            Output.prettyln(
+                "<d>This command is completely optional. To add a new local template, create a folder in $HOME/.bun-create/. To publish a new template, git clone https://github.com/jarred-sumner/bun, add a new folder to the \"examples\" folder, and submit a PR.<r>",
+                .{},
+            );
+        }
 
-        Output.pretty("<d>To add a new template, git clone https://github.com/jarred-sumner/bun, add a new folder to the \"examples\" folder, and submit a PR.<r>", .{});
         Output.flush();
     }
 };

@@ -56,17 +56,30 @@ for (let folder of examplesFolderEntries) {
   }
   var retryCount = 5;
 
+  // Never commit lockfiles
+  try {
+    fs.rmSync(path.join(absolute, "package-lock.json"));
+  } catch (exception) {}
+
+  try {
+    fs.rmSync(path.join(absolute, "yarn.lock"));
+  } catch (exception) {}
+
+  try {
+    fs.rmSync(path.join(absolute, "pnpm-lock.yaml"));
+  } catch (exception) {}
+
+  try {
+    fs.copyFileSync(
+      path.join(absolute, ".gitignore"),
+      path.join(absolute, "gitignore")
+    );
+  } catch (exception) {}
+
   restart: while (retryCount-- > 0) {
     packageJSON.version = version;
     if ("private" in packageJSON) delete packageJSON.private;
     if ("license" in packageJSON) delete packageJSON.license;
-
-    try {
-      fs.copyFileSync(
-        path.join(absolute, ".gitignore"),
-        path.join(absolute, "gitignore")
-      );
-    } catch (exception) {}
 
     fs.writeFileSync(
       path.join(absolute, "package.json"),

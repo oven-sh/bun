@@ -34,6 +34,12 @@
     ]
   },
   "devDependencies": {
-    "typescript": "^4.4.2"
+    "typescript": "^4.4.2",
+    "react-refresh": "^0.10.0"
+  },
+  "bun-create": {
+    "postinstall": [
+      "bun bun ./src/index.jsx"
+    ]
   }
 }

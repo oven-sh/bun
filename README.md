@@ -697,7 +697,8 @@ Bun also statically links these libraries:
 - [`picohttp`](https://github.com/h2o/picohttpparser), which is dual-licensed under the Perl License or the MIT License
 - [`mimalloc`](https://github.com/microsoft/mimalloc), which is MIT licensed
 - [`zlib-cloudflare`](https://github.com/cloudflare/zlib), which is zlib licensed
-- [`openssl`](https://github.com/openssl/openssl) 3.0.0, which is Apache 2.0 licensed
+- [`s2n-tls`](https://github.com/aws/s2n-tls), which is MIT licensed
+- [`libarchive`](https://github.com/libarchive/libarchive), which has [several licenses](https://github.com/libarchive/libarchive/blob/master/COPYING)
 
 For compatibiltiy reasons, these NPM packages are embedded into Bun's binary and injected if imported.
 

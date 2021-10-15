@@ -426,7 +426,7 @@ By default, templates are downloaded from folders inside `examples/` in Bun's Gi
 Create a new Next.js project:
 
 ```bash
-bun create next ./app`
+bun create next ./app
 ```
 
 Create a new React project:
@@ -455,10 +455,17 @@ Before checking Bun's examples folder, `bun create` checks for a local folder ma
 
 If a folder exists in any of those folders with the input, bun will use that instead of a remote template.
 
+To create a local template, run:
+
+```bash
+mkdir -p $HOME/.bun-create/new-template-name
+echo '{"name":"new-template-name"}' > $HOME/.bun-create/new-template-name/package.json
+```
+
 This lets you run:
 
 ```bash
-bun create my-boilerplate ./app
+bun create new-template-name ./app
 ```
 
 Now your new template should appear when you run:

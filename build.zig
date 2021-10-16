@@ -235,7 +235,6 @@ pub fn build(b: *std.build.Builder) !void {
             step.addObjectFile("src/deps/libs2n.a");
 
             step.addObjectFile("src/deps/zlib/libz.a");
-            step.addObjectFile("src/deps/openssl/libssl.a");
 
             step.addObjectFile("src/deps/mimalloc/libmimalloc.a");
             step.addLibPath("src/deps/mimalloc");
@@ -253,6 +252,7 @@ pub fn build(b: *std.build.Builder) !void {
                 step.addObjectFile(homebrew_prefix ++ "opt/icu4c/lib/libicudata.a");
                 step.addObjectFile(homebrew_prefix ++ "opt/icu4c/lib/libicui18n.a");
                 step.addObjectFile(homebrew_prefix ++ "opt/icu4c/lib/libicuuc.a");
+                step.addObjectFile(homebrew_prefix ++ "opt/libiconv/lib/libiconv.a");
                 // icucore is a weird macOS only library
                 step.linkSystemLibrary("icucore");
                 step.addLibPath(homebrew_prefix ++ "opt/icu4c/lib");
@@ -261,6 +261,7 @@ pub fn build(b: *std.build.Builder) !void {
                 step.linkSystemLibrary("icuuc");
                 step.linkSystemLibrary("icudata");
                 step.linkSystemLibrary("icui18n");
+                step.linkSystemLibrary("iconv");
             }
 
             for (bindings_files.items) |binding| {

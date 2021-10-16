@@ -6,8 +6,10 @@ make-lazy = $(eval $1 = $​$(eval $1 := $(value $(1)))$​$($1))
 ARCH_NAME :=
 ifeq ($(ARCH_NAME_RAW),arm64)
    ARCH_NAME = aarch64
+   BREW_PREFIX_PATH = /opt/homebrew
 else
    ARCH_NAME = x64
+   BREW_PREFIX_PATH = /usr/local
 endif
 
 TRIPLET = $(OS_NAME)-$(ARCH_NAME)
@@ -28,9 +30,10 @@ DEPS_DIR = $(shell pwd)/src/deps
 CPUS ?= $(shell nproc)
 USER ?= $(echo $USER)
 
-LIBCRYPTO_STATIC_LIB = $(shell brew list openssl@1.1|grep libcrypto.a)
-LIBCRYPTO_PREFIX_LIB_DIR = $(shell dirname $(LIBCRYPTO_STATIC_LIB))
-LIBCRYPTO_PREFIX_DIR = $(shell dirname $(LIBCRYPTO_PREFIX_LIB_DIR))
+LIBICONV_PATH ?= $(BREW_PREFIX_PATH)/opt/libiconv/lib/libiconv.a
+
+LIBCRYPTO_PREFIX_DIR = $(BREW_PREFIX_PATH)/opt/openssl@1.1
+LIBCRYPTO_STATIC_LIB ?= $(LIBCRYPTO_PREFIX_DIR)/lib/libcrypto.a
 LIBCRYPTO_INCLUDE_DIR = $(LIBCRYPTO_PREFIX_DIR)/include
 
 BUN_TMP_DIR := /tmp/make-bun
@@ -73,9 +76,7 @@ endif
 
 STRIP ?= $(shell which llvm-strip || which llvm-strip-12 || echo "Missing llvm-strip. Please pass it in the STRIP environment var"; exit 1;)
 
-ifeq ($(OS_NAME),darwin)
-	HOMEBREW_PREFIX = $(shell brew --prefix)/
-endif
+HOMEBREW_PREFIX ?= BREW_PREFIX_PATH
 
 
 SRC_DIR := src/javascript/jsc/bindings
@@ -104,11 +105,11 @@ endif
 
 
 
-MACOS_ICU_FILES := $(HOMEBREW_PREFIX)opt/icu4c/lib/libicudata.a \
+MACOS_ICU_FILES = $(HOMEBREW_PREFIX)opt/icu4c/lib/libicudata.a \
 	$(HOMEBREW_PREFIX)opt/icu4c/lib/libicui18n.a \
 	$(HOMEBREW_PREFIX)opt/icu4c/lib/libicuuc.a 
 
-MACOS_ICU_INCLUDE := $(HOMEBREW_PREFIX)opt/icu4c/include
+MACOS_ICU_INCLUDE = $(HOMEBREW_PREFIX)opt/icu4c/include
 
 ICU_FLAGS := 
 
@@ -158,6 +159,7 @@ BUN_LLD_FLAGS = $(OBJ_FILES) \
 		src/deps/libs2n.a \
 		src/deps/libcrypto.a \
 		src/deps/picohttpparser.o \
+		$(LIBICONV_PATH) \
 		$(CLANG_FLAGS) \
 		-liconv \
 
@@ -179,11 +181,10 @@ endif
 bun: vendor build-obj bun-link-lld-release
 
 
-vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib openssl
+vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib openssl s2n libarchive
 
 libarchive:
 	cd src/deps/libarchive; \
-	make clean; \
 	cmake . -DENABLE_ZLIB=OFF -DENABLE_OPENSSL=OFF; \
 	make -j${CPUS}; \
 	cp libarchive/libarchive.a $(DEPS_DIR)/libarchive.a;
@@ -199,6 +200,8 @@ require:
 	@cmake --version >/dev/null 2>&1 || (echo "ERROR: cmake is required."; exit 1)
 	@esbuild --version >/dev/null 2>&1 || (echo "ERROR: esbuild is required."; exit 1)
 	@npm --version >/dev/null 2>&1 || (echo "ERROR: npm is required."; exit 1)
+	@stat $(LIBICONV_PATH) >/dev/null 2>&1 || (echo "ERROR: libiconv is required. Please:\nbrew install libiconv"; exit 1)
+	@stat $(LIBCRYPTO_STATIC_LIB) >/dev/null 2>&1 || (echo "ERROR: OpenSSL 1.1 is required. Please:\nbrew install openssl@1.1"; exit 1)
 
 init-submodules:
 	git submodule update --init --recursive --progress --depth=1
@@ -268,7 +271,7 @@ s2n-mac:
 		-DLibCrypto_INCLUDE_DIR=$(LIBCRYPTO_INCLUDE_DIR) \
 		-DLibCrypto_STATIC_LIBRARY=$(LIBCRYPTO_STATIC_LIB) \
 		-DLibCrypto_LIBRARY=$(LIBCRYPTO_STATIC_LIB) \
-		-DCMAKE_PREFIX_PATH=$(shell brew --prefix openssl@1.1); \
+		-DCMAKE_PREFIX_PATH=$(LIBCRYPTO_PREFIX_DIR); \
 	CC=$(CC) CXX=$(CXX) cmake --build ./build -j$(CPUS); \
 	CC=$(CC) CXX=$(CXX) CTEST_PARALLEL_LEVEL=$(CPUS) ninja -C build
 	cp $(DEPS_DIR)/s2n-tls/build/lib/libs2n.a $(DEPS_DIR)/libs2n.a
@@ -284,7 +287,7 @@ s2n-mac-debug:
 		-DLibCrypto_INCLUDE_DIR=$(LIBCRYPTO_INCLUDE_DIR) \
 		-DLibCrypto_STATIC_LIBRARY=$(LIBCRYPTO_STATIC_LIB) \
 		-DLibCrypto_LIBRARY=$(LIBCRYPTO_STATIC_LIB) \
-		-DCMAKE_PREFIX_PATH=$(shell brew --prefix openssl@1.1); \
+		-DCMAKE_PREFIX_PATH=$(LIBCRYPTO_PREFIX_DIR); \
 	CC=$(CC) CXX=$(CXX) cmake --build ./build -j$(CPUS); \
 	CC=$(CC) CXX=$(CXX) CTEST_PARALLEL_LEVEL=$(CPUS) ninja -C build test
 	cp $(DEPS_DIR)/s2n-tls/build/lib/libs2n.a $(DEPS_DIR)/libs2n.a
@@ -414,9 +417,11 @@ clean-bindings:
 
 clean: clean-bindings
 	rm src/deps/*.a src/deps/*.o
-	cd src/deps/mimalloc && make clean;
-
-
+	(cd src/deps/mimalloc && make clean) || echo "";
+	(cd src/deps/libarchive && make clean) || echo "";
+	(cd src/deps/s2n-tls && make clean) || echo "";
+	(cd src/deps/picohttp && make clean) || echo "";
+	(cd src/deps/zlib && make clean) || echo "";
 
 
 

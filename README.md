@@ -718,6 +718,7 @@ Bun also statically links these libraries:
 - [`zlib-cloudflare`](https://github.com/cloudflare/zlib), which is zlib licensed
 - [`s2n-tls`](https://github.com/aws/s2n-tls), which is MIT licensed
 - [`libarchive`](https://github.com/libarchive/libarchive), which has [several licenses](https://github.com/libarchive/libarchive/blob/master/COPYING)
+- [`libiconv`](https://www.gnu.org/software/libiconv/), which is LGPL2. It's a dependency of libarchive.
 
 For compatibiltiy reasons, these NPM packages are embedded into Bun's binary and injected if imported.
 

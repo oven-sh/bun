@@ -417,7 +417,7 @@ If you're interested in adding a framework integration, please reach out. There'
 
 `bun create` is a fast way to create a new project from a template.
 
-At the time of writing, `bun create react app` runs ~14x faster on my local computer than `yarn create react-app app`. `bun create` currently does no caching (though your npm client does)
+At the time of writing, `bun create react app` runs ~11x faster on my local computer than `yarn create react-app app`. `bun create` currently does no caching (though your npm client does)
 
 #### Usage
 

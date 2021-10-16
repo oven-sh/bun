@@ -270,7 +270,7 @@ BUN_LLD_FLAGS = $(OBJ_FILES) \
 		src/deps/libcrypto.a \
 		src/deps/picohttpparser.o \
 		$(LIBICONV_PATH) \
-		$(CLANG_FLAGS) \
+		$(CLANG_FLAGS)
 
 ifeq ($(OS_NAME), linux)
 BUN_LLD_FLAGS += -lstdc++fs \
@@ -334,7 +334,10 @@ sign-macos-x64:
 sign-macos-aarch64: 
 	gon sign.macos-aarch64.json
 
-release: all-js build-obj jsc-bindings-mac bun-link-lld-release
+cls: 
+	@echo "\n\n---\n\n"
+
+release: all-js build-obj jsc-bindings-mac cls bun-link-lld-release
 
 jsc-check:
 	@ls $(JSC_BASE_DIR)  >/dev/null 2>&1 || (echo "Failed to access WebKit build. Please compile the WebKit submodule using the Dockerfile at $(shell pwd)/src/javascript/WebKit/Dockerfile and then copy from /output in the Docker container to $(JSC_BASE_DIR). You can override the directory via JSC_BASE_DIR. \n\n 	DOCKER_BUILDKIT=1 docker build -t bun-webkit $(shell pwd)/src/javascript/jsc/WebKit -f $(shell pwd)/src/javascript/jsc/WebKit/Dockerfile --progress=plain\n\n 	docker container create bun-webkit\n\n 	# Get the container ID\n	docker container ls\n\n 	docker cp DOCKER_CONTAINER_ID_YOU_JUST_FOUND:/output $(JSC_BASE_DIR)" && exit 1)	

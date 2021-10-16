@@ -3,12 +3,11 @@ import * as React from "react";
 import "./App.css";
 
 function App() {
-  const ms = Date.now() - parseInt(window.location.search.substring(1), 10);
   return (
     <div className="App">
       <header className="App-header">
         <img src={logo} className="App-logo" alt="logo" />
-        <h3>Loaded in {ms}ms.</h3>
+        <h3>Welcome to React!</h3>
         <a
           className="App-link"
           href="https://reactjs.org"

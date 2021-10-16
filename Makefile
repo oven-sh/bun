@@ -298,7 +298,7 @@ libarchive:
 	./build/autogen.sh; \
 	./configure --disable-shared --enable-static  --with-pic  --disable-bsdtar   --disable-bsdcat --disable-rpath --enable-posix-regex-lib  --without-xml2  --without-expat --without-openssl  --without-iconv --without-zlib; \
 	make -j${CPUS}; \
-	cp ./libs/libarchive.a $(DEPS_DIR)/libarchive.a;
+	cp ./.libs/libarchive.a $(DEPS_DIR)/libarchive.a;
 
 tgz:
 	zig build-exe -Drelease-fast --main-pkg-path $(shell pwd) ./misctools/tgz.zig $(DEPS_DIR)/zlib/libz.a $(DEPS_DIR)/libarchive.a $(LIBICONV_PATH) -lc 

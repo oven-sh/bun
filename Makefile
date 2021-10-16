@@ -30,16 +30,38 @@ DEPS_DIR = $(shell pwd)/src/deps
 CPUS ?= $(shell nproc)
 USER ?= $(echo $USER)
 
+OPENSSL_VERSION = OpenSSL_1_1_1l
 LIBICONV_PATH ?= $(BREW_PREFIX_PATH)/opt/libiconv/lib/libiconv.a
+
+OPENSSL_LINUX_DIR = $(DEPS_DIR)/openssl/openssl-OpenSSL_1_1_1l
 
 LIBCRYPTO_PREFIX_DIR = $(BREW_PREFIX_PATH)/opt/openssl@1.1
 LIBCRYPTO_STATIC_LIB ?= $(LIBCRYPTO_PREFIX_DIR)/lib/libcrypto.a
 LIBCRYPTO_INCLUDE_DIR = $(LIBCRYPTO_PREFIX_DIR)/include
 
 ifeq ($(OS_NAME),linux)
-LIBCRYPTO_STATIC_LIB = /usr/lib/x86_64-linux-gnu/lib/libcrypto.a
+LIBCRYPTO_STATIC_LIB = 
 LIBICONV_PATH = $(DEPS_DIR)/libiconv.a
 endif
+
+# Linux needs to have libcrypto 1.1.1 installed
+# download-openssl-linux:
+# 	mkdir -p $(DEPS_DIR)/openssl
+# 	wget https://github.com/openssl/openssl/archive/refs/tags/OpenSSL_1_1_1l.zip
+# 	unzip -o OpenSSL_1_1_1l.zip -d $(DEPS_DIR)/openssl
+# 	rm OpenSSL_1_1_1l.zip
+
+# build-openssl-linux:
+# 	cd $(OPENSSL_LINUX_DIR); \
+# 		./config -d -fPIC \
+# 			no-md2 no-rc5 no-rfc3779 no-sctp no-ssl-trace no-zlib     \
+# 			no-hw no-mdc2 no-seed no-idea enable-ec_nistp_64_gcc_128 no-camellia \
+# 			no-bf no-ripemd no-dsa no-ssl2 no-ssl3 no-capieng                  \
+# 			-DSSL_FORBID_ENULL -DOPENSSL_NO_DTLS1 -DOPENSSL_NO_HEARTBEATS; \
+# 		make -j $(CPUS) depend; \
+# 		make -j $(CPUS); \
+# 		make -j $(CPUS) install_sw; \
+# 		cp libcrypto.a $(DEPS_DIR)/libcrypto.a
 
 build-iconv-linux:
 	cd src/deps/libiconv/libiconv-1.16; ./configure --enable-static; make -j 12; cp ./lib/.libs/libiconv.a $(DEPS_DIR)/libiconv.a
@@ -73,9 +95,12 @@ ZLIB_LIB_DIR ?= $(DEPS_DIR)/zlib
 
 JSC_FILES := $(JSC_LIB)/libJavaScriptCore.a $(JSC_LIB)/libWTF.a  $(JSC_LIB)/libbmalloc.a
 
+DEFAULT_LINKER_FLAGS =
+
 JSC_BUILD_STEPS :=
 ifeq ($(OS_NAME),linux)
 	JSC_BUILD_STEPS += jsc-check
+DEFAULT_LINKER_FLAGS= -lcrypto -pthread -ldl 
 endif
 ifeq ($(OS_NAME),darwin)
 	JSC_BUILD_STEPS += jsc-build-mac jsc-copy-headers
@@ -85,6 +110,83 @@ endif
 STRIP ?= $(shell which llvm-strip || which llvm-strip-12 || echo "Missing llvm-strip. Please pass it in the STRIP environment var"; exit 1;)
 
 HOMEBREW_PREFIX ?= $(BREW_PREFIX_PATH)
+
+s2n-ubuntu-deps:
+	# https://github.com/aws/s2n-tls/blob/main/codebuild/spec/buildspec_ubuntu.yml#L50
+	sudo apt-get install -y --no-install-recommends indent \
+		iproute2 \
+		kwstyle \
+		lcov \
+		libssl-dev \
+		m4 \
+		make \
+		net-tools \
+		nettle-bin \
+		nettle-dev \
+		pkg-config \
+		psmisc \
+		python3-pip \
+		shellcheck \
+		sudo \
+		tcpdump \
+		unzip \
+		valgrind \
+		zlib1g-dev \
+		zlibc \
+		cmake \
+		tox \
+		libtool \
+		ninja-build
+
+s2n-linux:
+	cd $(DEPS_DIR)/s2n-tls; \
+	make clean; \
+	rm -rf build; \
+	CC=$(CC) CXX=$(CXX) cmake . -Bbuild -GNinja \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DBUILD_SHARED_LIBS=OFF \
+		-DBENCHMARK=0; \
+	CC=$(CC) CXX=$(CXX) cmake --build ./build -j$(CPUS); \
+	CC=$(CC) CXX=$(CXX) CTEST_PARALLEL_LEVEL=$(CPUS) ninja -C build;
+	cp $(DEPS_DIR)/s2n-tls/build/lib/libs2n.a $(DEPS_DIR)/libs2n.a
+
+s2n-linux-debug:
+	# https://github.com/aws/s2n-tls/blob/main/codebuild/spec/buildspec_ubuntu.yml#L50
+	sudo apt-get install -y --no-install-recommends indent \
+		iproute2 \
+		kwstyle \
+		lcov \
+		libssl-dev \
+		m4 \
+		make \
+		net-tools \
+		nettle-bin \
+		nettle-dev \
+		pkg-config \
+		psmisc \
+		python3-pip \
+		shellcheck \
+		sudo \
+		tcpdump \
+		unzip \
+		valgrind \
+		zlib1g-dev \
+		zlibc \
+		cmake \
+		tox \
+		libtool \
+		ninja-build
+
+	cd $(DEPS_DIR)/s2n-tls; \
+	make clean; \
+	rm -rf build; \
+	CC=$(CC) CXX=$(CXX) cmake . -Bbuild -GNinja \
+		-DCMAKE_BUILD_TYPE=Debug \
+		-DBUILD_SHARED_LIBS=OFF \
+		-DBENCHMARK=0; \
+	CC=$(CC) CXX=$(CXX) cmake --build ./build -j$(CPUS); \
+	CC=$(CC) CXX=$(CXX) CTEST_PARALLEL_LEVEL=$(CPUS) ninja -C build;
+	cp $(DEPS_DIR)/s2n-tls/build/lib/libs2n.a $(DEPS_DIR)/libs2n.a
 
 
 SRC_DIR := src/javascript/jsc/bindings
@@ -172,8 +274,7 @@ BUN_LLD_FLAGS = $(OBJ_FILES) \
 
 ifeq ($(OS_NAME), linux)
 BUN_LLD_FLAGS += -lstdc++fs \
-		-pthread \
-		-ldl \
+		$(DEFAULT_LINKER_FLAGS) \
 		-lc \
 		-Wl,-z,now \
 		-Wl,--as-needed \
@@ -192,9 +293,15 @@ vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder b
 
 libarchive:
 	cd src/deps/libarchive; \
-	cmake . -DENABLE_ZLIB=OFF -DENABLE_OPENSSL=OFF; \
+	cmake . -DLIBICONV_PATH="$(LIBICONV_PATH)"" -DLIBICONV_STATIC=ON  -DENABLE_ZLIB=OFF -DENABLE_OPENSSL=OFF; \
 	make -j${CPUS}; \
 	cp libarchive/libarchive.a $(DEPS_DIR)/libarchive.a;
+
+tgz:
+	zig build-exe -Drelease-fast --main-pkg-path $(shell pwd) ./misctools/tgz.zig $(DEPS_DIR)/zlib/libz.a $(DEPS_DIR)/libarchive.a $(LIBICONV_PATH) -lc 
+
+tgz-debug:
+	zig build-exe --main-pkg-path $(shell pwd) ./misctools/tgz.zig $(DEPS_DIR)/zlib/libz.a $(DEPS_DIR)/libarchive.a $(LIBICONV_PATH) -lc 
 
 vendor: require init-submodules vendor-without-check
 
@@ -250,24 +357,24 @@ bun_error:
 	@cd packages/bun-error; npm install; npm run --silent build
 
 fetch:
-	cd misctools; zig build-obj -Drelease-fast ./fetch.zig -fcompiler-rt --main-pkg-path ../
-	$(CXX) ./misctools/fetch.o -g -O3 -o ./misctools/fetch \
+	cd misctools; zig build-obj -Drelease-fast ./fetch.zig -fcompiler-rt -lc --main-pkg-path ../
+	$(CXX) ./misctools/fetch.o -g -O3 -o ./misctools/fetch $(DEFAULT_LINKER_FLAGS) -lc \
 		src/deps/mimalloc/libmimalloc.a \
 		src/deps/zlib/libz.a \
 		src/deps/libarchive.a \
 		src/deps/libs2n.a \
 		src/deps/picohttpparser.o \
-		src/deps/libcrypto.a
+		$(LIBCRYPTO_STATIC_LIB)
 
 fetch-debug:
-	cd misctools; zig build-obj ./fetch.zig -fcompiler-rt --main-pkg-path ../
-	$(CXX) ./misctools/fetch.o -g -o ./misctools/fetch \
+	cd misctools; zig build-obj ./fetch.zig -fcompiler-rt -lc --main-pkg-path ../
+	$(CXX) ./misctools/fetch.o -g -o ./misctools/fetch $(DEFAULT_LINKER_FLAGS) -lc  \
 		src/deps/mimalloc/libmimalloc.a \
 		src/deps/zlib/libz.a \
 		src/deps/libarchive.a \
 		src/deps/libs2n.a \
 		src/deps/picohttpparser.o \
-		src/deps/libcrypto.a
+		$(LIBCRYPTO_STATIC_LIB)
 
 s2n-mac:
 	cd $(DEPS_DIR)/s2n-tls; \

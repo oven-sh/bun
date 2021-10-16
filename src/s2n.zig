@@ -54,7 +54,7 @@ pub fn boot(allcoator: *std.mem.Allocator) void {
     var protocols = &protocol;
     s2nassert(s2n_config_set_protocol_preferences(global_s2n_config, protocols, 1));
     s2nassert(s2n_config_send_max_fragment_length(global_s2n_config, S2N_TLS_MAX_FRAG_LEN_4096));
-    s2nassert(s2n_config_set_cipher_preferences(global_s2n_config, "default_tls13"));
+    // s2nassert(s2n_config_set_cipher_preferences(global_s2n_config, "default_tls13"));
     // s2n_config_set_ticket_decrypt_key_lifetime(global_s2n_config, 9999999);
 
     s2nassert(
@@ -624,6 +624,7 @@ pub const Connection = struct {
         s2nassert(s2n_connection_set_ctx(this.conn, this));
         s2nassert(s2n_connection_set_config(this.conn, global_s2n_config));
         s2nassert(s2n_connection_set_read_fd(this.conn, @intCast(c_int, this.fd)));
+        s2nassert(s2n_connection_set_fd(this.conn, @intCast(c_int, this.fd)));
         s2nassert(s2n_connection_set_write_fd(this.conn, @intCast(c_int, this.fd)));
         s2nassert(s2n_connection_set_blinding(this.conn, S2N_SELF_SERVICE_BLINDING));
         // s2nassert(s2n_connection_set_dynamic_record(this.conn));

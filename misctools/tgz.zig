@@ -51,18 +51,21 @@ pub fn main() anyerror!void {
 
     var file_size = try tarball.getEndPos();
     var file_buf: []u8 = undefined;
+    var file_buf_cap: usize = 0;
 
     if (file_size < buf.len) {
         file_buf = buf[0..try tarball.readAll(&buf)];
+        file_buf_cap = buf.len;
     } else {
         file_buf = try tarball.readToEndAlloc(
             std.heap.c_allocator,
             file_size,
         );
+        file_buf_cap = file_buf.len;
     }
 
     if (std.mem.eql(u8, std.fs.path.extension(tarball_path), ".gz") or std.mem.eql(u8, std.fs.path.extension(tarball_path), ".tgz")) {
-        tarball_buf_list = std.ArrayListUnmanaged(u8){ .capacity = file_buf.len, .items = file_buf };
+        tarball_buf_list = try std.ArrayListUnmanaged(u8).initCapacity(std.heap.c_allocator, 1024);
         var gunzip = try Zlib.ZlibReaderArrayList.init(file_buf, &tarball_buf_list, std.heap.c_allocator);
         try gunzip.readAll();
         gunzip.deinit();
@@ -71,10 +74,12 @@ pub fn main() anyerror!void {
         tarball_buf_list = std.ArrayListUnmanaged(u8){ .capacity = file_buf.len, .items = file_buf };
     }
 
-    try Archive.extractToDisk(
+ _ =  try Archive.extractToDisk(
         file_buf,
         folder,
         null,
+        void,
+        void{},
         1,
         false,
         false,

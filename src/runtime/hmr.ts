@@ -189,9 +189,11 @@ if (typeof window !== "undefined") {
       let count = 0;
       let match: CSSHMRInsertionPoint = null;
 
+      const adoptedStyles = document.adoptedStyleSheets;
+
       if (this.updateMethod === CSSUpdateMethod.cssObjectModel) {
-        if (document.adoptedStyleSheets.length > 0) {
-          count = document.adoptedStyleSheets.length;
+        if (adoptedStyles.length > 0) {
+          count = adoptedStyles.length;
 
           for (let i = 0; i < count && match === null; i++) {
             let cssRules: CSSRuleList;
@@ -200,7 +202,7 @@ if (typeof window !== "undefined") {
             // Non-same origin stylesheets will potentially throw "Security error"
             // We will ignore those stylesheets and look at others.
             try {
-              sheet = document.adoptedStyleSheets[i];
+              sheet = adoptedStyles[i];
               cssRules = sheet.rules;
               ruleCount = sheet.rules.length;
             } catch (exception) {

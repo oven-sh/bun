@@ -408,6 +408,17 @@ pub const Archive = struct {
     pub const Context = struct {
         pluckers: []Plucker = &[_]Plucker{},
         overwrite_list: std.StringArrayHashMap(void),
+        all_files: EntryMap,
+        pub const EntryMap = std.ArrayHashMap(u64, [*c]u8, U64Context, false);
+
+        pub const U64Context = struct {
+            pub fn hash(ctx: @This(), k: u64) u32 {
+                return @truncate(u32, k);
+            }
+            pub fn eql(ctx: @This(), a: u64, b: u64) bool {
+                return a == b;
+            }
+        };
     };
 
     pub const Plucker = struct {
@@ -512,6 +523,8 @@ pub const Archive = struct {
         file_buffer: []const u8,
         root: []const u8,
         ctx: ?*Archive.Context,
+        comptime FilePathAppender: type,
+        appender: FilePathAppender,
         comptime depth_to_skip: usize,
         comptime close_handles: bool,
         comptime log: bool,
@@ -552,17 +565,19 @@ pub const Archive = struct {
                     var pathname: [:0]const u8 = std.mem.sliceTo(lib.archive_entry_pathname(entry).?, 0);
                     var tokenizer = std.mem.tokenize(u8, std.mem.span(pathname), std.fs.path.sep_str);
                     comptime var depth_i: usize = 0;
+
                     inline while (depth_i < depth_to_skip) : (depth_i += 1) {
                         if (tokenizer.next() == null) continue :loop;
                     }
 
                     var pathname_ = tokenizer.rest();
-                    pathname = std.mem.sliceTo(pathname_.ptr[0..pathname_.len :0], 0);
-                    const dirname = std.fs.path.dirname(std.mem.span(pathname)) orelse "";
+                    pathname = @intToPtr([*]const u8, @ptrToInt(pathname_.ptr))[0..pathname_.len :0];
 
                     const mask = lib.archive_entry_filetype(entry);
                     const size = @intCast(usize, std.math.max(lib.archive_entry_size(entry), 0));
                     if (size > 0) {
+                        const slice = std.mem.span(pathname);
+
                         if (comptime log) {
                             Output.prettyln(" {s}", .{pathname});
                         }
@@ -570,7 +585,7 @@ pub const Archive = struct {
                         const file = dir.createFileZ(pathname, .{ .truncate = true }) catch |err| brk: {
                             switch (err) {
                                 error.FileNotFound => {
-                                    dir.makePath(dirname) catch {};
+                                    try dir.makePath(std.fs.path.dirname(slice) orelse return err);
                                     break :brk try dir.createFileZ(pathname, .{ .truncate = true });
                                 },
                                 else => {
@@ -584,9 +599,16 @@ pub const Archive = struct {
 
                         if (ctx) |ctx_| {
                             const hash: u64 = if (ctx_.pluckers.len > 0)
-                                std.hash.Wyhash.hash(0, std.mem.span(pathname))
+                                std.hash.Wyhash.hash(0, slice)
                             else
                                 @as(u64, 0);
+
+                            if (comptime FilePathAppender != void) {
+                                var result = ctx.?.all_files.getOrPutAdapted(hash, Context.U64Context{}) catch unreachable;
+                                if (!result.found_existing) {
+                                    result.value_ptr.* = (try appender.appendMutable(@TypeOf(slice), slice)).ptr;
+                                }
+                            }
 
                             for (ctx_.pluckers) |*plucker_| {
                                 if (plucker_.filename_hash == hash) {

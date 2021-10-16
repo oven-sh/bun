@@ -58,6 +58,10 @@ pub fn next(self: *Walker) !?WalkerEntry {
                 dirname_len += 1;
             }
             try self.name_buffer.appendSlice(base.name);
+            const cur_len = self.name_buffer.items.len;
+            try self.name_buffer.append(0);
+            self.name_buffer.shrinkRetainingCapacity(cur_len);
+
             if (base.kind == .Directory) {
                 var new_dir = top.iter.dir.openDir(base.name, .{ .iterate = true }) catch |err| switch (err) {
                     error.NameTooLong => unreachable, // no path sep in base.name

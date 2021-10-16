@@ -21,7 +21,7 @@ pub fn copy(fd_in: os.fd_t, fd_out: os.fd_t) CopyFileError!void {
         }
     }
 
-    if (std.Target.current.os.tag == .linux) {
+    if (comptime std.Target.current.os.tag == .linux) {
         // Try copy_file_range first as that works at the FS level and is the
         // most efficient method (if available).
         var offset: u64 = 0;

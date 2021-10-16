@@ -47,6 +47,7 @@ remaining_redirect_count: i8 = 127,
 redirect_buf: [2048]u8 = undefined,
 disable_shutdown: bool = false,
 timeout: u32 = 0,
+progress_node: ?*std.Progress.Node = null,
 
 pub fn init(allocator: *std.mem.Allocator, method: Method, url: URL, header_entries: Headers.Entries, header_buf: string) HTTPClient {
     return HTTPClient{
@@ -306,12 +307,23 @@ pub fn sendHTTP(this: *HTTPClient, body: []const u8, body_out_str: *MutableStrin
 
     var client_reader = this.tcp_client.reader(SOCKET_FLAGS);
 
-    return this.processResponse(
-        false,
-        @TypeOf(client_reader),
-        client_reader,
-        body_out_str,
-    );
+    if (this.progress_node == null) {
+        return this.processResponse(
+            false,
+            false,
+            @TypeOf(client_reader),
+            client_reader,
+            body_out_str,
+        );
+    } else {
+        return this.processResponse(
+            false,
+            true,
+            @TypeOf(client_reader),
+            client_reader,
+            body_out_str,
+        );
+    }
 }
 
 const ZlibPool = struct {
@@ -353,7 +365,7 @@ const ZlibPool = struct {
     }
 };
 
-pub fn processResponse(this: *HTTPClient, comptime is_https: bool, comptime Client: type, client: Client, body_out_str: *MutableString) !picohttp.Response {
+pub fn processResponse(this: *HTTPClient, comptime is_https: bool, comptime report_progress: bool, comptime Client: type, client: Client, body_out_str: *MutableString) !picohttp.Response {
     var response: picohttp.Response = undefined;
     var read_length: usize = 0;
     {
@@ -365,6 +377,11 @@ pub fn processResponse(this: *HTTPClient, comptime is_https: bool, comptime Clie
         restart: while (req_buf_read != 0) {
             req_buf_read = try client.read(http_req_buf[read_length..]);
             read_length += req_buf_read;
+            if (comptime report_progress) {
+                this.progress_node.?.activate();
+                this.progress_node.?.setCompletedItems(read_length);
+                this.progress_node.?.context.maybeRefresh();
+            }
 
             var request_buffer = http_req_buf[0..read_length];
             read_headers_up_to = if (read_headers_up_to > read_length) read_length else read_headers_up_to;
@@ -520,6 +537,12 @@ pub fn processResponse(this: *HTTPClient, comptime is_https: bool, comptime Clie
             if (pret == -1) return error.ChunkedEncodingParseError;
 
             total_size += rsize;
+
+            if (comptime report_progress) {
+                this.progress_node.?.activate();
+                this.progress_node.?.setCompletedItems(total_size);
+                this.progress_node.?.context.maybeRefresh();
+            }
         }
 
         buffer.list.shrinkRetainingCapacity(total_size);
@@ -539,6 +562,12 @@ pub fn processResponse(this: *HTTPClient, comptime is_https: bool, comptime Clie
                 };
             },
             else => {},
+        }
+
+        if (comptime report_progress) {
+            this.progress_node.?.activate();
+            this.progress_node.?.setCompletedItems(body_out_str.list.items.len);
+            this.progress_node.?.context.maybeRefresh();
         }
 
         this.body_size = @intCast(u32, body_out_str.list.items.len);
@@ -585,6 +614,18 @@ pub fn processResponse(this: *HTTPClient, comptime is_https: bool, comptime Clie
 
             body_size += size;
             remaining_content_length -= size;
+
+            if (comptime report_progress) {
+                this.progress_node.?.activate();
+                this.progress_node.?.setCompletedItems(body_size);
+                this.progress_node.?.context.maybeRefresh();
+            }
+        }
+
+        if (comptime report_progress) {
+            this.progress_node.?.activate();
+            this.progress_node.?.setCompletedItems(body_size);
+            this.progress_node.?.context.maybeRefresh();
         }
 
         buffer.list.shrinkRetainingCapacity(body_size);
@@ -605,6 +646,12 @@ pub fn processResponse(this: *HTTPClient, comptime is_https: bool, comptime Clie
             },
             else => {},
         }
+    }
+
+    if (comptime report_progress) {
+        this.progress_node.?.activate();
+        this.progress_node.?.setCompletedItems(body_out_str.list.items.len);
+        this.progress_node.?.context.maybeRefresh();
     }
 
     return response;
@@ -643,7 +690,11 @@ pub fn sendHTTPS(this: *HTTPClient, body_str: []const u8, body_out_str: *Mutable
         try client_writer.writeAll(body);
     }
 
-    return try this.processResponse(true, @TypeOf(&client), &client, body_out_str);
+    if (this.progress_node == null) {
+        return try this.processResponse(true, false, @TypeOf(&client), &client, body_out_str);
+    } else {
+        return try this.processResponse(true, true, @TypeOf(&client), &client, body_out_str);
+    }
 }
 
 // zig test src/http_client.zig --test-filter "sendHTTP - only" -lc -lc++ /Users/jarred/Code/bun/src/deps/zlib/libz.a /Users/jarred/Code/bun/src/deps/picohttpparser.o --cache-dir /Users/jarred/Code/bun/zig-cache --global-cache-dir /Users/jarred/.cache/zig --name bun --pkg-begin clap /Users/jarred/Code/bun/src/deps/zig-clap/clap.zig --pkg-end --pkg-begin picohttp /Users/jarred/Code/bun/src/deps/picohttp.zig --pkg-end --pkg-begin iguanaTLS /Users/jarred/Code/bun/src/deps/iguanaTLS/src/main.zig --pkg-end -I /Users/jarred/Code/bun/src/deps -I /Users/jarred/Code/bun/src/deps/mimalloc -I /usr/local/opt/icu4c/include  -L src/deps/mimalloc -L /usr/local/opt/icu4c/lib --main-pkg-path /Users/jarred/Code/bun --enable-cache -femit-bin=zig-out/bin/test --test-no-exec

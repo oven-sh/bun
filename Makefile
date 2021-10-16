@@ -76,7 +76,7 @@ endif
 
 STRIP ?= $(shell which llvm-strip || which llvm-strip-12 || echo "Missing llvm-strip. Please pass it in the STRIP environment var"; exit 1;)
 
-HOMEBREW_PREFIX ?= BREW_PREFIX_PATH
+HOMEBREW_PREFIX ?= $(BREW_PREFIX_PATH)
 
 
 SRC_DIR := src/javascript/jsc/bindings

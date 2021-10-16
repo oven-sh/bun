@@ -71,3 +71,4 @@ bun-test-scratch
 misctools/fetch
 
 src/deps/libiconv
+src/deps/openssl

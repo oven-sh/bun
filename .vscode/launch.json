@@ -4,14 +4,19 @@
     {
       "type": "lldb",
       "request": "launch",
-      "name": "Transpile small",
-      "program": "${workspaceFolder}/packages/debug-bun-cli-darwin-x64/bin/bun-debug",
-      "args": [
-        // "/Users/jarred/Desktop/webpack4.js"
-        // "/Users/jarred/Code/bun/examples/css-stress-test/nexty/node_modules/next/dist/build/utils.js"
-        "./dotenv-load-check.ts"
-      ],
-      "cwd": "${workspaceFolder}/examples/css-stress-test",
+      "name": "tgz debug",
+      "program": "${workspaceFolder}/tgz",
+      "args": ["./bun-examples-all-0.0.1634264480817.tgz"],
+      "cwd": "${workspaceFolder}",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "fetch debug",
+      "program": "${workspaceFolder}/misctools/fetch",
+      "args": ["https://example.com"],
+      "cwd": "${workspaceFolder}",
       "console": "internalConsole"
     },
     {

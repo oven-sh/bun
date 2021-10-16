@@ -69,3 +69,5 @@ packages/bun-*/bin/*
 packages/bun-cli/bin/*
 bun-test-scratch
 misctools/fetch
+
+src/deps/libiconv

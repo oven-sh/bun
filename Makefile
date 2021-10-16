@@ -36,6 +36,12 @@ LIBCRYPTO_PREFIX_DIR = $(BREW_PREFIX_PATH)/opt/openssl@1.1
 LIBCRYPTO_STATIC_LIB ?= $(LIBCRYPTO_PREFIX_DIR)/lib/libcrypto.a
 LIBCRYPTO_INCLUDE_DIR = $(LIBCRYPTO_PREFIX_DIR)/include
 
+ifeq ($(OS_NAME),linux)
+LIBCRYPTO_STATIC_LIB = /usr/lib/x86_64-linux-gnu/lib/libcrypto.a
+LIBICONV_PATH = $(DEPS_DIR)/libiconv.a
+endif
+
+
 BUN_TMP_DIR := /tmp/make-bun
 
 DEFAULT_USE_BMALLOC := 1

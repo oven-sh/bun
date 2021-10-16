@@ -37,7 +37,19 @@ pub fn main() anyerror!void {
 
     Output.Source.set(&output_source);
     defer Output.flush();
-    try cli.Cli.start(default_allocator, stdout, stderr, MainPanicHandler);
+    cli.Cli.start(default_allocator, stdout, stderr, MainPanicHandler) catch |err| {
+        switch (err) {
+            error.CurrentWorkingDirectoryUnlinked => {
+                Output.prettyError(
+                    "\n<r><red>error: <r>The current working directory was deleted, so that command didn't work. Please cd into a different directory and try again.",
+                    .{},
+                );
+                Output.flush();
+                std.os.exit(1);
+            },
+            else => return err,
+        }
+    };
 
     std.mem.doNotOptimizeAway(JavaScriptVirtualMachine.fetch);
     std.mem.doNotOptimizeAway(JavaScriptVirtualMachine.init);

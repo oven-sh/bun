@@ -17,3 +17,11 @@
 	path = src/deps/zlib
 	url = https://github.com/cloudflare/zlib.git
 	ignore = dirty
+[submodule "src/deps/libarchive"]
+	path = src/deps/libarchive
+	url = https://github.com/libarchive/libarchive.git
+	ignore = dirty
+[submodule "src/deps/s2n-tls"]
+	path = src/deps/s2n-tls
+	url = https://github.com/Jarred-Sumner/s2n-tls
+	ignore = dirty

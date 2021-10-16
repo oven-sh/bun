@@ -388,6 +388,14 @@ inline fn eqlComptimeCheckLen(self: string, comptime alt: anytype, comptime chec
             const second = comptime std.mem.readIntNative(u64, alt[8..16]);
             return ((comptime !check_len) or self.len == alt.len) and first == std.mem.readIntNative(u64, self[0..8]) and second == std.mem.readIntNative(u64, self[8..16]);
         },
+        17 => {
+            const first = comptime std.mem.readIntNative(u64, alt[0..8]);
+            const second = comptime std.mem.readIntNative(u64, alt[8..16]);
+            return ((comptime !check_len) or self.len == alt.len) and
+                first == std.mem.readIntNative(u64, self[0..8]) and second ==
+                std.mem.readIntNative(u64, self[8..16]) and
+                alt[16] == self[16];
+        },
         23 => {
             const first = comptime std.mem.readIntNative(u64, alt[0..8]);
             const second = comptime std.mem.readIntNative(u64, alt[8..15]);

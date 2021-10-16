@@ -13,5 +13,6 @@
   "devDependencies": {
     "@types/node": "^16.9.2",
     "@types/puppeteer": "^5.4.4"
-  }
+  },
+  "version": "0.0.0"
 }

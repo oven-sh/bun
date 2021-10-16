@@ -6,6 +6,8 @@ usingnamespace @import("../javascript.zig");
 usingnamespace @import("../bindings/bindings.zig");
 const ZigURL = @import("../../../query_string_map.zig").URL;
 const HTTPClient = @import("../../../http_client.zig");
+const Method = @import("../../../http/method.zig").Method;
+
 const picohttp = @import("picohttp");
 pub const Response = struct {
     pub const Class = NewClass(
@@ -500,7 +502,7 @@ pub const Fetch = struct {
                                 defer js.JSStringRelease(string_ref);
                                 var method_name_buf: [16]u8 = undefined;
                                 var method_name = method_name_buf[0..js.JSStringGetUTF8CString(string_ref, &method_name_buf, method_name_buf.len)];
-                                http_client.method = http.Method.which(method_name) orelse http_client.method;
+                                http_client.method = Method.which(method_name) orelse http_client.method;
                             }
                         }
                     },

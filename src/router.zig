@@ -14,6 +14,7 @@ const Fs = @import("./fs.zig");
 const Options = @import("./options.zig");
 const allocators = @import("./allocators.zig");
 const URLPath = @import("./http/url_path.zig");
+const PathnameScanner = @import("./query_string_map.zig").PathnameScanner;
 
 const index_route_hash = @truncate(u32, std.hash.Wyhash.hash(0, "index"));
 const arbitrary_max_route = 4096;
@@ -598,6 +599,7 @@ pub const RouteMap = struct {
             .matched_route_buf = file_path_buf,
         };
 
+        // iterate over the top-level routes
         if (ctx.matchDynamicRoute(0, 0)) |_dynamic_route| {
             // route name == the filesystem path relative to the pages dir excluding the file extension
             var dynamic_route = _dynamic_route;
@@ -738,6 +740,10 @@ pub const Match = struct {
     redirect_path: ?string = null,
     query_string: string = "",
 
+    pub fn paramsIterator(this: *const Match) PathnameScanner {
+        return PathnameScanner.init(this.pathname, this.name, this.params);
+    }
+
     pub fn nameWithBasename(file_path: string, dir: string) string {
         var name = file_path;
         if (strings.indexOf(name, dir)) |i| {
@@ -751,3 +757,209 @@ pub const Match = struct {
         return std.mem.trimLeft(u8, this.pathname, "/");
     }
 };
+
+const FileSystem = Fs.FileSystem;
+
+const MockRequestContextType = struct {
+    controlled: bool = false,
+    url: URLPath,
+    match_file_path_buf: [1024]u8 = undefined,
+
+    handle_request_called: bool = false,
+    redirect_called: bool = false,
+    matched_route: ?Match = null,
+    has_called_done: bool = false,
+
+    pub fn handleRequest(this: *MockRequestContextType) !void {
+        this.handle_request_called = true;
+    }
+
+    pub fn handleRedirect(this: *MockRequestContextType, pathname: string) !void {
+        this.redirect_called = true;
+    }
+
+    pub const JavaScriptHandler = struct {
+        pub fn enqueue(ctx: *MockRequestContextType, server: *MockServer, filepath_buf: []u8, params: *Router.Param.List) !void {}
+    };
+};
+
+pub const MockServer = struct {
+    watchloop_handle: ?StoredFileDescriptorType = null,
+    watcher: Watcher = Watcher{},
+
+    pub const Watcher = struct {
+        watchloop_handle: ?StoredFileDescriptorType = null,
+        pub fn start(this: *Watcher) anyerror!void {}
+    };
+};
+
+fn makeTest(cwd_path: string, data: anytype) !void {
+    std.debug.assert(cwd_path.len > 1 and !strings.eql(cwd_path, "/") and !strings.endsWith(cwd_path, "bun"));
+    const bun_tests_dir = try std.fs.cwd().makeOpenPath("bun-test-scratch", .{ .iterate = true });
+    bun_tests_dir.deleteTree(cwd_path) catch {};
+
+    const cwd = try bun_tests_dir.makeOpenPath(cwd_path, .{ .iterate = true });
+    try cwd.setAsCwd();
+
+    const Data = @TypeOf(data);
+    const fields: []const std.builtin.TypeInfo.StructField = comptime std.meta.fields(Data);
+    inline for (fields) |field| {
+        const value = @field(data, field.name);
+
+        if (std.fs.path.dirname(field.name)) |dir| {
+            try cwd.makePath(dir);
+        }
+        var file = try cwd.createFile(field.name, .{ .truncate = true });
+        try file.writeAll(std.mem.span(value));
+        file.close();
+    }
+}
+
+const expect = std.testing.expect;
+const expectEqual = std.testing.expectEqual;
+const expectEqualStrings = std.testing.expectEqualStrings;
+const Logger = @import("./logger.zig");
+
+pub const Test = struct {
+    pub fn make(comptime testName: string, data: anytype) !Router {
+        try makeTest(testName, data);
+        const JSAst = @import("./js_ast.zig");
+        JSAst.Expr.Data.Store.create(default_allocator);
+        JSAst.Stmt.Data.Store.create(default_allocator);
+        var fs = try FileSystem.init1(default_allocator, null);
+        var top_level_dir = fs.top_level_dir;
+
+        var pages_parts = [_]string{ top_level_dir, "pages" };
+        var pages_dir = try Fs.FileSystem.instance.absAlloc(default_allocator, &pages_parts);
+        // _ = try std.fs.makeDirAbsolute(
+        //     pages_dir,
+        // );
+        var router = try Router.init(&FileSystem.instance, default_allocator, Options.RouteConfig{
+            .dir = pages_dir,
+            .routes_enabled = true,
+            .extensions = &.{"js"},
+        });
+        Output.initTest();
+
+        const Resolver = @import("./resolver/resolver.zig").Resolver;
+        var logger = Logger.Log.init(default_allocator);
+        errdefer {
+            logger.printForLogLevel(Output.errorWriter()) catch {};
+        }
+
+        var opts = Options.BundleOptions{
+            .resolve_mode = .lazy,
+            .platform = .browser,
+            .loaders = undefined,
+            .define = undefined,
+            .log = &logger,
+            .entry_points = &.{},
+            .out_extensions = std.StringHashMap(string).init(default_allocator),
+            .transform_options = std.mem.zeroes(Api.TransformOptions),
+            .external = Options.ExternalModules.init(
+                default_allocator,
+                &FileSystem.instance.fs,
+                FileSystem.instance.top_level_dir,
+                &.{},
+                &logger,
+                .browser,
+            ),
+        };
+
+        var resolver = Resolver.init1(default_allocator, &logger, &FileSystem.instance, opts);
+
+        var root_dir = (try resolver.readDirInfo(pages_dir)).?;
+        var entries = root_dir.getEntries().?;
+        try router.loadRoutes(root_dir, Resolver, &resolver, 0, true);
+        var entry_points = try router.getEntryPoints(default_allocator);
+
+        try expectEqual(std.meta.fieldNames(@TypeOf(data)).len, entry_points.len);
+        return router;
+    }
+};
+
+test "Routes basic" {
+    var server = MockServer{};
+    var ctx = MockRequestContextType{
+        .url = try URLPath.parse("/hi"),
+    };
+    var router = try Test.make("routes-basic", .{
+        .@"pages/hi.js" = "//hi",
+        .@"pages/index.js" = "//index",
+        .@"pages/blog/hi.js" = "//blog/hi",
+    });
+    try router.match(&server, MockRequestContextType, &ctx);
+    try expectEqualStrings(ctx.matched_route.?.name, "/hi");
+
+    ctx = MockRequestContextType{
+        .url = try URLPath.parse("/"),
+    };
+
+    try router.match(&server, MockRequestContextType, &ctx);
+    try expectEqualStrings(ctx.matched_route.?.name, "/index");
+
+    ctx = MockRequestContextType{
+        .url = try URLPath.parse("/blog/hi"),
+    };
+
+    try router.match(&server, MockRequestContextType, &ctx);
+    try expectEqualStrings(ctx.matched_route.?.name, "/blog/hi");
+
+    ctx = MockRequestContextType{
+        .url = try URLPath.parse("/blog/hey"),
+    };
+
+    try router.match(&server, MockRequestContextType, &ctx);
+    try expect(ctx.matched_route == null);
+
+    ctx = MockRequestContextType{
+        .url = try URLPath.parse("/blog/"),
+    };
+
+    try router.match(&server, MockRequestContextType, &ctx);
+    try expect(ctx.matched_route == null);
+
+    ctx = MockRequestContextType{
+        .url = try URLPath.parse("/pages/hi"),
+    };
+
+    try router.match(&server, MockRequestContextType, &ctx);
+    try expect(ctx.matched_route == null);
+}
+
+test "Dynamic routes" {
+    var server = MockServer{};
+    var ctx = MockRequestContextType{
+        .url = try URLPath.parse("/blog/hi"),
+    };
+    var filepath_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+    var router = try Test.make("routes-dynamic", .{
+        .@"pages/index.js" = "//index.js",
+        .@"pages/blog/hi.js" = "//blog-hi",
+        .@"pages/posts/[id].js" = "//hi",
+        // .@"pages/blog/posts/bacon.js" = "//index",
+    });
+
+    try router.match(&server, MockRequestContextType, &ctx);
+    try expectEqualStrings(ctx.matched_route.?.name, "/blog/hi");
+
+    var params = ctx.matched_route.?.paramsIterator();
+    try expect(params.next() == null);
+
+    ctx.matched_route = null;
+
+    ctx.url = try URLPath.parse("/posts/123");
+    try router.match(&server, MockRequestContextType, &ctx);
+
+    params = ctx.matched_route.?.paramsIterator();
+
+    try expectEqualStrings(ctx.matched_route.?.name, "/posts/[id]");
+    try expectEqualStrings(params.next().?.rawValue(ctx.matched_route.?.pathname), "123");
+
+    // ctx = MockRequestContextType{
+    //     .url = try URLPath.parse("/"),
+    // };
+
+    // try router.match(&server, MockRequestContextType, &ctx);
+    // try expectEqualStrings(ctx.matched_route.name, "index");
+}

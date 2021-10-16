@@ -32,6 +32,8 @@ const BunCommand = @import("./cli/bun_command.zig").BunCommand;
 const DevCommand = @import("./cli/dev_command.zig").DevCommand;
 const DiscordCommand = @import("./cli/discord_command.zig").DiscordCommand;
 const BuildCommand = @import("./cli/build_command.zig").BuildCommand;
+const CreateCommand = @import("./cli/create_command.zig").CreateCommand;
+const CreateListExamplesCommand = @import("./cli/create_command.zig").CreateListExamplesCommand;
 const RunCommand = @import("./cli/run_command.zig").RunCommand;
 
 var start_time: i128 = undefined;
@@ -62,39 +64,7 @@ pub const Cli = struct {
 };
 
 const LoaderMatcher = strings.ExactSizeMatcher(4);
-pub fn ColonListType(comptime t: type, value_resolver: anytype) type {
-    return struct {
-        pub fn init(allocator: *std.mem.Allocator, count: usize) !@This() {
-            var keys = try allocator.alloc(string, count);
-            var values = try allocator.alloc(t, count);
-
-            return @This(){ .keys = keys, .values = values };
-        }
-        keys: []string,
-        values: []t,
-
-        pub fn load(self: *@This(), input: []const string) !void {
-            for (input) |str, i| {
-                // Support either ":" or "=" as the separator, preferring whichever is first.
-                // ":" is less confusing IMO because that syntax is used with flags
-                // but "=" is what esbuild uses and I want this to be somewhat familiar for people using esbuild
-                const midpoint = std.math.min(strings.indexOfChar(str, ':') orelse std.math.maxInt(usize), strings.indexOfChar(str, '=') orelse std.math.maxInt(usize));
-                if (midpoint == std.math.maxInt(usize)) {
-                    return error.InvalidSeparator;
-                }
-
-                self.keys[i] = str[0..midpoint];
-                self.values[i] = try value_resolver(str[midpoint + 1 .. str.len]);
-            }
-        }
-
-        pub fn resolve(allocator: *std.mem.Allocator, input: []const string) !@This() {
-            var list = try init(allocator, input.len);
-            try list.load(input);
-            return list;
-        }
-    };
-}
+const ColonListType = @import("./cli/colon_list_type.zig").ColonListType;
 pub const LoaderColonList = ColonListType(Api.Loader, Arguments.loader_resolver);
 pub const DefineColonList = ColonListType(string, Arguments.noop_resolver);
 
@@ -197,7 +167,10 @@ pub const Arguments = struct {
     pub fn parse(allocator: *std.mem.Allocator, comptime cmd: Command.Tag) !Api.TransformOptions {
         var diag = clap.Diagnostic{};
 
-        var args = clap.parse(clap.Help, &params, .{ .diagnostic = &diag }) catch |err| {
+        var args = clap.parse(clap.Help, &params, .{
+            .diagnostic = &diag,
+            .allocator = allocator,
+        }) catch |err| {
             // Report useful error and exit
             diag.report(Output.errorWriter(), err) catch {};
             return err;
@@ -469,10 +442,11 @@ const HelpCommand = struct {
         const dirname = std.fs.path.basename(cwd);
         if (FeatureFlags.dev_only) {
             const fmt =
-                \\> <r> <b><green>dev    <r><d>  ./a.ts ./b.jsx<r>        Start a Bun Dev Server
-                \\> <r> <b><magenta>bun    <r><d>  ./a.ts ./b.jsx<r>        Bundle dependencies of input files into a <r><magenta>.bun<r>
-                \\> <r> <b><blue>discord<r>                        Open Bun's Discord server
-                \\> <r> <b><d>help      <r>                     Print this help menu
+                \\> <r> <b><green>dev     <r><d>  ./a.ts ./b.jsx<r>        Start a Bun Dev Server
+                \\> <r> <b><magenta>bun     <r><d>  ./a.ts ./b.jsx<r>        Bundle dependencies of input files into a <r><magenta>.bun<r>
+                \\> <r> <b><cyan>create     <r><d>  next ./app<r>          Start a new project from a template <d>(shorthand: c)<r>
+                \\> <r> <b><blue>discord <r>                        Open Bun's Discord server
+                \\> <r> <b><d>help      <r>                      Print this help menu
                 \\
             ;
 
@@ -485,6 +459,7 @@ const HelpCommand = struct {
                 \\> <r> <b><white>init<r>                           Setup Bun in \"{s}\"
                 \\> <r> <b><green>dev    <r><d>  ./a.ts ./b.jsx<r>        Start a Bun Dev Server
                 \\<d>*<r> <b><cyan>build  <r><d>  ./a.ts ./b.jsx<r>        Make JavaScript-like code runnable & bundle CSS
+                \\> <r> <b><cyan>create<r><d> next<r>        Use a template from https://github.com/jarred-sumner/bun/tree/main/examples<r>
                 \\> <r> <b><magenta>bun    <r><d>  ./a.ts ./b.jsx<r>        Bundle dependencies of input files into a <r><magenta>.bun<r>
                 \\> <r> <green>run    <r><d>  ./a.ts        <r>        Run a JavaScript-like file with Bun.js
                 \\> <r> <b><blue>discord<r>                        Open Bun's Discord server
@@ -544,7 +519,10 @@ pub const Command = struct {
 
         pub fn create(allocator: *std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {
             return Command.Context{
-                .args = try Arguments.parse(allocator, command),
+                .args = if (comptime command != Command.Tag.CreateCommand)
+                    try Arguments.parse(allocator, command)
+                else
+                    std.mem.zeroes(Api.TransformOptions),
                 .log = log,
                 .start_time = start_time,
                 .allocator = allocator,
@@ -561,7 +539,10 @@ pub const Command = struct {
             return .AutoCommand;
         }
 
-        const next_arg = (args_iter.next(allocator) orelse return .AutoCommand) catch unreachable;
+        var next_arg = (args_iter.next(allocator) orelse return .AutoCommand) catch unreachable;
+        while (next_arg[0] == '-') {
+            next_arg = (args_iter.next(allocator) orelse return .AutoCommand) catch unreachable;
+        }
 
         const first_arg_name = std.mem.span(next_arg);
         const RootCommandMatcher = strings.ExactSizeMatcher(8);
@@ -571,6 +552,7 @@ pub const Command = struct {
                 RootCommandMatcher.case("init") => .InitCommand,
                 RootCommandMatcher.case("bun") => .BunCommand,
                 RootCommandMatcher.case("discord") => .DiscordCommand,
+                RootCommandMatcher.case("c"), RootCommandMatcher.case("create") => .CreateCommand,
 
                 RootCommandMatcher.case("b"), RootCommandMatcher.case("build") => .BuildCommand,
                 RootCommandMatcher.case("r"), RootCommandMatcher.case("run") => .RunCommand,
@@ -585,6 +567,7 @@ pub const Command = struct {
                 RootCommandMatcher.case("bun") => .BunCommand,
                 RootCommandMatcher.case("discord") => .DiscordCommand,
                 RootCommandMatcher.case("d"), RootCommandMatcher.case("dev") => .DevCommand,
+                RootCommandMatcher.case("c"), RootCommandMatcher.case("create") => .CreateCommand,
 
                 RootCommandMatcher.case("help") => .HelpCommand,
                 else => .AutoCommand,
@@ -616,6 +599,32 @@ pub const Command = struct {
                 const ctx = try Command.Context.create(allocator, log, .BuildCommand);
 
                 try BuildCommand.exec(ctx);
+            },
+            .CreateCommand => {
+                const ctx = try Command.Context.create(allocator, log, .CreateCommand);
+                var positionals: [2]string = undefined;
+                var positional_i: usize = 0;
+
+                var args = try std.process.argsAlloc(allocator);
+
+                if (args.len > 2) {
+                    var remainder = args[2..];
+                    var remainder_i: usize = 0;
+                    var i: usize = 0;
+                    while (remainder_i < remainder.len and positional_i < positionals.len) : (remainder_i += 1) {
+                        var slice = std.mem.trim(u8, std.mem.span(remainder[remainder_i]), " \t\n;");
+                        if (slice.len > 0) {
+                            positionals[positional_i] = slice;
+                            positional_i += 1;
+                        }
+                    }
+                }
+                var positionals_ = positionals[0..positional_i];
+
+                switch (positionals_.len) {
+                    0...1 => try CreateListExamplesCommand.exec(ctx),
+                    else => try CreateCommand.exec(ctx, positionals_),
+                }
             },
             .RunCommand => {
                 const ctx = try Command.Context.create(allocator, log, .RunCommand);
@@ -661,5 +670,6 @@ pub const Command = struct {
         RunCommand,
         AutoCommand,
         HelpCommand,
+        CreateCommand,
     };
 };

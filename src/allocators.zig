@@ -272,6 +272,11 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
             return constStrToU8(slice);
         }
 
+        pub fn appendMutable(self: *Self, comptime AppendType: type, _value: AppendType) ![]u8 {
+            const appended = try @call(.{ .modifier = .always_inline }, append, .{ self, AppendType, _value });
+            return constStrToU8(appended);
+        }
+
         pub fn append(self: *Self, comptime AppendType: type, _value: AppendType) ![]const u8 {
             mutex.lock();
             defer mutex.unlock();
@@ -302,7 +307,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
         ) ![]const u8 {
             const value_len: usize = brk: {
                 switch (comptime AppendType) {
-                    []const u8, []u8 => {
+                    []const u8, []u8, [:0]const u8, [:0]u8 => {
                         break :brk _value.len;
                     },
                     else => {
@@ -322,7 +327,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
                 backing_buf_used += value_len;
 
                 switch (AppendType) {
-                    []const u8, []u8 => {
+                    []const u8, []u8, [:0]const u8, [:0]u8 => {
                         std.mem.copy(u8, backing_buf[start .. backing_buf_used - 1], _value);
                         backing_buf[backing_buf_used - 1] = 0;
                     },
@@ -341,7 +346,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
                 var value_buf = try self.allocator.alloc(u8, value_len);
 
                 switch (comptime AppendType) {
-                    []const u8, []u8 => {
+                    []const u8, []u8, [:0]const u8, [:0]u8 => {
                         std.mem.copy(u8, value_buf, _value);
                     },
                     else => {

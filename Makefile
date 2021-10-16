@@ -41,6 +41,8 @@ LIBCRYPTO_STATIC_LIB = /usr/lib/x86_64-linux-gnu/lib/libcrypto.a
 LIBICONV_PATH = $(DEPS_DIR)/libiconv.a
 endif
 
+build-iconv-linux:
+	cd src/deps/libiconv/libiconv-1.16; ./configure --enable-static; make -j 12; cp ./lib/.libs/libiconv.a $(DEPS_DIR)/libiconv.a
 
 BUN_TMP_DIR := /tmp/make-bun
 
@@ -167,7 +169,6 @@ BUN_LLD_FLAGS = $(OBJ_FILES) \
 		src/deps/picohttpparser.o \
 		$(LIBICONV_PATH) \
 		$(CLANG_FLAGS) \
-		-liconv \
 
 ifeq ($(OS_NAME), linux)
 BUN_LLD_FLAGS += -lstdc++fs \

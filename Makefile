@@ -105,9 +105,9 @@ endif
 
 
 
-MACOS_ICU_FILES = $(HOMEBREW_PREFIX)opt/icu4c/lib/libicudata.a \
-	$(HOMEBREW_PREFIX)opt/icu4c/lib/libicui18n.a \
-	$(HOMEBREW_PREFIX)opt/icu4c/lib/libicuuc.a 
+MACOS_ICU_FILES = $(HOMEBREW_PREFIX)/opt/icu4c/lib/libicudata.a \
+	$(HOMEBREW_PREFIX)/opt/icu4c/lib/libicui18n.a \
+	$(HOMEBREW_PREFIX)/opt/icu4c/lib/libicuuc.a 
 
 MACOS_ICU_INCLUDE = $(HOMEBREW_PREFIX)opt/icu4c/include
 
@@ -370,8 +370,8 @@ test-install:
 test-all: test-install test-with-hmr test-no-hmr
 
 copy-test-node-modules:
-	rm -rf integration/snippets/package-json-exports/node_modules
-	cp -r integration/snippets/package-json-exports/_node_modules_copy integration/snippets/package-json-exports/node_modules
+	rm -rf integration/snippets/package-json-exports/node_modules || echo "";
+	cp -r integration/snippets/package-json-exports/_node_modules_copy integration/snippets/package-json-exports/node_modules || echo "";
 kill-bun:
 	-killall -9 bun bun-debug
 	

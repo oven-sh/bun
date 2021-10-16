@@ -453,6 +453,8 @@ pub const CreateCommand = struct {
                             Output.prettyErrorln("<r>  {s}", .{path});
                         }
                     }
+
+                    Output.prettyErrorln("<r>\n<d>To do it anyway, use --force<r>", .{});
                     Output.flush();
                     std.os.exit(1);
                 }

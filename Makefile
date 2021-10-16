@@ -298,7 +298,7 @@ libarchive:
 	./build/autogen.sh; \
 	./configure --disable-shared --enable-static  --with-pic  --disable-bsdtar   --disable-bsdcat --disable-rpath --enable-posix-regex-lib  --without-xml2  --without-expat --without-openssl  --without-iconv --without-zlib; \
 	make -j${CPUS}; \
-	cp .libs/libarchive.a/libarchive.a $(DEPS_DIR)/libarchive.a;
+	cp ./libs/libarchive.a $(DEPS_DIR)/libarchive.a;
 
 tgz:
 	zig build-exe -Drelease-fast --main-pkg-path $(shell pwd) ./misctools/tgz.zig $(DEPS_DIR)/zlib/libz.a $(DEPS_DIR)/libarchive.a $(LIBICONV_PATH) -lc 
@@ -317,6 +317,8 @@ require:
 	@cmake --version >/dev/null 2>&1 || (echo "ERROR: cmake is required."; exit 1)
 	@esbuild --version >/dev/null 2>&1 || (echo "ERROR: esbuild is required."; exit 1)
 	@npm --version >/dev/null 2>&1 || (echo "ERROR: npm is required."; exit 1)
+	@aclocal 2>&1 || (echo "ERROR: automake is required. Install on mac with:\nbrew install automake"; exit 1)
+	@glibtoolize 2>&1 || (echo "ERROR: libtool is required. Install on mac with:\nbrew install libtool"; exit 1)
 	@stat $(LIBICONV_PATH) >/dev/null 2>&1 || (echo "ERROR: libiconv is required. Please:\nbrew install libiconv"; exit 1)
 	@stat $(LIBCRYPTO_STATIC_LIB) >/dev/null 2>&1 || (echo "ERROR: OpenSSL 1.1 is required. Please:\nbrew install openssl@1.1"; exit 1)
 

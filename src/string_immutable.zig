@@ -268,6 +268,14 @@ pub fn quotedAlloc(allocator: *std.mem.Allocator, self: string) !string {
     return out;
 }
 
+pub fn eqlAnyComptime(self: string, comptime list: []const string) bool {
+    inline for (list) |item| {
+        if (eqlComptimeCheckLen(self, item, true)) return true;
+    }
+
+    return false;
+}
+
 pub fn endsWithAnyComptime(self: string, comptime str: string) bool {
     if (comptime str.len < 10) {
         const last = self[self.len - 1];
@@ -396,13 +404,31 @@ inline fn eqlComptimeCheckLen(self: string, comptime alt: anytype, comptime chec
                 std.mem.readIntNative(u64, self[8..16]) and
                 alt[16] == self[16];
         },
+        18 => {
+            const first = comptime std.mem.readIntNative(u64, alt[0..8]);
+            const second = comptime std.mem.readIntNative(u64, alt[8..16]);
+            const third = comptime std.mem.readIntNative(u16, alt[16..18]);
+            return ((comptime !check_len) or self.len == alt.len) and
+                first == std.mem.readIntNative(u64, self[0..8]) and second ==
+                std.mem.readIntNative(u64, self[8..16]) and
+                std.mem.readIntNative(u16, self[16..18]) == third;
+        },
         23 => {
             const first = comptime std.mem.readIntNative(u64, alt[0..8]);
-            const second = comptime std.mem.readIntNative(u64, alt[8..15]);
+            const second = comptime std.mem.readIntNative(u64, alt[8..16]);
             return ((comptime !check_len) or self.len == alt.len) and
                 first == std.mem.readIntNative(u64, self[0..8]) and
                 second == std.mem.readIntNative(u64, self[8..16]) and
                 eqlComptimeIgnoreLen(self[16..23], comptime alt[16..23]);
+        },
+        22 => {
+            const first = comptime std.mem.readIntNative(u64, alt[0..8]);
+            const second = comptime std.mem.readIntNative(u64, alt[8..16]);
+
+            return ((comptime !check_len) or self.len == alt.len) and
+                first == std.mem.readIntNative(u64, self[0..8]) and
+                second == std.mem.readIntNative(u64, self[8..16]) and
+                eqlComptimeIgnoreLen(self[16..22], comptime alt[16..22]);
         },
         24 => {
             const first = comptime std.mem.readIntNative(u64, alt[0..8]);
@@ -668,7 +694,6 @@ pub fn toASCIIHexValue(character: u8) u8 {
 }
 
 pub fn utf8ByteSequenceLength(first_byte: u8) u3 {
-    // The switch is optimized much better than a "smart" approach using @clz
     return switch (first_byte) {
         0b0000_0000...0b0111_1111 => 1,
         0b1100_0000...0b1101_1111 => 2,

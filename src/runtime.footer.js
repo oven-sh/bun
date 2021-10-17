@@ -21,3 +21,4 @@ export var __exportDefault = BUN_RUNTIME.__exportDefault;
 export var $$bun_runtime_json_parse = JSON.parse;
 
 globalThis.require ||= BUN_RUNTIME.__require;
+globalThis.self ||= globalThis;

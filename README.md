@@ -28,11 +28,19 @@ npm install -g bun-cli
 
 ## Using Bun with Next.js
 
-In your project folder root (where `package.json` is):
+To create a new Next.js app with Bun:
 
 ```bash
 bun create next ./app
 cd app
+bun
+```
+
+To use an existing Next.js app with Bun:
+
+```bash
+npm install bun-framework-next
+bun bun --use next
 bun
 ```
 
@@ -77,11 +85,18 @@ If `public/index.html` exists, it becomes the default page instead of a 404 page
 
 #### Using Bun with Create React App
 
-Run this:
+To create new a React app:
 
 ```bash
 bun create react ./app
 cd app
+bun
+```
+
+To use an existing React app:
+
+```bash
+bun create /absolute-path-to-react-app app
 bun
 ```
 

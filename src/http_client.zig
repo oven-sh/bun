@@ -520,10 +520,9 @@ pub fn processResponse(this: *HTTPClient, comptime is_https: bool, comptime repo
         var total_size = rsize;
 
         while (pret == -2) {
-            if (buffer.list.items[total_size..].len < @intCast(usize, decoder.bytes_left_in_chunk)) {
-                try buffer.inflate(total_size + @intCast(usize, decoder.bytes_left_in_chunk));
+            if (buffer.list.items[total_size..].len < @intCast(usize, decoder.bytes_left_in_chunk) or buffer.list.items[total_size..].len < 512) {
+                try buffer.inflate(std.math.max(total_size * 2, 1024));
                 buffer.list.expandToCapacity();
-                var slice = buffer.list.items[total_size..];
             }
 
             rret = try client.read(buffer.list.items[total_size..]);

@@ -2033,6 +2033,23 @@ pub const Expr = struct {
         return exp.data.e_import;
     }
 
+    pub fn hasAnyPropertyNamed(expr: *const Expr, comptime names: []const string) bool {
+        if (std.meta.activeTag(expr.data) != .e_object) return false;
+        const obj = expr.data.e_object;
+        if (@ptrToInt(obj.properties.ptr) == 0) return false;
+
+        for (obj.properties) |prop| {
+            const value = prop.value orelse continue;
+            const key = prop.key orelse continue;
+            if (std.meta.activeTag(key.data) != .e_string) continue;
+            const key_str = key.data.e_string;
+            if (strings.eqlAnyComptime(key_str.utf8, names)) return true;
+        }
+
+        return false;
+    }
+
+    // Making this comptime bloats the binary and doesn't seem to impact runtime performance.
     pub fn asProperty(expr: *const Expr, name: string) ?Query {
         if (std.meta.activeTag(expr.data) != .e_object) return null;
         const obj = expr.data.e_object;

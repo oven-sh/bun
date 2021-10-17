@@ -459,7 +459,7 @@ const HelpCommand = struct {
                 \\> <r> <b><white>init<r>                           Setup Bun in \"{s}\"
                 \\> <r> <b><green>dev    <r><d>  ./a.ts ./b.jsx<r>        Start a Bun Dev Server
                 \\<d>*<r> <b><cyan>build  <r><d>  ./a.ts ./b.jsx<r>        Make JavaScript-like code runnable & bundle CSS
-                \\> <r> <b><cyan>create<r><d> next<r>        Use a template from https://github.com/jarred-sumner/bun/tree/main/examples<r>
+                \\> <r> <b><cyan>create<r><d> next  ./app<r>        Start a new project from a template<r>
                 \\> <r> <b><magenta>bun    <r><d>  ./a.ts ./b.jsx<r>        Bundle dependencies of input files into a <r><magenta>.bun<r>
                 \\> <r> <green>run    <r><d>  ./a.ts        <r>        Run a JavaScript-like file with Bun.js
                 \\> <r> <b><blue>discord<r>                        Open Bun's Discord server
@@ -621,10 +621,8 @@ pub const Command = struct {
                 }
                 var positionals_ = positionals[0..positional_i];
 
-                switch (positionals_.len) {
-                    0...1 => try CreateListExamplesCommand.exec(ctx),
-                    else => try CreateCommand.exec(ctx, positionals_),
-                }
+                try CreateCommand.exec(ctx, positionals_);
+                return;
             },
             .RunCommand => {
                 const ctx = try Command.Context.create(allocator, log, .RunCommand);

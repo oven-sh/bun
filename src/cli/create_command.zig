@@ -31,85 +31,17 @@ const NPMClient = @import("../which_npm_client.zig").NPMClient;
 const which = @import("../which.zig").which;
 const clap = @import("clap");
 const Lock = @import("../lock.zig").Lock;
-
+const Headers = @import("../javascript/jsc/webcore/response.zig").Headers;
 const CopyFile = @import("../copy_file.zig");
 var bun_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 
-// the standard library function for this returns false when statically linking
-fn getSelfExeSharedLibPaths(allocator: *std.mem.Allocator) error{OutOfMemory}![][:0]u8 {
-    const List = std.ArrayList([:0]u8);
-    const os = std.os;
-    const Allocator = std.mem.Allocator;
-    const builtin = std.builtin;
-    const mem = std.mem;
-
-    switch (builtin.os.tag) {
-        .linux,
-        .freebsd,
-        .netbsd,
-        .dragonfly,
-        .openbsd,
-        => {
-            var paths = List.init(allocator);
-            errdefer {
-                const slice = paths.toOwnedSlice();
-                for (slice) |item| {
-                    allocator.free(item);
-                }
-                allocator.free(slice);
-            }
-            try os.dl_iterate_phdr(&paths, error{OutOfMemory}, struct {
-                fn callback(info: *os.dl_phdr_info, size: usize, list: *List) !void {
-                    _ = size;
-                    const name = info.dlpi_name orelse return;
-                    if (name[0] == '/') {
-                        const item = try list.allocator.dupeZ(u8, mem.spanZ(name));
-                        errdefer list.allocator.free(item);
-                        try list.append(item);
-                    }
-                }
-            }.callback);
-            return paths.toOwnedSlice();
-        },
-        .macos, .ios, .watchos, .tvos => {
-            var paths = List.init(allocator);
-            errdefer {
-                const slice = paths.toOwnedSlice();
-                for (slice) |item| {
-                    allocator.free(item);
-                }
-                allocator.free(slice);
-            }
-            const img_count = std.c._dyld_image_count();
-            var i: u32 = 0;
-            while (i < img_count) : (i += 1) {
-                const name = std.c._dyld_get_image_name(i);
-                const item = try allocator.dupeZ(u8, mem.spanZ(name));
-                errdefer allocator.free(item);
-                try paths.append(item);
-            }
-            return paths.toOwnedSlice();
-        },
-        // revisit if Haiku implements dl_iterat_phdr (https://dev.haiku-os.org/ticket/15743)
-        .haiku => {
-            var paths = List.init(allocator);
-            errdefer {
-                const slice = paths.toOwnedSlice();
-                for (slice) |item| {
-                    allocator.free(item);
-                }
-                allocator.free(slice);
-            }
-
-            var b = "/boot/system/runtime_loader";
-            const item = try allocator.dupeZ(u8, mem.spanZ(b));
-            errdefer allocator.free(item);
-            try paths.append(item);
-
-            return paths.toOwnedSlice();
-        },
-        else => @compileError("getSelfExeSharedLibPaths unimplemented for this target"),
-    }
+const target_nextjs_version = "11.1.2";
+pub var initialized_store = false;
+pub fn initializeStore() void {
+    if (initialized_store) return;
+    initialized_store = true;
+    js_ast.Expr.Data.Store.create(default_allocator);
+    js_ast.Stmt.Data.Store.create(default_allocator);
 }
 
 const skip_dirs = &[_]string{ "node_modules", ".git" };
@@ -130,8 +62,30 @@ const npm_task_args = &[_]string{
     "exec",
 };
 
+const UnsupportedPackages = struct {
+    @"styled-jsx": bool = false,
+
+    pub fn update(this: *UnsupportedPackages, expr: js_ast.Expr) void {
+        for (expr.data.e_object.properties) |prop| {
+            inline for (comptime std.meta.fieldNames(UnsupportedPackages)) |field_name| {
+                if (strings.eqlComptime(prop.key.?.data.e_string.utf8, comptime field_name)) {
+                    @field(this, field_name) = true;
+                }
+            }
+        }
+    }
+
+    pub fn print(this: UnsupportedPackages) void {
+        inline for (comptime std.meta.fieldNames(UnsupportedPackages)) |field_name| {
+            if (@field(this, field_name)) {
+                Output.prettyErrorln("<r><yellow>warn<r><d>:<r> <b>\"{s}\"<r> won't work in Bun yet\n", .{field_name});
+            }
+        }
+    }
+};
+
 var bun_path: ?[:0]const u8 = null;
-fn execTask(allocator: *std.mem.Allocator, task_: string, cwd: string, PATH: string, npm_client: NPMClient) void {
+fn execTask(allocator: *std.mem.Allocator, task_: string, cwd: string, PATH: string, npm_client: ?NPMClient) void {
     const task = std.mem.trim(u8, task_, " \n\r\t");
     if (task.len == 0) return;
 
@@ -141,16 +95,18 @@ fn execTask(allocator: *std.mem.Allocator, task_: string, cwd: string, PATH: str
         count += 1;
     }
 
-    const npm_args = 2;
+    const npm_args = 2 * @intCast(usize, @boolToInt(npm_client != null));
     const total = count + npm_args;
     var argv = allocator.alloc(string, total) catch return;
     defer allocator.free(argv);
 
-    argv[0] = npm_client.bin;
-    argv[1] = npm_task_args[0];
+    if (npm_client) |client| {
+        argv[0] = client.bin;
+        argv[1] = npm_task_args[0];
+    }
 
     {
-        var i: usize = 2;
+        var i: usize = npm_args;
 
         splitter = std.mem.split(u8, task, " ");
         while (splitter.next()) |split| {
@@ -207,6 +163,14 @@ pub const ProgressBuf = struct {
         buf_index += 1;
         return try std.fmt.bufPrint(std.mem.span(&bufs[buf_index % 2]), fmt, args);
     }
+
+    pub fn pretty(comptime fmt: string, args: anytype) !string {
+        if (Output.enable_ansi_colors) {
+            return ProgressBuf.print(comptime Output.prettyFmt(fmt, true), args);
+        } else {
+            return ProgressBuf.print(comptime Output.prettyFmt(fmt, false), args);
+        }
+    }
 };
 
 const CreateOptions = struct {
@@ -214,6 +178,7 @@ const CreateOptions = struct {
     skip_install: bool = false,
     overwrite: bool = false,
     skip_git: bool = false,
+    skip_package_json: bool = false,
     verbose: bool = false,
 
     const params = [_]clap.Param(clap.Help){
@@ -225,13 +190,14 @@ const CreateOptions = struct {
         clap.parseParam("--no-install               Don't install node_modules") catch unreachable,
         clap.parseParam("--no-git                   Don't create a git repository") catch unreachable,
         clap.parseParam("--verbose                  Too many logs") catch unreachable,
+        clap.parseParam("--no-package-json          Disable package.json transforms") catch unreachable,
         clap.parseParam("<POS>...                   ") catch unreachable,
     };
 
-    pub fn parse(allocator: *std.mem.Allocator, comptime print_flags_only: bool) !CreateOptions {
+    pub fn parse(ctx: Command.Context, comptime print_flags_only: bool) !CreateOptions {
         var diag = clap.Diagnostic{};
 
-        var args = clap.parse(clap.Help, &params, .{ .diagnostic = &diag, .allocator = allocator }) catch |err| {
+        var args = clap.parse(clap.Help, &params, .{ .diagnostic = &diag, .allocator = ctx.allocator }) catch |err| {
             // Report useful error and exit
             diag.report(Output.errorWriter(), err) catch {};
             return err;
@@ -243,10 +209,16 @@ const CreateOptions = struct {
                 return undefined;
             }
 
-            Output.prettyln("<r><b>bun create<r> flags:\n", .{});
+            Output.prettyln("<r><b>bun create<r>\n  flags:\n", .{});
             Output.flush();
             clap.help(Output.writer(), params[1..]) catch {};
+            Output.pretty("\n", .{});
+            Output.prettyln("<r>  environment variables:\n\n", .{});
+            Output.prettyln("   <b>GITHUB_ACCESS_TOKEN<r>      Use a GitHub access token for downloading code from GitHub.", .{});
+            Output.prettyln("   <b>GITHUB_API_DOMAIN<r>        Instead of \"api.github.com\", useful for GitHub Enterprise\n", .{});
+            Output.prettyln("   <b>NPM_CLIENT<r>               Absolute path to the npm client executable", .{});
             Output.flush();
+
             std.os.exit(0);
         }
 
@@ -263,6 +235,8 @@ const CreateOptions = struct {
             opts.npm_client = NPMClient.Tag.pnpm;
         }
 
+        opts.skip_package_json = args.flag("--no-package-json");
+
         opts.verbose = args.flag("--verbose");
         opts.skip_install = args.flag("--no-install");
         opts.skip_git = args.flag("--no-git");
@@ -278,7 +252,11 @@ pub const CreateCommand = struct {
     var client: HTTPClient = undefined;
 
     pub fn exec(ctx: Command.Context, positionals: []const []const u8) !void {
-        var create_options = try CreateOptions.parse(ctx.allocator, false);
+        var create_options = try CreateOptions.parse(ctx, false);
+
+        if (positionals.len == 0) {
+            return try CreateListExamplesCommand.exec(ctx);
+        }
 
         var filesystem = try fs.FileSystem.init1(ctx.allocator, null);
         var env_loader: DotEnv.Loader = brk: {
@@ -290,6 +268,9 @@ pub const CreateCommand = struct {
 
         env_loader.loadProcess();
 
+        var example_tag = Example.Tag.unknown;
+
+        var unsupported_packages = UnsupportedPackages{};
         const template = brk: {
             var positional = positionals[0];
 
@@ -304,6 +285,7 @@ pub const CreateCommand = struct {
                         if (create_options.verbose) {
                             Output.prettyErrorln("reading from {s}", .{outdir_path});
                         }
+                        example_tag = Example.Tag.local_folder;
                         break :brk outdir_path;
                     }
                 }
@@ -317,6 +299,7 @@ pub const CreateCommand = struct {
                     if (create_options.verbose) {
                         Output.prettyErrorln("reading from {s}", .{outdir_path});
                     }
+                    example_tag = Example.Tag.local_folder;
                     break :brk outdir_path;
                 }
 
@@ -330,14 +313,67 @@ pub const CreateCommand = struct {
                         if (create_options.verbose) {
                             Output.prettyErrorln("reading from {s}", .{outdir_path});
                         }
+                        example_tag = Example.Tag.local_folder;
                         break :brk outdir_path;
+                    }
+                }
+
+                if (std.fs.path.isAbsolute(positional)) {
+                    example_tag = Example.Tag.local_folder;
+                    break :brk positional;
+                }
+
+                var repo_begin: usize = std.math.maxInt(usize);
+                // "https://github.com/foo/bar"
+                if (strings.startsWith(positional, "github.com/")) {
+                    repo_begin = "github.com/".len;
+                }
+
+                if (strings.startsWith(positional, "https://github.com/")) {
+                    repo_begin = "https://github.com/".len;
+                }
+
+                if (repo_begin == std.math.maxInt(usize) and positional[0] != '/') {
+                    if (std.mem.indexOfScalar(u8, positional, '/')) |first_slash_index| {
+                        if (std.mem.indexOfScalar(u8, positional, '/')) |last_slash_index| {
+                            if (first_slash_index == last_slash_index and
+                                positional[last_slash_index..].len > 0 and
+                                last_slash_index > 0)
+                            {
+                                repo_begin = 0;
+                            }
+                        }
+                    }
+                }
+
+                if (repo_begin != std.math.maxInt(usize)) {
+                    const remainder = positional[repo_begin..];
+                    if (std.mem.indexOfScalar(u8, remainder, '/')) |i| {
+                        if (i > 0 and remainder[i + 1 ..].len > 0) {
+                            if (std.mem.indexOfScalar(u8, remainder[i + 1 ..], '/')) |last_slash| {
+                                example_tag = Example.Tag.github_repository;
+                                break :brk std.mem.trim(u8, remainder[0 .. i + 1 + last_slash], "# \r\t");
+                            } else {
+                                example_tag = Example.Tag.github_repository;
+                                break :brk std.mem.trim(u8, remainder, "# \r\t");
+                            }
+                        }
                     }
                 }
             }
 
+            example_tag = Example.Tag.official;
             break :brk positional;
         };
-        const dirname = positionals[1];
+
+        const dirname: string = brk: {
+            if (positionals.len == 1) {
+                break :brk std.fs.path.basename(template);
+            }
+
+            break :brk positionals[1];
+        };
+
         var filename_writer = filesystem.dirname_store;
         const destination = try filesystem.dirname_store.append([]const u8, resolve_path.joinAbs(filesystem.top_level_dir, .auto, dirname));
 
@@ -350,7 +386,7 @@ pub const CreateCommand = struct {
             progress.refresh_rate_ns = std.time.ns_per_ms * 8;
 
             if (create_options.verbose) {
-                Output.prettyErrorln("your using alacritty", .{});
+                Output.prettyErrorln("alacritty gets faster progress bars ", .{});
             }
         }
 
@@ -359,387 +395,305 @@ pub const CreateCommand = struct {
         }
 
         var package_json_contents: MutableString = undefined;
-        var package_json_file: std.fs.File = undefined;
-
-        const is_remote_template = !std.fs.path.isAbsolute(template);
+        var package_json_file: ?std.fs.File = null;
 
         if (create_options.verbose) {
-            Output.prettyErrorln("is_remote_template {d}", .{@boolToInt(is_remote_template)});
+            Output.prettyErrorln("Downloading as {s}\n", .{@tagName(example_tag)});
         }
 
-        if (is_remote_template) {
-            var tarball_bytes: MutableString = Example.fetch(ctx, template, &progress, node) catch |err| {
-                switch (err) {
-                    error.HTTPForbidden, error.ExampleNotFound => {
+        switch (example_tag) {
+            Example.Tag.github_repository, Example.Tag.official => {
+                var tarball_bytes: MutableString = switch (example_tag) {
+                    .official => Example.fetch(ctx, template, &progress, node) catch |err| {
+                        switch (err) {
+                            error.HTTPForbidden, error.ExampleNotFound => {
+                                node.end();
+                                progress.refresh();
+
+                                Output.prettyError("\n<r><red>error:<r> <b>\"{s}\"<r> was not found. Here are templates you can use:\n\n", .{
+                                    template,
+                                });
+                                Output.flush();
+
+                                const examples = try Example.fetchAllLocalAndRemote(ctx, null, &env_loader, filesystem);
+                                Example.print(examples.items, dirname);
+                                Output.flush();
+                                std.os.exit(1);
+                            },
+                            else => {
+                                node.end();
+                                progress.refresh();
+
+                                Output.prettyErrorln("\n\n", .{});
+
+                                return err;
+                            },
+                        }
+                    },
+                    .github_repository => Example.fetchFromGitHub(ctx, &env_loader, template, &progress, node) catch |err| {
+                        switch (err) {
+                            error.HTTPForbidden => {
+                                node.end();
+                                progress.refresh();
+
+                                Output.prettyError("\n<r><red>error:<r> GitHub returned 403. This usually means GitHub is rate limiting your requests.\nTo fix this, either:<r>  <b>A) pass a <r><cyan>GITHUB_ACCESS_TOKEN<r> environment variable to Bun<r>\n  <b>B)Wait a little and try again<r>\n", .{});
+                                Global.crash();
+                            },
+
+                            error.GitHubRepositoryNotFound => {
+                                node.end();
+                                progress.refresh();
+
+                                Output.prettyError("\n<r><red>error:<r> <b>\"{s}\"<r> was not found on GitHub. Here are templates you can use:\n\n", .{
+                                    template,
+                                });
+                                Output.flush();
+
+                                const examples = try Example.fetchAllLocalAndRemote(ctx, null, &env_loader, filesystem);
+                                Example.print(examples.items, dirname);
+                                Global.crash();
+                            },
+                            else => {
+                                node.end();
+                                progress.refresh();
+
+                                Output.prettyErrorln("\n\n", .{});
+
+                                return err;
+                            },
+                        }
+                    },
+                    else => unreachable,
+                };
+
+                node.name = try ProgressBuf.print("Decompressing {s}", .{template});
+                node.setCompletedItems(0);
+                node.setEstimatedTotalItems(0);
+
+                progress.refresh();
+
+                var file_buf = try ctx.allocator.alloc(u8, 16384);
+
+                var tarball_buf_list = std.ArrayListUnmanaged(u8){ .capacity = file_buf.len, .items = file_buf };
+                var gunzip = try Zlib.ZlibReaderArrayList.init(tarball_bytes.list.items, &tarball_buf_list, ctx.allocator);
+                try gunzip.readAll();
+                gunzip.deinit();
+
+                node.name = try ProgressBuf.print("Extracting {s}", .{template});
+                node.setCompletedItems(0);
+                node.setEstimatedTotalItems(0);
+
+                progress.refresh();
+
+                var pluckers: [1]Archive.Plucker = if (!create_options.skip_package_json)
+                    [1]Archive.Plucker{try Archive.Plucker.init("package.json", 2048, ctx.allocator)}
+                else
+                    [1]Archive.Plucker{undefined};
+
+                var archive_context = Archive.Context{
+                    .pluckers = pluckers[0..@intCast(usize, @boolToInt(!create_options.skip_package_json))],
+                    .all_files = undefined,
+                    .overwrite_list = std.StringArrayHashMap(void).init(ctx.allocator),
+                };
+
+                if (!create_options.overwrite) {
+                    try Archive.getOverwritingFileList(
+                        tarball_buf_list.items,
+                        destination,
+                        &archive_context,
+                        @TypeOf(filesystem.dirname_store),
+                        filesystem.dirname_store,
+                        1,
+                    );
+
+                    inline for (never_conflict) |never_conflict_path| {
+                        _ = archive_context.overwrite_list.swapRemove(never_conflict_path);
+                    }
+
+                    if (archive_context.overwrite_list.count() > 0) {
                         node.end();
                         progress.refresh();
 
-                        Output.prettyError("\n<r><red>error:<r> <b>\"{s}\"<r> was not found. Here are templates you can use:\n\n", .{
-                            template,
-                        });
-                        Output.flush();
+                        // Thank you create-react-app for this copy (and idea)
+                        Output.prettyErrorln(
+                            "<r>\n<red>error<r><d>: <r>The directory <b><blue>{s}<r>/ contains files that could conflict:\n\n",
+                            .{
+                                std.fs.path.basename(destination),
+                            },
+                        );
+                        for (archive_context.overwrite_list.keys()) |path| {
+                            if (strings.endsWith(path, std.fs.path.sep_str)) {
+                                Output.prettyError("<r>  <blue>{s}<r>", .{path[0 .. std.math.max(path.len, 1) - 1]});
+                                Output.prettyErrorln(std.fs.path.sep_str, .{});
+                            } else {
+                                Output.prettyErrorln("<r>  {s}", .{path});
+                            }
+                        }
 
-                        const examples = try Example.fetchAllLocalAndRemote(ctx, null, &env_loader, filesystem);
-                        Example.print(examples.items, dirname);
+                        Output.prettyErrorln("<r>\n<d>To download {s} anyway, use --force<r>", .{template});
                         Output.flush();
                         std.os.exit(1);
-                    },
-                    else => {
-                        return err;
-                    },
+                    }
                 }
-            };
 
-            node.name = try ProgressBuf.print("Decompressing {s}", .{template});
-            node.setCompletedItems(0);
-            node.setEstimatedTotalItems(0);
-
-            progress.refresh();
-
-            var file_buf = try ctx.allocator.alloc(u8, 16384);
-
-            var tarball_buf_list = std.ArrayListUnmanaged(u8){ .capacity = file_buf.len, .items = file_buf };
-            var gunzip = try Zlib.ZlibReaderArrayList.init(tarball_bytes.list.items, &tarball_buf_list, ctx.allocator);
-            try gunzip.readAll();
-            gunzip.deinit();
-
-            node.name = try ProgressBuf.print("Extracting {s}", .{template});
-            node.setCompletedItems(0);
-            node.setEstimatedTotalItems(0);
-
-            progress.refresh();
-
-            var pluckers = [_]Archive.Plucker{
-                try Archive.Plucker.init("package.json", 2048, ctx.allocator),
-                try Archive.Plucker.init("GETTING_STARTED", 512, ctx.allocator),
-            };
-
-            var archive_context = Archive.Context{
-                .pluckers = &pluckers,
-                .all_files = undefined,
-                .overwrite_list = std.StringArrayHashMap(void).init(ctx.allocator),
-            };
-
-            if (!create_options.overwrite) {
-                try Archive.getOverwritingFileList(
+                const extracted_file_count = try Archive.extractToDisk(
                     tarball_buf_list.items,
                     destination,
                     &archive_context,
-                    @TypeOf(filesystem.dirname_store),
-                    filesystem.dirname_store,
+                    void,
+                    void{},
                     1,
+                    false,
+                    false,
                 );
 
-                inline for (never_conflict) |never_conflict_path| {
-                    _ = archive_context.overwrite_list.swapRemove(never_conflict_path);
-                }
+                if (!create_options.skip_package_json) {
+                    var plucker = pluckers[0];
 
-                if (archive_context.overwrite_list.count() > 0) {
+                    if (plucker.found and plucker.fd != 0) {
+                        node.name = "Updating package.json";
+                        progress.refresh();
+
+                        package_json_contents = plucker.contents;
+                        package_json_file = std.fs.File{ .handle = plucker.fd };
+                    }
+                }
+            },
+            .local_folder => {
+                var template_parts = [_]string{template};
+
+                node.name = "Copying files";
+                progress.refresh();
+
+                const template_dir = std.fs.openDirAbsolute(filesystem.abs(&template_parts), .{ .iterate = true }) catch |err| {
                     node.end();
                     progress.refresh();
 
-                    // Thank you create-react-app for this copy (and idea)
-                    Output.prettyErrorln(
-                        "<r><red>error<r><d>: <r>The directory <b><blue>{s}<r>/ contains files that could conflict:\n\n",
-                        .{
-                            std.fs.path.basename(destination),
-                        },
-                    );
-                    for (archive_context.overwrite_list.keys()) |path| {
-                        if (strings.endsWith(path, std.fs.path.sep_str)) {
-                            Output.prettyError("<r>  <blue>{s}<r>", .{path[0 .. std.math.max(path.len, 1) - 1]});
-                            Output.prettyErrorln(std.fs.path.sep_str, .{});
-                        } else {
-                            Output.prettyErrorln("<r>  {s}", .{path});
-                        }
-                    }
-
-                    Output.prettyErrorln("<r>\n<d>To do it anyway, use --force<r>", .{});
+                    Output.prettyErrorln("<r><red>{s}<r>: opening dir {s}", .{ @errorName(err), template });
                     Output.flush();
                     std.os.exit(1);
-                }
-            }
+                };
 
-            const extracted_file_count = try Archive.extractToDisk(
-                tarball_buf_list.items,
-                destination,
-                &archive_context,
-                void,
-                void{},
-                1,
-                false,
-                false,
-            );
+                std.fs.deleteTreeAbsolute(destination) catch {};
+                const destination_dir = std.fs.cwd().makeOpenPath(destination, .{ .iterate = true }) catch |err| {
+                    node.end();
 
-            var plucker = pluckers[0];
+                    progress.refresh();
 
-            if (!plucker.found or plucker.fd == 0) {
-                node.end();
+                    Output.prettyErrorln("<r><red>{s}<r>: creating dir {s}", .{ @errorName(err), destination });
+                    Output.flush();
+                    std.os.exit(1);
+                };
 
-                Output.prettyErrorln("package.json not found. This package is corrupt. Please try again or file an issue if it keeps happening.", .{});
-                Output.flush();
-                std.os.exit(1);
-            }
+                const Walker = @import("../walker_skippable.zig");
+                var walker_ = try Walker.walk(template_dir, ctx.allocator, skip_files, skip_dirs);
+                defer walker_.deinit();
 
-            node.name = "Updating package.json";
-            progress.refresh();
+                var count: usize = 0;
 
-            package_json_contents = plucker.contents;
-            package_json_file = std.fs.File{ .handle = plucker.fd };
-        } else {
-            var template_parts = [_]string{template};
+                const FileCopier = struct {
+                    pub fn copy(
+                        destination_dir_: std.fs.Dir,
+                        walker: *Walker,
+                        node_: *std.Progress.Node,
+                        progress_: *std.Progress,
+                    ) !void {
+                        while (try walker.next()) |entry| {
+                            if (entry.kind != .File) continue;
 
-            node.name = "Copying files";
-            progress.refresh();
+                            var outfile = destination_dir_.createFile(entry.path, .{}) catch brk: {
+                                if (std.fs.path.dirname(entry.path)) |entry_dirname| {
+                                    destination_dir_.makePath(entry_dirname) catch {};
+                                }
+                                break :brk destination_dir_.createFile(entry.path, .{}) catch |err| {
+                                    node_.end();
 
-            const template_dir = std.fs.openDirAbsolute(filesystem.abs(&template_parts), .{ .iterate = true }) catch |err| {
-                node.end();
-                progress.refresh();
+                                    progress_.refresh();
 
-                Output.prettyErrorln("<r><red>{s}<r>: opening dir {s}", .{ @errorName(err), template });
-                Output.flush();
-                std.os.exit(1);
-            };
-
-            std.fs.deleteTreeAbsolute(destination) catch {};
-            const destination_dir = std.fs.cwd().makeOpenPath(destination, .{ .iterate = true }) catch |err| {
-                node.end();
-
-                progress.refresh();
-
-                Output.prettyErrorln("<r><red>{s}<r>: creating dir {s}", .{ @errorName(err), destination });
-                Output.flush();
-                std.os.exit(1);
-            };
-
-            const Walker = @import("../walker_skippable.zig");
-            var walker_ = try Walker.walk(template_dir, ctx.allocator, skip_files, skip_dirs);
-            defer walker_.deinit();
-
-            var count: usize = 0;
-
-            const FileCopier = struct {
-                pub fn copy(
-                    destination_dir_: std.fs.Dir,
-                    walker: *Walker,
-                    node_: *std.Progress.Node,
-                    progress_: *std.Progress,
-                ) !void {
-                    while (try walker.next()) |entry| {
-                        // TODO: make this not walk these folders entirely
-                        // rather than checking each file path.....
-                        if (entry.kind != .File) continue;
-
-                        var outfile = destination_dir_.createFile(entry.path, .{}) catch brk: {
-                            if (std.fs.path.dirname(entry.path)) |entry_dirname| {
-                                destination_dir_.makePath(entry_dirname) catch {};
-                            }
-                            break :brk destination_dir_.createFile(entry.path, .{}) catch |err| {
-                                node_.end();
-
-                                progress_.refresh();
-
-                                Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
-                                Output.flush();
-                                std.os.exit(1);
+                                    Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
+                                    Output.flush();
+                                    std.os.exit(1);
+                                };
                             };
-                        };
-                        defer outfile.close();
-                        defer node_.completeOne();
+                            defer outfile.close();
+                            defer node_.completeOne();
 
-                        var infile = try entry.dir.openFile(entry.basename, .{ .read = true });
-                        defer infile.close();
+                            var infile = try entry.dir.openFile(entry.basename, .{ .read = true });
+                            defer infile.close();
 
-                        // Assumption: you only really care about making sure something that was executable is still executable
-                        const stat = infile.stat() catch continue;
-                        _ = C.fchmod(outfile.handle, stat.mode);
+                            // Assumption: you only really care about making sure something that was executable is still executable
+                            const stat = infile.stat() catch continue;
+                            _ = C.fchmod(outfile.handle, stat.mode);
 
-                        CopyFile.copy(infile.handle, outfile.handle) catch {
-                            entry.dir.copyFile(entry.basename, destination_dir_, entry.path, .{}) catch |err| {
-                                node_.end();
+                            CopyFile.copy(infile.handle, outfile.handle) catch {
+                                entry.dir.copyFile(entry.basename, destination_dir_, entry.path, .{}) catch |err| {
+                                    node_.end();
 
-                                progress_.refresh();
+                                    progress_.refresh();
 
-                                Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
-                                Output.flush();
-                                std.os.exit(1);
+                                    Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
+                                    Output.flush();
+                                    std.os.exit(1);
+                                };
                             };
+                        }
+                    }
+                };
+
+                try FileCopier.copy(destination_dir, &walker_, node, &progress);
+
+                package_json_file = destination_dir.openFile("package.json", .{ .read = true, .write = true }) catch null;
+
+                read_package_json: {
+                    if (package_json_file) |pkg| {
+                        const stat = pkg.stat() catch |err| {
+                            node.end();
+
+                            progress.refresh();
+
+                            package_json_file = null;
+                            Output.prettyErrorln("Error reading package.json: <r><red>{s}", .{@errorName(err)});
+                            break :read_package_json;
                         };
+
+                        if (stat.kind != .File or stat.size == 0) {
+                            package_json_file = null;
+                            node.end();
+
+                            progress.refresh();
+                            break :read_package_json;
+                        }
+                        package_json_contents = try MutableString.init(ctx.allocator, stat.size);
+                        package_json_contents.list.expandToCapacity();
+
+                        _ = pkg.preadAll(package_json_contents.list.items, 0) catch |err| {
+                            package_json_file = null;
+
+                            node.end();
+
+                            progress.refresh();
+
+                            Output.prettyErrorln("Error reading package.json: <r><red>{s}", .{@errorName(err)});
+                            break :read_package_json;
+                        };
+                        // The printer doesn't truncate, so we must do so manually
+                        std.os.ftruncate(pkg.handle, 0) catch {};
+
+                        initializeStore();
                     }
                 }
-            };
-
-            try FileCopier.copy(destination_dir, &walker_, node, &progress);
-
-            package_json_file = destination_dir.openFile("package.json", .{ .read = true, .write = true }) catch |err| {
-                node.end();
-
-                progress.refresh();
-
-                Output.prettyErrorln("Failed to open package.json due to error <r><red>{s}", .{@errorName(err)});
-                Output.flush();
-                std.os.exit(1);
-            };
-            const stat = package_json_file.stat() catch |err| {
-                node.end();
-
-                progress.refresh();
-
-                Output.prettyErrorln("Failed to stat package.json due to error <r><red>{s}", .{@errorName(err)});
-                Output.flush();
-                std.os.exit(1);
-            };
-
-            if (stat.kind != .File or stat.size == 0) {
-                node.end();
-
-                progress.refresh();
-
-                Output.prettyErrorln("package.json must be a file with content", .{});
-                Output.flush();
-                std.os.exit(1);
-            }
-            package_json_contents = try MutableString.init(ctx.allocator, stat.size);
-            package_json_contents.list.expandToCapacity();
-
-            _ = package_json_file.preadAll(package_json_contents.list.items, 0) catch |err| {
-                node.end();
-
-                progress.refresh();
-
-                Output.prettyErrorln("Error reading package.json: <r><red>{s}", .{@errorName(err)});
-                Output.flush();
-                std.os.exit(1);
-            };
-            // The printer doesn't truncate, so we must do so manually
-            std.os.ftruncate(package_json_file.handle, 0) catch {};
-
-            js_ast.Expr.Data.Store.create(default_allocator);
-            js_ast.Stmt.Data.Store.create(default_allocator);
+            },
+            else => unreachable,
         }
 
         node.end();
         progress.refresh();
 
-        var source = logger.Source.initPathString("package.json", package_json_contents.list.items);
-        var package_json_expr = ParseJSON(&source, ctx.log, ctx.allocator) catch |err| {
-            Output.prettyErrorln("package.json failed to parse with error: {s}", .{@errorName(err)});
-            Output.flush();
-            std.os.exit(1);
-        };
-
-        if (ctx.log.errors > 0) {
-            if (Output.enable_ansi_colors) {
-                try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true);
-            } else {
-                try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
-            }
-
-            Output.flush();
-            std.os.exit(1);
-        }
-
-        if (package_json_expr.asProperty("name")) |name_expr| {
-            if (name_expr.expr.data != .e_string) {
-                Output.prettyErrorln("package.json failed to parse correctly. its missing a name. it shouldnt be missing a name.", .{});
-                Output.flush();
-                std.os.exit(1);
-            }
-
-            var basename = std.fs.path.basename(destination);
-            name_expr.expr.data.e_string.utf8 = @intToPtr([*]u8, @ptrToInt(basename.ptr))[0..basename.len];
-        } else {
-            Output.prettyErrorln("package.json failed to parse correctly. its missing a name. it shouldnt be missing a name.", .{});
-            Output.flush();
-            std.os.exit(1);
-        }
-
-        package_json_expr.data.e_object.is_single_line = false;
-
+        var is_nextjs = false;
         var preinstall_tasks = std.mem.zeroes(std.ArrayListUnmanaged([]const u8));
         var postinstall_tasks = std.mem.zeroes(std.ArrayListUnmanaged([]const u8));
-
         var has_dependencies: bool = false;
-
-        {
-            var i: usize = 0;
-            var property_i: usize = 0;
-            while (i < package_json_expr.data.e_object.properties.len) : (i += 1) {
-                const property = package_json_expr.data.e_object.properties[i];
-                const key = property.key.?.asString(ctx.allocator).?;
-
-                has_dependencies = has_dependencies or
-                    ((strings.eqlComptime(key, "dependencies") or
-                    strings.eqlComptime(key, "devDependencies") or
-                    std.mem.indexOf(u8, key, "optionalDependencies") != null or
-                    strings.eqlComptime(key, "peerDependencies")) and
-                    (property.value.?.data == .e_object and property.value.?.data.e_object.properties.len > 0));
-
-                if (key.len == 0 or !strings.eqlComptime(key, "bun-create")) {
-                    package_json_expr.data.e_object.properties[property_i] = property;
-                    property_i += 1;
-                    continue;
-                }
-
-                var value = property.value.?;
-                if (value.asProperty("postinstall")) |postinstall| {
-                    switch (postinstall.expr.data) {
-                        .e_string => |single_task| {
-                            try postinstall_tasks.append(
-                                ctx.allocator,
-                                try single_task.string(ctx.allocator),
-                            );
-                        },
-                        .e_array => |tasks| {
-                            for (tasks.items) |task| {
-                                if (task.asString(ctx.allocator)) |task_entry| {
-                                    try postinstall_tasks.append(
-                                        ctx.allocator,
-                                        task_entry,
-                                    );
-                                }
-                            }
-                        },
-                        else => {},
-                    }
-                }
-
-                if (value.asProperty("preinstall")) |preinstall| {
-                    switch (preinstall.expr.data) {
-                        .e_string => |single_task| {
-                            try preinstall_tasks.append(
-                                ctx.allocator,
-                                try single_task.string(ctx.allocator),
-                            );
-                        },
-                        .e_array => |tasks| {
-                            for (tasks.items) |task| {
-                                if (task.asString(ctx.allocator)) |task_entry| {
-                                    try preinstall_tasks.append(
-                                        ctx.allocator,
-                                        task_entry,
-                                    );
-                                }
-                            }
-                        },
-                        else => {},
-                    }
-                }
-            }
-            package_json_expr.data.e_object.properties = package_json_expr.data.e_object.properties[0..property_i];
-        }
-
-        if (create_options.verbose) {
-            Output.prettyErrorln("Has dependencies? {d}", .{@boolToInt(has_dependencies)});
-        }
-
-        var package_json_writer = JSPrinter.NewFileWriter(package_json_file);
-
-        _ = JSPrinter.printJSON(@TypeOf(package_json_writer), package_json_writer, package_json_expr, &source) catch |err| {
-            Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
-            Output.flush();
-            std.os.exit(1);
-        };
+        const PATH = env_loader.map.get("PATH") orelse "";
 
         {
             var parent_dir = try std.fs.openDirAbsolute(destination, .{});
@@ -757,9 +711,665 @@ pub const CreateCommand = struct {
             ) catch {};
         }
 
-        const PATH = env_loader.map.get("PATH") orelse "";
+        process_package_json: {
+            if (create_options.skip_package_json) package_json_file = null;
+
+            if (package_json_file != null) {
+                initializeStore();
+
+                var source = logger.Source.initPathString("package.json", package_json_contents.list.items);
+
+                var package_json_expr = ParseJSON(&source, ctx.log, ctx.allocator) catch |err| {
+                    package_json_file = null;
+                    break :process_package_json;
+                };
+
+                if (package_json_expr.data != .e_object) {
+                    package_json_file = null;
+                    break :process_package_json;
+                }
+
+                var properties_list = std.ArrayList(js_ast.G.Property).fromOwnedSlice(default_allocator, package_json_expr.data.e_object.properties);
+
+                if (ctx.log.errors > 0) {
+                    if (Output.enable_ansi_colors) {
+                        try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true);
+                    } else {
+                        try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
+                    }
+
+                    package_json_file = null;
+                    break :process_package_json;
+                }
+
+                if (package_json_expr.asProperty("name")) |name_expr| {
+                    if (name_expr.expr.data == .e_string) {
+                        var basename = std.fs.path.basename(destination);
+                        name_expr.expr.data.e_string.utf8 = @intToPtr([*]u8, @ptrToInt(basename.ptr))[0..basename.len];
+                    }
+                }
+
+                const Needs = struct {
+                    bun_bun_for_nextjs: bool = false,
+                    bun_macro_relay: bool = false,
+                    bun_macro_relay_dependency: bool = false,
+                    bun_framework_next: bool = false,
+                    react_refresh: bool = false,
+                };
+                var needs = Needs{};
+                var has_relay = false;
+                var has_bun_framework_next = false;
+                var has_react_refresh = false;
+                var has_bun_macro_relay = false;
+                var has_react = false;
+
+                const Prune = struct {
+                    pub const packages = std.ComptimeStringMap(void, .{
+                        .{ "@parcel/babel-preset", void{} },
+                        .{ "@parcel/core", void{} },
+                        .{ "@swc/cli", void{} },
+                        .{ "@swc/core", void{} },
+                        .{ "@vitejs/plugin-react", void{} },
+                        .{ "@webpack/cli", void{} },
+                        .{ "react-scripts", void{} },
+                        .{ "swc", void{} },
+                        .{ "vite", void{} },
+                        .{ "webpack-cli", void{} },
+                        .{ "webpack", void{} },
+
+                        // one of cosmic config's imports breaks stuff
+                        .{ "cosmiconfig", void{} },
+                    });
+                    pub var prune_count: u16 = 0;
+
+                    pub fn prune(list: []js_ast.G.Property) []js_ast.G.Property {
+                        var i: usize = 0;
+                        var out_i: usize = 0;
+                        while (i < list.len) : (i += 1) {
+                            const key = list[i].key.?.data.e_string.utf8;
+
+                            const do_prune = packages.has(key);
+                            prune_count += @intCast(u16, @boolToInt(do_prune));
+
+                            if (!do_prune) {
+                                list[out_i] = list[i];
+                                out_i += 1;
+                            }
+                        }
+
+                        return list[0..out_i];
+                    }
+                };
+
+                var dev_dependencies: ?js_ast.Expr = null;
+                var dependencies: ?js_ast.Expr = null;
+
+                if (package_json_expr.asProperty("devDependencies")) |q| {
+                    const property = q.expr;
+
+                    if (property.data == .e_object and property.data.e_object.properties.len > 0) {
+                        unsupported_packages.update(property);
+
+                        has_relay = has_relay or property.hasAnyPropertyNamed(&.{ "react-relay", "relay-runtime", "babel-plugin-relay" });
+
+                        property.data.e_object.properties = Prune.prune(property.data.e_object.properties);
+                        if (property.data.e_object.properties.len > 0) {
+                            has_dependencies = true;
+                            dev_dependencies = q.expr;
+
+                            has_bun_framework_next = has_bun_framework_next or property.hasAnyPropertyNamed(&.{"bun-framework-next"});
+                            has_react = has_react or property.hasAnyPropertyNamed(&.{ "react", "react-dom", "react-relay", "@emotion/react" });
+                            has_bun_macro_relay = has_bun_macro_relay or property.hasAnyPropertyNamed(&.{"bun-macro-relay"});
+                            has_react_refresh = has_react_refresh or property.hasAnyPropertyNamed(&.{"react-refresh"});
+                        }
+                    }
+                }
+
+                if (package_json_expr.asProperty("dependencies")) |q| {
+                    const property = q.expr;
+
+                    if (property.data == .e_object and property.data.e_object.properties.len > 0) {
+                        unsupported_packages.update(property);
+
+                        has_relay = has_relay or property.hasAnyPropertyNamed(&.{ "react-relay", "relay-runtime", "babel-plugin-relay" });
+                        property.data.e_object.properties = Prune.prune(property.data.e_object.properties);
+
+                        if (property.data.e_object.properties.len > 0) {
+                            has_dependencies = true;
+                            dependencies = q.expr;
+
+                            if (property.asProperty("next")) |next_q| {
+                                is_nextjs = true;
+                                needs.bun_bun_for_nextjs = true;
+
+                                const original_version = next_q.expr.data.e_string.utf8;
+                                next_q.expr.data.e_string.utf8 = allocators.constStrToU8(target_nextjs_version);
+                            }
+
+                            has_bun_framework_next = has_bun_framework_next or property.hasAnyPropertyNamed(&.{"bun-framework-next"});
+                            has_react = has_react or is_nextjs or property.hasAnyPropertyNamed(&.{ "react", "react-dom", "react-relay", "@emotion/react" });
+                            has_react_refresh = has_react_refresh or property.hasAnyPropertyNamed(&.{"react-refresh"});
+                            has_bun_macro_relay = has_bun_macro_relay or property.hasAnyPropertyNamed(&.{"bun-macro-relay"});
+                        }
+                    }
+                }
+
+                needs.bun_macro_relay = !has_bun_macro_relay and has_relay;
+                needs.react_refresh = !has_react_refresh and has_react;
+                needs.bun_framework_next = is_nextjs and !has_bun_framework_next;
+                needs.bun_bun_for_nextjs = is_nextjs;
+                needs.bun_macro_relay_dependency = needs.bun_macro_relay;
+
+                var bun_macros_prop: ?js_ast.Expr = null;
+                var bun_prop: ?js_ast.Expr = null;
+                var bun_relay_prop: ?js_ast.Expr = null;
+
+                var needs_bun_prop = needs.bun_macro_relay or has_bun_macro_relay;
+                var needs_bun_macros_prop = needs_bun_prop;
+
+                if (needs_bun_macros_prop) {
+                    if (package_json_expr.asProperty("bun")) |bun| {
+                        needs_bun_prop = false;
+                        bun_prop = bun.expr;
+                        if (bun.expr.asProperty("macros")) |macros_q| {
+                            bun_macros_prop = macros_q.expr;
+                            needs_bun_macros_prop = false;
+                            if (macros_q.expr.asProperty("react-relay")) |react_relay_q| {
+                                bun_relay_prop = react_relay_q.expr;
+                                needs.bun_macro_relay = react_relay_q.expr.asProperty("graphql") == null;
+                            }
+
+                            if (macros_q.expr.asProperty("babel-plugin-relay/macro")) |react_relay_q| {
+                                bun_relay_prop = react_relay_q.expr;
+                                needs.bun_macro_relay = react_relay_q.expr.asProperty("graphql") == null;
+                            }
+                        }
+                    }
+                }
+
+                if (Prune.prune_count > 0) {
+                    Output.prettyErrorln("<r><d>[package.json] Pruned {d} unnecessary packages<r>", .{Prune.prune_count});
+                }
+
+                // if (create_options.verbose) {
+                if (needs.bun_macro_relay) {
+                    Output.prettyErrorln("<r><d>[package.json] Detected Relay -> added \"bun-macro-relay\" for compatibility<r>", .{});
+                }
+
+                if (needs.react_refresh) {
+                    Output.prettyErrorln("<r><d>[package.json] Detected React -> added \"react-refresh\" to enable React Fast Refresh<r>", .{});
+                }
+
+                if (needs.bun_framework_next) {
+                    Output.prettyErrorln("<r><d>[package.json] Detected Next -> added \"bun-framework-next\" for compatibility<r>", .{});
+                } else if (is_nextjs) {
+                    Output.prettyErrorln("<r><d>[package.json] Detected Next.js<r>", .{});
+                }
+
+                // }
+
+                var needs_to_inject_dev_dependency = needs.react_refresh or needs.bun_macro_relay;
+                var needs_to_inject_dependency = needs.bun_framework_next;
+
+                const dependencies_to_inject_count = @intCast(usize, @boolToInt(needs.bun_framework_next));
+
+                const dev_dependencies_to_inject_count = @intCast(usize, @boolToInt(needs.react_refresh)) +
+                    @intCast(usize, @boolToInt(needs.bun_macro_relay));
+
+                const new_properties_count = @intCast(usize, @boolToInt(needs_to_inject_dev_dependency and dev_dependencies == null)) +
+                    @intCast(usize, @boolToInt(needs_to_inject_dependency and dependencies == null)) +
+                    @intCast(usize, @boolToInt(needs_bun_prop));
+
+                if (new_properties_count != 0) {
+                    try properties_list.ensureUnusedCapacity(new_properties_count);
+                }
+
+                const E = js_ast.E;
+
+                const InjectionPrefill = struct {
+                    const dependencies_string = "dependencies";
+                    const dev_dependencies_string = "devDependencies";
+                    const bun_string = "bun";
+                    const macros_string = "macros";
+                    const bun_macros_relay_path = "bun-macro-relay";
+
+                    pub var dependencies_e_string = E.String{ .utf8 = dependencies_string };
+                    pub var devDependencies_e_string = E.String{ .utf8 = dev_dependencies_string };
+                    pub var bun_e_string = E.String{ .utf8 = bun_string };
+                    pub var macros_e_string = E.String{ .utf8 = macros_string };
+                    pub var react_relay_string = E.String{ .utf8 = "react-relay" };
+                    pub var bun_macros_relay_path_string = E.String{ .utf8 = "bun-macro-relay" };
+                    pub var babel_plugin_relay_macro = E.String{ .utf8 = "babel-plugin-relay/macro" };
+                    pub var babel_plugin_relay_macro_js = E.String{ .utf8 = "babel-plugin-relay/macro.js" };
+                    pub var graphql_string = E.String{ .utf8 = "graphql" };
+
+                    var npx_react_scripts_build_str = E.String{ .utf8 = "npx react-scripts build" };
+
+                    pub const npx_react_scripts_build = js_ast.Expr{ .data = .{ .e_string = &npx_react_scripts_build_str }, .loc = logger.Loc.Empty };
+
+                    var bun_macro_relay_properties = [_]js_ast.G.Property{
+                        js_ast.G.Property{
+                            .key = js_ast.Expr{
+                                .data = .{
+                                    .e_string = &graphql_string,
+                                },
+                                .loc = logger.Loc.Empty,
+                            },
+                            .value = js_ast.Expr{
+                                .data = .{
+                                    .e_string = &bun_macros_relay_path_string,
+                                },
+                                .loc = logger.Loc.Empty,
+                            },
+                        },
+                    };
+
+                    var bun_macro_relay_object = js_ast.E.Object{
+                        .properties = std.mem.span(&bun_macro_relay_properties),
+                    };
+
+                    var bun_macros_relay_object_properties = [_]js_ast.G.Property{
+                        js_ast.G.Property{
+                            .key = js_ast.Expr{
+                                .data = .{
+                                    .e_string = &react_relay_string,
+                                },
+                                .loc = logger.Loc.Empty,
+                            },
+                            .value = js_ast.Expr{
+                                .data = .{
+                                    .e_object = &bun_macro_relay_object,
+                                },
+                                .loc = logger.Loc.Empty,
+                            },
+                        },
+                        js_ast.G.Property{
+                            .key = js_ast.Expr{
+                                .data = .{
+                                    .e_string = &babel_plugin_relay_macro,
+                                },
+                                .loc = logger.Loc.Empty,
+                            },
+                            .value = js_ast.Expr{
+                                .data = .{
+                                    .e_object = &bun_macro_relay_object,
+                                },
+                                .loc = logger.Loc.Empty,
+                            },
+                        },
+                        js_ast.G.Property{
+                            .key = js_ast.Expr{
+                                .data = .{
+                                    .e_string = &babel_plugin_relay_macro_js,
+                                },
+                                .loc = logger.Loc.Empty,
+                            },
+                            .value = js_ast.Expr{
+                                .data = .{
+                                    .e_object = &bun_macro_relay_object,
+                                },
+                                .loc = logger.Loc.Empty,
+                            },
+                        },
+                    };
+
+                    pub var bun_macros_relay_object = E.Object{
+                        .properties = &bun_macros_relay_object_properties,
+                    };
+
+                    var bun_macros_relay_only_object_string = js_ast.E.String{ .utf8 = "macros" };
+                    var bun_macros_relay_only_object_properties = [_]js_ast.G.Property{
+                        js_ast.G.Property{
+                            .key = js_ast.Expr{
+                                .data = .{
+                                    .e_string = &bun_macros_relay_only_object_string,
+                                },
+                                .loc = logger.Loc.Empty,
+                            },
+                            .value = js_ast.Expr{
+                                .data = .{
+                                    .e_object = &bun_macros_relay_object,
+                                },
+                                .loc = logger.Loc.Empty,
+                            },
+                        },
+                    };
+                    pub var bun_macros_relay_only_object = E.Object{
+                        .properties = &bun_macros_relay_only_object_properties,
+                    };
+
+                    var bun_only_macros_string = js_ast.E.String{ .utf8 = "bun" };
+                    pub var bun_only_macros_relay_property = js_ast.G.Property{
+                        .key = js_ast.Expr{
+                            .data = .{
+                                .e_string = &bun_only_macros_string,
+                            },
+                            .loc = logger.Loc.Empty,
+                        },
+                        .value = js_ast.Expr{
+                            .data = .{
+                                .e_object = &bun_macros_relay_only_object,
+                            },
+                            .loc = logger.Loc.Empty,
+                        },
+                    };
+
+                    pub var bun_framework_next_string = js_ast.E.String{ .utf8 = "bun-framework-next" };
+                    pub var bun_framework_next_version = js_ast.E.String{ .utf8 = "latest" };
+                    pub var bun_framework_next_property = js_ast.G.Property{
+                        .key = js_ast.Expr{
+                            .data = .{
+                                .e_string = &bun_framework_next_string,
+                            },
+                            .loc = logger.Loc.Empty,
+                        },
+                        .value = js_ast.Expr{
+                            .data = .{
+                                .e_string = &bun_framework_next_version,
+                            },
+                            .loc = logger.Loc.Empty,
+                        },
+                    };
+
+                    pub var bun_macro_relay_dependency_string = js_ast.E.String{ .utf8 = "bun-macro-relay" };
+                    pub var bun_macro_relay_dependency_version = js_ast.E.String{ .utf8 = "latest" };
+
+                    pub var bun_macro_relay_dependency = js_ast.G.Property{
+                        .key = js_ast.Expr{
+                            .data = .{
+                                .e_string = &bun_macro_relay_dependency_string,
+                            },
+                            .loc = logger.Loc.Empty,
+                        },
+                        .value = js_ast.Expr{
+                            .data = .{
+                                .e_string = &bun_macro_relay_dependency_version,
+                            },
+                            .loc = logger.Loc.Empty,
+                        },
+                    };
+
+                    pub var refresh_runtime_string = js_ast.E.String{ .utf8 = "react-refresh" };
+                    pub var refresh_runtime_version = js_ast.E.String{ .utf8 = "0.10.0" };
+                    pub var react_refresh_dependency = js_ast.G.Property{
+                        .key = js_ast.Expr{
+                            .data = .{
+                                .e_string = &refresh_runtime_string,
+                            },
+                            .loc = logger.Loc.Empty,
+                        },
+                        .value = js_ast.Expr{
+                            .data = .{
+                                .e_string = &refresh_runtime_version,
+                            },
+                            .loc = logger.Loc.Empty,
+                        },
+                    };
+
+                    pub var dev_dependencies_key = js_ast.Expr{
+                        .data = .{
+                            .e_string = &devDependencies_e_string,
+                        },
+                        .loc = logger.Loc.Empty,
+                    };
+                    pub var dependencies_key = js_ast.Expr{
+                        .data = .{ .e_string = &dependencies_e_string },
+                        .loc = logger.Loc.Empty,
+                    };
+
+                    pub const bun_bun_for_nextjs_task: string = "bun bun --use next";
+                };
+
+                if (needs_to_inject_dev_dependency and dev_dependencies == null) {
+                    var e_object = try ctx.allocator.create(E.Object);
+
+                    e_object.* = E.Object{
+                        .properties = &.{},
+                    };
+
+                    const value = js_ast.Expr{ .data = .{ .e_object = e_object }, .loc = logger.Loc.Empty };
+                    properties_list.appendAssumeCapacity(js_ast.G.Property{
+                        .key = InjectionPrefill.dev_dependencies_key,
+                        .value = value,
+                    });
+                    dev_dependencies = value;
+                }
+
+                if (needs_to_inject_dependency and dependencies == null) {
+                    var e_object = try ctx.allocator.create(E.Object);
+
+                    e_object.* = E.Object{
+                        .properties = &.{},
+                    };
+
+                    const value = js_ast.Expr{ .data = .{ .e_object = e_object }, .loc = logger.Loc.Empty };
+                    properties_list.appendAssumeCapacity(js_ast.G.Property{
+                        .key = InjectionPrefill.dependencies_key,
+                        .value = value,
+                    });
+                    dependencies = value;
+                }
+
+                // inject an object like this, handling each permutation of what may or may not exist:
+                // {
+                //    "bun": {
+                //       "macros": {
+                //          "react-relay": {
+                //              "graphql": "bun-macro-relay"
+                //          }
+                //        }
+                //    }
+                // }
+                bun_section: {
+
+                    // "bun.macros.react-relay.graphql"
+                    if (needs.bun_macro_relay and !needs_bun_prop and !needs_bun_macros_prop) {
+                        // "graphql" is the only valid one for now, so anything else in this object is invalid.
+                        bun_relay_prop.?.data.e_object = InjectionPrefill.bun_macros_relay_object.properties[0].value.?.data.e_object;
+                        needs_bun_macros_prop = false;
+                        needs_bun_prop = false;
+                        needs.bun_macro_relay = false;
+                        break :bun_section;
+                    }
+
+                    // "bun.macros"
+                    if (needs_bun_macros_prop and !needs_bun_prop) {
+                        var obj = bun_prop.?.data.e_object;
+                        var properties = try std.ArrayList(js_ast.G.Property).initCapacity(
+                            ctx.allocator,
+                            obj.properties.len + InjectionPrefill.bun_macros_relay_object.properties.len,
+                        );
+                        defer obj.properties = properties.toOwnedSlice();
+
+                        try properties.insertSlice(0, obj.properties);
+                        try properties.insertSlice(0, InjectionPrefill.bun_macros_relay_object.properties);
+
+                        needs_bun_macros_prop = false;
+                        needs_bun_prop = false;
+                        needs.bun_macro_relay = false;
+                        break :bun_section;
+                    }
+
+                    // "bun"
+                    if (needs_bun_prop) {
+                        try properties_list.append(InjectionPrefill.bun_only_macros_relay_property);
+                        needs_bun_macros_prop = false;
+                        needs_bun_prop = false;
+                        needs.bun_macro_relay = false;
+                        break :bun_section;
+                    }
+                }
+
+                if (needs_to_inject_dependency) {
+                    defer needs_to_inject_dependency = false;
+                    var obj = dependencies.?.data.e_object;
+                    var properties = try std.ArrayList(js_ast.G.Property).initCapacity(
+                        ctx.allocator,
+                        obj.properties.len + dependencies_to_inject_count,
+                    );
+                    try properties.insertSlice(0, obj.properties);
+                    defer obj.properties = properties.toOwnedSlice();
+                    if (needs.bun_framework_next) {
+                        properties.appendAssumeCapacity(InjectionPrefill.bun_framework_next_property);
+                        needs.bun_framework_next = false;
+                    }
+                }
+
+                if (needs_to_inject_dev_dependency) {
+                    defer needs_to_inject_dev_dependency = false;
+                    var obj = dev_dependencies.?.data.e_object;
+                    var properties = try std.ArrayList(js_ast.G.Property).initCapacity(
+                        ctx.allocator,
+                        obj.properties.len + dev_dependencies_to_inject_count,
+                    );
+                    try properties.insertSlice(0, obj.properties);
+                    defer obj.properties = properties.toOwnedSlice();
+                    if (needs.bun_macro_relay_dependency) {
+                        properties.appendAssumeCapacity(InjectionPrefill.bun_macro_relay_dependency);
+                        needs.bun_macro_relay_dependency = false;
+                    }
+
+                    if (needs.react_refresh) {
+                        properties.appendAssumeCapacity(InjectionPrefill.react_refresh_dependency);
+                        needs.react_refresh = false;
+                    }
+                }
+
+                package_json_expr.data.e_object.is_single_line = false;
+
+                package_json_expr.data.e_object.properties = properties_list.items;
+                {
+                    var i: usize = 0;
+                    var property_i: usize = 0;
+                    while (i < package_json_expr.data.e_object.properties.len) : (i += 1) {
+                        const property = package_json_expr.data.e_object.properties[i];
+                        const key = property.key.?.asString(ctx.allocator).?;
+
+                        if (strings.eqlComptime(key, "scripts")) {
+                            if (property.value.?.data == .e_object) {
+                                var scripts_properties = property.value.?.data.e_object.properties;
+
+                                // if they're starting the app with "react-scripts start" or "next dev", that won't make sense
+                                // if they launch with npm run start it will just be slower
+                                var script_property_i: usize = 0;
+                                var script_property_out_i: usize = 0;
+
+                                while (script_property_i < scripts_properties.len) : (script_property_i += 1) {
+                                    const script = scripts_properties[script_property_i].value.?.data.e_string.utf8;
+
+                                    if (strings.contains(script, "react-scripts start") or
+                                        strings.contains(script, "next dev") or
+                                        strings.contains(script, "react-scripts eject"))
+                                    {
+                                        if (create_options.verbose) {
+                                            Output.prettyErrorln("<r><d>[package.json] Pruned unnecessary script: {s}<r>", .{script});
+                                        }
+
+                                        continue;
+                                    }
+
+                                    if (strings.contains(script, "react-scripts build")) {
+                                        scripts_properties[script_property_i].value = InjectionPrefill.npx_react_scripts_build;
+                                    }
+
+                                    scripts_properties[script_property_out_i] = scripts_properties[script_property_i];
+                                    script_property_out_i += 1;
+                                }
+
+                                property.value.?.data.e_object.properties = scripts_properties[0..script_property_out_i];
+                            }
+                        }
+
+                        if (key.len == 0 or !strings.eqlComptime(key, "bun-create")) {
+                            package_json_expr.data.e_object.properties[property_i] = property;
+                            property_i += 1;
+                            continue;
+                        }
+
+                        var value = property.value.?;
+                        if (value.asProperty("postinstall")) |postinstall| {
+                            switch (postinstall.expr.data) {
+                                .e_string => |single_task| {
+                                    try postinstall_tasks.append(
+                                        ctx.allocator,
+                                        try single_task.string(ctx.allocator),
+                                    );
+                                },
+                                .e_array => |tasks| {
+                                    for (tasks.items) |task| {
+                                        if (task.asString(ctx.allocator)) |task_entry| {
+                                            if (needs.bun_bun_for_nextjs) {
+                                                var iter = std.mem.split(u8, task_entry, " ");
+                                                var last_was_bun = false;
+                                                while (iter.next()) |current| {
+                                                    if (strings.eqlComptime(current, "bun")) {
+                                                        if (last_was_bun) {
+                                                            needs.bun_bun_for_nextjs = false;
+                                                            break;
+                                                        }
+                                                        last_was_bun = true;
+                                                    }
+                                                }
+                                            }
+
+                                            try postinstall_tasks.append(
+                                                ctx.allocator,
+                                                task_entry,
+                                            );
+                                        }
+                                    }
+                                },
+                                else => {},
+                            }
+                        }
+
+                        if (value.asProperty("preinstall")) |preinstall| {
+                            switch (preinstall.expr.data) {
+                                .e_string => |single_task| {
+                                    try preinstall_tasks.append(
+                                        ctx.allocator,
+                                        try single_task.string(ctx.allocator),
+                                    );
+                                },
+                                .e_array => |tasks| {
+                                    for (tasks.items) |task| {
+                                        if (task.asString(ctx.allocator)) |task_entry| {
+                                            try preinstall_tasks.append(
+                                                ctx.allocator,
+                                                task_entry,
+                                            );
+                                        }
+                                    }
+                                },
+                                else => {},
+                            }
+                        }
+                    }
+                    package_json_expr.data.e_object.properties = package_json_expr.data.e_object.properties[0..property_i];
+                }
+
+                var package_json_writer = JSPrinter.NewFileWriter(package_json_file.?);
+
+                const written = JSPrinter.printJSON(@TypeOf(package_json_writer), package_json_writer, package_json_expr, &source) catch |err| {
+                    Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
+                    package_json_file = null;
+                    break :process_package_json;
+                };
+
+                std.os.ftruncate(package_json_file.?.handle, written + 1) catch {};
+
+                if (needs.bun_bun_for_nextjs) {
+                    try postinstall_tasks.append(ctx.allocator, InjectionPrefill.bun_bun_for_nextjs_task);
+                }
+            }
+        }
+
+        if (create_options.verbose) {
+            Output.prettyErrorln("Has dependencies? {d}", .{@boolToInt(has_dependencies)});
+        }
 
         var npm_client_: ?NPMClient = null;
+
         create_options.skip_install = create_options.skip_install or !has_dependencies;
 
         if (!create_options.skip_git) {
@@ -843,9 +1453,9 @@ pub const CreateCommand = struct {
             progress.log("Failed to detect npm client. Tried pnpm, yarn, and npm.\n", .{});
         }
 
-        if (npm_client_ != null and !create_options.skip_install and postinstall_tasks.items.len > 0) {
+        if (postinstall_tasks.items.len > 0) {
             for (postinstall_tasks.items) |task, i| {
-                execTask(ctx.allocator, task, destination, PATH, npm_client_.?);
+                execTask(ctx.allocator, task, destination, PATH, npm_client_);
             }
         }
 
@@ -856,7 +1466,14 @@ pub const CreateCommand = struct {
         Output.printError("\n", .{});
         Output.printStartEnd(ctx.start_time, std.time.nanoTimestamp());
         Output.prettyErrorln(" <r><d>bun create {s}<r>", .{template});
+
         Output.flush();
+
+        Output.pretty(
+            \\
+            \\<d>Come hang out in Bun's Discord: https://bun.sh/discord<r>
+            \\
+        , .{});
 
         if (!create_options.skip_install) {
             Output.pretty(
@@ -864,6 +1481,14 @@ pub const CreateCommand = struct {
                 \\<r><d>-----<r>
                 \\
             , .{});
+            Output.flush();
+        }
+
+        if (unsupported_packages.@"styled-jsx") {
+            Output.prettyErrorln("\n", .{});
+            unsupported_packages.print();
+            Output.prettyErrorln("\n", .{});
+            Output.flush();
         }
 
         if (!create_options.skip_git and !create_options.skip_install) {
@@ -886,9 +1511,39 @@ pub const CreateCommand = struct {
             , .{});
         }
 
+        if (example_tag == .github_repository) {
+            var display_name = template;
+
+            if (std.mem.indexOfScalar(u8, display_name, '/')) |first_slash| {
+                if (std.mem.indexOfScalar(u8, display_name[first_slash + 1 ..], '/')) |second_slash| {
+                    display_name = template[0 .. first_slash + 1 + second_slash];
+                }
+            }
+
+            Output.pretty(
+                \\
+                \\<b><green>Success!<r> <b>{s}<r> loaded into <b>{s}<r>
+                \\
+            , .{ display_name, std.fs.path.basename(destination) });
+        } else {
+            Output.pretty(
+                \\
+                \\<b>Created <green>{s}<r> project successfully
+                \\
+            , .{std.fs.path.basename(template)});
+        }
+
+        if (is_nextjs) {
+            Output.pretty(
+                \\
+                \\<r><d>#<r> When dependencies change, run this to update node_modules.bun:
+                \\
+                \\  <b><cyan>bun bun --use next<r>
+                \\
+            , .{});
+        }
+
         Output.pretty(
-            \\
-            \\<b>Created <green>{s}<r> project successfully
             \\
             \\<d>#<r><b> To get started, run:<r>
             \\
@@ -896,7 +1551,6 @@ pub const CreateCommand = struct {
             \\  <b><cyan>bun<r>
             \\
         , .{
-            std.fs.path.basename(template),
             filesystem.relativeTo(destination),
         });
 
@@ -957,6 +1611,13 @@ pub const Example = struct {
     version: string,
     description: string,
     local: bool = false,
+
+    pub const Tag = enum {
+        unknown,
+        github_repository,
+        official,
+        local_folder,
+    };
 
     var client: HTTPClient = undefined;
     const examples_url: string = "https://registry.npmjs.org/bun-examples-all/latest";
@@ -1056,6 +1717,124 @@ pub const Example = struct {
         return examples;
     }
 
+    var github_repository_url_buf: [1024]u8 = undefined;
+    pub fn fetchFromGitHub(
+        ctx: Command.Context,
+        env_loader: *DotEnv.Loader,
+        name: string,
+        refresher: *std.Progress,
+        progress: *std.Progress.Node,
+    ) !MutableString {
+        var owner_i = std.mem.indexOfScalar(u8, name, '/').?;
+        var owner = name[0..owner_i];
+        var repository = name[owner_i + 1 ..];
+        var mutable = try MutableString.init(ctx.allocator, 8096);
+
+        if (std.mem.indexOfScalar(u8, repository, '/')) |i| {
+            repository = repository[0..i];
+        }
+
+        progress.name = try ProgressBuf.pretty("<d>[github] <b>GET<r> <blue>{s}/{s}<r>", .{ owner, repository });
+        refresher.refresh();
+
+        var github_api_domain: string = "api.github.com";
+        if (env_loader.map.get("GITHUB_API_DOMAIN")) |api_domain| {
+            if (api_domain.len > 0) {
+                github_api_domain = api_domain;
+            }
+        }
+
+        var api_url = URL.parse(
+            try std.fmt.bufPrint(
+                &github_repository_url_buf,
+                "https://{s}/repos/{s}/{s}/tarball",
+                .{ github_api_domain, owner, repository },
+            ),
+        );
+
+        var header_entries: Headers.Entries = .{};
+        var headers_buf: string = "";
+
+        if (env_loader.map.get("GITHUB_ACCESS_TOKEN")) |access_token| {
+            if (access_token.len > 0) {
+                headers_buf = try std.fmt.allocPrint(ctx.allocator, "Access-TokenBearer {s}", .{access_token});
+                try header_entries.append(
+                    ctx.allocator,
+                    Headers.Kv{
+                        .name = Api.StringPointer{
+                            .offset = 0,
+                            .length = @intCast(u32, "Access-Token".len),
+                        },
+                        .value = Api.StringPointer{
+                            .offset = @intCast(u32, "Access-Token".len),
+                            .length = @intCast(u32, headers_buf.len - "Access-Token".len),
+                        },
+                    },
+                );
+            }
+        }
+
+        client = HTTPClient.init(
+            ctx.allocator,
+            .GET,
+            api_url,
+            header_entries,
+            headers_buf,
+        );
+        client.timeout = timeout;
+        client.progress_node = progress;
+
+        var response = try client.send("", &mutable);
+
+        switch (response.status_code) {
+            404 => return error.GitHubRepositoryNotFound,
+            403 => return error.HTTPForbidden,
+            429 => return error.HTTPTooManyRequests,
+            499...599 => return error.NPMIsDown,
+            200 => {},
+            else => return error.HTTPError,
+        }
+
+        var is_expected_content_type = false;
+        var content_type: string = "";
+        for (response.headers) |header| {
+            if (strings.eqlInsensitive(header.name, "content-type")) {
+                content_type = header.value;
+
+                if (strings.eqlComptime(header.value, "application/x-gzip")) {
+                    is_expected_content_type = true;
+                    break;
+                }
+            }
+        }
+
+        if (!is_expected_content_type) {
+            progress.end();
+            refresher.refresh();
+
+            if (content_type.len > 0) {
+                Output.prettyErrorln("<r><red>error<r>: Unexpected content type from GitHub: {s}", .{content_type});
+                Output.flush();
+                Global.crash();
+            } else {
+                Output.prettyErrorln("<r><red>error<r>: Invalid response from GitHub (missing content type)", .{});
+                Output.flush();
+                Global.crash();
+            }
+        }
+
+        if (mutable.list.items.len == 0) {
+            progress.end();
+            refresher.refresh();
+
+            Output.prettyErrorln("<r><red>error<r>: Invalid response from GitHub (missing body)", .{});
+            Output.flush();
+            Global.crash();
+        }
+
+        return mutable;
+    }
+
     pub fn fetch(ctx: Command.Context, name: string, refresher: *std.Progress, progress: *std.Progress.Node) !MutableString {
         progress.name = "Fetching package.json";
         refresher.refresh();
@@ -1081,9 +1860,7 @@ pub const Example = struct {
 
         progress.name = "Parsing package.json";
         refresher.refresh();
-        js_ast.Expr.Data.Store.create(default_allocator);
-        js_ast.Stmt.Data.Store.create(default_allocator);
-
+        initializeStore();
         var source = logger.Source.initPathString("package.json", mutable.list.items);
         var expr = ParseJSON(&source, ctx.log, ctx.allocator) catch |err| {
             progress.end();
@@ -1193,8 +1970,7 @@ pub const Example = struct {
             std.os.exit(1);
         }
 
-        js_ast.Expr.Data.Store.create(default_allocator);
-        js_ast.Stmt.Data.Store.create(default_allocator);
+        initializeStore();
         var source = logger.Source.initPathString("examples.json", mutable.list.items);
         const examples_object = ParseJSON(&source, ctx.log, ctx.allocator) catch |err| {
             if (ctx.log.errors > 0) {
@@ -1275,6 +2051,8 @@ pub const CreateListExamplesCommand = struct {
         Output.flush();
 
         Example.print(examples.items, null);
+
+        Output.prettyln("You can also paste a GitHub repository:\n\n  bun create github-user/github-repo\n\n  bun create https://github.com/user/repo\n\n", .{});
 
         if (env_loader.map.get("HOME")) |homedir| {
             Output.prettyln(

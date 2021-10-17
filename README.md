@@ -435,7 +435,13 @@ Create a new React project:
 bun create react ./app
 ```
 
-To see a list of available templates, run
+Create from a GitHub repo:
+
+```bash
+bun create ahfarmer/calculator ./app
+```
+
+To see a list of examples, run:
 
 ```bash
 bun create

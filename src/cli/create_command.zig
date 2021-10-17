@@ -179,6 +179,7 @@ const CreateOptions = struct {
     overwrite: bool = false,
     skip_git: bool = false,
     skip_package_json: bool = false,
+    positionals: []const string,
     verbose: bool = false,
 
     const params = [_]clap.Param(clap.Help){
@@ -209,20 +210,25 @@ const CreateOptions = struct {
                 return undefined;
             }
 
-            Output.prettyln("<r><b>bun create<r>\n  flags:\n", .{});
+            Output.prettyln("<r><b>bun create<r>\n\n  flags:\n", .{});
             Output.flush();
             clap.help(Output.writer(), params[1..]) catch {};
             Output.pretty("\n", .{});
             Output.prettyln("<r>  environment variables:\n\n", .{});
-            Output.prettyln("   <b>GITHUB_ACCESS_TOKEN<r>      Use a GitHub access token for downloading code from GitHub.", .{});
-            Output.prettyln("   <b>GITHUB_API_DOMAIN<r>        Instead of \"api.github.com\", useful for GitHub Enterprise\n", .{});
-            Output.prettyln("   <b>NPM_CLIENT<r>               Absolute path to the npm client executable", .{});
+            Output.prettyln("        GITHUB_ACCESS_TOKEN<r>      Downloading code from GitHub with a higher rate limit", .{});
+            Output.prettyln("        GITHUB_API_DOMAIN<r>        Change \"api.github.com\", useful for GitHub Enterprise\n", .{});
+            Output.prettyln("        NPM_CLIENT<r>               Absolute path to the npm client executable", .{});
             Output.flush();
 
             std.os.exit(0);
         }
 
-        var opts = CreateOptions{};
+        var opts = CreateOptions{ .positionals = args.positionals() };
+
+        if (opts.positionals.len >= 1 and (strings.eqlComptime(opts.positionals[0], "c") or strings.eqlComptime(opts.positionals[0], "create"))) {
+            opts.positionals = opts.positionals[1..];
+        }
+
         if (args.flag("--npm")) {
             opts.npm_client = NPMClient.Tag.npm;
         }
@@ -251,8 +257,9 @@ var home_dir_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 pub const CreateCommand = struct {
     var client: HTTPClient = undefined;
 
-    pub fn exec(ctx: Command.Context, positionals: []const []const u8) !void {
+    pub fn exec(ctx: Command.Context, positionals_: []const []const u8) !void {
         var create_options = try CreateOptions.parse(ctx, false);
+        const positionals = create_options.positionals;
 
         if (positionals.len == 0) {
             return try CreateListExamplesCommand.exec(ctx);
@@ -690,6 +697,8 @@ pub const CreateCommand = struct {
         progress.refresh();
 
         var is_nextjs = false;
+        var is_create_react_app = false;
+        var create_react_app_entry_point_path: string = "";
         var preinstall_tasks = std.mem.zeroes(std.ArrayListUnmanaged([]const u8));
         var postinstall_tasks = std.mem.zeroes(std.ArrayListUnmanaged([]const u8));
         var has_dependencies: bool = false;
@@ -762,6 +771,7 @@ pub const CreateCommand = struct {
                 var has_react_refresh = false;
                 var has_bun_macro_relay = false;
                 var has_react = false;
+                var has_react_scripts = false;
 
                 const Prune = struct {
                     pub const packages = std.ComptimeStringMap(void, .{
@@ -810,6 +820,7 @@ pub const CreateCommand = struct {
                     if (property.data == .e_object and property.data.e_object.properties.len > 0) {
                         unsupported_packages.update(property);
 
+                        has_react_scripts = has_react_scripts or property.hasAnyPropertyNamed(&.{"react-scripts"});
                         has_relay = has_relay or property.hasAnyPropertyNamed(&.{ "react-relay", "relay-runtime", "babel-plugin-relay" });
 
                         property.data.e_object.properties = Prune.prune(property.data.e_object.properties);
@@ -831,6 +842,7 @@ pub const CreateCommand = struct {
                     if (property.data == .e_object and property.data.e_object.properties.len > 0) {
                         unsupported_packages.update(property);
 
+                        has_react_scripts = has_react_scripts or property.hasAnyPropertyNamed(&.{"react-scripts"});
                         has_relay = has_relay or property.hasAnyPropertyNamed(&.{ "react-relay", "relay-runtime", "babel-plugin-relay" });
                         property.data.e_object.properties = Prune.prune(property.data.e_object.properties);
 
@@ -859,6 +871,7 @@ pub const CreateCommand = struct {
                 needs.bun_framework_next = is_nextjs and !has_bun_framework_next;
                 needs.bun_bun_for_nextjs = is_nextjs;
                 needs.bun_macro_relay_dependency = needs.bun_macro_relay;
+                var bun_bun_for_react_scripts = false;
 
                 var bun_macros_prop: ?js_ast.Expr = null;
                 var bun_prop: ?js_ast.Expr = null;
@@ -893,15 +906,15 @@ pub const CreateCommand = struct {
 
                 // if (create_options.verbose) {
                 if (needs.bun_macro_relay) {
-                    Output.prettyErrorln("<r><d>[package.json] Detected Relay -> added \"bun-macro-relay\" for compatibility<r>", .{});
+                    Output.prettyErrorln("<r><d>[package.json] Detected Relay -> added \"bun-macro-relay\"<r>", .{});
                 }
 
                 if (needs.react_refresh) {
-                    Output.prettyErrorln("<r><d>[package.json] Detected React -> added \"react-refresh\" to enable React Fast Refresh<r>", .{});
+                    Output.prettyErrorln("<r><d>[package.json] Detected React -> added \"react-refresh\"<r>", .{});
                 }
 
                 if (needs.bun_framework_next) {
-                    Output.prettyErrorln("<r><d>[package.json] Detected Next -> added \"bun-framework-next\" for compatibility<r>", .{});
+                    Output.prettyErrorln("<r><d>[package.json] Detected Next -> added \"bun-framework-next\"<r>", .{});
                 } else if (is_nextjs) {
                     Output.prettyErrorln("<r><d>[package.json] Detected Next.js<r>", .{});
                 }
@@ -1235,6 +1248,101 @@ pub const CreateCommand = struct {
                     }
                 }
 
+                // this is a little dicey
+                // The idea is:
+                // Before the closing </body> tag of Create React App's public/index.html
+                // Inject "<script type="module" src="/src/index.js" async></script>"
+                // Only do this for create-react-app
+                // Which we define as:
+                // 1. has a "public/index.html"
+                // 2. "react-scripts" in package.json dependencies or devDependencies
+                // 3. has a src/index.{jsx,tsx,ts,mts,mcjs}
+                // If at any point those expectations are not matched OR the string /src/index.js already exists in the HTML
+                // don't do it!
+                if (has_react_scripts) {
+                    bail: {
+                        var public_index_html_parts = [_]string{ destination, "public/index.html" };
+                        var public_index_html_path = filesystem.absBuf(&public_index_html_parts, &bun_path_buf);
+
+                        const public_index_html_file = std.fs.openFileAbsolute(public_index_html_path, .{ .read = true, .write = true }) catch break :bail;
+                        defer public_index_html_file.close();
+
+                        const file_extensions_to_try = [_]string{ ".tsx", ".ts", ".jsx", ".js", ".mts", ".mcjs" };
+
+                        var found_file = false;
+                        var entry_point_path: string = "";
+                        var entry_point_file_parts = [_]string{ destination, "src/index" };
+                        var entry_point_file_path_base = filesystem.absBuf(&entry_point_file_parts, &bun_path_buf);
+
+                        for (file_extensions_to_try) |ext| {
+                            std.mem.copy(u8, bun_path_buf[entry_point_file_path_base.len..], ext);
+                            entry_point_path = bun_path_buf[0 .. entry_point_file_path_base.len + ext.len];
+                            std.fs.accessAbsolute(entry_point_path, .{}) catch continue;
+                            found_file = true;
+                            break;
+                        }
+                        if (!found_file) break :bail;
+
+                        var public_index_file_contents = public_index_html_file.readToEndAlloc(ctx.allocator, public_index_html_file.getEndPos() catch break :bail) catch break :bail;
+
+                        if (std.mem.indexOf(u8, public_index_file_contents, entry_point_path[destination.len..]) != null) {
+                            break :bail;
+                        }
+
+                        var body_closing_tag: usize = std.mem.lastIndexOf(u8, public_index_file_contents, "</body>") orelse break :bail;
+
+                        var public_index_file_out = std.ArrayList(u8).initCapacity(ctx.allocator, public_index_file_contents.len) catch break :bail;
+                        var html_writer = public_index_file_out.writer();
+
+                        _ = html_writer.writeAll(public_index_file_contents[0..body_closing_tag]) catch break :bail;
+
+                        create_react_app_entry_point_path = std.fmt.allocPrint(
+                            ctx.allocator,
+                            "./{s}",
+
+                            .{
+                                std.mem.trimLeft(
+                                    u8,
+                                    entry_point_path[destination.len..],
+                                    "/",
+                                ),
+                            },
+                        ) catch break :bail;
+
+                        html_writer.print(
+                            "<script type=\"module\" async src=\"/{s}\"></script>\n{s}",
+                            .{
+                                create_react_app_entry_point_path[2..],
+                                public_index_file_contents[body_closing_tag..],
+                            },
+                        ) catch break :bail;
+
+                        var outfile = std.mem.replaceOwned(u8, ctx.allocator, public_index_file_out.items, "%PUBLIC_URL%", "") catch break :bail;
+
+                        // don't do this actually
+                        // it completely breaks when there is more than one CSS file loaded
+                        // // bonus: check for an index.css file
+                        // // inject it into the .html file statically if the file exists but isn't already in
+                        // inject_css: {
+                        //     const head_i: usize = std.mem.indexOf(u8, outfile, "<head>") orelse break :inject_css;
+                        //     if (std.mem.indexOf(u8, outfile, "/src/index.css") != null) break :inject_css;
+
+                        //     std.mem.copy(u8, bun_path_buf[destination.len + "/src/index".len ..], ".css");
+                        //     var index_css_file_path = bun_path_buf[0 .. destination.len + "/src/index.css".len];
+                        //     std.fs.accessAbsolute(index_css_file_path, .{}) catch break :inject_css;
+                        //     var list = std.ArrayList(u8).fromOwnedSlice(ctx.allocator, outfile);
+                        //     list.insertSlice(head_i + "<head>".len, "<link rel=\"stylesheet\" href=\"/src/index.css\">\n") catch break :inject_css;
+                        //     outfile = list.toOwnedSlice();
+                        // }
+
+                        public_index_html_file.pwriteAll(outfile, 0) catch break :bail;
+                        std.os.ftruncate(public_index_html_file.handle, outfile.len + 1) catch break :bail;
+                        bun_bun_for_react_scripts = true;
+                        is_create_react_app = true;
+                        Output.prettyln("<r><d>[package.json] Added entry point {s} to public/index.html", .{create_react_app_entry_point_path});
+                    }
+                }
+
                 package_json_expr.data.e_object.is_single_line = false;
 
                 package_json_expr.data.e_object.properties = properties_list.items;
@@ -1298,13 +1406,14 @@ pub const CreateCommand = struct {
                                 .e_array => |tasks| {
                                     for (tasks.items) |task| {
                                         if (task.asString(ctx.allocator)) |task_entry| {
-                                            if (needs.bun_bun_for_nextjs) {
+                                            if (needs.bun_bun_for_nextjs or bun_bun_for_react_scripts) {
                                                 var iter = std.mem.split(u8, task_entry, " ");
                                                 var last_was_bun = false;
                                                 while (iter.next()) |current| {
                                                     if (strings.eqlComptime(current, "bun")) {
                                                         if (last_was_bun) {
                                                             needs.bun_bun_for_nextjs = false;
+                                                            bun_bun_for_react_scripts = false;
                                                             break;
                                                         }
                                                         last_was_bun = true;
@@ -1360,6 +1469,8 @@ pub const CreateCommand = struct {
 
                 if (needs.bun_bun_for_nextjs) {
                     try postinstall_tasks.append(ctx.allocator, InjectionPrefill.bun_bun_for_nextjs_task);
+                } else if (bun_bun_for_react_scripts) {
+                    try postinstall_tasks.append(ctx.allocator, try std.fmt.allocPrint(ctx.allocator, "bun bun {s}", .{create_react_app_entry_point_path}));
                 }
             }
         }
@@ -1541,6 +1652,14 @@ pub const CreateCommand = struct {
                 \\  <b><cyan>bun bun --use next<r>
                 \\
             , .{});
+        } else if (is_create_react_app) {
+            Output.pretty(
+                \\
+                \\<r><d>#<r> When dependencies change, run this to update node_modules.bun:
+                \\
+                \\  <b><cyan>bun bun {s}<r>
+                \\
+            , .{create_react_app_entry_point_path});
         }
 
         Output.pretty(
@@ -2052,7 +2171,7 @@ pub const CreateListExamplesCommand = struct {
 
         Example.print(examples.items, null);
 
-        Output.prettyln("You can also paste a GitHub repository:\n\n  bun create github-user/github-repo\n\n  bun create https://github.com/user/repo\n\n", .{});
+        Output.prettyln("<r><d>#<r> You can also paste a GitHub repository:\n\n  <b>bun create <cyan>ahfarmer/calculator calc<r>\n\n", .{});
 
         if (env_loader.map.get("HOME")) |homedir| {
             Output.prettyln(

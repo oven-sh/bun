@@ -15,8 +15,26 @@
       "request": "launch",
       "name": "fetch debug",
       "program": "${workspaceFolder}/misctools/fetch",
-      "args": ["https://example.com"],
+      "args": ["https://api.github.com/repos/hanford/trends/tarball"],
       "cwd": "${workspaceFolder}",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "bun create debug",
+      "program": "${workspaceFolder}/packages/debug-bun-cli-darwin-x64/bin/bun-debug",
+      "args": ["create", "hanford/trends", "foo"],
+      "cwd": "/tmp/",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "bun a debug",
+      "program": "${workspaceFolder}/packages/debug-bun-cli-darwin-x64/bin/bun-debug",
+      "args": ["create", "https://github.com/ahfarmer/calculator", "--force"],
+      "cwd": "/tmp/",
       "console": "internalConsole"
     },
     {

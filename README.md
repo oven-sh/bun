@@ -421,8 +421,6 @@ At the time of writing, `bun create react app` runs ~11x faster on my local comp
 
 #### Usage
 
-By default, templates are downloaded from folders inside `examples/` in Bun's GitHub repo. Running `bun create react ./local-path` downloads the `react` folder from `examples/react`.
-
 Create a new Next.js project:
 
 ```bash
@@ -445,6 +443,16 @@ To see a list of examples, run:
 
 ```bash
 bun create
+```
+
+Format:
+
+```bash
+bun create github-user/repo-name destination
+bun create local-example-or-remote-example destination
+bun create /absolute/path/to-template-folder destination
+bun create https://github.com/github-user/repo-name destination
+bun create github.com/github-user/repo-name destination
 ```
 
 Note: you don't need `bun create` to use Bun. You don't need any configuration at all. This command exists to make it a little easier.
@@ -569,6 +577,9 @@ ELSE IF local template
 3. Copy files recursively using the fastest system calls available (on macOS `fcopyfile` and Linux, `copy_file_range`). Do not copy or traverse into `node_modules` folder if exists (this alone makes it faster than `cp`)
 
 4. Parse the `package.json` (again!), update `name` to be `${basename(destination)}`, remove the `bun-create` section from the `package.json` and save the updated `package.json` to disk.
+   - IF Next.js is detected, add `bun-framework-next` to the list of imports
+   - IF Create React App is detected, add the entry point in /src/index.{js,jsx,ts,tsx} to `public/index.html`
+   - IF Relay is detected, add `bun-macro-relay` so that Relay works
 5. Auto-detect the npm client, preferring `pnpm`, `yarn` (v1), and lastly `npm`
 6. Run any tasks defined in `"bun-create": { "preinstall" }` with the npm client
 7. Run `${npmClient} install` unless `--no-install` is passed OR no dependencies are in package.json

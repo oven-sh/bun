@@ -1467,10 +1467,12 @@ pub const CreateCommand = struct {
 
                 std.os.ftruncate(package_json_file.?.handle, written + 1) catch {};
 
-                if (needs.bun_bun_for_nextjs) {
-                    try postinstall_tasks.append(ctx.allocator, InjectionPrefill.bun_bun_for_nextjs_task);
-                } else if (bun_bun_for_react_scripts) {
-                    try postinstall_tasks.append(ctx.allocator, try std.fmt.allocPrint(ctx.allocator, "bun bun {s}", .{create_react_app_entry_point_path}));
+                if (!create_options.skip_install) {
+                    if (needs.bun_bun_for_nextjs) {
+                        try postinstall_tasks.append(ctx.allocator, InjectionPrefill.bun_bun_for_nextjs_task);
+                    } else if (bun_bun_for_react_scripts) {
+                        try postinstall_tasks.append(ctx.allocator, try std.fmt.allocPrint(ctx.allocator, "bun bun {s}", .{create_react_app_entry_point_path}));
+                    }
                 }
             }
         }
@@ -1668,6 +1670,7 @@ pub const CreateCommand = struct {
             \\
             \\  <b><cyan>cd {s}<r>
             \\  <b><cyan>bun<r>
+            \\
             \\
         , .{
             filesystem.relativeTo(destination),

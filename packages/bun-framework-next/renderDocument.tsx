@@ -410,6 +410,10 @@ export async function render({
   }
   pages[pathname] = [route.scriptSrc, ...pageStylesheets];
 
+  if (!("/_app" in pages)) {
+    pages["/_app"] = [];
+  }
+
   const AppComponent = AppComponent_ || App.default;
   const Document =
     (DocumentNamespace && DocumentNamespace.default) || NextDocument.default;

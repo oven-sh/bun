@@ -12,7 +12,7 @@ React.Children.only = function (children) {
 };
 
 import * as ReactDOM from "react-dom";
-import App from "next/app";
+import NextApp from "next/app";
 import mitt, { MittEmitter } from "next/dist/shared/lib/mitt";
 import { RouterContext } from "next/dist/shared/lib/router-context";
 import Router, {
@@ -22,6 +22,8 @@ import Router, {
   hasBasePath,
   PrivateRouteInfo,
 } from "next/dist/shared/lib/router/router";
+
+const App = NextApp;
 
 import * as NextRouteLoader from "next/dist/client/route-loader";
 import { isDynamicRoute } from "next/dist/shared/lib/router/utils/is-dynamic";
@@ -188,7 +190,8 @@ const appElement: HTMLElement | null = document.getElementById("__next");
 let lastRenderReject: (() => void) | null;
 let webpackHMR: any;
 export let router: Router;
-let CachedApp: AppComponent, onPerfEntry: (metric: any) => void;
+let CachedApp: AppComponent = App,
+  onPerfEntry: (metric: any) => void;
 
 export default function boot(EntryPointNamespace, loader) {
   _boot(EntryPointNamespace).then(() => {}, false);
@@ -311,6 +314,9 @@ export async function _boot(EntryPointNamespace, isError) {
   const PageComponent = EntryPointNamespace.default;
 
   const appScripts = globalThis.__NEXT_DATA__.pages["/_app"];
+
+  CachedApp = NextApp;
+
   if (appScripts && appScripts.length > 0) {
     let appSrc;
     for (let asset of appScripts) {
@@ -327,9 +333,9 @@ export async function _boot(EntryPointNamespace, isError) {
         appSrc + " must have a default export'd React component"
       );
 
-      CachedApp = AppModule.default;
-    } else {
-      CachedApp = App;
+      if ("default" in AppModule) {
+        CachedApp = AppModule.default;
+      }
     }
   }
 
@@ -408,7 +414,7 @@ export function renderError(e) {
 }
 
 globalThis.next = {
-  version: "11.1.0",
+  version: "11.1.2",
   emitter,
   render,
   renderError,

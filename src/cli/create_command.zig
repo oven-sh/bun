@@ -181,6 +181,7 @@ const CreateOptions = struct {
     skip_package_json: bool = false,
     positionals: []const string,
     verbose: bool = false,
+    open: bool = false,
 
     const params = [_]clap.Param(clap.Help){
         clap.parseParam("--help                     Print this menu") catch unreachable,
@@ -192,6 +193,7 @@ const CreateOptions = struct {
         clap.parseParam("--no-git                   Don't create a git repository") catch unreachable,
         clap.parseParam("--verbose                  Too many logs") catch unreachable,
         clap.parseParam("--no-package-json          Disable package.json transforms") catch unreachable,
+        clap.parseParam("--open                     On finish, start bun & open in-browser") catch unreachable,
         clap.parseParam("<POS>...                   ") catch unreachable,
     };
 
@@ -244,6 +246,7 @@ const CreateOptions = struct {
         opts.skip_package_json = args.flag("--no-package-json");
 
         opts.verbose = args.flag("--verbose");
+        opts.open = args.flag("--open");
         opts.skip_install = args.flag("--no-install");
         opts.skip_git = args.flag("--no-git");
         opts.overwrite = args.flag("--force");
@@ -1677,6 +1680,23 @@ pub const CreateCommand = struct {
         });
 
         Output.flush();
+
+        if (create_options.open) {
+            if (which(&bun_path_buf, PATH, destination, "bun")) |bun| {
+                var argv = [_]string{std.mem.span(bun)};
+                var child = try std.ChildProcess.init(&argv, ctx.allocator);
+                child.cwd = destination;
+                child.stdin_behavior = .Inherit;
+                child.stdout_behavior = .Inherit;
+                child.stderr_behavior = .Inherit;
+
+                const open = @import("../open.zig");
+                open.openURL("http://localhost:3000/") catch {};
+
+                try child.spawn();
+                _ = child.wait() catch {};
+            }
+        }
     }
 };
 const Commands = .{

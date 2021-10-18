@@ -426,6 +426,16 @@ For developing frameworks, you can also do `bun bun --use ./relative-path-to-fra
 
 If you're interested in adding a framework integration, please reach out. There's a lot here and it's not entirely documented yet.
 
+# FAQ
+
+When running bun on an M1 (or Apple Silicon), if you see a message like this:
+
+> [1] 28447 killed bun create next ./test
+
+It most likely means you're running bun's x64 version on Apple Silicon. This happens if `node` (or, rather, `npm`) is running via Rosetta. Rosetta is unable to emulate AVX2 instructions, which Bun indirectly uses.
+
+The fix is to ensure you installed a version of Node built for Apple Silicon and then reinstall `bun-cli`. You can also try to directly install `npm install -g bun-cli-darwin-aarch64`.
+
 # Reference
 
 ### `bun create`

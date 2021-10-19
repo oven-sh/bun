@@ -1224,7 +1224,9 @@ pub const Resolver = struct {
                                 // directory path accidentally being interpreted as URL escapes.
                                 var esm_resolution = esmodule.resolve("/", esm.subpath, exports_map.root);
 
-                                if ((esm_resolution.status == .Inexact or esm_resolution.status == .Exact) and strings.startsWith(esm_resolution.path, "/")) {
+                                if ((esm_resolution.status == .Inexact or esm_resolution.status == .Exact) and
+                                    strings.startsWith(esm_resolution.path, "/"))
+                                {
                                     const abs_esm_path: string = brk: {
                                         var parts = [_]string{
                                             abs_package_path,

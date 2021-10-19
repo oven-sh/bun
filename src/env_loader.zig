@@ -325,7 +325,7 @@ pub const Lexer = struct {
     pub fn init(source: *const logger.Source) Lexer {
         return Lexer{
             .source = source,
-            .iter = CodepointIterator{ .bytes = source.contents, .i = 0 },
+            .iter = CodepointIterator.init(source.contents),
         };
     }
 };

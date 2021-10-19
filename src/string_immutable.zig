@@ -44,6 +44,11 @@ pub fn indexOfCharNeg(self: string, char: u8) i32 {
     return -1;
 }
 
+pub fn indexOfSigned(self: string, str: string) i32 {
+    const i = std.mem.indexOf(u8, self, str) orelse return -1;
+    return @intCast(i32, i);
+}
+
 pub inline fn lastIndexOfChar(self: string, char: u8) ?usize {
     return std.mem.lastIndexOfScalar(u8, self, char);
 }
@@ -203,6 +208,10 @@ test "StringOrTinyString Lowercase" {
     try std.testing.expectEqualStrings("hello!!!!!", str.slice());
 }
 
+pub fn hasPrefix(self: string, str: string) bool {
+    return str.len > 0 and startsWith(self, str);
+}
+
 pub fn startsWith(self: string, str: string) bool {
     if (str.len > self.len) {
         return false;
@@ -347,7 +356,10 @@ inline fn eqlComptimeCheckLen(self: string, comptime alt: anytype, comptime chec
         },
         5, 7 => {
             const check = comptime std.mem.readIntNative(u32, alt[0..4]);
-            if (((comptime check_len) and self.len != alt.len) or std.mem.readIntNative(u32, self[0..4]) != check) {
+            if (((comptime check_len) and
+                self.len != alt.len) or
+                std.mem.readIntNative(u32, self[0..4]) != check)
+            {
                 return false;
             }
             const remainder = self[4..];
@@ -566,7 +578,7 @@ pub fn encodeWTF8Rune(p: []u8, r: i32) u3 {
 }
 
 pub fn toUTF16Buf(in: string, out: []u16) usize {
-    var utf8Iterator = CodepointIterator{ .bytes = in, .i = 0 };
+    var utf8Iterator = CodepointIterator.init(in);
 
     var c: u21 = 0;
     var i: usize = 0;
@@ -595,7 +607,7 @@ pub fn toUTF16Buf(in: string, out: []u16) usize {
 }
 
 pub fn toUTF16Alloc(in: string, allocator: *std.mem.Allocator) !JavascriptString {
-    var utf8Iterator = CodepointIterator{ .bytes = in, .i = 0 };
+    var utf8Iterator = CodepointIterator.init(in);
     var out = try std.ArrayList(u16).initCapacity(allocator, in.len);
 
     var c: u21 = 0;
@@ -706,22 +718,43 @@ pub fn utf8ByteSequenceLength(first_byte: u8) u3 {
 pub fn NewCodePointIterator(comptime CodePointType: type, comptime zeroValue: comptime_int) type {
     return struct {
         const Iterator = @This();
-        bytes: []const u8,
-        i: usize,
+        bytes: [*]const u8,
+        i: u32 = 0,
+        len: u32 = 0,
         width: u3 = 0,
-        c: CodePointType = 0,
+        c: CodePointType = zeroValue,
+
+        pub fn initOffset(bytes: []const u8, offset: u32) Iterator {
+            return Iterator{
+                .bytes = bytes.ptr,
+                .i = offset,
+                .len = @truncate(u32, bytes.len),
+            };
+        }
+
+        pub inline fn isEnd(this: Iterator) bool {
+            return this.c == zeroValue and @minimum(this.len, this.i) >= this.len;
+        }
+
+        pub fn init(bytes: []const u8) Iterator {
+            return Iterator{
+                .bytes = bytes.ptr,
+                .i = 0,
+                .len = @truncate(u32, bytes.len),
+            };
+        }
 
         inline fn nextCodepointSlice(it: *Iterator) []const u8 {
             @setRuntimeSafety(false);
 
             const cp_len = utf8ByteSequenceLength(it.bytes[it.i]);
-            it.i += cp_len;
+            it.i = @minimum(it.i + cp_len, it.len);
 
-            return if (!(it.i > it.bytes.len)) it.bytes[it.i - cp_len .. it.i] else "";
+            return if (!(it.i + 1 > it.len)) it.bytes[it.i - cp_len .. it.i] else "";
         }
 
         pub fn needsUTF8Decoding(slice: string) bool {
-            var it = Iterator{ .bytes = slice, .i = 0 };
+            var it = Iterator.init(slice);
 
             while (true) {
                 const part = it.nextCodepointSlice();
@@ -788,6 +821,10 @@ pub fn NewCodePointIterator(comptime CodePointType: type, comptime zeroValue: co
             };
         }
 
+        pub fn remaining(it: *Iterator) []const u8 {
+            return it.bytes[it.i..it.len];
+        }
+
         /// Look ahead at the next n codepoints without advancing the iterator.
         /// If fewer than n codepoints are available, then return the remainder of the string.
         pub fn peek(it: *Iterator, n: usize) []const u8 {
@@ -797,7 +834,7 @@ pub fn NewCodePointIterator(comptime CodePointType: type, comptime zeroValue: co
             var end_ix = original_i;
             var found: usize = 0;
             while (found < n) : (found += 1) {
-                const next_codepoint = it.nextCodepointSlice() orelse return it.bytes[original_i..];
+                const next_codepoint = it.nextCodepointSlice() orelse return it.bytes[original_i..it.len];
                 end_ix += next_codepoint.len;
             }
 

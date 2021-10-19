@@ -232,7 +232,7 @@ pub const Data = struct {
 
                         if (rest_of_line.len > 0) {
                             var end_of_segment: usize = 1;
-                            var iter = strings.CodepointIterator{ .bytes = rest_of_line, .i = 1 };
+                            var iter = strings.CodepointIterator.initOffset(rest_of_line, 1);
                             // extremely naive: we should really use IsIdentifierContinue || isIdentifierStart here
 
                             // highlight until we reach the next matching
@@ -878,6 +878,11 @@ pub const Source = struct {
         line_count: usize,
     };
 
+    pub fn initEmptyFile(filepath: string) Source {
+        const path = fs.Path.init(filepath);
+        return Source{ .path = path, .key_path = path, .index = 0, .contents = "" };
+    }
+
     pub fn initFile(file: fs.File, allocator: *std.mem.Allocator) !Source {
         var name = file.path.name;
 
@@ -968,7 +973,7 @@ pub const Source = struct {
 
     pub fn initErrorPosition(self: *const Source, _offset: Loc) ErrorPosition {
         var prev_code_point: u21 = 0;
-        var offset: usize = std.math.min(if (_offset.start < 0) 0 else @intCast(usize, _offset.start), self.contents.len - 1);
+        var offset: usize = std.math.min(if (_offset.start < 0) 0 else @intCast(usize, _offset.start), @maximum(self.contents.len, 1) - 1);
 
         const contents = self.contents;
 

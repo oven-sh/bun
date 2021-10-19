@@ -2692,7 +2692,7 @@ pub fn isIdentifier(text: string) bool {
         return false;
     }
 
-    var iter = strings.CodepointIterator{ .i = 0, .bytes = text };
+    var iter = strings.CodepointIterator.init(text);
 
     if (!isIdentifierStart(iter.nextCodepoint())) {
         return false;

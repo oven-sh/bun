@@ -727,7 +727,11 @@ inline fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: typ
         return _cwd;
     }
 
-    if ((_platform == .loose or _platform == .posix) and parts.len == 1 and parts[0].len == 1 and parts[0][0] == std.fs.path.sep_posix) {
+    if ((comptime _platform == .loose or _platform == .posix) and
+        parts.len == 1 and
+        parts[0].len == 1 and
+        parts[0][0] == std.fs.path.sep_posix)
+    {
         return "/";
     }
 

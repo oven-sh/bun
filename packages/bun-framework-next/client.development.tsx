@@ -82,38 +82,9 @@ function nextDataFromBunData() {
   Object.assign(params, Object.fromEntries(url.searchParams.entries()));
   Object.assign(params, Object.fromEntries(paramsMap.entries()));
 
-  const pages = routes.reduce((acc, route) => {
-    var name = route.substring(route.indexOf("_next") + "_next/".length);
-
-    while (name.startsWith("/")) {
-      name = name.substring(1);
-    }
-
-    if (name.startsWith("pages")) {
-      name = name.substring("pages".length);
-    }
-
-    while (name.startsWith("/")) {
-      name = name.substring(1);
-    }
-
-    if (name.endsWith(".jsx")) {
-      name = name.substring(0, name.length - ".jsx".length);
-    }
-
-    if (name.endsWith(".tsx")) {
-      name = name.substring(0, name.length - ".tsx".length);
-    }
-
-    if (name.endsWith(".ts")) {
-      name = name.substring(0, name.length - ".ts".length);
-    }
-
-    if (name.endsWith(".js")) {
-      name = name.substring(0, name.length - ".js".length);
-    }
-
-    acc["/" + name] = [route];
+  const pages = routes.keys.reduce((acc, routeName, i) => {
+    const routePath = routes.values[i];
+    acc[routeName] = [routePath];
     return acc;
   }, {});
 

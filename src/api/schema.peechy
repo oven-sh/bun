@@ -84,7 +84,7 @@ struct Problems {
 }
 
 struct Router {
-  string[] routes;
+  StringMap routes;
   int32 route;
   StringMap params;
 }

@@ -718,43 +718,30 @@ pub fn utf8ByteSequenceLength(first_byte: u8) u3 {
 pub fn NewCodePointIterator(comptime CodePointType: type, comptime zeroValue: comptime_int) type {
     return struct {
         const Iterator = @This();
-        bytes: [*]const u8,
-        i: u32 = 0,
-        len: u32 = 0,
+        bytes: []const u8,
+        i: usize,
         width: u3 = 0,
-        c: CodePointType = zeroValue,
+        c: CodePointType = 0,
 
-        pub fn initOffset(bytes: []const u8, offset: u32) Iterator {
-            return Iterator{
-                .bytes = bytes.ptr,
-                .i = offset,
-                .len = @truncate(u32, bytes.len),
-            };
+        pub fn init(str: string) CodepointIterator {
+            return CodepointIterator{ .bytes = str, .i = 0, .width = 0, .c = 0 };
         }
 
-        pub inline fn isEnd(this: Iterator) bool {
-            return this.c == zeroValue and @minimum(this.len, this.i) >= this.len;
-        }
-
-        pub fn init(bytes: []const u8) Iterator {
-            return Iterator{
-                .bytes = bytes.ptr,
-                .i = 0,
-                .len = @truncate(u32, bytes.len),
-            };
+        pub fn initOffset(str: string, i: usize) CodepointIterator {
+            return CodepointIterator{ .bytes = str, .i = i, .width = 0, .c = 0 };
         }
 
         inline fn nextCodepointSlice(it: *Iterator) []const u8 {
             @setRuntimeSafety(false);
 
             const cp_len = utf8ByteSequenceLength(it.bytes[it.i]);
-            it.i = @minimum(it.i + cp_len, it.len);
+            it.i += cp_len;
 
-            return if (!(it.i + 1 > it.len)) it.bytes[it.i - cp_len .. it.i] else "";
+            return if (!(it.i > it.bytes.len)) it.bytes[it.i - cp_len .. it.i] else "";
         }
 
         pub fn needsUTF8Decoding(slice: string) bool {
-            var it = Iterator.init(slice);
+            var it = Iterator{ .bytes = slice, .i = 0 };
 
             while (true) {
                 const part = it.nextCodepointSlice();
@@ -821,10 +808,6 @@ pub fn NewCodePointIterator(comptime CodePointType: type, comptime zeroValue: co
             };
         }
 
-        pub fn remaining(it: *Iterator) []const u8 {
-            return it.bytes[it.i..it.len];
-        }
-
         /// Look ahead at the next n codepoints without advancing the iterator.
         /// If fewer than n codepoints are available, then return the remainder of the string.
         pub fn peek(it: *Iterator, n: usize) []const u8 {
@@ -834,7 +817,7 @@ pub fn NewCodePointIterator(comptime CodePointType: type, comptime zeroValue: co
             var end_ix = original_i;
             var found: usize = 0;
             while (found < n) : (found += 1) {
-                const next_codepoint = it.nextCodepointSlice() orelse return it.bytes[original_i..it.len];
+                const next_codepoint = it.nextCodepointSlice() orelse return it.bytes[original_i..];
                 end_ix += next_codepoint.len;
             }
 

@@ -63,6 +63,7 @@ addEventListener("fetch", async (event: FetchEvent) => {
       AppNamespace: appRoute,
       buildId,
       routePaths: Bun.getRouteFiles(),
+      routeNames: Bun.getRouteNames(),
       request: event.request,
     })
   );

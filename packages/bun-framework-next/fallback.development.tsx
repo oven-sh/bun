@@ -37,7 +37,7 @@ function renderFallback({
   reason,
   problems,
 }: FallbackMessageContainer) {
-  const route = router.routes[router.route];
+  const route = router.routes.values[router.route];
 
   if (!document.getElementById("__next")) {
     const next = document.createElement("div");
@@ -51,7 +51,7 @@ function renderFallback({
   });
 
   globalThis.__NEXT_DATA__.pages["/_app"] = [
-    ...globalThis.__NEXT_DATA__.pages["/_app"],
+    ...(globalThis.__NEXT_DATA__.pages["/_app"] || []),
     ...globalThis["__BUN"].allImportedStyles,
   ];
 

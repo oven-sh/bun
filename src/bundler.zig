@@ -384,11 +384,10 @@ pub const Bundler = struct {
                     this.options.routes.routes_enabled = true;
                     this.router = try Router.init(this.fs, this.allocator, this.options.routes);
                     try this.router.?.loadRoutes(
+                        this.log,
                         dir_info,
                         Resolver,
                         &this.resolver,
-                        std.math.maxInt(u16),
-                        true,
                     );
                     this.router.?.routes.client_framework_enabled = this.options.isFrontendFrameworkEnabled();
                     return;
@@ -401,7 +400,7 @@ pub const Bundler = struct {
             this.options.routes.dir = dir_info.abs_path;
 
             this.router = try Router.init(this.fs, this.allocator, this.options.routes);
-            try this.router.?.loadRoutes(dir_info, Resolver, &this.resolver, std.math.maxInt(u16), true);
+            try this.router.?.loadRoutes(this.log, dir_info, Resolver, &this.resolver);
             this.router.?.routes.client_framework_enabled = this.options.isFrontendFrameworkEnabled();
             return;
         }
@@ -866,7 +865,7 @@ pub const Bundler = struct {
                 defer this.bundler.resetStore();
                 Analytics.Features.filesystem_router = true;
 
-                const entry_points = try router.getEntryPoints(allocator);
+                const entry_points = try router.getEntryPoints();
                 for (entry_points) |entry_point| {
                     const source_dir = bundler.fs.top_level_dir;
                     const resolved = try bundler.linker.resolver.resolve(source_dir, entry_point, .entry_point);
@@ -2743,7 +2742,7 @@ pub const Bundler = struct {
         var load_from_routes = false;
         if (bundler.options.routes.routes_enabled and bundler.options.entry_points.len == 0) {
             if (bundler.router) |router| {
-                bundler.options.entry_points = try router.getEntryPoints(allocator);
+                bundler.options.entry_points = try router.getEntryPoints();
                 skip_normalize = true;
                 load_from_routes = true;
             }

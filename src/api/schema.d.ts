@@ -300,7 +300,7 @@ type uint32 = number;
   }
 
   export interface Router {
-    routes: string[];
+    routes: StringMap;
     route: int32;
     params: StringMap;
   }

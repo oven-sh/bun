@@ -2709,6 +2709,19 @@ pub fn isIdentifier(text: string) bool {
     return true;
 }
 
+test "isIdentifier" {
+    const expect = std.testing.expect;
+    try expect(!isIdentifierContinue(':'));
+    try expect(!isIdentifier("javascript:"));
+
+    try expect(isIdentifier("javascript"));
+
+    try expect(!isIdentifier(":2"));
+    try expect(!isIdentifier("2:"));
+    try expect(isIdentifier("$"));
+    try expect(!isIdentifier("$:"));
+}
+
 pub fn isIdentifierUTF16(text: JavascriptString) bool {
     const n = text.len;
     if (n == 0) {

@@ -416,9 +416,7 @@ function encodeProblems(message, bb) {
 function decodeRouter(bb) {
   var result = {};
 
-  var length = bb.readVarUint();
-  var values = result["routes"] = Array(length);
-  for (var i = 0; i < length; i++) values[i] = bb.readString();
+  result["routes"] = decodeStringMap(bb);
   result["route"] = bb.readInt32();
   result["params"] = decodeStringMap(bb);
   return result;
@@ -428,12 +426,7 @@ function encodeRouter(message, bb) {
 
   var value = message["routes"];
   if (value != null) {
-    var values = value, n = values.length;
-    bb.writeVarUint(n);
-    for (var i = 0; i < n; i++) {
-      value = values[i];
-      bb.writeString(value);
-    }
+    encodeStringMap(value, bb);
   } else {
     throw new Error("Missing required field \"routes\"");
   }

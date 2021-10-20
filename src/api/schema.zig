@@ -647,7 +647,7 @@ pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
 
 pub const Router = struct {
 /// routes
-routes: []const []const u8,
+routes: StringMap,
 
 /// route
 route: i32 = 0,
@@ -659,14 +659,14 @@ params: StringMap,
 pub fn decode(reader: anytype) anyerror!Router {
   var this = std.mem.zeroes(Router);
 
-  this.routes = try reader.readArray([]const u8); 
+  this.routes = try reader.readValue(StringMap); 
   this.route = try reader.readValue(i32); 
   this.params = try reader.readValue(StringMap); 
    return this;
 }
 
 pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-   try writer.writeArray([]const u8, this.routes);
+   try writer.writeValue(this.routes);
    try writer.writeInt(this.route);
    try writer.writeValue(this.params);
 }

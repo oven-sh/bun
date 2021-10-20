@@ -17,11 +17,18 @@ const URLPath = @import("./http/url_path.zig");
 const PathnameScanner = @import("./query_string_map.zig").PathnameScanner;
 const CodepointIterator = @import("./string_immutable.zig").CodepointIterator;
 
-const index_route_hash = @truncate(u32, std.hash.Wyhash.hash(0, "index"));
+const index_route_hash = @truncate(u32, std.hash.Wyhash.hash(0, "$$/index-route$$-!(@*@#&*%-901823098123"));
 const arbitrary_max_route = 4096;
 
+pub const Param = struct {
+    name: string,
+    value: string,
+
+    pub const List = std.MultiArrayList(Param);
+};
+
 dir: StoredFileDescriptorType = 0,
-routes: RouteMap,
+routes: Routes,
 loaded_routes: bool = false,
 allocator: *std.mem.Allocator,
 fs: *Fs.FileSystem,
@@ -33,11 +40,10 @@ pub fn init(
     config: Options.RouteConfig,
 ) !Router {
     return Router{
-        .routes = RouteMap{
-            .routes = RouteGroup.Root.initEmpty(),
-            .index = null,
-            .allocator = allocator,
+        .routes = Routes{
             .config = config,
+            .allocator = allocator,
+            .static = std.StringHashMap(*Route).init(allocator),
         },
         .fs = fs,
         .allocator = allocator,
@@ -45,248 +51,167 @@ pub fn init(
     };
 }
 
-pub const EntryPointList = struct {
-    entry_points: []const string,
-    buffer: []u8,
-};
-pub fn getEntryPointsWithBuffer(this: *const Router, allocator: *std.mem.Allocator, comptime absolute: bool) !EntryPointList {
-    var i: u16 = 0;
-    const route_count: u16 = @truncate(u16, this.routes.routes.len);
-
-    var count: usize = 0;
-    var str_len: usize = 0;
-
-    while (i < route_count) : (i += 1) {
-        const children = this.routes.routes.items(.children)[i];
-        count += @intCast(
-            usize,
-            @boolToInt(children.len == 0),
-        );
-        if (children.len == 0) {
-            const entry = this.routes.routes.items(.entry)[i];
-            str_len += entry.base().len + entry.dir.len;
-        }
-    }
-
-    var buffer = try allocator.alloc(u8, str_len + count);
-    var remain = buffer;
-    var entry_points = try allocator.alloc(string, count);
-
-    i = 0;
-    var entry_point_i: usize = 0;
-    while (i < route_count) : (i += 1) {
-        const children = this.routes.routes.items(.children)[i];
-        if (children.len == 0) {
-            const entry = this.routes.routes.items(.entry)[i];
-            if (comptime absolute) {
-                var parts = [_]string{ entry.dir, entry.base() };
-                entry_points[entry_point_i] = this.fs.absBuf(&parts, remain);
-            } else {
-                var parts = [_]string{ "/", this.config.asset_prefix_path, this.fs.relativeTo(entry.dir), entry.base() };
-                entry_points[entry_point_i] = this.fs.joinBuf(&parts, remain);
-            }
-
-            remain = remain[entry_points[entry_point_i].len..];
-            entry_point_i += 1;
-        }
-    }
-
-    return EntryPointList{ .entry_points = entry_points, .buffer = buffer };
+pub fn getEntryPoints(this: *const Router) ![]const string {
+    return this.routes.list.items(.filepath);
 }
 
-pub fn getEntryPoints(this: *const Router, allocator: *std.mem.Allocator) ![]const string {
-    const list = try getEntryPointsWithBuffer(this, allocator, true);
-    return list.entry_points;
+pub fn getPublicPaths(this: *const Router) ![]const string {
+    return this.routes.list.items(.public_path);
+}
+
+pub fn routeIndexByHash(this: *const Router, hash: u32) ?usize {
+    if (hash == index_route_hash) {
+        return this.routes.index_id;
+    }
+
+    return std.mem.indexOfScalar(u32, this.routes.list.items(.hash), hash);
+}
+
+pub fn getNames(this: *const Router) ![]const string {
+    return this.routes.list.items(.name);
 }
 
 const banned_dirs = [_]string{
     "node_modules",
 };
 
-const RouteEntry = struct {
+const RouteIndex = struct {
     route: *Route,
+    name: string,
+    match_name: string,
+    filepath: string,
+    public_path: string,
     hash: u32,
 
-    pub const List = std.MultiArrayList(RouteEntry);
+    pub const List = std.MultiArrayList(RouteIndex);
+};
 
-    pub fn indexInList(hashes: []u32, hash: u32) ?u32 {
-        for (hashes) |hash_, i| {
-            if (hash_ == hash) return @truncate(u32, i);
+pub const Routes = struct {
+    list: RouteIndex.List = RouteIndex.List{},
+    dynamic: []*Route = &[_]*Route{},
+    dynamic_names: []string = &[_]string{},
+    dynamic_match_names: []string = &[_]string{},
+
+    /// completely static children of indefinite depth
+    /// `"blog/posts"`
+    /// `"dashboard"`
+    /// `"profiles"`
+    /// this is a fast path?
+    static: std.StringHashMap(*Route),
+
+    /// Corresponds to "index.js" on the filesystem
+    index: ?*Route = null,
+    index_id: ?usize = 0,
+
+    allocator: *std.mem.Allocator,
+    config: Options.RouteConfig,
+
+    // This is passed here and propagated through Match
+    // We put this here to avoid loading the FrameworkConfig for the client, on the server.
+    client_framework_enabled: bool = false,
+
+    pub fn matchPage(this: *Routes, routes_dir: string, url_path: URLPath, params: *Param.List) ?Match {
+        // Trim trailing slash
+        var path = url_path.path;
+        var redirect = false;
+
+        // Normalize trailing slash
+        // "/foo/bar/index/" => "/foo/bar/index"
+        if (path.len > 0 and path[path.len - 1] == '/') {
+            path = path[0 .. path.len - 1];
+            redirect = true;
+        }
+
+        // Normal case: "/foo/bar/index" => "/foo/bar"
+        // Pathological: "/foo/bar/index/index/index/index/index/index" => "/foo/bar"
+        // Extremely pathological: "/index/index/index/index/index/index/index" => "index"
+        while (strings.endsWith(path, "/index")) {
+            path = path[0 .. path.len - "/index".len];
+            redirect = true;
+        }
+
+        if (strings.eqlComptime(path, "index")) {
+            path = "";
+            redirect = true;
+        }
+
+        // one final time, trim trailing slash
+        while (path.len > 0 and path[path.len - 1] == '/') {
+            path = path[0 .. path.len - 1];
+            redirect = true;
+        }
+
+        if (strings.eqlComptime(path, ".")) {
+            path = "";
+            redirect = false;
+        }
+
+        if (path.len == 0) {
+            if (this.index) |index| {
+                return Match{
+                    .params = params,
+                    .name = index.name,
+                    .path = index.abs_path.slice(),
+                    .pathname = url_path.pathname,
+                    .basename = index.entry.base(),
+                    .hash = index_route_hash,
+                    .file_path = index.abs_path.slice(),
+                    .query_string = url_path.query_string,
+                    .client_framework_enabled = this.client_framework_enabled,
+                };
+            }
+
+            return null;
+        }
+
+        const MatchContextType = struct {
+            params: Param.List,
+        };
+        var matcher = MatchContextType{ .params = params.* };
+        defer params.* = matcher.params;
+
+        if (this.match(this.allocator, path, *MatchContextType, &matcher)) |route| {
+            return Match{
+                .params = params,
+                .name = route.name,
+                .path = route.abs_path.slice(),
+                .pathname = url_path.pathname,
+                .basename = route.entry.base(),
+                .hash = route.full_hash,
+                .file_path = route.abs_path.slice(),
+                .query_string = url_path.query_string,
+                .client_framework_enabled = this.client_framework_enabled,
+            };
         }
 
         return null;
     }
-};
 
-pub const RouteGroup = struct {
-    /// **Static child routes**
-    /// Each key's pointer starts at the offset of the pattern string
-    ///
-    /// When no more dynamic paramters exist for the route, it will live in this hash table.
-    ///
-    /// index routes live in the parent's `RouteGroup` and do not have `"index"` in the key
-    ///
-    /// `"edit"` -> `"pages/posts/[id]/edit.js"`
-    /// `"posts/all"` -> `"pages/posts/all.js"` 
-    /// `"posts"` -> `"pages/posts/index.js"` or `"pages/posts.js"`        
-
-    static: std.StringArrayHashMapUnmanaged(*Route) = std.StringArrayHashMapUnmanaged(*Route){},
-    child: ?*RouteGroup = null,
-
-/// **Dynamic Route**
-///
-/// When it's the final pattern in the route and there was no index route, this route will match. Only matches when there is still text for a single segment.
-///
-/// `posts/[id]` -> `"pages/posts/[id].js"`
-
-    dynamic: ?*Route = null,
-
-    /// **Catch all route**
-///
-/// 
-///
-/// `posts/[id]` -> `"pages/posts/[id].js"`
-    catch_all: ?*Route = null,
-    catch_all_is_optional: bool = false,
-
-    offset: u32 = 0,
-
-    pub const zero = RouteGroup{};
-
-    pub fn isEmpty(this: *const RouteGroup) bool {
-        this.dy
-        return this.static.count() == 0 and this.child == null and this.index == null and this.dynamic == null and this.catch_all == null;
-    }
-
-    pub fn init() RouteGroup {
-        return RouteGroup{
-            .index = null,
-            .static = std.StringArrayHashMapUnmanaged(*Route){},
-        };
-    }
-
-    pub fn insert(this: *RouteGroup, allocator: *std.mem.Allocator, routes: []*Route, offset: u32) u32 {
-        if (comptime isDebug) {
-            std.debug.assert(offset > 0);
-            std.debug.assert(this.offset == 0 or this.offset == offset);
-        }
-
-        this.offset = offset;
-
+    fn matchDynamic(this: *Routes, allocator: *std.mem.Allocator, path: string, comptime MatchContext: type, ctx: MatchContext) ?*Route {
+        // its cleaned, so now we search the big list of strings
         var i: usize = 0;
-        while (i < routes.len) {
-            var j: usize = i + 1;
-            defer i = j;
-        }
-    }
-
-    pub const Root = struct {
-        all: []*Route = &[_]*Route{},
-
-        /// completely static children of indefinite depth
-        /// `"blog/posts"`
-        /// `"dashboard"`
-        /// `"profiles"`
-        /// this is a fast path?
-        static: std.StringHashMap(*Route),
-
-        /// The root can only have one of these 
-        /// These routes have at least one parameter somewhere
-        children: ?RouteGroup = null,
-
-        /// Corresponds to "index.js" on the filesystem
-        index: ?*Route = null,
-
-        pub fn initEmpty() Root {
-            return Root{
-                .static = std.StringHashMap(*Route).init(default_allocator),
-                .children = std.StringArrayHashMap(RouteGroup).init(default_allocator),
-            };
-        }
-
-        pub fn insert(this: *Root, allocator: *std.mem.Allocator, log: *Logger.Log, children: []*Route) void {
-            var i: u32 = 0;
-            var end = @intCast(u32, children.len);
-            var j: u32 = 0;
-            while (i < children.len) {
-                var route = children[i];
-
-                if (comptime isDebug) {
-                    std.debug.assert(route.param_count > 0);
-                }
-
-                const first_pattern = Pattern.init(route.name, 0) catch unreachable;
-
-                // Since routes are sorted by [ appearing last
-                // and we make all static routes fit into a separate hash table first
-                // we can assume that if the pattern is the last one, it's a dynamic route of some kind
-                if (first_pattern.isEnd(route.name)) {
-                    switch (first_pattern.value) {
-                        .static => unreachable, // thats a bug
-                        .dynamic => {
-                            if (this.dynamic != null) {
-                                log.addErrorFmt(null, Logger.Loc.Empty, allocator,
-                                    \\Multiple dynamic routes can't be on the root route. Rename either:
-                                    \\
-                                    \\ {s}
-                                    \\ {s}
-                                    \\
-                                , .{
-                                    route.abs_path.str(), this.dynamic.?.abs_path.str(),
-                                });
-                            }
-
-                            this.dynamic = route;
-                        },
-                        .optional_catch_all, .catch_all => {
-                            if (this.fallback != null) {
-                                log.addErrorFmt(null, Logger.Loc.Empty, allocator,
-                                    \\Multiple catch-all routes can't be on the root route. Rename either:
-                                    \\
-                                    \\  {s}
-                                    \\  {s}
-                                    \\
-                                , .{
-                                    route.abs_path.str(), this.fallback.?.abs_path.str(),
-                                });
-                            }
-
-                            this.fallback = route;
-                        },
-                    }
-
-                    return;
-                }
-
-                j = i + 1;
-                defer i = j;
-
-                if (j >= children.len) {
-                    var entry = this.children.getOrPut(hashed_string.str()) catch unreachable;
-                    if (!entry.found_existing) {
-                        entry.value_ptr.* = RouteGroup.init(allocator);
-                    }
-
-                    _ = entry.value_ptr.insert(routes[@maximum(@as(usize, i), 1) - 1 ..], 0);
-                    return;
-                }
-
-                var second_route = children[j];
-                var second_pattern = Pattern.init(second_route.name, 0) catch unreachable;
-                var prev_pattern = second_pattern;
-                while (j < children.len and first_pattern.eql(second_pattern)) : (j += 1) {
-                    prev_pattern = second_pattern;
-                    second_route = children[j];
-                }
-
-                if (this.children == null) {
-                    this.children = RouteGroup.init(allocator);
-                }
-
-                this.children.?.insert(routes[i..j], first_pattern.len);
+        while (i < this.dynamic_names.len) : (i += 1) {
+            const name = this.dynamic_match_names[i];
+            const case_sensitive_name_without_leading_slash = this.dynamic_names[i][1..];
+            var offset: u32 = 0;
+            if (Pattern.match(path, name, case_sensitive_name_without_leading_slash, allocator, *@TypeOf(ctx.params), &ctx.params, true)) {
+                return this.dynamic[i];
             }
         }
-    };
+
+        return null;
+    }
+
+    fn match(this: *Routes, allocator: *std.mem.Allocator, pathname_: string, comptime MatchContext: type, ctx: MatchContext) ?*Route {
+        var pathname = std.mem.trimLeft(u8, pathname_, "/");
+
+        if (pathname.len == 0) {
+            return this.index;
+        }
+
+        return this.static.get(pathname) orelse
+            this.matchDynamic(allocator, pathname, MatchContext, ctx);
+    }
 };
 
 const RouteLoader = struct {
@@ -294,11 +219,10 @@ const RouteLoader = struct {
     fs: *FileSystem,
     config: Options.RouteConfig,
 
-    list: RouteEntry.List,
+    dedupe_dynamic: std.AutoArrayHashMap(u32, string),
     log: *Logger.Log,
     index: ?*Route = null,
     static_list: std.StringHashMap(*Route),
-
     all_routes: std.ArrayListUnmanaged(*Route),
 
     pub fn appendRoute(this: *RouteLoader, route: Route) void {
@@ -306,6 +230,7 @@ const RouteLoader = struct {
         if (route.full_hash == index_route_hash) {
             var new_route = this.allocator.create(Route) catch unreachable;
             this.index = new_route;
+            new_route.* = route;
             this.all_routes.append(this.allocator, new_route) catch unreachable;
             return;
         }
@@ -320,7 +245,7 @@ const RouteLoader = struct {
                     &source,
                     Logger.Loc.Empty,
                     this.allocator,
-                    "Route {s} is already defined by {s}",
+                    "Route \"{s}\" is already defined by {s}",
                     .{ route.name, entry.value_ptr.*.abs_path.slice() },
                 ) catch unreachable;
                 return;
@@ -333,26 +258,16 @@ const RouteLoader = struct {
             return;
         }
 
-        // dynamic-ish
         {
-            // This becomes a dead pointer at the end
-            var slice = this.list.slice();
-
-            const hashes = slice.items(.hash);
-            if (std.mem.indexOfScalar(u32, hashes, route.full_hash)) |i| {
-                const routes = slice.items(.route);
-
-                if (comptime isDebug) {
-                    std.debug.assert(strings.eql(routes[i].name, route.name));
-                }
-
+            const entry = this.dedupe_dynamic.getOrPutValue(route.full_hash, route.abs_path.slice()) catch unreachable;
+            if (entry.found_existing) {
                 const source = Logger.Source.initEmptyFile(route.abs_path.slice());
                 this.log.addErrorFmt(
                     &source,
                     Logger.Loc.Empty,
                     this.allocator,
-                    "Route {s} is already defined by {s}",
-                    .{ route.name, routes[i].abs_path.slice() },
+                    "Route \"{s}\" is already defined by {s}",
+                    .{ route.name, entry.value_ptr.* },
                 ) catch unreachable;
                 return;
             }
@@ -361,52 +276,86 @@ const RouteLoader = struct {
         {
             var new_route = this.allocator.create(Route) catch unreachable;
             new_route.* = route;
-
-            this.list.append(
-                this.allocator,
-                .{
-                    .hash = route.full_hash,
-                    .route = new_route,
-                },
-            ) catch unreachable;
             this.all_routes.append(this.allocator, new_route) catch unreachable;
         }
     }
 
-    pub fn loadAll(allocator: *std.mem.Allocator, config: Options.RouteConfig, log: *Logger.Log, comptime ResolverType: type, resolver: *ResolverType, root_dir_info: *const DirInfo) RouteGroup.Root {
+    pub fn loadAll(allocator: *std.mem.Allocator, config: Options.RouteConfig, log: *Logger.Log, comptime ResolverType: type, resolver: *ResolverType, root_dir_info: *const DirInfo) Routes {
         var this = RouteLoader{
             .allocator = allocator,
             .log = log,
             .fs = resolver.fs,
             .config = config,
-            .list = .{},
             .static_list = std.StringHashMap(*Route).init(allocator),
+            .dedupe_dynamic = std.AutoArrayHashMap(u32, string).init(allocator),
             .all_routes = .{},
         };
+        defer this.dedupe_dynamic.deinit();
         this.load(ResolverType, resolver, root_dir_info);
-        if (this.list.len + this.static_list.count() == 0) return RouteGroup.Root.initEmpty();
-
-        var root = RouteGroup.Root{
-            .all = this.all_routes.toOwnedSlice(allocator),
-            .index = this.index,
+        if (this.all_routes.items.len == 0) return Routes{
             .static = this.static_list,
-            .children = std.StringArrayHashMap(RouteGroup).init(this.allocator),
+            .config = config,
+            .allocator = allocator,
         };
 
-        var list = this.list.toOwnedSlice();
+        std.sort.sort(*Route, this.all_routes.items, Route.Sorter{}, Route.Sorter.sortByName);
 
-        var routes = list.items(.route);
+        var route_list = RouteIndex.List{};
+        route_list.setCapacity(allocator, this.all_routes.items.len) catch unreachable;
 
-        if (routes.len > 0) {
-            std.sort.sort(*Route, routes, Route.Sorter{}, Route.Sorter.sortByName);
-            for (routes) |route| {
-                Output.prettyErrorln("\nName: <b>{s}<r>", .{route.name});
+        var dynamic_start: ?usize = null;
+        var index_id: ?usize = null;
+
+        const public_dir_is_in_top_level_dir = strings.startsWith(this.config.dir, this.fs.top_level_dir);
+        for (this.all_routes.items) |route, i| {
+            if (route.param_count > 0 and dynamic_start == null) {
+                dynamic_start = i;
             }
-            // root.insert(allocator, log, routes);
+
+            if (route.full_hash == index_route_hash) index_id = i;
+
+            route_list.appendAssumeCapacity(.{
+                .name = route.name,
+                .filepath = route.abs_path.slice(),
+                .match_name = route.match_name.slice(),
+                .public_path = route.public_path.slice(),
+                .route = route,
+                .hash = route.full_hash,
+            });
+            Output.prettyErrorln("Route: {s}", .{route.name});
         }
 
-        // return root;
-        return root;
+        var dynamic: []*Route = &[_]*Route{};
+        var dynamic_names: []string = &[_]string{};
+        var dynamic_match_names: []string = &[_]string{};
+
+        if (dynamic_start) |dynamic_i| {
+            dynamic = route_list.items(.route)[dynamic_i..];
+            dynamic_names = route_list.items(.name)[dynamic_i..];
+            dynamic_match_names = route_list.items(.match_name)[dynamic_i..];
+
+            if (index_id) |index_i| {
+                if (index_i > dynamic_i) {
+                    // Due to the sorting order, the index route can be the last route.
+                    // We don't want to attempt to match the index route or different stuff will break.
+                    dynamic = dynamic[0 .. dynamic.len - 1];
+                    dynamic_names = dynamic_names[0 .. dynamic_names.len - 1];
+                    dynamic_match_names = dynamic_match_names[0 .. dynamic_match_names.len - 1];
+                }
+            }
+        }
+
+        return Routes{
+            .list = route_list,
+            .dynamic = dynamic,
+            .dynamic_names = dynamic_names,
+            .dynamic_match_names = dynamic_match_names,
+            .static = this.static_list,
+            .index = this.index,
+            .config = config,
+            .allocator = allocator,
+            .index_id = index_id,
+        };
     }
 
     pub fn load(this: *RouteLoader, comptime ResolverType: type, resolver: *ResolverType, root_dir_info: *const DirInfo) void {
@@ -447,14 +396,22 @@ const RouteLoader = struct {
 
                         for (this.config.extensions) |_extname| {
                             if (strings.eql(extname[1..], _extname)) {
+                                // length is extended by one
+                                // entry.dir is a string with a trailing slash
+                                if (comptime isDebug) {
+                                    std.debug.assert(entry.dir.ptr[fs.top_level_dir.len - 1] == '/');
+                                }
+
+                                const public_dir = entry.dir.ptr[fs.top_level_dir.len - 1 .. entry.dir.len];
+
                                 if (Route.parse(
-                                    entry.base_lowercase(),
-                                    // we extend the pointer length by one to get it's slash
-                                    entry.dir.ptr[this.config.dir.len..entry.dir.len],
+                                    entry.base(),
                                     extname,
                                     entry,
                                     this.log,
                                     this.allocator,
+                                    public_dir,
+                                    @truncate(u16, this.config.dir.len - fs.top_level_dir.len),
                                 )) |route| {
                                     this.appendRoute(route);
                                 }
@@ -472,15 +429,19 @@ const RouteLoader = struct {
 // it does not currently handle duplicate exact route matches. that's undefined behavior, for now.
 pub fn loadRoutes(
     this: *Router,
+    log: *Logger.Log,
     root_dir_info: *const DirInfo,
     comptime ResolverType: type,
     resolver: *ResolverType,
-    comptime is_root: bool,
-) anyerror!void {}
+) anyerror!void {
+    if (this.loaded_routes) return;
+    this.routes = RouteLoader.loadAll(this.allocator, this.config, log, ResolverType, resolver, root_dir_info);
+    this.loaded_routes = true;
+}
 
 pub const TinyPtr = packed struct {
-    offset: u32 = 0,
-    len: u32 = 0,
+    offset: u16 = 0,
+    len: u16 = 0,
 
     pub inline fn str(this: TinyPtr, slice: string) string {
         return if (this.len > 0) slice[this.offset .. this.offset + this.len] else "";
@@ -490,29 +451,51 @@ pub const TinyPtr = packed struct {
     }
 
     pub inline fn eql(a: TinyPtr, b: TinyPtr) bool {
-        return @bitCast(u64, a) == @bitCast(u64, b);
+        return @bitCast(u32, a) == @bitCast(u32, b);
+    }
+
+    pub fn from(parent: string, in: string) TinyPtr {
+        if (in.len == 0 or parent.len == 0) return TinyPtr{};
+
+        const right = @ptrToInt(in.ptr) + in.len;
+        const end = @ptrToInt(parent.ptr) + parent.len;
+        if (comptime isDebug) {
+            std.debug.assert(end < right);
+        }
+
+        const length = @maximum(end, right) - right;
+        const offset = @maximum(@ptrToInt(in.ptr), @ptrToInt(parent.ptr)) - @ptrToInt(parent.ptr);
+        return TinyPtr{ .offset = @truncate(u16, offset), .len = @truncate(u16, length) };
     }
 };
 
-pub const Param = struct {
-    key: TinyPtr,
-    kind: RoutePart.Tag,
-    value: TinyPtr,
-
-    pub const List = std.MultiArrayList(Param);
-};
-
 pub const Route = struct {
+    /// Public display name for the route.
+    /// "/", "/index" is "/"
+    /// "/foo/index.js" becomes "/foo"
+    /// case-sensitive, has leading slash
     name: string,
+
+    /// Name used for matching. 
+    /// - Omits leading slash
+    /// - Lowercased
+    match_name: PathString,
+
     entry: *Fs.FileSystem.Entry,
     full_hash: u32,
     param_count: u16,
     abs_path: PathString,
 
+    /// URL-safe path for the route's transpiled script relative to project's top level directory
+    /// - It might not share a prefix with the absolute path due to symlinks.
+    /// - It has a leading slash
+    public_path: PathString,
+
     pub const Ptr = TinyPtr;
 
-    pub const index_route_name: string = "index";
+    pub const index_route_name: string = "/";
     var route_file_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+    var second_route_file_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 
     pub const Sorter = struct {
         const sort_table: [std.math.maxInt(u8)]u8 = brk: {
@@ -526,7 +509,7 @@ pub const Route = struct {
             table['['] = 252;
             table[']'] = 253;
             // of each segment
-            table['/'] = 1;
+            table['/'] = 254;
             break :brk table;
         };
 
@@ -546,17 +529,24 @@ pub const Route = struct {
         }
 
         pub fn sortByName(ctx: @This(), a: *Route, b: *Route) bool {
-            return @call(.{ .modifier = .always_inline }, sortByNameString, .{ ctx, a.name, b.name });
+            // ensure that dynamic routes are always at the bottom
+            // this is so we skip looking at static routes when matching dynamic routes
+            // without allocating a new array
+            if (a.param_count > 0 and b.param_count == 0) return false;
+            if (b.param_count > 0 and a.param_count == 0) return true;
+
+            return @call(.{ .modifier = .always_inline }, sortByNameString, .{ ctx, a.match_name.slice(), b.match_name.slice() });
         }
     };
 
     pub fn parse(
         base_: string,
-        dir: string,
         extname: string,
         entry: *Fs.FileSystem.Entry,
         log: *Logger.Log,
         allocator: *std.mem.Allocator,
+        public_dir_: string,
+        routes_dirname_len: u16,
     ) ?Route {
         var abs_path_str: string = if (entry.abs_path.isEmpty())
             ""
@@ -565,37 +555,80 @@ pub const Route = struct {
 
         var base = base_[0 .. base_.len - extname.len];
 
-        if (strings.eql(base, "index")) {
-            base = "";
-        }
+        var public_dir = std.mem.trim(u8, public_dir_, "/");
 
-        var route_name: string = std.mem.trimRight(u8, dir, "/");
+        // this is a path like
+        // "/pages/index.js"
+        // "/pages/foo/index.ts"
+        // "/pages/foo/bar.tsx"
+        // the name we actually store will often be this one
+        var public_path: string = brk: {
+            if (base.len == 0) break :brk public_dir;
+            route_file_buf[0] = '/';
 
-        var name: string = brk: {
-            if (route_name.len == 0) break :brk base;
-            _ = strings.copyLowercase(route_name, &route_file_buf);
-            route_file_buf[route_name.len] = '/';
-            std.mem.copy(u8, route_file_buf[route_name.len + 1 ..], base);
-            break :brk route_file_buf[0 .. route_name.len + 1 + base.len];
+            var buf = route_file_buf[1..];
+
+            std.mem.copy(
+                u8,
+                buf,
+                public_dir,
+            );
+            buf[public_dir.len] = '/';
+            std.mem.copy(u8, buf[public_dir.len + 1 ..], base);
+
+            std.mem.copy(u8, buf[public_dir.len + 1 + base.len ..], extname);
+            break :brk route_file_buf[0 .. 1 + public_dir.len + 1 + base.len + extname.len];
         };
 
-        while (name.len > 0 and name[name.len - 1] == '/') {
+        var name = public_path[0 .. public_path.len - extname.len];
+
+        while (name.len > 1 and name[name.len - 1] == '/') {
             name = name[0 .. name.len - 1];
         }
 
-        name = std.mem.trimLeft(u8, name, "/");
+        name = name[routes_dirname_len..];
+
+        if (strings.endsWith(name, "/index")) {
+            name = name[0 .. name.len - 6];
+        }
+
+        name = std.mem.trimRight(u8, name, "/");
+
+        var match_name: string = name;
 
         var param_count: u16 = 0;
+        const is_index = name.len == 0;
 
         if (name.len > 0) {
             param_count = Pattern.validate(
-                name,
+                name[1..],
                 allocator,
                 log,
             ) orelse return null;
-            name = FileSystem.DirnameStore.instance.append(@TypeOf(name), name) catch unreachable;
+
+            var has_uppercase = false;
+            var name_i: usize = 0;
+            while (!has_uppercase and name_i < public_path.len) : (name_i += 1) {
+                has_uppercase = public_path[name_i] >= 'A' and public_path[name_i] <= 'Z';
+            }
+
+            const name_offset = @ptrToInt(name.ptr) - @ptrToInt(public_path.ptr);
+
+            if (has_uppercase) {
+                public_path = FileSystem.DirnameStore.instance.append(@TypeOf(public_path), public_path) catch unreachable;
+                name = public_path[name_offset..][0..name.len];
+                match_name = FileSystem.DirnameStore.instance.appendLowerCase(@TypeOf(name[1..]), name[1..]) catch unreachable;
+            } else {
+                public_path = FileSystem.DirnameStore.instance.append(@TypeOf(public_path), public_path) catch unreachable;
+                name = public_path[name_offset..][0..name.len];
+                match_name = name[1..];
+            }
+
+            std.debug.assert(match_name[0] != '/');
+            std.debug.assert(name[0] == '/');
         } else {
             name = Route.index_route_name;
+            match_name = Route.index_route_name;
         }
 
         if (abs_path_str.len == 0) {
@@ -631,417 +664,22 @@ pub const Route = struct {
         return Route{
             .name = name,
             .entry = entry,
-            .full_hash = @truncate(u32, std.hash.Wyhash.hash(0, abs_path_str)),
+            .public_path = PathString.init(public_path),
+            .match_name = PathString.init(match_name),
+            .full_hash = if (is_index)
+                index_route_hash
+            else
+                @truncate(u32, std.hash.Wyhash.hash(0, name)),
             .param_count = param_count,
             .abs_path = entry.abs_path,
         };
     }
 };
 
-// Reference: https://nextjs.org/docs/routing/introduction
-// Examples:
-// - pages/index.js => /
-// - pages/foo.js => /foo
-// - pages/foo/index.js => /foo
-// - pages/foo/[bar] => {/foo/bacon, /foo/bar, /foo/baz, /foo/10293012930}
-// - pages/foo/[...bar] => {/foo/bacon/toast, /foo/bar/what, /foo/baz, /foo/10293012930}
-// Syntax:
-// - [param-name]
-// - Catch All: [...param-name]
-// - Optional Catch All: [[...param-name]]
-// Invalid syntax:
-// - pages/foo/hello-[bar]
-// - pages/foo/[bar]-foo
-pub const RouteMap = struct {
-    routes: RouteGroup.Root,
-    index: ?u32,
-    allocator: *std.mem.Allocator,
-    config: Options.RouteConfig,
-
-    // This is passed here and propagated through Match
-    // We put this here to avoid loading the FrameworkConfig for the client, on the server.
-    client_framework_enabled: bool = false,
-
-    pub threadlocal var segments_buf: [128]string = undefined;
-    pub threadlocal var segments_hash: [128]u32 = undefined;
-
-    pub fn routePathLen(this: *const RouteMap, _ptr: u16) u16 {
-        return this.appendRoutePath(_ptr, &[_]u8{}, false);
-    }
-
-    // This is probably really slow
-    // But it might be fine because it's mostly looking up within the same array
-    // and that array is probably in the cache line
-    var ptr_buf: [arbitrary_max_route]u16 = undefined;
-    // TODO: skip copying parent dirs when it's another file in the same parent dir
-    pub fn appendRoutePath(this: *const RouteMap, tail: u16, buf: []u8, comptime write: bool) u16 {
-        var head: u16 = this.routes.items(.parent)[tail];
-
-        var ptr_buf_count: i32 = 0;
-        var written: u16 = 0;
-        while (!(head == Route.top_level_parent)) : (ptr_buf_count += 1) {
-            ptr_buf[@intCast(usize, ptr_buf_count)] = head;
-            head = this.routes.items(.parent)[head];
-        }
-
-        var i: usize = @intCast(usize, ptr_buf_count);
-        var remain = buf;
-        while (i > 0) : (i -= 1) {
-            const path = this.routes.items(.path)[
-                @intCast(
-                    usize,
-                    ptr_buf[i],
-                )
-            ];
-            if (comptime write) {
-                std.mem.copy(u8, remain, path);
-
-                remain = remain[path.len..];
-                remain[0] = std.fs.path.sep;
-                remain = remain[1..];
-            }
-            written += @truncate(u16, path.len + 1);
-        }
-
-        {
-            const path = this.routes.items(.path)[tail];
-            if (comptime write) {
-                std.mem.copy(u8, remain, path);
-            }
-            written += @truncate(u16, path.len);
-        }
-
-        return written;
-    }
-
-    const MatchContext = struct {
-        params: *Param.List,
-        segments: []string,
-        hashes: []u32,
-        map: *RouteMap,
-        allocator: *std.mem.Allocator,
-        redirect_path: ?string = "",
-        url_path: URLPath,
-
-        matched_route_buf: []u8 = undefined,
-
-        file_path: string = "",
-
-        pub fn matchDynamicRoute(
-            this: *MatchContext,
-            head_i: u16,
-            segment_i: u16,
-        ) ?Match {
-            const start_len = this.params.len;
-            var head = this.map.routes.get(head_i);
-            const remaining: []string = this.segments[segment_i + 1 ..];
-
-            if ((remaining.len > 0 and head.children.len == 0)) {
-                return null;
-            }
-
-            switch (head.part.tag) {
-                .exact => {
-                    // is it the end of an exact match?
-                    if (!(this.hashes.len > segment_i and this.hashes[segment_i] == head.hash)) {
-                        return null;
-                    }
-                },
-                else => {},
-            }
-
-            var match_result: Match = undefined;
-            if (head.children.len > 0 and remaining.len > 0) {
-                var child_i = head.children.offset;
-                const last = child_i + head.children.len;
-                var matched = false;
-                while (child_i < last) : (child_i += 1) {
-                    if (this.matchDynamicRoute(child_i, segment_i + 1)) |res| {
-                        match_result = res;
-                        matched = true;
-                        break;
-                    }
-                }
-
-                if (!matched) {
-                    this.params.shrinkRetainingCapacity(start_len);
-                    return null;
-                }
-                // this is a folder
-            } else if (remaining.len == 0 and head.children.len > 0) {
-                this.params.shrinkRetainingCapacity(start_len);
-                return null;
-            } else {
-                const entry = head.entry;
-                var parts = [_]string{ entry.dir, entry.base() };
-                const file_path = Fs.FileSystem.instance.absBuf(&parts, this.matched_route_buf);
-
-                match_result = Match{
-                    .path = head.path,
-                    .name = Match.nameWithBasename(file_path, this.map.config.dir),
-                    .params = this.params,
-                    .hash = head.full_hash,
-                    .query_string = this.url_path.query_string,
-                    .pathname = this.url_path.pathname,
-                    .basename = entry.base(),
-                    .file_path = file_path,
-                };
-
-                this.matched_route_buf[match_result.file_path.len] = 0;
-            }
-
-            // Now that we know for sure the route will match, we append the param
-            switch (head.part.tag) {
-                .param => {
-                    // account for the slashes
-                    var segment_offset: u16 = segment_i;
-                    for (this.segments[0..segment_i]) |segment| {
-                        segment_offset += @truncate(u16, segment.len);
-                    }
-                    var total_offset: u16 = 0;
-
-                    var current_i: u16 = head.parent;
-                    const slices = this.map.routes;
-                    const names = slices.items(.name);
-                    const parents = slices.items(.parent);
-                    while (current_i != Route.top_level_parent) : (current_i = parents[current_i]) {
-                        total_offset += @truncate(u16, names[current_i].len);
-                    }
-
-                    this.params.append(
-                        this.allocator,
-                        Param{
-                            .key = .{ .offset = head.part.name.offset + total_offset + segment_i, .len = head.part.name.len },
-                            .value = .{ .offset = segment_offset, .len = @truncate(u16, this.segments[segment_i].len) },
-                            .kind = head.part.tag,
-                        },
-                    ) catch unreachable;
-                },
-                else => {},
-            }
-
-            return match_result;
-        }
-    };
-
-    // This makes many passes over the list of routes
-    // However, most of those passes are basically array.indexOf(number) and then smallerArray.indexOf(number)
-    pub fn matchPage(this: *RouteMap, routes_dir: string, file_path_buf: []u8, url_path: URLPath, params: *Param.List) ?Match {
-        // Trim trailing slash
-        var path = url_path.path;
-        var redirect = false;
-
-        // Normalize trailing slash
-        // "/foo/bar/index/" => "/foo/bar/index"
-        if (path.len > 0 and path[path.len - 1] == '/') {
-            path = path[0 .. path.len - 1];
-            redirect = true;
-        }
-
-        // Normal case: "/foo/bar/index" => "/foo/bar"
-        // Pathological: "/foo/bar/index/index/index/index/index/index" => "/foo/bar"
-        // Extremely pathological: "/index/index/index/index/index/index/index" => "index"
-        while (strings.endsWith(path, "/index")) {
-            path = path[0 .. path.len - "/index".len];
-            redirect = true;
-        }
-
-        if (strings.eqlComptime(path, "index")) {
-            path = "";
-            redirect = true;
-        }
-
-        if (strings.eqlComptime(path, ".")) {
-            path = "";
-            redirect = false;
-        }
-
-        const routes_slice = this.routes.slice();
-
-        if (path.len == 0) {
-            if (this.index) |index| {
-                const entry = routes_slice.items(.entry)[index];
-                const parts = [_]string{ entry.dir, entry.base() };
-
-                return Match{
-                    .params = params,
-                    .name = routes_slice.items(.name)[index],
-                    .path = routes_slice.items(.path)[index],
-                    .pathname = url_path.pathname,
-                    .basename = entry.base(),
-                    .hash = index_route_hash,
-                    .file_path = Fs.FileSystem.instance.absBuf(&parts, file_path_buf),
-                    .query_string = url_path.query_string,
-                    .client_framework_enabled = this.client_framework_enabled,
-                };
-            }
-
-            return null;
-        }
-
-        const full_hash = @truncate(u32, std.hash.Wyhash.hash(0, path));
-
-        // Check for an exact match
-        // These means there are no params.
-        if (std.mem.indexOfScalar(u32, routes_slice.items(.full_hash), full_hash)) |exact_match| {
-            const route = this.routes.get(exact_match);
-            // It might be a folder with an index route
-            // /bacon/index.js => /bacon
-            if (route.children.len > 0) {
-                const children = routes_slice.items(.hash)[route.children.offset .. route.children.offset + route.children.len];
-                for (children) |child_hash, i| {
-                    if (child_hash == index_route_hash) {
-                        const entry = routes_slice.items(.entry)[i + route.children.offset];
-                        const parts = [_]string{ entry.dir, entry.base() };
-                        const file_path = Fs.FileSystem.instance.absBuf(&parts, file_path_buf);
-                        return Match{
-                            .params = params,
-                            .name = Match.nameWithBasename(file_path, this.config.dir),
-                            .path = routes_slice.items(.path)[i],
-                            .pathname = url_path.pathname,
-                            .basename = entry.base(),
-                            .hash = child_hash,
-                            .file_path = file_path,
-                            .query_string = url_path.query_string,
-                            .client_framework_enabled = this.client_framework_enabled,
-                        };
-                    }
-                }
-                // It's an exact route, there are no params
-                // /foo/bar => /foo/bar.js
-            } else {
-                const entry = route.entry;
-                const parts = [_]string{ entry.dir, entry.base() };
-                const file_path = Fs.FileSystem.instance.absBuf(&parts, file_path_buf);
-                return Match{
-                    .params = params,
-                    .name = Match.nameWithBasename(file_path, this.config.dir),
-                    .path = route.path,
-                    .redirect_path = if (redirect) path else null,
-                    .hash = full_hash,
-                    .basename = entry.base(),
-                    .pathname = url_path.pathname,
-                    .query_string = url_path.query_string,
-                    .file_path = file_path,
-                    .client_framework_enabled = this.client_framework_enabled,
-                };
-            }
-        }
-
-        var last_slash_i: usize = 0;
-        var segments: []string = segments_buf[0..];
-        var hashes: []u32 = segments_hash[0..];
-        var segment_i: usize = 0;
-        var splitter = std.mem.tokenize(u8, path, "/");
-        while (splitter.next()) |part| {
-            if (part.len == 0 or (part.len == 1 and part[0] == '.')) continue;
-            segments[segment_i] = part;
-            hashes[segment_i] = @truncate(u32, std.hash.Wyhash.hash(0, part));
-            segment_i += 1;
-        }
-        segments = segments[0..segment_i];
-        hashes = hashes[0..segment_i];
-
-        // Now, we've established that there is no exact match.
-        // Something will be dynamic
-        // There are three tricky things about this.
-        // 1. It's possible that the correct route is a catch-all route or an optional catch-all route.
-        // 2. Given routes like this:
-        //      * [name]/[id]
-        //      * foo/[id]
-        //    If the URL is /foo/123
-        //    Then the correct route is foo/[id]
-        var ctx = MatchContext{
-            .params = params,
-            .segments = segments,
-            .hashes = hashes,
-            .map = this,
-            .redirect_path = if (redirect) path else null,
-            .allocator = this.allocator,
-            .url_path = url_path,
-            .matched_route_buf = file_path_buf,
-        };
-
-        // iterate over the top-level routes
-        if (ctx.matchDynamicRoute(0, 0)) |_dynamic_route| {
-            // route name == the filesystem path relative to the pages dir excluding the file extension
-            var dynamic_route = _dynamic_route;
-            dynamic_route.client_framework_enabled = this.client_framework_enabled;
-            return dynamic_route;
-        }
-
-        return null;
-    }
-};
-
-// This is a u32
-pub const RoutePart = packed struct {
-    name: Ptr,
-    tag: Tag,
-
-    pub fn str(this: RoutePart, name: string) string {
-        return switch (this.tag) {
-            .exact => name,
-            else => name[this.name.offset..][0..this.name.len],
-        };
-    }
-
-    pub const Ptr = packed struct {
-        offset: u14,
-        len: u14,
-    };
-
-    pub const Tag = enum(u4) {
-        optional_catch_all = 1,
-        catch_all = 2,
-        param = 3,
-        exact = 4,
-    };
-
-    pub fn parse(base: string) RoutePart {
-        std.debug.assert(base.len > 0);
-
-        var part = RoutePart{
-            .name = Ptr{ .offset = 0, .len = @truncate(u14, base.len) },
-            .tag = .exact,
-        };
-
-        if (base[0] == '[') {
-            if (base.len > 1) {
-                switch (base[1]) {
-                    ']' => {},
-
-                    '[' => {
-                        // optional catch all
-                        if (strings.eqlComptime(base[1..std.math.min(base.len, 5)], "[...")) {
-                            part.name.len = @truncate(u14, std.mem.indexOfScalar(u8, base[5..], ']') orelse return part);
-                            part.name.offset = 5;
-                            part.tag = .optional_catch_all;
-                        }
-                    },
-                    '.' => {
-                        // regular catch all
-                        if (strings.eqlComptime(base[1..std.math.min(base.len, 4)], "...")) {
-                            part.name.len = @truncate(u14, std.mem.indexOfScalar(u8, base[4..], ']') orelse return part);
-                            part.name.offset = 4;
-                            part.tag = .catch_all;
-                        }
-                    },
-                    else => {
-                        part.name.len = @truncate(u14, std.mem.indexOfScalar(u8, base[1..], ']') orelse return part);
-                        part.tag = .param;
-                        part.name.offset = 1;
-                    },
-                }
-            }
-        }
-
-        return part;
-    }
-};
-
 threadlocal var params_list: Param.List = undefined;
 pub fn match(app: *Router, server: anytype, comptime RequestContextType: type, ctx: *RequestContextType) !void {
+    ctx.matched_route = null;
+
     // If there's an extname assume it's an asset and not a page
     switch (ctx.url.extname.len) {
         0 => {},
@@ -1059,8 +697,7 @@ pub fn match(app: *Router, server: anytype, comptime RequestContextType: type, c
     }
 
     params_list.shrinkRetainingCapacity(0);
-    var filepath_buf = std.mem.span(&ctx.match_file_path_buf);
-    if (app.routes.matchPage(app.config.dir, filepath_buf, ctx.url, &params_list)) |route| {
+    if (app.routes.matchPage(app.config.dir, ctx.url, &params_list)) |route| {
         if (route.redirect_path) |redirect| {
             try ctx.handleRedirect(redirect);
             return;
@@ -1073,7 +710,7 @@ pub fn match(app: *Router, server: anytype, comptime RequestContextType: type, c
         }
 
         ctx.matched_route = route;
-        RequestContextType.JavaScriptHandler.enqueue(ctx, server, filepath_buf, &params_list) catch {
+        RequestContextType.JavaScriptHandler.enqueue(ctx, server, &params_list) catch {
             server.javascript_enabled = false;
         };
     }
@@ -1121,31 +758,507 @@ pub const Match = struct {
     }
 };
 
+const FileSystem = Fs.FileSystem;
+
+const MockRequestContextType = struct {
+    controlled: bool = false,
+    url: URLPath,
+    match_file_path_buf: [1024]u8 = undefined,
+
+    handle_request_called: bool = false,
+    redirect_called: bool = false,
+    matched_route: ?Match = null,
+    has_called_done: bool = false,
+
+    pub fn handleRequest(this: *MockRequestContextType) !void {
+        this.handle_request_called = true;
+    }
+
+    pub fn handleRedirect(this: *MockRequestContextType, pathname: string) !void {
+        this.redirect_called = true;
+    }
+
+    pub const JavaScriptHandler = struct {
+        pub fn enqueue(ctx: *MockRequestContextType, server: *MockServer, params: *Router.Param.List) !void {}
+    };
+};
+
+pub const MockServer = struct {
+    watchloop_handle: ?StoredFileDescriptorType = null,
+    watcher: Watcher = Watcher{},
+
+    pub const Watcher = struct {
+        watchloop_handle: ?StoredFileDescriptorType = null,
+        pub fn start(this: *Watcher) anyerror!void {}
+    };
+};
+
+fn makeTest(cwd_path: string, data: anytype) !void {
+    Output.initTest();
+    std.debug.assert(cwd_path.len > 1 and !strings.eql(cwd_path, "/") and !strings.endsWith(cwd_path, "bun"));
+    const bun_tests_dir = try std.fs.cwd().makeOpenPath("bun-test-scratch", .{ .iterate = true });
+    bun_tests_dir.deleteTree(cwd_path) catch {};
+
+    const cwd = try bun_tests_dir.makeOpenPath(cwd_path, .{ .iterate = true });
+    try cwd.setAsCwd();
+
+    const Data = @TypeOf(data);
+    const fields: []const std.builtin.TypeInfo.StructField = comptime std.meta.fields(Data);
+    inline for (fields) |field| {
+        @setEvalBranchQuota(9999);
+        const value = @field(data, field.name);
+
+        if (std.fs.path.dirname(field.name)) |dir| {
+            try cwd.makePath(dir);
+        }
+        var file = try cwd.createFile(field.name, .{ .truncate = true });
+        try file.writeAll(std.mem.span(value));
+        file.close();
+    }
+}
+
+const expect = std.testing.expect;
+const expectEqual = std.testing.expectEqual;
+const expectEqualStrings = std.testing.expectEqualStrings;
+const expectStr = std.testing.expectEqualStrings;
+const Logger = @import("./logger.zig");
+
+pub const Test = struct {
+    pub fn makeRoutes(comptime testName: string, data: anytype) !Routes {
+        Output.initTest();
+        try makeTest(testName, data);
+        const JSAst = @import("./js_ast.zig");
+        JSAst.Expr.Data.Store.create(default_allocator);
+        JSAst.Stmt.Data.Store.create(default_allocator);
+        var fs = try FileSystem.init1(default_allocator, null);
+        var top_level_dir = fs.top_level_dir;
+
+        var pages_parts = [_]string{ top_level_dir, "pages" };
+        var pages_dir = try Fs.FileSystem.instance.absAlloc(default_allocator, &pages_parts);
+        // _ = try std.fs.makeDirAbsolute(
+        //     pages_dir,
+        // );
+        var router = try Router.init(&FileSystem.instance, default_allocator, Options.RouteConfig{
+            .dir = pages_dir,
+            .routes_enabled = true,
+            .extensions = &.{"js"},
+        });
+
+        const Resolver = @import("./resolver/resolver.zig").Resolver;
+        var logger = Logger.Log.init(default_allocator);
+        errdefer {
+            logger.printForLogLevel(Output.errorWriter()) catch {};
+        }
+
+        var opts = Options.BundleOptions{
+            .resolve_mode = .lazy,
+            .platform = .browser,
+            .loaders = undefined,
+            .define = undefined,
+            .log = &logger,
+            .routes = router.config,
+            .entry_points = &.{},
+            .out_extensions = std.StringHashMap(string).init(default_allocator),
+            .transform_options = std.mem.zeroes(Api.TransformOptions),
+            .external = Options.ExternalModules.init(
+                default_allocator,
+                &FileSystem.instance.fs,
+                FileSystem.instance.top_level_dir,
+                &.{},
+                &logger,
+                .browser,
+            ),
+        };
+
+        var resolver = Resolver.init1(default_allocator, &logger, &FileSystem.instance, opts);
+
+        var root_dir = (try resolver.readDirInfo(pages_dir)).?;
+        var entries = root_dir.getEntries().?;
+        return RouteLoader.loadAll(default_allocator, opts.routes, &logger, Resolver, &resolver, root_dir);
+        // try router.loadRoutes(root_dir, Resolver, &resolver, 0, true);
+        // var entry_points = try router.getEntryPoints(default_allocator);
+
+        // try expectEqual(std.meta.fieldNames(@TypeOf(data)).len, entry_points.len);
+        // return router;
+    }
+
+    pub fn make(comptime testName: string, data: anytype) !Router {
+        try makeTest(testName, data);
+        const JSAst = @import("./js_ast.zig");
+        JSAst.Expr.Data.Store.create(default_allocator);
+        JSAst.Stmt.Data.Store.create(default_allocator);
+        var fs = try FileSystem.init1(default_allocator, null);
+        var top_level_dir = fs.top_level_dir;
+
+        var pages_parts = [_]string{ top_level_dir, "pages" };
+        var pages_dir = try Fs.FileSystem.instance.absAlloc(default_allocator, &pages_parts);
+        // _ = try std.fs.makeDirAbsolute(
+        //     pages_dir,
+        // );
+        var router = try Router.init(&FileSystem.instance, default_allocator, Options.RouteConfig{
+            .dir = pages_dir,
+            .routes_enabled = true,
+            .extensions = &.{"js"},
+        });
+
+        const Resolver = @import("./resolver/resolver.zig").Resolver;
+        var logger = Logger.Log.init(default_allocator);
+        errdefer {
+            logger.printForLogLevel(Output.errorWriter()) catch {};
+        }
+
+        var opts = Options.BundleOptions{
+            .resolve_mode = .lazy,
+            .platform = .browser,
+            .loaders = undefined,
+            .define = undefined,
+            .log = &logger,
+            .routes = router.config,
+            .entry_points = &.{},
+            .out_extensions = std.StringHashMap(string).init(default_allocator),
+            .transform_options = std.mem.zeroes(Api.TransformOptions),
+            .external = Options.ExternalModules.init(
+                default_allocator,
+                &FileSystem.instance.fs,
+                FileSystem.instance.top_level_dir,
+                &.{},
+                &logger,
+                .browser,
+            ),
+        };
+
+        var resolver = Resolver.init1(default_allocator, &logger, &FileSystem.instance, opts);
+
+        var root_dir = (try resolver.readDirInfo(pages_dir)).?;
+        var entries = root_dir.getEntries().?;
+        try router.loadRoutes(&logger, root_dir, Resolver, &resolver);
+        var entry_points = try router.getEntryPoints();
+
+        try expectEqual(std.meta.fieldNames(@TypeOf(data)).len, entry_points.len);
+        return router;
+    }
+};
+
+test "Route Loader" {
+    var server = MockServer{};
+    var ctx = MockRequestContextType{
+        .url = try URLPath.parse("/hi"),
+    };
+    const fixtures = @import("./test/fixtures.zig");
+    var router = try Test.make("routes-basic", fixtures.github_api_routes_list);
+
+    var parameters = Param.List{};
+    const MatchContext = struct {
+        params: Param.List,
+
+        pub fn empty(this: *@This()) !void {
+            try expectEqual(this.params.len, 0);
+        }
+    };
+
+    {
+        var match_ctx = MatchContext{ .params = .{} };
+        var route = router.match(default_allocator, "/organizations", *MatchContext, &match_ctx);
+        try match_ctx.empty();
+        try expectEqualStrings(route.?.name, "organizations");
+    }
+
+    {
+        var match_ctx = MatchContext{ .params = .{} };
+        var route = router.match(default_allocator, "/app/installations/", *MatchContext, &match_ctx);
+        try match_ctx.empty();
+        try expectEqualStrings(route.?.name, "app/installations");
+    }
+
+    {
+        var match_ctx = MatchContext{ .params = .{} };
+        var route = router.match(default_allocator, "/app/installations/123", *MatchContext, &match_ctx);
+        try expectEqualStrings(route.?.name, "app/installations/[installation_id]");
+        try expectEqualStrings(match_ctx.params.get(0).name, "installation_id");
+        try expectEqualStrings(match_ctx.params.get(0).value, "123");
+    }
+
+    {
+        var match_ctx = MatchContext{ .params = .{} };
+        var route = router.match(default_allocator, "/codes_of_conduct/", *MatchContext, &match_ctx);
+        try match_ctx.empty();
+        try expectEqualStrings(route.?.name, "codes_of_conduct");
+    }
+
+    {
+        var match_ctx = MatchContext{ .params = .{} };
+        var route = router.match(default_allocator, "codes_of_conduct/123", *MatchContext, &match_ctx);
+        try expectEqualStrings(route.?.name, "codes_of_conduct/[key]");
+        try expectEqualStrings(match_ctx.params.get(0).name, "key");
+        try expectEqualStrings(match_ctx.params.get(0).value, "123");
+    }
+
+    {
+        var match_ctx = MatchContext{ .params = .{} };
+        var route = router.match(default_allocator, "codes_of_conduct/123/", *MatchContext, &match_ctx);
+        try expectEqualStrings(route.?.name, "codes_of_conduct/[key]");
+        try expectEqualStrings(match_ctx.params.get(0).name, "key");
+        try expectEqualStrings(match_ctx.params.get(0).value, "123");
+    }
+
+    {
+        var match_ctx = MatchContext{ .params = .{} };
+        var route = router.match(default_allocator, "/orgs/123/index", *MatchContext, &match_ctx);
+        try expectEqualStrings(route.?.name, "orgs/[org]");
+        try expectEqualStrings(match_ctx.params.get(0).name, "org");
+        try expectEqualStrings(match_ctx.params.get(0).value, "123");
+    }
+
+    {
+        var match_ctx = MatchContext{ .params = .{} };
+        var route = router.match(default_allocator, "/orgs/123/actions/permissions", *MatchContext, &match_ctx);
+        try expectEqualStrings(route.?.name, "orgs/[org]/actions/permissions");
+        try expectEqualStrings(match_ctx.params.get(0).name, "org");
+        try expectEqualStrings(match_ctx.params.get(0).value, "123");
+    }
+
+    {
+        var match_ctx = MatchContext{ .params = .{} };
+        var route = router.match(default_allocator, "/orgs/orgg/teams/teamm/discussions/123/comments/999/reactions", *MatchContext, &match_ctx);
+        try expectEqualStrings(route.?.name, "orgs/[org]/teams/[team_slug]/discussions/[discussion_number]/comments/[comment_number]/reactions");
+        try expectEqualStrings(match_ctx.params.get(0).name, "org");
+        try expectEqualStrings(match_ctx.params.get(0).value, "orgg");
+
+        try expectEqualStrings(match_ctx.params.get(1).name, "team_slug");
+        try expectEqualStrings(match_ctx.params.get(1).value, "teamm");
+
+        try expectEqualStrings(match_ctx.params.get(2).name, "discussion_number");
+        try expectEqualStrings(match_ctx.params.get(2).value, "123");
+
+        try expectEqualStrings(match_ctx.params.get(3).name, "comment_number");
+        try expectEqualStrings(match_ctx.params.get(3).value, "999");
+    }
+    {
+        var match_ctx = MatchContext{ .params = .{} };
+        var route = router.match(default_allocator, "/repositories/123/environments/production/not-real", *MatchContext, &match_ctx);
+        try expectEqualStrings(route.?.name, "repositories/[repository_id]/[...jarred-fake-catch-all]");
+        try expectEqualStrings(match_ctx.params.get(0).name, "repository_id");
+        try expectEqualStrings(match_ctx.params.get(0).value, "123");
+
+        try expectEqualStrings(match_ctx.params.get(1).name, "jarred-fake-catch-all");
+        try expectEqualStrings(match_ctx.params.get(1).value, "environments/production/not-real");
+
+        try expectEqual(match_ctx.params.len, 2);
+    }
+}
+
+test "Routes basic" {
+    var server = MockServer{};
+    var ctx = MockRequestContextType{
+        .url = try URLPath.parse("/hi"),
+    };
+
+    var router = try Test.make("routes-basic", .{
+        .@"pages/hi.js" = "//hi",
+        .@"pages/index.js" = "//index",
+        .@"pages/blog/hi.js" = "//blog/hi",
+    });
+    try router.match(&server, MockRequestContextType, &ctx);
+    try expectEqualStrings(ctx.matched_route.?.name, "/hi");
+
+    ctx = MockRequestContextType{
+        .url = try URLPath.parse("/"),
+    };
+
+    try router.match(&server, MockRequestContextType, &ctx);
+    try expectEqualStrings(ctx.matched_route.?.name, "/");
+
+    ctx = MockRequestContextType{
+        .url = try URLPath.parse("/blog/hi"),
+    };
+
+    try router.match(&server, MockRequestContextType, &ctx);
+    try expectEqualStrings(ctx.matched_route.?.name, "/blog/hi");
+
+    ctx = MockRequestContextType{
+        .url = try URLPath.parse("/blog/hey"),
+    };
+
+    try router.match(&server, MockRequestContextType, &ctx);
+    try expect(ctx.matched_route == null);
+
+    ctx = MockRequestContextType{
+        .url = try URLPath.parse("/blog/"),
+    };
+
+    try router.match(&server, MockRequestContextType, &ctx);
+    try expect(ctx.matched_route == null);
+
+    ctx = MockRequestContextType{
+        .url = try URLPath.parse("/pages/hi"),
+    };
+
+    try router.match(&server, MockRequestContextType, &ctx);
+    try expect(ctx.matched_route == null);
+}
+
+test "Dynamic routes" {
+    var server = MockServer{};
+    var ctx = MockRequestContextType{
+        .url = try URLPath.parse("/blog/hi"),
+    };
+    var filepath_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+    var router = try Test.make("routes-dynamic", .{
+        .@"pages/index.js" = "//index.js",
+        .@"pages/blog/hi.js" = "//blog-hi",
+        .@"pages/posts/[id].js" = "//hi",
+        // .@"pages/blog/posts/bacon.js" = "//index",
+    });
+
+    try router.match(&server, MockRequestContextType, &ctx);
+    try expectEqualStrings(ctx.matched_route.?.name, "blog/hi");
+
+    var params = ctx.matched_route.?.paramsIterator();
+    try expect(params.next() == null);
+
+    ctx.matched_route = null;
+
+    ctx.url = try URLPath.parse("/posts/123");
+    try router.match(&server, MockRequestContextType, &ctx);
+
+    params = ctx.matched_route.?.paramsIterator();
+
+    try expectEqualStrings(ctx.matched_route.?.name, "posts/[id]");
+    try expectEqualStrings(params.next().?.rawValue(ctx.matched_route.?.pathname), "123");
+
+    // ctx = MockRequestContextType{
+    //     .url = try URLPath.parse("/"),
+    // };
+
+    // try router.match(&server, MockRequestContextType, &ctx);
+    // try expectEqualStrings(ctx.matched_route.name, "index");
+}
+
+test "Pattern" {
+    const pattern = "[dynamic]/static/[dynamic2]/[...catch_all]";
+
+    const dynamic = try Pattern.init(pattern, 0);
+    try expectStr(@tagName(dynamic.value), "dynamic");
+    const static = try Pattern.init(pattern, dynamic.len);
+    try expectStr(@tagName(static.value), "static");
+    const dynamic2 = try Pattern.init(pattern, static.len);
+    try expectStr(@tagName(dynamic2.value), "dynamic");
+    const static2 = try Pattern.init(pattern, dynamic2.len);
+    try expectStr(@tagName(static2.value), "static");
+    const catch_all = try Pattern.init(pattern, static2.len);
+    try expectStr(@tagName(catch_all.value), "catch_all");
+
+    try expectStr(dynamic.value.dynamic.str(pattern), "dynamic");
+    try expectStr(static.value.static, "/static/");
+    try expectStr(dynamic2.value.dynamic.str(pattern), "dynamic2");
+    try expectStr(static2.value.static, "/");
+    try expectStr(catch_all.value.catch_all.str(pattern), "catch_all");
+}
+
 const Pattern = struct {
     value: Value,
-    len: u32 = 0,
+    len: RoutePathInt = 0,
 
-    // pub fn match(path: string, name: string, params: *para) bool {
-    //     var offset: u32 = 0;
-    //     var path_i: u32 = 0;
-    //     while (offset < name.len) {
-    //         var pattern = Pattern.init(name, 0) catch unreachable;
-    //         var path_ = path[path_i..];
+    /// Match a filesystem route pattern to a URL path.
+    pub fn match(
+        // `path` must be lowercased and have no leading slash
+        path: string,
+        /// case-sensitive, must not have a leading slash
+        name: string,
+        /// case-insensitive, must not have a leading slash
+        match_name: string,
+        allocator: *std.mem.Allocator,
+        comptime ParamsListType: type,
+        params: ParamsListType,
+        comptime allow_optional_catch_all: bool,
+    ) bool {
+        var offset: RoutePathInt = 0;
+        var path_ = path;
+        while (offset < name.len) {
+            var pattern = Pattern.init(match_name, offset) catch unreachable;
+            offset = pattern.len;
 
-    //         switch (pattern.value) {
-    //             .static => |str| {
-    //                 if (!strings.eql(str, path_[0..str.len])) {
-    //                     return false;
-    //                 }
+            switch (pattern.value) {
+                .static => |str| {
+                    const segment = path_[0 .. std.mem.indexOfScalar(u8, path_, '/') orelse path_.len];
+                    if (!str.eql(segment)) {
+                        params.shrinkRetainingCapacity(0);
+                        return false;
+                    }
 
-    //                 path_ = path_[str.len..];
-    //                 offset = pattern.len;
-    //             },
-    //         }
-    //     }
+                    path_ = if (segment.len < path_.len)
+                        path_[segment.len + 1 ..]
+                    else
+                        "";
 
-    //     return true;
-    // }
+                    if (path_.len == 0 and pattern.isEnd(name)) return true;
+                },
+                .dynamic => |dynamic| {
+                    if (std.mem.indexOfScalar(u8, path_, '/')) |i| {
+                        params.append(allocator, .{
+                            .name = dynamic,
+                            .value = path,
+                        }) catch unreachable;
+                        path_ = path_[i + 1 ..];
+
+                        if (pattern.isEnd(name)) {
+                            params.shrinkRetainingCapacity(0);
+                            return false;
+                        }
+
+                        continue;
+                    } else if (pattern.isEnd(name)) {
+                        params.append(allocator, .{
+                            .name = dynamic.str(name),
+                            .value = path_,
+                        }) catch unreachable;
+                        return true;
+                    } else if (comptime allow_optional_catch_all) {
+                        pattern = Pattern.init(match_name, offset) catch unreachable;
+
+                        if (pattern.value == .optional_catch_all) {
+                            params.append(allocator, .{
+                                .name = dynamic.str(name),
+                                .value = path_,
+                            }) catch unreachable;
+                            path_ = "";
+                        }
+
+                        return true;
+                    }
+
+                    if (comptime !allow_optional_catch_all) {
+                        return true;
+                    }
+                },
+                .catch_all => |dynamic| {
+                    if (path_.len > 0) {
+                        params.append(allocator, .{
+                            .name = dynamic.str(name),
+                            .value = path_,
+                        }) catch unreachable;
+                        return true;
+                    }
+
+                    return false;
+                },
+                .optional_catch_all => |dynamic| {
+                    if (comptime allow_optional_catch_all) {
+                        if (path_.len > 0) params.append(allocator, .{
+                            .name = dynamic.str(name),
+                            .value = path_,
+                        }) catch unreachable;
+
+                        return true;
+                    }
+
+                    return false;
+                },
+            }
+        }
+
+        return false;
+    }
 
     /// Validate a Route pattern, returning the number of route parameters.
     /// `null` means invalid. Error messages are logged. 
@@ -1164,7 +1277,7 @@ const Pattern = struct {
         }
 
         var count: u16 = 0;
-        var offset: u32 = 0;
+        var offset: RoutePathInt = 0;
         std.debug.assert(input.len > 0);
 
         const end = @truncate(u32, input.len - 1);
@@ -1249,22 +1362,24 @@ const Pattern = struct {
         PatternMissingClosingBracket,
     };
 
-    pub fn init(input: string, offset_: u32) PatternParseError!Pattern {
+    const RoutePathInt = u16;
+
+    pub fn init(input: string, offset_: RoutePathInt) PatternParseError!Pattern {
         return initMaybeHash(input, offset_, true);
     }
 
     pub fn isEnd(this: Pattern, input: string) bool {
-        return @as(usize, this.len) >= input.len;
+        return @as(usize, this.len) >= input.len - 1;
     }
 
-    pub fn initUnhashed(input: string, offset_: u32) PatternParseError!Pattern {
+    pub fn initUnhashed(input: string, offset_: RoutePathInt) PatternParseError!Pattern {
         return initMaybeHash(input, offset_, false);
     }
 
-    inline fn initMaybeHash(input: string, offset_: u32, comptime do_hash: bool) PatternParseError!Pattern {
+    inline fn initMaybeHash(input: string, offset_: RoutePathInt, comptime do_hash: bool) PatternParseError!Pattern {
         const initHashedString = if (comptime do_hash) HashedString.init else HashedString.initNoHash;
 
-        var offset: u32 = offset_;
+        var offset: RoutePathInt = offset_;
 
         while (input.len > @as(usize, offset) and input[offset] == '/') {
             offset += 1;
@@ -1272,20 +1387,20 @@ const Pattern = struct {
 
         if (input.len == 0 or input.len <= @as(usize, offset)) return Pattern{
             .value = .{ .static = HashedString.empty },
-            .len = @truncate(u32, @minimum(input.len, @as(usize, offset))),
+            .len = @truncate(RoutePathInt, @minimum(input.len, @as(usize, offset))),
         };
 
-        var i: u32 = offset;
+        var i: RoutePathInt = offset;
 
         var tag = Tag.static;
-        const end = @intCast(u32, input.len - 1);
+        const end = @intCast(RoutePathInt, input.len - 1);
 
         if (offset == end) return Pattern{ .len = offset, .value = .{ .static = HashedString.empty } };
 
         while (i <= end) : (i += 1) {
             switch (input[i]) {
                 '/' => {
-                    return Pattern{ .len = i, .value = .{ .static = initHashedString(input[offset..i]) } };
+                    return Pattern{ .len = @minimum(i + 1, end), .value = .{ .static = initHashedString(input[offset..i]) } };
                 },
                 '[' => {
                     if (i > offset) {
@@ -1312,9 +1427,11 @@ const Pattern = struct {
                                 return error.InvalidOptionalCatchAllRoute;
                             }
 
+                            i += 1;
+
                             const catch_all_dot_start = i;
                             if (!strings.eqlComptimeIgnoreLen(input[i..][0..3], "...")) return error.InvalidOptionalCatchAllRoute;
-                            i += 4;
+                            i += 3;
                             param.offset = i;
                         },
                         '.' => {
@@ -1345,15 +1462,14 @@ const Pattern = struct {
                     i += 1;
 
                     if (tag == Tag.optional_catch_all) {
-                        i += 1;
-
                         if (input[i] != ']') return error.PatternMissingClosingBracket;
+                        i += 1;
                     }
 
                     if (@enumToInt(tag) > @enumToInt(Tag.dynamic) and i <= end) return error.CatchAllMustBeAtTheEnd;
 
                     return Pattern{
-                        .len = @minimum(end, i),
+                        .len = @minimum(i + 1, end),
                         .value = switch (tag) {
                             .dynamic => .{
                                 .dynamic = param,
@@ -1394,541 +1510,155 @@ const Pattern = struct {
     };
 };
 
-const FileSystem = Fs.FileSystem;
+test "Pattern Match" {
+    Output.initTest();
+    const Entry = Param;
 
-const MockRequestContextType = struct {
-    controlled: bool = false,
-    url: URLPath,
-    match_file_path_buf: [1024]u8 = undefined,
+    const regular_list = .{
+        .@"404" = .{
+            "404",
+            &[_]Entry{},
+        },
+        .@"[teamSlug]" = .{
+            "value",
+            &[_]Entry{
+                .{ .name = "teamSlug", .value = "value" },
+            },
+        },
+        .@"hi/hello/[teamSlug]" = .{
+            "hi/hello/123",
+            &[_]Entry{
+                .{ .name = "teamSlug", .value = "123" },
+            },
+        },
+        .@"hi/[teamSlug]/hello" = .{
+            "hi/123/hello",
+            &[_]Entry{
+                .{ .name = "teamSlug", .value = "123" },
+            },
+        },
+        .@"[teamSlug]/hi/hello" = .{
+            "123/hi/hello",
+            &[_]Entry{
+                .{ .name = "teamSlug", .value = "123" },
+            },
+        },
+        .@"[teamSlug]/[project]" = .{
+            "team/bacon",
+            &[_]Entry{
+                .{ .name = "teamSlug", .value = "team" },
+                .{ .name = "project", .value = "bacon" },
+            },
+        },
+        .@"lemon/[teamSlug]/[project]" = .{
+            "lemon/team/bacon",
+            &[_]Entry{
+                .{ .name = "teamSlug", .value = "team" },
+                .{ .name = "project", .value = "bacon" },
+            },
+        },
+        .@"[teamSlug]/[project]/lemon" = .{
+            "team/bacon/lemon",
+            &[_]Entry{
+                .{ .name = "teamSlug", .value = "team" },
+                .{ .name = "project", .value = "bacon" },
+            },
+        },
+        .@"[teamSlug]/lemon/[project]" = .{
+            "team/lemon/lemon",
+            &[_]Entry{
+                .{ .name = "teamSlug", .value = "team" },
+                .{ .name = "project", .value = "lemon" },
+            },
+        },
 
-    handle_request_called: bool = false,
-    redirect_called: bool = false,
-    matched_route: ?Match = null,
-    has_called_done: bool = false,
+        .@"[teamSlug]/lemon/[...project]" = .{
+            "team/lemon/lemon-bacon-cheese/wow/brocollini",
+            &[_]Entry{
+                .{ .name = "teamSlug", .value = "team" },
+                .{ .name = "project", .value = "lemon-bacon-cheese/wow/brocollini" },
+            },
+        },
 
-    pub fn handleRequest(this: *MockRequestContextType) !void {
-        this.handle_request_called = true;
-    }
-
-    pub fn handleRedirect(this: *MockRequestContextType, pathname: string) !void {
-        this.redirect_called = true;
-    }
-
-    pub const JavaScriptHandler = struct {
-        pub fn enqueue(ctx: *MockRequestContextType, server: *MockServer, filepath_buf: []u8, params: *Router.Param.List) !void {}
+        .@"[teamSlug]/lemon/[project]/[[...slug]]" = .{
+            "team/lemon/lemon/slugggg",
+            &[_]Entry{
+                .{ .name = "teamSlug", .value = "team" },
+                .{ .name = "project", .value = "lemon" },
+                .{ .name = "slug", .value = "slugggg" },
+            },
+        },
     };
-};
 
-pub const MockServer = struct {
-    watchloop_handle: ?StoredFileDescriptorType = null,
-    watcher: Watcher = Watcher{},
+    const optional_catch_all = .{
+        .@"404" = .{
+            "404",
+            &[_]Entry{},
+        },
+        .@"404/[[...slug]]" = .{
+            "404",
+            &[_]Entry{},
+        },
 
-    pub const Watcher = struct {
-        watchloop_handle: ?StoredFileDescriptorType = null,
-        pub fn start(this: *Watcher) anyerror!void {}
+        .@"404a/[[...slug]]" = .{
+            "404a",
+            &[_]Entry{},
+        },
+
+        .@"[teamSlug]/lemon/[project]/[[...slug]]" = .{
+            "team/lemon/lemon/slugggg",
+            &[_]Entry{
+                .{ .name = "teamSlug", .value = "team" },
+                .{ .name = "project", .value = "lemon" },
+                .{ .name = "slug", .value = "slugggg" },
+            },
+        },
     };
-};
 
-fn makeTest(cwd_path: string, data: anytype) !void {
-    std.debug.assert(cwd_path.len > 1 and !strings.eql(cwd_path, "/") and !strings.endsWith(cwd_path, "bun"));
-    const bun_tests_dir = try std.fs.cwd().makeOpenPath("bun-test-scratch", .{ .iterate = true });
-    bun_tests_dir.deleteTree(cwd_path) catch {};
+    const TestList = struct {
+        pub fn run(comptime list: anytype) usize {
+            const ParamListType = std.MultiArrayList(Entry);
+            var parameters = ParamListType{};
+            var failures: usize = 0;
+            inline for (comptime std.meta.fieldNames(@TypeOf(list))) |pattern| {
+                parameters.shrinkRetainingCapacity(0);
 
-    const cwd = try bun_tests_dir.makeOpenPath(cwd_path, .{ .iterate = true });
-    try cwd.setAsCwd();
+                const part = comptime @field(list, pattern);
+                const pathname = part.@"0";
+                const entries = part.@"1";
+                fail: {
+                    if (!Pattern.match(pathname, pattern, pattern, default_allocator, *ParamListType, &parameters, true)) {
+                        Output.prettyErrorln("Expected pattern <b>\"{s}\"<r> to match <b>\"{s}\"<r>", .{ pattern, pathname });
+                        failures += 1;
+                        break :fail;
+                    }
 
-    const Data = @TypeOf(data);
-    const fields: []const std.builtin.TypeInfo.StructField = comptime std.meta.fields(Data);
-    inline for (fields) |field| {
-        @setEvalBranchQuota(9999);
-        const value = @field(data, field.name);
+                    if (comptime entries.len > 0) {
+                        for (parameters.items(.name)) |entry_name, i| {
+                            if (!strings.eql(entry_name, entries[i].name)) {
+                                failures += 1;
+                                Output.prettyErrorln("{s} -- Expected name <b>\"{s}\"<r> but received <b>\"{s}\"<r> for path {s}", .{ pattern, entries[i].name, parameters.get(i).name, pathname });
+                                break :fail;
+                            }
+                            if (!strings.eql(parameters.get(i).value, entries[i].value)) {
+                                failures += 1;
+                                Output.prettyErrorln("{s} -- Expected value <b>\"{s}\"<r> but received <b>\"{s}\"<r> for path {s}", .{ pattern, entries[i].value, parameters.get(i).value, pathname });
+                                break :fail;
+                            }
+                        }
+                    }
 
-        if (std.fs.path.dirname(field.name)) |dir| {
-            try cwd.makePath(dir);
+                    if (parameters.len != entries.len) {
+                        Output.prettyErrorln("Expected parameter count for <b>\"{s}\"<r> to match <b>\"{s}\"<r>", .{ pattern, pathname });
+                        failures += 1;
+                        break :fail;
+                    }
+                }
+            }
+            return failures;
         }
-        var file = try cwd.createFile(field.name, .{ .truncate = true });
-        try file.writeAll(std.mem.span(value));
-        file.close();
-    }
+    };
+
+    if (TestList.run(regular_list) > 0) try expect(false);
+    if (TestList.run(optional_catch_all) > 0) try expect(false);
 }
-
-const expect = std.testing.expect;
-const expectEqual = std.testing.expectEqual;
-const expectEqualStrings = std.testing.expectEqualStrings;
-const expectStr = std.testing.expectEqualStrings;
-const Logger = @import("./logger.zig");
-
-pub const Test = struct {
-    pub fn makeRoot(comptime testName: string, data: anytype) !RouteGroup.Root {
-        try makeTest(testName, data);
-        const JSAst = @import("./js_ast.zig");
-        JSAst.Expr.Data.Store.create(default_allocator);
-        JSAst.Stmt.Data.Store.create(default_allocator);
-        var fs = try FileSystem.init1(default_allocator, null);
-        var top_level_dir = fs.top_level_dir;
-
-        var pages_parts = [_]string{ top_level_dir, "pages" };
-        var pages_dir = try Fs.FileSystem.instance.absAlloc(default_allocator, &pages_parts);
-        // _ = try std.fs.makeDirAbsolute(
-        //     pages_dir,
-        // );
-        var router = try Router.init(&FileSystem.instance, default_allocator, Options.RouteConfig{
-            .dir = pages_dir,
-            .routes_enabled = true,
-            .extensions = &.{"js"},
-        });
-        Output.initTest();
-
-        const Resolver = @import("./resolver/resolver.zig").Resolver;
-        var logger = Logger.Log.init(default_allocator);
-        errdefer {
-            logger.printForLogLevel(Output.errorWriter()) catch {};
-        }
-
-        var opts = Options.BundleOptions{
-            .resolve_mode = .lazy,
-            .platform = .browser,
-            .loaders = undefined,
-            .define = undefined,
-            .log = &logger,
-            .routes = router.config,
-            .entry_points = &.{},
-            .out_extensions = std.StringHashMap(string).init(default_allocator),
-            .transform_options = std.mem.zeroes(Api.TransformOptions),
-            .external = Options.ExternalModules.init(
-                default_allocator,
-                &FileSystem.instance.fs,
-                FileSystem.instance.top_level_dir,
-                &.{},
-                &logger,
-                .browser,
-            ),
-        };
-
-        var resolver = Resolver.init1(default_allocator, &logger, &FileSystem.instance, opts);
-
-        var root_dir = (try resolver.readDirInfo(pages_dir)).?;
-        var entries = root_dir.getEntries().?;
-        return RouteLoader.loadAll(default_allocator, opts.routes, &logger, Resolver, &resolver, root_dir);
-        // try router.loadRoutes(root_dir, Resolver, &resolver, 0, true);
-        // var entry_points = try router.getEntryPoints(default_allocator);
-
-        // try expectEqual(std.meta.fieldNames(@TypeOf(data)).len, entry_points.len);
-        // return router;
-    }
-};
-
-test "Route Loader" {
-    var server = MockServer{};
-    var ctx = MockRequestContextType{
-        .url = try URLPath.parse("/hi"),
-    };
-    var router = try Test.makeRoot("routes-basic", github_api_routes_list);
-}
-
-test "Routes basic" {
-    var server = MockServer{};
-    var ctx = MockRequestContextType{
-        .url = try URLPath.parse("/hi"),
-    };
-    var router = try Test.make("routes-basic", .{
-        .@"pages/hi.js" = "//hi",
-        .@"pages/index.js" = "//index",
-        .@"pages/blog/hi.js" = "//blog/hi",
-    });
-    try router.match(&server, MockRequestContextType, &ctx);
-    try expectEqualStrings(ctx.matched_route.?.name, "hi");
-
-    ctx = MockRequestContextType{
-        .url = try URLPath.parse("/"),
-    };
-
-    try router.match(&server, MockRequestContextType, &ctx);
-    try expectEqualStrings(ctx.matched_route.?.name, "/index");
-
-    ctx = MockRequestContextType{
-        .url = try URLPath.parse("/blog/hi"),
-    };
-
-    try router.match(&server, MockRequestContextType, &ctx);
-    try expectEqualStrings(ctx.matched_route.?.name, "blog/hi");
-
-    ctx = MockRequestContextType{
-        .url = try URLPath.parse("/blog/hey"),
-    };
-
-    try router.match(&server, MockRequestContextType, &ctx);
-    try expect(ctx.matched_route == null);
-
-    ctx = MockRequestContextType{
-        .url = try URLPath.parse("/blog/"),
-    };
-
-    try router.match(&server, MockRequestContextType, &ctx);
-    try expect(ctx.matched_route == null);
-
-    ctx = MockRequestContextType{
-        .url = try URLPath.parse("/pages/hi"),
-    };
-
-    try router.match(&server, MockRequestContextType, &ctx);
-    try expect(ctx.matched_route == null);
-}
-
-test "Dynamic routes" {
-    var server = MockServer{};
-    var ctx = MockRequestContextType{
-        .url = try URLPath.parse("/blog/hi"),
-    };
-    var filepath_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-    var router = try Test.make("routes-dynamic", .{
-        .@"pages/index.js" = "//index.js",
-        .@"pages/blog/hi.js" = "//blog-hi",
-        .@"pages/posts/[id].js" = "//hi",
-        // .@"pages/blog/posts/bacon.js" = "//index",
-    });
-
-    try router.match(&server, MockRequestContextType, &ctx);
-    try expectEqualStrings(ctx.matched_route.?.name, "blog/hi");
-
-    var params = ctx.matched_route.?.paramsIterator();
-    try expect(params.next() == null);
-
-    ctx.matched_route = null;
-
-    ctx.url = try URLPath.parse("/posts/123");
-    try router.match(&server, MockRequestContextType, &ctx);
-
-    params = ctx.matched_route.?.paramsIterator();
-
-    try expectEqualStrings(ctx.matched_route.?.name, "/posts/[id]");
-    try expectEqualStrings(params.next().?.rawValue(ctx.matched_route.?.pathname), "123");
-
-    // ctx = MockRequestContextType{
-    //     .url = try URLPath.parse("/"),
-    // };
-
-    // try router.match(&server, MockRequestContextType, &ctx);
-    // try expectEqualStrings(ctx.matched_route.name, "index");
-}
-
-test "Pattern" {
-    const pattern = "[dynamic]/static/[dynamic2]/[...catch_all]";
-
-    const dynamic = try Pattern.init(pattern, 0);
-    try expectStr(@tagName(dynamic.value), "dynamic");
-    const static = try Pattern.init(pattern, dynamic.len);
-    try expectStr(@tagName(static.value), "static");
-    const dynamic2 = try Pattern.init(pattern, static.len);
-    try expectStr(@tagName(dynamic2.value), "dynamic");
-    const static2 = try Pattern.init(pattern, dynamic2.len);
-    try expectStr(@tagName(static2.value), "static");
-    const catch_all = try Pattern.init(pattern, static2.len);
-    try expectStr(@tagName(catch_all.value), "catch_all");
-
-    try expectStr(dynamic.value.dynamic.str(pattern), "dynamic");
-    try expectStr(static.value.static, "/static/");
-    try expectStr(dynamic2.value.dynamic.str(pattern), "dynamic2");
-    try expectStr(static2.value.static, "/");
-    try expectStr(catch_all.value.catch_all.str(pattern), "catch_all");
-}
-
-const github_api_routes_list = .{
-    .@"pages/[...catch-all-at-root].js" = "//pages/[...catch-all-at-root].js",
-    .@"pages/index.js" = "//pages/index.js",
-    .@"pages/app.js" = "//pages/app.js",
-    .@"pages/app/installations.js" = "//pages/app/installations.js",
-    .@"pages/app/installations/[installation_id].js" = "//pages/app/installations/[installation_id].js",
-    .@"pages/apps/[app_slug].js" = "//pages/apps/[app_slug].js",
-    .@"pages/codes_of_conduct.js" = "//pages/codes_of_conduct.js",
-    .@"pages/codes_of_conduct/[key].js" = "//pages/codes_of_conduct/[key].js",
-    .@"pages/emojis.js" = "//pages/emojis.js",
-    .@"pages/events.js" = "//pages/events.js",
-    .@"pages/feeds.js" = "//pages/feeds.js",
-    .@"pages/gitignore/templates.js" = "//pages/gitignore/templates.js",
-    .@"pages/gitignore/templates/[name].js" = "//pages/gitignore/templates/[name].js",
-    .@"pages/installation/repositories.js" = "//pages/installation/repositories.js",
-    .@"pages/licenses.js" = "//pages/licenses.js",
-    .@"pages/licenses/[license].js" = "//pages/licenses/[license].js",
-    .@"pages/meta.js" = "//pages/meta.js",
-    .@"pages/networks/[owner]/[repo]/events.js" = "//pages/networks/[owner]/[repo]/events.js",
-    .@"pages/octocat.js" = "//pages/octocat.js",
-    .@"pages/organizations.js" = "//pages/organizations.js",
-    .@"pages/orgs/[org]/index.js" = "//pages/orgs/[org].js",
-    .@"pages/orgs/[org]/actions/permissions.js" = "//pages/orgs/[org]/actions/permissions.js",
-    .@"pages/orgs/[org]/actions/permissions/repositories.js" = "//pages/orgs/[org]/actions/permissions/repositories.js",
-    .@"pages/orgs/[org]/actions/permissions/selected-actions.js" = "//pages/orgs/[org]/actions/permissions/selected-actions.js",
-    .@"pages/orgs/[org]/actions/runner-groups.js" = "//pages/orgs/[org]/actions/runner-groups.js",
-    .@"pages/orgs/[org]/actions/runner-groups/[runner_group_id].js" = "//pages/orgs/[org]/actions/runner-groups/[runner_group_id].js",
-    .@"pages/orgs/[org]/actions/runner-groups/[runner_group_id]/repositories.js" = "//pages/orgs/[org]/actions/runner-groups/[runner_group_id]/repositories.js",
-    .@"pages/orgs/[org]/actions/runner-groups/[runner_group_id]/runners.js" = "//pages/orgs/[org]/actions/runner-groups/[runner_group_id]/runners.js",
-    .@"pages/orgs/[org]/actions/runners.js" = "//pages/orgs/[org]/actions/runners.js",
-    .@"pages/orgs/[org]/actions/runners/[runner_id].js" = "//pages/orgs/[org]/actions/runners/[runner_id].js",
-    .@"pages/orgs/[org]/actions/runners/downloads.js" = "//pages/orgs/[org]/actions/runners/downloads.js",
-    .@"pages/orgs/[org]/actions/secrets.js" = "//pages/orgs/[org]/actions/secrets.js",
-    .@"pages/orgs/[org]/actions/secrets/[secret_name].js" = "//pages/orgs/[org]/actions/secrets/[secret_name].js",
-    .@"pages/orgs/[org]/actions/secrets/[secret_name]/repositories.js" = "//pages/orgs/[org]/actions/secrets/[secret_name]/repositories.js",
-    .@"pages/orgs/[org]/actions/secrets/public-key.js" = "//pages/orgs/[org]/actions/secrets/public-key.js",
-    .@"pages/orgs/[org]/audit-log.js" = "//pages/orgs/[org]/audit-log.js",
-    .@"pages/orgs/[org]/blocks.js" = "//pages/orgs/[org]/blocks.js",
-    .@"pages/orgs/[org]/blocks/[username].js" = "//pages/orgs/[org]/blocks/[username].js",
-    .@"pages/orgs/[org]/credential-authorizations.js" = "//pages/orgs/[org]/credential-authorizations.js",
-    .@"pages/orgs/[org]/events.js" = "//pages/orgs/[org]/events.js",
-    .@"pages/orgs/[org]/external-group/[group_id].js" = "//pages/orgs/[org]/external-group/[group_id].js",
-    .@"pages/orgs/[org]/external-groups.js" = "//pages/orgs/[org]/external-groups.js",
-    .@"pages/orgs/[org]/failed_invitations.js" = "//pages/orgs/[org]/failed_invitations.js",
-    .@"pages/orgs/[org]/hooks.js" = "//pages/orgs/[org]/hooks.js",
-    .@"pages/orgs/[org]/hooks/[hook_id].js" = "//pages/orgs/[org]/hooks/[hook_id].js",
-    .@"pages/orgs/[org]/hooks/[hook_id]/config.js" = "//pages/orgs/[org]/hooks/[hook_id]/config.js",
-    .@"pages/orgs/[org]/hooks/[hook_id]/deliveries.js" = "//pages/orgs/[org]/hooks/[hook_id]/deliveries.js",
-    .@"pages/orgs/[org]/hooks/[hook_id]/deliveries/[delivery_id].js" = "//pages/orgs/[org]/hooks/[hook_id]/deliveries/[delivery_id].js",
-    .@"pages/orgs/[org]/installations.js" = "//pages/orgs/[org]/installations.js",
-    .@"pages/orgs/[org]/interaction-limits.js" = "//pages/orgs/[org]/interaction-limits.js",
-    .@"pages/orgs/[org]/invitations.js" = "//pages/orgs/[org]/invitations.js",
-    .@"pages/orgs/[org]/invitations/[invitation_id]/teams.js" = "//pages/orgs/[org]/invitations/[invitation_id]/teams.js",
-    .@"pages/orgs/[org]/members.js" = "//pages/orgs/[org]/members.js",
-    .@"pages/orgs/[org]/members/[username].js" = "//pages/orgs/[org]/members/[username].js",
-    .@"pages/orgs/[org]/memberships/[username].js" = "//pages/orgs/[org]/memberships/[username].js",
-    .@"pages/orgs/[org]/outside_collaborators.js" = "//pages/orgs/[org]/outside_collaborators.js",
-    .@"pages/orgs/[org]/projects.js" = "//pages/orgs/[org]/projects.js",
-    .@"pages/orgs/[org]/public_members.js" = "//pages/orgs/[org]/public_members.js",
-    .@"pages/orgs/[org]/public_members/[username].js" = "//pages/orgs/[org]/public_members/[username].js",
-    .@"pages/orgs/[org]/repos.js" = "//pages/orgs/[org]/repos.js",
-    .@"pages/orgs/[org]/secret-scanning/alerts.js" = "//pages/orgs/[org]/secret-scanning/alerts.js",
-    .@"pages/orgs/[org]/team-sync/groups.js" = "//pages/orgs/[org]/team-sync/groups.js",
-    .@"pages/orgs/[org]/teams.js" = "//pages/orgs/[org]/teams.js",
-    .@"pages/orgs/[org]/teams/[team_slug].js" = "//pages/orgs/[org]/teams/[team_slug].js",
-    .@"pages/orgs/[org]/teams/[team_slug]/discussions.js" = "//pages/orgs/[org]/teams/[team_slug]/discussions.js",
-    .@"pages/orgs/[org]/teams/[team_slug]/discussions/[discussion_number].js" = "//pages/orgs/[org]/teams/[team_slug]/discussions/[discussion_number].js",
-    .@"pages/orgs/[org]/teams/[team_slug]/discussions/[discussion_number]/comments.js" = "//pages/orgs/[org]/teams/[team_slug]/discussions/[discussion_number]/comments.js",
-    .@"pages/orgs/[org]/teams/[team_slug]/discussions/[discussion_number]/comments/[comment_number].js" = "//pages/orgs/[org]/teams/[team_slug]/discussions/[discussion_number]/comments/[comment_number].js",
-    .@"pages/orgs/[org]/teams/[team_slug]/discussions/[discussion_number]/comments/[comment_number]/reactions.js" = "//pages/orgs/[org]/teams/[team_slug]/discussions/[discussion_number]/comments/[comment_number]/reactions.js",
-    .@"pages/orgs/[org]/teams/[team_slug]/discussions/[discussion_number]/reactions.js" = "//pages/orgs/[org]/teams/[team_slug]/discussions/[discussion_number]/reactions.js",
-    .@"pages/orgs/[org]/teams/[team_slug]/invitations.js" = "//pages/orgs/[org]/teams/[team_slug]/invitations.js",
-    .@"pages/orgs/[org]/teams/[team_slug]/members.js" = "//pages/orgs/[org]/teams/[team_slug]/members.js",
-    .@"pages/orgs/[org]/teams/[team_slug]/memberships/[username].js" = "//pages/orgs/[org]/teams/[team_slug]/memberships/[username].js",
-    .@"pages/orgs/[org]/teams/[team_slug]/projects.js" = "//pages/orgs/[org]/teams/[team_slug]/projects.js",
-    .@"pages/orgs/[org]/teams/[team_slug]/projects/[project_id].js" = "//pages/orgs/[org]/teams/[team_slug]/projects/[project_id].js",
-    .@"pages/orgs/[org]/teams/[team_slug]/repos.js" = "//pages/orgs/[org]/teams/[team_slug]/repos.js",
-    .@"pages/orgs/[org]/teams/[team_slug]/repos/[owner]/[repo].js" = "//pages/orgs/[org]/teams/[team_slug]/repos/[owner]/[repo].js",
-    .@"pages/orgs/[org]/teams/[team_slug]/teams.js" = "//pages/orgs/[org]/teams/[team_slug]/teams.js",
-    .@"pages/projects/[project_id].js" = "//pages/projects/[project_id].js",
-    .@"pages/projects/[project_id]/collaborators.js" = "//pages/projects/[project_id]/collaborators.js",
-    .@"pages/projects/[project_id]/collaborators/[username]/permission.js" = "//pages/projects/[project_id]/collaborators/[username]/permission.js",
-    .@"pages/projects/[project_id]/columns.js" = "//pages/projects/[project_id]/columns.js",
-    .@"pages/projects/columns/[column_id].js" = "//pages/projects/columns/[column_id].js",
-    .@"pages/projects/columns/[column_id]/cards.js" = "//pages/projects/columns/[column_id]/cards.js",
-    .@"pages/projects/columns/cards/[card_id].js" = "//pages/projects/columns/cards/[card_id].js",
-    .@"pages/rate_limit.js" = "//pages/rate_limit.js",
-    .@"pages/repos/[owner]/[repo].js" = "//pages/repos/[owner]/[repo].js",
-    .@"pages/repos/[owner]/[repo]/actions/artifacts.js" = "//pages/repos/[owner]/[repo]/actions/artifacts.js",
-    .@"pages/repos/[owner]/[repo]/actions/artifacts/[artifact_id].js" = "//pages/repos/[owner]/[repo]/actions/artifacts/[artifact_id].js",
-    .@"pages/repos/[owner]/[repo]/actions/artifacts/[artifact_id]/[archive_format].js" = "//pages/repos/[owner]/[repo]/actions/artifacts/[artifact_id]/[archive_format].js",
-    .@"pages/repos/[owner]/[repo]/actions/jobs/[job_id].js" = "//pages/repos/[owner]/[repo]/actions/jobs/[job_id].js",
-    .@"pages/repos/[owner]/[repo]/actions/jobs/[job_id]/logs.js" = "//pages/repos/[owner]/[repo]/actions/jobs/[job_id]/logs.js",
-    .@"pages/repos/[owner]/[repo]/actions/permissions.js" = "//pages/repos/[owner]/[repo]/actions/permissions.js",
-    .@"pages/repos/[owner]/[repo]/actions/permissions/selected-actions.js" = "//pages/repos/[owner]/[repo]/actions/permissions/selected-actions.js",
-    .@"pages/repos/[owner]/[repo]/actions/runners.js" = "//pages/repos/[owner]/[repo]/actions/runners.js",
-    .@"pages/repos/[owner]/[repo]/actions/runners/[runner_id].js" = "//pages/repos/[owner]/[repo]/actions/runners/[runner_id].js",
-    .@"pages/repos/[owner]/[repo]/actions/runners/downloads.js" = "//pages/repos/[owner]/[repo]/actions/runners/downloads.js",
-    .@"pages/repos/[owner]/[repo]/actions/runs.js" = "//pages/repos/[owner]/[repo]/actions/runs.js",
-    .@"pages/repos/[owner]/[repo]/actions/runs/[run_id].js" = "//pages/repos/[owner]/[repo]/actions/runs/[run_id].js",
-    .@"pages/repos/[owner]/[repo]/actions/runs/[run_id]/approvals.js" = "//pages/repos/[owner]/[repo]/actions/runs/[run_id]/approvals.js",
-    .@"pages/repos/[owner]/[repo]/actions/runs/[run_id]/artifacts.js" = "//pages/repos/[owner]/[repo]/actions/runs/[run_id]/artifacts.js",
-    .@"pages/repos/[owner]/[repo]/actions/runs/[run_id]/attempts/[attempt_number].js" = "//pages/repos/[owner]/[repo]/actions/runs/[run_id]/attempts/[attempt_number].js",
-    .@"pages/repos/[owner]/[repo]/actions/runs/[run_id]/attempts/[attempt_number]/jobs.js" = "//pages/repos/[owner]/[repo]/actions/runs/[run_id]/attempts/[attempt_number]/jobs.js",
-    .@"pages/repos/[owner]/[repo]/actions/runs/[run_id]/attempts/[attempt_number]/logs.js" = "//pages/repos/[owner]/[repo]/actions/runs/[run_id]/attempts/[attempt_number]/logs.js",
-    .@"pages/repos/[owner]/[repo]/actions/runs/[run_id]/jobs.js" = "//pages/repos/[owner]/[repo]/actions/runs/[run_id]/jobs.js",
-    .@"pages/repos/[owner]/[repo]/actions/runs/[run_id]/logs.js" = "//pages/repos/[owner]/[repo]/actions/runs/[run_id]/logs.js",
-    .@"pages/repos/[owner]/[repo]/actions/runs/[run_id]/pending_deployments.js" = "//pages/repos/[owner]/[repo]/actions/runs/[run_id]/pending_deployments.js",
-    .@"pages/repos/[owner]/[repo]/actions/secrets.js" = "//pages/repos/[owner]/[repo]/actions/secrets.js",
-    .@"pages/repos/[owner]/[repo]/actions/secrets/[secret_name].js" = "//pages/repos/[owner]/[repo]/actions/secrets/[secret_name].js",
-    .@"pages/repos/[owner]/[repo]/actions/secrets/public-key.js" = "//pages/repos/[owner]/[repo]/actions/secrets/public-key.js",
-    .@"pages/repos/[owner]/[repo]/actions/workflows.js" = "//pages/repos/[owner]/[repo]/actions/workflows.js",
-    .@"pages/repos/[owner]/[repo]/actions/workflows/[workflow_id].js" = "//pages/repos/[owner]/[repo]/actions/workflows/[workflow_id].js",
-    .@"pages/repos/[owner]/[repo]/actions/workflows/[workflow_id]/runs.js" = "//pages/repos/[owner]/[repo]/actions/workflows/[workflow_id]/runs.js",
-    .@"pages/repos/[owner]/[repo]/assignees.js" = "//pages/repos/[owner]/[repo]/assignees.js",
-    .@"pages/repos/[owner]/[repo]/assignees/[assignee].js" = "//pages/repos/[owner]/[repo]/assignees/[assignee].js",
-    .@"pages/repos/[owner]/[repo]/autolinks.js" = "//pages/repos/[owner]/[repo]/autolinks.js",
-    .@"pages/repos/[owner]/[repo]/autolinks/[autolink_id].js" = "//pages/repos/[owner]/[repo]/autolinks/[autolink_id].js",
-    .@"pages/repos/[owner]/[repo]/branches.js" = "//pages/repos/[owner]/[repo]/branches.js",
-    .@"pages/repos/[owner]/[repo]/branches/[branch].js" = "//pages/repos/[owner]/[repo]/branches/[branch].js",
-    .@"pages/repos/[owner]/[repo]/branches/[branch]/protection.js" = "//pages/repos/[owner]/[repo]/branches/[branch]/protection.js",
-    .@"pages/repos/[owner]/[repo]/branches/[branch]/protection/enforce_admins.js" = "//pages/repos/[owner]/[repo]/branches/[branch]/protection/enforce_admins.js",
-    .@"pages/repos/[owner]/[repo]/branches/[branch]/protection/required_pull_request_reviews.js" = "//pages/repos/[owner]/[repo]/branches/[branch]/protection/required_pull_request_reviews.js",
-    .@"pages/repos/[owner]/[repo]/branches/[branch]/protection/required_signatures.js" = "//pages/repos/[owner]/[repo]/branches/[branch]/protection/required_signatures.js",
-    .@"pages/repos/[owner]/[repo]/branches/[branch]/protection/required_status_checks.js" = "//pages/repos/[owner]/[repo]/branches/[branch]/protection/required_status_checks.js",
-    .@"pages/repos/[owner]/[repo]/branches/[branch]/protection/required_status_checks/contexts.js" = "//pages/repos/[owner]/[repo]/branches/[branch]/protection/required_status_checks/contexts.js",
-    .@"pages/repos/[owner]/[repo]/branches/[branch]/protection/restrictions.js" = "//pages/repos/[owner]/[repo]/branches/[branch]/protection/restrictions.js",
-    .@"pages/repos/[owner]/[repo]/branches/[branch]/protection/restrictions/apps.js" = "//pages/repos/[owner]/[repo]/branches/[branch]/protection/restrictions/apps.js",
-    .@"pages/repos/[owner]/[repo]/branches/[branch]/protection/restrictions/teams.js" = "//pages/repos/[owner]/[repo]/branches/[branch]/protection/restrictions/teams.js",
-    .@"pages/repos/[owner]/[repo]/branches/[branch]/protection/restrictions/users.js" = "//pages/repos/[owner]/[repo]/branches/[branch]/protection/restrictions/users.js",
-    .@"pages/repos/[owner]/[repo]/check-runs/[check_run_id].js" = "//pages/repos/[owner]/[repo]/check-runs/[check_run_id].js",
-    .@"pages/repos/[owner]/[repo]/check-runs/[check_run_id]/annotations.js" = "//pages/repos/[owner]/[repo]/check-runs/[check_run_id]/annotations.js",
-    .@"pages/repos/[owner]/[repo]/check-suites/[check_suite_id].js" = "//pages/repos/[owner]/[repo]/check-suites/[check_suite_id].js",
-    .@"pages/repos/[owner]/[repo]/check-suites/[check_suite_id]/check-runs.js" = "//pages/repos/[owner]/[repo]/check-suites/[check_suite_id]/check-runs.js",
-    .@"pages/repos/[owner]/[repo]/code-scanning/alerts.js" = "//pages/repos/[owner]/[repo]/code-scanning/alerts.js",
-    .@"pages/repos/[owner]/[repo]/code-scanning/alerts/[alert_number].js" = "//pages/repos/[owner]/[repo]/code-scanning/alerts/[alert_number].js",
-    .@"pages/repos/[owner]/[repo]/code-scanning/alerts/[alert_number]/instances.js" = "//pages/repos/[owner]/[repo]/code-scanning/alerts/[alert_number]/instances.js",
-    .@"pages/repos/[owner]/[repo]/code-scanning/analyses.js" = "//pages/repos/[owner]/[repo]/code-scanning/analyses.js",
-    .@"pages/repos/[owner]/[repo]/code-scanning/analyses/[analysis_id].js" = "//pages/repos/[owner]/[repo]/code-scanning/analyses/[analysis_id].js",
-    .@"pages/repos/[owner]/[repo]/code-scanning/sarifs/[sarif_id].js" = "//pages/repos/[owner]/[repo]/code-scanning/sarifs/[sarif_id].js",
-    .@"pages/repos/[owner]/[repo]/collaborators.js" = "//pages/repos/[owner]/[repo]/collaborators.js",
-    .@"pages/repos/[owner]/[repo]/collaborators/[username].js" = "//pages/repos/[owner]/[repo]/collaborators/[username].js",
-    .@"pages/repos/[owner]/[repo]/collaborators/[username]/permission.js" = "//pages/repos/[owner]/[repo]/collaborators/[username]/permission.js",
-    .@"pages/repos/[owner]/[repo]/comments.js" = "//pages/repos/[owner]/[repo]/comments.js",
-    .@"pages/repos/[owner]/[repo]/comments/[comment_id].js" = "//pages/repos/[owner]/[repo]/comments/[comment_id].js",
-    .@"pages/repos/[owner]/[repo]/comments/[comment_id]/reactions.js" = "//pages/repos/[owner]/[repo]/comments/[comment_id]/reactions.js",
-    .@"pages/repos/[owner]/[repo]/commits.js" = "//pages/repos/[owner]/[repo]/commits.js",
-    .@"pages/repos/[owner]/[repo]/commits/[commit_sha]/branches-where-head.js" = "//pages/repos/[owner]/[repo]/commits/[commit_sha]/branches-where-head.js",
-    .@"pages/repos/[owner]/[repo]/commits/[commit_sha]/comments.js" = "//pages/repos/[owner]/[repo]/commits/[commit_sha]/comments.js",
-    .@"pages/repos/[owner]/[repo]/commits/[commit_sha]/pulls.js" = "//pages/repos/[owner]/[repo]/commits/[commit_sha]/pulls.js",
-    .@"pages/repos/[owner]/[repo]/commits/[ref].js" = "//pages/repos/[owner]/[repo]/commits/[ref].js",
-    .@"pages/repos/[owner]/[repo]/commits/[ref]/check-runs.js" = "//pages/repos/[owner]/[repo]/commits/[ref]/check-runs.js",
-    .@"pages/repos/[owner]/[repo]/commits/[ref]/check-suites.js" = "//pages/repos/[owner]/[repo]/commits/[ref]/check-suites.js",
-    .@"pages/repos/[owner]/[repo]/commits/[ref]/status.js" = "//pages/repos/[owner]/[repo]/commits/[ref]/status.js",
-    .@"pages/repos/[owner]/[repo]/commits/[ref]/statuses.js" = "//pages/repos/[owner]/[repo]/commits/[ref]/statuses.js",
-    .@"pages/repos/[owner]/[repo]/community/profile.js" = "//pages/repos/[owner]/[repo]/community/profile.js",
-    .@"pages/repos/[owner]/[repo]/compare/[basehead].js" = "//pages/repos/[owner]/[repo]/compare/[basehead].js",
-    .@"pages/repos/[owner]/[repo]/contents/[path].js" = "//pages/repos/[owner]/[repo]/contents/[path].js",
-    .@"pages/repos/[owner]/[repo]/contributors.js" = "//pages/repos/[owner]/[repo]/contributors.js",
-    .@"pages/repos/[owner]/[repo]/deployments.js" = "//pages/repos/[owner]/[repo]/deployments.js",
-    .@"pages/repos/[owner]/[repo]/deployments/[deployment_id].js" = "//pages/repos/[owner]/[repo]/deployments/[deployment_id].js",
-    .@"pages/repos/[owner]/[repo]/deployments/[deployment_id]/statuses.js" = "//pages/repos/[owner]/[repo]/deployments/[deployment_id]/statuses.js",
-    .@"pages/repos/[owner]/[repo]/deployments/[deployment_id]/statuses/[status_id].js" = "//pages/repos/[owner]/[repo]/deployments/[deployment_id]/statuses/[status_id].js",
-    .@"pages/repos/[owner]/[repo]/environments.js" = "//pages/repos/[owner]/[repo]/environments.js",
-    .@"pages/repos/[owner]/[repo]/environments/[environment_name].js" = "//pages/repos/[owner]/[repo]/environments/[environment_name].js",
-    .@"pages/repos/[owner]/[repo]/events.js" = "//pages/repos/[owner]/[repo]/events.js",
-    .@"pages/repos/[owner]/[repo]/forks.js" = "//pages/repos/[owner]/[repo]/forks.js",
-    .@"pages/repos/[owner]/[repo]/git/blobs/[file_sha].js" = "//pages/repos/[owner]/[repo]/git/blobs/[file_sha].js",
-    .@"pages/repos/[owner]/[repo]/git/commits/[commit_sha].js" = "//pages/repos/[owner]/[repo]/git/commits/[commit_sha].js",
-    .@"pages/repos/[owner]/[repo]/git/matching-refs/[ref].js" = "//pages/repos/[owner]/[repo]/git/matching-refs/[ref].js",
-    .@"pages/repos/[owner]/[repo]/git/ref/[ref].js" = "//pages/repos/[owner]/[repo]/git/ref/[ref].js",
-    .@"pages/repos/[owner]/[repo]/git/tags/[tag_sha].js" = "//pages/repos/[owner]/[repo]/git/tags/[tag_sha].js",
-    .@"pages/repos/[owner]/[repo]/git/trees/[tree_sha].js" = "//pages/repos/[owner]/[repo]/git/trees/[tree_sha].js",
-    .@"pages/repos/[owner]/[repo]/hooks.js" = "//pages/repos/[owner]/[repo]/hooks.js",
-    .@"pages/repos/[owner]/[repo]/hooks/[hook_id].js" = "//pages/repos/[owner]/[repo]/hooks/[hook_id].js",
-    .@"pages/repos/[owner]/[repo]/hooks/[hook_id]/config.js" = "//pages/repos/[owner]/[repo]/hooks/[hook_id]/config.js",
-    .@"pages/repos/[owner]/[repo]/hooks/[hook_id]/deliveries.js" = "//pages/repos/[owner]/[repo]/hooks/[hook_id]/deliveries.js",
-    .@"pages/repos/[owner]/[repo]/hooks/[hook_id]/deliveries/[delivery_id].js" = "//pages/repos/[owner]/[repo]/hooks/[hook_id]/deliveries/[delivery_id].js",
-    .@"pages/repos/[owner]/[repo]/import.js" = "//pages/repos/[owner]/[repo]/import.js",
-    .@"pages/repos/[owner]/[repo]/import/authors.js" = "//pages/repos/[owner]/[repo]/import/authors.js",
-    .@"pages/repos/[owner]/[repo]/import/large_files.js" = "//pages/repos/[owner]/[repo]/import/large_files.js",
-    .@"pages/repos/[owner]/[repo]/interaction-limits.js" = "//pages/repos/[owner]/[repo]/interaction-limits.js",
-    .@"pages/repos/[owner]/[repo]/invitations.js" = "//pages/repos/[owner]/[repo]/invitations.js",
-    .@"pages/repos/[owner]/[repo]/issues.js" = "//pages/repos/[owner]/[repo]/issues.js",
-    .@"pages/repos/[owner]/[repo]/issues/[issue_number].js" = "//pages/repos/[owner]/[repo]/issues/[issue_number].js",
-    .@"pages/repos/[owner]/[repo]/issues/[issue_number]/comments.js" = "//pages/repos/[owner]/[repo]/issues/[issue_number]/comments.js",
-    .@"pages/repos/[owner]/[repo]/issues/[issue_number]/events.js" = "//pages/repos/[owner]/[repo]/issues/[issue_number]/events.js",
-    .@"pages/repos/[owner]/[repo]/issues/[issue_number]/labels.js" = "//pages/repos/[owner]/[repo]/issues/[issue_number]/labels.js",
-    .@"pages/repos/[owner]/[repo]/issues/[issue_number]/reactions.js" = "//pages/repos/[owner]/[repo]/issues/[issue_number]/reactions.js",
-    .@"pages/repos/[owner]/[repo]/issues/[issue_number]/timeline.js" = "//pages/repos/[owner]/[repo]/issues/[issue_number]/timeline.js",
-    .@"pages/repos/[owner]/[repo]/issues/comments.js" = "//pages/repos/[owner]/[repo]/issues/comments.js",
-    .@"pages/repos/[owner]/[repo]/issues/comments/[comment_id].js" = "//pages/repos/[owner]/[repo]/issues/comments/[comment_id].js",
-    .@"pages/repos/[owner]/[repo]/issues/comments/[comment_id]/reactions.js" = "//pages/repos/[owner]/[repo]/issues/comments/[comment_id]/reactions.js",
-    .@"pages/repos/[owner]/[repo]/issues/events.js" = "//pages/repos/[owner]/[repo]/issues/events.js",
-    .@"pages/repos/[owner]/[repo]/issues/events/[event_id].js" = "//pages/repos/[owner]/[repo]/issues/events/[event_id].js",
-    .@"pages/repos/[owner]/[repo]/keys.js" = "//pages/repos/[owner]/[repo]/keys.js",
-    .@"pages/repos/[owner]/[repo]/keys/[key_id].js" = "//pages/repos/[owner]/[repo]/keys/[key_id].js",
-    .@"pages/repos/[owner]/[repo]/labels.js" = "//pages/repos/[owner]/[repo]/labels.js",
-    .@"pages/repos/[owner]/[repo]/labels/[name].js" = "//pages/repos/[owner]/[repo]/labels/[name].js",
-    .@"pages/repos/[owner]/[repo]/languages.js" = "//pages/repos/[owner]/[repo]/languages.js",
-    .@"pages/repos/[owner]/[repo]/license.js" = "//pages/repos/[owner]/[repo]/license.js",
-    .@"pages/repos/[owner]/[repo]/milestones.js" = "//pages/repos/[owner]/[repo]/milestones.js",
-    .@"pages/repos/[owner]/[repo]/milestones/[milestone_number].js" = "//pages/repos/[owner]/[repo]/milestones/[milestone_number].js",
-    .@"pages/repos/[owner]/[repo]/milestones/[milestone_number]/labels.js" = "//pages/repos/[owner]/[repo]/milestones/[milestone_number]/labels.js",
-    .@"pages/repos/[owner]/[repo]/pages.js" = "//pages/repos/[owner]/[repo]/pages.js",
-    .@"pages/repos/[owner]/[repo]/pages/builds.js" = "//pages/repos/[owner]/[repo]/pages/builds.js",
-    .@"pages/repos/[owner]/[repo]/pages/builds/[build_id].js" = "//pages/repos/[owner]/[repo]/pages/builds/[build_id].js",
-    .@"pages/repos/[owner]/[repo]/pages/builds/latest.js" = "//pages/repos/[owner]/[repo]/pages/builds/latest.js",
-    .@"pages/repos/[owner]/[repo]/pages/health.js" = "//pages/repos/[owner]/[repo]/pages/health.js",
-    .@"pages/repos/[owner]/[repo]/projects.js" = "//pages/repos/[owner]/[repo]/projects.js",
-    .@"pages/repos/[owner]/[repo]/pulls.js" = "//pages/repos/[owner]/[repo]/pulls.js",
-    .@"pages/repos/[owner]/[repo]/pulls/[pull_number].js" = "//pages/repos/[owner]/[repo]/pulls/[pull_number].js",
-    .@"pages/repos/[owner]/[repo]/pulls/[pull_number]/comments.js" = "//pages/repos/[owner]/[repo]/pulls/[pull_number]/comments.js",
-    .@"pages/repos/[owner]/[repo]/pulls/[pull_number]/commits.js" = "//pages/repos/[owner]/[repo]/pulls/[pull_number]/commits.js",
-    .@"pages/repos/[owner]/[repo]/pulls/[pull_number]/files.js" = "//pages/repos/[owner]/[repo]/pulls/[pull_number]/files.js",
-    .@"pages/repos/[owner]/[repo]/pulls/[pull_number]/merge.js" = "//pages/repos/[owner]/[repo]/pulls/[pull_number]/merge.js",
-    .@"pages/repos/[owner]/[repo]/pulls/[pull_number]/requested_reviewers.js" = "//pages/repos/[owner]/[repo]/pulls/[pull_number]/requested_reviewers.js",
-    .@"pages/repos/[owner]/[repo]/pulls/[pull_number]/reviews.js" = "//pages/repos/[owner]/[repo]/pulls/[pull_number]/reviews.js",
-    .@"pages/repos/[owner]/[repo]/pulls/[pull_number]/reviews/[review_id].js" = "//pages/repos/[owner]/[repo]/pulls/[pull_number]/reviews/[review_id].js",
-    .@"pages/repos/[owner]/[repo]/pulls/[pull_number]/reviews/[review_id]/comments.js" = "//pages/repos/[owner]/[repo]/pulls/[pull_number]/reviews/[review_id]/comments.js",
-    .@"pages/repos/[owner]/[repo]/pulls/comments.js" = "//pages/repos/[owner]/[repo]/pulls/comments.js",
-    .@"pages/repos/[owner]/[repo]/pulls/comments/[comment_id].js" = "//pages/repos/[owner]/[repo]/pulls/comments/[comment_id].js",
-    .@"pages/repos/[owner]/[repo]/pulls/comments/[comment_id]/reactions.js" = "//pages/repos/[owner]/[repo]/pulls/comments/[comment_id]/reactions.js",
-    .@"pages/repos/[owner]/[repo]/readme.js" = "//pages/repos/[owner]/[repo]/readme.js",
-    .@"pages/repos/[owner]/[repo]/readme/[dir].js" = "//pages/repos/[owner]/[repo]/readme/[dir].js",
-    .@"pages/repos/[owner]/[repo]/releases.js" = "//pages/repos/[owner]/[repo]/releases.js",
-    .@"pages/repos/[owner]/[repo]/releases/[release_id].js" = "//pages/repos/[owner]/[repo]/releases/[release_id].js",
-    .@"pages/repos/[owner]/[repo]/releases/[release_id]/assets.js" = "//pages/repos/[owner]/[repo]/releases/[release_id]/assets.js",
-    .@"pages/repos/[owner]/[repo]/releases/assets/[asset_id].js" = "//pages/repos/[owner]/[repo]/releases/assets/[asset_id].js",
-    .@"pages/repos/[owner]/[repo]/releases/latest.js" = "//pages/repos/[owner]/[repo]/releases/latest.js",
-    .@"pages/repos/[owner]/[repo]/releases/tags/[tag].js" = "//pages/repos/[owner]/[repo]/releases/tags/[tag].js",
-    .@"pages/repos/[owner]/[repo]/secret-scanning/alerts.js" = "//pages/repos/[owner]/[repo]/secret-scanning/alerts.js",
-    .@"pages/repos/[owner]/[repo]/secret-scanning/alerts/[alert_number].js" = "//pages/repos/[owner]/[repo]/secret-scanning/alerts/[alert_number].js",
-    .@"pages/repos/[owner]/[repo]/stargazers.js" = "//pages/repos/[owner]/[repo]/stargazers.js",
-    .@"pages/repos/[owner]/[repo]/stats/code_frequency.js" = "//pages/repos/[owner]/[repo]/stats/code_frequency.js",
-    .@"pages/repos/[owner]/[repo]/stats/commit_activity.js" = "//pages/repos/[owner]/[repo]/stats/commit_activity.js",
-    .@"pages/repos/[owner]/[repo]/stats/contributors.js" = "//pages/repos/[owner]/[repo]/stats/contributors.js",
-    .@"pages/repos/[owner]/[repo]/stats/participation.js" = "//pages/repos/[owner]/[repo]/stats/participation.js",
-    .@"pages/repos/[owner]/[repo]/stats/punch_card.js" = "//pages/repos/[owner]/[repo]/stats/punch_card.js",
-    .@"pages/repos/[owner]/[repo]/subscribers.js" = "//pages/repos/[owner]/[repo]/subscribers.js",
-    .@"pages/repos/[owner]/[repo]/tags.js" = "//pages/repos/[owner]/[repo]/tags.js",
-    .@"pages/repos/[owner]/[repo]/tarball/[ref].js" = "//pages/repos/[owner]/[repo]/tarball/[ref].js",
-    .@"pages/repos/[owner]/[repo]/teams.js" = "//pages/repos/[owner]/[repo]/teams.js",
-    .@"pages/repos/[owner]/[repo]/topics.js" = "//pages/repos/[owner]/[repo]/topics.js",
-    .@"pages/repos/[owner]/[repo]/traffic/clones.js" = "//pages/repos/[owner]/[repo]/traffic/clones.js",
-    .@"pages/repos/[owner]/[repo]/traffic/popular/paths.js" = "//pages/repos/[owner]/[repo]/traffic/popular/paths.js",
-    .@"pages/repos/[owner]/[repo]/traffic/popular/referrers.js" = "//pages/repos/[owner]/[repo]/traffic/popular/referrers.js",
-    .@"pages/repos/[owner]/[repo]/traffic/views.js" = "//pages/repos/[owner]/[repo]/traffic/views.js",
-    .@"pages/repos/[owner]/[repo]/zipball/[ref].js" = "//pages/repos/[owner]/[repo]/zipball/[ref].js",
-    .@"pages/repositories.js" = "//pages/repositories.js",
-    .@"pages/repositories/[repository_id]/environments/[environment_name]/secrets.js" = "//pages/repositories/[repository_id]/environments/[environment_name]/secrets.js",
-    .@"pages/repositories/[repository_id]/environments/[environment_name]/secrets/[secret_name].js" = "//pages/repositories/[repository_id]/environments/[environment_name]/secrets/[secret_name].js",
-    .@"pages/repositories/[repository_id]/environments/[environment_name]/secrets/public-key.js" = "//pages/repositories/[repository_id]/environments/[environment_name]/secrets/public-key.js",
-    .@"pages/scim/v2/enterprises/[enterprise]/Groups.js" = "//pages/scim/v2/enterprises/[enterprise]/Groups.js",
-    .@"pages/scim/v2/enterprises/[enterprise]/Groups/[scim_group_id].js" = "//pages/scim/v2/enterprises/[enterprise]/Groups/[scim_group_id].js",
-    .@"pages/scim/v2/enterprises/[enterprise]/Users.js" = "//pages/scim/v2/enterprises/[enterprise]/Users.js",
-    .@"pages/scim/v2/enterprises/[enterprise]/Users/[scim_user_id].js" = "//pages/scim/v2/enterprises/[enterprise]/Users/[scim_user_id].js",
-    .@"pages/scim/v2/organizations/[org]/Users.js" = "//pages/scim/v2/organizations/[org]/Users.js",
-    .@"pages/scim/v2/organizations/[org]/Users/[scim_user_id].js" = "//pages/scim/v2/organizations/[org]/Users/[scim_user_id].js",
-    .@"pages/search/code.js" = "//pages/search/code.js",
-    .@"pages/search/commits.js" = "//pages/search/commits.js",
-    .@"pages/search/issues.js" = "//pages/search/issues.js",
-    .@"pages/search/labels.js" = "//pages/search/labels.js",
-    .@"pages/search/repositories.js" = "//pages/search/repositories.js",
-    .@"pages/search/topics.js" = "//pages/search/topics.js",
-    .@"pages/search/users.js" = "//pages/search/users.js",
-    .@"pages/teams/[team_id].js" = "//pages/teams/[team_id].js",
-    .@"pages/teams/[team_id]/discussions.js" = "//pages/teams/[team_id]/discussions.js",
-    .@"pages/teams/[team_id]/discussions/[discussion_number].js" = "//pages/teams/[team_id]/discussions/[discussion_number].js",
-    .@"pages/teams/[team_id]/discussions/[discussion_number]/comments.js" = "//pages/teams/[team_id]/discussions/[discussion_number]/comments.js",
-    .@"pages/teams/[team_id]/discussions/[discussion_number]/comments/[comment_number].js" = "//pages/teams/[team_id]/discussions/[discussion_number]/comments/[comment_number].js",
-    .@"pages/teams/[team_id]/discussions/[discussion_number]/comments/[comment_number]/reactions.js" = "//pages/teams/[team_id]/discussions/[discussion_number]/comments/[comment_number]/reactions.js",
-    .@"pages/teams/[team_id]/discussions/[discussion_number]/reactions.js" = "//pages/teams/[team_id]/discussions/[discussion_number]/reactions.js",
-    .@"pages/teams/[team_id]/invitations.js" = "//pages/teams/[team_id]/invitations.js",
-    .@"pages/teams/[team_id]/members.js" = "//pages/teams/[team_id]/members.js",
-    .@"pages/teams/[team_id]/members/[username].js" = "//pages/teams/[team_id]/members/[username].js",
-    .@"pages/teams/[team_id]/memberships/[username].js" = "//pages/teams/[team_id]/memberships/[username].js",
-    .@"pages/teams/[team_id]/projects.js" = "//pages/teams/[team_id]/projects.js",
-    .@"pages/teams/[team_id]/projects/[project_id].js" = "//pages/teams/[team_id]/projects/[project_id].js",
-    .@"pages/teams/[team_id]/repos.js" = "//pages/teams/[team_id]/repos.js",
-    .@"pages/teams/[team_id]/repos/[owner]/[repo].js" = "//pages/teams/[team_id]/repos/[owner]/[repo].js",
-    .@"pages/teams/[team_id]/teams.js" = "//pages/teams/[team_id]/teams.js",
-    .@"pages/users.js" = "//pages/users.js",
-    .@"pages/users/[username].js" = "//pages/users/[username].js",
-    .@"pages/users/[username]/events.js" = "//pages/users/[username]/events.js",
-    .@"pages/users/[username]/events/public.js" = "//pages/users/[username]/events/public.js",
-    .@"pages/users/[username]/followers.js" = "//pages/users/[username]/followers.js",
-    .@"pages/users/[username]/following.js" = "//pages/users/[username]/following.js",
-    .@"pages/users/[username]/following/[target_user].js" = "//pages/users/[username]/following/[target_user].js",
-    .@"pages/users/[username]/gpg_keys.js" = "//pages/users/[username]/gpg_keys.js",
-    .@"pages/users/[username]/keys.js" = "//pages/users/[username]/keys.js",
-    .@"pages/users/[username]/orgs.js" = "//pages/users/[username]/orgs.js",
-    .@"pages/users/[username]/received_events.js" = "//pages/users/[username]/received_events.js",
-    .@"pages/users/[username]/received_events/public.js" = "//pages/users/[username]/received_events/public.js",
-    .@"pages/users/[username]/repos.js" = "//pages/users/[username]/repos.js",
-    .@"pages/users/[username]/starred.js" = "//pages/users/[username]/starred.js",
-    .@"pages/users/[username]/subscriptions.js" = "//pages/users/[username]/subscriptions.js",
-    .@"pages/zen.js" = "//pages/zen.js",
-};

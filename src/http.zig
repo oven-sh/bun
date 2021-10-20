@@ -82,7 +82,6 @@ pub const RequestContext = struct {
     matched_route: ?Router.Match = null,
 
     full_url: [:0]const u8 = "",
-    match_file_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined,
     res_headers_count: usize = 0,
 
     pub fn getFullURL(this: *RequestContext) [:0]const u8 {
@@ -134,11 +133,13 @@ pub const RequestContext = struct {
         args: anytype,
     ) !void {
         var route_index: i32 = -1;
-        const routes: []const string = if (bundler_.router != null) brk: {
+        const routes: Api.StringMap = if (bundler_.router != null) brk: {
             const router = &bundler_.router.?;
-            var list = try router.getEntryPointsWithBuffer(allocator, false);
-            break :brk list.entry_points;
-        } else &([_]string{});
+            break :brk Api.StringMap{
+                .keys = router.getNames() catch unreachable,
+                .values = router.getPublicPaths() catch unreachable,
+            };
+        } else std.mem.zeroes(Api.StringMap);
         var preload: string = "";
 
         var params: Api.StringMap = std.mem.zeroes(Api.StringMap);
@@ -184,35 +185,12 @@ pub const RequestContext = struct {
 
         if (this.matched_route) |match| {
             if (match.params.len > 0) {
-                var all = try allocator.alloc(string, match.params.len * 2);
-                var keys = all[0..match.params.len];
-                var values = all[match.params.len..];
-                var slice = match.params.slice();
-
-                var _keys: []Router.TinyPtr = slice.items(.key);
-                var _values: []Router.TinyPtr = slice.items(.value);
-
-                for (_keys) |key, i| {
-                    keys[i] = key.str(match.name);
-                    values[i] = _values[i].str(match.pathnameWithoutLeadingSlash());
-                }
-
-                params.keys = keys;
-                params.values = values;
+                params.keys = match.params.items(.name);
+                params.values = match.params.items(.value);
             }
 
-            for (routes) |route, i| {
-                var comparator = route;
-                if (comparator[0] == '/') comparator = comparator[1..];
-
-                if (this.bundler.router.?.config.asset_prefix_path.len > 0) {
-                    comparator = comparator[this.bundler.router.?.config.asset_prefix_path.len..];
-                }
-
-                if (strings.endsWith(match.file_path, comparator)) {
-                    route_index = @truncate(i32, @intCast(i64, i));
-                    break;
-                }
+            if (this.bundler.router.?.routeIndexByHash(match.hash)) |ind| {
+                route_index = @intCast(i32, ind);
             }
         }
 
@@ -220,7 +198,10 @@ pub const RequestContext = struct {
         defer allocator.destroy(fallback_container);
         fallback_container.* = Api.FallbackMessageContainer{
             .message = try std.fmt.allocPrint(allocator, fmt, args),
-            .router = if (routes.len > 0) Api.Router{ .route = route_index, .params = params, .routes = routes } else null,
+            .router = if (routes.keys.len > 0)
+                Api.Router{ .route = route_index, .params = params, .routes = routes }
+            else
+                null,
             .reason = step,
             .cwd = this.bundler.fs.top_level_dir,
             .problems = Api.Problems{
@@ -1259,7 +1240,7 @@ pub const RequestContext = struct {
         }
 
         var one: [1]*JavaScriptHandler = undefined;
-        pub fn enqueue(ctx: *RequestContext, server: *Server, filepath_buf: []u8, params: *Router.Param.List) !void {
+        pub fn enqueue(ctx: *RequestContext, server: *Server, params: *Router.Param.List) !void {
             if (JavaScriptHandler.javascript_disabled) {
                 try ctx.renderFallback(
                     ctx.allocator,
@@ -1286,15 +1267,6 @@ pub const RequestContext = struct {
             clone.ctx.conn = &clone.conn;
 
             clone.ctx.matched_route.?.params = &clone.params;
-            clone.ctx.matched_route.?.file_path = filepath_buf[0..ctx.matched_route.?.file_path.len];
-
-            // this copy may be unnecessary, i'm not 100% sure where when
-            std.mem.copy(u8, &clone.ctx.match_file_path_buf, filepath_buf[0..ctx.matched_route.?.file_path.len]);
-
-            // Ensure the matched route name pointers to the filepath buffer instead of whatever it was before
-            if (strings.indexOf(clone.ctx.matched_route.?.file_path, ctx.matched_route.?.name)) |i| {
-                clone.ctx.matched_route.?.name = Router.Match.nameWithBasename(clone.ctx.matched_route.?.file_path, ctx.bundler.router.?.config.dir);
-            }
 
             if (!has_loaded_channel) {
                 var handler_thread = try server.allocator.create(HandlerThread);

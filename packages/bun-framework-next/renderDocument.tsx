@@ -373,6 +373,7 @@ export async function render({
   DocumentNamespace = null,
   buildId,
   routePaths = [],
+  routeNames = [],
 }: {
   buildId: number;
   route: any;
@@ -382,6 +383,7 @@ export async function render({
   appStylesheets: string[];
   pageStylesheets: string[];
   routePaths: string[];
+  routeNames: string[];
   request: Request;
 }): Promise<Response> {
   const { default: Component, getStaticProps = null } = PageNamespace || {};
@@ -393,12 +395,10 @@ export async function render({
   var asPath = route.pathname;
   const pages = {};
 
-  for (let path of routePaths) {
-    const filePath = path.substring(
-      path.indexOf("_next/pages/") + "_next/pages".length
-    );
-    const name = filePath.substring(0, filePath.indexOf("."));
-    pages[name] = [Bun.origin + path];
+  for (let i = 0; i < routeNames.length; i++) {
+    const filePath = routePaths[i];
+    const name = routeNames[i];
+    pages[name] = [Bun.origin + filePath];
   }
 
   if (appStylesheets.length > 0) {

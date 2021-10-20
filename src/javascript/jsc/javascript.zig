@@ -359,16 +359,35 @@ pub const Bun = struct {
     ) js.JSValueRef {
         if (VirtualMachine.vm.bundler.router == null) return js.JSValueMakeNull(ctx);
 
-        const router = &(VirtualMachine.vm.bundler.router orelse unreachable);
-        const list = router.getEntryPointsWithBuffer(VirtualMachine.vm.allocator, false) catch unreachable;
-        VirtualMachine.vm.flush_list.append(list.buffer) catch {};
-        defer VirtualMachine.vm.allocator.free(list.entry_points);
+        const router = &VirtualMachine.vm.bundler.router.?;
+        const list = router.getPublicPaths() catch unreachable;
 
-        for (routes_list_strings[0..std.math.min(list.entry_points.len, routes_list_strings.len)]) |_, i| {
-            routes_list_strings[i] = ZigString.init(list.entry_points[i]);
+        for (routes_list_strings[0..@minimum(list.len, routes_list_strings.len)]) |_, i| {
+            routes_list_strings[i] = ZigString.init(list[i]);
         }
 
-        const ref = JSValue.createStringArray(VirtualMachine.vm.global, &routes_list_strings, list.entry_points.len).asRef();
+        const ref = JSValue.createStringArray(VirtualMachine.vm.global, &routes_list_strings, list.len).asRef();
+        return ref;
+    }
+
+    pub fn getRouteNames(
+        this: void,
+        ctx: js.JSContextRef,
+        function: js.JSObjectRef,
+        thisObject: js.JSObjectRef,
+        arguments: []const js.JSValueRef,
+        exception: js.ExceptionRef,
+    ) js.JSValueRef {
+        if (VirtualMachine.vm.bundler.router == null) return js.JSValueMakeNull(ctx);
+
+        const router = &VirtualMachine.vm.bundler.router.?;
+        const list = router.getNames() catch unreachable;
+
+        for (routes_list_strings[0..@minimum(list.len, routes_list_strings.len)]) |_, i| {
+            routes_list_strings[i] = ZigString.init(list[i]);
+        }
+
+        const ref = JSValue.createStringArray(VirtualMachine.vm.global, &routes_list_strings, list.len).asRef();
         return ref;
     }
 
@@ -475,6 +494,13 @@ pub const Bun = struct {
                 .rfn = Bun.getRouteFiles,
                 .ts = d.ts{
                     .name = "getRouteFiles",
+                    .@"return" = "string[]",
+                },
+            },
+            .getRouteNames = .{
+                .rfn = Bun.getRouteNames,
+                .ts = d.ts{
+                    .name = "getRouteNames",
                     .@"return" = "string[]",
                 },
             },

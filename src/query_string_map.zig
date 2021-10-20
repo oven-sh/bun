@@ -798,6 +798,19 @@ pub const CombinedScanner = struct {
     }
 };
 
+fn stringPointerFromStrings(parent: string, in: string) Api.StringPointer {
+    if (in.len == 0 or parent.len == 0) return Api.StringPointer{};
+
+    const end = @ptrToInt(parent.ptr) + parent.len;
+    const in_end = @ptrToInt(in.ptr) + in.len;
+    if (in_end < end) return Api.StringPointer{};
+
+    return Api.StringPointer{
+        .offset = @truncate(u32, @maximum(@ptrToInt(in.ptr), @ptrToInt(parent.ptr)) - @ptrToInt(parent.ptr)),
+        .length = @truncate(u32, in.len),
+    };
+}
+
 pub const PathnameScanner = struct {
     params: *ParamsList,
     pathname: string,
@@ -827,11 +840,14 @@ pub const PathnameScanner = struct {
 
         defer this.i += 1;
         const param = this.params.get(this.i);
+
         return Scanner.Result{
-            .name = param.key.toStringPointer(),
+            // TODO: fix this technical debt
+            .name = stringPointerFromStrings(this.routename, param.name),
             .name_needs_decoding = false,
-            .value = param.value.toStringPointer(),
-            .value_needs_decoding = std.mem.indexOfScalar(u8, param.value.str(this.pathname), '%') != null,
+            // TODO: fix this technical debt
+            .value = stringPointerFromStrings(this.pathname, param.value),
+            .value_needs_decoding = std.mem.indexOfScalar(u8, param.value, '%') != null,
         };
     }
 };

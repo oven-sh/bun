@@ -237,7 +237,7 @@ const RouteLoader = struct {
 
         // static route
         if (route.param_count == 0) {
-            var entry = this.static_list.getOrPut(route.name) catch unreachable;
+            var entry = this.static_list.getOrPut(route.match_name.slice()) catch unreachable;
 
             if (entry.found_existing) {
                 const source = Logger.Source.initEmptyFile(route.abs_path.slice());
@@ -629,6 +629,8 @@ pub const Route = struct {
         } else {
             name = Route.index_route_name;
             match_name = Route.index_route_name;
+
+            public_path = FileSystem.DirnameStore.instance.append(@TypeOf(public_path), public_path) catch unreachable;
         }
 
         if (abs_path_str.len == 0) {
@@ -1196,7 +1198,7 @@ const Pattern = struct {
                 .dynamic => |dynamic| {
                     if (std.mem.indexOfScalar(u8, path_, '/')) |i| {
                         params.append(allocator, .{
-                            .name = dynamic,
+                            .name = dynamic.str(name),
                             .value = path,
                         }) catch unreachable;
                         path_ = path_[i + 1 ..];

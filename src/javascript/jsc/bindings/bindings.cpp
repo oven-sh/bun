@@ -1,3 +1,4 @@
+#include "ZigGlobalObject.h"
 #include "helpers.h"
 #include "root.h"
 #include <JavaScriptCore/AggregateError.h>
@@ -34,6 +35,7 @@
 #include <wtf/text/StringImpl.h>
 #include <wtf/text/StringView.h>
 #include <wtf/text/WTFString.h>
+
 extern "C" {
 JSC__JSValue
 JSC__JSObject__create(JSC__JSGlobalObject *globalObject, size_t initialCapacity, void *arg2,
@@ -1253,12 +1255,15 @@ static void fromErrorInstance(ZigException *except, JSC::JSGlobalObject *global,
                               JSC::ErrorInstance *err, const Vector<JSC::StackFrame> *stackTrace,
                               JSC::JSValue val) {
   JSC::JSObject *obj = JSC::jsDynamicCast<JSC::JSObject *>(global->vm(), val);
+
+  bool getFromSourceURL = false;
   if (stackTrace != nullptr && stackTrace->size() > 0) {
     populateStackTrace(*stackTrace, &except->stack);
   } else if (err->stackTrace() != nullptr && err->stackTrace()->size() > 0) {
     populateStackTrace(*err->stackTrace(), &except->stack);
+  } else {
+    getFromSourceURL = true;
   }
-
   except->code = (unsigned char)err->errorType();
   if (err->isStackOverflowError()) { except->code = 253; }
   if (err->isOutOfMemoryError()) { except->code = 8; }
@@ -1272,6 +1277,24 @@ static void fromErrorInstance(ZigException *except, JSC::JSGlobalObject *global,
   }
   except->name = Zig::toZigString(err->sanitizedNameString(global));
   except->runtime_type = err->runtimeTypeForCause();
+
+  if (getFromSourceURL) {
+    if (obj->hasProperty(global, global->vm().propertyNames->sourceURL)) {
+      except->stack.frames_ptr[0].source_url = Zig::toZigString(
+        obj->getDirect(global->vm(), global->vm().propertyNames->sourceURL).toWTFString(global));
+
+      if (obj->hasProperty(global, global->vm().propertyNames->line)) {
+        except->stack.frames_ptr[0].position.line =
+          obj->getDirect(global->vm(), global->vm().propertyNames->line).toInt32(global);
+      }
+
+      if (obj->hasProperty(global, global->vm().propertyNames->column)) {
+        except->stack.frames_ptr[0].position.column_start =
+          obj->getDirect(global->vm(), global->vm().propertyNames->column).toInt32(global);
+      }
+      except->stack.frames_len = 1;
+    }
+  }
 
   except->exception = err;
 }

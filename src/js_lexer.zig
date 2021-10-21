@@ -2626,31 +2626,49 @@ pub const Lexer = struct {
     }
 };
 
-pub fn isIdentifierStart(codepoint: CodePoint) bool {
+pub inline fn isIdentifierStart(codepoint: CodePoint) bool {
     @setRuntimeSafety(false);
     switch (codepoint) {
         'a'...'z', 'A'...'Z', '_', '$' => return true,
         else => {},
     }
 
-    if (codepoint < 127) return false;
+    return if (codepoint < 127)
+        false
+    else
+        isIdentifierStartSlow(codepoint);
+}
 
+fn isIdentifierStartSlow(codepoint: CodePoint) bool {
+    @setRuntimeSafety(false);
+    @setCold(true);
     return switch (codepoint) {
         std.math.max(tables.id_start.r16_min, tables.id_start.latin_offset)...tables.id_start.r16_max => tables.id_start.inRange16(@intCast(u16, codepoint)),
         tables.id_start.r32_min...tables.id_start.r32_max => tables.id_start.inRange32(@intCast(u32, codepoint)),
         else => false,
     };
 }
-pub fn isIdentifierContinue(codepoint: CodePoint) bool {
+
+const zero_width_non_joiner = 0x200C;
+const zero_width_joiner = 0x200D;
+pub inline fn isIdentifierContinue(codepoint: CodePoint) bool {
     @setRuntimeSafety(false);
 
     switch (codepoint) {
-        'a'...'z', 'A'...'Z', '_', '$', '0'...'9' => return true,
+        zero_width_non_joiner, zero_width_joiner, 'a'...'z', 'A'...'Z', '_', '$', '0'...'9' => return true,
         else => {},
     }
 
-    if (codepoint < 127) return false;
+    return if (codepoint < 127)
+        false
+    else
+        isIdentifierContinueSlow(codepoint);
+}
 
+// separate function because zig's @setCold is granular up to a function
+fn isIdentifierContinueSlow(codepoint: CodePoint) bool {
+    @setCold(true);
+    @setRuntimeSafety(false);
     return switch (codepoint) {
         std.math.max(tables.id_continue.r16_min, tables.id_continue.latin_offset)...tables.id_continue.r16_max => tables.id_continue.inRange16(@intCast(u16, codepoint)),
         tables.id_continue.r32_min...tables.id_continue.r32_max => tables.id_continue.inRange32(@intCast(u32, codepoint)),
@@ -2711,6 +2729,11 @@ pub fn isIdentifier(text: string) bool {
 
 test "isIdentifier" {
     const expect = std.testing.expect;
+    try expect(!isIdentifierStart(0x2029));
+    try expect(!isIdentifierStart(0x2028));
+    try expect(!isIdentifier("\\u2028"));
+    try expect(!isIdentifier("\\u2029"));
+
     try expect(!isIdentifierContinue(':'));
     try expect(!isIdentifier("javascript:"));
 
@@ -2766,7 +2789,7 @@ pub const CodepointIterator = struct {
         const cp_len = strings.utf8ByteSequenceLength(it.bytes[it.i]);
         it.i += cp_len;
         // without branching,
-        it.width = @intCast(u3, @boolToInt(it.i <= it.bytes.len)) * cp_len;
+        it.width = @as(u3, @boolToInt(it.i <= it.bytes.len and cp_len > 0));
 
         return if (!(it.i > it.bytes.len)) it.bytes[it.i - cp_len .. it.i] else "";
     }

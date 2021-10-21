@@ -105,28 +105,7 @@ async function main() {
     await page.close();
   }
 
-  const tests = [
-    "/cjs-transform-shouldnt-have-static-imports-in-cjs-function.js",
-    "/bundled-entry-point.js",
-    "/export.js",
-    "/type-only-imports.ts",
-    "/global-is-remapped-to-globalThis.js",
-    "/multiple-imports.js",
-    "/ts-fallback-rewrite-works.js",
-    "/tsx-fallback-rewrite-works.js",
-    "/lodash-regexp.js",
-    "/unicode-identifiers.js",
-    "/string-escapes.js",
-    "/package-json-exports/index.js",
-    "/array-args-with-default-values.js",
-    "/forbid-in-is-correct.js",
-    "/code-simplification-neql-define.js",
-    "/spread_with_key.tsx",
-    "/styledcomponents-output.js",
-    "/void-shouldnt-delete-call-expressions.js",
-    "/custom-emotion-jsx/file.jsx",
-    "/react-context-value-func.tsx",
-  ];
+  const tests = require("./snippets.json");
   tests.reverse();
 
   for (let test of tests) {

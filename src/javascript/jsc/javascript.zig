@@ -30,6 +30,7 @@ const DotEnv = @import("../../env_loader.zig");
 const ParseResult = @import("../../bundler.zig").ParseResult;
 const PackageJSON = @import("../../resolver/package_json.zig").PackageJSON;
 const MacroRemap = @import("../../resolver/package_json.zig").MacroMap;
+
 pub const GlobalClasses = [_]type{
     Request.Class,
     Response.Class,
@@ -40,6 +41,9 @@ pub const GlobalClasses = [_]type{
     Bun.Class,
     Fetch.Class,
     js_ast.Macro.JSNode.BunJSXCallbackFunction,
+
+    // The last item in this array becomes "process.env"
+    Bun.EnvironmentVariables.Class,
 };
 const Blob = @import("../../blob.zig");
 
@@ -554,8 +558,86 @@ pub const Bun = struct {
                 .get = getAssetPrefix,
                 .ts = d.ts{ .name = "assetPrefix", .@"return" = "string" },
             },
+            .env = .{
+                .get = EnvironmentVariables.getter,
+            },
         },
     );
+
+    /// EnvironmentVariables is runtime defined.
+    /// Also, you can't iterate over process.env normally since it only exists at build-time otherwise
+    // This is aliased to Bun.env
+    pub const EnvironmentVariables = struct {
+        pub const Class = NewClass(
+            void,
+            .{
+                .name = "DotEnv",
+                .read_only = true,
+            },
+            .{
+                .getProperty = .{
+                    .rfn = getProperty,
+                },
+                // .hasProperty = .{
+                //     .rfn = hasProperty,
+                // },
+                .getPropertyNames = .{
+                    .rfn = getPropertyNames,
+                },
+            },
+            .{},
+        );
+
+        pub fn getter(
+            this: void,
+            ctx: js.JSContextRef,
+            thisObject: js.JSValueRef,
+            prop: js.JSStringRef,
+            exception: js.ExceptionRef,
+        ) js.JSValueRef {
+            return js.JSObjectMake(ctx, EnvironmentVariables.Class.get().*, null);
+        }
+
+        pub fn getProperty(
+            ctx: js.JSContextRef,
+            thisObject: js.JSObjectRef,
+            propertyName: js.JSStringRef,
+            exception: js.ExceptionRef,
+        ) callconv(.C) js.JSValueRef {
+            const len = js.JSStringGetLength(propertyName);
+            var ptr = js.JSStringGetCharacters8Ptr(propertyName);
+            var name = ptr[0..len];
+            if (VirtualMachine.vm.bundler.env.map.get(name)) |value| {
+                return ZigString.toRef(value, VirtualMachine.vm.global);
+            }
+
+            return js.JSValueMakeUndefined(ctx);
+        }
+
+        pub fn hasProperty(
+            ctx: js.JSContextRef,
+            thisObject: js.JSObjectRef,
+            propertyName: js.JSStringRef,
+        ) callconv(.C) bool {
+            const len = js.JSStringGetLength(propertyName);
+            const ptr = js.JSStringGetCharacters8Ptr(propertyName);
+            const name = ptr[0..len];
+            return VirtualMachine.vm.bundler.env.map.get(name) != null;
+        }
+
+        pub fn getPropertyNames(
+            ctx: js.JSContextRef,
+            thisObject: js.JSObjectRef,
+            props: js.JSPropertyNameAccumulatorRef,
+        ) callconv(.C) void {
+            var iter = VirtualMachine.vm.bundler.env.map.iter();
+
+            while (iter.next()) |item| {
+                const str = item.key_ptr.*;
+                js.JSPropertyNameAccumulatorAddName(props, js.JSStringCreateStatic(str.ptr, str.len));
+            }
+        }
+    };
 };
 
 const bun_file_import_path = "/node_modules.server.bun";
@@ -585,6 +667,9 @@ pub const VirtualMachine = struct {
     flush_list: std.ArrayList(string),
     entry_point: ServerEntryPoint = undefined,
 
+    last_syntax_error_filename_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined,
+    last_syntax_error_filename: string = "",
+
     arena: *std.heap.ArenaAllocator = undefined,
     has_loaded: bool = false,
 
@@ -603,6 +688,15 @@ pub const VirtualMachine = struct {
     pub threadlocal var vm_loaded = false;
     pub threadlocal var vm: *VirtualMachine = undefined;
 
+    pub fn getSyntaxErrorFilename(this: *VirtualMachine) ?string {
+        if (this.last_syntax_error_filename.len > 0) {
+            const filename = this.last_syntax_error_filename;
+            this.last_syntax_error_filename = "";
+            return filename;
+        }
+
+        return null;
+    }
     pub fn enableMacroMode(this: *VirtualMachine) void {
         this.bundler.options.platform = .bun_macro;
         this.macro_mode = true;
@@ -797,7 +891,7 @@ pub const VirtualMachine = struct {
                 parse_result,
                 @TypeOf(&source_code_printer),
                 &source_code_printer,
-                .esm,
+                .esm_ascii,
             );
 
             if (written == 0) {
@@ -914,7 +1008,7 @@ pub const VirtualMachine = struct {
                     parse_result,
                     @TypeOf(&source_code_printer),
                     &source_code_printer,
-                    .esm,
+                    .esm_ascii,
                 );
 
                 if (written == 0) {
@@ -1085,6 +1179,12 @@ pub const VirtualMachine = struct {
         }
 
         return slice;
+    }
+
+    pub fn setSyntaxErrorFilePath(global: *JSGlobalObject, loader: *JSModuleLoader, key: ZigString) void {
+        var slice = key.slice();
+        std.mem.copy(u8, &vm.last_syntax_error_filename_buf, slice);
+        vm.last_syntax_error_filename = vm.last_syntax_error_filename_buf[0..slice.len];
     }
 
     // This double prints
@@ -1630,6 +1730,33 @@ pub const VirtualMachine = struct {
         }
 
         try printStackTrace(@TypeOf(writer), writer, exception.stack, allow_ansi_color);
+
+        // SyntaxError in JavaScriptCore does not include a filename
+        // This can make debugging syntax errors difficult
+        if (this.getSyntaxErrorFilename()) |filename| {
+            const frame = ZigStackFrame{
+                .function_name = ZigString.Empty,
+                .source_url = ZigString.init(filename),
+                .position = ZigStackFramePosition.Invalid,
+                .code_type = ZigStackFrameCode.Module,
+            };
+            try writer.print(
+                comptime Output.prettyFmt(
+                    "<r>      <d>at <r>{any} <d>(<r>{any}<d>)<r>\n",
+                    allow_ansi_color,
+                ),
+                .{
+                    frame.nameFormatter(
+                        allow_ansi_color,
+                    ),
+                    frame.sourceURLFormatter(
+                        vm.bundler.fs.top_level_dir,
+                        &vm.bundler.options.origin,
+                        allow_ansi_color,
+                    ),
+                },
+            );
+        }
     }
 };
 

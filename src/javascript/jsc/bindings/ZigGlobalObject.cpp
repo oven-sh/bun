@@ -86,15 +86,15 @@ bool has_loaded_jsc = false;
 
 extern "C" void JSCInitialize() {
   if (has_loaded_jsc) return;
-    JSC::Options::useSourceProviderCache() = true;
-    JSC::Options::useUnlinkedCodeBlockJettisoning() = false;
-    // JSC::Options::useTopLevelAwait() = true;
-    JSC::Options::exposeInternalModuleLoader() = true;
-    // std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
-    WTF::initializeMainThread();
-    JSC::initialize();
-    // Gigacage::disablePrimitiveGigacage();
-    has_loaded_jsc = true;
+  JSC::Options::useSourceProviderCache() = true;
+  JSC::Options::useUnlinkedCodeBlockJettisoning() = false;
+  // JSC::Options::useTopLevelAwait() = true;
+  JSC::Options::exposeInternalModuleLoader() = true;
+  // std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
+  WTF::initializeMainThread();
+  JSC::initialize();
+  // Gigacage::disablePrimitiveGigacage();
+  has_loaded_jsc = true;
 }
 
 extern "C" JSC__JSGlobalObject *Zig__GlobalObject__create(JSClassRef *globalObjectClass, int count,
@@ -178,8 +178,6 @@ void GlobalObject::installAPIGlobals(JSClassRef *globals, int count) {
   // modify it or it wasn't statically analyzable
   JSC::JSObject *processDotEnv = JSC::constructEmptyObject(this, this->objectPrototype(), 0);
 
-  process->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "env"), processDotEnv);
-
   // this should be transpiled out, but just incase
   process->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "browser"),
                      JSC::JSValue(false));
@@ -196,8 +194,8 @@ void GlobalObject::installAPIGlobals(JSClassRef *globals, int count) {
   process->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "platform"),
                      JSC::jsString(this->vm(), WTF::String("linux")));
 #endif
-
-  for (int i = 0; i < count; i++) {
+  int i = 0;
+  for (; i < count - 1; i++) {
     auto jsClass = globals[i];
 
     JSC::JSCallbackObject<JSNonFinalObject> *object =
@@ -208,6 +206,20 @@ void GlobalObject::installAPIGlobals(JSClassRef *globals, int count) {
     extraStaticGlobals.uncheckedAppend(
       GlobalPropertyInfo{JSC::Identifier::fromString(vm(), jsClass->className()),
                          JSC::JSValue(object), JSC::PropertyAttribute::DontDelete | 0});
+  }
+
+  // The last one must be "process.env"
+  // Runtime-support is for if they change
+  {
+    auto jsClass = globals[i];
+
+    JSC::JSCallbackObject<JSNonFinalObject> *object =
+      JSC::JSCallbackObject<JSNonFinalObject>::create(this, this->callbackObjectStructure(),
+                                                      jsClass, nullptr);
+    if (JSObject *prototype = jsClass->prototype(this)) object->setPrototypeDirect(vm(), prototype);
+
+    process->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "env"),
+                       JSC::JSValue(object), JSC::PropertyAttribute::DontDelete | 0);
   }
 
   extraStaticGlobals.uncheckedAppend(
@@ -396,6 +408,7 @@ JSC::JSInternalPromise *GlobalObject::moduleLoaderFetch(JSGlobalObject *globalOb
   }
 
   scope.release();
+
   promise->resolve(globalObject, jsSourceCode);
   globalObject->vm().drainMicrotasks();
   return promise;
@@ -432,9 +445,11 @@ JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject *globalObject,
                                                 JSModuleLoader *moduleLoader, JSValue key,
                                                 JSValue moduleRecordValue, JSValue scriptFetcher,
                                                 JSValue sentValue, JSValue resumeMode) {
-  // VM& vm = globalObject->vm();
-  return moduleLoader->evaluateNonVirtual(globalObject, key, moduleRecordValue, scriptFetcher,
-                                          sentValue, resumeMode);
+
+  JSC::JSValue result = moduleLoader->evaluateNonVirtual(globalObject, key, moduleRecordValue,
+                                                         scriptFetcher, sentValue, resumeMode);
+
+  return result;
 }
 
 } // namespace Zig

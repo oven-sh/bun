@@ -1,6 +1,7 @@
 #include "root.h"
-
 #pragma once
+
+#include "headers-handwritten.h"
 
 namespace JSC {
 class Structure;

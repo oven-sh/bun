@@ -10,6 +10,8 @@
 #include <JavaScriptCore/ThrowScope.h>
 #include <JavaScriptCore/VM.h>
 
+#pragma once
+
 template <class CppType, typename ZigType> class Wrap {
     public:
   Wrap(){};

@@ -168,13 +168,21 @@ pub const JavaScript = struct {
         source: *const logger.Source,
     ) anyerror!?js_ast.Ast {
         var temp_log = logger.Log.init(allocator);
-        defer temp_log.appendToMaybeRecycled(log, source) catch {};
         var parser = js_parser.Parser.init(opts, &temp_log, source, defines, allocator) catch |err| {
+            temp_log.appendToMaybeRecycled(log, source) catch {};
             return null;
         };
 
-        const result = try parser.parse();
+        const result = parser.parse() catch |err| {
+            if (temp_log.errors == 0) {
+                log.addRangeError(source, parser.lexer.range(), @errorName(err)) catch unreachable;
+            }
 
+            temp_log.appendToMaybeRecycled(log, source) catch {};
+            return null;
+        };
+
+        temp_log.appendToMaybeRecycled(log, source) catch {};
         return if (result.ok) result.ast else null;
     }
 

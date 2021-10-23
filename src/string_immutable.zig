@@ -492,9 +492,9 @@ pub fn toUTF8Alloc(allocator: *std.mem.Allocator, js: []const u16) !string {
     var list = std.ArrayList(u8).initCapacity(allocator, js.len) catch unreachable;
     var i: usize = 0;
     while (i < js.len) : (i += 1) {
-        var r1 = @intCast(i32, js[i]);
+        var r1 = @as(i32, js[i]);
         if (r1 >= 0xD800 and r1 <= 0xDBFF and i + 1 < js.len) {
-            const r2 = @intCast(i32, js[i] + 1);
+            const r2 = @as(i32, js[i] + 1);
             if (r2 >= 0xDC00 and r2 <= 0xDFFF) {
                 r1 = (r1 - 0xD800) << 10 | (r2 - 0xDC00) + 0x10000;
                 i += 1;
@@ -577,57 +577,6 @@ pub fn encodeWTF8Rune(p: []u8, r: i32) u3 {
     }
 }
 
-pub fn toUTF16Buf(in: string, out: []u16) usize {
-    var utf8Iterator = CodepointIterator.init(in);
-
-    var c: u21 = 0;
-    var i: usize = 0;
-    while (true) {
-        const code_point = utf8Iterator.nextCodepoint();
-
-        switch (code_point) {
-            -1 => {
-                return i;
-            },
-            0...0xFFFF => {
-                out[i] = @intCast(u16, code_point);
-                i += 1;
-            },
-            else => {
-                c = code_point - 0x10000;
-                out[i] = @intCast(u16, 0xD800 + ((c >> 10) & 0x3FF));
-                i += 1;
-                out[i] = @intCast(u16, 0xDC00 + (c & 0x3FF));
-                i += 1;
-            },
-        }
-    }
-
-    return i;
-}
-
-pub fn toUTF16Alloc(in: string, allocator: *std.mem.Allocator) !JavascriptString {
-    var utf8Iterator = CodepointIterator.init(in);
-    var out = try std.ArrayList(u16).initCapacity(allocator, in.len);
-
-    var c: u21 = 0;
-    var i: usize = 0;
-    while (utf8Iterator.nextCodepoint()) |code_point| {
-        switch (code_point) {
-            0...0xFFFF => {
-                try out.append(@intCast(u16, code_point));
-            },
-            else => {
-                c = code_point - 0x10000;
-                try out.append(@intCast(u16, 0xD800 + ((c >> 10) & 0x3FF)));
-                try out.append(@intCast(u16, 0xDC00 + (c & 0x3FF)));
-            },
-        }
-    }
-
-    return out.toOwnedSlice();
-}
-
 pub fn containsNonBmpCodePoint(text: string) bool {
     var iter = std.unicode.Utf8Iterator{ .bytes = text, .i = 0 };
 
@@ -653,16 +602,20 @@ pub fn containsNonBmpCodePointUTF16(_text: []const u16) bool {
     const n = _text.len;
     if (n > 0) {
         var i: usize = 0;
-        var c: u16 = 0;
-        var c2: u16 = 0;
         var text = _text[0 .. n - 1];
         while (i < n - 1) : (i += 1) {
-            c = text[i];
-            if (c >= 0xD800 and c <= 0xDBFF) {
-                c2 = text[i + 1];
-                if (c2 >= 0xDC00 and c2 <= 0xDFFF) {
-                    return true;
-                }
+            switch (text[i]) {
+                // Check for a high surrogate
+                0xD800...0xDBFF => {
+                    // Check for a low surrogate
+                    switch (text[i + 1]) {
+                        0xDC00...0xDFFF => {
+                            return true;
+                        },
+                        else => {},
+                    }
+                },
+                else => {},
             }
         }
     }
@@ -705,7 +658,17 @@ pub fn toASCIIHexValue(character: u8) u8 {
     };
 }
 
-pub fn utf8ByteSequenceLength(first_byte: u8) u3 {
+pub inline fn utf8ByteSequenceLength(first_byte: u8) u3 {
+    return switch (first_byte) {
+        0b0000_0000...0b0111_1111 => 1,
+        0b1100_0000...0b1101_1111 => 2,
+        0b1110_0000...0b1110_1111 => 3,
+        0b1111_0000...0b1111_0111 => 4,
+        else => 0,
+    };
+}
+
+pub inline fn utf8ByteSequenceLength32(first_byte: u8) u32 {
     return switch (first_byte) {
         0b0000_0000...0b0111_1111 => 1,
         0b1100_0000...0b1101_1111 => 2,
@@ -720,24 +683,61 @@ pub fn NewCodePointIterator(comptime CodePointType: type, comptime zeroValue: co
         const Iterator = @This();
         bytes: []const u8,
         i: usize,
+        next_width: usize = 0,
         width: u3 = 0,
-        c: CodePointType = 0,
+        c: CodePointType = zeroValue,
 
-        pub fn init(str: string) CodepointIterator {
-            return CodepointIterator{ .bytes = str, .i = 0, .width = 0, .c = 0 };
+        pub const Cursor = struct {
+            i: u32 = 0,
+            c: CodePointType = zeroValue,
+            width: u3 = 0,
+        };
+
+        pub fn init(str: string) Iterator {
+            return Iterator{ .bytes = str, .i = 0, .c = zeroValue };
         }
 
-        pub fn initOffset(str: string, i: usize) CodepointIterator {
-            return CodepointIterator{ .bytes = str, .i = i, .width = 0, .c = 0 };
+        pub fn initOffset(str: string, i: usize) Iterator {
+            return Iterator{ .bytes = str, .i = i, .c = zeroValue };
+        }
+
+        pub inline fn next(it: *const Iterator, cursor: *Cursor) bool {
+            const pos: u32 = @as(u32, cursor.width) + cursor.i;
+            if (pos >= it.bytes.len) {
+                return false;
+            }
+
+            const cp_len = utf8ByteSequenceLength(it.bytes[pos]);
+            cursor.* = Cursor{
+                .i = pos,
+                .c = @as(
+                    CodePointType,
+                    switch (cp_len) {
+                        1 => it.bytes[pos],
+                        2 => std.unicode.utf8Decode2(it.bytes[pos..][0..2]) catch return false,
+                        3 => std.unicode.utf8Decode3(it.bytes[pos..][0..3]) catch return false,
+                        4 => std.unicode.utf8Decode4(it.bytes[pos..][0..4]) catch return false,
+                        else => return false,
+                    },
+                ),
+                .width = cp_len,
+            };
+            return true;
         }
 
         inline fn nextCodepointSlice(it: *Iterator) []const u8 {
-            @setRuntimeSafety(false);
+            const bytes = it.bytes;
+            const prev = it.i;
+            const next_ = prev + it.next_width;
+            if (bytes.len <= next_) return "";
 
-            const cp_len = utf8ByteSequenceLength(it.bytes[it.i]);
-            it.i += cp_len;
+            const cp_len = utf8ByteSequenceLength(bytes[next_]);
+            it.next_width = cp_len;
+            it.i = @minimum(next_, bytes.len);
 
-            return if (!(it.i > it.bytes.len)) it.bytes[it.i - cp_len .. it.i] else "";
+            const slice = bytes[prev..][0..cp_len];
+            it.width = @intCast(u3, slice.len);
+            return slice;
         }
 
         pub fn needsUTF8Decoding(slice: string) bool {
@@ -745,9 +745,8 @@ pub fn NewCodePointIterator(comptime CodePointType: type, comptime zeroValue: co
 
             while (true) {
                 const part = it.nextCodepointSlice();
-                it.width = @intCast(u3, part.len);
                 @setRuntimeSafety(false);
-                switch (it.width) {
+                switch (part.len) {
                     0 => return false,
                     1 => continue,
                     else => return true,
@@ -756,8 +755,6 @@ pub fn NewCodePointIterator(comptime CodePointType: type, comptime zeroValue: co
         }
 
         pub fn scanUntilQuotedValueOrEOF(iter: *Iterator, comptime quote: CodePointType) usize {
-            @setRuntimeSafety(false);
-
             while (iter.c > -1) {
                 if (!switch (iter.nextCodepoint()) {
                     quote => false,
@@ -778,11 +775,24 @@ pub fn NewCodePointIterator(comptime CodePointType: type, comptime zeroValue: co
 
         pub fn nextCodepoint(it: *Iterator) CodePointType {
             const slice = it.nextCodepointSlice();
-            it.width = @intCast(u3, slice.len);
-            @setRuntimeSafety(false);
 
-            it.c = switch (it.width) {
+            it.c = switch (slice.len) {
                 0 => zeroValue,
+                1 => @intCast(CodePointType, slice[0]),
+                2 => @intCast(CodePointType, std.unicode.utf8Decode2(slice) catch unreachable),
+                3 => @intCast(CodePointType, std.unicode.utf8Decode3(slice) catch unreachable),
+                4 => @intCast(CodePointType, std.unicode.utf8Decode4(slice) catch unreachable),
+                else => unreachable,
+            };
+
+            return it.c;
+        }
+
+        pub fn nextCodepointNullable(it: *Iterator) ?CodePointType {
+            const slice = it.nextCodepointSlice();
+            if (slice.len == 0) return null;
+
+            it.c = switch (slice.len) {
                 1 => @intCast(CodePointType, slice[0]),
                 2 => @intCast(CodePointType, std.unicode.utf8Decode2(slice) catch unreachable),
                 3 => @intCast(CodePointType, std.unicode.utf8Decode3(slice) catch unreachable),
@@ -795,10 +805,8 @@ pub fn NewCodePointIterator(comptime CodePointType: type, comptime zeroValue: co
 
         pub fn nextCodepointNoReturn(it: *Iterator) void {
             const slice = it.nextCodepointSlice();
-            it.width = @intCast(u3, slice.len);
-            @setRuntimeSafety(false);
 
-            it.c = switch (it.width) {
+            it.c = switch (slice.len) {
                 0 => zeroValue,
                 1 => @intCast(CodePointType, slice[0]),
                 2 => @intCast(CodePointType, std.unicode.utf8Decode2(slice) catch unreachable),

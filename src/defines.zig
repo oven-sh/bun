@@ -27,6 +27,7 @@ const Globals = struct {
 const defines_path = fs.Path.initWithNamespace("defines.json", "internal");
 pub const RawDefines = std.StringArrayHashMap(string);
 pub const UserDefines = std.StringHashMap(DefineData);
+pub const UserDefinesArray = std.StringArrayHashMap(DefineData);
 
 const Rewrites = struct {
     pub const global = "global";
@@ -74,9 +75,9 @@ pub const DefineData = struct {
             while (splitter.next()) |part| {
                 if (!js_lexer.isIdentifier(part)) {
                     if (strings.eql(part, entry.key_ptr)) {
-                        try log.addErrorFmt(null, logger.Loc{}, allocator, "The define key \"{s}\" must be a valid identifier", .{entry.key_ptr});
+                        try log.addErrorFmt(null, logger.Loc{}, allocator, "The define key \"{s}\" must be a valid identifier", .{entry.key_ptr.*});
                     } else {
-                        try log.addErrorFmt(null, logger.Loc{}, allocator, "The define key \"{s}\" contains invalid  identifier \"{s}\"", .{ part, entry.key_ptr });
+                        try log.addErrorFmt(null, logger.Loc{}, allocator, "The define key \"{s}\" contains invalid  identifier \"{s}\"", .{ part, entry.value_ptr.* });
                     }
                     break;
                 }
@@ -201,7 +202,61 @@ pub const Define = struct {
     dots: std.StringHashMap([]DotDefine),
     allocator: *std.mem.Allocator,
 
-    pub fn init(allocator: *std.mem.Allocator, _user_defines: ?UserDefines) !*@This() {
+    pub fn insertFromIterator(define: *Define, allocator: *std.mem.Allocator, comptime Iterator: type, iter: Iterator) !void {
+        while (iter.next()) |user_define| {
+            const user_define_key = user_define.key_ptr.*;
+            // If it has a dot, then it's a DotDefine.
+            // e.g. process.env.NODE_ENV
+            if (strings.lastIndexOfChar(user_define_key, '.')) |last_dot| {
+                const tail = user_define_key[last_dot + 1 .. user_define_key.len];
+                const remainder = user_define_key[0..last_dot];
+                const count = std.mem.count(u8, remainder, ".") + 1;
+                var parts = try allocator.alloc(string, count + 1);
+                var splitter = std.mem.split(u8, remainder, ".");
+                var i: usize = 0;
+                while (splitter.next()) |split| : (i += 1) {
+                    parts[i] = split;
+                }
+                parts[i] = tail;
+                var didFind = false;
+                var initial_values: []DotDefine = &([_]DotDefine{});
+
+                // "NODE_ENV"
+                if (define.dots.getEntry(tail)) |entry| {
+                    for (entry.value_ptr.*) |*part| {
+                        // ["process", "env"] === ["process", "env"] (if that actually worked)
+                        if (arePartsEqual(part.parts, parts)) {
+                            part.data = part.data.merge(user_define.value_ptr.*);
+                            didFind = true;
+                            break;
+                        }
+                    }
+
+                    initial_values = entry.value_ptr.*;
+                }
+
+                if (!didFind) {
+                    var list = try std.ArrayList(DotDefine).initCapacity(allocator, initial_values.len + 1);
+                    if (initial_values.len > 0) {
+                        list.appendSliceAssumeCapacity(initial_values);
+                    }
+
+                    list.appendAssumeCapacity(DotDefine{
+                        .data = user_define.value_ptr.*,
+                        // TODO: do we need to allocate this?
+                        .parts = parts,
+                    });
+                    try define.dots.put(tail, list.toOwnedSlice());
+                }
+            } else {
+
+                // e.g. IS_BROWSER
+                try define.identifiers.put(user_define_key, user_define.value_ptr.*);
+            }
+        }
+    }
+
+    pub fn init(allocator: *std.mem.Allocator, _user_defines: ?UserDefines, string_defines: ?UserDefinesArray) !*@This() {
         var define = try allocator.create(Define);
         define.allocator = allocator;
         define.identifiers = std.StringHashMap(IdentifierDefine).init(allocator);
@@ -276,57 +331,14 @@ pub const Define = struct {
         // At this stage, user data has already been validated.
         if (_user_defines) |user_defines| {
             var iter = user_defines.iterator();
-            while (iter.next()) |user_define| {
-                const user_define_key = user_define.key_ptr.*;
-                // If it has a dot, then it's a DotDefine.
-                // e.g. process.env.NODE_ENV
-                if (strings.lastIndexOfChar(user_define_key, '.')) |last_dot| {
-                    const tail = user_define_key[last_dot + 1 .. user_define_key.len];
-                    const remainder = user_define_key[0..last_dot];
-                    const count = std.mem.count(u8, remainder, ".") + 1;
-                    var parts = try allocator.alloc(string, count + 1);
-                    var splitter = std.mem.split(u8, remainder, ".");
-                    var i: usize = 0;
-                    while (splitter.next()) |split| : (i += 1) {
-                        parts[i] = split;
-                    }
-                    parts[i] = tail;
-                    var didFind = false;
-                    var initial_values: []DotDefine = &([_]DotDefine{});
+            try define.insertFromIterator(allocator, @TypeOf(&iter), &iter);
+        }
 
-                    // "NODE_ENV"
-                    if (define.dots.getEntry(tail)) |entry| {
-                        for (entry.value_ptr.*) |*part| {
-                            // ["process", "env"] === ["process", "env"] (if that actually worked)
-                            if (arePartsEqual(part.parts, parts)) {
-                                part.data = part.data.merge(user_define.value_ptr.*);
-                                didFind = true;
-                                break;
-                            }
-                        }
-
-                        initial_values = entry.value_ptr.*;
-                    }
-
-                    if (!didFind) {
-                        var list = try std.ArrayList(DotDefine).initCapacity(allocator, initial_values.len + 1);
-                        if (initial_values.len > 0) {
-                            list.appendSliceAssumeCapacity(initial_values);
-                        }
-
-                        list.appendAssumeCapacity(DotDefine{
-                            .data = user_define.value_ptr.*,
-                            // TODO: do we need to allocate this?
-                            .parts = parts,
-                        });
-                        try define.dots.put(tail, list.toOwnedSlice());
-                    }
-                } else {
-
-                    // e.g. IS_BROWSER
-                    try define.identifiers.put(user_define_key, user_define.value_ptr.*);
-                }
-            }
+        // Step 4. Load environment data into hash tables.
+        // These are only strings. We do not parse them as JSON.
+        if (string_defines) |string_defines_| {
+            var iter = string_defines_.iterator();
+            try define.insertFromIterator(allocator, @TypeOf(&iter), &iter);
         }
 
         {

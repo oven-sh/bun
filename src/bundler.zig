@@ -1551,14 +1551,14 @@ pub const Bundler = struct {
                             opts.warn_about_unbundled_modules = false;
                             opts.macro_context = &worker.data.macro_context;
                             opts.macro_context.remap = package.macros;
-
-                            ast = (try bundler.resolver.caches.js.parse(
+                            ast = (bundler.resolver.caches.js.parse(
                                 bundler.allocator,
                                 opts,
                                 bundler.options.define,
                                 log,
                                 &source,
-                            )) orelse return;
+                            ) catch null) orelse return;
+
                             approximate_newline_count = ast.approximate_newline_count;
                             if (ast.import_records.len > 0) {
                                 for (ast.import_records) |*import_record, record_id| {
@@ -1616,6 +1616,12 @@ pub const Bundler = struct {
                                                 file_path.text,
                                             });
                                         }
+
+                                        // Disable failing packages from being printed.
+                                        // This may cause broken code to write.
+                                        // However, doing this means we tell them all the resolve errors
+                                        // Rather than just the first one.
+                                        import_record.path.is_disabled = true;
 
                                         switch (err) {
                                             error.ModuleNotFound => {
@@ -1822,33 +1828,73 @@ pub const Bundler = struct {
                             // It should only have one part.
                             ast.parts = ast.parts[ast.parts.len - 1 ..];
                             const write_result =
+                                // The difference between these two is `ascii_only`
+                                // We try our best to print UTF-8.
+                                // However, JavaScriptCore does not accept UTF-8.
+                                // It accepts either latin1 characters as unsigned char
+                                // or UTF-16 chars as uint16
+                                // We don't want to add a UTF decoding pass to the .bun files
+                                // because it's potentially 15 MB of code.
+                                // If we store it as UTF-16 directly, then that 15 MB of code becomes 30 MB of code!
+                                // lots of code!
+                                //
+
+                                if (!bundler.options.platform.isBun())
                                 try js_printer.printCommonJSThreaded(
-                                @TypeOf(writer),
-                                writer,
-                                ast,
-                                js_ast.Symbol.Map.initList(symbols),
-                                &source,
-                                false,
-                                js_printer.Options{
-                                    .to_module_ref = Ref.RuntimeRef,
-                                    .bundle_export_ref = ast.runtime_imports.@"$$m".?.ref,
-                                    .source_path = file_path,
-                                    .externals = ast.externals,
-                                    .indent = 0,
-                                    .require_ref = ast.require_ref,
-                                    .module_hash = module_id,
-                                    .runtime_imports = ast.runtime_imports,
-                                    .prepend_part_value = &prepend_part,
-                                    .prepend_part_key = if (needs_prepend_part) closure.body.stmts.ptr else null,
-                                },
-                                Linker,
-                                &bundler.linker,
-                                &this.write_lock,
-                                std.fs.File,
-                                this.tmpfile,
-                                std.fs.File.getPos,
-                                &this.tmpfile_byte_offset,
-                            );
+                                    @TypeOf(writer),
+                                    writer,
+                                    ast,
+                                    js_ast.Symbol.Map.initList(symbols),
+                                    &source,
+                                    false,
+                                    js_printer.Options{
+                                        .to_module_ref = Ref.RuntimeRef,
+                                        .bundle_export_ref = ast.runtime_imports.@"$$m".?.ref,
+                                        .source_path = file_path,
+                                        .externals = ast.externals,
+                                        .indent = 0,
+                                        .require_ref = ast.require_ref,
+                                        .module_hash = module_id,
+                                        .runtime_imports = ast.runtime_imports,
+                                        .prepend_part_value = &prepend_part,
+                                        .prepend_part_key = if (needs_prepend_part) closure.body.stmts.ptr else null,
+                                    },
+                                    Linker,
+                                    &bundler.linker,
+                                    &this.write_lock,
+                                    std.fs.File,
+                                    this.tmpfile,
+                                    std.fs.File.getPos,
+                                    &this.tmpfile_byte_offset,
+                                )
+                            else
+                                try js_printer.printCommonJSThreaded(
+                                    @TypeOf(writer),
+                                    writer,
+                                    ast,
+                                    js_ast.Symbol.Map.initList(symbols),
+                                    &source,
+                                    true,
+                                    js_printer.Options{
+                                        .to_module_ref = Ref.RuntimeRef,
+                                        .bundle_export_ref = ast.runtime_imports.@"$$m".?.ref,
+                                        .source_path = file_path,
+                                        .externals = ast.externals,
+                                        .indent = 0,
+                                        .require_ref = ast.require_ref,
+                                        .module_hash = module_id,
+                                        .runtime_imports = ast.runtime_imports,
+                                        .prepend_part_value = &prepend_part,
+                                        .prepend_part_key = if (needs_prepend_part) closure.body.stmts.ptr else null,
+                                    },
+                                    Linker,
+                                    &bundler.linker,
+                                    &this.write_lock,
+                                    std.fs.File,
+                                    this.tmpfile,
+                                    std.fs.File.getPos,
+                                    &this.tmpfile_byte_offset,
+                                );
 
                             code_offset = write_result.off;
                         },
@@ -2384,6 +2430,7 @@ pub const Bundler = struct {
                 Linker,
                 &bundler.linker,
             ),
+
             .esm => try js_printer.printAst(
                 Writer,
                 writer,
@@ -2397,6 +2444,41 @@ pub const Bundler = struct {
                     .runtime_imports = ast.runtime_imports,
                     .require_ref = ast.require_ref,
 
+                    .css_import_behavior = bundler.options.cssImportBehavior(),
+                },
+                Linker,
+                &bundler.linker,
+            ),
+            .esm_ascii => try js_printer.printAst(
+                Writer,
+                writer,
+                ast,
+                js_ast.Symbol.Map.initList(symbols),
+                &result.source,
+                true,
+                js_printer.Options{
+                    .to_module_ref = Ref.RuntimeRef,
+                    .externals = ast.externals,
+                    .runtime_imports = ast.runtime_imports,
+                    .require_ref = ast.require_ref,
+
+                    .css_import_behavior = bundler.options.cssImportBehavior(),
+                },
+                Linker,
+                &bundler.linker,
+            ),
+            .cjs_ascii => try js_printer.printCommonJS(
+                Writer,
+                writer,
+                ast,
+                js_ast.Symbol.Map.initList(symbols),
+                &result.source,
+                true,
+                js_printer.Options{
+                    .to_module_ref = Ref.RuntimeRef,
+                    .externals = ast.externals,
+                    .runtime_imports = ast.runtime_imports,
+                    .require_ref = ast.require_ref,
                     .css_import_behavior = bundler.options.cssImportBehavior(),
                 },
                 Linker,

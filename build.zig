@@ -7,11 +7,6 @@ pub fn addPicoHTTP(step: *std.build.LibExeObjStep, comptime with_obj: bool) void
         .path = .{ .path = "src/deps/picohttp.zig" },
     });
 
-    _ = step.addPackage(.{
-        .name = "iguanaTLS",
-        .path = .{ .path = "src/deps/iguanaTLS/src/main.zig" },
-    });
-
     step.addIncludeDir("src/deps");
 
     if (with_obj) {

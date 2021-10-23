@@ -22,21 +22,49 @@ threadlocal var temporary_nested_value_buffer: [4096]u8 = undefined;
 pub const Lexer = struct {
     source: *const logger.Source,
     iter: CodepointIterator,
+    cursor: CodepointIterator.Cursor = CodepointIterator.Cursor{},
     _codepoint: CodePoint = 0,
     current: usize = 0,
+    last_non_space: usize = 0,
     start: usize = 0,
     end: usize = 0,
     has_nested_value: bool = false,
     has_newline_before: bool = true,
+    was_quoted: bool = false,
 
-    pub inline fn codepoint(this: *Lexer) CodePoint {
-        return this._codepoint;
+    pub inline fn codepoint(this: *const Lexer) CodePoint {
+        return this.cursor.c;
     }
 
     pub fn step(this: *Lexer) void {
-        @call(.{ .modifier = .always_inline }, CodepointIterator.nextCodepointNoReturn, .{&this.iter});
-        this._codepoint = this.iter.c;
-        this.current += 1;
+        const ended = !this.iter.next(&this.cursor);
+        if (ended) this.cursor.c = -1;
+        this.current = this.cursor.i;
+        this.last_non_space = switch (this.cursor.c) {
+            'a'...'z',
+            'A'...'Z',
+            '0'...'9',
+            '-',
+            '_',
+            '#',
+            '$',
+            '@',
+            ')',
+            '(',
+            '^',
+            '*',
+            '&',
+            '+',
+            '|',
+            '{',
+            '}',
+            '[',
+            ']',
+            '=',
+            -1,
+            => this.current,
+            else => this.last_non_space,
+        };
     }
 
     pub fn eatNestedValue(
@@ -102,24 +130,28 @@ pub const Lexer = struct {
         lexer: *Lexer,
         comptime quote: CodePoint,
     ) string {
-        const start = lexer.current - 1;
-        lexer.step();
+        var start = lexer.current;
+        var was_quoted = false;
+        switch (comptime quote) {
+            '"', '\'' => {
+                lexer.step();
+                was_quoted = true;
+            },
 
-        var last_non_space: usize = 0;
+            else => {},
+        }
+
         while (true) {
             switch (lexer.codepoint()) {
                 '\\' => {
                     lexer.step();
                     // Handle Windows CRLF
-                    last_non_space += 1;
 
                     switch (lexer.codepoint()) {
                         '\r' => {
                             lexer.step();
-                            last_non_space += 1;
                             if (lexer.codepoint() == '\n') {
                                 lexer.step();
-                                last_non_space += 1;
                             }
                             continue;
                         },
@@ -135,18 +167,23 @@ pub const Lexer = struct {
                 -1 => {
                     lexer.end = lexer.current;
 
-                    return lexer.source.contents[start..][0 .. last_non_space + 1];
+                    return if (lexer.last_non_space > start)
+                        lexer.source.contents[start..lexer.last_non_space]
+                    else
+                        "";
                 },
                 '$' => {
                     lexer.has_nested_value = true;
-                    last_non_space += 1;
                 },
 
                 '#' => {
                     lexer.step();
                     lexer.eatComment();
 
-                    return lexer.source.contents[start..][0 .. last_non_space + 1];
+                    return if (lexer.last_non_space > start)
+                        lexer.source.contents[start..lexer.last_non_space]
+                    else
+                        "";
                 },
 
                 '\n', '\r', escLineFeed => {
@@ -160,7 +197,10 @@ pub const Lexer = struct {
                             lexer.end = lexer.current;
                             lexer.step();
 
-                            return lexer.source.contents[start..][0 .. last_non_space + 1];
+                            return if (lexer.last_non_space > start)
+                                lexer.source.contents[start..lexer.last_non_space]
+                            else
+                                "";
                         },
                         '"' => {
                             // We keep going
@@ -170,14 +210,13 @@ pub const Lexer = struct {
                     }
                 },
                 quote => {
-                    lexer.end = lexer.current;
                     lexer.step();
+                    lexer.end = lexer.current;
+                    lexer.was_quoted = was_quoted;
                     return lexer.source.contents[start..lexer.end];
                 },
                 ' ' => {},
-                else => {
-                    last_non_space += 1;
-                },
+                else => {},
             }
 
             lexer.step();
@@ -238,9 +277,8 @@ pub const Lexer = struct {
 
                 // Valid keys:
                 'a'...'z', 'A'...'Z', '0'...'9', '_', '-', '.' => {
-                    this.start = this.current - 1;
+                    this.start = this.current;
                     this.step();
-                    var last_non_space: usize = 0;
                     while (true) {
                         switch (this.codepoint()) {
 
@@ -252,14 +290,15 @@ pub const Lexer = struct {
                             },
                             0, -1 => {
                                 this.end = this.current;
-                                return Variable{ .key = this.source.contents[this.start..][0 .. last_non_space + 1], .value = "" };
+                                return if (this.last_non_space > this.start)
+                                    Variable{ .key = this.source.contents[this.start..this.last_non_space], .value = "" }
+                                else
+                                    null;
                             },
-                            'a'...'z', 'A'...'Z', '0'...'9', '_', '-', '.' => {
-                                last_non_space += 1;
-                            },
+                            'a'...'z', 'A'...'Z', '0'...'9', '_', '-', '.' => {},
                             '=' => {
                                 this.end = this.current;
-                                const key = this.source.contents[this.start..][0 .. last_non_space + 1];
+                                const key = this.source.contents[this.start..this.last_non_space];
                                 if (key.len == 0) return null;
                                 this.step();
 
@@ -308,9 +347,7 @@ pub const Lexer = struct {
                                 }
                             },
                             ' ' => {},
-                            else => {
-                                last_non_space += 1;
-                            },
+                            else => {},
                         }
                         this.step();
                     }
@@ -343,10 +380,19 @@ pub const Loader = struct {
 
     const empty_string_value: string = "\"\"";
 
+    /// Load values from the environment into Define. 
+    /// 
+    /// If there is a framework, values from the framework are inserted with a
+    /// **lower priority** so that users may override defaults. Unlike regular
+    /// defines, environment variables are loaded as JavaScript string literals.
+    ///
+    /// Empty enivronment variables become empty strings.
     pub fn copyForDefine(
         this: *Loader,
-        comptime Type: type,
-        to: *Type,
+        comptime JSONStore: type,
+        to_json: *JSONStore,
+        comptime StringStore: type,
+        to_string: *StringStore,
         framework_defaults: Api.StringMap,
         behavior: Api.DotEnvBehavior,
         prefix: string,
@@ -371,74 +417,137 @@ pub const Loader = struct {
 
         // We have to copy all the keys to prepend "process.env" :/
         var key_buf_len: usize = 0;
+        var e_strings_to_allocate: usize = 0;
 
         if (behavior != .disable) {
             if (behavior == .prefix) {
                 std.debug.assert(prefix.len > 0);
 
                 while (iter.next()) |entry| {
+                    const value = entry.value_ptr.*;
                     if (strings.startsWith(entry.key_ptr.*, prefix)) {
                         key_buf_len += entry.key_ptr.len;
                         key_count += 1;
+                        e_strings_to_allocate += 1;
                         std.debug.assert(entry.key_ptr.len > 0);
                     }
                 }
             } else {
                 while (iter.next()) |entry| {
-                    key_buf_len += entry.key_ptr.len;
-                    key_count += 1;
-                    std.debug.assert(entry.key_ptr.len > 0);
+                    if (entry.key_ptr.len > 0) {
+                        key_buf_len += entry.key_ptr.len;
+                        key_count += 1;
+                        e_strings_to_allocate += 1;
+
+                        std.debug.assert(entry.key_ptr.len > 0);
+                    }
                 }
             }
 
             if (key_buf_len > 0) {
                 iter.reset();
                 key_buf = try allocator.alloc(u8, key_buf_len + key_count * "process.env.".len);
+                const js_ast = @import("./js_ast.zig");
+
+                const EString = js_ast.E.String;
+
+                var e_strings = try allocator.alloc(js_ast.E.String, e_strings_to_allocate);
+                errdefer allocator.free(e_strings);
                 errdefer allocator.free(key_buf);
                 var key_fixed_allocator = std.heap.FixedBufferAllocator.init(key_buf);
                 var key_allocator = &key_fixed_allocator.allocator;
 
                 if (behavior == .prefix) {
                     while (iter.next()) |entry| {
-                        const value: string = if (entry.value_ptr.*.len == 0) empty_string_value else entry.value_ptr.*;
+                        const value: string = entry.value_ptr.*;
 
                         if (strings.startsWith(entry.key_ptr.*, prefix)) {
-                            _ = try to.getOrPutValue(
-                                std.fmt.allocPrint(key_allocator, "process.env.{s}", .{entry.key_ptr.*}) catch unreachable,
-                                value,
+                            const key_str = std.fmt.allocPrint(key_allocator, "process.env.{s}", .{entry.key_ptr.*}) catch unreachable;
+
+                            e_strings[0] = js_ast.E.String{
+                                .utf8 = if (value.len > 0)
+                                    @intToPtr([*]u8, @ptrToInt(value.ptr))[0..value.len]
+                                else
+                                    &[_]u8{},
+                            };
+
+                            _ = try to_string.getOrPutValue(
+                                key_str,
+                                .{
+                                    .can_be_removed_if_unused = true,
+                                    .call_can_be_unwrapped_if_unused = true,
+                                    .value = js_ast.Expr.Data{ .e_string = &e_strings[0] },
+                                },
                             );
+                            e_strings = e_strings[1..];
                         } else {
                             const hash = std.hash.Wyhash.hash(0, entry.key_ptr.*);
 
                             std.debug.assert(hash != invalid_hash);
 
                             if (std.mem.indexOfScalar(u64, string_map_hashes, hash)) |key_i| {
-                                _ = try to.getOrPutValue(
+                                e_strings[0] = js_ast.E.String{
+                                    .utf8 = if (value.len > 0)
+                                        @intToPtr([*]u8, @ptrToInt(value.ptr))[0..value.len]
+                                    else
+                                        &[_]u8{},
+                                };
+
+                                _ = try to_string.getOrPutValue(
                                     framework_defaults.keys[key_i],
-                                    value,
+                                    .{
+                                        .can_be_removed_if_unused = true,
+                                        .call_can_be_unwrapped_if_unused = true,
+                                        .value = js_ast.Expr.Data{ .e_string = &e_strings[0] },
+                                    },
                                 );
+                                e_strings = e_strings[1..];
                             }
                         }
                     }
                 } else {
                     while (iter.next()) |entry| {
                         const value: string = if (entry.value_ptr.*.len == 0) empty_string_value else entry.value_ptr.*;
-                        _ = try to.getOrPutValue(
-                            std.fmt.allocPrint(key_allocator, "process.env.{s}", .{entry.key_ptr.*}) catch unreachable,
-                            value,
+                        const key = std.fmt.allocPrint(key_allocator, "process.env.{s}", .{entry.key_ptr.*}) catch unreachable;
+
+                        e_strings[0] = js_ast.E.String{
+                            .utf8 = if (entry.value_ptr.*.len > 0)
+                                @intToPtr([*]u8, @ptrToInt(entry.value_ptr.*.ptr))[0..value.len]
+                            else
+                                &[_]u8{},
+                        };
+
+                        _ = try to_string.getOrPutValue(
+                            key,
+                            .{
+                                .can_be_removed_if_unused = true,
+                                .call_can_be_unwrapped_if_unused = true,
+                                .value = js_ast.Expr.Data{ .e_string = &e_strings[0] },
+                            },
                         );
+                        e_strings = e_strings[1..];
                     }
                 }
             }
         }
 
         for (framework_defaults.keys) |key, i| {
-            const value = framework_defaults.values[i];
+            var value = framework_defaults.values[i];
 
-            if (value.len == 0) {
-                _ = try to.getOrPutValue(key, empty_string_value);
-            } else {
-                _ = try to.getOrPutValue(key, value);
+            if (!to_string.contains(key) and !to_json.contains(key)) {
+                // is this an escaped string?
+                // if so, we start with the quotes instead of the escape
+                if (value.len > 2 and
+                    value[0] == '\\' and
+                    (value[1] == '"' or value[1] == '\'') and
+                    value[value.len - 1] == '\\' and
+                    (value[value.len - 2] == '"' or
+                    value[value.len - 2] == '\''))
+                {
+                    value = value[1 .. value.len - 1];
+                }
+
+                _ = try to_json.getOrPutValue(key, value);
             }
         }
 
@@ -471,7 +580,7 @@ pub const Loader = struct {
     }
 
     // mostly for tests
-    pub fn loadFromString(this: *Loader, str: string, comptime overwrite: bool) void {
+    pub fn loadFromString(this: *Loader, str: stringZ, comptime overwrite: bool) void {
         var source = logger.Source.initPathString("test", str);
         Parser.parse(&source, this.allocator, this.map, overwrite);
         std.mem.doNotOptimizeAway(&source);
@@ -593,7 +702,7 @@ pub const Loader = struct {
         var contents = try file.readAll(buf);
         // always sentinel
         buf.ptr[contents + 1] = 0;
-        const source = logger.Source.initPathString(base, buf.ptr[0..contents]);
+        const source = logger.Source.initPathString(base, buf.ptr[0..contents :0]);
 
         Parser.parse(
             &source,
@@ -616,12 +725,14 @@ pub const Parser = struct {
         var lexer = Lexer.init(source);
         var fbs = std.io.fixedBufferStream(&temporary_nested_value_buffer);
         var writer = fbs.writer();
+        var temp_variable_i: u16 = 0;
+        var total_alloc_len: usize = 0;
 
         while (lexer.next()) |variable| {
             if (variable.has_nested_value) {
                 writer.context.reset();
 
-                lexer.eatNestedValue(Map, map, @TypeOf(writer), writer, variable, Map.get) catch unreachable;
+                lexer.eatNestedValue(Map, map, @TypeOf(writer), writer, variable, Map.get_) catch unreachable;
                 const new_value = fbs.buffer[0..fbs.pos];
                 if (new_value.len > 0) {
                     if (comptime override) {
@@ -661,7 +772,14 @@ pub const Map = struct {
         try this.map.put(key, value);
     }
 
-    pub fn get(
+    pub inline fn get(
+        this: *const Map,
+        key: string,
+    ) ?string {
+        return this.map.get(key);
+    }
+
+    pub fn get_(
         this: *const Map,
         key: string,
     ) ?string {

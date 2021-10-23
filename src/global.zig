@@ -1,5 +1,4 @@
 const std = @import("std");
-pub usingnamespace @import("strings.zig");
 pub const Environment = @import("env.zig");
 
 pub const default_allocator: *std.mem.Allocator = if (isTest)
@@ -457,3 +456,7 @@ pub const FileDescriptorType = if (isBrowser) u0 else std.os.fd_t;
 // such is often the case with macOS
 // As a useful optimization, we can store file descriptors and just keep them open...forever
 pub const StoredFileDescriptorType = if (isWindows or isBrowser) u0 else std.os.fd_t;
+
+pub usingnamespace @import("string_types.zig");
+pub const strings = @import("string_immutable.zig");
+pub const MutableString = @import("string_mutable.zig").MutableString;

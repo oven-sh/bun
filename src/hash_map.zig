@@ -1,6 +1,7 @@
-// This is the hash map implementation built in to zig
+// This is the previous version of the hash map implementation built in to zig
 // except, with a getWithHash(key: K)
 // and a hash getWithHash(key: K)
+// This improved JS parser performance due to being able to reuse hash keys when looking up symbol table entries
 
 const std = @import("std");
 const assert = debug.assert;

@@ -586,7 +586,8 @@ bun-link-lld-release-aarch64:
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 	$(CXX) -c -o $@ $< \
 		$(CLANG_FLAGS) \
-		-O1
+		-O1 \
+		-w
 
 sizegen:
 	$(CXX) src/javascript/jsc/headergen/sizegen.cpp -o $(BUN_TMP_DIR)/sizegen $(CLANG_FLAGS) -O1
@@ -600,3 +601,6 @@ analytics:
 
 analytics-features:
 	@cd misctools; zig run --main-pkg-path ../ ./features.zig
+
+find-unused-zig-files: 
+	@bash ./misctools/find-unused-zig.sh

@@ -41,6 +41,7 @@ const first_high_surrogate: u21 = 0xD800;
 const last_high_surrogate: u21 = 0xDBFF;
 const first_low_surrogate: u21 = 0xDC00;
 const last_low_surrogate: u21 = 0xDFFF;
+const CodepointIterator = @import("./string_immutable.zig").UnsignedCodepointIterator;
 const assert = std.debug.assert;
 
 threadlocal var imported_module_ids_list: std.ArrayList(u32) = undefined;
@@ -269,6 +270,10 @@ pub fn NewPrinter(
                 comptime_int, u16, u8 => {
                     p.writer.print(@TypeOf(str), str);
                 },
+                [6]u8 => {
+                    const span = std.mem.span(&str);
+                    p.writer.print(@TypeOf(span), span);
+                },
                 else => {
                     p.writer.print(@TypeOf(str), str);
                 },
@@ -310,7 +315,7 @@ pub fn NewPrinter(
         pub inline fn printSpaceBeforeIdentifier(
             p: *Printer,
         ) void {
-            if (p.writer.written > 0 and (js_lexer.isIdentifierContinue(p.writer.prevChar()) or p.writer.written == p.prev_reg_exp_end)) {
+            if (p.writer.written > 0 and (js_lexer.isIdentifierContinue(@as(i32, p.writer.prevChar())) or p.writer.written == p.prev_reg_exp_end)) {
                 p.print(" ");
             }
         }
@@ -582,7 +587,7 @@ pub fn NewPrinter(
             // e(text.len) catch unreachable;
 
             while (i < n) {
-                const c = @intCast(u21, text[i]);
+                const c = @as(u21, text[i]);
                 i += 1;
                 var r: u21 = 0;
                 var width: u3 = 0;
@@ -882,9 +887,7 @@ pub fn NewPrinter(
         }
 
         pub inline fn canPrintIdentifierUTF16(p: *Printer, name: []const u16) bool {
-            // TODO: fix this
-            // this is commented out because something isn't quite right
-            // the problem may lie in isIdentifierUTF16, or it may lie in how these are allocated.
+            if (comptime is_json) return false;
             return false;
             // if (comptime ascii_only) {
             //     return js_lexer.isIdentifierUTF16(name) and !strings.containsNonBmpCodePointUTF16(name);
@@ -3707,7 +3710,56 @@ pub fn NewPrinter(
         }
 
         pub fn printIdentifier(p: *Printer, identifier: string) void {
-            p.print(identifier);
+            if (comptime ascii_only) {
+                p.printQuotedIdentifier(identifier);
+            } else {
+                p.print(identifier);
+            }
+        }
+
+        fn printQuotedIdentifier(p: *Printer, identifier: string) void {
+            var ascii_start: usize = 0;
+            var is_ascii = false;
+            var iter = CodepointIterator.init(identifier);
+            var cursor = CodepointIterator.Cursor{};
+            while (iter.next(&cursor)) {
+                switch (cursor.c) {
+                    first_ascii...last_ascii => {
+                        if (!is_ascii) {
+                            ascii_start = cursor.i;
+                            is_ascii = true;
+                        }
+                    },
+                    else => {
+                        if (is_ascii) {
+                            p.print(identifier[ascii_start..cursor.i]);
+                            is_ascii = false;
+                        }
+
+                        switch (cursor.c) {
+                            0...0xFFFF => {
+                                p.print([_]u8{
+                                    '\\',
+                                    'u',
+                                    hex_chars[cursor.c >> 12],
+                                    hex_chars[(cursor.c >> 8) & 15],
+                                    hex_chars[(cursor.c >> 4) & 15],
+                                    hex_chars[cursor.c & 15],
+                                });
+                            },
+                            else => {
+                                p.print("\\u{");
+                                std.fmt.formatInt(cursor.c, 16, .lower, .{}, p) catch unreachable;
+                                p.print("}");
+                            },
+                        }
+                    },
+                }
+            }
+
+            if (is_ascii) {
+                p.print(identifier[ascii_start..]);
+            }
         }
 
         pub fn printIdentifierUTF16(p: *Printer, name: []const u16) !void {
@@ -3725,12 +3777,15 @@ pub fn NewPrinter(
                     }
                 }
 
-                if (ascii_only and c > last_ascii) {
-                    if (c > last_low_surrogate and c <= 0xFFFF) {
-                        temp = [_]u8{ '\\', 'u', hex_chars[c >> 12], hex_chars[(c >> 8) & 15], hex_chars[(c >> 4) & 15], hex_chars[c & 15] };
-                        p.print(&temp);
-                    } else {
-                        Global.panic("Not implemented yet: unicode escapes in ascii only", .{});
+                if ((comptime ascii_only) and c > last_ascii) {
+                    switch (c) {
+                        0...0xFFFF => {
+                            p.print([_]u8{ '\\', 'u', hex_chars[c >> 12], hex_chars[(c >> 8) & 15], hex_chars[(c >> 4) & 15], hex_chars[c & 15] });
+                        },
+                        else => {
+                            p.print("\\u");
+                            p.print(std.fmt.bufPrintIntToSlice(&temp, c, 16, .upper, .{}));
+                        },
                     }
                     continue;
                 }
@@ -4082,6 +4137,14 @@ pub fn NewFileWriter(file: std.fs.File) FileWriter {
 pub const Format = enum {
     esm,
     cjs,
+
+    // Bun.js must escape non-latin1 identifiers in the output This is because
+    // we load JavaScript as a UTF-8 buffer instead of a UTF-16 buffer
+    // JavaScriptCore does not support UTF-8 identifiers when the source code
+    // string is loaded as const char* We don't want to double the size of code
+    // in memory...
+    esm_ascii,
+    cjs_ascii,
 };
 
 pub fn printAst(
@@ -4090,12 +4153,12 @@ pub fn printAst(
     tree: Ast,
     symbols: js_ast.Symbol.Map,
     source: *const logger.Source,
-    ascii_only: bool,
+    comptime ascii_only: bool,
     opts: Options,
     comptime LinkerType: type,
     linker: ?*LinkerType,
 ) !usize {
-    const PrinterType = NewPrinter(false, Writer, LinkerType, false, false, false, false);
+    const PrinterType = NewPrinter(ascii_only, Writer, LinkerType, false, false, false, false);
     var writer = _writer;
 
     var printer = try PrinterType.init(
@@ -4169,12 +4232,12 @@ pub fn printCommonJS(
     tree: Ast,
     symbols: js_ast.Symbol.Map,
     source: *const logger.Source,
-    ascii_only: bool,
+    comptime ascii_only: bool,
     opts: Options,
     comptime LinkerType: type,
     linker: ?*LinkerType,
 ) !usize {
-    const PrinterType = NewPrinter(false, Writer, LinkerType, true, false, false, false);
+    const PrinterType = NewPrinter(ascii_only, Writer, LinkerType, true, false, false, false);
     var writer = _writer;
     var printer = try PrinterType.init(
         writer,
@@ -4222,7 +4285,7 @@ pub fn printCommonJSThreaded(
     tree: Ast,
     symbols: js_ast.Symbol.Map,
     source: *const logger.Source,
-    ascii_only: bool,
+    comptime ascii_only: bool,
     opts: Options,
     comptime LinkerType: type,
     linker: ?*LinkerType,
@@ -4232,7 +4295,7 @@ pub fn printCommonJSThreaded(
     comptime getPos: fn (ctx: GetPosType) anyerror!u64,
     end_off_ptr: *u32,
 ) !WriteResult {
-    const PrinterType = NewPrinter(false, Writer, LinkerType, true, false, true, false);
+    const PrinterType = NewPrinter(ascii_only, Writer, LinkerType, true, false, true, false);
     var writer = _writer;
     var printer = try PrinterType.init(
         writer,

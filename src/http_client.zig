@@ -6,7 +6,6 @@ const std = @import("std");
 const Headers = @import("./javascript/jsc/webcore/response.zig").Headers;
 const URL = @import("./query_string_map.zig").URL;
 const Method = @import("./http/method.zig").Method;
-const iguanaTLS = @import("./deps/iguanaTLS/src/main.zig");
 const Api = @import("./api/schema.zig").Api;
 const Lock = @import("./lock.zig").Lock;
 const HTTPClient = @This();

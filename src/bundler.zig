@@ -18,7 +18,6 @@ const schema = @import("api/schema.zig");
 const Api = schema.Api;
 const _resolver = @import("./resolver/resolver.zig");
 const sync = @import("sync.zig");
-const ThreadSafeHashMap = @import("./thread_safe_hash_map.zig");
 const ImportRecord = @import("./import_record.zig").ImportRecord;
 const allocators = @import("./allocators.zig");
 const MimeType = @import("./http/mime_type.zig");

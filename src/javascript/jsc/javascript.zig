@@ -17,7 +17,6 @@ const hash_map = @import("../../hash_map.zig");
 const http = @import("../../http.zig");
 const ImportKind = ast.ImportKind;
 const Analytics = @import("../../analytics/analytics_thread.zig");
-usingnamespace @import("./node_env_buf_map.zig");
 usingnamespace @import("./base.zig");
 usingnamespace @import("./webcore/response.zig");
 usingnamespace @import("./config.zig");

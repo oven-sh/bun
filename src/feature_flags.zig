@@ -48,14 +48,6 @@ pub const bundle_dynamic_import = true;
 pub const allow_json_single_quotes = true;
 
 pub const react_specific_warnings = true;
-// Disabled due to concurrency bug I don't have time to fix right now.
-// I suspect it's like 3 undefined memory issues.
-// This was the command I ran to reproduce it:
-//    for i in (seq 1000)
-//      command ../../build/debug/macos-x86_64/bun --use=./nexty2 --new-jsb > /dev/null
-//    end
-// It only happens 1 out of every N times, probably like 50.
-pub const parallel_bun = false;
 
 pub const CSSInJSImportBehavior = enum {
     // When you import a .css file and you reference the import in JavaScript

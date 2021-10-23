@@ -13,8 +13,6 @@ const js_printer = @import("../../js_printer.zig");
 const hash_map = @import("../../hash_map.zig");
 const http = @import("../../http.zig");
 
-usingnamespace @import("./node_env_buf_map.zig");
-
 pub const DefaultBunDefines = struct {
     pub const Keys = struct {
         const window = "window";

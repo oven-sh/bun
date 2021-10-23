@@ -816,11 +816,16 @@ pub fn definesFromTransformOptions(
         input_user_define.values,
     );
 
+    var environment_defines = defines.UserDefinesArray.init(allocator);
+    defer environment_defines.deinit();
+
     if (loader) |_loader| {
         if (framework_env) |framework| {
             _ = try _loader.copyForDefine(
                 defines.RawDefines,
                 &user_defines,
+                defines.UserDefinesArray,
+                &environment_defines,
                 framework.toAPI().defaults,
                 framework.behavior,
                 framework.prefix,
@@ -830,6 +835,8 @@ pub fn definesFromTransformOptions(
             _ = try _loader.copyForDefine(
                 defines.RawDefines,
                 &user_defines,
+                defines.UserDefinesArray,
+                &environment_defines,
                 std.mem.zeroes(Api.StringMap),
                 Api.DotEnvBehavior.disable,
                 "",
@@ -857,6 +864,7 @@ pub fn definesFromTransformOptions(
     return try defines.Define.init(
         allocator,
         resolved_defines,
+        environment_defines,
     );
 }
 

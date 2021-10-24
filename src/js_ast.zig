@@ -261,7 +261,7 @@ pub const Binding = struct {
                     exprs[i] = convert: {
                         const expr = toExpr(&item.binding, wrapper);
                         if (b.has_spread and i == exprs.len - 1) {
-                            break :convert Expr.alloc(wrapper.allocator, E.Spread, E.Spread{ .value = expr }, expr.loc);
+                            break :convert Expr.init(E.Spread, E.Spread{ .value = expr }, expr.loc);
                         } else if (item.default_value) |default| {
                             break :convert Expr.assign(expr, default, wrapper.allocator);
                         } else {
@@ -270,7 +270,7 @@ pub const Binding = struct {
                     };
                 }
 
-                return Expr.alloc(wrapper.allocator, E.Array, E.Array{ .items = exprs, .is_single_line = b.is_single_line }, loc);
+                return Expr.init(E.Array, E.Array{ .items = exprs, .is_single_line = b.is_single_line }, loc);
             },
             .b_object => |b| {
                 var properties = wrapper.allocator.alloc(G.Property, b.properties.len) catch unreachable;
@@ -284,7 +284,7 @@ pub const Binding = struct {
                         .initializer = item.default_value,
                     };
                 }
-                return Expr.alloc(wrapper.allocator, E.Object, E.Object{ .properties = properties, .is_single_line = b.is_single_line }, loc);
+                return Expr.init(E.Object, E.Object{ .properties = properties, .is_single_line = b.is_single_line }, loc);
             },
             else => {
                 Global.panic("Interanl error", .{});
@@ -2158,7 +2158,7 @@ pub const Expr = struct {
 
         // "a op b" => "a op b"
         // "(a op b) op c" => "(a op b) op c"
-        return Expr.alloc(allocator, E.Binary, E.Binary{ .op = op, .left = a, .right = b }, a.loc);
+        return Expr.init(E.Binary, E.Binary{ .op = op, .left = a, .right = b }, a.loc);
     }
 
     pub fn joinWithComma(a: Expr, b: Expr, allocator: *std.mem.Allocator) Expr {
@@ -2170,7 +2170,7 @@ pub const Expr = struct {
             return a;
         }
 
-        return Expr.alloc(allocator, E.Binary, E.Binary{ .op = .bin_comma, .left = a, .right = b }, a.loc);
+        return Expr.init(E.Binary, E.Binary{ .op = .bin_comma, .left = a, .right = b }, a.loc);
     }
 
     pub fn joinAllWithComma(all: []Expr, allocator: *std.mem.Allocator) Expr {
@@ -2268,9 +2268,8 @@ pub const Expr = struct {
     var false_bool = E.Boolean{ .value = false };
     var bool_values = [_]*E.Boolean{ &false_bool, &true_bool };
 
-    pub fn init(comptime Type: type, exp: *const Type, loc: logger.Loc) Expr {
+    pub  fn init(comptime Type: type, st: Type, loc: logger.Loc) Expr {
         icount += 1;
-        const st = exp.*;
 
         switch (Type) {
             E.Array => {
@@ -2586,11 +2585,6 @@ pub const Expr = struct {
                 @compileError("Invalid type passed to Expr.init: " ++ @typeName(Type));
             },
         }
-    }
-
-    pub fn alloc(allocator: *std.mem.Allocator, comptime Type: type, st: Type, loc: logger.Loc) Expr {
-        icount += 1;
-        return init(Type, &st, loc);
     }
 
     pub const Tag = enum(u6) {
@@ -3023,14 +3017,14 @@ pub const Expr = struct {
     }
 
     pub fn assign(a: Expr, b: Expr, allocator: *std.mem.Allocator) Expr {
-        return alloc(allocator, E.Binary, E.Binary{
+        return init(E.Binary, E.Binary{
             .op = .bin_assign,
             .left = a,
             .right = b,
         }, a.loc);
     }
     pub inline fn at(expr: Expr, comptime Type: type, t: Type, allocator: *std.mem.Allocator) Expr {
-        return alloc(allocator, Type, t, expr.loc);
+        return init(Type, t, expr.loc);
     }
 
     // Wraps the provided expression in the "!" prefix operator. The expression
@@ -4008,7 +4002,9 @@ pub const Scope = struct {
 };
 
 pub fn printmem(comptime format: string, args: anytype) void {
-    // Output.print(format, args);
+    defer Output.flush();
+    Output.initTest();
+    Output.print(format, args);
 }
 
 pub const Macro = struct {
@@ -5931,10 +5927,9 @@ pub const Macro = struct {
                                 self.p.recordUsage(self.bun_jsx_ref);
                                 _ = self.writeElement(element);
                                 var call_args = self.p.allocator.alloc(Expr, 1) catch unreachable;
-                                call_args[0] = Expr.alloc(self.p.allocator, E.Array, E.Array{ .items = self.args.items }, tag_expr.loc);
+                                call_args[0] = Expr.init(E.Array, E.Array{ .items = self.args.items }, tag_expr.loc);
 
-                                return Expr.alloc(
-                                    self.p.allocator,
+                                return Expr.init(
                                     E.Call,
                                     E.Call{
                                         .target = Expr{
@@ -5958,8 +5953,7 @@ pub const Macro = struct {
                         var call_args = self.p.allocator.alloc(Expr, 1) catch unreachable;
                         call_args[0] = Expr.alloc(self.p.allocator, E.Array, E.Array{ .items = self.args.items }, loc);
 
-                        return Expr.alloc(
-                            self.p.allocator,
+                        return Expr.init(
                             E.Call,
                             E.Call{
                                 .target = Expr{
@@ -6405,7 +6399,7 @@ pub const Macro = struct {
                                 }
                             }
                         }
-                        expr.* = Expr.alloc(writer.allocator, E.Array, E.Array{ .items = items.items[0..i] }, writer.loc);
+                        expr.* = Expr.init(E.Array, E.Array{ .items = items.items[0..i] }, writer.loc);
                         return true;
                     },
                     .e_boolean => {
@@ -6466,7 +6460,7 @@ pub const Macro = struct {
                         const len = js.JSStringGetLength(jsstring);
                         var str = writer.allocator.alloc(u8, len + 1) catch unreachable;
                         const outlen = js.JSStringGetUTF8CString(jsstring, str.ptr, len + 1);
-                        expr.* = Expr.alloc(writer.allocator, E.RegExp, E.RegExp{ .value = str[0..outlen] }, writer.loc);
+                        expr.* = Expr.init(E.RegExp, E.RegExp{ .value = str[0..outlen] }, writer.loc);
                         return true;
                     },
                     .e_object => {

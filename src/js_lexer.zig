@@ -46,6 +46,8 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
         const LexerType = @This();
         const is_json = json_options.is_json;
         const json = json_options;
+        const JSONBool = if (is_json) bool else void;
+        const JSONBoolDefault: JSONBool = if (is_json) true else void{};
 
         pub const Error = error{
             UTF8Fail,
@@ -63,7 +65,6 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
 
         // err: ?LexerType.Error,
         log: *logger.Log,
-        for_global_name: bool = false,
         source: *const logger.Source,
         current: usize = 0,
         start: usize = 0,
@@ -96,12 +97,13 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
         string_literal: JavascriptString,
         string_literal_is_ascii: bool = false,
 
-        is_ascii_only: bool = true,
+        /// Only used for JSON stringification when bundling
+        /// This is a zero-bit type unless we're parsing JSON.
+        is_ascii_only: JSONBool = JSONBoolDefault,
 
         pub fn clone(self: *const LexerType) LexerType {
             return LexerType{
                 .log = self.log,
-                .for_global_name = self.for_global_name,
                 .source = self.source,
                 .current = self.current,
                 .start = self.start,
@@ -223,7 +225,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
         pub fn decodeEscapeSequences(lexer: *LexerType, start: usize, text: string, comptime BufType: type, buf_: *BufType) !void {
             var buf = buf_.*;
             defer buf_.* = buf;
-            lexer.is_ascii_only = false;
+            if (comptime is_json) lexer.is_ascii_only = false;
 
             var iterator = strings.CodepointIterator{ .bytes = text[start..], .i = 0 };
             var iter = strings.CodepointIterator.Cursor{};
@@ -679,7 +681,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                 try lexer.decodeEscapeSequences(0, lexer.string_literal_slice, @TypeOf(lexer.string_literal_buffer), &lexer.string_literal_buffer);
                 lexer.string_literal = lexer.string_literal_buffer.items;
             }
-            lexer.is_ascii_only = lexer.is_ascii_only and lexer.string_literal_is_ascii;
+            if (comptime is_json) lexer.is_ascii_only = lexer.is_ascii_only and lexer.string_literal_is_ascii;
 
             if (comptime !FeatureFlags.allow_json_single_quotes) {
                 if (quote == '\'' and is_json) {
@@ -1327,10 +1329,6 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                         // '/' or '/=' or '//' or '/* ... */'
                         try lexer.step();
 
-                        if (lexer.for_global_name) {
-                            lexer.token = .t_slash;
-                            break;
-                        }
                         switch (lexer.code_point) {
                             '=' => {
                                 try lexer.step();
@@ -1687,25 +1685,6 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                 .loc = logger.usize2Loc(self.start),
                 .len = std.math.lossyCast(i32, self.end - self.start),
             };
-        }
-
-        pub fn initGlobalName(log: *logger.Log, source: *const logger.Source, allocator: *std.mem.Allocator) !LexerType {
-            var empty_string_literal: JavascriptString = &emptyJavaScriptString;
-            var lex = LexerType{
-                .log = log,
-                .source = source,
-                .string_literal_is_ascii = true,
-                .string_literal = empty_string_literal,
-                .string_literal_buffer = std.ArrayList(u16).init(allocator),
-                .prev_error_loc = logger.Loc.Empty,
-                .allocator = allocator,
-                .comments_to_preserve_before = std.ArrayList(js_ast.G.Comment).init(allocator),
-                .for_global_name = true,
-            };
-            try lex.step();
-            try lex.next();
-
-            return lex;
         }
 
         pub fn initTSConfig(log: *logger.Log, source: *const logger.Source, allocator: *std.mem.Allocator) !LexerType {

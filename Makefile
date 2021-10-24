@@ -354,7 +354,10 @@ bin-dir:
 	@echo $(BIN_DIR)
 
 api: 
-	npm install; ./node_modules/.bin/peechy --schema src/api/schema.peechy --esm src/api/schema.js --ts src/api/schema.d.ts --zig src/api/schema.zig
+	pnpm install; ./node_modules/.bin/peechy --schema src/api/schema.peechy --esm src/api/schema.js --ts src/api/schema.d.ts --zig src/api/schema.zig
+	zig fmt src/api/schema.zig
+	prettier --write src/api/schema.js
+	prettier --write src/api/schema.d.ts
 
 node-fallbacks: 
 	@cd src/node-fallbacks; npm install; npm run --silent build
@@ -601,7 +604,8 @@ picohttp:
 	 $(CC) -march=native -O3 -g -fPIE -c src/deps/picohttpparser/picohttpparser.c -Isrc/deps -o src/deps/picohttpparser.o; cd ../../	
 
 analytics:
-	 ./node_modules/.bin/peechy --schema src/analytics/schema.peechy --zig src/analytics/analytics_schema.zig
+	./node_modules/.bin/peechy --schema src/analytics/schema.peechy --zig src/analytics/analytics_schema.zig
+	zig fmt src/analytics/analytics_schema.zig
 
 analytics-features:
 	@cd misctools; zig run --main-pkg-path ../ ./features.zig

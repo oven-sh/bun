@@ -1,7 +1,7 @@
 {
   "dependencies": {
     "moment": "^2.29.1",
-    "peechy": "^0.4.19",
+    "peechy": "0.4.20",
     "puppeteer": "^10.2.0",
     "react": "^17.0.2",
     "react-dom": "^17.0.2"

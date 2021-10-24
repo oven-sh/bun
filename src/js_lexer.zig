@@ -189,10 +189,6 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
             // }
         }
 
-        pub fn codePointEql(self: *LexerType, a: u8) bool {
-            return @intCast(CodePoint, a) == self.code_point;
-        }
-
         /// Look ahead at the next n codepoints without advancing the iterator.
         /// If fewer than n codepoints are available, then return the remainder of the string.
         fn peek(it: *LexerType, n: usize) string {

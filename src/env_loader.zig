@@ -580,7 +580,7 @@ pub const Loader = struct {
     }
 
     // mostly for tests
-    pub fn loadFromString(this: *Loader, str: stringZ, comptime overwrite: bool) void {
+    pub fn loadFromString(this: *Loader, str: string, comptime overwrite: bool) void {
         var source = logger.Source.initPathString("test", str);
         Parser.parse(&source, this.allocator, this.map, overwrite);
         std.mem.doNotOptimizeAway(&source);
@@ -772,6 +772,26 @@ pub const Map = struct {
         try this.map.put(key, value);
     }
 
+    pub fn jsonStringify(self: *const @This(), options: anytype, writer: anytype) !void {
+        var iterator = self.map.iterator();
+
+        _ = try writer.writeAll("{");
+
+        while (iterator.next()) |entry| {
+            std.json.stringify(entry.key_ptr.*, options, writer) catch unreachable;
+
+            _ = try writer.writeAll(": ");
+
+            std.json.stringify(entry.value_ptr.*, options, writer) catch unreachable;
+
+            if (iterator.index < self.map.count() - 1) {
+                _ = try writer.writeAll(", ");
+            }
+        }
+
+        try writer.writeAll("}");
+    }
+
     pub inline fn get(
         this: *const Map,
         key: string,
@@ -799,7 +819,7 @@ pub var instance: ?*Loader = null;
 
 const expectString = std.testing.expectEqualStrings;
 const expect = std.testing.expect;
-test "DotEnv Loader" {
+test "DotEnv Loader - basic" {
     const VALID_ENV =
         \\API_KEY=verysecure
         \\process.env.WAT=ABCDEFGHIJKLMNOPQRSTUVWXYZZ10239457123
@@ -810,7 +830,7 @@ test "DotEnv Loader" {
         \\SINGLE_QUOTED_SHOULDNT_PRESERVE_NEWLINES='yo
         \\'
         \\
-        \\SINGLE_QUOTED_PRESERVES_QUOTES='yo'
+        \\SINGLE_QUOTED_DOESNT_PRESERVES_QUOTES='yo'
         \\
         \\# Line Comment
         \\UNQUOTED_SHOULDNT_PRESERVE_NEWLINES_AND_TRIMS_TRAILING_SPACE=yo # Inline Comment
@@ -832,9 +852,9 @@ test "DotEnv Loader" {
         \\
         \\NESTED_VALUES_RESPECT_ESCAPING='\$API_KEY'
         \\
-        \\EMPTY_SINGLE_QUOTED_VALUE_IS_EMPTY_STRING_CHARS=''
+        \\EMPTY_SINGLE_QUOTED_VALUE_IS_EMPTY_STRING=''
         \\
-        \\EMPTY_DOUBLE_QUOTED_VALUE_IS_EMPTY_STRING_CHARS=""
+        \\EMPTY_DOUBLE_QUOTED_VALUE_IS_EMPTY_STRING=""
         \\
     ;
     const source = logger.Source.initPathString(".env", VALID_ENV);
@@ -845,24 +865,24 @@ test "DotEnv Loader" {
         &map,
         true,
     );
-    try expectString(map.get("NESTED_VALUES_RESPECT_ESCAPING").?, "'\\$API_KEY'");
+    try expectString(map.get("NESTED_VALUES_RESPECT_ESCAPING").?, "\\$API_KEY");
 
-    try expectString(map.get("NESTED_VALUE").?, "'verysecure'");
-    try expectString(map.get("RECURSIVE_NESTED_VALUE").?, "'verysecure':verysecure");
+    try expectString(map.get("NESTED_VALUE").?, "verysecure");
+    try expectString(map.get("RECURSIVE_NESTED_VALUE").?, "verysecure:verysecure");
 
     try expectString(map.get("API_KEY").?, "verysecure");
     try expectString(map.get("process.env.WAT").?, "ABCDEFGHIJKLMNOPQRSTUVWXYZZ10239457123");
-    try expectString(map.get("DOUBLE-QUOTED_SHOULD_PRESERVE_NEWLINES").?, "\"\nya\n\"");
-    try expectString(map.get("SINGLE_QUOTED_SHOULDNT_PRESERVE_NEWLINES").?, "'yo");
-    try expectString(map.get("SINGLE_QUOTED_PRESERVES_QUOTES").?, "'yo'");
+    try expectString(map.get("DOUBLE-QUOTED_SHOULD_PRESERVE_NEWLINES").?, "\nya\n");
+    try expectString(map.get("SINGLE_QUOTED_SHOULDNT_PRESERVE_NEWLINES").?, "yo");
+    try expectString(map.get("SINGLE_QUOTED_DOESNT_PRESERVES_QUOTES").?, "yo");
     try expectString(map.get("UNQUOTED_SHOULDNT_PRESERVE_NEWLINES_AND_TRIMS_TRAILING_SPACE").?, "yo");
     try expect(map.get("LINES_WITHOUT_EQUAL_ARE_IGNORED") == null);
     try expectString(map.get("LEADING_SPACE_IS_TRIMMED").?, "yes");
     try expect(map.get("NO_VALUE_IS_EMPTY_STRING").?.len == 0);
-    try expectString(map.get("IGNORING_DOESNT_BREAK_OTHER_LINES").?, "'yes'");
+    try expectString(map.get("IGNORING_DOESNT_BREAK_OTHER_LINES").?, "yes");
     try expectString(map.get("LEADING_SPACE_IN_UNQUOTED_VALUE_IS_TRIMMED").?, "yes");
-    try expectString(map.get("EMPTY_SINGLE_QUOTED_VALUE_IS_EMPTY_STRING_CHARS").?, "''");
-    try expectString(map.get("EMPTY_DOUBLE_QUOTED_VALUE_IS_EMPTY_STRING_CHARS").?, "\"\"");
+    try expectString(map.get("EMPTY_SINGLE_QUOTED_VALUE_IS_EMPTY_STRING").?, "");
+    try expectString(map.get("EMPTY_DOUBLE_QUOTED_VALUE_IS_EMPTY_STRING").?, "");
 }
 
 test "DotEnv Process" {
@@ -871,16 +891,16 @@ test "DotEnv Process" {
     var loader = Loader.init(&map, default_allocator);
     loader.loadProcess();
 
-    try expectString(loader.map.get("TMPDIR").?, process.get("TMPDIR").?);
+    try expectString(loader.map.get("TMPDIR").?, std.os.getenvZ("TMPDIR").?);
     try expect(loader.map.get("TMPDIR").?.len > 0);
 
     try expectString(loader.map.get("USER").?, process.get("USER").?);
     try expect(loader.map.get("USER").?.len > 0);
 }
 
-test "DotEnv Loader.copyForDefine" {
+test "DotEnv Loader - copyForDefine" {
     const UserDefine = std.StringArrayHashMap(string);
-
+    const UserDefinesArray = @import("./defines.zig").UserDefinesArray;
     var map = Map.init(default_allocator);
     var loader = Loader.init(&map, default_allocator);
     const framework_keys = [_]string{ "process.env.BACON", "process.env.HOSTNAME" };
@@ -905,32 +925,37 @@ test "DotEnv Loader.copyForDefine" {
     loader.loadFromString(skip_user_overrides, false);
 
     var user_defines = UserDefine.init(default_allocator);
-    var buf = try loader.copyForDefine(UserDefine, &user_defines, framework, .disable, "", default_allocator);
+    var env_defines = UserDefinesArray.init(default_allocator);
+    var buf = try loader.copyForDefine(UserDefine, &user_defines, UserDefinesArray, &env_defines, framework, .disable, "", default_allocator);
 
     try expect(user_defines.get("process.env.THIS_SHOULDNT_BE_IN_DEFINES_MAP") == null);
 
     user_defines = UserDefine.init(default_allocator);
+    env_defines = UserDefinesArray.init(default_allocator);
 
     loader.loadFromString(user_overrides, true);
 
     buf = try loader.copyForDefine(
         UserDefine,
         &user_defines,
+        UserDefinesArray,
+        &env_defines,
         framework,
         Api.DotEnvBehavior.load_all,
         "",
         default_allocator,
     );
 
-    try expect(user_defines.get("process.env.BACON") != null);
-    try expectString(user_defines.get("process.env.BACON").?, "false");
-    try expectString(user_defines.get("process.env.HOSTNAME").?, "example.com");
-    try expect(user_defines.get("process.env.THIS_SHOULDNT_BE_IN_DEFINES_MAP") != null);
+    try expect(env_defines.get("process.env.BACON") != null);
+    try expectString(env_defines.get("process.env.BACON").?.value.e_string.slice8(), "false");
+    try expectString(env_defines.get("process.env.HOSTNAME").?.value.e_string.slice8(), "example.com");
+    try expect(env_defines.get("process.env.THIS_SHOULDNT_BE_IN_DEFINES_MAP") != null);
 
     user_defines = UserDefine.init(default_allocator);
+    env_defines = UserDefinesArray.init(default_allocator);
 
-    buf = try loader.copyForDefine(UserDefine, &user_defines, framework, .prefix, "HO", default_allocator);
+    buf = try loader.copyForDefine(UserDefine, &user_defines, UserDefinesArray, &env_defines, framework, .prefix, "HO", default_allocator);
 
-    try expectString(user_defines.get("process.env.HOSTNAME").?, "example.com");
-    try expect(user_defines.get("process.env.THIS_SHOULDNT_BE_IN_DEFINES_MAP") == null);
+    try expectString(env_defines.get("process.env.HOSTNAME").?.value.e_string.slice8(), "example.com");
+    try expect(env_defines.get("process.env.THIS_SHOULDNT_BE_IN_DEFINES_MAP") == null);
 }

@@ -506,6 +506,7 @@ pub const Log = struct {
     }
 
     pub fn addVerbose(log: *Log, source: ?*const Source, loc: Loc, text: string) !void {
+        @setCold(true);
         try log.addMsg(Msg{
             .kind = .verbose,
             .data = rangeData(source, Range{ .loc = loc }, text),
@@ -625,6 +626,7 @@ pub const Log = struct {
     }
 
     pub fn addVerboseWithNotes(log: *Log, source: ?*const Source, loc: Loc, text: string, notes: []Data) !void {
+        @setCold(true);
         if (!Kind.shouldPrint(.verbose, log.level)) return;
 
         try log.addMsg(Msg{
@@ -676,6 +678,7 @@ pub const Log = struct {
         args: anytype,
         import_kind: ImportKind,
     ) !void {
+        @setCold(true);
         return try _addResolveError(log, source, r, allocator, fmt, args, import_kind, false);
     }
 
@@ -688,10 +691,12 @@ pub const Log = struct {
         args: anytype,
         import_kind: ImportKind,
     ) !void {
+        @setCold(true);
         return try _addResolveError(log, source, r, allocator, fmt, args, import_kind, true);
     }
 
     pub fn addRangeError(log: *Log, source: ?*const Source, r: Range, text: string) !void {
+        @setCold(true);
         log.errors += 1;
         try log.addMsg(Msg{
             .kind = .err,
@@ -700,6 +705,7 @@ pub const Log = struct {
     }
 
     pub fn addRangeErrorFmt(log: *Log, source: ?*const Source, r: Range, allocator: *std.mem.Allocator, comptime text: string, args: anytype) !void {
+        @setCold(true);
         log.errors += 1;
         try log.addMsg(Msg{
             .kind = .err,
@@ -708,6 +714,7 @@ pub const Log = struct {
     }
 
     pub fn addRangeErrorFmtWithNotes(log: *Log, source: ?*const Source, r: Range, allocator: *std.mem.Allocator, notes: []Data, comptime text: string, args: anytype) !void {
+        @setCold(true);
         log.errors += 1;
         try log.addMsg(Msg{
             .kind = .err,
@@ -717,6 +724,7 @@ pub const Log = struct {
     }
 
     pub fn addErrorFmt(log: *Log, source: ?*const Source, l: Loc, allocator: *std.mem.Allocator, comptime text: string, args: anytype) !void {
+        @setCold(true);
         log.errors += 1;
         try log.addMsg(Msg{
             .kind = .err,
@@ -725,6 +733,7 @@ pub const Log = struct {
     }
 
     pub fn addRangeWarning(log: *Log, source: ?*const Source, r: Range, text: string) !void {
+        @setCold(true);
         if (!Kind.shouldPrint(.warn, log.level)) return;
         log.warnings += 1;
         try log.addMsg(Msg{
@@ -734,6 +743,7 @@ pub const Log = struct {
     }
 
     pub fn addWarningFmt(log: *Log, source: ?*const Source, l: Loc, allocator: *std.mem.Allocator, comptime text: string, args: anytype) !void {
+        @setCold(true);
         if (!Kind.shouldPrint(.warn, log.level)) return;
         log.warnings += 1;
         try log.addMsg(Msg{
@@ -743,6 +753,7 @@ pub const Log = struct {
     }
 
     pub fn addRangeWarningFmt(log: *Log, source: ?*const Source, r: Range, allocator: *std.mem.Allocator, comptime text: string, args: anytype) !void {
+        @setCold(true);
         if (!Kind.shouldPrint(.warn, log.level)) return;
         log.warnings += 1;
         try log.addMsg(Msg{
@@ -762,6 +773,7 @@ pub const Log = struct {
         note_args: anytype,
         note_range: Range,
     ) !void {
+        @setCold(true);
         if (!Kind.shouldPrint(.warn, log.level)) return;
         log.warnings += 1;
 
@@ -776,6 +788,7 @@ pub const Log = struct {
     }
 
     pub fn addWarning(log: *Log, source: ?*const Source, l: Loc, text: string) !void {
+        @setCold(true);
         if (!Kind.shouldPrint(.warn, log.level)) return;
         log.warnings += 1;
         try log.addMsg(Msg{
@@ -785,6 +798,7 @@ pub const Log = struct {
     }
 
     pub fn addRangeDebug(log: *Log, source: ?*const Source, r: Range, text: string) !void {
+        @setCold(true);
         if (!Kind.shouldPrint(.debug, log.level)) return;
         try log.addMsg(Msg{
             .kind = .debug,
@@ -793,6 +807,7 @@ pub const Log = struct {
     }
 
     pub fn addRangeDebugWithNotes(log: *Log, source: ?*const Source, r: Range, text: string, notes: []Data) !void {
+        @setCold(true);
         if (!Kind.shouldPrint(.debug, log.level)) return;
         // log.de += 1;
         try log.addMsg(Msg{
@@ -803,6 +818,7 @@ pub const Log = struct {
     }
 
     pub fn addRangeErrorWithNotes(log: *Log, source: ?*const Source, r: Range, text: string, notes: []Data) !void {
+        @setCold(true);
         log.errors += 1;
         try log.addMsg(Msg{
             .kind = Kind.err,
@@ -812,6 +828,7 @@ pub const Log = struct {
     }
 
     pub fn addRangeWarningWithNotes(log: *Log, source: ?*const Source, r: Range, text: string, notes: []Data) !void {
+        @setCold(true);
         if (!Kind.shouldPrint(.warn, log.level)) return;
         log.warnings += 1;
         try log.addMsg(Msg{
@@ -821,11 +838,12 @@ pub const Log = struct {
         });
     }
 
-    pub fn addMsg(self: *Log, msg: Msg) !void {
+    pub inline fn addMsg(self: *Log, msg: Msg) !void {
         try self.msgs.append(msg);
     }
 
     pub fn addError(self: *Log, _source: ?*const Source, loc: Loc, text: string) !void {
+        @setCold(true);
         self.errors += 1;
         try self.addMsg(Msg{ .kind = .err, .data = rangeData(_source, Range{ .loc = loc }, text) });
     }

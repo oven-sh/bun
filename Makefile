@@ -703,7 +703,7 @@ build-unit:
 	-femit-bin=zig-out/bin/$(testname) \
 	-fcompiler-rt \
 	-lc -lc++ \
-	--cache-dir /tmp/zig-cache-bun-$(testname)-$(basename $(firstword $(testfilter))) \
+	--cache-dir /tmp/zig-cache-bun-$(testname)-$(basename $(lastword $(testfilter))) \
 	-fallow-shlib-undefined \
 	-L$(LIBCRYPTO_PREFIX_DIR)/lib \
 	-lcrypto -lssl \

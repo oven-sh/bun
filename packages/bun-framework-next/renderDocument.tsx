@@ -391,7 +391,7 @@ export async function render({
   var query = Object.assign({}, route.query);
 
   // These are reversed in our Router versus Next.js...mostly due to personal preference.
-  const pathname = "/" + route.name;
+  const pathname = route.name;
   var asPath = route.pathname;
   const pages = {};
 

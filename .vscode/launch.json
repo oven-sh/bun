@@ -40,6 +40,15 @@
     {
       "type": "lldb",
       "request": "launch",
+      "name": "bun routes",
+      "program": "${workspaceFolder}/packages/debug-bun-cli-darwin-x64/bin/bun-debug",
+      "args": [],
+      "cwd": "${workspaceFolder}/integration/apps/routing",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
       "name": "Eval Error",
       "program": "${workspaceFolder}/build/debug/macos-x86_64/spjs",
       "args": [
@@ -174,10 +183,28 @@
     {
       "type": "lldb",
       "request": "launch",
-      "name": "Fixture serve",
+      "name": "Dazzle serve",
       "program": "${workspaceFolder}/packages/debug-bun-cli-darwin-x64/bin/bun-debug",
-      "args": [],
-      "cwd": "${workspaceFolder}/src/test/fixtures",
+      "args": ["--origin=http://localhost:5000", "--disable-hmr"],
+      "cwd": "/Users/jarred/Build/lattice/apps/dazzle",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Bun",
+      "program": "${workspaceFolder}/packages/debug-bun-cli-darwin-x64/bin/bun-debug",
+      "args": ["bun", "--use=next"],
+      "cwd": "/Users/jarred/Build/lattice/apps/dazzle",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "unicode check",
+      "args": ["--disable-hmr"],
+      "program": "${workspaceFolder}/packages/debug-bun-cli-darwin-x64/bin/bun-debug",
+      "cwd": "/Users/jarred/Build/app994",
       "console": "internalConsole"
     },
 

@@ -10,12 +10,15 @@ import { parse, print } from "graphql";
 // 6. Replace the TemplateLiteral with the default identifier from the injected import
 let artifactDirectory: string = `__generated__`;
 
-if (process.env.RELAY_ARTIFACT_DIRECTORY) {
-  artifactDirectory = process.env.RELAY_ARTIFACT_DIRECTORY;
+const { RELAY_ARTIFACT_DIRECTORY, BUN_MACRO_RELAY_ARTIFACT_DIRECTORY } =
+  Bun.env;
+
+if (RELAY_ARTIFACT_DIRECTORY) {
+  artifactDirectory = RELAY_ARTIFACT_DIRECTORY;
 }
 
-if (process.env.BUN_MACRO_RELAY_ARTIFACT_DIRECTORY) {
-  artifactDirectory = process.env.BUN_MACRO_RELAY_ARTIFACT_DIRECTORY;
+if (BUN_MACRO_RELAY_ARTIFACT_DIRECTORY) {
+  artifactDirectory = BUN_MACRO_RELAY_ARTIFACT_DIRECTORY;
 }
 
 // TODO: platform-independent path cleaning

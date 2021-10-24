@@ -3,15 +3,16 @@
   "search.quickOpen.includeSymbols": false,
   "search.seedWithNearestWord": true,
   "search.smartCase": true,
-  "search.exclude": {
-    "src/javascript/jsc/WebKit/**/*": true
-  },
+  "search.exclude": {},
   "search.followSymlinks": false,
   "search.useIgnoreFiles": true,
   "zig.buildOnSave": false,
   "[zig]": {
     "editor.defaultFormatter": "tiehuis.zig"
   },
+  "lldb.verboseLogging": true,
+  "zig.beforeDebugCmd": "make build-unit ${file} ${filter} ${bin}",
+  "zig.testCmd": "make test ${file} ${filter} ${bin}",
   "files.exclude": {
     "**/.git": true,
     "**/.svn": true,
@@ -19,8 +20,20 @@
     "**/CVS": true,
     "**/.DS_Store": true,
     "**/Thumbs.db": true,
+    "**/*.xcworkspacedata": true,
+    "**/*.xcscheme": true,
+    "**/*.pem": true,
+    "**/*.xcodeproj": true,
+
     "integration/snapshots": true,
-    "integration/snapshots-no-hmr": true
+    "integration/snapshots-no-hmr": true,
+    "src/javascript/jsc/WebKit": true,
+    "src/deps/libarchive": true,
+    "src/deps/mimalloc": true,
+    "src/deps/s2n-tls": true,
+    "src/deps/openssl": true,
+    "src/deps/zlib": true,
+    "integration/snippets/package-json-exports/_node_modules_copy": true
   },
   "C_Cpp.files.exclude": {
     "**/.vscode": true,

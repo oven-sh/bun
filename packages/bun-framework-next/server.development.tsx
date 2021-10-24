@@ -52,7 +52,6 @@ addEventListener("fetch", async (event: FetchEvent) => {
     appRoute = null;
   }
   const appStylesheets = (Bun.getImportedStyles() as string[]).slice();
-
   event.respondWith(
     render({
       route,

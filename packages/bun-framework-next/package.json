@@ -32,7 +32,7 @@
           ".env": "NEXT_PUBLIC_",
           "defaults": {
             "process.env.__NEXT_TRAILING_SLASH": "false",
-            "process.env.NODE_ENV": "\"development\"",
+            "process.env.NODE_ENV": "'development'",
             "process.env.__NEXT_ROUTER_BASEPATH": "''",
             "process.env.__NEXT_SCROLL_RESTORATION": "false",
             "process.env.__NEXT_I18N_SUPPORT": "false",

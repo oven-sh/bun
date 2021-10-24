@@ -128,13 +128,19 @@ pub fn build(b: *std.build.Builder) !void {
 
     exe.setOutputDir(output_dir);
     var cwd_dir = std.fs.cwd();
-
-    const runtime_hash = std.hash.Wyhash.hash(0, @embedFile("./src/runtime.out.js"));
+    var runtime_out_file = try std.fs.cwd().openFile("src/runtime.out.js", .{ .read = true });
+    const runtime_hash = std.hash.Wyhash.hash(
+        0,
+        try runtime_out_file.readToEndAlloc(b.allocator, try runtime_out_file.getEndPos()),
+    );
     const runtime_version_file = std.fs.cwd().openFile("src/runtime.version", .{ .write = true }) catch unreachable;
     runtime_version_file.writer().print("{x}", .{runtime_hash}) catch unreachable;
     defer runtime_version_file.close();
-
-    const fallback_hash = std.hash.Wyhash.hash(0, @embedFile("./src/fallback.out.js"));
+    var fallback_out_file = try std.fs.cwd().openFile("src/fallback.out.js", .{ .read = true });
+    const fallback_hash = std.hash.Wyhash.hash(
+        0,
+        try fallback_out_file.readToEndAlloc(b.allocator, try fallback_out_file.getEndPos()),
+    );
     const fallback_version_file = std.fs.cwd().openFile("src/fallback.version", .{ .write = true }) catch unreachable;
     fallback_version_file.writer().print("{x}", .{fallback_hash}) catch unreachable;
     defer fallback_version_file.close();

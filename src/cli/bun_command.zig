@@ -25,14 +25,13 @@ const DotEnv = @import("../env_loader.zig");
 const fs = @import("../fs.zig");
 const Router = @import("../router.zig");
 
-var wait_group: sync.WaitGroup = undefined;
 var estimated_input_lines_of_code_: usize = undefined;
 const ServerBundleGeneratorThread = struct {
     inline fn _generate(
         logs: *logger.Log,
         env_loader_: *DotEnv.Loader,
         allocator_: *std.mem.Allocator,
-        transform_args: Api.TransformOptions,
+        ctx: Command.Context,
         _filepath: [*:0]const u8,
         server_conf: Api.LoadedFramework,
         route_conf_: ?Api.LoadedRouteConfig,
@@ -41,7 +40,7 @@ const ServerBundleGeneratorThread = struct {
         var server_bundler = try bundler.Bundler.init(
             allocator_,
             logs,
-            try configureTransformOptionsForBun(allocator_, transform_args),
+            try configureTransformOptionsForBun(allocator_, ctx.args),
             null,
             env_loader_,
         );
@@ -54,6 +53,7 @@ const ServerBundleGeneratorThread = struct {
             Output.prettyErrorln("<r><red>{s}<r> loading --define or .env values for node_modules.server.bun\n", .{@errorName(err)});
             return err;
         };
+
         var estimated_input_lines_of_code: usize = 0;
         _ = try bundler.Bundler.GenerateNodeModuleBundle.generate(
             &server_bundler,
@@ -68,28 +68,15 @@ const ServerBundleGeneratorThread = struct {
     pub fn generate(
         logs: *logger.Log,
         env_loader_: *DotEnv.Loader,
-        transform_args: Api.TransformOptions,
+        ctx: Command.Context,
         _filepath: [*:0]const u8,
         server_conf: Api.LoadedFramework,
         route_conf_: ?Api.LoadedRouteConfig,
         router: ?Router,
     ) void {
-        if (FeatureFlags.parallel_bun) {
-            try alloc.setup(default_allocator);
-            var stdout_ = std.io.getStdOut();
-            var stderr_ = std.io.getStdErr();
-            var output_source = Output.Source.init(stdout_, stderr_);
-            Output.Source.set(&output_source);
-        }
-
         defer Output.flush();
-        defer {
-            if (FeatureFlags.parallel_bun) {
-                wait_group.done();
-            }
-        }
 
-        _generate(logs, env_loader_, default_allocator, transform_args, _filepath, server_conf, route_conf_, router) catch return;
+        _generate(logs, env_loader_, default_allocator, ctx, _filepath, server_conf, route_conf_, router) catch return;
     }
 };
 
@@ -120,51 +107,38 @@ pub const BunCommand = struct {
             break :brk null;
         };
         var env_loader = this_bundler.env;
-        wait_group = sync.WaitGroup.init();
-        var server_bundler_generator_thread: ?std.Thread = null;
+
+        if (ctx.dump_environment_variables) {
+            const opts = std.json.StringifyOptions{
+                .whitespace = std.json.StringifyOptions.Whitespace{
+                    .separator = true,
+                },
+            };
+            Output.flush();
+            try std.json.stringify(env_loader.map.*, opts, Output.writer());
+            Output.flush();
+            return;
+        }
+
         var generated_server = false;
         if (this_bundler.options.framework) |*framework| {
             if (framework.toAPI(allocator, this_bundler.fs.top_level_dir) catch null) |_server_conf| {
-                if (FeatureFlags.parallel_bun) {
-                    wait_group.add();
-                    server_bundler_generator_thread = try std.Thread.spawn(
-                        .{},
-                        ServerBundleGeneratorThread.generate,
-                        .{
-                            log,
-                            env_loader,
-                            ctx.args,
-                            server_bundle_filepath,
-                            _server_conf,
-                            loaded_route_config,
-                            this_bundler.router,
-                        },
-                    );
-                    generated_server = true;
-                } else {
-                    ServerBundleGeneratorThread.generate(
-                        log,
-                        env_loader,
-                        ctx.args,
-                        server_bundle_filepath,
-                        _server_conf,
-                        loaded_route_config,
-                        this_bundler.router,
-                    );
-                    generated_server = true;
+                ServerBundleGeneratorThread.generate(
+                    log,
+                    env_loader,
+                    ctx,
+                    server_bundle_filepath,
+                    _server_conf,
+                    loaded_route_config,
+                    this_bundler.router,
+                );
+                generated_server = true;
 
-                    if (log.msgs.items.len > 0) {
-                        try log.printForLogLevel(Output.errorWriter());
-                        log.* = logger.Log.init(allocator);
-                        Output.flush();
-                    }
+                if (log.msgs.items.len > 0) {
+                    try log.printForLogLevel(Output.errorWriter());
+                    log.* = logger.Log.init(allocator);
+                    Output.flush();
                 }
-            }
-        }
-
-        defer {
-            if (server_bundler_generator_thread) |thread| {
-                thread.join();
             }
         }
 
@@ -182,9 +156,6 @@ pub const BunCommand = struct {
             );
 
             const estimated_input_lines_of_code = estimated_input_lines_of_code_;
-            if (server_bundler_generator_thread) |thread| {
-                wait_group.wait();
-            }
 
             if (node_modules_) |node_modules| {
                 if (log.errors > 0) {

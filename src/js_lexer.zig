@@ -210,11 +210,11 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
             return it.source.contents[original_i..end_ix];
         }
 
-        pub fn isIdentifierOrKeyword(lexer: LexerType) bool {
+        pub inline fn isIdentifierOrKeyword(lexer: LexerType) bool {
             return @enumToInt(lexer.token) >= @enumToInt(T.t_identifier);
         }
 
-        pub fn stringLiteralUTF16(lexer: *LexerType) JavascriptString {
+        pub inline fn stringLiteralUTF16(lexer: *LexerType) JavascriptString {
             if (lexer.string_literal_is_ascii) {
                 return lexer.stringToUTF16(lexer.string_literal_slice);
             } else {

@@ -1461,7 +1461,7 @@ pub const SideEffects = enum(u2) {
                 return Result{ .ok = true, .value = !strings.eqlComptime(e.value, "0"), .side_effects = .no_side_effects };
             },
             .e_string => |e| {
-                return Result{ .ok = true, .value = std.math.max(e.value.len, e.utf8.len) > 0, .side_effects = .no_side_effects };
+                return Result{ .ok = true, .value = e.isPresent(), .side_effects = .no_side_effects };
             },
             .e_function, .e_arrow, .e_reg_exp => {
                 return Result{ .ok = true, .value = true, .side_effects = .no_side_effects };
@@ -2101,7 +2101,7 @@ pub const Parser = struct {
     fn _parse(self: *Parser, comptime ParserType: type) !js_ast.Result {
         var p: ParserType = undefined;
         try ParserType.init(self.allocator, self.log, self.source, self.define, self.lexer, self.options, &p);
-
+        defer p.lexer.deinit();
         var result: js_ast.Result = undefined;
 
         // Consume a leading hashbang comment

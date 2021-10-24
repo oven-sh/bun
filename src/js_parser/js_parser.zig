@@ -6939,11 +6939,11 @@ pub fn NewParser(
                             return;
                         }
 
-                        try p.log.addError(p.source, value.loc, p.allocator, comptime std.fmt.comptimePrint("for-{s} loop variables cannot have an initializer", .{loop_type}));
+                        try p.log.addError(p.source, value.loc, comptime std.fmt.comptimePrint("for-{s} loop variables cannot have an initializer", .{loop_type}));
                     }
                 },
                 else => {
-                    try p.log.addError(p.source, decls[0].binding.loc, p.allocator, comptime std.fmt.comptimePrint("for-{s} loops must have a single declaration", .{loop_type}));
+                    try p.log.addError(p.source, decls[0].binding.loc, comptime std.fmt.comptimePrint("for-{s} loops must have a single declaration", .{loop_type}));
                 },
             }
         }
@@ -7538,10 +7538,10 @@ pub fn NewParser(
                                     if (!str.prefer_template) {
                                         isDirectivePrologue = true;
 
-                                        if (strings.eqlUtf16("use strict", str.value)) {
+                                        if (str.eql(string, "use strict")) {
                                             // Track "use strict" directives
                                             p.current_scope.strict_mode = .explicit_strict_mode;
-                                        } else if (strings.eqlUtf16("use asm", str.value)) {
+                                        } else if (str.eql(string, "use asm")) {
                                             stmt.data = Prefill.Data.SEmpty;
                                         }
                                     }

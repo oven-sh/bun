@@ -1137,7 +1137,7 @@ pub const Resolver = struct {
             var dir_info = (r.dirInfoCached(slice) catch null) orelse return null;
             return RootPathPair{
                 .base_path = slice,
-                .package_json = dir_info.package_json.?,
+                .package_json = dir_info.package_json orelse return null,
             };
         }
     }

@@ -3450,7 +3450,7 @@ pub fn NewParser(
         // If we're auto-importing JSX and it's bundled, we use the bundled version
         // This means we need to transform from require(react) to react()
         // unless we're building inside of bun, then it's just normal commonjs
-        pub fn callUnbundledRequire(p: *P, require_args: []Expr) Expr {
+        pub inline fn callUnbundledRequire(p: *P, require_args: []Expr) Expr {
             return p.callRuntime(require_args[0].loc, "__require", require_args);
         }
 
@@ -3989,7 +3989,7 @@ pub fn NewParser(
             }
         }
 
-        fn nextScopeInOrderForVisitPass(p: *P) ScopeOrder {
+        inline fn nextScopeInOrderForVisitPass(p: *P) ScopeOrder {
             const head = p.scope_order_to_visit[0];
             p.scope_order_to_visit = p.scope_order_to_visit[1..p.scope_order_to_visit.len];
             return head;
@@ -4523,7 +4523,7 @@ pub fn NewParser(
 
         // pub fn parseBinding(p: *P)
 
-        pub fn skipTypescriptReturnType(p: *P) anyerror!void {
+        pub inline fn skipTypescriptReturnType(p: *P) anyerror!void {
             try p.skipTypeScriptTypeWithOpts(.lowest, .{ .is_return_type = true });
         }
 
@@ -4550,7 +4550,7 @@ pub fn NewParser(
             return decorators.items;
         }
 
-        fn skipTypeScriptType(p: *P, level: js_ast.Op.Level) anyerror!void {
+        inline fn skipTypeScriptType(p: *P, level: js_ast.Op.Level) anyerror!void {
             try p.skipTypeScriptTypeWithOpts(level, .{});
         }
 
@@ -6009,7 +6009,7 @@ pub fn NewParser(
 
                     // Detect for-in loops
                     if (p.lexer.token == .t_in) {
-                        try p.forbidInitializers(decls, "in", false);
+                        try p.forbidInitializers(decls, "in", is_var);
                         try p.lexer.next();
                         const value = try p.parseExpr(.lowest);
                         try p.lexer.expect(.t_close_paren);
@@ -6927,20 +6927,24 @@ pub fn NewParser(
             return ImportClause{ .items = items.items, .is_single_line = is_single_line };
         }
 
-        fn forbidInitializers(p: *P, decls: []G.Decl, loop_type: string, is_var: bool) !void {
-            if (decls.len > 1) {
-                try p.log.addErrorFmt(p.source, decls[0].binding.loc, p.allocator, "for-{s} loops must have a single declaration", .{loop_type});
-            } else if (decls.len == 1) {
-                if (decls[0].value) |value| {
-                    if (is_var) {
+        fn forbidInitializers(p: *P, decls: []G.Decl, comptime loop_type: string, is_var: bool) !void {
+            switch (decls.len) {
+                0 => {},
+                1 => {
+                    if (decls[0].value) |value| {
+                        if (is_var) {
 
-                        // This is a weird special case. Initializers are allowed in "var"
-                        // statements with identifier bindings.
-                        return;
+                            // This is a weird special case. Initializers are allowed in "var"
+                            // statements with identifier bindings.
+                            return;
+                        }
+
+                        try p.log.addError(p.source, value.loc, p.allocator, comptime std.fmt.comptimePrint("for-{s} loop variables cannot have an initializer", .{loop_type}));
                     }
-
-                    try p.log.addErrorFmt(p.source, value.loc, p.allocator, "for-{s} loop variables cannot have an initializer", .{loop_type});
-                }
+                },
+                else => {
+                    try p.log.addError(p.source, decls[0].binding.loc, p.allocator, comptime std.fmt.comptimePrint("for-{s} loops must have a single declaration", .{loop_type}));
+                },
             }
         }
 
@@ -8144,15 +8148,15 @@ pub fn NewParser(
             return Backtracking.lexerBacktracker(p, Backtracking.skipTypeScriptArrowArgsWithBacktracking);
         }
 
-        pub fn parseExprOrBindings(p: *P, level: Level, errors: ?*DeferredErrors) anyerror!Expr {
+        pub inline fn parseExprOrBindings(p: *P, level: Level, errors: ?*DeferredErrors) anyerror!Expr {
             return try p.parseExprCommon(level, errors, Expr.EFlags.none);
         }
 
-        pub fn parseExpr(p: *P, level: Level) anyerror!Expr {
+        pub inline fn parseExpr(p: *P, level: Level) anyerror!Expr {
             return try p.parseExprCommon(level, null, Expr.EFlags.none);
         }
 
-        pub fn parseExprWithFlags(p: *P, level: Level, flags: Expr.EFlags) anyerror!Expr {
+        pub inline fn parseExprWithFlags(p: *P, level: Level, flags: Expr.EFlags) anyerror!Expr {
             return try p.parseExprCommon(level, null, flags);
         }
 
@@ -8181,7 +8185,7 @@ pub fn NewParser(
             return try p.parseSuffix(expr, level, errors, flags);
         }
 
-        pub fn addImportRecord(p: *P, kind: ImportKind, loc: logger.Loc, name: string) u32 {
+        pub inline fn addImportRecord(p: *P, kind: ImportKind, loc: logger.Loc, name: string) u32 {
             return p.addImportRecordByRange(kind, p.source.rangeOfString(loc), name);
         }
 

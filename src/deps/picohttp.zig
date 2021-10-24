@@ -169,7 +169,8 @@ pub const Response = struct {
     }
 
     pub fn parse(buf: []const u8, src: []Header) !Response {
-        return try parseParts(buf, src, 0);
+        var offset: usize = 0;
+        return try parseParts(buf, src, &offset);
     }
 };
 

@@ -1,1 +1,0 @@
-git add -A . > /dev/null 2>&1; git commit -am "Initial Commit" > /dev/null 2>&1;

@@ -501,7 +501,7 @@ pub fn toUTF8Alloc(allocator: *std.mem.Allocator, js: []const u16) !string {
             }
         }
         const width = encodeWTF8Rune(&temp, r1);
-        list.appendSlice(temp[0..width]) catch unreachable;
+        try list.appendSlice(temp[0..width]);
     }
     return list.items;
 }

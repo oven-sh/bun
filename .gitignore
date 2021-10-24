@@ -72,3 +72,4 @@ misctools/fetch
 
 src/deps/libiconv
 src/deps/openssl
+src/tests.zig

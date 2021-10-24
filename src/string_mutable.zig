@@ -54,18 +54,23 @@ pub const MutableString = struct {
             return "_";
         }
 
+        var iterator = strings.CodepointIterator.init(str);
+        var cursor = strings.CodepointIterator.Cursor{};
+
         var has_needed_gap = false;
         var needs_gap = false;
         var start_i: usize = 0;
 
+        if (!iterator.next(&cursor)) return "_";
+
         // Common case: no gap necessary. No allocation necessary.
-        needs_gap = !js_lexer.isIdentifierStart(@intCast(js_lexer.CodePoint, str[0]));
+        needs_gap = !js_lexer.isIdentifierStart(cursor.c);
         if (!needs_gap) {
             // Are there any non-alphanumeric chars at all?
-            for (str[1..str.len]) |c, i| {
-                if (!js_lexer.isIdentifierContinue(@intCast(js_lexer.CodePoint, c))) {
+            while (iterator.next(&cursor)) {
+                if (!js_lexer.isIdentifierContinue(cursor.c) or cursor.width > 1) {
                     needs_gap = true;
-                    start_i = 1 + i;
+                    start_i = cursor.i;
                     break;
                 }
             }
@@ -78,21 +83,20 @@ pub const MutableString = struct {
             var i: usize = 0;
 
             var slice = str[start_i..];
+            iterator = strings.CodepointIterator.init(slice);
+            cursor = strings.CodepointIterator.Cursor{};
 
-            while (i < slice.len) : (i += 1) {
-                const c = @intCast(js_lexer.CodePoint, slice[i]);
-                if (js_lexer.isIdentifierContinue(c)) {
+            while (iterator.next(&cursor)) {
+                if (js_lexer.isIdentifierContinue(cursor.c) and cursor.width == 1) {
                     if (needs_gap) {
                         try mutable.appendChar('_');
                         needs_gap = false;
                         has_needed_gap = true;
                     }
-
-                    try mutable.appendChar(slice[i]);
+                    try mutable.append(slice[cursor.i .. cursor.i + @as(u32, cursor.width)]);
                 } else if (!needs_gap) {
                     needs_gap = true;
                     // skip the code point, replace it with a single _
-                    i += std.math.max(strings.utf8ByteSequenceLength(slice[i]), 1) - 1;
                 }
             }
 
@@ -212,7 +216,7 @@ test "MutableString" {
     const alloc = std.heap.page_allocator;
 
     var str = try MutableString.initCopy(alloc, "hello");
-    expect(str.eql("hello"));
+    try expect(str.eql("hello"));
 }
 
 test "MutableString.ensureValidIdentifier" {

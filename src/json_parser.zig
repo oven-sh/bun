@@ -36,31 +36,23 @@ const Level = js_ast.Op.Level;
 const Op = js_ast.Op;
 const Scope = js_ast.Scope;
 const locModuleScope = logger.Loc.Empty;
-const Lexer = js_lexer.Lexer;
 
 fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
     return struct {
+        const Lexer = js_lexer.NewLexer(opts);
+
         lexer: Lexer,
         source: *const logger.Source,
         log: *logger.Log,
         allocator: *std.mem.Allocator,
 
         pub fn init(allocator: *std.mem.Allocator, source: *const logger.Source, log: *logger.Log) !Parser {
-            if (opts.allow_comments) {
-                return Parser{
-                    .lexer = try Lexer.initTSConfig(log, source, allocator),
-                    .allocator = allocator,
-                    .log = log,
-                    .source = source,
-                };
-            } else {
-                return Parser{
-                    .lexer = try Lexer.initJSON(log, source, allocator),
-                    .allocator = allocator,
-                    .log = log,
-                    .source = source,
-                };
-            }
+            return Parser{
+                .lexer = try Lexer.init(log, source, allocator),
+                .allocator = allocator,
+                .log = log,
+                .source = source,
+            };
         }
 
         const Parser = @This();
@@ -219,13 +211,15 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
     };
 }
 
-const JSONParser = JSONLikeParser(js_lexer.JSONOptions{});
+const JSONParser = JSONLikeParser(js_lexer.JSONOptions{ .is_json = true });
 const DotEnvJSONParser = JSONLikeParser(js_lexer.JSONOptions{
-    .starts_with_string = true,
+    .ignore_leading_escape_sequences = true,
+    .ignore_trailing_escape_sequences = true,
     .allow_trailing_commas = true,
+    .is_json = true,
 });
-const TSConfigParser = JSONLikeParser(js_lexer.JSONOptions{ .allow_comments = true, .allow_trailing_commas = true });
 var empty_string = E.String{ .utf8 = "" };
+const TSConfigParser = JSONLikeParser(js_lexer.JSONOptions{ .allow_comments = true, .is_json = true, .allow_trailing_commas = true });
 var empty_object = E.Object{};
 var empty_array = E.Array{ .items = &[_]ExprNodeIndex{} };
 var empty_string_data = Expr.Data{ .e_string = &empty_string };

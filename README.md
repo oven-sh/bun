@@ -33,6 +33,7 @@ To create a new Next.js app with Bun:
 ```bash
 bun create next ./app
 cd app
+npm install
 bun
 ```
 

@@ -14,7 +14,7 @@ endif
 
 TRIPLET = $(OS_NAME)-$(ARCH_NAME)
 PACKAGE_NAME = bun-cli-$(TRIPLET)
-PACKAGES_REALPATH = $(shell realpath packages)
+PACKAGES_REALPATH = $(realpath packages)
 PACKAGE_DIR = $(PACKAGES_REALPATH)/$(PACKAGE_NAME)
 DEBUG_PACKAGE_DIR = $(PACKAGES_REALPATH)/debug-$(PACKAGE_NAME)
 BIN_DIR = $(PACKAGE_DIR)/bin
@@ -24,8 +24,8 @@ DEBUG_BUN = $(DEBUG_BIN)/bun-debug
 BUILD_ID = $(shell cat ./build-id)
 PACKAGE_JSON_VERSION = 0.0.$(BUILD_ID)
 BUN_BUILD_TAG = bun-v$(PACKAGE_JSON_VERSION)
-CC ?= $(shell realpath clang)
-CXX ?= $(shell realpath clang++)
+CC ?= $(realpath clang)
+CXX ?= $(realpath clang++)
 DEPS_DIR = $(shell pwd)/src/deps
 CPUS ?= $(shell nproc)
 USER ?= $(echo $USER)
@@ -219,7 +219,7 @@ MACOS_ICU_FILES = $(HOMEBREW_PREFIX)/opt/icu4c/lib/libicudata.a \
 	$(HOMEBREW_PREFIX)/opt/icu4c/lib/libicui18n.a \
 	$(HOMEBREW_PREFIX)/opt/icu4c/lib/libicuuc.a 
 
-MACOS_ICU_INCLUDE = $(HOMEBREW_PREFIX)opt/icu4c/include
+MACOS_ICU_INCLUDE = $(HOMEBREW_PREFIX)/opt/icu4c/include
 
 ICU_FLAGS := 
 
@@ -260,15 +260,20 @@ ifeq ($(OS_NAME), darwin)
 CLANG_FLAGS += -DDU_DISABLE_RENAMING=1 
 endif
 
-BUN_LLD_FLAGS = $(OBJ_FILES) \
-		${ICU_FLAGS} \
-		${JSC_FILES} \
-		src/deps/mimalloc/libmimalloc.a \
+
+
+ARCHIVE_FILES_WITHOUT_LIBCRYPTO = src/deps/mimalloc/libmimalloc.a \
 		src/deps/zlib/libz.a \
 		src/deps/libarchive.a \
 		src/deps/libs2n.a \
-		src/deps/libcrypto.a \
-		src/deps/picohttpparser.o \
+		src/deps/picohttpparser.o
+
+ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) src/deps/libcrypto.a
+
+BUN_LLD_FLAGS = $(OBJ_FILES) \
+		${ICU_FLAGS} \
+		${JSC_FILES} \
+		$(ARCHIVE_FILES) \
 		$(LIBICONV_PATH) \
 		$(CLANG_FLAGS)
 
@@ -313,7 +318,6 @@ zlib:
 
 require:
 	@echo "Checking if the required utilities are available..."
-	@realpath --version >/dev/null 2>&1 || (echo "ERROR: realpath is required."; exit 1)
 	@cmake --version >/dev/null 2>&1 || (echo "ERROR: cmake is required."; exit 1)
 	@esbuild --version >/dev/null 2>&1 || (echo "ERROR: esbuild is required."; exit 1)
 	@npm --version >/dev/null 2>&1 || (echo "ERROR: npm is required."; exit 1)
@@ -604,3 +608,110 @@ analytics-features:
 
 find-unused-zig-files: 
 	@bash ./misctools/find-unused-zig.sh
+
+generate-unit-tests: 
+	@bash ./misctools/generate-test-file.sh
+
+fmt-all:
+	find src -name "*.zig" -exec zig fmt {} \;
+
+unit-tests: generate-unit-tests run-unit-tests
+
+
+
+ifeq (test, $(firstword $(MAKECMDGOALS)))
+testpath := $(firstword $(wordlist 2, $(words $(MAKECMDGOALS)), $(MAKECMDGOALS)))
+testfilter := $(wordlist 3, $(words $(MAKECMDGOALS)), $(MAKECMDGOALS))
+testbinpath := zig-out/bin/test
+testbinpath := $(lastword $(testfilter))
+
+ifeq ($(if $(patsubst /%,,$(testbinpath)),,yes),yes)
+testfilterflag := --test-filter "$(filter-out $(testbinpath), $(testfilter))"
+
+endif
+
+ifneq ($(if $(patsubst /%,,$(testbinpath)),,yes),yes)
+testbinpath := zig-out/bin/test
+ifneq ($(strip $(testfilter)),)
+testfilterflag := --test-filter "$(testfilter)"
+endif
+endif
+
+  testname := $(shell basename $(testpath))
+
+  
+  $(eval $(testname):;@true)
+
+  ifeq ($(words $(testfilter)), 0)
+testfilterflag :=  --test-name-prefix "$(testname): "
+endif
+
+ifeq ($(testfilterflag), undefined)
+testfilterflag :=  --test-name-prefix "$(testname): "
+endif
+
+
+endif
+
+ifeq (build-unit, $(firstword $(MAKECMDGOALS)))
+testpath := $(firstword $(wordlist 2, $(words $(MAKECMDGOALS)), $(MAKECMDGOALS)))
+testfilter := $(wordlist 3, $(words $(MAKECMDGOALS)), $(MAKECMDGOALS))
+testbinpath := zig-out/bin/test
+testbinpath := $(lastword $(testfilter))
+
+ifeq ($(if $(patsubst /%,,$(testbinpath)),,yes),yes)
+testfilterflag := --test-filter "$(filter-out $(testbinpath), $(testfilter))"
+
+endif
+
+ifneq ($(if $(patsubst /%,,$(testbinpath)),,yes),yes)
+testbinpath := zig-out/bin/test
+ifneq ($(strip $(testfilter)),)
+testfilterflag := --test-filter "$(testfilter)"
+endif
+endif
+
+  testname := $(shell basename $(testpath))
+
+  
+$(eval $(testname):;@true)
+$(eval $(testfilter):;@true)
+$(eval $(testpath):;@true)
+
+  ifeq ($(words $(testfilter)), 0)
+testfilterflag :=  --test-name-prefix "$(testname): "
+endif
+
+ifeq ($(testfilterflag), undefined)
+testfilterflag :=  --test-name-prefix "$(testname): "
+endif
+
+
+
+endif
+
+build-unit:
+	@rm -rf zig-out/bin/$(testname)
+	@mkdir -p zig-out/bin
+	zig test $(realpath $(testpath)) \
+	$(testfilterflag) \
+	--pkg-begin picohttp $(DEPS_DIR)/picohttp.zig --pkg-end \
+	--pkg-begin clap $(DEPS_DIR)/zig-clap/clap.zig --pkg-end \
+	--main-pkg-path $(shell pwd) \
+	--test-no-exec \
+	-fPIC \
+	-femit-bin=zig-out/bin/$(testname) \
+	-fcompiler-rt \
+	-lc -lc++ \
+	--cache-dir /tmp/zig-cache-bun-$(testname)-$(basename $(firstword $(testfilter))) \
+	-fallow-shlib-undefined \
+	-L$(LIBCRYPTO_PREFIX_DIR)/lib \
+	-lcrypto -lssl \
+	$(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) $(ICU_FLAGS) && \
+	cp zig-out/bin/$(testname) $(testbinpath)
+
+run-unit:
+	@zig-out/bin/$(testname) -- fake
+	
+
+test: build-unit run-unit

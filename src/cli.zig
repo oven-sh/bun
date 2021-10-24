@@ -120,7 +120,10 @@ pub const Arguments = struct {
 
     pub const ParamType = clap.Param(clap.Help);
 
-    const params: [26]ParamType = brk: {
+    const total_env_count = 27;
+    const public_env_count = 26;
+
+    const params: [total_env_count]ParamType = brk: {
         @setEvalBranchQuota(9999);
         break :brk [_]ParamType{
             clap.parseParam("--use <STR>                       Choose a framework, e.g. \"--use next\". It checks first for a package named \"bun-framework-packagename\" and then \"packagename\".") catch unreachable,
@@ -149,6 +152,7 @@ pub const Arguments = struct {
             clap.parseParam("-h, --help                        Display this help and exit.              ") catch unreachable,
             clap.parseParam("-i, --inject <STR>...             Inject module at the top of every file") catch unreachable,
             clap.parseParam("-l, --loader <STR>...             Parse files with .ext:loader, e.g. --loader .js:jsx. Valid loaders: jsx, js, json, tsx, ts, css") catch unreachable,
+            clap.parseParam("--dump-environment-variables") catch unreachable,
             // clap.parseParam("-o, --outdir <STR>                Save output to directory (default: \"out\" if none provided and multiple entry points passed)") catch unreachable,
             // clap.parseParam("-r, --resolve <STR>               Determine import/require behavior. \"disable\" ignores. \"dev\" bundles node_modules and builds everything else as independent entry points") catch unreachable,
             // clap.parseParam("-r, --resolve <STR>               Determine import/require behavior. \"disable\" ignores. \"dev\" bundles node_modules and builds everything else as independent entry points") catch unreachable,
@@ -164,7 +168,7 @@ pub const Arguments = struct {
         std.os.exit(0);
     }
 
-    pub fn parse(allocator: *std.mem.Allocator, comptime cmd: Command.Tag) !Api.TransformOptions {
+    pub fn parse(allocator: *std.mem.Allocator, ctx: *Command.Context, comptime cmd: Command.Tag) !Api.TransformOptions {
         var diag = clap.Diagnostic{};
 
         var args = clap.parse(clap.Help, &params, .{
@@ -224,13 +228,15 @@ pub const Arguments = struct {
 
         const print_help = args.flag("--help");
         if (print_help) {
-            clap.help(Output.writer(), &params) catch {};
+            clap.help(Output.writer(), std.mem.span(params[0..public_env_count])) catch {};
             Output.prettyln("\n-------\n\n", .{});
             Output.flush();
             HelpCommand.printWithReason(.explicit);
             Output.flush();
             std.os.exit(0);
         }
+
+        ctx.dump_environment_variables = args.flag("--dump-environment-variables");
 
         // var output_dir = args.option("--outdir");
         var output_dir: ?string = null;
@@ -517,16 +523,21 @@ pub const Command = struct {
         log: *logger.Log,
         allocator: *std.mem.Allocator,
 
+        dump_environment_variables: bool = false,
+
         pub fn create(allocator: *std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {
-            return Command.Context{
-                .args = if (comptime command != Command.Tag.CreateCommand)
-                    try Arguments.parse(allocator, command)
-                else
-                    std.mem.zeroes(Api.TransformOptions),
+            var ctx = Command.Context{
+                .args = std.mem.zeroes(Api.TransformOptions),
                 .log = log,
                 .start_time = start_time,
                 .allocator = allocator,
             };
+
+            if (comptime command != Command.Tag.CreateCommand) {
+                ctx.args = try Arguments.parse(allocator, &ctx, command);
+            }
+
+            return ctx;
         }
     };
 

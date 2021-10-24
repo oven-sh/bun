@@ -26,6 +26,7 @@ pub const Lexer = struct {
     _codepoint: CodePoint = 0,
     current: usize = 0,
     last_non_space: usize = 0,
+    prev_non_space: usize = 0,
     start: usize = 0,
     end: usize = 0,
     has_nested_value: bool = false,
@@ -36,35 +37,10 @@ pub const Lexer = struct {
         return this.cursor.c;
     }
 
-    pub fn step(this: *Lexer) void {
+    pub inline fn step(this: *Lexer) void {
         const ended = !this.iter.next(&this.cursor);
         if (ended) this.cursor.c = -1;
         this.current = this.cursor.i;
-        this.last_non_space = switch (this.cursor.c) {
-            'a'...'z',
-            'A'...'Z',
-            '0'...'9',
-            '-',
-            '_',
-            '#',
-            '$',
-            '@',
-            ')',
-            '(',
-            '^',
-            '*',
-            '&',
-            '+',
-            '|',
-            '{',
-            '}',
-            '[',
-            ']',
-            '=',
-            -1,
-            => this.current,
-            else => this.last_non_space,
-        };
     }
 
     pub fn eatNestedValue(
@@ -130,7 +106,6 @@ pub const Lexer = struct {
         lexer: *Lexer,
         comptime quote: CodePoint,
     ) string {
-        var start = lexer.current;
         var was_quoted = false;
         switch (comptime quote) {
             '"', '\'' => {
@@ -141,6 +116,9 @@ pub const Lexer = struct {
             else => {},
         }
 
+        var start = lexer.current;
+        var last_non_space: usize = start;
+        var any_spaces = false;
         while (true) {
             switch (lexer.codepoint()) {
                 '\\' => {
@@ -167,23 +145,18 @@ pub const Lexer = struct {
                 -1 => {
                     lexer.end = lexer.current;
 
-                    return if (lexer.last_non_space > start)
-                        lexer.source.contents[start..lexer.last_non_space]
-                    else
-                        "";
+                    return lexer.source.contents[start..if (any_spaces) @minimum(last_non_space, lexer.source.contents.len) else lexer.source.contents.len];
                 },
                 '$' => {
                     lexer.has_nested_value = true;
                 },
 
                 '#' => {
+                    const end = lexer.current;
                     lexer.step();
                     lexer.eatComment();
 
-                    return if (lexer.last_non_space > start)
-                        lexer.source.contents[start..lexer.last_non_space]
-                    else
-                        "";
+                    return lexer.source.contents[start .. last_non_space + 1];
                 },
 
                 '\n', '\r', escLineFeed => {
@@ -191,34 +164,38 @@ pub const Lexer = struct {
                         '\'' => {
                             lexer.end = lexer.current;
                             lexer.step();
-                            return lexer.source.contents[start .. lexer.end - 1];
+                            return lexer.source.contents[start..@minimum(lexer.end, lexer.source.contents.len)];
                         },
                         implicitQuoteCharacter => {
                             lexer.end = lexer.current;
                             lexer.step();
 
-                            return if (lexer.last_non_space > start)
-                                lexer.source.contents[start..lexer.last_non_space]
-                            else
-                                "";
+                            return lexer.source.contents[start..@minimum(if (any_spaces) last_non_space + 1 else lexer.end, lexer.end)];
                         },
                         '"' => {
                             // We keep going
-
                         },
                         else => {},
                     }
                 },
                 quote => {
-                    lexer.step();
                     lexer.end = lexer.current;
+                    lexer.step();
+
                     lexer.was_quoted = was_quoted;
-                    return lexer.source.contents[start..lexer.end];
+                    return lexer.source.contents[start..@minimum(
+                        lexer.end,
+                        lexer.source.contents.len,
+                    )];
                 },
-                ' ' => {},
+                ' ' => {
+                    any_spaces = true;
+                    while (lexer.codepoint() == ' ') lexer.step();
+                    continue;
+                },
                 else => {},
             }
-
+            if (lexer.codepoint() != ' ') last_non_space = lexer.current;
             lexer.step();
         }
         unreachable;
@@ -258,7 +235,13 @@ pub const Lexer = struct {
 
         this.has_newline_before = this.end == 0;
 
+        var last_non_space = start;
         restart: while (true) {
+            last_non_space = switch (this.codepoint()) {
+                ' ', '\r', '\n' => last_non_space,
+                else => this.current,
+            };
+
             switch (this.codepoint()) {
                 0, -1 => {
                     return null;
@@ -290,15 +273,15 @@ pub const Lexer = struct {
                             },
                             0, -1 => {
                                 this.end = this.current;
-                                return if (this.last_non_space > this.start)
-                                    Variable{ .key = this.source.contents[this.start..this.last_non_space], .value = "" }
+                                return if (last_non_space > this.start)
+                                    Variable{ .key = this.source.contents[this.start..@minimum(last_non_space + 1, this.source.contents.len)], .value = "" }
                                 else
                                     null;
                             },
                             'a'...'z', 'A'...'Z', '0'...'9', '_', '-', '.' => {},
                             '=' => {
                                 this.end = this.current;
-                                const key = this.source.contents[this.start..this.last_non_space];
+                                const key = this.source.contents[this.start..this.end];
                                 if (key.len == 0) return null;
                                 this.step();
 
@@ -331,6 +314,7 @@ pub const Lexer = struct {
                                         // consume unquoted leading spaces
                                         ' ' => {
                                             this.step();
+                                            while (this.codepoint() == ' ') this.step();
                                             continue :inner;
                                         },
                                         // we treat everything else the same as if it were wrapped in single quotes
@@ -346,7 +330,11 @@ pub const Lexer = struct {
                                     }
                                 }
                             },
-                            ' ' => {},
+                            ' ' => {
+                                this.step();
+                                while (this.codepoint() == ' ') this.step();
+                                continue;
+                            },
                             else => {},
                         }
                         this.step();

@@ -60,9 +60,9 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
         pub fn e(p: *Parser, t: anytype, loc: logger.Loc) Expr {
             const Type = @TypeOf(t);
             if (@typeInfo(Type) == .Pointer) {
-                return Expr.init(std.meta.Child(Type), t, loc);
+                return Expr.init(std.meta.Child(Type), t.*, loc);
             } else {
-                return Expr.alloc(p.allocator, Type, t, loc);
+                return Expr.init(Type, t, loc);
             }
         }
         pub fn parseExpr(p: *Parser, comptime maybe_auto_quote: bool) anyerror!Expr {

@@ -161,36 +161,37 @@ pub const Hunk = struct {
     }
 };
 
-test "Hunk" {
-    // test a few random operations. very low coverage. write more later
-    var buf: [100]u8 = undefined;
-    var hunk = Hunk.init(buf[0..]);
+// WASM only
+// test "Hunk" {
+//     // test a few random operations. very low coverage. write more later
+//     var buf: [100]u8 = undefined;
+//     var hunk = Hunk.init(buf[0..]);
 
-    const high_mark = hunk.getHighMark();
+//     const high_mark = hunk.getHighMark();
 
-    _ = try hunk.low().allocator.alloc(u8, 7);
-    _ = try hunk.high().allocator.alloc(u8, 8);
+//     _ = try hunk.low().allocator.alloc(u8, 7);
+//     _ = try hunk.high().allocator.alloc(u8, 8);
 
-    std.testing.expectEqual(@as(usize, 7), hunk.low_used);
-    std.testing.expectEqual(@as(usize, 8), hunk.high_used);
+//     std.testing.expectEqual(@as(usize, 7), hunk.low_used);
+//     std.testing.expectEqual(@as(usize, 8), hunk.high_used);
 
-    _ = try hunk.high().allocator.alloc(u8, 8);
+//     _ = try hunk.high().allocator.alloc(u8, 8);
 
-    std.testing.expectEqual(@as(usize, 16), hunk.high_used);
+//     std.testing.expectEqual(@as(usize, 16), hunk.high_used);
 
-    const low_mark = hunk.getLowMark();
+//     const low_mark = hunk.getLowMark();
 
-    _ = try hunk.low().allocator.alloc(u8, 100 - 7 - 16);
+//     _ = try hunk.low().allocator.alloc(u8, 100 - 7 - 16);
 
-    std.testing.expectEqual(@as(usize, 100 - 16), hunk.low_used);
+//     std.testing.expectEqual(@as(usize, 100 - 16), hunk.low_used);
 
-    std.testing.expectError(error.OutOfMemory, hunk.high().allocator.alloc(u8, 1));
+//     std.testing.expectError(error.OutOfMemory, hunk.high().allocator.alloc(u8, 1));
 
-    hunk.freeToLowMark(low_mark);
+//     hunk.freeToLowMark(low_mark);
 
-    _ = try hunk.high().allocator.alloc(u8, 1);
+//     _ = try hunk.high().allocator.alloc(u8, 1);
 
-    hunk.freeToHighMark(high_mark);
+//     hunk.freeToHighMark(high_mark);
 
-    std.testing.expectEqual(@as(usize, 0), hunk.high_used);
-}
+//     std.testing.expectEqual(@as(usize, 0), hunk.high_used);
+// }

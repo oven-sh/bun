@@ -2751,34 +2751,6 @@ pub const CodepointIterator = struct {
     }
 };
 
-test "isIdentifier" {
-    const expect = std.testing.expect;
-    try expect(!isIdentifierStart(0x2029));
-    try expect(!isIdentifierStart(0));
-    try expect(!isIdentifierStart(1));
-    try expect(!isIdentifierStart(2));
-    try expect(!isIdentifierStart(3));
-    try expect(!isIdentifierStart(4));
-    try expect(!isIdentifierStart(5));
-    try expect(!isIdentifierStart(6));
-    try expect(!isIdentifierStart(7));
-    try expect(!isIdentifierStart(8));
-    try expect(!isIdentifierStart(9));
-    try expect(!isIdentifierStart(0x2028));
-    try expect(!isIdentifier("\\u2028"));
-    try expect(!isIdentifier("\\u2029"));
-
-    try expect(!isIdentifierContinue(':'));
-    try expect(!isIdentifier("javascript:"));
-
-    try expect(isIdentifier("javascript"));
-
-    try expect(!isIdentifier(":2"));
-    try expect(!isIdentifier("2:"));
-    try expect(isIdentifier("$"));
-    try expect(!isIdentifier("$:"));
-}
-
 pub fn isIdentifierUTF16(text: []const u16) bool {
     const n = text.len;
     if (n == 0) {
@@ -2883,107 +2855,30 @@ inline fn float64(num: anytype) f64 {
     return @intToFloat(f64, num);
 }
 
-fn test_lexer(contents: []const u8) Lexer {
-    alloc.setup(default_allocator) catch unreachable;
-    var log = alloc.dynamic.create(logger.Log) catch unreachable;
-    log.* = logger.Log.init(alloc.dynamic);
-    var _source = logger.Source.initPathString(
-        "index.js",
-        contents,
-    );
-    var source = alloc.dynamic.create(logger.Source) catch unreachable;
-    source.* = _source;
-    return Lexer.init(log, source, alloc.dynamic) catch unreachable;
-}
+test "isIdentifier" {
+    const expect = std.testing.expect;
+    try expect(!isIdentifierStart(0x2029));
+    try expect(!isIdentifierStart(0));
+    try expect(!isIdentifierStart(1));
+    try expect(!isIdentifierStart(2));
+    try expect(!isIdentifierStart(3));
+    try expect(!isIdentifierStart(4));
+    try expect(!isIdentifierStart(5));
+    try expect(!isIdentifierStart(6));
+    try expect(!isIdentifierStart(7));
+    try expect(!isIdentifierStart(8));
+    try expect(!isIdentifierStart(9));
+    try expect(!isIdentifierStart(0x2028));
+    try expect(!isIdentifier("\\u2028"));
+    try expect(!isIdentifier("\\u2029"));
 
-// test "LexerType.next()" {
-//     try alloc.setup(std.heap.page_allocator);
-//     const msgs = std.ArrayList(logger.Msg).init(alloc.dynamic);
-//     const log = logger.Log{
-//         .msgs = msgs,
-//     };
+    try expect(!isIdentifierContinue(':'));
+    try expect(!isIdentifier("javascript:"));
 
-//     const source = logger.Source.initPathString("index.js", "for (let i = 0; i < 100; i++) { console.log('hi'); }", std.heap.page_allocator);
-//     var lex = try LexerType.init(log, source, alloc.dynamic);
-//    try  lex.next();
-// }
+    try expect(isIdentifier("javascript"));
 
-fn expectStr(lexer: *Lexer, expected: string, actual: string) void {
-    if (lexer.log.errors > 0 or lexer.log.warnings > 0) {
-        Global.panic("{s}", .{lexer.log.msgs.items});
-        // const msg: logger.Msg = lexer.log.msgs.items[0];
-        // msg.formatNoWriter(Global.panic);
-    }
-    std.testing.expectEqual(lexer.log.errors, 0);
-    std.testing.expectEqual(lexer.log.warnings, 0);
-    std.testing.expectEqual(false, lexer.did_panic);
-    std.testing.expectEqual(@as(usize, 0), lexer.log.errors);
-    std.testing.expectEqual(@as(usize, 0), lexer.log.warnings);
-    std.testing.expectEqualStrings(expected, actual);
-}
-
-test "Lexer.next() simple" {
-    var lex = test_lexer("for (let i = 0; i < 100; i++) { }");
-    expectStr(&lex, "\"for\"", tokenToString.get(lex.token));
-    try lex.next();
-    expectStr(&lex, "\"(\"", tokenToString.get(lex.token));
-    try lex.next();
-    expectStr(&lex, "let", lex.raw());
-    try lex.next();
-    expectStr(&lex, "i", lex.raw());
-    try lex.next();
-    expectStr(&lex, "=", lex.raw());
-    try lex.next();
-    expectStr(&lex, "0", lex.raw());
-    try lex.next();
-    expectStr(&lex, ";", lex.raw());
-    try lex.next();
-    expectStr(&lex, "i", lex.raw());
-    try lex.next();
-    std.testing.expect(lex.number == 0.0);
-    expectStr(&lex, "<", lex.raw());
-    try lex.next();
-    std.testing.expect(lex.number == 100.0);
-    expectStr(&lex, "100", lex.raw());
-    try lex.next();
-}
-
-pub fn test_stringLiteralEquals(expected: string, source_text: string) !void {
-    var msgs = std.ArrayList(logger.Msg).init(std.testing.allocator);
-    var log = logger.Log{
-        .msgs = msgs,
-    };
-
-    defer std.testing.allocator.free(msgs.items);
-
-    var source = logger.Source.initPathString(
-        "index.js",
-        source_text,
-    );
-
-    var lex = try Lexer.init(&log, &source, std.heap.page_allocator);
-    while (!lex.token.isString() and lex.token != .t_end_of_file) {
-        try lex.next();
-    }
-
-    var lit = std.unicode.utf16leToUtf8Alloc(std.heap.page_allocator, lex.stringLiteralUTF16()) catch unreachable;
-    std.testing.expectEqualStrings(expected, lit);
-    std.testing.expectEqualStrings(expected, lex.string_literal_slice);
-}
-
-pub fn test_skipTo(lexer: *LexerType, n: string) void {
-    var i: usize = 0;
-    while (i < n.len) {
-        lexer.next();
-        i += 1;
-    }
-}
-
-test "LexerType.rawTemplateContents" {
-    try test_stringLiteralEquals("hello!", "const a = 'hello!';");
-    try test_stringLiteralEquals("hello!hi", "const b = 'hello!hi';");
-    try test_stringLiteralEquals("hello!\n\nhi", "const b = `hello!\n\nhi`;");
-    // TODO: \r\n
-    // test_stringLiteralEquals("hello!\nhi", "const b = `hello!\r\nhi`;");
-    try test_stringLiteralEquals("hello!", "const b = `hello!${\"hi\"}`");
+    try expect(!isIdentifier(":2"));
+    try expect(!isIdentifier("2:"));
+    try expect(isIdentifier("$"));
+    try expect(!isIdentifier("$:"));
 }

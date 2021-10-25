@@ -212,14 +212,6 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
             return @enumToInt(lexer.token) >= @enumToInt(T.t_identifier);
         }
 
-        pub inline fn stringLiteralUTF16(lexer: *LexerType) JavascriptString {
-            if (lexer.string_literal_is_ascii) {
-                return lexer.stringToUTF16(lexer.string_literal_slice);
-            } else {
-                return lexer.allocator.dupe(u16, lexer.string_literal) catch unreachable;
-            }
-        }
-
         pub fn deinit(this: *LexerType) void {}
 
         fn decodeEscapeSequences(lexer: *LexerType, start: usize, text: string, comptime BufType: type, buf_: *BufType) !void {
@@ -227,7 +219,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
             defer buf_.* = buf;
             if (comptime is_json) lexer.is_ascii_only = false;
 
-            var iterator = strings.CodepointIterator{ .bytes = text[start..], .i = 0 };
+            const iterator = strings.CodepointIterator{ .bytes = text[start..], .i = 0 };
             var iter = strings.CodepointIterator.Cursor{};
             const start_length = buf.items.len;
             while (iterator.next(&iter)) {
@@ -1747,7 +1739,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
             if (lexer.string_literal_is_ascii) {
                 return js_ast.E.String{ .utf8 = lexer.string_literal_slice };
             } else {
-                return js_ast.E.String{ .value = lexer.stringLiteralUTF16() };
+                return js_ast.E.String{ .value = lexer.allocator.dupe(u16, lexer.string_literal) catch unreachable };
             }
         }
 
@@ -1788,16 +1780,6 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                     },
                 }
             }
-        }
-
-        // TODO: use wtf-8 encoding.
-        pub fn stringToUTF16(lexer: *LexerType, str: string) JavascriptString {
-            var buf: JavascriptString = lexer.allocator.alloc(u16, std.mem.len(str)) catch unreachable;
-            // theres prob a faster/better way
-            for (str) |char, i| {
-                buf[i] = char;
-            }
-            return buf;
         }
 
         // TODO: use wtf-8 encoding.
@@ -2112,25 +2094,17 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
             var decoded = jsx_decode_buf;
             defer jsx_decode_buf = decoded;
             var decoded_ptr = &decoded;
-            var i: u32 = 0;
+
             var after_last_non_whitespace: ?u32 = null;
 
             // Trim whitespace off the end of the first line
             var first_non_whitespace: ?u32 = 0;
 
-            while (i < text.len) {
-                const width: u3 = strings.utf8ByteSequenceLength(text[i]);
+            const iterator = strings.CodepointIterator.init(text);
+            var cursor = strings.CodepointIterator.Cursor{};
 
-                const c: CodePoint = switch (width) {
-                    0 => -1,
-                    1 => @intCast(CodePoint, text[i]),
-                    2 => @intCast(CodePoint, std.unicode.utf8Decode2(text[i..][0..2]) catch unreachable),
-                    3 => @intCast(CodePoint, std.unicode.utf8Decode3(text[i..][0..3]) catch unreachable),
-                    4 => @intCast(CodePoint, std.unicode.utf8Decode4(text[i..][0..4]) catch unreachable),
-                    else => unreachable,
-                };
-
-                switch (c) {
+            while (iterator.next(&cursor)) {
+                switch (cursor.c) {
                     '\r', '\n', 0x2028, 0x2029 => {
                         if (first_non_whitespace != null and after_last_non_whitespace != null) {
                             // Newline
@@ -2148,15 +2122,14 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                     '\t', ' ' => {},
                     else => {
                         // Check for unusual whitespace characters
-                        if (!isWhitespace(@intCast(CodePoint, c))) {
-                            after_last_non_whitespace = i + width;
+                        if (!isWhitespace(cursor.c)) {
+                            after_last_non_whitespace = cursor.i + @as(u32, cursor.width);
                             if (first_non_whitespace == null) {
-                                first_non_whitespace = i;
+                                first_non_whitespace = cursor.i;
                             }
                         }
                     },
                 }
-                i += width;
             }
 
             if (first_non_whitespace) |start| {
@@ -2171,25 +2144,13 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
         }
 
         pub fn decodeJSXEntities(lexer: *LexerType, text: string, out: *std.ArrayList(u16)) !void {
-            var i: usize = 0;
-            var buf = [4]u8{ 0, 0, 0, 0 };
+            const iterator = strings.CodepointIterator.init(text);
+            var cursor = strings.CodepointIterator.Cursor{};
 
-            while (i < text.len) {
-                const width: u3 = strings.utf8ByteSequenceLength(text[i]);
-
-                var c: CodePoint = switch (width) {
-                    0 => -1,
-                    1 => @intCast(CodePoint, text[i]),
-                    2 => @intCast(CodePoint, std.unicode.utf8Decode2(text[i..][0..2]) catch unreachable),
-                    3 => @intCast(CodePoint, std.unicode.utf8Decode3(text[i..][0..3]) catch unreachable),
-                    4 => @intCast(CodePoint, std.unicode.utf8Decode4(text[i..][0..4]) catch unreachable),
-                    else => unreachable,
-                };
-                i += width;
-
-                if (c == '&') {
-                    if (strings.indexOfChar(text[i..text.len], ';')) |length| {
-                        const entity = text[i .. i + length];
+            while (iterator.next(&cursor)) {
+                if (cursor.c == '&') {
+                    if (strings.indexOfChar(text[cursor.i..], ';')) |length| {
+                        const entity = text[cursor.i .. @as(usize, cursor.i) + length];
                         if (entity[0] == '#') {
                             var number = entity[1..entity.len];
                             var base: u8 = 10;
@@ -2197,22 +2158,32 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                                 number = number[1..number.len];
                                 base = 16;
                             }
-                            c = try std.fmt.parseInt(i32, number, base);
-                            i += length + 1;
+                            cursor.c = try std.fmt.parseInt(i32, number, base);
+                            cursor.i += @intCast(u32, length) + 1;
+                            cursor.width = 0;
                         } else if (tables.jsxEntity.get(entity)) |ent| {
-                            c = ent;
-                            i += length + 1;
+                            cursor.c = ent;
+                            cursor.i += @intCast(u32, length) + 1;
                         }
                     }
                 }
 
-                if (c <= 0xFFFF) {
-                    try out.append(@intCast(u16, c));
+                if (cursor.c <= 0xFFFF) {
+                    try out.append(@intCast(u16, cursor.c));
                 } else {
-                    c -= 0x1000;
+                    cursor.c -= 0x10000;
                     try out.ensureUnusedCapacity(2);
-                    out.appendAssumeCapacity(@intCast(u16, 0xD800 + ((c >> 10) & 0x3FF)));
-                    out.appendAssumeCapacity(@intCast(u16, 0xDC00 + (c & 0x3FF)));
+                    (out.items.ptr + out.items.len)[0..2].* = [_]u16{
+                        @truncate(
+                            u16,
+                            @bitCast(u32, @as(i32, 0xD800) + ((cursor.c >> 10) & 0x3FF)),
+                        ),
+                        @truncate(
+                            u16,
+                            @bitCast(u32, @as(i32, 0xDC00) + (cursor.c & 0x3FF)),
+                        ),
+                    };
+                    out.items = out.items.ptr[0 .. out.items.len + 2];
                 }
             }
         }
@@ -2663,7 +2634,7 @@ pub fn isIdentifier(text: string) bool {
         return false;
     }
 
-    var iter = strings.CodepointIterator{ .bytes = text, .i = 0 };
+    const iter = strings.CodepointIterator{ .bytes = text, .i = 0 };
     var cursor = strings.CodepointIterator.Cursor{};
     if (!iter.next(&cursor)) return false;
 
@@ -2679,55 +2650,6 @@ pub fn isIdentifier(text: string) bool {
 
     return true;
 }
-
-pub const CodepointIterator = struct {
-    bytes: []const u8,
-    i: usize,
-    width: u3 = 0,
-    c: CodePoint = 0,
-
-    pub fn nextCodepointSlice(it: *CodepointIterator) []const u8 {
-        @setRuntimeSafety(false);
-
-        const cp_len = strings.utf8ByteSequenceLength(it.bytes[it.i]);
-        it.i += cp_len;
-        // without branching,
-
-        const slice = if (!(it.i > it.bytes.len)) it.bytes[it.i - cp_len .. it.i] else "";
-        it.width = @truncate(u3, slice.len);
-        return slice;
-    }
-
-    pub fn nextCodepoint(it: *CodepointIterator) ?CodePoint {
-        const slice = it.nextCodepointSlice();
-        it.c = switch (it.width) {
-            0 => it.c,
-            1 => @as(CodePoint, slice[0]),
-            2 => @as(CodePoint, unicode.utf8Decode2(slice) catch unreachable),
-            3 => @as(CodePoint, unicode.utf8Decode3(slice) catch unreachable),
-            4 => @as(CodePoint, unicode.utf8Decode4(slice) catch unreachable),
-            else => unreachable,
-        };
-
-        return if (slice.len > 0) it.c else null;
-    }
-
-    /// Look ahead at the next n codepoints without advancing the iterator.
-    /// If fewer than n codepoints are available, then return the remainder of the string.
-    pub fn peek(it: *CodepointIterator, n: usize) []const u8 {
-        const original_i = it.i;
-        defer it.i = original_i;
-
-        var end_ix = original_i;
-        var found: usize = 0;
-        while (found < n) : (found += 1) {
-            const next_codepoint = it.nextCodepointSlice() orelse return it.bytes[original_i..];
-            end_ix += next_codepoint.len;
-        }
-
-        return it.bytes[original_i..end_ix];
-    }
-};
 
 pub fn isIdentifierUTF16(text: []const u16) bool {
     const n = text.len;

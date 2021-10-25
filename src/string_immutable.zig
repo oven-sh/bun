@@ -548,7 +548,7 @@ pub fn utf16EqlString(text: []const u16, str: string) bool {
 
 // This is a clone of golang's "utf8.EncodeRune" that has been modified to encode using
 // WTF-8 instead. See https://simonsapin.github.io/wtf-8/ for more info.
-pub fn encodeWTF8Rune(p: []u8, r: i32) u3 {
+pub fn encodeWTF8Rune(p: *[4]u8, r: i32) u3 {
     return @call(
         .{
             .modifier = .always_inline,
@@ -562,7 +562,7 @@ pub fn encodeWTF8Rune(p: []u8, r: i32) u3 {
     );
 }
 
-pub fn encodeWTF8RuneT(p: []u8, comptime R: type, r: R) u3 {
+pub fn encodeWTF8RuneT(p: *[4]u8, comptime R: type, r: R) u3 {
     switch (r) {
         0...0x7F => {
             p[0] = @intCast(u8, r);
@@ -588,6 +588,60 @@ pub fn encodeWTF8RuneT(p: []u8, comptime R: type, r: R) u3 {
         },
     }
 }
+
+pub fn codepointSize(comptime R: type, r: R) u3 {
+    return switch (r) {
+        0b0000_0000...0b0111_1111 => 1,
+        0b1100_0000...0b1101_1111 => 2,
+        0b1110_0000...0b1110_1111 => 3,
+        0b1111_0000...0b1111_0111 => 4,
+        else => 0,
+    };
+}
+
+// /// Encode Type into UTF-8 bytes.
+// /// - Invalid unicode data becomes U+FFFD REPLACEMENT CHARACTER.
+// /// -
+// pub fn encodeUTF8RuneT(out: *[4]u8, comptime R: type, c: R) u3 {
+//     switch (c) {
+//         0b0000_0000...0b0111_1111 => {
+//             out[0] = @intCast(u8, c);
+//             return 1;
+//         },
+//         0b1100_0000...0b1101_1111 => {
+//             out[0] = @truncate(u8, 0b11000000 | (c >> 6));
+//             out[1] = @truncate(u8, 0b10000000 | c & 0b111111);
+//             return 2;
+//         },
+
+//         0b1110_0000...0b1110_1111 => {
+//             if (0xd800 <= c and c <= 0xdfff) {
+//                 // Replacement character
+//                 out[0..3].* = [_]u8{ 0xEF, 0xBF, 0xBD };
+
+//                 return 3;
+//             }
+
+//             out[0] = @truncate(u8, 0b11100000 | (c >> 12));
+//             out[1] = @truncate(u8, 0b10000000 | (c >> 6) & 0b111111);
+//             out[2] = @truncate(u8, 0b10000000 | c & 0b111111);
+//             return 3;
+//         },
+//         0b1111_0000...0b1111_0111 => {
+//             out[0] = @truncate(u8, 0b11110000 | (c >> 18));
+//             out[1] = @truncate(u8, 0b10000000 | (c >> 12) & 0b111111);
+//             out[2] = @truncate(u8, 0b10000000 | (c >> 6) & 0b111111);
+//             out[3] = @truncate(u8, 0b10000000 | c & 0b111111);
+//             return 4;
+//         },
+//         else => {
+//             // Replacement character
+//             out[0..3].* = [_]u8{ 0xEF, 0xBF, 0xBD };
+
+//             return 3;
+//         },
+//     }
+// }
 
 pub fn containsNonBmpCodePoint(text: string) bool {
     var iter = CodepointIterator.init(text);

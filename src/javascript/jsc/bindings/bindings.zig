@@ -110,6 +110,10 @@ pub const ZigString = extern struct {
         return this.ptr[0..std.math.min(this.len, 4096)];
     }
 
+    pub inline fn full(this: *const ZigString) []const u8 {
+        return this.ptr[0..this.len];
+    }
+
     pub fn trimmedSlice(this: *const ZigString) []const u8 {
         return std.mem.trim(u8, this.ptr[0..std.math.min(this.len, 4096)], " \r\n");
     }

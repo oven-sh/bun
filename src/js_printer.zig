@@ -37,10 +37,10 @@ const Ast = js_ast.Ast;
 const hex_chars = "0123456789ABCDEF";
 const first_ascii = 0x20;
 const last_ascii = 0x7E;
-const first_high_surrogate: u21 = 0xD800;
-const last_high_surrogate: u21 = 0xDBFF;
-const first_low_surrogate: u21 = 0xDC00;
-const last_low_surrogate: u21 = 0xDFFF;
+const first_high_surrogate = 0xD800;
+const last_high_surrogate = 0xDBFF;
+const first_low_surrogate = 0xDC00;
+const last_low_surrogate = 0xDFFF;
 const CodepointIterator = @import("./string_immutable.zig").UnsignedCodepointIterator;
 const assert = std.debug.assert;
 
@@ -601,11 +601,10 @@ pub fn NewPrinter(
             // e(text.len) catch unreachable;
 
             while (i < n) {
-                const CodeUnitType = u21;
+                const CodeUnitType = u32;
 
-                const c = @as(CodeUnitType, text[i]);
+                const c: CodeUnitType = text[i];
                 i += 1;
-                var r: CodeUnitType = 0;
                 var width: u3 = 0;
 
                 // TODO: here
@@ -726,18 +725,17 @@ pub fn NewPrinter(
 
                     else => {
                         switch (c) {
-                            
                             first_high_surrogate...last_high_surrogate => {
 
                                 // Is there a next character?
 
                                 if (i < n) {
-                                    const c2: CodeUnitType = @as(CodeUnitType, text[i]);
+                                    const c2: CodeUnitType = text[i];
 
                                     if (c2 >= first_high_surrogate and c2 <= last_low_surrogate) {
-                                        // this is some magic to me
-                                        r = (c << 10) + c2 + (0x10000 - (first_high_surrogate << 10) - first_low_surrogate);
                                         i += 1;
+                                        const r: CodeUnitType = 0x10000 + (((c & 0x03ff) << 10) | (c2 & 0x03ff));
+
                                         // Escape this character if UTF-8 isn't allowed
                                         if (ascii_only) {
                                             var ptr = e.writer.reserve(12) catch unreachable;
@@ -749,20 +747,18 @@ pub fn NewPrinter(
 
                                             continue;
                                             // Otherwise, encode to UTF-8
-                                        } else {
-                                            var ptr = e.writer.reserve(4) catch unreachable;
-                                            e.writer.advance(strings.encodeWTF8RuneT(ptr[0..4], CodeUnitType, r));
-                                            continue;
                                         }
+
+                                        var ptr = e.writer.reserve(4) catch unreachable;
+                                        e.writer.advance(strings.encodeWTF8RuneT(ptr[0..4], CodeUnitType, r));
+                                        continue;
                                     }
                                 }
 
-                                {
-                                    // Write an unpaired high surrogate
-                                    var ptr = e.writer.reserve(6) catch unreachable;
-                                    ptr[0..6].* = [_]u8{ '\\', 'u', hex_chars[c >> 12], hex_chars[(c >> 8) & 15], hex_chars[(c >> 4) & 15], hex_chars[c & 15] };
-                                    e.writer.advance(6);
-                                }
+                                // Write an unpaired high surrogate
+                                var ptr = e.writer.reserve(6) catch unreachable;
+                                ptr[0..6].* = [_]u8{ '\\', 'u', hex_chars[c >> 12], hex_chars[(c >> 8) & 15], hex_chars[(c >> 4) & 15], hex_chars[c & 15] };
+                                e.writer.advance(6);
                             },
                             // Is this an unpaired low surrogate or four-digit hex escape?
                             first_low_surrogate...last_low_surrogate => {
@@ -3825,35 +3821,45 @@ pub fn NewPrinter(
         }
 
         pub fn printIdentifierUTF16(p: *Printer, name: []const u16) !void {
-            var temp = [_]u8{ 0, 0, 0, 0, 0, 0 };
             const n = name.len;
             var i: usize = 0;
-            while (i < n) : (i += 1) {
-                var c: u21 = name[i];
 
-                if (c >= first_high_surrogate and c <= last_high_surrogate and i + 1 < n) {
-                    const c2: u21 = name[i + 1];
-                    if (c2 >= first_low_surrogate and c2 <= last_low_surrogate) {
-                        c = (c << 10) + c2 + (0x10000 - (first_high_surrogate << 10) - first_low_surrogate);
-                        i += 1;
-                    }
+            const CodeUnitType = u32;
+            while (i < n) {
+                var c: CodeUnitType = name[i];
+                i += 1;
+
+                if (c & ~@as(CodeUnitType, 0x03ff) == 0xd800 and i < n) {
+                    c = 0x10000 + (((c & 0x03ff) << 10) | (name[i] & 0x03ff));
                 }
 
                 if ((comptime ascii_only) and c > last_ascii) {
                     switch (c) {
                         0...0xFFFF => {
-                            p.print([_]u8{ '\\', 'u', hex_chars[c >> 12], hex_chars[(c >> 8) & 15], hex_chars[(c >> 4) & 15], hex_chars[c & 15] });
+                            p.print(
+                                [_]u8{
+                                    '\\',
+                                    'u',
+                                    hex_chars[c >> 12],
+                                    hex_chars[(c >> 8) & 15],
+                                    hex_chars[(c >> 4) & 15],
+                                    hex_chars[c & 15],
+                                },
+                            );
                         },
                         else => {
                             p.print("\\u");
-                            p.print(std.fmt.bufPrintIntToSlice(&temp, c, 16, .upper, .{}));
+                            var buf_ptr = p.writer.reserve(4) catch unreachable;
+                            p.writer.advance(strings.encodeWTF8RuneT(buf_ptr[0..4], CodeUnitType, c));
                         },
                     }
                     continue;
                 }
 
-                const width = try std.unicode.utf8Encode(c, &temp);
-                p.print(temp[0..width]);
+                {
+                    var buf_ptr = p.writer.reserve(4) catch unreachable;
+                    p.writer.advance(strings.encodeWTF8RuneT(buf_ptr[0..4], CodeUnitType, c));
+                }
             }
         }
 
